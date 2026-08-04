@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "path": "tests/compiler/test_reverify_expand.cpp",
       "contains": [
         "ac1_expand_with_occurrence"
       ]
@@ -30,7 +30,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "path": "tests/compiler/test_reverify_expand.cpp",
       "contains": [
         "ac2_no_priority_zero_cost"
       ]
@@ -44,7 +44,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "path": "tests/compiler/test_reverify_expand.cpp",
       "contains": [
         "ac3_at_most_one_expand"
       ]
@@ -65,7 +65,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "path": "tests/compiler/test_reverify_expand.cpp",
       "contains": [
         "ac4_timeout_escalate_source"
       ]
@@ -90,7 +90,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_reverify_expand_2356"
+        "test_reverify_expand"
       ]
     },
     {
@@ -103,7 +103,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "path": "tests/compiler/test_reverify_expand.cpp",
       "contains": [
         "ac5_query_and_source"
       ]

@@ -38,7 +38,7 @@ def main() -> int:
     met = _read("src/compiler/observability_metrics.h")
     fields = _read("src/compiler/compiler_metrics_fields.inc")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/compiler/test_castop_density_closed_loop_2459.cpp")
+    test = _read("tests/compiler/test_castop_density_closed_loop.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -67,7 +67,7 @@ def main() -> int:
     must("schema-2319", "AC5", q)
     must("castop_density_streak", "AC5", met)
     must("castop_density_gate_reject_total", "AC5", fields)
-    must("test_castop_density_closed_loop_2459", "gate", cmake)
+    must("test_castop_density_closed_loop", "gate", cmake)
     must("check_castop_density_closed_loop_2459", "gate", build)
     must("cmd_castop_density_closed_loop_coverage", "gate", build)
     must("#2459", "gate", sd)

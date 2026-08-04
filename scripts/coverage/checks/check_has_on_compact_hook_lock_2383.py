@@ -49,7 +49,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     arena = _read("src/core/arena.ixx")
-    test = _read("tests/core/test_has_on_compact_hook_lock_2383.cpp")
+    test = _read("tests/core/test_has_on_compact_hook_lock.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -78,7 +78,7 @@ def main() -> int:
 
     # AC3
     must("ac3_semantics", "AC3", test)
-    must("test_has_on_compact_hook_lock_2383", "AC3", cmake)
+    must("test_has_on_compact_hook_lock", "AC3", cmake)
     must("check_has_on_compact_hook_lock_2383", "AC3", build)
     must("cmd_has_on_compact_hook_lock_coverage", "AC3", build)
     must("Issue #2383", "AC3", test)

@@ -37,7 +37,7 @@ def main() -> int:
     ixx = _read("src/compiler/type_checker.ixx")
     mh = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/compiler/test_partial_cone_cap_2560.cpp")
+    test = _read("tests/compiler/test_partial_cone_cap.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -81,7 +81,7 @@ def main() -> int:
     must("partial-cone-soft-overflow-total", "AC5", q)
     must("partial-cone-hard-fallback-total", "AC5", q)
     must("partial-cone-last-size", "AC5", q)
-    must("test_partial_cone_cap_2560", "AC5", cmake)
+    must("test_partial_cone_cap", "AC5", cmake)
     must("check_partial_cone_cap_2560", "AC5", build)
     must("cmd_partial_cone_cap_coverage", "AC5", build)
     must("ac5_schema", "AC5", test)

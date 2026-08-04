@@ -40,7 +40,7 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     jit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    test = _read("tests/serve/test_steal_complete_restamp_txn_2510.cpp")
+    test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -80,7 +80,7 @@ def main() -> int:
     must("steal-complete-restamp-total", "AC5", q)
     must("steal-complete-layout-hard-fail-total", "AC5", q)
     must("schema-2510", "AC5", jit)
-    must("test_steal_complete_restamp_txn_2510", "AC5", cmake)
+    must("test_steal_complete_restamp_txn", "AC5", cmake)
     must("check_steal_complete_restamp_txn_2510", "AC5", build)
     must("cmd_steal_complete_restamp_txn_coverage", "AC5", build)
     must("AC5", "AC5", test)

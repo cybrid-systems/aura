@@ -38,7 +38,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_subtree_dirty_bounds_2424.cpp")
+    test = _read("tests/core/test_subtree_dirty_bounds.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -79,7 +79,7 @@ def main() -> int:
 
     must("check_subtree_dirty_bounds_2424", "gate", build)
     must("cmd_subtree_dirty_bounds_coverage", "gate", build)
-    must("test_subtree_dirty_bounds_2424", "gate", cmake)
+    must("test_subtree_dirty_bounds", "gate", cmake)
 
     if fails:
         for f in fails:

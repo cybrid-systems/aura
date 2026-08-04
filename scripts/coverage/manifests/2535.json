@@ -38,8 +38,8 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mailbox_bp_admit_default_2535",
-        "aura_issue_test_link_light(test_mailbox_bp_admit_default_2535)"
+        "test_mailbox_bp_admit_default",
+        "aura_issue_test_link_light(test_mailbox_bp_admit_default)"
       ]
     },
     {
@@ -51,7 +51,7 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/orch/test_mailbox_bp_admit_default_2535.cpp",
+      "path": "tests/orch/test_mailbox_bp_admit_default.cpp",
       "contains": [
         "AC1"
       ]

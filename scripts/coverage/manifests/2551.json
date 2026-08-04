@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/serve/test_mailbox_hold_starvation_hard_2551.cpp",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
       "contains": [
         "ac1_production_hard_signal"
       ]
@@ -28,14 +28,14 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/serve/test_mailbox_hold_starvation_hard_2551.cpp",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
       "contains": [
         "ac2_soft_and_free"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/serve/test_mailbox_hold_starvation_hard_2551.cpp",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
       "contains": [
         "AC3"
       ]
@@ -72,7 +72,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/serve/test_mailbox_hold_starvation_hard_2551.cpp",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
       "contains": [
         "ac4_chaos_and_query"
       ]
@@ -96,7 +96,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mailbox_hold_starvation_hard_2551"
+        "test_mailbox_hold_starvation_hard"
       ]
     },
     {
@@ -109,7 +109,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/serve/test_mailbox_hold_starvation_hard_2551.cpp",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
       "contains": [
         "ac5_source_and_gate"
       ]

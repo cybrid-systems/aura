@@ -38,7 +38,7 @@ def main() -> int:
             fails.append(f"{label}: must not contain {n!r}")
 
     jit = _read("src/compiler/aura_jit.cpp")
-    test = _read("tests/compiler/test_aura_jit_unused_fn_lock_2475.cpp")
+    test = _read("tests/compiler/test_aura_jit_unused_fn_lock.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -66,7 +66,7 @@ def main() -> int:
 
     must("check_aura_jit_unused_fn_lock_2475", "gate", build)
     must("cmd_aura_jit_unused_fn_lock_coverage", "gate", build)
-    must("test_aura_jit_unused_fn_lock_2475", "gate", cmake)
+    must("test_aura_jit_unused_fn_lock", "gate", cmake)
     must("2475 AC5", "gate", test)
 
     if fails:

@@ -37,7 +37,7 @@ def main() -> int:
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     # Production surface wins via later register_stats_impl in obs_eval.
     q_prod = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_live_closure_stable_id_only_2369.cpp")
+    test = _read("tests/compiler/test_live_closure_stable_id_only.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -72,7 +72,7 @@ def main() -> int:
     must("ac4_query", "AC4", test)
 
     # AC5 gate
-    must("test_live_closure_stable_id_only_2369", "AC5", cmake)
+    must("test_live_closure_stable_id_only", "AC5", cmake)
     must("check_live_closure_stable_id_only_2369", "AC5", build)
     must("cmd_live_closure_stable_id_only_coverage", "AC5", build)
     must("ac5_source_and_gate", "AC5", test)

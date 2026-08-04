@@ -41,7 +41,7 @@ def main() -> int:
     fh = _read("src/serve/fiber.h")
     wc = _read("src/serve/worker.cpp")
     wh = _read("src/serve/worker.h")
-    test = _read("tests/serve/test_is_stealable_snapshot_gate_2549.cpp")
+    test = _read("tests/serve/test_is_stealable_snapshot_gate.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -91,7 +91,7 @@ def main() -> int:
     # AC5: wiring
     must("ac1_held_or_unsafe_mb_not_stealable", "AC5", test)
     must("ac3_production_call_sites", "AC5", test)
-    must("test_is_stealable_snapshot_gate_2549", "AC5", cmake)
+    must("test_is_stealable_snapshot_gate", "AC5", cmake)
     must("check_is_stealable_snapshot_gate_2549", "AC5", build)
     must("cmd_is_stealable_snapshot_gate_coverage", "AC5", build)
 

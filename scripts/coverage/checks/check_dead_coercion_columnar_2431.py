@@ -41,7 +41,7 @@ def main() -> int:
     pm = _read("src/compiler/pass_impls.ixx")
     if not pm:
         pm = _read("src/compiler/pass_manager.ixx")
-    test = _read("tests/compiler/test_dead_coercion_columnar_2431.cpp")
+    test = _read("tests/compiler/test_dead_coercion_columnar.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -63,7 +63,7 @@ def main() -> int:
     must("2431 AC5", "AC5", test)
     must("check_dead_coercion_columnar_2431", "gate", build)
     must("cmd_dead_coercion_columnar_coverage", "gate", build)
-    must("test_dead_coercion_columnar_2431", "gate", cmake)
+    must("test_dead_coercion_columnar", "gate", cmake)
 
     if fails:
         for f in fails:

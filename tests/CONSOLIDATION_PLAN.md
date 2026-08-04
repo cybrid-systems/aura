@@ -146,9 +146,9 @@ for each member in batch:
 
 | Action | Files | Target |
 |--------|-------|--------|
-| Merge | `test_lock_order_audit_2316` + `_2354` | `test_lock_order_audit.cpp` |
-| Merge | `test_production_safety_1047` + `_1097` | `test_production_safety.cpp` |
-| Merge | `test_reemit_production_default_defer_2205` + `_2208` | `test_reemit_production_default_defer.cpp` |
+| Merge | `test_lock_order_audit` + `_2354` | `test_lock_order_audit.cpp` |
+| Merge | `test_production_safety_p1` + `_1097` | `test_production_safety.cpp` |
+| Merge | `test_reemit_production_default_defer` + `_2208` | `test_reemit_production_default_defer.cpp` |
 | Keep special | `test_issue_178` + `_reflect` | Reflect dual-TU executable (do **not** dump into misc) |
 | Absorb or delete | `test_issue_1990`–`1993` | Prefer fold into serve mailbox/fiber suite with banner issues |
 
@@ -209,7 +209,7 @@ Approximate keyword buckets (a file may fit multiple; primary used for routing):
 | **S2** (done) | A6–A10 residual splits + Stream C homes | misc ≤40 (30); co-locate C pairs |
 | **S2** | Stream A6–A10 + Stream C merges | misc ≤40; 3 content merges |
 | **S3** (done) | Stream B1–B5 renames (117 files) | flatast/security/densify/linear_misc/orch_agent zero `_NNNN` |
-| **S4** | Stream B6–B10 renames | issue-suffix file count → **&lt; 30** specials only |
+| **S4** (done) | Stream B6–B10 renames (~276 + 5 disambig) | issue-suffix left: 6 `test_issue_*` only |
 | **S5** | Stream D contract cleanup | remove `# folded:` block |
 
 Do **not** rename 400 files in one PR — batch-sized PRs (~20–40 files) keep pre-push/gate reviewable.

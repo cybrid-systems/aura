@@ -38,7 +38,7 @@ def main() -> int:
 
     msg = _read("src/compiler/evaluator_primitives_messaging.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
-    test = _read("tests/compiler/test_channel_rendezvous_2483.cpp")
+    test = _read("tests/compiler/test_channel_rendezvous.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -59,7 +59,7 @@ def main() -> int:
     must("2483 AC1", "gate", test)
     must("check_channel_rendezvous_2483", "gate", build)
     must("cmd_channel_rendezvous_coverage", "gate", build)
-    must("test_channel_rendezvous_2483", "gate", cmake)
+    must("test_channel_rendezvous", "gate", cmake)
     must("2483 AC4", "gate", test)
 
     if fails:

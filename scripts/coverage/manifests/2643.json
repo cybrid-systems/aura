@@ -47,7 +47,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_instance_constraint_depth_cap_2607.cpp",
+      "path": "tests/compiler/test_instance_constraint_depth_cap.cpp",
       "contains": [
         "r.instance_repair_hints.empty()"
       ]
@@ -110,14 +110,14 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_instance_constraint_depth_cap_2607.cpp",
+      "path": "tests/compiler/test_instance_constraint_depth_cap.cpp",
       "contains": [
         "#2643"
       ]
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_instance_constraint_depth_cap_2607.cpp",
+      "path": "tests/compiler/test_instance_constraint_depth_cap.cpp",
       "contains": [
         "escalate_if_production",
         "ac2643_repair_hint_on_timeout",

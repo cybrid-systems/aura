@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_ir_soa_layout_stamp_2432.cpp",
+      "path": "tests/compiler/test_ir_soa_layout_stamp.cpp",
       "contains": [
         "2432 AC1"
       ]
@@ -45,7 +45,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_ir_soa_layout_stamp_2432.cpp",
+      "path": "tests/compiler/test_ir_soa_layout_stamp.cpp",
       "contains": [
         "2432 AC3"
       ]
@@ -81,7 +81,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_ir_soa_layout_stamp_2432.cpp",
+      "path": "tests/compiler/test_ir_soa_layout_stamp.cpp",
       "contains": [
         "2432 AC4"
       ]
@@ -98,7 +98,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_ir_soa_layout_stamp_2432"
+        "test_ir_soa_layout_stamp"
       ]
     }
   ],

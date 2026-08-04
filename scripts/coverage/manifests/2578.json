@@ -54,7 +54,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_aether_denseness_residual_2578"
+        "test_aether_denseness_residual"
       ]
     },
     {
@@ -67,7 +67,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_aether_denseness_residual_2578.cpp",
+      "path": "tests/compiler/test_aether_denseness_residual.cpp",
       "contains": [
         "ac2_orch_freevar_survive_rebind"
       ]

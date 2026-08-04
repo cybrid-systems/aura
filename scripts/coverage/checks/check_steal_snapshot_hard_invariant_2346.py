@@ -37,7 +37,7 @@ def main() -> int:
     fc = _read("src/serve/fiber.cpp")
     hooks = _read("src/compiler/typed_mutation_audit_hooks.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/serve/test_steal_snapshot_hard_invariant_2346.cpp")
+    test = _read("tests/serve/test_steal_snapshot_hard_invariant.cpp")
     cmake = _read("CMakeLists.txt")
 
     # AC1 Soft
@@ -70,7 +70,7 @@ def main() -> int:
 
     # AC5
     must("AC5: source-cite", "AC5", test)
-    must("test_steal_snapshot_hard_invariant_2346", "AC5", cmake)
+    must("test_steal_snapshot_hard_invariant", "AC5", cmake)
     must("Issue #2346", "AC5", fc)
 
     if fails:

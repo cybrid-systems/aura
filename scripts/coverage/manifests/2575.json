@@ -38,7 +38,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_jit_dual_string_heap_2575.cpp",
+      "path": "tests/compiler/test_jit_dual_string_heap.cpp",
       "contains": [
         "ac1_string_append_display"
       ]
@@ -47,7 +47,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_jit_dual_string_heap_2575"
+        "test_jit_dual_string_heap"
       ]
     },
     {

@@ -33,7 +33,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    test = _read("tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp")
+    test = _read("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp")
     build = _read("build.py")
     nightly = _read(".github/workflows/nightly.yml")
     cmake = _read("CMakeLists.txt")
@@ -80,7 +80,7 @@ def main() -> int:
     must("AURA_LOCK_ORDER_CANARY", "AC5", nightly)
     must("AURA_CHAOS_FULL", "AC5", nightly)
     must("production-concurrency", "AC5", nightly)
-    must("test_chaos_mutate_steal_gc_mailbox_2352", "AC5", cmake)
+    must("test_chaos_mutate_steal_gc_mailbox", "AC5", cmake)
     must("ac2380_production_concurrency_docs", "AC5", test)
 
     if fails:

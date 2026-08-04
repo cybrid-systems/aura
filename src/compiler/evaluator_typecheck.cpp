@@ -2377,7 +2377,7 @@ void Evaluator::inject_commit_cs_type_conflict_for_test() noexcept {
 }
 
 // Issue #2260: force truncated_reverify on next solve_delta_occurrence.
-// Mirrors test_adaptive_reverify_limit_2146 AC2 setup (low limit + clean fan-out).
+// Mirrors test_adaptive_reverify_limit AC2 setup (low limit + clean fan-out).
 void Evaluator::inject_commit_cs_truncated_reverify_for_test() noexcept {
     try {
         auto* reg_raw = ensure_type_registry();

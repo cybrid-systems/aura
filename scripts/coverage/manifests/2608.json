@@ -115,7 +115,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate_2608.cpp",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate.cpp",
       "contains": [
         "ac1_persist_prune_rehydrate",
         "ac2_soft_zero_writes"
@@ -125,7 +125,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_occurrence_goal_persist_rehydrate_2608"
+        "test_occurrence_goal_persist_rehydrate"
       ]
     },
     {
@@ -177,7 +177,7 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate_2608.cpp",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate.cpp",
       "contains": [
         "ac2641_1_production_default_persist",
         "ac2641_3_env_zero_forces_off",

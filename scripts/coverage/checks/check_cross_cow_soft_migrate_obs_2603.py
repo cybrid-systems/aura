@@ -16,7 +16,7 @@ AC3: Soft disabled env (AURA_CROSS_COW_SOFT_MIGRATE=0) → always hard.
 AC4: Additive schema only. #2505 / #2547 surfaces preserved (existing
      hard-reject-reason + CowGenMismatch breakdown). New keys are
      purely additive (no removal / rename of existing counters).
-AC5: Source-cite + unit test in tests/compiler/test_cross_cow_soft_migrate_2371.cpp
+AC5: Source-cite + unit test in tests/compiler/test_cross_cow_soft_migrate.cpp
      (extended per #81967 with ac2603_* sections).
 
 Rationale (Issue #2603 body):
@@ -43,7 +43,7 @@ BRIDGE = ROOT / "src" / "compiler" / "aura_jit_bridge.cpp"
 RUNTIME_CPP = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 METRICS = ROOT / "src" / "compiler" / "observability_metrics.h"
 OBS_EVAL = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
-TEST = ROOT / "tests" / "compiler" / "test_cross_cow_soft_migrate_2371.cpp"
+TEST = ROOT / "tests" / "compiler" / "test_cross_cow_soft_migrate.cpp"
 
 
 def _extract_body(text: str, open_idx: int) -> str:
@@ -240,9 +240,9 @@ def main() -> int:
                     f"existing {key} (compatibility with #2371/#2505/#2547)"
                 )
 
-    # AC5: source-cite + unit test in test_cross_cow_soft_migrate_2371.cpp
+    # AC5: source-cite + unit test in test_cross_cow_soft_migrate.cpp
     if not TEST.exists():
-        failures.append("AC5: tests/compiler/test_cross_cow_soft_migrate_2371.cpp not found")
+        failures.append("AC5: tests/compiler/test_cross_cow_soft_migrate.cpp not found")
     else:
         test_text = TEST.read_text(encoding="utf-8", errors="replace")
         for ac_fn in (
@@ -254,7 +254,7 @@ def main() -> int:
         ):
             if ac_fn not in test_text:
                 failures.append(
-                    f"AC5: tests/compiler/test_cross_cow_soft_migrate_2371.cpp "
+                    f"AC5: tests/compiler/test_cross_cow_soft_migrate.cpp "
                     f"missing test function {ac_fn} (issue #2603 coverage)"
                 )
         if "main()" in test_text:

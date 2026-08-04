@@ -50,9 +50,9 @@ def main() -> int:
 
     fh = _read("src/serve/fiber.h")
     efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
-    test = _read("tests/serve/test_orch_soft_boundary_unified_2515.cpp")
-    t2115 = _read("tests/serve/test_depth_safe_mutation_boundary_steal_2115.cpp")
-    t2118 = _read("tests/serve/test_orch_agent_mutation_boundary_2118.cpp")
+    test = _read("tests/serve/test_orch_soft_boundary_unified.cpp")
+    t2115 = _read("tests/serve/test_depth_safe_mutation_boundary_steal.cpp")
+    t2118 = _read("tests/serve/test_orch_agent_mutation_boundary.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -93,18 +93,18 @@ def main() -> int:
     must("#2184", "AC4", fh)
     must("Issue #2515", "AC4", efm)
     if not t2115:
-        fails.append("AC4: tests/serve/test_depth_safe_mutation_boundary_steal_2115.cpp removed (must preserve)")
+        fails.append("AC4: tests/serve/test_depth_safe_mutation_boundary_steal.cpp removed (must preserve)")
     if not t2118:
-        fails.append("AC4: tests/serve/test_orch_agent_mutation_boundary_2118.cpp removed (must preserve)")
+        fails.append("AC4: tests/serve/test_orch_agent_mutation_boundary.cpp removed (must preserve)")
 
     # AC5 — Zero extra cost pure-reasoning path + linter self-test.
     must("pure-reasoning", "AC5", test)
     must("AC1", "AC5", test)
     must("AC5", "AC5", test)
     must("zero cost", "AC5", test)
-    must("aura_add_issue_test(test_orch_soft_boundary_unified_2515)", "AC5", cmake)
-    must("aura_issue_test_link_light(test_orch_soft_boundary_unified_2515)", "AC5", cmake)
-    must("add_dependencies(all_test_issue_targets test_orch_soft_boundary_unified_2515)", "AC5", cmake)
+    must("aura_add_issue_test(test_orch_soft_boundary_unified)", "AC5", cmake)
+    must("aura_issue_test_link_light(test_orch_soft_boundary_unified)", "AC5", cmake)
+    must("add_dependencies(all_test_issue_targets test_orch_soft_boundary_unified)", "AC5", cmake)
     must("check_orch_soft_boundary_unified_2515", "AC5", build)
 
     if fails:

@@ -42,7 +42,7 @@ def main() -> int:
     opt = _read("src/compiler/optimization_passes.ixx")
     coercion = _read("src/compiler/coercion_map.ixx")
     query = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/compiler/test_dce_elided_deopt_meta_2611.cpp")
+    test = _read("tests/compiler/test_dce_elided_deopt_meta.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -75,7 +75,7 @@ def main() -> int:
     must("ac4_schema_source_cite", "AC4", test)
 
     # AC5 gate + no design docs for 2611
-    must("test_dce_elided_deopt_meta_2611", "AC5", cmake)
+    must("test_dce_elided_deopt_meta", "AC5", cmake)
     must("check_dce_elided_deopt_meta_2611", "AC5", build)
     must("cmd_dce_elided_deopt_meta_coverage", "AC5", build)
     must("ac5_no_docs", "AC5", test)

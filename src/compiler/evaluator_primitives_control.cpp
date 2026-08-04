@@ -21,7 +21,7 @@
 //
 //   Avoid relying on inner (define x 0) as "loop init" — agents often
 //   copy that from other languages; see education warning on the
-//   special-form path and tests/compiler/test_while_define_oneshot_2571.cpp.
+//   special-form path and tests/compiler/test_while_define_oneshot.cpp.
 
 module;
 

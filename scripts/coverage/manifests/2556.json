@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_dead_coercion_dirty_cone_2556.cpp",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
       "contains": [
         "ac1_partial_cone"
       ]
@@ -30,7 +30,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_dead_coercion_dirty_cone_2556.cpp",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
       "contains": [
         "ac2_full_scan"
       ]
@@ -44,7 +44,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_dead_coercion_dirty_cone_2556.cpp",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
       "contains": [
         "ac4_soft_empty"
       ]
@@ -71,7 +71,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_dead_coercion_dirty_cone_2556"
+        "test_dead_coercion_dirty_cone"
       ]
     },
     {
@@ -84,7 +84,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_dead_coercion_dirty_cone_2556.cpp",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
       "contains": [
         "ac5_source_schema"
       ]

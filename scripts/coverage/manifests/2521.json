@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "path": "tests/core/test_pcv_tls_default_on.cpp",
       "contains": [
         "ac1_default_on"
       ]
@@ -31,7 +31,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "path": "tests/core/test_pcv_tls_default_on.cpp",
       "contains": [
         "ac2_exclusive_stress"
       ]
@@ -45,28 +45,28 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "path": "tests/core/test_pcv_tls_default_on.cpp",
       "contains": [
         "ac3_steal_policy"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_pcv_unique_hotpath_2058.cpp",
+      "path": "tests/core/test_pcv_unique_hotpath.cpp",
       "contains": [
         "set_pcv_tls_scratch_for_test(false)"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_pcv_exclusive_with_set_2140.cpp",
+      "path": "tests/core/test_pcv_exclusive_with_set.cpp",
       "contains": [
         "set_pcv_tls_scratch_for_test(false)"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "path": "tests/core/test_pcv_tls_default_on.cpp",
       "contains": [
         "ac4_alloc_count_override"
       ]
@@ -86,7 +86,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_pcv_tls_default_on_2521"
+        "test_pcv_tls_default_on"
       ]
     },
     {
@@ -99,7 +99,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "path": "tests/core/test_pcv_tls_default_on.cpp",
       "contains": [
         "ac5_query"
       ]

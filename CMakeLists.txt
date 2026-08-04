@@ -1048,13 +1048,13 @@ add_test(NAME test_shape COMMAND test_shape
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # Issue #2141: ShapeProfiler shared_mutex multi-fiber concurrency.
-add_executable(test_shape_profiler_concurrency_2141
-    tests/compiler/test_shape_profiler_concurrency_2141.cpp
+add_executable(test_shape_profiler_concurrency
+    tests/compiler/test_shape_profiler_concurrency.cpp
     src/compiler/shape_profiler.cpp)
-target_include_directories(test_shape_profiler_concurrency_2141 PRIVATE src tests)
-target_link_libraries(test_shape_profiler_concurrency_2141 PRIVATE stdc++ pthread)
-target_sources(test_shape_profiler_concurrency_2141 PRIVATE src/core/contract_handler.cpp)
-add_test(NAME test_shape_profiler_concurrency_2141 COMMAND test_shape_profiler_concurrency_2141
+target_include_directories(test_shape_profiler_concurrency PRIVATE src tests)
+target_link_libraries(test_shape_profiler_concurrency PRIVATE stdc++ pthread)
+target_sources(test_shape_profiler_concurrency PRIVATE src/core/contract_handler.cpp)
+add_test(NAME test_shape_profiler_concurrency COMMAND test_shape_profiler_concurrency
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # ── Speculative JIT tests (Phase 2, #53) ─────────────────────
@@ -1317,31 +1317,31 @@ target_link_libraries(issue_212_bench PRIVATE aura_test_objects pthread stdc++ s
 
 # Issue #2289: GCC 16.1 early-snapshot reflection workaround cleanup.
 # Header-only smoke (opcode_reflect + to_json); no module / aura_test_objects.
-add_executable(test_opcode_reflect_2289 tests/reflect/test_opcode_reflect_2289.cpp)
-target_include_directories(test_opcode_reflect_2289 PRIVATE src)
-target_compile_options(test_opcode_reflect_2289 PRIVATE -freflection -Wall
+add_executable(test_opcode_reflect tests/reflect/test_opcode_reflect.cpp)
+target_include_directories(test_opcode_reflect PRIVATE src)
+target_compile_options(test_opcode_reflect PRIVATE -freflection -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
-target_compile_features(test_opcode_reflect_2289 PUBLIC cxx_std_26)
-target_link_libraries(test_opcode_reflect_2289 PRIVATE stdc++)
-add_test(NAME test_opcode_reflect_2289_verification COMMAND ./test_opcode_reflect_2289)
+target_compile_features(test_opcode_reflect PUBLIC cxx_std_26)
+target_link_libraries(test_opcode_reflect PRIVATE stdc++)
+add_test(NAME test_opcode_reflect_2289_verification COMMAND ./test_opcode_reflect)
 
 # Issue #2290: document + exercise aura-reflect isolation (non-module -freflection).
-add_executable(test_reflect_isolation_2290 tests/reflect/test_reflect_isolation_2290.cpp)
-target_include_directories(test_reflect_isolation_2290 PRIVATE src)
-target_compile_options(test_reflect_isolation_2290 PRIVATE -freflection -Wall
+add_executable(test_reflect_isolation tests/reflect/test_reflect_isolation.cpp)
+target_include_directories(test_reflect_isolation PRIVATE src)
+target_compile_options(test_reflect_isolation PRIVATE -freflection -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
-target_compile_features(test_reflect_isolation_2290 PUBLIC cxx_std_26)
-target_link_libraries(test_reflect_isolation_2290 PRIVATE stdc++)
-add_test(NAME test_reflect_isolation_2290_verification COMMAND ./test_reflect_isolation_2290)
+target_compile_features(test_reflect_isolation PUBLIC cxx_std_26)
+target_link_libraries(test_reflect_isolation PRIVATE stdc++)
+add_test(NAME test_reflect_isolation_2290_verification COMMAND ./test_reflect_isolation)
 
 # Issue #2291: Phase 4 pure-POD IR types (auto_serialize / validate).
-add_executable(test_ir_pod_phase4_2291 tests/reflect/test_ir_pod_phase4_2291.cpp)
-target_include_directories(test_ir_pod_phase4_2291 PRIVATE src)
-target_compile_options(test_ir_pod_phase4_2291 PRIVATE -freflection -Wall
+add_executable(test_ir_pod_phase4 tests/reflect/test_ir_pod_phase4.cpp)
+target_include_directories(test_ir_pod_phase4 PRIVATE src)
+target_compile_options(test_ir_pod_phase4 PRIVATE -freflection -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
-target_compile_features(test_ir_pod_phase4_2291 PUBLIC cxx_std_26)
-target_link_libraries(test_ir_pod_phase4_2291 PRIVATE aura-reflect stdc++)
-add_test(NAME test_ir_pod_phase4_2291_verification COMMAND ./test_ir_pod_phase4_2291)
+target_compile_features(test_ir_pod_phase4 PUBLIC cxx_std_26)
+target_link_libraries(test_ir_pod_phase4 PRIVATE aura-reflect stdc++)
+add_test(NAME test_ir_pod_phase4_2291_verification COMMAND ./test_ir_pod_phase4)
 
 # Wave A1: observability snapshot JSON via to_json (links aura-reflect).
 add_executable(test_obs_json_to_json_a1 tests/reflect/test_obs_json_to_json_a1.cpp)
@@ -1928,9 +1928,9 @@ add_dependencies(all_test_issue_targets test_rest_param_hygiene_self_evo)
 # DISABLED (pre-existing namespace mismatch: extern decls in aura::compiler::macro_exp,
 # but defs in aura::compiler::macro_expansion via inline namespace ABI tag — needs
 # test source fix or #ifdef AURA_ISSUE_BUNDLE_MEMBER in extern block) for CI green:
-# aura_add_issue_test(test_rest_param_nested_qq_hygiene_2239)
-# aura_issue_test_link_llvm_jit(test_rest_param_nested_qq_hygiene_2239)
-# add_dependencies(all_test_issue_targets test_rest_param_nested_qq_hygiene_2239)
+# aura_add_issue_test(test_rest_param_nested_qq_hygiene)
+# aura_issue_test_link_llvm_jit(test_rest_param_nested_qq_hygiene)
+# add_dependencies(all_test_issue_targets test_rest_param_nested_qq_hygiene)
 
 # Issue #2019: MacroIntroduced restamp after expand → FlatAST.
 aura_add_issue_test(test_macro_restamp_after_flat)
@@ -2244,13 +2244,13 @@ add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_st
 
 # Issue #2109: instruction-level impact + partial re-emit.
 # DISABLED (runtime crash/missing features) for CI green:
-# aura_add_issue_test(test_instruction_level_impact_partial_2109)
-# aura_issue_test_link_llvm_jit(test_instruction_level_impact_partial_2109)
-# add_dependencies(all_test_issue_targets test_instruction_level_impact_partial_2109)
+# aura_add_issue_test(test_instruction_level_impact_partial)
+# aura_issue_test_link_llvm_jit(test_instruction_level_impact_partial)
+# add_dependencies(all_test_issue_targets test_instruction_level_impact_partial)
 
 # Issue #2110: hybrid string dep_graph_ ↔ NodeId DepGraph cascade.
 # DISABLED (runtime crash/missing features) for CI green:
-# aura_add_issue_test(test_dep_graph_hybrid_cascade_2110)
+# aura_add_issue_test(test_dep_graph_hybrid_cascade)
 
 
 
@@ -2301,11 +2301,11 @@ add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_st
 
 # Issue #2223: ADT match exhaustiveness in TypedMutationAudit (adt_ok).
 # DISABLED (runtime crash/hang) for CI green:
-# aura_add_issue_test(test_adt_exhaustiveness_audit_2223)
+# aura_add_issue_test(test_adt_exhaustiveness_audit)
 
-# aura_issue_test_link_llvm_jit(test_adt_exhaustiveness_audit_2223)
+# aura_issue_test_link_llvm_jit(test_adt_exhaustiveness_audit)
 
-# add_dependencies(all_test_issue_targets test_adt_exhaustiveness_audit_2223)
+# add_dependencies(all_test_issue_targets test_adt_exhaustiveness_audit)
 
 
 
@@ -2323,8 +2323,8 @@ add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_st
 
 
 # DISABLED (runtime crash/missing features) for CI green:
-# aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
-# add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade_2110)
+# aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade)
+# add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade)
 
 
 
@@ -2332,20 +2332,20 @@ add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_st
 
 # Issue #2115: unify is_at_safe_mutation_boundary with depth-safe steal API.
 # DISABLED (runtime crash/hang) for CI green:
-# aura_add_issue_test(test_depth_safe_mutation_boundary_steal_2115)
+# aura_add_issue_test(test_depth_safe_mutation_boundary_steal)
 
-# aura_issue_test_link_llvm_jit(test_depth_safe_mutation_boundary_steal_2115)
+# aura_issue_test_link_llvm_jit(test_depth_safe_mutation_boundary_steal)
 
-# add_dependencies(all_test_issue_targets test_depth_safe_mutation_boundary_steal_2115)
+# add_dependencies(all_test_issue_targets test_depth_safe_mutation_boundary_steal)
 
 
 # Issue #2184: MutationSafetySnapshot for steal decisions.
 # DISABLED (runtime crash/hang) for CI green:
-# aura_add_issue_test(test_mutation_safety_snapshot_steal_2184)
+# aura_add_issue_test(test_mutation_safety_snapshot_steal)
 
-# aura_issue_test_link_llvm_jit(test_mutation_safety_snapshot_steal_2184)
+# aura_issue_test_link_llvm_jit(test_mutation_safety_snapshot_steal)
 
-# add_dependencies(all_test_issue_targets test_mutation_safety_snapshot_steal_2184)
+# add_dependencies(all_test_issue_targets test_mutation_safety_snapshot_steal)
 
 # Issue #2346: resume MutationSafetySnapshot hard-invariant (fail-closed canary).
 
@@ -2396,11 +2396,11 @@ add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_st
 
 # Issue #2119: MutationBoundary yield hold + steal starvation metrics + adaptive.
 # DISABLED (runtime crash/hang) for CI green:
-# aura_add_issue_test(test_boundary_yield_steal_metrics_2119)
+# aura_add_issue_test(test_boundary_yield_steal_metrics)
 
-# aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics_2119)
+# aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics)
 
-# add_dependencies(all_test_issue_targets test_boundary_yield_steal_metrics_2119)
+# add_dependencies(all_test_issue_targets test_boundary_yield_steal_metrics)
 
 
 
@@ -2442,38 +2442,38 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # Members live in multi-TU thematic batches (tests/HOMES.md). Standalone
 # binaries removed; these comments preserve coverage contract needles
 # (aura_add_issue_test / link_light|llvm_jit / all_test_issue_targets).
-# folded: aura_add_issue_test(test_adaptive_cascade_depth_partial_thr_2209)
-# folded: aura_issue_test_link_light(test_adaptive_cascade_depth_partial_thr_2209)
-# folded: aura_issue_test_link_llvm_jit(test_adaptive_cascade_depth_partial_thr_2209)
-# folded: all_test_issue_targets test_adaptive_cascade_depth_partial_thr_2209
-# folded: aura_add_issue_test(test_adaptive_partial_relower_threshold_2112)
-# folded: aura_issue_test_link_light(test_adaptive_partial_relower_threshold_2112)
-# folded: aura_issue_test_link_llvm_jit(test_adaptive_partial_relower_threshold_2112)
-# folded: all_test_issue_targets test_adaptive_partial_relower_threshold_2112
-# folded: aura_add_issue_test(test_adaptive_reverify_limit_2146)
-# folded: aura_issue_test_link_light(test_adaptive_reverify_limit_2146)
-# folded: aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit_2146)
-# folded: all_test_issue_targets test_adaptive_reverify_limit_2146
+# folded: aura_add_issue_test(test_adaptive_cascade_depth_partial_thr)
+# folded: aura_issue_test_link_light(test_adaptive_cascade_depth_partial_thr)
+# folded: aura_issue_test_link_llvm_jit(test_adaptive_cascade_depth_partial_thr)
+# folded: all_test_issue_targets test_adaptive_cascade_depth_partial_thr
+# folded: aura_add_issue_test(test_adaptive_partial_relower_threshold)
+# folded: aura_issue_test_link_light(test_adaptive_partial_relower_threshold)
+# folded: aura_issue_test_link_llvm_jit(test_adaptive_partial_relower_threshold)
+# folded: all_test_issue_targets test_adaptive_partial_relower_threshold
+# folded: aura_add_issue_test(test_adaptive_reverify_limit)
+# folded: aura_issue_test_link_light(test_adaptive_reverify_limit)
+# folded: aura_issue_test_link_llvm_jit(test_adaptive_reverify_limit)
+# folded: all_test_issue_targets test_adaptive_reverify_limit
 # folded: aura_add_issue_test(test_add_node_builder_contract)
 # folded: aura_issue_test_link_light(test_add_node_builder_contract)
 # folded: aura_issue_test_link_llvm_jit(test_add_node_builder_contract)
 # folded: all_test_issue_targets test_add_node_builder_contract
-# folded: aura_add_issue_test(test_adt_exhaustiveness_audit_2223)
-# folded: aura_issue_test_link_light(test_adt_exhaustiveness_audit_2223)
-# folded: aura_issue_test_link_llvm_jit(test_adt_exhaustiveness_audit_2223)
-# folded: all_test_issue_targets test_adt_exhaustiveness_audit_2223
-# folded: aura_add_issue_test(test_adt_hard_gate_exhaustiveness_2264)
-# folded: aura_issue_test_link_light(test_adt_hard_gate_exhaustiveness_2264)
-# folded: aura_issue_test_link_llvm_jit(test_adt_hard_gate_exhaustiveness_2264)
-# folded: all_test_issue_targets test_adt_hard_gate_exhaustiveness_2264
-# folded: aura_add_issue_test(test_adt_match_goal_table_2564)
-# folded: aura_issue_test_link_light(test_adt_match_goal_table_2564)
-# folded: aura_issue_test_link_llvm_jit(test_adt_match_goal_table_2564)
-# folded: all_test_issue_targets test_adt_match_goal_table_2564
-# folded: aura_add_issue_test(test_aether_denseness_residual_2578)
-# folded: aura_issue_test_link_light(test_aether_denseness_residual_2578)
-# folded: aura_issue_test_link_llvm_jit(test_aether_denseness_residual_2578)
-# folded: all_test_issue_targets test_aether_denseness_residual_2578
+# folded: aura_add_issue_test(test_adt_exhaustiveness_audit)
+# folded: aura_issue_test_link_light(test_adt_exhaustiveness_audit)
+# folded: aura_issue_test_link_llvm_jit(test_adt_exhaustiveness_audit)
+# folded: all_test_issue_targets test_adt_exhaustiveness_audit
+# folded: aura_add_issue_test(test_adt_hard_gate_exhaustiveness)
+# folded: aura_issue_test_link_light(test_adt_hard_gate_exhaustiveness)
+# folded: aura_issue_test_link_llvm_jit(test_adt_hard_gate_exhaustiveness)
+# folded: all_test_issue_targets test_adt_hard_gate_exhaustiveness
+# folded: aura_add_issue_test(test_adt_match_goal_table)
+# folded: aura_issue_test_link_light(test_adt_match_goal_table)
+# folded: aura_issue_test_link_llvm_jit(test_adt_match_goal_table)
+# folded: all_test_issue_targets test_adt_match_goal_table
+# folded: aura_add_issue_test(test_aether_denseness_residual)
+# folded: aura_issue_test_link_light(test_aether_denseness_residual)
+# folded: aura_issue_test_link_llvm_jit(test_aether_denseness_residual)
+# folded: all_test_issue_targets test_aether_denseness_residual
 # folded: aura_add_issue_test(test_agent_apply_mutex)
 # folded: aura_issue_test_link_light(test_agent_apply_mutex)
 # folded: aura_issue_test_link_llvm_jit(test_agent_apply_mutex)
@@ -2506,50 +2506,50 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_agent_scope_hierarchy)
 # folded: aura_issue_test_link_llvm_jit(test_agent_scope_hierarchy)
 # folded: all_test_issue_targets test_agent_scope_hierarchy
-# folded: aura_add_issue_test(test_anonymous_residual_stable_id_policy_2605)
-# folded: aura_issue_test_link_light(test_anonymous_residual_stable_id_policy_2605)
-# folded: aura_issue_test_link_llvm_jit(test_anonymous_residual_stable_id_policy_2605)
-# folded: all_test_issue_targets test_anonymous_residual_stable_id_policy_2605
-# folded: aura_add_issue_test(test_aot_anonymous_closure_policy_2238)
-# folded: aura_issue_test_link_light(test_aot_anonymous_closure_policy_2238)
-# folded: aura_issue_test_link_llvm_jit(test_aot_anonymous_closure_policy_2238)
-# folded: all_test_issue_targets test_aot_anonymous_closure_policy_2238
-# folded: aura_add_issue_test(test_aot_hot_update_health_2506)
-# folded: aura_issue_test_link_light(test_aot_hot_update_health_2506)
-# folded: aura_issue_test_link_llvm_jit(test_aot_hot_update_health_2506)
-# folded: all_test_issue_targets test_aot_hot_update_health_2506
-# folded: aura_add_issue_test(test_aot_jit_joint_versioning_2046)
-# folded: aura_issue_test_link_light(test_aot_jit_joint_versioning_2046)
-# folded: aura_issue_test_link_llvm_jit(test_aot_jit_joint_versioning_2046)
-# folded: all_test_issue_targets test_aot_jit_joint_versioning_2046
-# folded: aura_add_issue_test(test_aot_version_triple_2306)
-# folded: aura_issue_test_link_light(test_aot_version_triple_2306)
-# folded: aura_issue_test_link_llvm_jit(test_aot_version_triple_2306)
-# folded: all_test_issue_targets test_aot_version_triple_2306
-# folded: aura_add_issue_test(test_arena_adaptive_compact_2059)
-# folded: aura_issue_test_link_light(test_arena_adaptive_compact_2059)
-# folded: aura_issue_test_link_llvm_jit(test_arena_adaptive_compact_2059)
-# folded: all_test_issue_targets test_arena_adaptive_compact_2059
-# folded: aura_add_issue_test(test_arena_compact_hook_stats_2381)
-# folded: aura_issue_test_link_light(test_arena_compact_hook_stats_2381)
-# folded: aura_issue_test_link_llvm_jit(test_arena_compact_hook_stats_2381)
-# folded: all_test_issue_targets test_arena_compact_hook_stats_2381
-# folded: aura_add_issue_test(test_arena_compact_notify_lifecycle_2438)
-# folded: aura_issue_test_link_light(test_arena_compact_notify_lifecycle_2438)
-# folded: aura_issue_test_link_llvm_jit(test_arena_compact_notify_lifecycle_2438)
-# folded: all_test_issue_targets test_arena_compact_notify_lifecycle_2438
-# folded: aura_add_issue_test(test_arena_dtor_clears_hooks_2382)
-# folded: aura_issue_test_link_light(test_arena_dtor_clears_hooks_2382)
-# folded: aura_issue_test_link_llvm_jit(test_arena_dtor_clears_hooks_2382)
-# folded: all_test_issue_targets test_arena_dtor_clears_hooks_2382
+# folded: aura_add_issue_test(test_anonymous_residual_stable_id_policy)
+# folded: aura_issue_test_link_light(test_anonymous_residual_stable_id_policy)
+# folded: aura_issue_test_link_llvm_jit(test_anonymous_residual_stable_id_policy)
+# folded: all_test_issue_targets test_anonymous_residual_stable_id_policy
+# folded: aura_add_issue_test(test_aot_anonymous_closure_policy)
+# folded: aura_issue_test_link_light(test_aot_anonymous_closure_policy)
+# folded: aura_issue_test_link_llvm_jit(test_aot_anonymous_closure_policy)
+# folded: all_test_issue_targets test_aot_anonymous_closure_policy
+# folded: aura_add_issue_test(test_aot_hot_update_health)
+# folded: aura_issue_test_link_light(test_aot_hot_update_health)
+# folded: aura_issue_test_link_llvm_jit(test_aot_hot_update_health)
+# folded: all_test_issue_targets test_aot_hot_update_health
+# folded: aura_add_issue_test(test_aot_jit_joint_versioning)
+# folded: aura_issue_test_link_light(test_aot_jit_joint_versioning)
+# folded: aura_issue_test_link_llvm_jit(test_aot_jit_joint_versioning)
+# folded: all_test_issue_targets test_aot_jit_joint_versioning
+# folded: aura_add_issue_test(test_aot_version_triple)
+# folded: aura_issue_test_link_light(test_aot_version_triple)
+# folded: aura_issue_test_link_llvm_jit(test_aot_version_triple)
+# folded: all_test_issue_targets test_aot_version_triple
+# folded: aura_add_issue_test(test_arena_adaptive_compact)
+# folded: aura_issue_test_link_light(test_arena_adaptive_compact)
+# folded: aura_issue_test_link_llvm_jit(test_arena_adaptive_compact)
+# folded: all_test_issue_targets test_arena_adaptive_compact
+# folded: aura_add_issue_test(test_arena_compact_hook_stats)
+# folded: aura_issue_test_link_light(test_arena_compact_hook_stats)
+# folded: aura_issue_test_link_llvm_jit(test_arena_compact_hook_stats)
+# folded: all_test_issue_targets test_arena_compact_hook_stats
+# folded: aura_add_issue_test(test_arena_compact_notify_lifecycle)
+# folded: aura_issue_test_link_light(test_arena_compact_notify_lifecycle)
+# folded: aura_issue_test_link_llvm_jit(test_arena_compact_notify_lifecycle)
+# folded: all_test_issue_targets test_arena_compact_notify_lifecycle
+# folded: aura_add_issue_test(test_arena_dtor_clears_hooks)
+# folded: aura_issue_test_link_light(test_arena_dtor_clears_hooks)
+# folded: aura_issue_test_link_llvm_jit(test_arena_dtor_clears_hooks)
+# folded: all_test_issue_targets test_arena_dtor_clears_hooks
 # folded: aura_add_issue_test(test_arena_moving_densify_health)
 # folded: aura_issue_test_link_light(test_arena_moving_densify_health)
 # folded: aura_issue_test_link_llvm_jit(test_arena_moving_densify_health)
 # folded: all_test_issue_targets test_arena_moving_densify_health
-# folded: aura_add_issue_test(test_atomic_mark_bitvector_2117)
-# folded: aura_issue_test_link_light(test_atomic_mark_bitvector_2117)
-# folded: aura_issue_test_link_llvm_jit(test_atomic_mark_bitvector_2117)
-# folded: all_test_issue_targets test_atomic_mark_bitvector_2117
+# folded: aura_add_issue_test(test_atomic_mark_bitvector)
+# folded: aura_issue_test_link_light(test_atomic_mark_bitvector)
+# folded: aura_issue_test_link_llvm_jit(test_atomic_mark_bitvector)
+# folded: all_test_issue_targets test_atomic_mark_bitvector
 # folded: aura_add_issue_test(test_audit_mid_fallback_slo)
 # folded: aura_issue_test_link_light(test_audit_mid_fallback_slo)
 # folded: aura_issue_test_link_llvm_jit(test_audit_mid_fallback_slo)
@@ -2562,58 +2562,58 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_audit_ring_publish)
 # folded: aura_issue_test_link_llvm_jit(test_audit_ring_publish)
 # folded: all_test_issue_targets test_audit_ring_publish
-# folded: aura_add_issue_test(test_audit_wal_force_multi_tenant_2150)
-# folded: aura_issue_test_link_light(test_audit_wal_force_multi_tenant_2150)
-# folded: aura_issue_test_link_llvm_jit(test_audit_wal_force_multi_tenant_2150)
-# folded: all_test_issue_targets test_audit_wal_force_multi_tenant_2150
-# folded: aura_add_issue_test(test_aura_jit_unused_fn_lock_2475)
-# folded: aura_issue_test_link_light(test_aura_jit_unused_fn_lock_2475)
-# folded: aura_issue_test_link_llvm_jit(test_aura_jit_unused_fn_lock_2475)
-# folded: all_test_issue_targets test_aura_jit_unused_fn_lock_2475
-# folded: aura_add_issue_test(test_aura_sandbox_env_2076)
-# folded: aura_issue_test_link_light(test_aura_sandbox_env_2076)
-# folded: aura_issue_test_link_llvm_jit(test_aura_sandbox_env_2076)
-# folded: all_test_issue_targets test_aura_sandbox_env_2076
-# folded: aura_add_issue_test(test_batch_dirty_cascade_2522)
-# folded: aura_issue_test_link_light(test_batch_dirty_cascade_2522)
-# folded: aura_issue_test_link_llvm_jit(test_batch_dirty_cascade_2522)
-# folded: all_test_issue_targets test_batch_dirty_cascade_2522
-# folded: aura_add_issue_test(test_batch_dirty_discipline_2615)
-# folded: aura_issue_test_link_light(test_batch_dirty_discipline_2615)
-# folded: aura_issue_test_link_llvm_jit(test_batch_dirty_discipline_2615)
-# folded: all_test_issue_targets test_batch_dirty_discipline_2615
-# folded: aura_add_issue_test(test_bidirectional_match_check_2348)
-# folded: aura_issue_test_link_light(test_bidirectional_match_check_2348)
-# folded: aura_issue_test_link_llvm_jit(test_bidirectional_match_check_2348)
-# folded: all_test_issue_targets test_bidirectional_match_check_2348
+# folded: aura_add_issue_test(test_audit_wal_force_multi_tenant)
+# folded: aura_issue_test_link_light(test_audit_wal_force_multi_tenant)
+# folded: aura_issue_test_link_llvm_jit(test_audit_wal_force_multi_tenant)
+# folded: all_test_issue_targets test_audit_wal_force_multi_tenant
+# folded: aura_add_issue_test(test_aura_jit_unused_fn_lock)
+# folded: aura_issue_test_link_light(test_aura_jit_unused_fn_lock)
+# folded: aura_issue_test_link_llvm_jit(test_aura_jit_unused_fn_lock)
+# folded: all_test_issue_targets test_aura_jit_unused_fn_lock
+# folded: aura_add_issue_test(test_aura_sandbox_env)
+# folded: aura_issue_test_link_light(test_aura_sandbox_env)
+# folded: aura_issue_test_link_llvm_jit(test_aura_sandbox_env)
+# folded: all_test_issue_targets test_aura_sandbox_env
+# folded: aura_add_issue_test(test_batch_dirty_cascade)
+# folded: aura_issue_test_link_light(test_batch_dirty_cascade)
+# folded: aura_issue_test_link_llvm_jit(test_batch_dirty_cascade)
+# folded: all_test_issue_targets test_batch_dirty_cascade
+# folded: aura_add_issue_test(test_batch_dirty_discipline)
+# folded: aura_issue_test_link_light(test_batch_dirty_discipline)
+# folded: aura_issue_test_link_llvm_jit(test_batch_dirty_discipline)
+# folded: all_test_issue_targets test_batch_dirty_discipline
+# folded: aura_add_issue_test(test_bidirectional_match_check)
+# folded: aura_issue_test_link_light(test_bidirectional_match_check)
+# folded: aura_issue_test_link_llvm_jit(test_bidirectional_match_check)
+# folded: all_test_issue_targets test_bidirectional_match_check
 # folded: aura_add_issue_test(test_binding_gens_atomic)
 # folded: aura_issue_test_link_light(test_binding_gens_atomic)
 # folded: aura_issue_test_link_llvm_jit(test_binding_gens_atomic)
 # folded: all_test_issue_targets test_binding_gens_atomic
-# folded: aura_add_issue_test(test_blame_complete_commit_gate_2221)
-# folded: aura_issue_test_link_light(test_blame_complete_commit_gate_2221)
-# folded: aura_issue_test_link_llvm_jit(test_blame_complete_commit_gate_2221)
-# folded: all_test_issue_targets test_blame_complete_commit_gate_2221
-# folded: aura_add_issue_test(test_blame_soft_recover_2561)
-# folded: aura_issue_test_link_light(test_blame_soft_recover_2561)
-# folded: aura_issue_test_link_llvm_jit(test_blame_soft_recover_2561)
-# folded: all_test_issue_targets test_blame_soft_recover_2561
-# folded: aura_add_issue_test(test_boundary_solve_hard_gate_2260)
-# folded: aura_issue_test_link_light(test_boundary_solve_hard_gate_2260)
-# folded: aura_issue_test_link_llvm_jit(test_boundary_solve_hard_gate_2260)
-# folded: all_test_issue_targets test_boundary_solve_hard_gate_2260
-# folded: aura_add_issue_test(test_boundary_yield_steal_metrics_2119)
-# folded: aura_issue_test_link_light(test_boundary_yield_steal_metrics_2119)
-# folded: aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics_2119)
-# folded: all_test_issue_targets test_boundary_yield_steal_metrics_2119
-# folded: aura_add_issue_test(test_bugfix_968)
-# folded: aura_issue_test_link_light(test_bugfix_968)
-# folded: aura_issue_test_link_llvm_jit(test_bugfix_968)
-# folded: all_test_issue_targets test_bugfix_968
-# folded: aura_add_issue_test(test_cache_stamp_restamp_contract_2183)
-# folded: aura_issue_test_link_light(test_cache_stamp_restamp_contract_2183)
-# folded: aura_issue_test_link_llvm_jit(test_cache_stamp_restamp_contract_2183)
-# folded: all_test_issue_targets test_cache_stamp_restamp_contract_2183
+# folded: aura_add_issue_test(test_blame_complete_commit_gate)
+# folded: aura_issue_test_link_light(test_blame_complete_commit_gate)
+# folded: aura_issue_test_link_llvm_jit(test_blame_complete_commit_gate)
+# folded: all_test_issue_targets test_blame_complete_commit_gate
+# folded: aura_add_issue_test(test_blame_soft_recover)
+# folded: aura_issue_test_link_light(test_blame_soft_recover)
+# folded: aura_issue_test_link_llvm_jit(test_blame_soft_recover)
+# folded: all_test_issue_targets test_blame_soft_recover
+# folded: aura_add_issue_test(test_boundary_solve_hard_gate)
+# folded: aura_issue_test_link_light(test_boundary_solve_hard_gate)
+# folded: aura_issue_test_link_llvm_jit(test_boundary_solve_hard_gate)
+# folded: all_test_issue_targets test_boundary_solve_hard_gate
+# folded: aura_add_issue_test(test_boundary_yield_steal_metrics)
+# folded: aura_issue_test_link_light(test_boundary_yield_steal_metrics)
+# folded: aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics)
+# folded: all_test_issue_targets test_boundary_yield_steal_metrics
+# folded: aura_add_issue_test(test_bugfix)
+# folded: aura_issue_test_link_light(test_bugfix)
+# folded: aura_issue_test_link_llvm_jit(test_bugfix)
+# folded: all_test_issue_targets test_bugfix
+# folded: aura_add_issue_test(test_cache_stamp_restamp_contract)
+# folded: aura_issue_test_link_light(test_cache_stamp_restamp_contract)
+# folded: aura_issue_test_link_llvm_jit(test_cache_stamp_restamp_contract)
+# folded: all_test_issue_targets test_cache_stamp_restamp_contract
 # folded: aura_add_issue_test(test_cap_write_effect_matrix)
 # folded: aura_issue_test_link_light(test_cap_write_effect_matrix)
 # folded: aura_issue_test_link_llvm_jit(test_cap_write_effect_matrix)
@@ -2650,146 +2650,146 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_capability_unified)
 # folded: aura_issue_test_link_llvm_jit(test_capability_unified)
 # folded: all_test_issue_targets test_capability_unified
-# folded: aura_add_issue_test(test_cascade_incremental_pass_suite_2044)
-# folded: aura_issue_test_link_light(test_cascade_incremental_pass_suite_2044)
-# folded: aura_issue_test_link_llvm_jit(test_cascade_incremental_pass_suite_2044)
-# folded: all_test_issue_targets test_cascade_incremental_pass_suite_2044
-# folded: aura_add_issue_test(test_cascade_skip_metrics_2106)
-# folded: aura_issue_test_link_light(test_cascade_skip_metrics_2106)
-# folded: aura_issue_test_link_llvm_jit(test_cascade_skip_metrics_2106)
-# folded: all_test_issue_targets test_cascade_skip_metrics_2106
-# folded: aura_add_issue_test(test_castop_density_closed_loop_2459)
-# folded: aura_issue_test_link_light(test_castop_density_closed_loop_2459)
-# folded: aura_issue_test_link_llvm_jit(test_castop_density_closed_loop_2459)
-# folded: all_test_issue_targets test_castop_density_closed_loop_2459
-# folded: aura_add_issue_test(test_castop_density_hard_2358)
-# folded: aura_issue_test_link_light(test_castop_density_hard_2358)
-# folded: aura_issue_test_link_llvm_jit(test_castop_density_hard_2358)
-# folded: all_test_issue_targets test_castop_density_hard_2358
-# folded: aura_add_issue_test(test_castop_typed_meta_2624)
-# folded: aura_issue_test_link_light(test_castop_typed_meta_2624)
-# folded: aura_issue_test_link_llvm_jit(test_castop_typed_meta_2624)
-# folded: all_test_issue_targets test_castop_typed_meta_2624
-# folded: aura_add_issue_test(test_channel_rendezvous_2483)
-# folded: aura_issue_test_link_light(test_channel_rendezvous_2483)
-# folded: aura_issue_test_link_llvm_jit(test_channel_rendezvous_2483)
-# folded: all_test_issue_targets test_channel_rendezvous_2483
-# folded: aura_add_issue_test(test_chaos_mutate_steal_gc_mailbox_2352)
-# folded: aura_issue_test_link_light(test_chaos_mutate_steal_gc_mailbox_2352)
-# folded: aura_issue_test_link_llvm_jit(test_chaos_mutate_steal_gc_mailbox_2352)
-# folded: all_test_issue_targets test_chaos_mutate_steal_gc_mailbox_2352
+# folded: aura_add_issue_test(test_cascade_incremental_pass_suite)
+# folded: aura_issue_test_link_light(test_cascade_incremental_pass_suite)
+# folded: aura_issue_test_link_llvm_jit(test_cascade_incremental_pass_suite)
+# folded: all_test_issue_targets test_cascade_incremental_pass_suite
+# folded: aura_add_issue_test(test_cascade_skip_metrics)
+# folded: aura_issue_test_link_light(test_cascade_skip_metrics)
+# folded: aura_issue_test_link_llvm_jit(test_cascade_skip_metrics)
+# folded: all_test_issue_targets test_cascade_skip_metrics
+# folded: aura_add_issue_test(test_castop_density_closed_loop)
+# folded: aura_issue_test_link_light(test_castop_density_closed_loop)
+# folded: aura_issue_test_link_llvm_jit(test_castop_density_closed_loop)
+# folded: all_test_issue_targets test_castop_density_closed_loop
+# folded: aura_add_issue_test(test_castop_density_hard)
+# folded: aura_issue_test_link_light(test_castop_density_hard)
+# folded: aura_issue_test_link_llvm_jit(test_castop_density_hard)
+# folded: all_test_issue_targets test_castop_density_hard
+# folded: aura_add_issue_test(test_castop_typed_meta)
+# folded: aura_issue_test_link_light(test_castop_typed_meta)
+# folded: aura_issue_test_link_llvm_jit(test_castop_typed_meta)
+# folded: all_test_issue_targets test_castop_typed_meta
+# folded: aura_add_issue_test(test_channel_rendezvous)
+# folded: aura_issue_test_link_light(test_channel_rendezvous)
+# folded: aura_issue_test_link_llvm_jit(test_channel_rendezvous)
+# folded: all_test_issue_targets test_channel_rendezvous
+# folded: aura_add_issue_test(test_chaos_mutate_steal_gc_mailbox)
+# folded: aura_issue_test_link_light(test_chaos_mutate_steal_gc_mailbox)
+# folded: aura_issue_test_link_llvm_jit(test_chaos_mutate_steal_gc_mailbox)
+# folded: all_test_issue_targets test_chaos_mutate_steal_gc_mailbox
 # folded: aura_add_issue_test(test_clear_macro_dirty_concurrent)
 # folded: aura_issue_test_link_light(test_clear_macro_dirty_concurrent)
 # folded: aura_issue_test_link_llvm_jit(test_clear_macro_dirty_concurrent)
 # folded: all_test_issue_targets test_clear_macro_dirty_concurrent
-# folded: aura_add_issue_test(test_closure_call_must_deopt_toctou_2472)
-# folded: aura_issue_test_link_light(test_closure_call_must_deopt_toctou_2472)
-# folded: aura_issue_test_link_llvm_jit(test_closure_call_must_deopt_toctou_2472)
-# folded: all_test_issue_targets test_closure_call_must_deopt_toctou_2472
-# folded: aura_add_issue_test(test_closure_cow_gen_stamp_2547)
-# folded: aura_issue_test_link_light(test_closure_cow_gen_stamp_2547)
-# folded: aura_issue_test_link_llvm_jit(test_closure_cow_gen_stamp_2547)
-# folded: all_test_issue_targets test_closure_cow_gen_stamp_2547
-# folded: aura_add_issue_test(test_coercion_ban_weak_ir_2261)
-# folded: aura_issue_test_link_light(test_coercion_ban_weak_ir_2261)
-# folded: aura_issue_test_link_llvm_jit(test_coercion_ban_weak_ir_2261)
-# folded: all_test_issue_targets test_coercion_ban_weak_ir_2261
-# folded: aura_add_issue_test(test_coercion_dual_require_2562)
-# folded: aura_issue_test_link_light(test_coercion_dual_require_2562)
-# folded: aura_issue_test_link_llvm_jit(test_coercion_dual_require_2562)
-# folded: all_test_issue_targets test_coercion_dual_require_2562
-# folded: aura_add_issue_test(test_coercion_prov_slo_2558)
-# folded: aura_issue_test_link_light(test_coercion_prov_slo_2558)
-# folded: aura_issue_test_link_llvm_jit(test_coercion_prov_slo_2558)
-# folded: all_test_issue_targets test_coercion_prov_slo_2558
-# folded: aura_add_issue_test(test_coercion_provenance_fast_strict_2147)
-# folded: aura_issue_test_link_light(test_coercion_provenance_fast_strict_2147)
-# folded: aura_issue_test_link_llvm_jit(test_coercion_provenance_fast_strict_2147)
-# folded: all_test_issue_targets test_coercion_provenance_fast_strict_2147
-# folded: aura_add_issue_test(test_coercion_provenance_miss_force_audit_2102)
-# folded: aura_issue_test_link_light(test_coercion_provenance_miss_force_audit_2102)
-# folded: aura_issue_test_link_llvm_jit(test_coercion_provenance_miss_force_audit_2102)
-# folded: all_test_issue_targets test_coercion_provenance_miss_force_audit_2102
-# folded: aura_add_issue_test(test_coercion_reject_production_defaults_2185)
-# folded: aura_issue_test_link_light(test_coercion_reject_production_defaults_2185)
-# folded: aura_issue_test_link_llvm_jit(test_coercion_reject_production_defaults_2185)
-# folded: all_test_issue_targets test_coercion_reject_production_defaults_2185
-# folded: aura_add_issue_test(test_coercion_stamp_at_add_2512)
-# folded: aura_issue_test_link_light(test_coercion_stamp_at_add_2512)
-# folded: aura_issue_test_link_llvm_jit(test_coercion_stamp_at_add_2512)
-# folded: all_test_issue_targets test_coercion_stamp_at_add_2512
-# folded: aura_add_issue_test(test_coercion_unify_incomplete_skip_2620)
-# folded: aura_issue_test_link_light(test_coercion_unify_incomplete_skip_2620)
-# folded: aura_issue_test_link_llvm_jit(test_coercion_unify_incomplete_skip_2620)
-# folded: all_test_issue_targets test_coercion_unify_incomplete_skip_2620
-# folded: aura_add_issue_test(test_command_line_cap_io_read_2478)
-# folded: aura_issue_test_link_light(test_command_line_cap_io_read_2478)
-# folded: aura_issue_test_link_llvm_jit(test_command_line_cap_io_read_2478)
-# folded: all_test_issue_targets test_command_line_cap_io_read_2478
-# folded: aura_add_issue_test(test_commercial_tenant_profile_2584)
-# folded: aura_issue_test_link_light(test_commercial_tenant_profile_2584)
-# folded: aura_issue_test_link_llvm_jit(test_commercial_tenant_profile_2584)
-# folded: all_test_issue_targets test_commercial_tenant_profile_2584
-# folded: aura_add_issue_test(test_commit_readiness_score_2553)
-# folded: aura_issue_test_link_light(test_commit_readiness_score_2553)
-# folded: aura_issue_test_link_llvm_jit(test_commit_readiness_score_2553)
-# folded: all_test_issue_targets test_commit_readiness_score_2553
-# folded: aura_add_issue_test(test_compact_policy_2500)
-# folded: aura_issue_test_link_light(test_compact_policy_2500)
-# folded: aura_issue_test_link_llvm_jit(test_compact_policy_2500)
-# folded: all_test_issue_targets test_compact_policy_2500
-# folded: aura_add_issue_test(test_composite_auto_partial_from_cone_2610)
-# folded: aura_issue_test_link_light(test_composite_auto_partial_from_cone_2610)
-# folded: aura_issue_test_link_llvm_jit(test_composite_auto_partial_from_cone_2610)
-# folded: all_test_issue_targets test_composite_auto_partial_from_cone_2610
-# folded: aura_add_issue_test(test_composite_commit_cs_reuse_2180)
-# folded: aura_issue_test_link_light(test_composite_commit_cs_reuse_2180)
-# folded: aura_issue_test_link_llvm_jit(test_composite_commit_cs_reuse_2180)
-# folded: all_test_issue_targets test_composite_commit_cs_reuse_2180
-# folded: aura_add_issue_test(test_composite_cs_signature_matrix_2509)
-# folded: aura_issue_test_link_light(test_composite_cs_signature_matrix_2509)
-# folded: aura_issue_test_link_llvm_jit(test_composite_cs_signature_matrix_2509)
-# folded: all_test_issue_targets test_composite_cs_signature_matrix_2509
-# folded: aura_add_issue_test(test_composite_txn_commit_2105)
-# folded: aura_issue_test_link_light(test_composite_txn_commit_2105)
-# folded: aura_issue_test_link_llvm_jit(test_composite_txn_commit_2105)
-# folded: all_test_issue_targets test_composite_txn_commit_2105
-# folded: aura_add_issue_test(test_comprehensive_live_closure_expire_2042)
-# folded: aura_issue_test_link_light(test_comprehensive_live_closure_expire_2042)
-# folded: aura_issue_test_link_llvm_jit(test_comprehensive_live_closure_expire_2042)
-# folded: all_test_issue_targets test_comprehensive_live_closure_expire_2042
-# folded: aura_add_issue_test(test_cross_cow_drift_contract_2505)
-# folded: aura_issue_test_link_light(test_cross_cow_drift_contract_2505)
-# folded: aura_issue_test_link_llvm_jit(test_cross_cow_drift_contract_2505)
-# folded: all_test_issue_targets test_cross_cow_drift_contract_2505
-# folded: aura_add_issue_test(test_cross_cow_soft_migrate_2371)
-# folded: aura_issue_test_link_light(test_cross_cow_soft_migrate_2371)
-# folded: aura_issue_test_link_llvm_jit(test_cross_cow_soft_migrate_2371)
-# folded: all_test_issue_targets test_cross_cow_soft_migrate_2371
-# folded: aura_add_issue_test(test_dce_elided_deopt_meta_2611)
-# folded: aura_issue_test_link_light(test_dce_elided_deopt_meta_2611)
-# folded: aura_issue_test_link_llvm_jit(test_dce_elided_deopt_meta_2611)
-# folded: all_test_issue_targets test_dce_elided_deopt_meta_2611
-# folded: aura_add_issue_test(test_dead_coercion_columnar_2431)
-# folded: aura_issue_test_link_light(test_dead_coercion_columnar_2431)
-# folded: aura_issue_test_link_llvm_jit(test_dead_coercion_columnar_2431)
-# folded: all_test_issue_targets test_dead_coercion_columnar_2431
-# folded: aura_add_issue_test(test_dead_coercion_dirty_cone_2556)
-# folded: aura_issue_test_link_light(test_dead_coercion_dirty_cone_2556)
-# folded: aura_issue_test_link_llvm_jit(test_dead_coercion_dirty_cone_2556)
-# folded: all_test_issue_targets test_dead_coercion_dirty_cone_2556
-# folded: aura_add_issue_test(test_dead_coercion_layered_2282)
-# folded: aura_issue_test_link_light(test_dead_coercion_layered_2282)
-# folded: aura_issue_test_link_llvm_jit(test_dead_coercion_layered_2282)
-# folded: all_test_issue_targets test_dead_coercion_layered_2282
+# folded: aura_add_issue_test(test_closure_call_must_deopt_toctou)
+# folded: aura_issue_test_link_light(test_closure_call_must_deopt_toctou)
+# folded: aura_issue_test_link_llvm_jit(test_closure_call_must_deopt_toctou)
+# folded: all_test_issue_targets test_closure_call_must_deopt_toctou
+# folded: aura_add_issue_test(test_closure_cow_gen_stamp)
+# folded: aura_issue_test_link_light(test_closure_cow_gen_stamp)
+# folded: aura_issue_test_link_llvm_jit(test_closure_cow_gen_stamp)
+# folded: all_test_issue_targets test_closure_cow_gen_stamp
+# folded: aura_add_issue_test(test_coercion_ban_weak_ir)
+# folded: aura_issue_test_link_light(test_coercion_ban_weak_ir)
+# folded: aura_issue_test_link_llvm_jit(test_coercion_ban_weak_ir)
+# folded: all_test_issue_targets test_coercion_ban_weak_ir
+# folded: aura_add_issue_test(test_coercion_dual_require)
+# folded: aura_issue_test_link_light(test_coercion_dual_require)
+# folded: aura_issue_test_link_llvm_jit(test_coercion_dual_require)
+# folded: all_test_issue_targets test_coercion_dual_require
+# folded: aura_add_issue_test(test_coercion_prov_slo)
+# folded: aura_issue_test_link_light(test_coercion_prov_slo)
+# folded: aura_issue_test_link_llvm_jit(test_coercion_prov_slo)
+# folded: all_test_issue_targets test_coercion_prov_slo
+# folded: aura_add_issue_test(test_coercion_provenance_fast_strict)
+# folded: aura_issue_test_link_light(test_coercion_provenance_fast_strict)
+# folded: aura_issue_test_link_llvm_jit(test_coercion_provenance_fast_strict)
+# folded: all_test_issue_targets test_coercion_provenance_fast_strict
+# folded: aura_add_issue_test(test_coercion_provenance_miss_force_audit)
+# folded: aura_issue_test_link_light(test_coercion_provenance_miss_force_audit)
+# folded: aura_issue_test_link_llvm_jit(test_coercion_provenance_miss_force_audit)
+# folded: all_test_issue_targets test_coercion_provenance_miss_force_audit
+# folded: aura_add_issue_test(test_coercion_reject_production_defaults)
+# folded: aura_issue_test_link_light(test_coercion_reject_production_defaults)
+# folded: aura_issue_test_link_llvm_jit(test_coercion_reject_production_defaults)
+# folded: all_test_issue_targets test_coercion_reject_production_defaults
+# folded: aura_add_issue_test(test_coercion_stamp_at_add)
+# folded: aura_issue_test_link_light(test_coercion_stamp_at_add)
+# folded: aura_issue_test_link_llvm_jit(test_coercion_stamp_at_add)
+# folded: all_test_issue_targets test_coercion_stamp_at_add
+# folded: aura_add_issue_test(test_coercion_unify_incomplete_skip)
+# folded: aura_issue_test_link_light(test_coercion_unify_incomplete_skip)
+# folded: aura_issue_test_link_llvm_jit(test_coercion_unify_incomplete_skip)
+# folded: all_test_issue_targets test_coercion_unify_incomplete_skip
+# folded: aura_add_issue_test(test_command_line_cap_io_read)
+# folded: aura_issue_test_link_light(test_command_line_cap_io_read)
+# folded: aura_issue_test_link_llvm_jit(test_command_line_cap_io_read)
+# folded: all_test_issue_targets test_command_line_cap_io_read
+# folded: aura_add_issue_test(test_commercial_tenant_profile)
+# folded: aura_issue_test_link_light(test_commercial_tenant_profile)
+# folded: aura_issue_test_link_llvm_jit(test_commercial_tenant_profile)
+# folded: all_test_issue_targets test_commercial_tenant_profile
+# folded: aura_add_issue_test(test_commit_readiness_score)
+# folded: aura_issue_test_link_light(test_commit_readiness_score)
+# folded: aura_issue_test_link_llvm_jit(test_commit_readiness_score)
+# folded: all_test_issue_targets test_commit_readiness_score
+# folded: aura_add_issue_test(test_compact_policy)
+# folded: aura_issue_test_link_light(test_compact_policy)
+# folded: aura_issue_test_link_llvm_jit(test_compact_policy)
+# folded: all_test_issue_targets test_compact_policy
+# folded: aura_add_issue_test(test_composite_auto_partial_from_cone)
+# folded: aura_issue_test_link_light(test_composite_auto_partial_from_cone)
+# folded: aura_issue_test_link_llvm_jit(test_composite_auto_partial_from_cone)
+# folded: all_test_issue_targets test_composite_auto_partial_from_cone
+# folded: aura_add_issue_test(test_composite_commit_cs_reuse)
+# folded: aura_issue_test_link_light(test_composite_commit_cs_reuse)
+# folded: aura_issue_test_link_llvm_jit(test_composite_commit_cs_reuse)
+# folded: all_test_issue_targets test_composite_commit_cs_reuse
+# folded: aura_add_issue_test(test_composite_cs_signature_matrix)
+# folded: aura_issue_test_link_light(test_composite_cs_signature_matrix)
+# folded: aura_issue_test_link_llvm_jit(test_composite_cs_signature_matrix)
+# folded: all_test_issue_targets test_composite_cs_signature_matrix
+# folded: aura_add_issue_test(test_composite_txn_commit)
+# folded: aura_issue_test_link_light(test_composite_txn_commit)
+# folded: aura_issue_test_link_llvm_jit(test_composite_txn_commit)
+# folded: all_test_issue_targets test_composite_txn_commit
+# folded: aura_add_issue_test(test_comprehensive_live_closure_expire)
+# folded: aura_issue_test_link_light(test_comprehensive_live_closure_expire)
+# folded: aura_issue_test_link_llvm_jit(test_comprehensive_live_closure_expire)
+# folded: all_test_issue_targets test_comprehensive_live_closure_expire
+# folded: aura_add_issue_test(test_cross_cow_drift_contract)
+# folded: aura_issue_test_link_light(test_cross_cow_drift_contract)
+# folded: aura_issue_test_link_llvm_jit(test_cross_cow_drift_contract)
+# folded: all_test_issue_targets test_cross_cow_drift_contract
+# folded: aura_add_issue_test(test_cross_cow_soft_migrate)
+# folded: aura_issue_test_link_light(test_cross_cow_soft_migrate)
+# folded: aura_issue_test_link_llvm_jit(test_cross_cow_soft_migrate)
+# folded: all_test_issue_targets test_cross_cow_soft_migrate
+# folded: aura_add_issue_test(test_dce_elided_deopt_meta)
+# folded: aura_issue_test_link_light(test_dce_elided_deopt_meta)
+# folded: aura_issue_test_link_llvm_jit(test_dce_elided_deopt_meta)
+# folded: all_test_issue_targets test_dce_elided_deopt_meta
+# folded: aura_add_issue_test(test_dead_coercion_columnar)
+# folded: aura_issue_test_link_light(test_dead_coercion_columnar)
+# folded: aura_issue_test_link_llvm_jit(test_dead_coercion_columnar)
+# folded: all_test_issue_targets test_dead_coercion_columnar
+# folded: aura_add_issue_test(test_dead_coercion_dirty_cone)
+# folded: aura_issue_test_link_light(test_dead_coercion_dirty_cone)
+# folded: aura_issue_test_link_llvm_jit(test_dead_coercion_dirty_cone)
+# folded: all_test_issue_targets test_dead_coercion_dirty_cone
+# folded: aura_add_issue_test(test_dead_coercion_layered)
+# folded: aura_issue_test_link_light(test_dead_coercion_layered)
+# folded: aura_issue_test_link_llvm_jit(test_dead_coercion_layered)
+# folded: all_test_issue_targets test_dead_coercion_layered
 # folded: aura_add_issue_test(test_defines_referencing_sym)
 # folded: aura_issue_test_link_light(test_defines_referencing_sym)
 # folded: aura_issue_test_link_llvm_jit(test_defines_referencing_sym)
 # folded: all_test_issue_targets test_defines_referencing_sym
-# folded: aura_add_issue_test(test_delta_truncate_goal_priority_2508)
-# folded: aura_issue_test_link_light(test_delta_truncate_goal_priority_2508)
-# folded: aura_issue_test_link_llvm_jit(test_delta_truncate_goal_priority_2508)
-# folded: all_test_issue_targets test_delta_truncate_goal_priority_2508
+# folded: aura_add_issue_test(test_delta_truncate_goal_priority)
+# folded: aura_issue_test_link_light(test_delta_truncate_goal_priority)
+# folded: aura_issue_test_link_llvm_jit(test_delta_truncate_goal_priority)
+# folded: all_test_issue_targets test_delta_truncate_goal_priority
 # folded: aura_add_issue_test(test_densify_envframe_ok)
 # folded: aura_issue_test_link_light(test_densify_envframe_ok)
 # folded: aura_issue_test_link_llvm_jit(test_densify_envframe_ok)
@@ -2810,98 +2810,98 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_densify_root_closure_closed_loop)
 # folded: aura_issue_test_link_llvm_jit(test_densify_root_closure_closed_loop)
 # folded: all_test_issue_targets test_densify_root_closure_closed_loop
-# folded: aura_add_issue_test(test_dep_graph_hybrid_cascade_2110)
-# folded: aura_issue_test_link_light(test_dep_graph_hybrid_cascade_2110)
-# folded: aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade_2110)
-# folded: all_test_issue_targets test_dep_graph_hybrid_cascade_2110
-# folded: aura_add_issue_test(test_depth_safe_mutation_boundary_steal_2115)
-# folded: aura_issue_test_link_light(test_depth_safe_mutation_boundary_steal_2115)
-# folded: aura_issue_test_link_llvm_jit(test_depth_safe_mutation_boundary_steal_2115)
-# folded: all_test_issue_targets test_depth_safe_mutation_boundary_steal_2115
-# folded: aura_add_issue_test(test_dirty_aware_shape_linear_passes_2130)
-# folded: aura_issue_test_link_light(test_dirty_aware_shape_linear_passes_2130)
-# folded: aura_issue_test_link_llvm_jit(test_dirty_aware_shape_linear_passes_2130)
-# folded: all_test_issue_targets test_dirty_aware_shape_linear_passes_2130
+# folded: aura_add_issue_test(test_dep_graph_hybrid_cascade)
+# folded: aura_issue_test_link_light(test_dep_graph_hybrid_cascade)
+# folded: aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade)
+# folded: all_test_issue_targets test_dep_graph_hybrid_cascade
+# folded: aura_add_issue_test(test_depth_safe_mutation_boundary_steal)
+# folded: aura_issue_test_link_light(test_depth_safe_mutation_boundary_steal)
+# folded: aura_issue_test_link_llvm_jit(test_depth_safe_mutation_boundary_steal)
+# folded: all_test_issue_targets test_depth_safe_mutation_boundary_steal
+# folded: aura_add_issue_test(test_dirty_aware_shape_linear_passes)
+# folded: aura_issue_test_link_light(test_dirty_aware_shape_linear_passes)
+# folded: aura_issue_test_link_llvm_jit(test_dirty_aware_shape_linear_passes)
+# folded: all_test_issue_targets test_dirty_aware_shape_linear_passes
 # folded: aura_add_issue_test(test_dirty_column_lock)
 # folded: aura_issue_test_link_light(test_dirty_column_lock)
 # folded: aura_issue_test_link_llvm_jit(test_dirty_column_lock)
 # folded: all_test_issue_targets test_dirty_column_lock
-# folded: aura_add_issue_test(test_dispatch_required_effects_2152)
-# folded: aura_issue_test_link_light(test_dispatch_required_effects_2152)
-# folded: aura_issue_test_link_llvm_jit(test_dispatch_required_effects_2152)
-# folded: all_test_issue_targets test_dispatch_required_effects_2152
-# folded: aura_add_issue_test(test_dual_path_desync_hard_fail_2116)
-# folded: aura_issue_test_link_light(test_dual_path_desync_hard_fail_2116)
-# folded: aura_issue_test_link_llvm_jit(test_dual_path_desync_hard_fail_2116)
-# folded: all_test_issue_targets test_dual_path_desync_hard_fail_2116
-# folded: aura_add_issue_test(test_edsl_validate_or_refresh_2186)
-# folded: aura_issue_test_link_light(test_edsl_validate_or_refresh_2186)
-# folded: aura_issue_test_link_llvm_jit(test_edsl_validate_or_refresh_2186)
-# folded: all_test_issue_targets test_edsl_validate_or_refresh_2186
-# folded: aura_add_issue_test(test_effect_epoch_mutation_unify_2149)
-# folded: aura_issue_test_link_light(test_effect_epoch_mutation_unify_2149)
-# folded: aura_issue_test_link_llvm_jit(test_effect_epoch_mutation_unify_2149)
-# folded: all_test_issue_targets test_effect_epoch_mutation_unify_2149
-# folded: aura_add_issue_test(test_emit_object_deprecated_2477)
-# folded: aura_issue_test_link_light(test_emit_object_deprecated_2477)
-# folded: aura_issue_test_link_llvm_jit(test_emit_object_deprecated_2477)
-# folded: all_test_issue_targets test_emit_object_deprecated_2477
+# folded: aura_add_issue_test(test_dispatch_required_effects)
+# folded: aura_issue_test_link_light(test_dispatch_required_effects)
+# folded: aura_issue_test_link_llvm_jit(test_dispatch_required_effects)
+# folded: all_test_issue_targets test_dispatch_required_effects
+# folded: aura_add_issue_test(test_dual_path_desync_hard_fail)
+# folded: aura_issue_test_link_light(test_dual_path_desync_hard_fail)
+# folded: aura_issue_test_link_llvm_jit(test_dual_path_desync_hard_fail)
+# folded: all_test_issue_targets test_dual_path_desync_hard_fail
+# folded: aura_add_issue_test(test_edsl_validate_or_refresh)
+# folded: aura_issue_test_link_light(test_edsl_validate_or_refresh)
+# folded: aura_issue_test_link_llvm_jit(test_edsl_validate_or_refresh)
+# folded: all_test_issue_targets test_edsl_validate_or_refresh
+# folded: aura_add_issue_test(test_effect_epoch_mutation_unify)
+# folded: aura_issue_test_link_light(test_effect_epoch_mutation_unify)
+# folded: aura_issue_test_link_llvm_jit(test_effect_epoch_mutation_unify)
+# folded: all_test_issue_targets test_effect_epoch_mutation_unify
+# folded: aura_add_issue_test(test_emit_object_deprecated)
+# folded: aura_issue_test_link_light(test_emit_object_deprecated)
+# folded: aura_issue_test_link_llvm_jit(test_emit_object_deprecated)
+# folded: all_test_issue_targets test_emit_object_deprecated
 # folded: aura_add_issue_test(test_envframe_ownership_steal_densify)
 # folded: aura_issue_test_link_light(test_envframe_ownership_steal_densify)
 # folded: aura_issue_test_link_llvm_jit(test_envframe_ownership_steal_densify)
 # folded: all_test_issue_targets test_envframe_ownership_steal_densify
-# folded: aura_add_issue_test(test_epoch_bump_invariant_2304)
-# folded: aura_issue_test_link_light(test_epoch_bump_invariant_2304)
-# folded: aura_issue_test_link_llvm_jit(test_epoch_bump_invariant_2304)
-# folded: all_test_issue_targets test_epoch_bump_invariant_2304
-# folded: aura_add_issue_test(test_epoch_invariant_complete_2501)
-# folded: aura_issue_test_link_light(test_epoch_invariant_complete_2501)
-# folded: aura_issue_test_link_llvm_jit(test_epoch_invariant_complete_2501)
-# folded: all_test_issue_targets test_epoch_invariant_complete_2501
-# folded: aura_add_issue_test(test_epoch_invariant_soft_prod_2541)
-# folded: aura_issue_test_link_light(test_epoch_invariant_soft_prod_2541)
-# folded: aura_issue_test_link_llvm_jit(test_epoch_invariant_soft_prod_2541)
-# folded: all_test_issue_targets test_epoch_invariant_soft_prod_2541
-# folded: aura_add_issue_test(test_epoch_invariant_walk_2366)
-# folded: aura_issue_test_link_light(test_epoch_invariant_walk_2366)
-# folded: aura_issue_test_link_llvm_jit(test_epoch_invariant_walk_2366)
-# folded: all_test_issue_targets test_epoch_invariant_walk_2366
+# folded: aura_add_issue_test(test_epoch_bump_invariant)
+# folded: aura_issue_test_link_light(test_epoch_bump_invariant)
+# folded: aura_issue_test_link_llvm_jit(test_epoch_bump_invariant)
+# folded: all_test_issue_targets test_epoch_bump_invariant
+# folded: aura_add_issue_test(test_epoch_invariant_complete)
+# folded: aura_issue_test_link_light(test_epoch_invariant_complete)
+# folded: aura_issue_test_link_llvm_jit(test_epoch_invariant_complete)
+# folded: all_test_issue_targets test_epoch_invariant_complete
+# folded: aura_add_issue_test(test_epoch_invariant_soft_prod)
+# folded: aura_issue_test_link_light(test_epoch_invariant_soft_prod)
+# folded: aura_issue_test_link_llvm_jit(test_epoch_invariant_soft_prod)
+# folded: all_test_issue_targets test_epoch_invariant_soft_prod
+# folded: aura_add_issue_test(test_epoch_invariant_walk)
+# folded: aura_issue_test_link_light(test_epoch_invariant_walk)
+# folded: aura_issue_test_link_llvm_jit(test_epoch_invariant_walk)
+# folded: all_test_issue_targets test_epoch_invariant_walk
 # folded: aura_add_issue_test(test_escape_gate_steal_densify_clear)
 # folded: aura_issue_test_link_light(test_escape_gate_steal_densify_clear)
 # folded: aura_issue_test_link_llvm_jit(test_escape_gate_steal_densify_clear)
 # folded: all_test_issue_targets test_escape_gate_steal_densify_clear
-# folded: aura_add_issue_test(test_escape_move_elision_gate_2263)
-# folded: aura_issue_test_link_light(test_escape_move_elision_gate_2263)
-# folded: aura_issue_test_link_llvm_jit(test_escape_move_elision_gate_2263)
-# folded: all_test_issue_targets test_escape_move_elision_gate_2263
-# folded: aura_add_issue_test(test_eval_current_no_auto_fix_2484)
-# folded: aura_issue_test_link_light(test_eval_current_no_auto_fix_2484)
-# folded: aura_issue_test_link_llvm_jit(test_eval_current_no_auto_fix_2484)
-# folded: all_test_issue_targets test_eval_current_no_auto_fix_2484
-# folded: aura_add_issue_test(test_exhausted_min_dirty_reemit_2544)
-# folded: aura_issue_test_link_light(test_exhausted_min_dirty_reemit_2544)
-# folded: aura_issue_test_link_llvm_jit(test_exhausted_min_dirty_reemit_2544)
-# folded: all_test_issue_targets test_exhausted_min_dirty_reemit_2544
+# folded: aura_add_issue_test(test_escape_move_elision_gate)
+# folded: aura_issue_test_link_light(test_escape_move_elision_gate)
+# folded: aura_issue_test_link_llvm_jit(test_escape_move_elision_gate)
+# folded: all_test_issue_targets test_escape_move_elision_gate
+# folded: aura_add_issue_test(test_eval_current_no_auto_fix)
+# folded: aura_issue_test_link_light(test_eval_current_no_auto_fix)
+# folded: aura_issue_test_link_llvm_jit(test_eval_current_no_auto_fix)
+# folded: all_test_issue_targets test_eval_current_no_auto_fix
+# folded: aura_add_issue_test(test_exhausted_min_dirty_reemit)
+# folded: aura_issue_test_link_light(test_exhausted_min_dirty_reemit)
+# folded: aura_issue_test_link_llvm_jit(test_exhausted_min_dirty_reemit)
+# folded: all_test_issue_targets test_exhausted_min_dirty_reemit
 # folded: aura_add_issue_test(test_failure_policy_bridge)
 # folded: aura_issue_test_link_light(test_failure_policy_bridge)
 # folded: aura_issue_test_link_llvm_jit(test_failure_policy_bridge)
 # folded: all_test_issue_targets test_failure_policy_bridge
-# folded: aura_add_issue_test(test_fiber_migration_refresh_2194)
-# folded: aura_issue_test_link_light(test_fiber_migration_refresh_2194)
-# folded: aura_issue_test_link_llvm_jit(test_fiber_migration_refresh_2194)
-# folded: all_test_issue_targets test_fiber_migration_refresh_2194
-# folded: aura_add_issue_test(test_fiber_native_keepalive_2159)
-# folded: aura_issue_test_link_light(test_fiber_native_keepalive_2159)
-# folded: aura_issue_test_link_llvm_jit(test_fiber_native_keepalive_2159)
-# folded: all_test_issue_targets test_fiber_native_keepalive_2159
-# folded: aura_add_issue_test(test_fiber_reclaim_orphan_release_2498)
-# folded: aura_issue_test_link_light(test_fiber_reclaim_orphan_release_2498)
-# folded: aura_issue_test_link_llvm_jit(test_fiber_reclaim_orphan_release_2498)
-# folded: all_test_issue_targets test_fiber_reclaim_orphan_release_2498
-# folded: aura_add_issue_test(test_fixup_deltas_2392)
-# folded: aura_issue_test_link_light(test_fixup_deltas_2392)
-# folded: aura_issue_test_link_llvm_jit(test_fixup_deltas_2392)
-# folded: all_test_issue_targets test_fixup_deltas_2392
+# folded: aura_add_issue_test(test_fiber_migration_refresh)
+# folded: aura_issue_test_link_light(test_fiber_migration_refresh)
+# folded: aura_issue_test_link_llvm_jit(test_fiber_migration_refresh)
+# folded: all_test_issue_targets test_fiber_migration_refresh
+# folded: aura_add_issue_test(test_fiber_native_keepalive)
+# folded: aura_issue_test_link_light(test_fiber_native_keepalive)
+# folded: aura_issue_test_link_llvm_jit(test_fiber_native_keepalive)
+# folded: all_test_issue_targets test_fiber_native_keepalive
+# folded: aura_add_issue_test(test_fiber_reclaim_orphan_release)
+# folded: aura_issue_test_link_light(test_fiber_reclaim_orphan_release)
+# folded: aura_issue_test_link_llvm_jit(test_fiber_reclaim_orphan_release)
+# folded: all_test_issue_targets test_fiber_reclaim_orphan_release
+# folded: aura_add_issue_test(test_fixup_deltas)
+# folded: aura_issue_test_link_light(test_fixup_deltas)
+# folded: aura_issue_test_link_llvm_jit(test_fixup_deltas)
+# folded: all_test_issue_targets test_fixup_deltas
 # folded: aura_add_issue_test(test_flatast_add_node_lock)
 # folded: aura_issue_test_link_light(test_flatast_add_node_lock)
 # folded: aura_issue_test_link_llvm_jit(test_flatast_add_node_lock)
@@ -2910,34 +2910,34 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_flatast_soa_read_guard)
 # folded: aura_issue_test_link_llvm_jit(test_flatast_soa_read_guard)
 # folded: all_test_issue_targets test_flatast_soa_read_guard
-# folded: aura_add_issue_test(test_force_compact_hard_mutex_2157)
-# folded: aura_issue_test_link_light(test_force_compact_hard_mutex_2157)
-# folded: aura_issue_test_link_llvm_jit(test_force_compact_hard_mutex_2157)
-# folded: all_test_issue_targets test_force_compact_hard_mutex_2157
-# folded: aura_add_issue_test(test_force_jit_repromote_2502)
-# folded: aura_issue_test_link_light(test_force_jit_repromote_2502)
-# folded: aura_issue_test_link_llvm_jit(test_force_jit_repromote_2502)
-# folded: all_test_issue_targets test_force_jit_repromote_2502
-# folded: aura_add_issue_test(test_frame_budget_cascade_isolation_2137)
-# folded: aura_issue_test_link_light(test_frame_budget_cascade_isolation_2137)
-# folded: aura_issue_test_link_llvm_jit(test_frame_budget_cascade_isolation_2137)
-# folded: all_test_issue_targets test_frame_budget_cascade_isolation_2137
-# folded: aura_add_issue_test(test_gc_closures_mtx_flush_sweep_2473)
-# folded: aura_issue_test_link_light(test_gc_closures_mtx_flush_sweep_2473)
-# folded: aura_issue_test_link_llvm_jit(test_gc_closures_mtx_flush_sweep_2473)
-# folded: all_test_issue_targets test_gc_closures_mtx_flush_sweep_2473
-# folded: aura_add_issue_test(test_gc_coord_scope_2131)
-# folded: aura_issue_test_link_light(test_gc_coord_scope_2131)
-# folded: aura_issue_test_link_llvm_jit(test_gc_coord_scope_2131)
-# folded: all_test_issue_targets test_gc_coord_scope_2131
+# folded: aura_add_issue_test(test_force_compact_hard_mutex)
+# folded: aura_issue_test_link_light(test_force_compact_hard_mutex)
+# folded: aura_issue_test_link_llvm_jit(test_force_compact_hard_mutex)
+# folded: all_test_issue_targets test_force_compact_hard_mutex
+# folded: aura_add_issue_test(test_force_jit_repromote)
+# folded: aura_issue_test_link_light(test_force_jit_repromote)
+# folded: aura_issue_test_link_llvm_jit(test_force_jit_repromote)
+# folded: all_test_issue_targets test_force_jit_repromote
+# folded: aura_add_issue_test(test_frame_budget_cascade_isolation)
+# folded: aura_issue_test_link_light(test_frame_budget_cascade_isolation)
+# folded: aura_issue_test_link_llvm_jit(test_frame_budget_cascade_isolation)
+# folded: all_test_issue_targets test_frame_budget_cascade_isolation
+# folded: aura_add_issue_test(test_gc_closures_mtx_flush_sweep)
+# folded: aura_issue_test_link_light(test_gc_closures_mtx_flush_sweep)
+# folded: aura_issue_test_link_llvm_jit(test_gc_closures_mtx_flush_sweep)
+# folded: all_test_issue_targets test_gc_closures_mtx_flush_sweep
+# folded: aura_add_issue_test(test_gc_coord_scope)
+# folded: aura_issue_test_link_light(test_gc_coord_scope)
+# folded: aura_issue_test_link_llvm_jit(test_gc_coord_scope)
+# folded: all_test_issue_targets test_gc_coord_scope
 # folded: aura_add_issue_test(test_gc_defer_arm_fetch_or)
 # folded: aura_issue_test_link_light(test_gc_defer_arm_fetch_or)
 # folded: aura_issue_test_link_llvm_jit(test_gc_defer_arm_fetch_or)
 # folded: all_test_issue_targets test_gc_defer_arm_fetch_or
-# folded: aura_add_issue_test(test_gc_defer_mutation_hold_2204)
-# folded: aura_issue_test_link_light(test_gc_defer_mutation_hold_2204)
-# folded: aura_issue_test_link_llvm_jit(test_gc_defer_mutation_hold_2204)
-# folded: all_test_issue_targets test_gc_defer_mutation_hold_2204
+# folded: aura_add_issue_test(test_gc_defer_mutation_hold)
+# folded: aura_issue_test_link_light(test_gc_defer_mutation_hold)
+# folded: aura_issue_test_link_llvm_jit(test_gc_defer_mutation_hold)
+# folded: all_test_issue_targets test_gc_defer_mutation_hold
 # folded: aura_add_issue_test(test_gc_defer_overflow_policy_atomic)
 # folded: aura_issue_test_link_light(test_gc_defer_overflow_policy_atomic)
 # folded: aura_issue_test_link_llvm_jit(test_gc_defer_overflow_policy_atomic)
@@ -2946,14 +2946,14 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_gc_defer_reconcile_cas)
 # folded: aura_issue_test_link_llvm_jit(test_gc_defer_reconcile_cas)
 # folded: all_test_issue_targets test_gc_defer_reconcile_cas
-# folded: aura_add_issue_test(test_gc_heap_cells_clear_2486)
-# folded: aura_issue_test_link_light(test_gc_heap_cells_clear_2486)
-# folded: aura_issue_test_link_llvm_jit(test_gc_heap_cells_clear_2486)
-# folded: all_test_issue_targets test_gc_heap_cells_clear_2486
-# folded: aura_add_issue_test(test_gc_mark_size_inject_2084)
-# folded: aura_issue_test_link_light(test_gc_mark_size_inject_2084)
-# folded: aura_issue_test_link_llvm_jit(test_gc_mark_size_inject_2084)
-# folded: all_test_issue_targets test_gc_mark_size_inject_2084
+# folded: aura_add_issue_test(test_gc_heap_cells_clear)
+# folded: aura_issue_test_link_light(test_gc_heap_cells_clear)
+# folded: aura_issue_test_link_llvm_jit(test_gc_heap_cells_clear)
+# folded: all_test_issue_targets test_gc_heap_cells_clear
+# folded: aura_add_issue_test(test_gc_mark_size_inject)
+# folded: aura_issue_test_link_light(test_gc_mark_size_inject)
+# folded: aura_issue_test_link_llvm_jit(test_gc_mark_size_inject)
+# folded: all_test_issue_targets test_gc_mark_size_inject
 # folded: aura_add_issue_test(test_general_object_pin)
 # folded: aura_issue_test_link_light(test_general_object_pin)
 # folded: aura_issue_test_link_llvm_jit(test_general_object_pin)
@@ -2994,10 +2994,10 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_grant_macro_self_evo_stamp)
 # folded: aura_issue_test_link_llvm_jit(test_grant_macro_self_evo_stamp)
 # folded: all_test_issue_targets test_grant_macro_self_evo_stamp
-# folded: aura_add_issue_test(test_guard_exit_occurrence_refresh_2144)
-# folded: aura_issue_test_link_light(test_guard_exit_occurrence_refresh_2144)
-# folded: aura_issue_test_link_llvm_jit(test_guard_exit_occurrence_refresh_2144)
-# folded: all_test_issue_targets test_guard_exit_occurrence_refresh_2144
+# folded: aura_add_issue_test(test_guard_exit_occurrence_refresh)
+# folded: aura_issue_test_link_light(test_guard_exit_occurrence_refresh)
+# folded: aura_issue_test_link_llvm_jit(test_guard_exit_occurrence_refresh)
+# folded: all_test_issue_targets test_guard_exit_occurrence_refresh
 # folded: aura_add_issue_test(test_hard_fiber_isolation)
 # folded: aura_issue_test_link_light(test_hard_fiber_isolation)
 # folded: aura_issue_test_link_llvm_jit(test_hard_fiber_isolation)
@@ -3006,106 +3006,106 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_hard_fiber_restricted)
 # folded: aura_issue_test_link_llvm_jit(test_hard_fiber_restricted)
 # folded: all_test_issue_targets test_hard_fiber_restricted
-# folded: aura_add_issue_test(test_hard_gate_full_strict_2145)
-# folded: aura_issue_test_link_light(test_hard_gate_full_strict_2145)
-# folded: aura_issue_test_link_llvm_jit(test_hard_gate_full_strict_2145)
-# folded: all_test_issue_targets test_hard_gate_full_strict_2145
-# folded: aura_add_issue_test(test_has_on_compact_hook_lock_2383)
-# folded: aura_issue_test_link_light(test_has_on_compact_hook_lock_2383)
-# folded: aura_issue_test_link_llvm_jit(test_has_on_compact_hook_lock_2383)
-# folded: all_test_issue_targets test_has_on_compact_hook_lock_2383
-# folded: aura_add_issue_test(test_hot_children_columnar_2614)
-# folded: aura_issue_test_link_light(test_hot_children_columnar_2614)
-# folded: aura_issue_test_link_llvm_jit(test_hot_children_columnar_2614)
-# folded: all_test_issue_targets test_hot_children_columnar_2614
-# folded: aura_add_issue_test(test_hot_contract_placement_2435)
-# folded: aura_issue_test_link_light(test_hot_contract_placement_2435)
-# folded: aura_issue_test_link_llvm_jit(test_hot_contract_placement_2435)
-# folded: all_test_issue_targets test_hot_contract_placement_2435
-# folded: aura_add_issue_test(test_hot_contract_unify_2142)
-# folded: aura_issue_test_link_light(test_hot_contract_unify_2142)
-# folded: aura_issue_test_link_llvm_jit(test_hot_contract_unify_2142)
-# folded: all_test_issue_targets test_hot_contract_unify_2142
-# folded: aura_add_issue_test(test_hot_pass_dirty_soa_2060)
-# folded: aura_issue_test_link_light(test_hot_pass_dirty_soa_2060)
-# folded: aura_issue_test_link_llvm_jit(test_hot_pass_dirty_soa_2060)
-# folded: all_test_issue_targets test_hot_pass_dirty_soa_2060
-# folded: aura_add_issue_test(test_hot_pass_hard_dod_2434)
-# folded: aura_issue_test_link_light(test_hot_pass_hard_dod_2434)
-# folded: aura_issue_test_link_llvm_jit(test_hot_pass_hard_dod_2434)
-# folded: all_test_issue_targets test_hot_pass_hard_dod_2434
-# folded: aura_add_issue_test(test_hot_pass_pure_wrap_2258)
-# folded: aura_issue_test_link_light(test_hot_pass_pure_wrap_2258)
-# folded: aura_issue_test_link_llvm_jit(test_hot_pass_pure_wrap_2258)
-# folded: all_test_issue_targets test_hot_pass_pure_wrap_2258
-# folded: aura_add_issue_test(test_hot_strategy_2582)
-# folded: aura_issue_test_link_light(test_hot_strategy_2582)
-# folded: aura_issue_test_link_llvm_jit(test_hot_strategy_2582)
-# folded: all_test_issue_targets test_hot_strategy_2582
-# folded: aura_add_issue_test(test_hygiene_checkpoint_2099)
-# folded: aura_issue_test_link_light(test_hygiene_checkpoint_2099)
-# folded: aura_issue_test_link_llvm_jit(test_hygiene_checkpoint_2099)
-# folded: all_test_issue_targets test_hygiene_checkpoint_2099
-# folded: aura_add_issue_test(test_hygiene_diagnostic_2167)
-# folded: aura_issue_test_link_light(test_hygiene_diagnostic_2167)
-# folded: aura_issue_test_link_llvm_jit(test_hygiene_diagnostic_2167)
-# folded: all_test_issue_targets test_hygiene_diagnostic_2167
+# folded: aura_add_issue_test(test_hard_gate_full_strict)
+# folded: aura_issue_test_link_light(test_hard_gate_full_strict)
+# folded: aura_issue_test_link_llvm_jit(test_hard_gate_full_strict)
+# folded: all_test_issue_targets test_hard_gate_full_strict
+# folded: aura_add_issue_test(test_has_on_compact_hook_lock)
+# folded: aura_issue_test_link_light(test_has_on_compact_hook_lock)
+# folded: aura_issue_test_link_llvm_jit(test_has_on_compact_hook_lock)
+# folded: all_test_issue_targets test_has_on_compact_hook_lock
+# folded: aura_add_issue_test(test_hot_children_columnar)
+# folded: aura_issue_test_link_light(test_hot_children_columnar)
+# folded: aura_issue_test_link_llvm_jit(test_hot_children_columnar)
+# folded: all_test_issue_targets test_hot_children_columnar
+# folded: aura_add_issue_test(test_hot_contract_placement)
+# folded: aura_issue_test_link_light(test_hot_contract_placement)
+# folded: aura_issue_test_link_llvm_jit(test_hot_contract_placement)
+# folded: all_test_issue_targets test_hot_contract_placement
+# folded: aura_add_issue_test(test_hot_contract_unify)
+# folded: aura_issue_test_link_light(test_hot_contract_unify)
+# folded: aura_issue_test_link_llvm_jit(test_hot_contract_unify)
+# folded: all_test_issue_targets test_hot_contract_unify
+# folded: aura_add_issue_test(test_hot_pass_dirty_soa)
+# folded: aura_issue_test_link_light(test_hot_pass_dirty_soa)
+# folded: aura_issue_test_link_llvm_jit(test_hot_pass_dirty_soa)
+# folded: all_test_issue_targets test_hot_pass_dirty_soa
+# folded: aura_add_issue_test(test_hot_pass_hard_dod)
+# folded: aura_issue_test_link_light(test_hot_pass_hard_dod)
+# folded: aura_issue_test_link_llvm_jit(test_hot_pass_hard_dod)
+# folded: all_test_issue_targets test_hot_pass_hard_dod
+# folded: aura_add_issue_test(test_hot_pass_pure_wrap)
+# folded: aura_issue_test_link_light(test_hot_pass_pure_wrap)
+# folded: aura_issue_test_link_llvm_jit(test_hot_pass_pure_wrap)
+# folded: all_test_issue_targets test_hot_pass_pure_wrap
+# folded: aura_add_issue_test(test_hot_strategy)
+# folded: aura_issue_test_link_light(test_hot_strategy)
+# folded: aura_issue_test_link_llvm_jit(test_hot_strategy)
+# folded: all_test_issue_targets test_hot_strategy
+# folded: aura_add_issue_test(test_hygiene_checkpoint)
+# folded: aura_issue_test_link_light(test_hygiene_checkpoint)
+# folded: aura_issue_test_link_llvm_jit(test_hygiene_checkpoint)
+# folded: all_test_issue_targets test_hygiene_checkpoint
+# folded: aura_add_issue_test(test_hygiene_diagnostic)
+# folded: aura_issue_test_link_light(test_hygiene_diagnostic)
+# folded: aura_issue_test_link_llvm_jit(test_hygiene_diagnostic)
+# folded: all_test_issue_targets test_hygiene_diagnostic
 # folded: aura_add_issue_test(test_incoming_parent_dirty_atomic)
 # folded: aura_issue_test_link_light(test_incoming_parent_dirty_atomic)
 # folded: aura_issue_test_link_llvm_jit(test_incoming_parent_dirty_atomic)
 # folded: all_test_issue_targets test_incoming_parent_dirty_atomic
-# folded: aura_add_issue_test(test_incremental_restamp_2061)
-# folded: aura_issue_test_link_light(test_incremental_restamp_2061)
-# folded: aura_issue_test_link_llvm_jit(test_incremental_restamp_2061)
-# folded: all_test_issue_targets test_incremental_restamp_2061
-# folded: aura_add_issue_test(test_incremental_soundness_oracle_2113)
-# folded: aura_issue_test_link_light(test_incremental_soundness_oracle_2113)
-# folded: aura_issue_test_link_llvm_jit(test_incremental_soundness_oracle_2113)
-# folded: all_test_issue_targets test_incremental_soundness_oracle_2113
-# folded: aura_add_issue_test(test_instance_constraint_depth_cap_2607)
-# folded: aura_issue_test_link_light(test_instance_constraint_depth_cap_2607)
-# folded: aura_issue_test_link_llvm_jit(test_instance_constraint_depth_cap_2607)
-# folded: all_test_issue_targets test_instance_constraint_depth_cap_2607
-# folded: aura_add_issue_test(test_instr_impact_minimal_dirty_2126)
-# folded: aura_issue_test_link_light(test_instr_impact_minimal_dirty_2126)
-# folded: aura_issue_test_link_llvm_jit(test_instr_impact_minimal_dirty_2126)
-# folded: all_test_issue_targets test_instr_impact_minimal_dirty_2126
-# folded: aura_add_issue_test(test_instr_level_relower_pass_2133)
-# folded: aura_issue_test_link_light(test_instr_level_relower_pass_2133)
-# folded: aura_issue_test_link_llvm_jit(test_instr_level_relower_pass_2133)
-# folded: all_test_issue_targets test_instr_level_relower_pass_2133
-# folded: aura_add_issue_test(test_instruction_level_impact_partial_2109)
-# folded: aura_issue_test_link_light(test_instruction_level_impact_partial_2109)
-# folded: aura_issue_test_link_llvm_jit(test_instruction_level_impact_partial_2109)
-# folded: all_test_issue_targets test_instruction_level_impact_partial_2109
-# folded: aura_add_issue_test(test_ir_const_string_intern_2573)
-# folded: aura_issue_test_link_light(test_ir_const_string_intern_2573)
-# folded: aura_issue_test_link_llvm_jit(test_ir_const_string_intern_2573)
-# folded: all_test_issue_targets test_ir_const_string_intern_2573
-# folded: aura_add_issue_test(test_ir_optimize_type_info_chain_2471)
-# folded: aura_issue_test_link_light(test_ir_optimize_type_info_chain_2471)
-# folded: aura_issue_test_link_llvm_jit(test_ir_optimize_type_info_chain_2471)
-# folded: all_test_issue_targets test_ir_optimize_type_info_chain_2471
-# folded: aura_add_issue_test(test_ir_pod_phase4_2291)
-# folded: aura_issue_test_link_light(test_ir_pod_phase4_2291)
-# folded: aura_issue_test_link_llvm_jit(test_ir_pod_phase4_2291)
-# folded: all_test_issue_targets test_ir_pod_phase4_2291
-# folded: aura_add_issue_test(test_ir_soa_layout_stamp_2432)
-# folded: aura_issue_test_link_light(test_ir_soa_layout_stamp_2432)
-# folded: aura_issue_test_link_llvm_jit(test_ir_soa_layout_stamp_2432)
-# folded: all_test_issue_targets test_ir_soa_layout_stamp_2432
-# folded: aura_add_issue_test(test_is_stealable_snapshot_gate_2549)
-# folded: aura_issue_test_link_light(test_is_stealable_snapshot_gate_2549)
-# folded: aura_issue_test_link_llvm_jit(test_is_stealable_snapshot_gate_2549)
-# folded: all_test_issue_targets test_is_stealable_snapshot_gate_2549
-# folded: aura_add_issue_test(test_isolation_audit_mid_2156)
-# folded: aura_issue_test_link_light(test_isolation_audit_mid_2156)
-# folded: aura_issue_test_link_llvm_jit(test_isolation_audit_mid_2156)
-# folded: all_test_issue_targets test_isolation_audit_mid_2156
-# folded: aura_add_issue_test(test_isolation_stamp_resolve_2224)
-# folded: aura_issue_test_link_light(test_isolation_stamp_resolve_2224)
-# folded: aura_issue_test_link_llvm_jit(test_isolation_stamp_resolve_2224)
-# folded: all_test_issue_targets test_isolation_stamp_resolve_2224
+# folded: aura_add_issue_test(test_incremental_restamp)
+# folded: aura_issue_test_link_light(test_incremental_restamp)
+# folded: aura_issue_test_link_llvm_jit(test_incremental_restamp)
+# folded: all_test_issue_targets test_incremental_restamp
+# folded: aura_add_issue_test(test_incremental_soundness_oracle)
+# folded: aura_issue_test_link_light(test_incremental_soundness_oracle)
+# folded: aura_issue_test_link_llvm_jit(test_incremental_soundness_oracle)
+# folded: all_test_issue_targets test_incremental_soundness_oracle
+# folded: aura_add_issue_test(test_instance_constraint_depth_cap)
+# folded: aura_issue_test_link_light(test_instance_constraint_depth_cap)
+# folded: aura_issue_test_link_llvm_jit(test_instance_constraint_depth_cap)
+# folded: all_test_issue_targets test_instance_constraint_depth_cap
+# folded: aura_add_issue_test(test_instr_impact_minimal_dirty)
+# folded: aura_issue_test_link_light(test_instr_impact_minimal_dirty)
+# folded: aura_issue_test_link_llvm_jit(test_instr_impact_minimal_dirty)
+# folded: all_test_issue_targets test_instr_impact_minimal_dirty
+# folded: aura_add_issue_test(test_instr_level_relower_pass)
+# folded: aura_issue_test_link_light(test_instr_level_relower_pass)
+# folded: aura_issue_test_link_llvm_jit(test_instr_level_relower_pass)
+# folded: all_test_issue_targets test_instr_level_relower_pass
+# folded: aura_add_issue_test(test_instruction_level_impact_partial)
+# folded: aura_issue_test_link_light(test_instruction_level_impact_partial)
+# folded: aura_issue_test_link_llvm_jit(test_instruction_level_impact_partial)
+# folded: all_test_issue_targets test_instruction_level_impact_partial
+# folded: aura_add_issue_test(test_ir_const_string_intern)
+# folded: aura_issue_test_link_light(test_ir_const_string_intern)
+# folded: aura_issue_test_link_llvm_jit(test_ir_const_string_intern)
+# folded: all_test_issue_targets test_ir_const_string_intern
+# folded: aura_add_issue_test(test_ir_optimize_type_info_chain)
+# folded: aura_issue_test_link_light(test_ir_optimize_type_info_chain)
+# folded: aura_issue_test_link_llvm_jit(test_ir_optimize_type_info_chain)
+# folded: all_test_issue_targets test_ir_optimize_type_info_chain
+# folded: aura_add_issue_test(test_ir_pod_phase4)
+# folded: aura_issue_test_link_light(test_ir_pod_phase4)
+# folded: aura_issue_test_link_llvm_jit(test_ir_pod_phase4)
+# folded: all_test_issue_targets test_ir_pod_phase4
+# folded: aura_add_issue_test(test_ir_soa_layout_stamp)
+# folded: aura_issue_test_link_light(test_ir_soa_layout_stamp)
+# folded: aura_issue_test_link_llvm_jit(test_ir_soa_layout_stamp)
+# folded: all_test_issue_targets test_ir_soa_layout_stamp
+# folded: aura_add_issue_test(test_is_stealable_snapshot_gate)
+# folded: aura_issue_test_link_light(test_is_stealable_snapshot_gate)
+# folded: aura_issue_test_link_llvm_jit(test_is_stealable_snapshot_gate)
+# folded: all_test_issue_targets test_is_stealable_snapshot_gate
+# folded: aura_add_issue_test(test_isolation_audit_mid)
+# folded: aura_issue_test_link_light(test_isolation_audit_mid)
+# folded: aura_issue_test_link_llvm_jit(test_isolation_audit_mid)
+# folded: all_test_issue_targets test_isolation_audit_mid
+# folded: aura_add_issue_test(test_isolation_stamp_resolve)
+# folded: aura_issue_test_link_light(test_isolation_stamp_resolve)
+# folded: aura_issue_test_link_llvm_jit(test_isolation_stamp_resolve)
+# folded: all_test_issue_targets test_isolation_stamp_resolve
 # folded: aura_add_issue_test(test_issue_1990)
 # folded: aura_issue_test_link_light(test_issue_1990)
 # folded: aura_issue_test_link_llvm_jit(test_issue_1990)
@@ -3122,46 +3122,46 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_issue_1993)
 # folded: aura_issue_test_link_llvm_jit(test_issue_1993)
 # folded: all_test_issue_targets test_issue_1993
-# folded: aura_add_issue_test(test_jit_dual_string_heap_2575)
-# folded: aura_issue_test_link_light(test_jit_dual_string_heap_2575)
-# folded: aura_issue_test_link_llvm_jit(test_jit_dual_string_heap_2575)
-# folded: all_test_issue_targets test_jit_dual_string_heap_2575
-# folded: aura_add_issue_test(test_jit_interpreter_equivalence_oracle_2210)
-# folded: aura_issue_test_link_light(test_jit_interpreter_equivalence_oracle_2210)
-# folded: aura_issue_test_link_llvm_jit(test_jit_interpreter_equivalence_oracle_2210)
-# folded: all_test_issue_targets test_jit_interpreter_equivalence_oracle_2210
-# folded: aura_add_issue_test(test_jit_macro_deopt_hygiene_2100)
-# folded: aura_issue_test_link_light(test_jit_macro_deopt_hygiene_2100)
-# folded: aura_issue_test_link_llvm_jit(test_jit_macro_deopt_hygiene_2100)
-# folded: all_test_issue_targets test_jit_macro_deopt_hygiene_2100
-# folded: aura_add_issue_test(test_join_drain_reclaim_2227)
-# folded: aura_issue_test_link_light(test_join_drain_reclaim_2227)
-# folded: aura_issue_test_link_llvm_jit(test_join_drain_reclaim_2227)
-# folded: all_test_issue_targets test_join_drain_reclaim_2227
-# folded: aura_add_issue_test(test_join_drain_timeout_2153)
-# folded: aura_issue_test_link_light(test_join_drain_timeout_2153)
-# folded: aura_issue_test_link_llvm_jit(test_join_drain_timeout_2153)
-# folded: all_test_issue_targets test_join_drain_timeout_2153
-# folded: aura_add_issue_test(test_json_parse_number_exception_2480)
-# folded: aura_issue_test_link_light(test_json_parse_number_exception_2480)
-# folded: aura_issue_test_link_llvm_jit(test_json_parse_number_exception_2480)
-# folded: all_test_issue_targets test_json_parse_number_exception_2480
-# folded: aura_add_issue_test(test_json_parse_object_grow_2481)
-# folded: aura_issue_test_link_light(test_json_parse_object_grow_2481)
-# folded: aura_issue_test_link_llvm_jit(test_json_parse_object_grow_2481)
-# folded: all_test_issue_targets test_json_parse_object_grow_2481
+# folded: aura_add_issue_test(test_jit_dual_string_heap)
+# folded: aura_issue_test_link_light(test_jit_dual_string_heap)
+# folded: aura_issue_test_link_llvm_jit(test_jit_dual_string_heap)
+# folded: all_test_issue_targets test_jit_dual_string_heap
+# folded: aura_add_issue_test(test_jit_interpreter_equivalence_oracle)
+# folded: aura_issue_test_link_light(test_jit_interpreter_equivalence_oracle)
+# folded: aura_issue_test_link_llvm_jit(test_jit_interpreter_equivalence_oracle)
+# folded: all_test_issue_targets test_jit_interpreter_equivalence_oracle
+# folded: aura_add_issue_test(test_jit_macro_deopt_hygiene)
+# folded: aura_issue_test_link_light(test_jit_macro_deopt_hygiene)
+# folded: aura_issue_test_link_llvm_jit(test_jit_macro_deopt_hygiene)
+# folded: all_test_issue_targets test_jit_macro_deopt_hygiene
+# folded: aura_add_issue_test(test_join_drain_reclaim)
+# folded: aura_issue_test_link_light(test_join_drain_reclaim)
+# folded: aura_issue_test_link_llvm_jit(test_join_drain_reclaim)
+# folded: all_test_issue_targets test_join_drain_reclaim
+# folded: aura_add_issue_test(test_join_drain_timeout)
+# folded: aura_issue_test_link_light(test_join_drain_timeout)
+# folded: aura_issue_test_link_llvm_jit(test_join_drain_timeout)
+# folded: all_test_issue_targets test_join_drain_timeout
+# folded: aura_add_issue_test(test_json_parse_number_exception)
+# folded: aura_issue_test_link_light(test_json_parse_number_exception)
+# folded: aura_issue_test_link_llvm_jit(test_json_parse_number_exception)
+# folded: all_test_issue_targets test_json_parse_number_exception
+# folded: aura_add_issue_test(test_json_parse_object_grow)
+# folded: aura_issue_test_link_light(test_json_parse_object_grow)
+# folded: aura_issue_test_link_llvm_jit(test_json_parse_object_grow)
+# folded: all_test_issue_targets test_json_parse_object_grow
 # folded: aura_add_issue_test(test_last_validated_generation_atomic)
 # folded: aura_issue_test_link_light(test_last_validated_generation_atomic)
 # folded: aura_issue_test_link_llvm_jit(test_last_validated_generation_atomic)
 # folded: all_test_issue_targets test_last_validated_generation_atomic
-# folded: aura_add_issue_test(test_layout_stamp_2170)
-# folded: aura_issue_test_link_light(test_layout_stamp_2170)
-# folded: aura_issue_test_link_llvm_jit(test_layout_stamp_2170)
-# folded: all_test_issue_targets test_layout_stamp_2170
-# folded: aura_add_issue_test(test_layout_stamp_equality_8field_2519)
-# folded: aura_issue_test_link_light(test_layout_stamp_equality_8field_2519)
-# folded: aura_issue_test_link_llvm_jit(test_layout_stamp_equality_8field_2519)
-# folded: all_test_issue_targets test_layout_stamp_equality_8field_2519
+# folded: aura_add_issue_test(test_layout_stamp)
+# folded: aura_issue_test_link_light(test_layout_stamp)
+# folded: aura_issue_test_link_llvm_jit(test_layout_stamp)
+# folded: all_test_issue_targets test_layout_stamp
+# folded: aura_add_issue_test(test_layout_stamp_equality_8field)
+# folded: aura_issue_test_link_light(test_layout_stamp_equality_8field)
+# folded: aura_issue_test_link_llvm_jit(test_layout_stamp_equality_8field)
+# folded: all_test_issue_targets test_layout_stamp_equality_8field
 # folded: aura_add_issue_test(test_lifetime_contract_snapshot)
 # folded: aura_issue_test_link_light(test_lifetime_contract_snapshot)
 # folded: aura_issue_test_link_llvm_jit(test_lifetime_contract_snapshot)
@@ -3202,10 +3202,10 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_linear_pin_moving_compact)
 # folded: aura_issue_test_link_llvm_jit(test_linear_pin_moving_compact)
 # folded: all_test_issue_targets test_linear_pin_moving_compact
-# folded: aura_add_issue_test(test_linear_state_stamp_apply_2129)
-# folded: aura_issue_test_link_light(test_linear_state_stamp_apply_2129)
-# folded: aura_issue_test_link_llvm_jit(test_linear_state_stamp_apply_2129)
-# folded: all_test_issue_targets test_linear_state_stamp_apply_2129
+# folded: aura_add_issue_test(test_linear_state_stamp_apply)
+# folded: aura_issue_test_link_light(test_linear_state_stamp_apply)
+# folded: aura_issue_test_link_llvm_jit(test_linear_state_stamp_apply)
+# folded: all_test_issue_targets test_linear_state_stamp_apply
 # folded: aura_add_issue_test(test_linear_synth_boundary_authority)
 # folded: aura_issue_test_link_light(test_linear_synth_boundary_authority)
 # folded: aura_issue_test_link_llvm_jit(test_linear_synth_boundary_authority)
@@ -3218,94 +3218,94 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_linear_three_layer_wire)
 # folded: aura_issue_test_link_llvm_jit(test_linear_three_layer_wire)
 # folded: all_test_issue_targets test_linear_three_layer_wire
-# folded: aura_add_issue_test(test_list_end_of_list_void_2482)
-# folded: aura_issue_test_link_light(test_list_end_of_list_void_2482)
-# folded: aura_issue_test_link_llvm_jit(test_list_end_of_list_void_2482)
-# folded: all_test_issue_targets test_list_end_of_list_void_2482
-# folded: aura_add_issue_test(test_live_closure_full_restamp_2542)
-# folded: aura_issue_test_link_light(test_live_closure_full_restamp_2542)
-# folded: aura_issue_test_link_llvm_jit(test_live_closure_full_restamp_2542)
-# folded: all_test_issue_targets test_live_closure_full_restamp_2542
-# folded: aura_add_issue_test(test_live_closure_stable_id_only_2369)
-# folded: aura_issue_test_link_light(test_live_closure_stable_id_only_2369)
-# folded: aura_issue_test_link_llvm_jit(test_live_closure_stable_id_only_2369)
-# folded: all_test_issue_targets test_live_closure_stable_id_only_2369
-# folded: aura_add_issue_test(test_load_cap_io_read_2485)
-# folded: aura_issue_test_link_light(test_load_cap_io_read_2485)
-# folded: aura_issue_test_link_llvm_jit(test_load_cap_io_read_2485)
-# folded: all_test_issue_targets test_load_cap_io_read_2485
-# folded: aura_add_issue_test(test_lock_order_audit_2316)
-# folded: aura_issue_test_link_light(test_lock_order_audit_2316)
-# folded: aura_issue_test_link_llvm_jit(test_lock_order_audit_2316)
-# folded: all_test_issue_targets test_lock_order_audit_2316
-# folded: aura_add_issue_test(test_lock_order_audit_2354)
-# folded: aura_issue_test_link_light(test_lock_order_audit_2354)
-# folded: aura_issue_test_link_llvm_jit(test_lock_order_audit_2354)
-# folded: all_test_issue_targets test_lock_order_audit_2354
-# folded: aura_add_issue_test(test_lock_order_production_soft_2557)
-# folded: aura_issue_test_link_light(test_lock_order_production_soft_2557)
-# folded: aura_issue_test_link_llvm_jit(test_lock_order_production_soft_2557)
-# folded: all_test_issue_targets test_lock_order_production_soft_2557
-# folded: aura_add_issue_test(test_macro_cross_flat_hygiene_2235)
-# folded: aura_issue_test_link_light(test_macro_cross_flat_hygiene_2235)
-# folded: aura_issue_test_link_llvm_jit(test_macro_cross_flat_hygiene_2235)
-# folded: all_test_issue_targets test_macro_cross_flat_hygiene_2235
+# folded: aura_add_issue_test(test_list_end_of_list_void)
+# folded: aura_issue_test_link_light(test_list_end_of_list_void)
+# folded: aura_issue_test_link_llvm_jit(test_list_end_of_list_void)
+# folded: all_test_issue_targets test_list_end_of_list_void
+# folded: aura_add_issue_test(test_live_closure_full_restamp)
+# folded: aura_issue_test_link_light(test_live_closure_full_restamp)
+# folded: aura_issue_test_link_llvm_jit(test_live_closure_full_restamp)
+# folded: all_test_issue_targets test_live_closure_full_restamp
+# folded: aura_add_issue_test(test_live_closure_stable_id_only)
+# folded: aura_issue_test_link_light(test_live_closure_stable_id_only)
+# folded: aura_issue_test_link_llvm_jit(test_live_closure_stable_id_only)
+# folded: all_test_issue_targets test_live_closure_stable_id_only
+# folded: aura_add_issue_test(test_load_cap_io_read)
+# folded: aura_issue_test_link_light(test_load_cap_io_read)
+# folded: aura_issue_test_link_llvm_jit(test_load_cap_io_read)
+# folded: all_test_issue_targets test_load_cap_io_read
+# folded: aura_add_issue_test(test_lock_order_audit)
+# folded: aura_issue_test_link_light(test_lock_order_audit)
+# folded: aura_issue_test_link_llvm_jit(test_lock_order_audit)
+# folded: all_test_issue_targets test_lock_order_audit
+# folded: aura_add_issue_test(test_lock_order_audit_hard)
+# folded: aura_issue_test_link_light(test_lock_order_audit_hard)
+# folded: aura_issue_test_link_llvm_jit(test_lock_order_audit_hard)
+# folded: all_test_issue_targets test_lock_order_audit_hard
+# folded: aura_add_issue_test(test_lock_order_production_soft)
+# folded: aura_issue_test_link_light(test_lock_order_production_soft)
+# folded: aura_issue_test_link_llvm_jit(test_lock_order_production_soft)
+# folded: all_test_issue_targets test_lock_order_production_soft
+# folded: aura_add_issue_test(test_macro_cross_flat_hygiene)
+# folded: aura_issue_test_link_light(test_macro_cross_flat_hygiene)
+# folded: aura_issue_test_link_llvm_jit(test_macro_cross_flat_hygiene)
+# folded: all_test_issue_targets test_macro_cross_flat_hygiene
 # folded: aura_add_issue_test(test_macro_dirty_bits_lock)
 # folded: aura_issue_test_link_light(test_macro_dirty_bits_lock)
 # folded: aura_issue_test_link_llvm_jit(test_macro_dirty_bits_lock)
 # folded: all_test_issue_targets test_macro_dirty_bits_lock
-# folded: aura_add_issue_test(test_macro_hygiene_limits_2101)
-# folded: aura_issue_test_link_light(test_macro_hygiene_limits_2101)
-# folded: aura_issue_test_link_llvm_jit(test_macro_hygiene_limits_2101)
-# folded: all_test_issue_targets test_macro_hygiene_limits_2101
-# folded: aura_add_issue_test(test_mailbox_bp_admit_2228)
-# folded: aura_issue_test_link_light(test_mailbox_bp_admit_2228)
-# folded: aura_issue_test_link_llvm_jit(test_mailbox_bp_admit_2228)
-# folded: all_test_issue_targets test_mailbox_bp_admit_2228
-# folded: aura_add_issue_test(test_mailbox_bp_admit_default_2535)
-# folded: aura_issue_test_link_light(test_mailbox_bp_admit_default_2535)
-# folded: aura_issue_test_link_llvm_jit(test_mailbox_bp_admit_default_2535)
-# folded: all_test_issue_targets test_mailbox_bp_admit_default_2535
-# folded: aura_add_issue_test(test_mailbox_hold_exit_drain_2511)
-# folded: aura_issue_test_link_light(test_mailbox_hold_exit_drain_2511)
-# folded: aura_issue_test_link_llvm_jit(test_mailbox_hold_exit_drain_2511)
-# folded: all_test_issue_targets test_mailbox_hold_exit_drain_2511
-# folded: aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
-# folded: aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)
-# folded: aura_issue_test_link_llvm_jit(test_mailbox_hold_starvation_hard_2551)
-# folded: all_test_issue_targets test_mailbox_hold_starvation_hard_2551
-# folded: aura_add_issue_test(test_mailbox_recv_mutation_boundary_2188)
-# folded: aura_issue_test_link_light(test_mailbox_recv_mutation_boundary_2188)
-# folded: aura_issue_test_link_llvm_jit(test_mailbox_recv_mutation_boundary_2188)
-# folded: all_test_issue_targets test_mailbox_recv_mutation_boundary_2188
-# folded: aura_add_issue_test(test_mailbox_tenant_principal_2592)
-# folded: aura_issue_test_link_light(test_mailbox_tenant_principal_2592)
-# folded: aura_issue_test_link_llvm_jit(test_mailbox_tenant_principal_2592)
-# folded: all_test_issue_targets test_mailbox_tenant_principal_2592
-# folded: aura_add_issue_test(test_memo_goal_epoch_health_2359)
-# folded: aura_issue_test_link_light(test_memo_goal_epoch_health_2359)
-# folded: aura_issue_test_link_llvm_jit(test_memo_goal_epoch_health_2359)
-# folded: all_test_issue_targets test_memo_goal_epoch_health_2359
-# folded: aura_add_issue_test(test_module_export_display_2572)
-# folded: aura_issue_test_link_light(test_module_export_display_2572)
-# folded: aura_issue_test_link_llvm_jit(test_module_export_display_2572)
-# folded: all_test_issue_targets test_module_export_display_2572
-# folded: aura_add_issue_test(test_module_load_tail_export_2570)
-# folded: aura_issue_test_link_light(test_module_load_tail_export_2570)
-# folded: aura_issue_test_link_llvm_jit(test_module_load_tail_export_2570)
-# folded: all_test_issue_targets test_module_load_tail_export_2570
-# folded: aura_add_issue_test(test_module_partition_map_2524)
-# folded: aura_issue_test_link_light(test_module_partition_map_2524)
-# folded: aura_issue_test_link_llvm_jit(test_module_partition_map_2524)
-# folded: all_test_issue_targets test_module_partition_map_2524
-# folded: aura_add_issue_test(test_module_rebind_residual_2579)
-# folded: aura_issue_test_link_light(test_module_rebind_residual_2579)
-# folded: aura_issue_test_link_llvm_jit(test_module_rebind_residual_2579)
-# folded: all_test_issue_targets test_module_rebind_residual_2579
-# folded: aura_add_issue_test(test_module_require_freevar_2566)
-# folded: aura_issue_test_link_light(test_module_require_freevar_2566)
-# folded: aura_issue_test_link_llvm_jit(test_module_require_freevar_2566)
-# folded: all_test_issue_targets test_module_require_freevar_2566
+# folded: aura_add_issue_test(test_macro_hygiene_limits)
+# folded: aura_issue_test_link_light(test_macro_hygiene_limits)
+# folded: aura_issue_test_link_llvm_jit(test_macro_hygiene_limits)
+# folded: all_test_issue_targets test_macro_hygiene_limits
+# folded: aura_add_issue_test(test_mailbox_bp_admit)
+# folded: aura_issue_test_link_light(test_mailbox_bp_admit)
+# folded: aura_issue_test_link_llvm_jit(test_mailbox_bp_admit)
+# folded: all_test_issue_targets test_mailbox_bp_admit
+# folded: aura_add_issue_test(test_mailbox_bp_admit_default)
+# folded: aura_issue_test_link_light(test_mailbox_bp_admit_default)
+# folded: aura_issue_test_link_llvm_jit(test_mailbox_bp_admit_default)
+# folded: all_test_issue_targets test_mailbox_bp_admit_default
+# folded: aura_add_issue_test(test_mailbox_hold_exit_drain)
+# folded: aura_issue_test_link_light(test_mailbox_hold_exit_drain)
+# folded: aura_issue_test_link_llvm_jit(test_mailbox_hold_exit_drain)
+# folded: all_test_issue_targets test_mailbox_hold_exit_drain
+# folded: aura_add_issue_test(test_mailbox_hold_starvation_hard)
+# folded: aura_issue_test_link_light(test_mailbox_hold_starvation_hard)
+# folded: aura_issue_test_link_llvm_jit(test_mailbox_hold_starvation_hard)
+# folded: all_test_issue_targets test_mailbox_hold_starvation_hard
+# folded: aura_add_issue_test(test_mailbox_recv_mutation_boundary)
+# folded: aura_issue_test_link_light(test_mailbox_recv_mutation_boundary)
+# folded: aura_issue_test_link_llvm_jit(test_mailbox_recv_mutation_boundary)
+# folded: all_test_issue_targets test_mailbox_recv_mutation_boundary
+# folded: aura_add_issue_test(test_mailbox_tenant_principal)
+# folded: aura_issue_test_link_light(test_mailbox_tenant_principal)
+# folded: aura_issue_test_link_llvm_jit(test_mailbox_tenant_principal)
+# folded: all_test_issue_targets test_mailbox_tenant_principal
+# folded: aura_add_issue_test(test_memo_goal_epoch_health)
+# folded: aura_issue_test_link_light(test_memo_goal_epoch_health)
+# folded: aura_issue_test_link_llvm_jit(test_memo_goal_epoch_health)
+# folded: all_test_issue_targets test_memo_goal_epoch_health
+# folded: aura_add_issue_test(test_module_export_display)
+# folded: aura_issue_test_link_light(test_module_export_display)
+# folded: aura_issue_test_link_llvm_jit(test_module_export_display)
+# folded: all_test_issue_targets test_module_export_display
+# folded: aura_add_issue_test(test_module_load_tail_export)
+# folded: aura_issue_test_link_light(test_module_load_tail_export)
+# folded: aura_issue_test_link_llvm_jit(test_module_load_tail_export)
+# folded: all_test_issue_targets test_module_load_tail_export
+# folded: aura_add_issue_test(test_module_partition_map)
+# folded: aura_issue_test_link_light(test_module_partition_map)
+# folded: aura_issue_test_link_llvm_jit(test_module_partition_map)
+# folded: all_test_issue_targets test_module_partition_map
+# folded: aura_add_issue_test(test_module_rebind_residual)
+# folded: aura_issue_test_link_light(test_module_rebind_residual)
+# folded: aura_issue_test_link_llvm_jit(test_module_rebind_residual)
+# folded: all_test_issue_targets test_module_rebind_residual
+# folded: aura_add_issue_test(test_module_require_freevar)
+# folded: aura_issue_test_link_light(test_module_require_freevar)
+# folded: aura_issue_test_link_llvm_jit(test_module_require_freevar)
+# folded: all_test_issue_targets test_module_require_freevar
 # folded: aura_add_issue_test(test_moving_compact)
 # folded: aura_issue_test_link_light(test_moving_compact)
 # folded: aura_issue_test_link_llvm_jit(test_moving_compact)
@@ -3314,70 +3314,70 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_moving_densify_fail_closed)
 # folded: aura_issue_test_link_llvm_jit(test_moving_densify_fail_closed)
 # folded: all_test_issue_targets test_moving_densify_fail_closed
-# folded: aura_add_issue_test(test_must_deopt_before_next_call_2128)
-# folded: aura_issue_test_link_light(test_must_deopt_before_next_call_2128)
-# folded: aura_issue_test_link_llvm_jit(test_must_deopt_before_next_call_2128)
-# folded: all_test_issue_targets test_must_deopt_before_next_call_2128
-# folded: aura_add_issue_test(test_mutate_capability_force_2052)
-# folded: aura_issue_test_link_light(test_mutate_capability_force_2052)
-# folded: aura_issue_test_link_llvm_jit(test_mutate_capability_force_2052)
-# folded: all_test_issue_targets test_mutate_capability_force_2052
-# folded: aura_add_issue_test(test_mutate_mailbox_starvation_throttle_2587)
-# folded: aura_issue_test_link_light(test_mutate_mailbox_starvation_throttle_2587)
-# folded: aura_issue_test_link_llvm_jit(test_mutate_mailbox_starvation_throttle_2587)
-# folded: all_test_issue_targets test_mutate_mailbox_starvation_throttle_2587
-# folded: aura_add_issue_test(test_mutate_type_gate_2219)
-# folded: aura_issue_test_link_light(test_mutate_type_gate_2219)
-# folded: aura_issue_test_link_llvm_jit(test_mutate_type_gate_2219)
-# folded: all_test_issue_targets test_mutate_type_gate_2219
-# folded: aura_add_issue_test(test_mutation_concurrency_health_2379)
-# folded: aura_issue_test_link_light(test_mutation_concurrency_health_2379)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_concurrency_health_2379)
-# folded: all_test_issue_targets test_mutation_concurrency_health_2379
-# folded: aura_add_issue_test(test_mutation_contention_2040)
-# folded: aura_issue_test_link_light(test_mutation_contention_2040)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_contention_2040)
-# folded: all_test_issue_targets test_mutation_contention_2040
-# folded: aura_add_issue_test(test_mutation_guard_try_acquire_2124)
-# folded: aura_issue_test_link_light(test_mutation_guard_try_acquire_2124)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_guard_try_acquire_2124)
-# folded: all_test_issue_targets test_mutation_guard_try_acquire_2124
-# folded: aura_add_issue_test(test_mutation_hold_estimate_2405)
-# folded: aura_issue_test_link_light(test_mutation_hold_estimate_2405)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_hold_estimate_2405)
-# folded: all_test_issue_targets test_mutation_hold_estimate_2405
-# folded: aura_add_issue_test(test_mutation_hold_hard_timeout_2199)
-# folded: aura_issue_test_link_light(test_mutation_hold_hard_timeout_2199)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_hold_hard_timeout_2199)
-# folded: all_test_issue_targets test_mutation_hold_hard_timeout_2199
-# folded: aura_add_issue_test(test_mutation_hold_live_2517)
-# folded: aura_issue_test_link_light(test_mutation_hold_live_2517)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_hold_live_2517)
-# folded: all_test_issue_targets test_mutation_hold_live_2517
-# folded: aura_add_issue_test(test_mutation_hold_slo_2349)
-# folded: aura_issue_test_link_light(test_mutation_hold_slo_2349)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_hold_slo_2349)
-# folded: all_test_issue_targets test_mutation_hold_slo_2349
+# folded: aura_add_issue_test(test_must_deopt_before_next_call)
+# folded: aura_issue_test_link_light(test_must_deopt_before_next_call)
+# folded: aura_issue_test_link_llvm_jit(test_must_deopt_before_next_call)
+# folded: all_test_issue_targets test_must_deopt_before_next_call
+# folded: aura_add_issue_test(test_mutate_capability_force)
+# folded: aura_issue_test_link_light(test_mutate_capability_force)
+# folded: aura_issue_test_link_llvm_jit(test_mutate_capability_force)
+# folded: all_test_issue_targets test_mutate_capability_force
+# folded: aura_add_issue_test(test_mutate_mailbox_starvation_throttle)
+# folded: aura_issue_test_link_light(test_mutate_mailbox_starvation_throttle)
+# folded: aura_issue_test_link_llvm_jit(test_mutate_mailbox_starvation_throttle)
+# folded: all_test_issue_targets test_mutate_mailbox_starvation_throttle
+# folded: aura_add_issue_test(test_mutate_type_gate)
+# folded: aura_issue_test_link_light(test_mutate_type_gate)
+# folded: aura_issue_test_link_llvm_jit(test_mutate_type_gate)
+# folded: all_test_issue_targets test_mutate_type_gate
+# folded: aura_add_issue_test(test_mutation_concurrency_health)
+# folded: aura_issue_test_link_light(test_mutation_concurrency_health)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_concurrency_health)
+# folded: all_test_issue_targets test_mutation_concurrency_health
+# folded: aura_add_issue_test(test_mutation_contention)
+# folded: aura_issue_test_link_light(test_mutation_contention)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_contention)
+# folded: all_test_issue_targets test_mutation_contention
+# folded: aura_add_issue_test(test_mutation_guard_try_acquire_unit)
+# folded: aura_issue_test_link_light(test_mutation_guard_try_acquire_unit)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_guard_try_acquire_unit)
+# folded: all_test_issue_targets test_mutation_guard_try_acquire_unit
+# folded: aura_add_issue_test(test_mutation_hold_estimate)
+# folded: aura_issue_test_link_light(test_mutation_hold_estimate)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_hold_estimate)
+# folded: all_test_issue_targets test_mutation_hold_estimate
+# folded: aura_add_issue_test(test_mutation_hold_hard_timeout)
+# folded: aura_issue_test_link_light(test_mutation_hold_hard_timeout)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_hold_hard_timeout)
+# folded: all_test_issue_targets test_mutation_hold_hard_timeout
+# folded: aura_add_issue_test(test_mutation_hold_live)
+# folded: aura_issue_test_link_light(test_mutation_hold_live)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_hold_live)
+# folded: all_test_issue_targets test_mutation_hold_live
+# folded: aura_add_issue_test(test_mutation_hold_slo)
+# folded: aura_issue_test_link_light(test_mutation_hold_slo)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_hold_slo)
+# folded: all_test_issue_targets test_mutation_hold_slo
 # folded: aura_add_issue_test(test_mutation_log_cow_copy)
 # folded: aura_issue_test_link_light(test_mutation_log_cow_copy)
 # folded: aura_issue_test_link_llvm_jit(test_mutation_log_cow_copy)
 # folded: all_test_issue_targets test_mutation_log_cow_copy
-# folded: aura_add_issue_test(test_mutation_log_pressure_2201)
-# folded: aura_issue_test_link_light(test_mutation_log_pressure_2201)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_log_pressure_2201)
-# folded: all_test_issue_targets test_mutation_log_pressure_2201
-# folded: aura_add_issue_test(test_mutation_memory_blame_2196)
-# folded: aura_issue_test_link_light(test_mutation_memory_blame_2196)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_memory_blame_2196)
-# folded: all_test_issue_targets test_mutation_memory_blame_2196
-# folded: aura_add_issue_test(test_mutation_safety_snapshot_steal_2184)
-# folded: aura_issue_test_link_light(test_mutation_safety_snapshot_steal_2184)
-# folded: aura_issue_test_link_llvm_jit(test_mutation_safety_snapshot_steal_2184)
-# folded: all_test_issue_targets test_mutation_safety_snapshot_steal_2184
-# folded: aura_add_issue_test(test_named_closure_stable_id_at_create_2550)
-# folded: aura_issue_test_link_light(test_named_closure_stable_id_at_create_2550)
-# folded: aura_issue_test_link_llvm_jit(test_named_closure_stable_id_at_create_2550)
-# folded: all_test_issue_targets test_named_closure_stable_id_at_create_2550
+# folded: aura_add_issue_test(test_mutation_log_pressure)
+# folded: aura_issue_test_link_light(test_mutation_log_pressure)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_log_pressure)
+# folded: all_test_issue_targets test_mutation_log_pressure
+# folded: aura_add_issue_test(test_mutation_memory_blame)
+# folded: aura_issue_test_link_light(test_mutation_memory_blame)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_memory_blame)
+# folded: all_test_issue_targets test_mutation_memory_blame
+# folded: aura_add_issue_test(test_mutation_safety_snapshot_steal)
+# folded: aura_issue_test_link_light(test_mutation_safety_snapshot_steal)
+# folded: aura_issue_test_link_llvm_jit(test_mutation_safety_snapshot_steal)
+# folded: all_test_issue_targets test_mutation_safety_snapshot_steal
+# folded: aura_add_issue_test(test_named_closure_stable_id_at_create)
+# folded: aura_issue_test_link_light(test_named_closure_stable_id_at_create)
+# folded: aura_issue_test_link_llvm_jit(test_named_closure_stable_id_at_create)
+# folded: all_test_issue_targets test_named_closure_stable_id_at_create
 # folded: aura_add_issue_test(test_node_meta_bounds)
 # folded: aura_issue_test_link_light(test_node_meta_bounds)
 # folded: aura_issue_test_link_llvm_jit(test_node_meta_bounds)
@@ -3386,34 +3386,34 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_node_meta_gap)
 # folded: aura_issue_test_link_llvm_jit(test_node_meta_gap)
 # folded: all_test_issue_targets test_node_meta_gap
-# folded: aura_add_issue_test(test_occurrence_cache_key_2461)
-# folded: aura_issue_test_link_light(test_occurrence_cache_key_2461)
-# folded: aura_issue_test_link_llvm_jit(test_occurrence_cache_key_2461)
-# folded: all_test_issue_targets test_occurrence_cache_key_2461
-# folded: aura_add_issue_test(test_occurrence_dirty_key_authority_2622)
-# folded: aura_issue_test_link_light(test_occurrence_dirty_key_authority_2622)
-# folded: aura_issue_test_link_llvm_jit(test_occurrence_dirty_key_authority_2622)
-# folded: all_test_issue_targets test_occurrence_dirty_key_authority_2622
-# folded: aura_add_issue_test(test_occurrence_goal_epoch_table_2278)
-# folded: aura_issue_test_link_light(test_occurrence_goal_epoch_table_2278)
-# folded: aura_issue_test_link_llvm_jit(test_occurrence_goal_epoch_table_2278)
-# folded: all_test_issue_targets test_occurrence_goal_epoch_table_2278
-# folded: aura_add_issue_test(test_occurrence_goal_persist_rehydrate_2608)
-# folded: aura_issue_test_link_light(test_occurrence_goal_persist_rehydrate_2608)
-# folded: aura_issue_test_link_llvm_jit(test_occurrence_goal_persist_rehydrate_2608)
-# folded: all_test_issue_targets test_occurrence_goal_persist_rehydrate_2608
-# folded: aura_add_issue_test(test_opcode_reflect_2289)
-# folded: aura_issue_test_link_light(test_opcode_reflect_2289)
-# folded: aura_issue_test_link_llvm_jit(test_opcode_reflect_2289)
-# folded: all_test_issue_targets test_opcode_reflect_2289
-# folded: aura_add_issue_test(test_orch_agent_mutation_boundary_2118)
-# folded: aura_issue_test_link_light(test_orch_agent_mutation_boundary_2118)
-# folded: aura_issue_test_link_llvm_jit(test_orch_agent_mutation_boundary_2118)
-# folded: all_test_issue_targets test_orch_agent_mutation_boundary_2118
-# folded: aura_add_issue_test(test_orch_hot_update_health_throttle_2543)
-# folded: aura_issue_test_link_light(test_orch_hot_update_health_throttle_2543)
-# folded: aura_issue_test_link_llvm_jit(test_orch_hot_update_health_throttle_2543)
-# folded: all_test_issue_targets test_orch_hot_update_health_throttle_2543
+# folded: aura_add_issue_test(test_occurrence_cache_key)
+# folded: aura_issue_test_link_light(test_occurrence_cache_key)
+# folded: aura_issue_test_link_llvm_jit(test_occurrence_cache_key)
+# folded: all_test_issue_targets test_occurrence_cache_key
+# folded: aura_add_issue_test(test_occurrence_dirty_key_authority)
+# folded: aura_issue_test_link_light(test_occurrence_dirty_key_authority)
+# folded: aura_issue_test_link_llvm_jit(test_occurrence_dirty_key_authority)
+# folded: all_test_issue_targets test_occurrence_dirty_key_authority
+# folded: aura_add_issue_test(test_occurrence_goal_epoch_table)
+# folded: aura_issue_test_link_light(test_occurrence_goal_epoch_table)
+# folded: aura_issue_test_link_llvm_jit(test_occurrence_goal_epoch_table)
+# folded: all_test_issue_targets test_occurrence_goal_epoch_table
+# folded: aura_add_issue_test(test_occurrence_goal_persist_rehydrate)
+# folded: aura_issue_test_link_light(test_occurrence_goal_persist_rehydrate)
+# folded: aura_issue_test_link_llvm_jit(test_occurrence_goal_persist_rehydrate)
+# folded: all_test_issue_targets test_occurrence_goal_persist_rehydrate
+# folded: aura_add_issue_test(test_opcode_reflect)
+# folded: aura_issue_test_link_light(test_opcode_reflect)
+# folded: aura_issue_test_link_llvm_jit(test_opcode_reflect)
+# folded: all_test_issue_targets test_opcode_reflect
+# folded: aura_add_issue_test(test_orch_agent_mutation_boundary)
+# folded: aura_issue_test_link_light(test_orch_agent_mutation_boundary)
+# folded: aura_issue_test_link_llvm_jit(test_orch_agent_mutation_boundary)
+# folded: all_test_issue_targets test_orch_agent_mutation_boundary
+# folded: aura_add_issue_test(test_orch_hot_update_health_throttle)
+# folded: aura_issue_test_link_light(test_orch_hot_update_health_throttle)
+# folded: aura_issue_test_link_llvm_jit(test_orch_hot_update_health_throttle)
+# folded: all_test_issue_targets test_orch_hot_update_health_throttle
 # folded: aura_add_issue_test(test_orch_obs_facade)
 # folded: aura_issue_test_link_light(test_orch_obs_facade)
 # folded: aura_issue_test_link_llvm_jit(test_orch_obs_facade)
@@ -3422,18 +3422,18 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_orch_scope)
 # folded: aura_issue_test_link_llvm_jit(test_orch_scope)
 # folded: all_test_issue_targets test_orch_scope
-# folded: aura_add_issue_test(test_orch_scope_child_2631)
-# folded: aura_issue_test_link_light(test_orch_scope_child_2631)
-# folded: aura_issue_test_link_llvm_jit(test_orch_scope_child_2631)
-# folded: all_test_issue_targets test_orch_scope_child_2631
-# folded: aura_add_issue_test(test_orch_soft_boundary_unified_2515)
-# folded: aura_issue_test_link_light(test_orch_soft_boundary_unified_2515)
-# folded: aura_issue_test_link_llvm_jit(test_orch_soft_boundary_unified_2515)
-# folded: all_test_issue_targets test_orch_soft_boundary_unified_2515
-# folded: aura_add_issue_test(test_outermost_exit_order_2120)
-# folded: aura_issue_test_link_light(test_outermost_exit_order_2120)
-# folded: aura_issue_test_link_llvm_jit(test_outermost_exit_order_2120)
-# folded: all_test_issue_targets test_outermost_exit_order_2120
+# folded: aura_add_issue_test(test_orch_scope_child)
+# folded: aura_issue_test_link_light(test_orch_scope_child)
+# folded: aura_issue_test_link_llvm_jit(test_orch_scope_child)
+# folded: all_test_issue_targets test_orch_scope_child
+# folded: aura_add_issue_test(test_orch_soft_boundary_unified)
+# folded: aura_issue_test_link_light(test_orch_soft_boundary_unified)
+# folded: aura_issue_test_link_llvm_jit(test_orch_soft_boundary_unified)
+# folded: all_test_issue_targets test_orch_soft_boundary_unified
+# folded: aura_add_issue_test(test_outermost_exit_order)
+# folded: aura_issue_test_link_light(test_outermost_exit_order)
+# folded: aura_issue_test_link_llvm_jit(test_outermost_exit_order)
+# folded: all_test_issue_targets test_outermost_exit_order
 # folded: aura_add_issue_test(test_panic_defer_after_densify)
 # folded: aura_issue_test_link_light(test_panic_defer_after_densify)
 # folded: aura_issue_test_link_llvm_jit(test_panic_defer_after_densify)
@@ -3458,174 +3458,174 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_param_data_mutation_contract)
 # folded: aura_issue_test_link_llvm_jit(test_param_data_mutation_contract)
 # folded: all_test_issue_targets test_param_data_mutation_contract
-# folded: aura_add_issue_test(test_partial_cone_cap_2560)
-# folded: aura_issue_test_link_light(test_partial_cone_cap_2560)
-# folded: aura_issue_test_link_llvm_jit(test_partial_cone_cap_2560)
-# folded: all_test_issue_targets test_partial_cone_cap_2560
-# folded: aura_add_issue_test(test_partial_cone_commit_gate_2621)
-# folded: aura_issue_test_link_light(test_partial_cone_commit_gate_2621)
-# folded: aura_issue_test_link_llvm_jit(test_partial_cone_commit_gate_2621)
-# folded: all_test_issue_targets test_partial_cone_commit_gate_2621
-# folded: aura_add_issue_test(test_partial_cs_single_source_2262)
-# folded: aura_issue_test_link_light(test_partial_cs_single_source_2262)
-# folded: aura_issue_test_link_llvm_jit(test_partial_cs_single_source_2262)
-# folded: all_test_issue_targets test_partial_cs_single_source_2262
-# folded: aura_add_issue_test(test_partial_recompile_single_evict_2476)
-# folded: aura_issue_test_link_light(test_partial_recompile_single_evict_2476)
-# folded: aura_issue_test_link_llvm_jit(test_partial_recompile_single_evict_2476)
-# folded: all_test_issue_targets test_partial_recompile_single_evict_2476
-# folded: aura_add_issue_test(test_partial_relower_cascade_2041)
-# folded: aura_issue_test_link_light(test_partial_relower_cascade_2041)
-# folded: aura_issue_test_link_llvm_jit(test_partial_relower_cascade_2041)
-# folded: all_test_issue_targets test_partial_relower_cascade_2041
-# folded: aura_add_issue_test(test_partial_relower_storm_gate_2190)
-# folded: aura_issue_test_link_light(test_partial_relower_storm_gate_2190)
-# folded: aura_issue_test_link_llvm_jit(test_partial_relower_storm_gate_2190)
-# folded: all_test_issue_targets test_partial_relower_storm_gate_2190
-# folded: aura_add_issue_test(test_pcv_exclusive_with_set_2140)
-# folded: aura_issue_test_link_light(test_pcv_exclusive_with_set_2140)
-# folded: aura_issue_test_link_llvm_jit(test_pcv_exclusive_with_set_2140)
-# folded: all_test_issue_targets test_pcv_exclusive_with_set_2140
-# folded: aura_add_issue_test(test_pcv_tls_default_on_2521)
-# folded: aura_issue_test_link_light(test_pcv_tls_default_on_2521)
-# folded: aura_issue_test_link_llvm_jit(test_pcv_tls_default_on_2521)
-# folded: all_test_issue_targets test_pcv_tls_default_on_2521
-# folded: aura_add_issue_test(test_pcv_tls_scratch_2406)
-# folded: aura_issue_test_link_light(test_pcv_tls_scratch_2406)
-# folded: aura_issue_test_link_llvm_jit(test_pcv_tls_scratch_2406)
-# folded: all_test_issue_targets test_pcv_tls_scratch_2406
-# folded: aura_add_issue_test(test_pcv_unique_hotpath_2058)
-# folded: aura_issue_test_link_light(test_pcv_unique_hotpath_2058)
-# folded: aura_issue_test_link_llvm_jit(test_pcv_unique_hotpath_2058)
-# folded: all_test_issue_targets test_pcv_unique_hotpath_2058
+# folded: aura_add_issue_test(test_partial_cone_cap)
+# folded: aura_issue_test_link_light(test_partial_cone_cap)
+# folded: aura_issue_test_link_llvm_jit(test_partial_cone_cap)
+# folded: all_test_issue_targets test_partial_cone_cap
+# folded: aura_add_issue_test(test_partial_cone_commit_gate)
+# folded: aura_issue_test_link_light(test_partial_cone_commit_gate)
+# folded: aura_issue_test_link_llvm_jit(test_partial_cone_commit_gate)
+# folded: all_test_issue_targets test_partial_cone_commit_gate
+# folded: aura_add_issue_test(test_partial_cs_single_source)
+# folded: aura_issue_test_link_light(test_partial_cs_single_source)
+# folded: aura_issue_test_link_llvm_jit(test_partial_cs_single_source)
+# folded: all_test_issue_targets test_partial_cs_single_source
+# folded: aura_add_issue_test(test_partial_recompile_single_evict)
+# folded: aura_issue_test_link_light(test_partial_recompile_single_evict)
+# folded: aura_issue_test_link_llvm_jit(test_partial_recompile_single_evict)
+# folded: all_test_issue_targets test_partial_recompile_single_evict
+# folded: aura_add_issue_test(test_partial_relower_cascade)
+# folded: aura_issue_test_link_light(test_partial_relower_cascade)
+# folded: aura_issue_test_link_llvm_jit(test_partial_relower_cascade)
+# folded: all_test_issue_targets test_partial_relower_cascade
+# folded: aura_add_issue_test(test_partial_relower_storm_gate)
+# folded: aura_issue_test_link_light(test_partial_relower_storm_gate)
+# folded: aura_issue_test_link_llvm_jit(test_partial_relower_storm_gate)
+# folded: all_test_issue_targets test_partial_relower_storm_gate
+# folded: aura_add_issue_test(test_pcv_exclusive_with_set)
+# folded: aura_issue_test_link_light(test_pcv_exclusive_with_set)
+# folded: aura_issue_test_link_llvm_jit(test_pcv_exclusive_with_set)
+# folded: all_test_issue_targets test_pcv_exclusive_with_set
+# folded: aura_add_issue_test(test_pcv_tls_default_on)
+# folded: aura_issue_test_link_light(test_pcv_tls_default_on)
+# folded: aura_issue_test_link_llvm_jit(test_pcv_tls_default_on)
+# folded: all_test_issue_targets test_pcv_tls_default_on
+# folded: aura_add_issue_test(test_pcv_tls_scratch)
+# folded: aura_issue_test_link_light(test_pcv_tls_scratch)
+# folded: aura_issue_test_link_llvm_jit(test_pcv_tls_scratch)
+# folded: all_test_issue_targets test_pcv_tls_scratch
+# folded: aura_add_issue_test(test_pcv_unique_hotpath)
+# folded: aura_issue_test_link_light(test_pcv_unique_hotpath)
+# folded: aura_issue_test_link_llvm_jit(test_pcv_unique_hotpath)
+# folded: all_test_issue_targets test_pcv_unique_hotpath
 # folded: aura_add_issue_test(test_per_scope_bp_admit)
 # folded: aura_issue_test_link_light(test_per_scope_bp_admit)
 # folded: aura_issue_test_link_llvm_jit(test_per_scope_bp_admit)
 # folded: all_test_issue_targets test_per_scope_bp_admit
-# folded: aura_add_issue_test(test_pereval_reemit_region_independence_2606)
-# folded: aura_issue_test_link_light(test_pereval_reemit_region_independence_2606)
-# folded: aura_issue_test_link_llvm_jit(test_pereval_reemit_region_independence_2606)
-# folded: all_test_issue_targets test_pereval_reemit_region_independence_2606
-# folded: aura_add_issue_test(test_persistent_typechecker_2220)
-# folded: aura_issue_test_link_light(test_persistent_typechecker_2220)
-# folded: aura_issue_test_link_llvm_jit(test_persistent_typechecker_2220)
-# folded: all_test_issue_targets test_persistent_typechecker_2220
-# folded: aura_add_issue_test(test_post_compact_lifecycle_2436)
-# folded: aura_issue_test_link_light(test_post_compact_lifecycle_2436)
-# folded: aura_issue_test_link_llvm_jit(test_post_compact_lifecycle_2436)
-# folded: all_test_issue_targets test_post_compact_lifecycle_2436
+# folded: aura_add_issue_test(test_pereval_reemit_region_independence)
+# folded: aura_issue_test_link_light(test_pereval_reemit_region_independence)
+# folded: aura_issue_test_link_llvm_jit(test_pereval_reemit_region_independence)
+# folded: all_test_issue_targets test_pereval_reemit_region_independence
+# folded: aura_add_issue_test(test_persistent_typechecker)
+# folded: aura_issue_test_link_light(test_persistent_typechecker)
+# folded: aura_issue_test_link_llvm_jit(test_persistent_typechecker)
+# folded: all_test_issue_targets test_persistent_typechecker
+# folded: aura_add_issue_test(test_post_compact_lifecycle)
+# folded: aura_issue_test_link_light(test_post_compact_lifecycle)
+# folded: aura_issue_test_link_llvm_jit(test_post_compact_lifecycle)
+# folded: all_test_issue_targets test_post_compact_lifecycle
 # folded: aura_add_issue_test(test_post_densify_linear_type_revalidate)
 # folded: aura_issue_test_link_light(test_post_densify_linear_type_revalidate)
 # folded: aura_issue_test_link_llvm_jit(test_post_densify_linear_type_revalidate)
 # folded: all_test_issue_targets test_post_densify_linear_type_revalidate
-# folded: aura_add_issue_test(test_post_steal_linear_revalidate_2197)
-# folded: aura_issue_test_link_light(test_post_steal_linear_revalidate_2197)
-# folded: aura_issue_test_link_llvm_jit(test_post_steal_linear_revalidate_2197)
-# folded: all_test_issue_targets test_post_steal_linear_revalidate_2197
-# folded: aura_add_issue_test(test_predicate_meet_join_lattice_2148)
-# folded: aura_issue_test_link_light(test_predicate_meet_join_lattice_2148)
-# folded: aura_issue_test_link_llvm_jit(test_predicate_meet_join_lattice_2148)
-# folded: all_test_issue_targets test_predicate_meet_join_lattice_2148
-# folded: aura_add_issue_test(test_predicate_memo_boundary_selective_2104)
-# folded: aura_issue_test_link_light(test_predicate_memo_boundary_selective_2104)
-# folded: aura_issue_test_link_llvm_jit(test_predicate_memo_boundary_selective_2104)
-# folded: all_test_issue_targets test_predicate_memo_boundary_selective_2104
-# folded: aura_add_issue_test(test_primcall_narg_2576)
-# folded: aura_issue_test_link_light(test_primcall_narg_2576)
-# folded: aura_issue_test_link_llvm_jit(test_primcall_narg_2576)
-# folded: all_test_issue_targets test_primcall_narg_2576
-# folded: aura_add_issue_test(test_primcall_str_intern_2577)
-# folded: aura_issue_test_link_light(test_primcall_str_intern_2577)
-# folded: aura_issue_test_link_llvm_jit(test_primcall_str_intern_2577)
-# folded: all_test_issue_targets test_primcall_str_intern_2577
-# folded: aura_add_issue_test(test_production_hardening_985)
-# folded: aura_issue_test_link_light(test_production_hardening_985)
-# folded: aura_issue_test_link_llvm_jit(test_production_hardening_985)
-# folded: all_test_issue_targets test_production_hardening_985
-# folded: aura_add_issue_test(test_production_safety_1047)
-# folded: aura_issue_test_link_light(test_production_safety_1047)
-# folded: aura_issue_test_link_llvm_jit(test_production_safety_1047)
-# folded: all_test_issue_targets test_production_safety_1047
-# folded: aura_add_issue_test(test_production_safety_1097)
-# folded: aura_issue_test_link_light(test_production_safety_1097)
-# folded: aura_issue_test_link_llvm_jit(test_production_safety_1097)
-# folded: all_test_issue_targets test_production_safety_1097
-# folded: aura_add_issue_test(test_production_security_defaults_2053)
-# folded: aura_issue_test_link_light(test_production_security_defaults_2053)
-# folded: aura_issue_test_link_llvm_jit(test_production_security_defaults_2053)
-# folded: all_test_issue_targets test_production_security_defaults_2053
-# folded: aura_add_issue_test(test_production_stability_1014)
-# folded: aura_issue_test_link_light(test_production_stability_1014)
-# folded: aura_issue_test_link_llvm_jit(test_production_stability_1014)
-# folded: all_test_issue_targets test_production_stability_1014
-# folded: aura_add_issue_test(test_query_and_replace_batch_2527)
-# folded: aura_issue_test_link_light(test_query_and_replace_batch_2527)
-# folded: aura_issue_test_link_llvm_jit(test_query_and_replace_batch_2527)
-# folded: all_test_issue_targets test_query_and_replace_batch_2527
-# folded: aura_add_issue_test(test_query_by_marker_provenance_2242)
-# folded: aura_issue_test_link_light(test_query_by_marker_provenance_2242)
-# folded: aura_issue_test_link_llvm_jit(test_query_by_marker_provenance_2242)
-# folded: all_test_issue_targets test_query_by_marker_provenance_2242
-# folded: aura_add_issue_test(test_query_epoch_contract_2192)
-# folded: aura_issue_test_link_light(test_query_epoch_contract_2192)
-# folded: aura_issue_test_link_llvm_jit(test_query_epoch_contract_2192)
-# folded: all_test_issue_targets test_query_epoch_contract_2192
-# folded: aura_add_issue_test(test_query_hygiene_default_2525)
-# folded: aura_issue_test_link_light(test_query_hygiene_default_2525)
-# folded: aura_issue_test_link_llvm_jit(test_query_hygiene_default_2525)
-# folded: all_test_issue_targets test_query_hygiene_default_2525
-# folded: aura_add_issue_test(test_query_index_composite_2403)
-# folded: aura_issue_test_link_light(test_query_index_composite_2403)
-# folded: aura_issue_test_link_llvm_jit(test_query_index_composite_2403)
-# folded: all_test_issue_targets test_query_index_composite_2403
-# folded: aura_add_issue_test(test_query_pattern_default_hygiene_2123)
-# folded: aura_issue_test_link_light(test_query_pattern_default_hygiene_2123)
-# folded: aura_issue_test_link_llvm_jit(test_query_pattern_default_hygiene_2123)
-# folded: all_test_issue_targets test_query_pattern_default_hygiene_2123
+# folded: aura_add_issue_test(test_post_steal_linear_revalidate)
+# folded: aura_issue_test_link_light(test_post_steal_linear_revalidate)
+# folded: aura_issue_test_link_llvm_jit(test_post_steal_linear_revalidate)
+# folded: all_test_issue_targets test_post_steal_linear_revalidate
+# folded: aura_add_issue_test(test_predicate_meet_join_lattice)
+# folded: aura_issue_test_link_light(test_predicate_meet_join_lattice)
+# folded: aura_issue_test_link_llvm_jit(test_predicate_meet_join_lattice)
+# folded: all_test_issue_targets test_predicate_meet_join_lattice
+# folded: aura_add_issue_test(test_predicate_memo_boundary_selective)
+# folded: aura_issue_test_link_light(test_predicate_memo_boundary_selective)
+# folded: aura_issue_test_link_llvm_jit(test_predicate_memo_boundary_selective)
+# folded: all_test_issue_targets test_predicate_memo_boundary_selective
+# folded: aura_add_issue_test(test_primcall_narg)
+# folded: aura_issue_test_link_light(test_primcall_narg)
+# folded: aura_issue_test_link_llvm_jit(test_primcall_narg)
+# folded: all_test_issue_targets test_primcall_narg
+# folded: aura_add_issue_test(test_primcall_str_intern)
+# folded: aura_issue_test_link_light(test_primcall_str_intern)
+# folded: aura_issue_test_link_llvm_jit(test_primcall_str_intern)
+# folded: all_test_issue_targets test_primcall_str_intern
+# folded: aura_add_issue_test(test_production_hardening)
+# folded: aura_issue_test_link_light(test_production_hardening)
+# folded: aura_issue_test_link_llvm_jit(test_production_hardening)
+# folded: all_test_issue_targets test_production_hardening
+# folded: aura_add_issue_test(test_production_safety_p1)
+# folded: aura_issue_test_link_light(test_production_safety_p1)
+# folded: aura_issue_test_link_llvm_jit(test_production_safety_p1)
+# folded: all_test_issue_targets test_production_safety_p1
+# folded: aura_add_issue_test(test_production_safety_p2)
+# folded: aura_issue_test_link_light(test_production_safety_p2)
+# folded: aura_issue_test_link_llvm_jit(test_production_safety_p2)
+# folded: all_test_issue_targets test_production_safety_p2
+# folded: aura_add_issue_test(test_production_security_defaults)
+# folded: aura_issue_test_link_light(test_production_security_defaults)
+# folded: aura_issue_test_link_llvm_jit(test_production_security_defaults)
+# folded: all_test_issue_targets test_production_security_defaults
+# folded: aura_add_issue_test(test_production_stability)
+# folded: aura_issue_test_link_light(test_production_stability)
+# folded: aura_issue_test_link_llvm_jit(test_production_stability)
+# folded: all_test_issue_targets test_production_stability
+# folded: aura_add_issue_test(test_query_and_replace_batch)
+# folded: aura_issue_test_link_light(test_query_and_replace_batch)
+# folded: aura_issue_test_link_llvm_jit(test_query_and_replace_batch)
+# folded: all_test_issue_targets test_query_and_replace_batch
+# folded: aura_add_issue_test(test_query_by_marker_provenance)
+# folded: aura_issue_test_link_light(test_query_by_marker_provenance)
+# folded: aura_issue_test_link_llvm_jit(test_query_by_marker_provenance)
+# folded: all_test_issue_targets test_query_by_marker_provenance
+# folded: aura_add_issue_test(test_query_epoch_contract)
+# folded: aura_issue_test_link_light(test_query_epoch_contract)
+# folded: aura_issue_test_link_llvm_jit(test_query_epoch_contract)
+# folded: all_test_issue_targets test_query_epoch_contract
+# folded: aura_add_issue_test(test_query_hygiene_default)
+# folded: aura_issue_test_link_light(test_query_hygiene_default)
+# folded: aura_issue_test_link_llvm_jit(test_query_hygiene_default)
+# folded: all_test_issue_targets test_query_hygiene_default
+# folded: aura_add_issue_test(test_query_index_composite)
+# folded: aura_issue_test_link_light(test_query_index_composite)
+# folded: aura_issue_test_link_llvm_jit(test_query_index_composite)
+# folded: all_test_issue_targets test_query_index_composite
+# folded: aura_add_issue_test(test_query_pattern_default_hygiene)
+# folded: aura_issue_test_link_light(test_query_pattern_default_hygiene)
+# folded: aura_issue_test_link_llvm_jit(test_query_pattern_default_hygiene)
+# folded: all_test_issue_targets test_query_pattern_default_hygiene
 # folded: aura_add_issue_test(test_raii_guard_flatast_lifetime)
 # folded: aura_issue_test_link_light(test_raii_guard_flatast_lifetime)
 # folded: aura_issue_test_link_llvm_jit(test_raii_guard_flatast_lifetime)
 # folded: all_test_issue_targets test_raii_guard_flatast_lifetime
-# folded: aura_add_issue_test(test_reemit_mutation_boundary_handshake_2114)
-# folded: aura_issue_test_link_light(test_reemit_mutation_boundary_handshake_2114)
-# folded: aura_issue_test_link_llvm_jit(test_reemit_mutation_boundary_handshake_2114)
-# folded: all_test_issue_targets test_reemit_mutation_boundary_handshake_2114
-# folded: aura_add_issue_test(test_reemit_production_default_defer_2205)
-# folded: aura_issue_test_link_light(test_reemit_production_default_defer_2205)
-# folded: aura_issue_test_link_llvm_jit(test_reemit_production_default_defer_2205)
-# folded: all_test_issue_targets test_reemit_production_default_defer_2205
-# folded: aura_add_issue_test(test_reemit_production_default_defer_2208)
-# folded: aura_issue_test_link_light(test_reemit_production_default_defer_2208)
-# folded: aura_issue_test_link_llvm_jit(test_reemit_production_default_defer_2208)
-# folded: all_test_issue_targets test_reemit_production_default_defer_2208
-# folded: aura_add_issue_test(test_reflect_isolation_2290)
-# folded: aura_issue_test_link_light(test_reflect_isolation_2290)
-# folded: aura_issue_test_link_llvm_jit(test_reflect_isolation_2290)
-# folded: all_test_issue_targets test_reflect_isolation_2290
-# folded: aura_add_issue_test(test_regex_redos_timeout_2479)
-# folded: aura_issue_test_link_light(test_regex_redos_timeout_2479)
-# folded: aura_issue_test_link_llvm_jit(test_regex_redos_timeout_2479)
-# folded: all_test_issue_targets test_regex_redos_timeout_2479
+# folded: aura_add_issue_test(test_reemit_mutation_boundary_handshake)
+# folded: aura_issue_test_link_light(test_reemit_mutation_boundary_handshake)
+# folded: aura_issue_test_link_llvm_jit(test_reemit_mutation_boundary_handshake)
+# folded: all_test_issue_targets test_reemit_mutation_boundary_handshake
+# folded: aura_add_issue_test(test_reemit_production_default_defer)
+# folded: aura_issue_test_link_light(test_reemit_production_default_defer)
+# folded: aura_issue_test_link_llvm_jit(test_reemit_production_default_defer)
+# folded: all_test_issue_targets test_reemit_production_default_defer
+# folded: aura_add_issue_test(test_reemit_production_default_defer_v2)
+# folded: aura_issue_test_link_light(test_reemit_production_default_defer_v2)
+# folded: aura_issue_test_link_llvm_jit(test_reemit_production_default_defer_v2)
+# folded: all_test_issue_targets test_reemit_production_default_defer_v2
+# folded: aura_add_issue_test(test_reflect_isolation)
+# folded: aura_issue_test_link_light(test_reflect_isolation)
+# folded: aura_issue_test_link_llvm_jit(test_reflect_isolation)
+# folded: all_test_issue_targets test_reflect_isolation
+# folded: aura_add_issue_test(test_regex_redos_timeout)
+# folded: aura_issue_test_link_light(test_regex_redos_timeout)
+# folded: aura_issue_test_link_llvm_jit(test_regex_redos_timeout)
+# folded: all_test_issue_targets test_regex_redos_timeout
 # folded: aura_add_issue_test(test_region_dense_atomic)
 # folded: aura_issue_test_link_light(test_region_dense_atomic)
 # folded: aura_issue_test_link_llvm_jit(test_region_dense_atomic)
 # folded: all_test_issue_targets test_region_dense_atomic
-# folded: aura_add_issue_test(test_region_priority_deopt_throttle_2132)
-# folded: aura_issue_test_link_light(test_region_priority_deopt_throttle_2132)
-# folded: aura_issue_test_link_llvm_jit(test_region_priority_deopt_throttle_2132)
-# folded: all_test_issue_targets test_region_priority_deopt_throttle_2132
-# folded: aura_add_issue_test(test_reload_recovery_query_2367)
-# folded: aura_issue_test_link_light(test_reload_recovery_query_2367)
-# folded: aura_issue_test_link_llvm_jit(test_reload_recovery_query_2367)
-# folded: all_test_issue_targets test_reload_recovery_query_2367
-# folded: aura_add_issue_test(test_relower_fallback_reason_2193)
-# folded: aura_issue_test_link_light(test_relower_fallback_reason_2193)
-# folded: aura_issue_test_link_llvm_jit(test_relower_fallback_reason_2193)
-# folded: all_test_issue_targets test_relower_fallback_reason_2193
-# folded: aura_add_issue_test(test_remount_force_deopt_2503)
-# folded: aura_issue_test_link_light(test_remount_force_deopt_2503)
-# folded: aura_issue_test_link_llvm_jit(test_remount_force_deopt_2503)
-# folded: all_test_issue_targets test_remount_force_deopt_2503
+# folded: aura_add_issue_test(test_region_priority_deopt_throttle)
+# folded: aura_issue_test_link_light(test_region_priority_deopt_throttle)
+# folded: aura_issue_test_link_llvm_jit(test_region_priority_deopt_throttle)
+# folded: all_test_issue_targets test_region_priority_deopt_throttle
+# folded: aura_add_issue_test(test_reload_recovery_query)
+# folded: aura_issue_test_link_light(test_reload_recovery_query)
+# folded: aura_issue_test_link_llvm_jit(test_reload_recovery_query)
+# folded: all_test_issue_targets test_reload_recovery_query
+# folded: aura_add_issue_test(test_relower_fallback_reason)
+# folded: aura_issue_test_link_light(test_relower_fallback_reason)
+# folded: aura_issue_test_link_llvm_jit(test_relower_fallback_reason)
+# folded: all_test_issue_targets test_relower_fallback_reason
+# folded: aura_add_issue_test(test_remount_force_deopt)
+# folded: aura_issue_test_link_light(test_remount_force_deopt)
+# folded: aura_issue_test_link_llvm_jit(test_remount_force_deopt)
+# folded: all_test_issue_targets test_remount_force_deopt
 # folded: aura_add_issue_test(test_require_effect_auto_isolation)
 # folded: aura_issue_test_link_light(test_require_effect_auto_isolation)
 # folded: aura_issue_test_link_llvm_jit(test_require_effect_auto_isolation)
@@ -3634,38 +3634,38 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_require_effect_live_mid)
 # folded: aura_issue_test_link_llvm_jit(test_require_effect_live_mid)
 # folded: all_test_issue_targets test_require_effect_live_mid
-# folded: aura_add_issue_test(test_reset_slot_parent_edges_2412)
-# folded: aura_issue_test_link_light(test_reset_slot_parent_edges_2412)
-# folded: aura_issue_test_link_llvm_jit(test_reset_slot_parent_edges_2412)
-# folded: all_test_issue_targets test_reset_slot_parent_edges_2412
-# folded: aura_add_issue_test(test_residual_defer_steal_hard_and_2546)
-# folded: aura_issue_test_link_light(test_residual_defer_steal_hard_and_2546)
-# folded: aura_issue_test_link_llvm_jit(test_residual_defer_steal_hard_and_2546)
-# folded: all_test_issue_targets test_residual_defer_steal_hard_and_2546
-# folded: aura_add_issue_test(test_residual_force_safepoint_2533)
-# folded: aura_issue_test_link_light(test_residual_force_safepoint_2533)
-# folded: aura_issue_test_link_llvm_jit(test_residual_force_safepoint_2533)
-# folded: all_test_issue_targets test_residual_force_safepoint_2533
-# folded: aura_add_issue_test(test_residual_gc_defer_assert_2211)
-# folded: aura_issue_test_link_light(test_residual_gc_defer_assert_2211)
-# folded: aura_issue_test_link_llvm_jit(test_residual_gc_defer_assert_2211)
-# folded: all_test_issue_targets test_residual_gc_defer_assert_2211
-# folded: aura_add_issue_test(test_rest_param_hygiene_2169)
-# folded: aura_issue_test_link_light(test_rest_param_hygiene_2169)
-# folded: aura_issue_test_link_llvm_jit(test_rest_param_hygiene_2169)
-# folded: all_test_issue_targets test_rest_param_hygiene_2169
-# folded: aura_add_issue_test(test_rest_param_nested_qq_hygiene_2239)
-# folded: aura_issue_test_link_light(test_rest_param_nested_qq_hygiene_2239)
-# folded: aura_issue_test_link_llvm_jit(test_rest_param_nested_qq_hygiene_2239)
-# folded: all_test_issue_targets test_rest_param_nested_qq_hygiene_2239
+# folded: aura_add_issue_test(test_reset_slot_parent_edges)
+# folded: aura_issue_test_link_light(test_reset_slot_parent_edges)
+# folded: aura_issue_test_link_llvm_jit(test_reset_slot_parent_edges)
+# folded: all_test_issue_targets test_reset_slot_parent_edges
+# folded: aura_add_issue_test(test_residual_defer_steal_hard_and)
+# folded: aura_issue_test_link_light(test_residual_defer_steal_hard_and)
+# folded: aura_issue_test_link_llvm_jit(test_residual_defer_steal_hard_and)
+# folded: all_test_issue_targets test_residual_defer_steal_hard_and
+# folded: aura_add_issue_test(test_residual_force_safepoint)
+# folded: aura_issue_test_link_light(test_residual_force_safepoint)
+# folded: aura_issue_test_link_llvm_jit(test_residual_force_safepoint)
+# folded: all_test_issue_targets test_residual_force_safepoint
+# folded: aura_add_issue_test(test_residual_gc_defer_assert)
+# folded: aura_issue_test_link_light(test_residual_gc_defer_assert)
+# folded: aura_issue_test_link_llvm_jit(test_residual_gc_defer_assert)
+# folded: all_test_issue_targets test_residual_gc_defer_assert
+# folded: aura_add_issue_test(test_rest_param_hygiene)
+# folded: aura_issue_test_link_light(test_rest_param_hygiene)
+# folded: aura_issue_test_link_llvm_jit(test_rest_param_hygiene)
+# folded: all_test_issue_targets test_rest_param_hygiene
+# folded: aura_add_issue_test(test_rest_param_nested_qq_hygiene)
+# folded: aura_issue_test_link_light(test_rest_param_nested_qq_hygiene)
+# folded: aura_issue_test_link_llvm_jit(test_rest_param_nested_qq_hygiene)
+# folded: all_test_issue_targets test_rest_param_nested_qq_hygiene
 # folded: aura_add_issue_test(test_restamp_lazy_align_atomic)
 # folded: aura_issue_test_link_light(test_restamp_lazy_align_atomic)
 # folded: aura_issue_test_link_llvm_jit(test_restamp_lazy_align_atomic)
 # folded: all_test_issue_targets test_restamp_lazy_align_atomic
-# folded: aura_add_issue_test(test_restamp_sla_observability_2528)
-# folded: aura_issue_test_link_light(test_restamp_sla_observability_2528)
-# folded: aura_issue_test_link_llvm_jit(test_restamp_sla_observability_2528)
-# folded: all_test_issue_targets test_restamp_sla_observability_2528
+# folded: aura_add_issue_test(test_restamp_sla_observability)
+# folded: aura_issue_test_link_light(test_restamp_sla_observability)
+# folded: aura_issue_test_link_llvm_jit(test_restamp_sla_observability)
+# folded: all_test_issue_targets test_restamp_sla_observability
 # folded: aura_add_issue_test(test_restore_children_structural_lock)
 # folded: aura_issue_test_link_light(test_restore_children_structural_lock)
 # folded: aura_issue_test_link_llvm_jit(test_restore_children_structural_lock)
@@ -3674,14 +3674,14 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_restricted_unset_principal)
 # folded: aura_issue_test_link_llvm_jit(test_restricted_unset_principal)
 # folded: all_test_issue_targets test_restricted_unset_principal
-# folded: aura_add_issue_test(test_reverify_expand_2356)
-# folded: aura_issue_test_link_light(test_reverify_expand_2356)
-# folded: aura_issue_test_link_llvm_jit(test_reverify_expand_2356)
-# folded: all_test_issue_targets test_reverify_expand_2356
-# folded: aura_add_issue_test(test_rollback_by_marker_2237)
-# folded: aura_issue_test_link_light(test_rollback_by_marker_2237)
-# folded: aura_issue_test_link_llvm_jit(test_rollback_by_marker_2237)
-# folded: all_test_issue_targets test_rollback_by_marker_2237
+# folded: aura_add_issue_test(test_reverify_expand)
+# folded: aura_issue_test_link_light(test_reverify_expand)
+# folded: aura_issue_test_link_llvm_jit(test_reverify_expand)
+# folded: all_test_issue_targets test_reverify_expand
+# folded: aura_add_issue_test(test_rollback_by_marker)
+# folded: aura_issue_test_link_light(test_rollback_by_marker)
+# folded: aura_issue_test_link_llvm_jit(test_rollback_by_marker)
+# folded: all_test_issue_targets test_rollback_by_marker
 # folded: aura_add_issue_test(test_root_remap_pass)
 # folded: aura_issue_test_link_light(test_root_remap_pass)
 # folded: aura_issue_test_link_llvm_jit(test_root_remap_pass)
@@ -3730,34 +3730,34 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_security_schedule_mutate_admit)
 # folded: aura_issue_test_link_llvm_jit(test_security_schedule_mutate_admit)
 # folded: all_test_issue_targets test_security_schedule_mutate_admit
-# folded: aura_add_issue_test(test_selfevo_bugfix_941)
-# folded: aura_issue_test_link_light(test_selfevo_bugfix_941)
-# folded: aura_issue_test_link_llvm_jit(test_selfevo_bugfix_941)
-# folded: all_test_issue_targets test_selfevo_bugfix_941
-# folded: aura_add_issue_test(test_setcode_rebind_survive_2569)
-# folded: aura_issue_test_link_light(test_setcode_rebind_survive_2569)
-# folded: aura_issue_test_link_llvm_jit(test_setcode_rebind_survive_2569)
-# folded: all_test_issue_targets test_setcode_rebind_survive_2569
-# folded: aura_add_issue_test(test_shape_compact_storm_isolation_2617)
-# folded: aura_issue_test_link_light(test_shape_compact_storm_isolation_2617)
-# folded: aura_issue_test_link_llvm_jit(test_shape_compact_storm_isolation_2617)
-# folded: all_test_issue_targets test_shape_compact_storm_isolation_2617
-# folded: aura_add_issue_test(test_shape_high_mutation_storm_2433)
-# folded: aura_issue_test_link_light(test_shape_high_mutation_storm_2433)
-# folded: aura_issue_test_link_llvm_jit(test_shape_high_mutation_storm_2433)
-# folded: all_test_issue_targets test_shape_high_mutation_storm_2433
-# folded: aura_add_issue_test(test_shape_profiler_concurrency_2141)
-# folded: aura_issue_test_link_light(test_shape_profiler_concurrency_2141)
-# folded: aura_issue_test_link_llvm_jit(test_shape_profiler_concurrency_2141)
-# folded: all_test_issue_targets test_shape_profiler_concurrency_2141
-# folded: aura_add_issue_test(test_shape_storm_adaptive_2526)
-# folded: aura_issue_test_link_light(test_shape_storm_adaptive_2526)
-# folded: aura_issue_test_link_llvm_jit(test_shape_storm_adaptive_2526)
-# folded: all_test_issue_targets test_shape_storm_adaptive_2526
-# folded: aura_add_issue_test(test_shape_storm_partial_relower_2212)
-# folded: aura_issue_test_link_light(test_shape_storm_partial_relower_2212)
-# folded: aura_issue_test_link_llvm_jit(test_shape_storm_partial_relower_2212)
-# folded: all_test_issue_targets test_shape_storm_partial_relower_2212
+# folded: aura_add_issue_test(test_selfevo_bugfix)
+# folded: aura_issue_test_link_light(test_selfevo_bugfix)
+# folded: aura_issue_test_link_llvm_jit(test_selfevo_bugfix)
+# folded: all_test_issue_targets test_selfevo_bugfix
+# folded: aura_add_issue_test(test_setcode_rebind_survive)
+# folded: aura_issue_test_link_light(test_setcode_rebind_survive)
+# folded: aura_issue_test_link_llvm_jit(test_setcode_rebind_survive)
+# folded: all_test_issue_targets test_setcode_rebind_survive
+# folded: aura_add_issue_test(test_shape_compact_storm_isolation)
+# folded: aura_issue_test_link_light(test_shape_compact_storm_isolation)
+# folded: aura_issue_test_link_llvm_jit(test_shape_compact_storm_isolation)
+# folded: all_test_issue_targets test_shape_compact_storm_isolation
+# folded: aura_add_issue_test(test_shape_high_mutation_storm)
+# folded: aura_issue_test_link_light(test_shape_high_mutation_storm)
+# folded: aura_issue_test_link_llvm_jit(test_shape_high_mutation_storm)
+# folded: all_test_issue_targets test_shape_high_mutation_storm
+# folded: aura_add_issue_test(test_shape_profiler_concurrency)
+# folded: aura_issue_test_link_light(test_shape_profiler_concurrency)
+# folded: aura_issue_test_link_llvm_jit(test_shape_profiler_concurrency)
+# folded: all_test_issue_targets test_shape_profiler_concurrency
+# folded: aura_add_issue_test(test_shape_storm_adaptive)
+# folded: aura_issue_test_link_light(test_shape_storm_adaptive)
+# folded: aura_issue_test_link_llvm_jit(test_shape_storm_adaptive)
+# folded: all_test_issue_targets test_shape_storm_adaptive
+# folded: aura_add_issue_test(test_shape_storm_partial_relower)
+# folded: aura_issue_test_link_light(test_shape_storm_partial_relower)
+# folded: aura_issue_test_link_llvm_jit(test_shape_storm_partial_relower)
+# folded: all_test_issue_targets test_shape_storm_partial_relower
 # folded: aura_add_issue_test(test_side_effect_inherit)
 # folded: aura_issue_test_link_light(test_side_effect_inherit)
 # folded: aura_issue_test_link_llvm_jit(test_side_effect_inherit)
@@ -3766,126 +3766,126 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_side_effect_security_gate_hardfail)
 # folded: aura_issue_test_link_llvm_jit(test_side_effect_security_gate_hardfail)
 # folded: all_test_issue_targets test_side_effect_security_gate_hardfail
-# folded: aura_add_issue_test(test_soa_ban_residual_aos_bridge_2520)
-# folded: aura_issue_test_link_light(test_soa_ban_residual_aos_bridge_2520)
-# folded: aura_issue_test_link_llvm_jit(test_soa_ban_residual_aos_bridge_2520)
-# folded: all_test_issue_targets test_soa_ban_residual_aos_bridge_2520
+# folded: aura_add_issue_test(test_soa_ban_residual_aos_bridge)
+# folded: aura_issue_test_link_light(test_soa_ban_residual_aos_bridge)
+# folded: aura_issue_test_link_llvm_jit(test_soa_ban_residual_aos_bridge)
+# folded: all_test_issue_targets test_soa_ban_residual_aos_bridge
 # folded: aura_add_issue_test(test_soa_column_atomic)
 # folded: aura_issue_test_link_light(test_soa_column_atomic)
 # folded: aura_issue_test_link_llvm_jit(test_soa_column_atomic)
 # folded: all_test_issue_targets test_soa_column_atomic
-# folded: aura_add_issue_test(test_soa_dirty_aware_pipeline_2143)
-# folded: aura_issue_test_link_light(test_soa_dirty_aware_pipeline_2143)
-# folded: aura_issue_test_link_llvm_jit(test_soa_dirty_aware_pipeline_2143)
-# folded: all_test_issue_targets test_soa_dirty_aware_pipeline_2143
-# folded: aura_add_issue_test(test_soa_generation_fence_2111)
-# folded: aura_issue_test_link_light(test_soa_generation_fence_2111)
-# folded: aura_issue_test_link_llvm_jit(test_soa_generation_fence_2111)
-# folded: all_test_issue_targets test_soa_generation_fence_2111
-# folded: aura_add_issue_test(test_soa_partial_desync_gate_2181)
-# folded: aura_issue_test_link_light(test_soa_partial_desync_gate_2181)
-# folded: aura_issue_test_link_llvm_jit(test_soa_partial_desync_gate_2181)
-# folded: all_test_issue_targets test_soa_partial_desync_gate_2181
-# folded: aura_add_issue_test(test_soa_residual_production_smoke_2618)
-# folded: aura_issue_test_link_light(test_soa_residual_production_smoke_2618)
-# folded: aura_issue_test_link_llvm_jit(test_soa_residual_production_smoke_2618)
-# folded: all_test_issue_targets test_soa_residual_production_smoke_2618
-# folded: aura_add_issue_test(test_soa_single_entry_dirty_sync_2139)
-# folded: aura_issue_test_link_light(test_soa_single_entry_dirty_sync_2139)
-# folded: aura_issue_test_link_llvm_jit(test_soa_single_entry_dirty_sync_2139)
-# folded: all_test_issue_targets test_soa_single_entry_dirty_sync_2139
-# folded: aura_add_issue_test(test_solve_delta_unresolved_export_2107)
-# folded: aura_issue_test_link_light(test_solve_delta_unresolved_export_2107)
-# folded: aura_issue_test_link_llvm_jit(test_solve_delta_unresolved_export_2107)
-# folded: all_test_issue_targets test_solve_delta_unresolved_export_2107
-# folded: aura_add_issue_test(test_source_to_ir_desync_recovery_2206)
-# folded: aura_issue_test_link_light(test_source_to_ir_desync_recovery_2206)
-# folded: aura_issue_test_link_llvm_jit(test_source_to_ir_desync_recovery_2206)
-# folded: all_test_issue_targets test_source_to_ir_desync_recovery_2206
-# folded: aura_add_issue_test(test_source_to_ir_map_consistency_2045)
-# folded: aura_issue_test_link_light(test_source_to_ir_map_consistency_2045)
-# folded: aura_issue_test_link_llvm_jit(test_source_to_ir_map_consistency_2045)
-# folded: all_test_issue_targets test_source_to_ir_map_consistency_2045
-# folded: aura_add_issue_test(test_spawn_quota_no_leak_2155)
-# folded: aura_issue_test_link_light(test_spawn_quota_no_leak_2155)
-# folded: aura_issue_test_link_llvm_jit(test_spawn_quota_no_leak_2155)
-# folded: all_test_issue_targets test_spawn_quota_no_leak_2155
-# folded: aura_add_issue_test(test_specjit_per_eval_storm_isolation_2370)
-# folded: aura_issue_test_link_light(test_specjit_per_eval_storm_isolation_2370)
-# folded: aura_issue_test_link_llvm_jit(test_specjit_per_eval_storm_isolation_2370)
-# folded: all_test_issue_targets test_specjit_per_eval_storm_isolation_2370
-# folded: aura_add_issue_test(test_specjit_pereval_storm_e2e_2504)
-# folded: aura_issue_test_link_light(test_specjit_pereval_storm_e2e_2504)
-# folded: aura_issue_test_link_llvm_jit(test_specjit_pereval_storm_e2e_2504)
-# folded: all_test_issue_targets test_specjit_pereval_storm_e2e_2504
-# folded: aura_add_issue_test(test_stable_ref_cow_refresh_failclosed_2393)
-# folded: aura_issue_test_link_light(test_stable_ref_cow_refresh_failclosed_2393)
-# folded: aura_issue_test_link_llvm_jit(test_stable_ref_cow_refresh_failclosed_2393)
-# folded: all_test_issue_targets test_stable_ref_cow_refresh_failclosed_2393
-# folded: aura_add_issue_test(test_stable_ref_export_validate_2404)
-# folded: aura_issue_test_link_light(test_stable_ref_export_validate_2404)
-# folded: aura_issue_test_link_llvm_jit(test_stable_ref_export_validate_2404)
-# folded: all_test_issue_targets test_stable_ref_export_validate_2404
+# folded: aura_add_issue_test(test_soa_dirty_aware_pipeline)
+# folded: aura_issue_test_link_light(test_soa_dirty_aware_pipeline)
+# folded: aura_issue_test_link_llvm_jit(test_soa_dirty_aware_pipeline)
+# folded: all_test_issue_targets test_soa_dirty_aware_pipeline
+# folded: aura_add_issue_test(test_soa_generation_fence)
+# folded: aura_issue_test_link_light(test_soa_generation_fence)
+# folded: aura_issue_test_link_llvm_jit(test_soa_generation_fence)
+# folded: all_test_issue_targets test_soa_generation_fence
+# folded: aura_add_issue_test(test_soa_partial_desync_gate)
+# folded: aura_issue_test_link_light(test_soa_partial_desync_gate)
+# folded: aura_issue_test_link_llvm_jit(test_soa_partial_desync_gate)
+# folded: all_test_issue_targets test_soa_partial_desync_gate
+# folded: aura_add_issue_test(test_soa_residual_production_smoke)
+# folded: aura_issue_test_link_light(test_soa_residual_production_smoke)
+# folded: aura_issue_test_link_llvm_jit(test_soa_residual_production_smoke)
+# folded: all_test_issue_targets test_soa_residual_production_smoke
+# folded: aura_add_issue_test(test_soa_single_entry_dirty_sync)
+# folded: aura_issue_test_link_light(test_soa_single_entry_dirty_sync)
+# folded: aura_issue_test_link_llvm_jit(test_soa_single_entry_dirty_sync)
+# folded: all_test_issue_targets test_soa_single_entry_dirty_sync
+# folded: aura_add_issue_test(test_solve_delta_unresolved_export)
+# folded: aura_issue_test_link_light(test_solve_delta_unresolved_export)
+# folded: aura_issue_test_link_llvm_jit(test_solve_delta_unresolved_export)
+# folded: all_test_issue_targets test_solve_delta_unresolved_export
+# folded: aura_add_issue_test(test_source_to_ir_desync_recovery)
+# folded: aura_issue_test_link_light(test_source_to_ir_desync_recovery)
+# folded: aura_issue_test_link_llvm_jit(test_source_to_ir_desync_recovery)
+# folded: all_test_issue_targets test_source_to_ir_desync_recovery
+# folded: aura_add_issue_test(test_source_to_ir_map_consistency)
+# folded: aura_issue_test_link_light(test_source_to_ir_map_consistency)
+# folded: aura_issue_test_link_llvm_jit(test_source_to_ir_map_consistency)
+# folded: all_test_issue_targets test_source_to_ir_map_consistency
+# folded: aura_add_issue_test(test_spawn_quota_no_leak)
+# folded: aura_issue_test_link_light(test_spawn_quota_no_leak)
+# folded: aura_issue_test_link_llvm_jit(test_spawn_quota_no_leak)
+# folded: all_test_issue_targets test_spawn_quota_no_leak
+# folded: aura_add_issue_test(test_specjit_per_eval_storm_isolation)
+# folded: aura_issue_test_link_light(test_specjit_per_eval_storm_isolation)
+# folded: aura_issue_test_link_llvm_jit(test_specjit_per_eval_storm_isolation)
+# folded: all_test_issue_targets test_specjit_per_eval_storm_isolation
+# folded: aura_add_issue_test(test_specjit_pereval_storm_e2e)
+# folded: aura_issue_test_link_light(test_specjit_pereval_storm_e2e)
+# folded: aura_issue_test_link_llvm_jit(test_specjit_pereval_storm_e2e)
+# folded: all_test_issue_targets test_specjit_pereval_storm_e2e
+# folded: aura_add_issue_test(test_stable_ref_cow_refresh_failclosed)
+# folded: aura_issue_test_link_light(test_stable_ref_cow_refresh_failclosed)
+# folded: aura_issue_test_link_llvm_jit(test_stable_ref_cow_refresh_failclosed)
+# folded: all_test_issue_targets test_stable_ref_cow_refresh_failclosed
+# folded: aura_add_issue_test(test_stable_ref_export_validate)
+# folded: aura_issue_test_link_light(test_stable_ref_export_validate)
+# folded: aura_issue_test_link_llvm_jit(test_stable_ref_export_validate)
+# folded: all_test_issue_targets test_stable_ref_export_validate
 # folded: aura_add_issue_test(test_stable_ref_pin_lifecycle)
 # folded: aura_issue_test_link_light(test_stable_ref_pin_lifecycle)
 # folded: aura_issue_test_link_llvm_jit(test_stable_ref_pin_lifecycle)
 # folded: all_test_issue_targets test_stable_ref_pin_lifecycle
-# folded: aura_add_issue_test(test_stable_ref_tenant_capture_2125)
-# folded: aura_issue_test_link_light(test_stable_ref_tenant_capture_2125)
-# folded: aura_issue_test_link_llvm_jit(test_stable_ref_tenant_capture_2125)
-# folded: all_test_issue_targets test_stable_ref_tenant_capture_2125
-# folded: aura_add_issue_test(test_stable_ref_tenant_mandate_2056)
-# folded: aura_issue_test_link_light(test_stable_ref_tenant_mandate_2056)
-# folded: aura_issue_test_link_llvm_jit(test_stable_ref_tenant_mandate_2056)
-# folded: all_test_issue_targets test_stable_ref_tenant_mandate_2056
-# folded: aura_add_issue_test(test_stable_ref_wire_endian_2395)
-# folded: aura_issue_test_link_light(test_stable_ref_wire_endian_2395)
-# folded: aura_issue_test_link_llvm_jit(test_stable_ref_wire_endian_2395)
-# folded: all_test_issue_targets test_stable_ref_wire_endian_2395
-# folded: aura_add_issue_test(test_stable_ref_wire_v2_2198)
-# folded: aura_issue_test_link_light(test_stable_ref_wire_v2_2198)
-# folded: aura_issue_test_link_llvm_jit(test_stable_ref_wire_v2_2198)
-# folded: all_test_issue_targets test_stable_ref_wire_v2_2198
-# folded: aura_add_issue_test(test_stdlib_production_review_923)
-# folded: aura_issue_test_link_light(test_stdlib_production_review_923)
-# folded: aura_issue_test_link_llvm_jit(test_stdlib_production_review_923)
-# folded: all_test_issue_targets test_stdlib_production_review_923
-# folded: aura_add_issue_test(test_steal_complete_gc_defer_2203)
-# folded: aura_issue_test_link_light(test_steal_complete_gc_defer_2203)
-# folded: aura_issue_test_link_llvm_jit(test_steal_complete_gc_defer_2203)
-# folded: all_test_issue_targets test_steal_complete_gc_defer_2203
-# folded: aura_add_issue_test(test_steal_complete_restamp_txn_2510)
-# folded: aura_issue_test_link_light(test_steal_complete_restamp_txn_2510)
-# folded: aura_issue_test_link_llvm_jit(test_steal_complete_restamp_txn_2510)
-# folded: all_test_issue_targets test_steal_complete_restamp_txn_2510
-# folded: aura_add_issue_test(test_steal_complete_strong_entry_2377)
-# folded: aura_issue_test_link_light(test_steal_complete_strong_entry_2377)
-# folded: aura_issue_test_link_llvm_jit(test_steal_complete_strong_entry_2377)
-# folded: all_test_issue_targets test_steal_complete_strong_entry_2377
-# folded: aura_add_issue_test(test_steal_densify_linear_type_hard_and_2609)
-# folded: aura_issue_test_link_light(test_steal_densify_linear_type_hard_and_2609)
-# folded: aura_issue_test_link_llvm_jit(test_steal_densify_linear_type_hard_and_2609)
-# folded: all_test_issue_targets test_steal_densify_linear_type_hard_and_2609
-# folded: aura_add_issue_test(test_steal_layout_stamp_2351)
-# folded: aura_issue_test_link_light(test_steal_layout_stamp_2351)
-# folded: aura_issue_test_link_llvm_jit(test_steal_layout_stamp_2351)
-# folded: all_test_issue_targets test_steal_layout_stamp_2351
-# folded: aura_add_issue_test(test_steal_safety_ticket_2518)
-# folded: aura_issue_test_link_light(test_steal_safety_ticket_2518)
-# folded: aura_issue_test_link_llvm_jit(test_steal_safety_ticket_2518)
-# folded: all_test_issue_targets test_steal_safety_ticket_2518
-# folded: aura_add_issue_test(test_steal_snapshot_hard_invariant_2346)
-# folded: aura_issue_test_link_light(test_steal_snapshot_hard_invariant_2346)
-# folded: aura_issue_test_link_llvm_jit(test_steal_snapshot_hard_invariant_2346)
-# folded: all_test_issue_targets test_steal_snapshot_hard_invariant_2346
-# folded: aura_add_issue_test(test_steal_snapshot_soft_production_lock_2372)
-# folded: aura_issue_test_link_light(test_steal_snapshot_soft_production_lock_2372)
-# folded: aura_issue_test_link_llvm_jit(test_steal_snapshot_soft_production_lock_2372)
-# folded: all_test_issue_targets test_steal_snapshot_soft_production_lock_2372
-# folded: aura_add_issue_test(test_storm_isolation_2236)
-# folded: aura_issue_test_link_light(test_storm_isolation_2236)
-# folded: aura_issue_test_link_llvm_jit(test_storm_isolation_2236)
-# folded: all_test_issue_targets test_storm_isolation_2236
+# folded: aura_add_issue_test(test_stable_ref_tenant_capture)
+# folded: aura_issue_test_link_light(test_stable_ref_tenant_capture)
+# folded: aura_issue_test_link_llvm_jit(test_stable_ref_tenant_capture)
+# folded: all_test_issue_targets test_stable_ref_tenant_capture
+# folded: aura_add_issue_test(test_stable_ref_tenant_mandate)
+# folded: aura_issue_test_link_light(test_stable_ref_tenant_mandate)
+# folded: aura_issue_test_link_llvm_jit(test_stable_ref_tenant_mandate)
+# folded: all_test_issue_targets test_stable_ref_tenant_mandate
+# folded: aura_add_issue_test(test_stable_ref_wire_endian)
+# folded: aura_issue_test_link_light(test_stable_ref_wire_endian)
+# folded: aura_issue_test_link_llvm_jit(test_stable_ref_wire_endian)
+# folded: all_test_issue_targets test_stable_ref_wire_endian
+# folded: aura_add_issue_test(test_stable_ref_wire_v2)
+# folded: aura_issue_test_link_light(test_stable_ref_wire_v2)
+# folded: aura_issue_test_link_llvm_jit(test_stable_ref_wire_v2)
+# folded: all_test_issue_targets test_stable_ref_wire_v2
+# folded: aura_add_issue_test(test_stdlib_production_review)
+# folded: aura_issue_test_link_light(test_stdlib_production_review)
+# folded: aura_issue_test_link_llvm_jit(test_stdlib_production_review)
+# folded: all_test_issue_targets test_stdlib_production_review
+# folded: aura_add_issue_test(test_steal_complete_gc_defer)
+# folded: aura_issue_test_link_light(test_steal_complete_gc_defer)
+# folded: aura_issue_test_link_llvm_jit(test_steal_complete_gc_defer)
+# folded: all_test_issue_targets test_steal_complete_gc_defer
+# folded: aura_add_issue_test(test_steal_complete_restamp_txn)
+# folded: aura_issue_test_link_light(test_steal_complete_restamp_txn)
+# folded: aura_issue_test_link_llvm_jit(test_steal_complete_restamp_txn)
+# folded: all_test_issue_targets test_steal_complete_restamp_txn
+# folded: aura_add_issue_test(test_steal_complete_strong_entry)
+# folded: aura_issue_test_link_light(test_steal_complete_strong_entry)
+# folded: aura_issue_test_link_llvm_jit(test_steal_complete_strong_entry)
+# folded: all_test_issue_targets test_steal_complete_strong_entry
+# folded: aura_add_issue_test(test_steal_densify_linear_type_hard_and)
+# folded: aura_issue_test_link_light(test_steal_densify_linear_type_hard_and)
+# folded: aura_issue_test_link_llvm_jit(test_steal_densify_linear_type_hard_and)
+# folded: all_test_issue_targets test_steal_densify_linear_type_hard_and
+# folded: aura_add_issue_test(test_steal_layout_stamp)
+# folded: aura_issue_test_link_light(test_steal_layout_stamp)
+# folded: aura_issue_test_link_llvm_jit(test_steal_layout_stamp)
+# folded: all_test_issue_targets test_steal_layout_stamp
+# folded: aura_add_issue_test(test_steal_safety_ticket)
+# folded: aura_issue_test_link_light(test_steal_safety_ticket)
+# folded: aura_issue_test_link_llvm_jit(test_steal_safety_ticket)
+# folded: all_test_issue_targets test_steal_safety_ticket
+# folded: aura_add_issue_test(test_steal_snapshot_hard_invariant)
+# folded: aura_issue_test_link_light(test_steal_snapshot_hard_invariant)
+# folded: aura_issue_test_link_llvm_jit(test_steal_snapshot_hard_invariant)
+# folded: all_test_issue_targets test_steal_snapshot_hard_invariant
+# folded: aura_add_issue_test(test_steal_snapshot_soft_production_lock)
+# folded: aura_issue_test_link_light(test_steal_snapshot_soft_production_lock)
+# folded: aura_issue_test_link_llvm_jit(test_steal_snapshot_soft_production_lock)
+# folded: all_test_issue_targets test_steal_snapshot_soft_production_lock
+# folded: aura_add_issue_test(test_storm_isolation)
+# folded: aura_issue_test_link_light(test_storm_isolation)
+# folded: aura_issue_test_link_llvm_jit(test_storm_isolation)
+# folded: all_test_issue_targets test_storm_isolation
 # folded: aura_add_issue_test(test_stringpool_buf_fragmentation_lock)
 # folded: aura_issue_test_link_light(test_stringpool_buf_fragmentation_lock)
 # folded: aura_issue_test_link_llvm_jit(test_stringpool_buf_fragmentation_lock)
@@ -3898,10 +3898,10 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_structural_metadata_lock_order)
 # folded: aura_issue_test_link_llvm_jit(test_structural_metadata_lock_order)
 # folded: all_test_issue_targets test_structural_metadata_lock_order
-# folded: aura_add_issue_test(test_subtree_dirty_bounds_2424)
-# folded: aura_issue_test_link_light(test_subtree_dirty_bounds_2424)
-# folded: aura_issue_test_link_llvm_jit(test_subtree_dirty_bounds_2424)
-# folded: all_test_issue_targets test_subtree_dirty_bounds_2424
+# folded: aura_add_issue_test(test_subtree_dirty_bounds)
+# folded: aura_issue_test_link_light(test_subtree_dirty_bounds)
+# folded: aura_issue_test_link_llvm_jit(test_subtree_dirty_bounds)
+# folded: all_test_issue_targets test_subtree_dirty_bounds
 # folded: aura_add_issue_test(test_subtree_gen_atomic)
 # folded: aura_issue_test_link_light(test_subtree_gen_atomic)
 # folded: aura_issue_test_link_llvm_jit(test_subtree_gen_atomic)
@@ -3910,10 +3910,10 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_subtree_uses_sym_template_bloat)
 # folded: aura_issue_test_link_llvm_jit(test_subtree_uses_sym_template_bloat)
 # folded: all_test_issue_targets test_subtree_uses_sym_template_bloat
-# folded: aura_add_issue_test(test_subtype_constraint_meet_2195)
-# folded: aura_issue_test_link_light(test_subtype_constraint_meet_2195)
-# folded: aura_issue_test_link_llvm_jit(test_subtype_constraint_meet_2195)
-# folded: all_test_issue_targets test_subtype_constraint_meet_2195
+# folded: aura_add_issue_test(test_subtype_constraint_meet)
+# folded: aura_issue_test_link_light(test_subtype_constraint_meet)
+# folded: aura_issue_test_link_llvm_jit(test_subtype_constraint_meet)
+# folded: all_test_issue_targets test_subtype_constraint_meet
 # folded: aura_add_issue_test(test_summary_flags_guard)
 # folded: aura_issue_test_link_light(test_summary_flags_guard)
 # folded: aura_issue_test_link_llvm_jit(test_summary_flags_guard)
@@ -3922,14 +3922,14 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_summary_recompute_sym)
 # folded: aura_issue_test_link_llvm_jit(test_summary_recompute_sym)
 # folded: all_test_issue_targets test_summary_recompute_sym
-# folded: aura_add_issue_test(test_symbol_eq_2568)
-# folded: aura_issue_test_link_light(test_symbol_eq_2568)
-# folded: aura_issue_test_link_llvm_jit(test_symbol_eq_2568)
-# folded: all_test_issue_targets test_symbol_eq_2568
-# folded: aura_add_issue_test(test_sys_open_path_harden_2487)
-# folded: aura_issue_test_link_light(test_sys_open_path_harden_2487)
-# folded: aura_issue_test_link_llvm_jit(test_sys_open_path_harden_2487)
-# folded: all_test_issue_targets test_sys_open_path_harden_2487
+# folded: aura_add_issue_test(test_symbol_eq)
+# folded: aura_issue_test_link_light(test_symbol_eq)
+# folded: aura_issue_test_link_llvm_jit(test_symbol_eq)
+# folded: all_test_issue_targets test_symbol_eq
+# folded: aura_add_issue_test(test_sys_open_path_harden)
+# folded: aura_issue_test_link_light(test_sys_open_path_harden)
+# folded: aura_issue_test_link_llvm_jit(test_sys_open_path_harden)
+# folded: all_test_issue_targets test_sys_open_path_harden
 # folded: aura_add_issue_test(test_tag_arity_index_lock)
 # folded: aura_issue_test_link_light(test_tag_arity_index_lock)
 # folded: aura_issue_test_link_llvm_jit(test_tag_arity_index_lock)
@@ -3942,114 +3942,114 @@ add_dependencies(all_test_issue_targets test_arena_defrag)
 # folded: aura_issue_test_link_light(test_tenant_scope_fiber_mandate)
 # folded: aura_issue_test_link_llvm_jit(test_tenant_scope_fiber_mandate)
 # folded: all_test_issue_targets test_tenant_scope_fiber_mandate
-# folded: aura_add_issue_test(test_timeout_repair_rich_roots_2548)
-# folded: aura_issue_test_link_light(test_timeout_repair_rich_roots_2548)
-# folded: aura_issue_test_link_llvm_jit(test_timeout_repair_rich_roots_2548)
-# folded: all_test_issue_targets test_timeout_repair_rich_roots_2548
-# folded: aura_add_issue_test(test_transaction_guard_2555)
-# folded: aura_issue_test_link_light(test_transaction_guard_2555)
-# folded: aura_issue_test_link_llvm_jit(test_transaction_guard_2555)
-# folded: all_test_issue_targets test_transaction_guard_2555
-# folded: aura_add_issue_test(test_tree_walker_fallback_strict_2213)
-# folded: aura_issue_test_link_light(test_tree_walker_fallback_strict_2213)
-# folded: aura_issue_test_link_llvm_jit(test_tree_walker_fallback_strict_2213)
-# folded: all_test_issue_targets test_tree_walker_fallback_strict_2213
-# folded: aura_add_issue_test(test_truncate_commit_gate_2458)
-# folded: aura_issue_test_link_light(test_truncate_commit_gate_2458)
-# folded: aura_issue_test_link_llvm_jit(test_truncate_commit_gate_2458)
-# folded: all_test_issue_targets test_truncate_commit_gate_2458
-# folded: aura_add_issue_test(test_try_catch_bind_2567)
-# folded: aura_issue_test_link_light(test_try_catch_bind_2567)
-# folded: aura_issue_test_link_llvm_jit(test_try_catch_bind_2567)
-# folded: all_test_issue_targets test_try_catch_bind_2567
-# folded: aura_add_issue_test(test_type_dep_epoch_prune_2355)
-# folded: aura_issue_test_link_light(test_type_dep_epoch_prune_2355)
-# folded: aura_issue_test_link_llvm_jit(test_type_dep_epoch_prune_2355)
-# folded: all_test_issue_targets test_type_dep_epoch_prune_2355
-# folded: aura_add_issue_test(test_type_dep_partial_merge_2283)
-# folded: aura_issue_test_link_light(test_type_dep_partial_merge_2283)
-# folded: aura_issue_test_link_llvm_jit(test_type_dep_partial_merge_2283)
-# folded: all_test_issue_targets test_type_dep_partial_merge_2283
-# folded: aura_add_issue_test(test_type_dirty_cone_dep_graph_2191)
-# folded: aura_issue_test_link_light(test_type_dirty_cone_dep_graph_2191)
-# folded: aura_issue_test_link_llvm_jit(test_type_dirty_cone_dep_graph_2191)
-# folded: all_test_issue_targets test_type_dirty_cone_dep_graph_2191
-# folded: aura_add_issue_test(test_type_dirty_txn_order_2516)
-# folded: aura_issue_test_link_light(test_type_dirty_txn_order_2516)
-# folded: aura_issue_test_link_llvm_jit(test_type_dirty_txn_order_2516)
-# folded: all_test_issue_targets test_type_dirty_txn_order_2516
+# folded: aura_add_issue_test(test_timeout_repair_rich_roots)
+# folded: aura_issue_test_link_light(test_timeout_repair_rich_roots)
+# folded: aura_issue_test_link_llvm_jit(test_timeout_repair_rich_roots)
+# folded: all_test_issue_targets test_timeout_repair_rich_roots
+# folded: aura_add_issue_test(test_transaction_guard)
+# folded: aura_issue_test_link_light(test_transaction_guard)
+# folded: aura_issue_test_link_llvm_jit(test_transaction_guard)
+# folded: all_test_issue_targets test_transaction_guard
+# folded: aura_add_issue_test(test_tree_walker_fallback_strict)
+# folded: aura_issue_test_link_light(test_tree_walker_fallback_strict)
+# folded: aura_issue_test_link_llvm_jit(test_tree_walker_fallback_strict)
+# folded: all_test_issue_targets test_tree_walker_fallback_strict
+# folded: aura_add_issue_test(test_truncate_commit_gate)
+# folded: aura_issue_test_link_light(test_truncate_commit_gate)
+# folded: aura_issue_test_link_llvm_jit(test_truncate_commit_gate)
+# folded: all_test_issue_targets test_truncate_commit_gate
+# folded: aura_add_issue_test(test_try_catch_bind)
+# folded: aura_issue_test_link_light(test_try_catch_bind)
+# folded: aura_issue_test_link_llvm_jit(test_try_catch_bind)
+# folded: all_test_issue_targets test_try_catch_bind
+# folded: aura_add_issue_test(test_type_dep_epoch_prune)
+# folded: aura_issue_test_link_light(test_type_dep_epoch_prune)
+# folded: aura_issue_test_link_llvm_jit(test_type_dep_epoch_prune)
+# folded: all_test_issue_targets test_type_dep_epoch_prune
+# folded: aura_add_issue_test(test_type_dep_partial_merge)
+# folded: aura_issue_test_link_light(test_type_dep_partial_merge)
+# folded: aura_issue_test_link_llvm_jit(test_type_dep_partial_merge)
+# folded: all_test_issue_targets test_type_dep_partial_merge
+# folded: aura_add_issue_test(test_type_dirty_cone_dep_graph)
+# folded: aura_issue_test_link_light(test_type_dirty_cone_dep_graph)
+# folded: aura_issue_test_link_llvm_jit(test_type_dirty_cone_dep_graph)
+# folded: all_test_issue_targets test_type_dirty_cone_dep_graph
+# folded: aura_add_issue_test(test_type_dirty_txn_order)
+# folded: aura_issue_test_link_light(test_type_dirty_txn_order)
+# folded: aura_issue_test_link_llvm_jit(test_type_dirty_txn_order)
+# folded: all_test_issue_targets test_type_dirty_txn_order
 # folded: aura_add_issue_test(test_type_freshness_steal_densify)
 # folded: aura_issue_test_link_light(test_type_freshness_steal_densify)
 # folded: aura_issue_test_link_llvm_jit(test_type_freshness_steal_densify)
 # folded: all_test_issue_targets test_type_freshness_steal_densify
-# folded: aura_add_issue_test(test_type_linear_commit_health_2613)
-# folded: aura_issue_test_link_light(test_type_linear_commit_health_2613)
-# folded: aura_issue_test_link_llvm_jit(test_type_linear_commit_health_2613)
-# folded: all_test_issue_targets test_type_linear_commit_health_2613
-# folded: aura_add_issue_test(test_type_system_health_2350)
-# folded: aura_issue_test_link_light(test_type_system_health_2350)
-# folded: aura_issue_test_link_llvm_jit(test_type_system_health_2350)
-# folded: all_test_issue_targets test_type_system_health_2350
-# folded: aura_add_issue_test(test_type_system_health_next_action_2462)
-# folded: aura_issue_test_link_light(test_type_system_health_next_action_2462)
-# folded: aura_issue_test_link_llvm_jit(test_type_system_health_next_action_2462)
-# folded: all_test_issue_targets test_type_system_health_next_action_2462
-# folded: aura_add_issue_test(test_type_timeout_repair_2284)
-# folded: aura_issue_test_link_light(test_type_timeout_repair_2284)
-# folded: aura_issue_test_link_llvm_jit(test_type_timeout_repair_2284)
-# folded: all_test_issue_targets test_type_timeout_repair_2284
-# folded: aura_add_issue_test(test_typed_mutation_audit_decision_2281)
-# folded: aura_issue_test_link_light(test_typed_mutation_audit_decision_2281)
-# folded: aura_issue_test_link_llvm_jit(test_typed_mutation_audit_decision_2281)
-# folded: all_test_issue_targets test_typed_mutation_audit_decision_2281
-# folded: aura_add_issue_test(test_validate_node_no_abort_2390)
-# folded: aura_issue_test_link_light(test_validate_node_no_abort_2390)
-# folded: aura_issue_test_link_llvm_jit(test_validate_node_no_abort_2390)
-# folded: all_test_issue_targets test_validate_node_no_abort_2390
-# folded: aura_add_issue_test(test_validate_post_restore_soa_2391)
-# folded: aura_issue_test_link_light(test_validate_post_restore_soa_2391)
-# folded: aura_issue_test_link_llvm_jit(test_validate_post_restore_soa_2391)
-# folded: all_test_issue_targets test_validate_post_restore_soa_2391
-# folded: aura_add_issue_test(test_value_tag_hot_path_2259)
-# folded: aura_issue_test_link_light(test_value_tag_hot_path_2259)
-# folded: aura_issue_test_link_llvm_jit(test_value_tag_hot_path_2259)
-# folded: all_test_issue_targets test_value_tag_hot_path_2259
-# folded: aura_add_issue_test(test_value_tag_hotpath_ban_2616)
-# folded: aura_issue_test_link_light(test_value_tag_hotpath_ban_2616)
-# folded: aura_issue_test_link_llvm_jit(test_value_tag_hotpath_ban_2616)
-# folded: all_test_issue_targets test_value_tag_hotpath_ban_2616
+# folded: aura_add_issue_test(test_type_linear_commit_health)
+# folded: aura_issue_test_link_light(test_type_linear_commit_health)
+# folded: aura_issue_test_link_llvm_jit(test_type_linear_commit_health)
+# folded: all_test_issue_targets test_type_linear_commit_health
+# folded: aura_add_issue_test(test_type_system_health)
+# folded: aura_issue_test_link_light(test_type_system_health)
+# folded: aura_issue_test_link_llvm_jit(test_type_system_health)
+# folded: all_test_issue_targets test_type_system_health
+# folded: aura_add_issue_test(test_type_system_health_next_action)
+# folded: aura_issue_test_link_light(test_type_system_health_next_action)
+# folded: aura_issue_test_link_llvm_jit(test_type_system_health_next_action)
+# folded: all_test_issue_targets test_type_system_health_next_action
+# folded: aura_add_issue_test(test_type_timeout_repair)
+# folded: aura_issue_test_link_light(test_type_timeout_repair)
+# folded: aura_issue_test_link_llvm_jit(test_type_timeout_repair)
+# folded: all_test_issue_targets test_type_timeout_repair
+# folded: aura_add_issue_test(test_typed_mutation_audit_decision)
+# folded: aura_issue_test_link_light(test_typed_mutation_audit_decision)
+# folded: aura_issue_test_link_llvm_jit(test_typed_mutation_audit_decision)
+# folded: all_test_issue_targets test_typed_mutation_audit_decision
+# folded: aura_add_issue_test(test_validate_node_no_abort)
+# folded: aura_issue_test_link_light(test_validate_node_no_abort)
+# folded: aura_issue_test_link_llvm_jit(test_validate_node_no_abort)
+# folded: all_test_issue_targets test_validate_node_no_abort
+# folded: aura_add_issue_test(test_validate_post_restore_soa)
+# folded: aura_issue_test_link_light(test_validate_post_restore_soa)
+# folded: aura_issue_test_link_llvm_jit(test_validate_post_restore_soa)
+# folded: all_test_issue_targets test_validate_post_restore_soa
+# folded: aura_add_issue_test(test_value_tag_hot_path)
+# folded: aura_issue_test_link_light(test_value_tag_hot_path)
+# folded: aura_issue_test_link_llvm_jit(test_value_tag_hot_path)
+# folded: all_test_issue_targets test_value_tag_hot_path
+# folded: aura_add_issue_test(test_value_tag_hotpath_ban)
+# folded: aura_issue_test_link_light(test_value_tag_hotpath_ban)
+# folded: aura_issue_test_link_llvm_jit(test_value_tag_hotpath_ban)
+# folded: all_test_issue_targets test_value_tag_hotpath_ban
 # folded: aura_add_issue_test(test_verification_dirty_bits_lock)
 # folded: aura_issue_test_link_light(test_verification_dirty_bits_lock)
 # folded: aura_issue_test_link_llvm_jit(test_verification_dirty_bits_lock)
 # folded: all_test_issue_targets test_verification_dirty_bits_lock
-# folded: aura_add_issue_test(test_while_define_oneshot_2571)
-# folded: aura_issue_test_link_light(test_while_define_oneshot_2571)
-# folded: aura_issue_test_link_llvm_jit(test_while_define_oneshot_2571)
-# folded: all_test_issue_targets test_while_define_oneshot_2571
-# folded: aura_add_issue_test(test_workload_adaptive_relower_2127)
-# folded: aura_issue_test_link_light(test_workload_adaptive_relower_2127)
-# folded: aura_issue_test_link_llvm_jit(test_workload_adaptive_relower_2127)
-# folded: all_test_issue_targets test_workload_adaptive_relower_2127
-# folded: aura_add_issue_test(test_workspace_isolation_wire_2073)
-# folded: aura_issue_test_link_light(test_workspace_isolation_wire_2073)
-# folded: aura_issue_test_link_llvm_jit(test_workspace_isolation_wire_2073)
-# folded: all_test_issue_targets test_workspace_isolation_wire_2073
-# folded: aura_add_issue_test(test_workspace_mtx_contention_2523)
-# folded: aura_issue_test_link_light(test_workspace_mtx_contention_2523)
-# folded: aura_issue_test_link_llvm_jit(test_workspace_mtx_contention_2523)
-# folded: all_test_issue_targets test_workspace_mtx_contention_2523
-# folded: aura_add_issue_test(test_workspace_region_concurrency_2121)
-# folded: aura_issue_test_link_light(test_workspace_region_concurrency_2121)
-# folded: aura_issue_test_link_llvm_jit(test_workspace_region_concurrency_2121)
-# folded: all_test_issue_targets test_workspace_region_concurrency_2121
-# folded: aura_add_issue_test(test_write_string_escape_2574)
-# folded: aura_issue_test_link_light(test_write_string_escape_2574)
-# folded: aura_issue_test_link_llvm_jit(test_write_string_escape_2574)
-# folded: all_test_issue_targets test_write_string_escape_2574
-# folded: aura_add_issue_test(test_yield_while_mutation_held_2200)
-# folded: aura_issue_test_link_light(test_yield_while_mutation_held_2200)
-# folded: aura_issue_test_link_llvm_jit(test_yield_while_mutation_held_2200)
-# folded: all_test_issue_targets test_yield_while_mutation_held_2200
+# folded: aura_add_issue_test(test_while_define_oneshot)
+# folded: aura_issue_test_link_light(test_while_define_oneshot)
+# folded: aura_issue_test_link_llvm_jit(test_while_define_oneshot)
+# folded: all_test_issue_targets test_while_define_oneshot
+# folded: aura_add_issue_test(test_workload_adaptive_relower)
+# folded: aura_issue_test_link_light(test_workload_adaptive_relower)
+# folded: aura_issue_test_link_llvm_jit(test_workload_adaptive_relower)
+# folded: all_test_issue_targets test_workload_adaptive_relower
+# folded: aura_add_issue_test(test_workspace_isolation_wire)
+# folded: aura_issue_test_link_light(test_workspace_isolation_wire)
+# folded: aura_issue_test_link_llvm_jit(test_workspace_isolation_wire)
+# folded: all_test_issue_targets test_workspace_isolation_wire
+# folded: aura_add_issue_test(test_workspace_mtx_contention)
+# folded: aura_issue_test_link_light(test_workspace_mtx_contention)
+# folded: aura_issue_test_link_llvm_jit(test_workspace_mtx_contention)
+# folded: all_test_issue_targets test_workspace_mtx_contention
+# folded: aura_add_issue_test(test_workspace_region_concurrency)
+# folded: aura_issue_test_link_light(test_workspace_region_concurrency)
+# folded: aura_issue_test_link_llvm_jit(test_workspace_region_concurrency)
+# folded: all_test_issue_targets test_workspace_region_concurrency
+# folded: aura_add_issue_test(test_write_string_escape)
+# folded: aura_issue_test_link_light(test_write_string_escape)
+# folded: aura_issue_test_link_llvm_jit(test_write_string_escape)
+# folded: all_test_issue_targets test_write_string_escape
+# folded: aura_add_issue_test(test_yield_while_mutation_held)
+# folded: aura_issue_test_link_light(test_yield_while_mutation_held)
+# folded: aura_issue_test_link_llvm_jit(test_yield_while_mutation_held)
+# folded: all_test_issue_targets test_yield_while_mutation_held
 
 # Domain batch: FlatAST / SoA atomic + lock ACs (36 members + driver).
 add_executable(test_flatast_atomic_lock_batch
@@ -4202,32 +4202,32 @@ endif()
 # Domain batch: AOT / SpecJIT / stamp / relower / reload (28 members + driver).
 add_executable(test_aot_jit_stamp_batch
     tests/compiler/test_aot_jit_stamp_batch.cpp
-    tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp
-    tests/compiler/test_aot_anonymous_closure_policy_2238.cpp
-    tests/compiler/test_aot_hot_update_health_2506.cpp
-    tests/compiler/test_aot_jit_joint_versioning_2046.cpp
-    tests/compiler/test_aot_version_triple_2306.cpp
-    tests/compiler/test_cache_stamp_restamp_contract_2183.cpp
-    tests/compiler/test_closure_cow_gen_stamp_2547.cpp
-    tests/compiler/test_coercion_stamp_at_add_2512.cpp
-    tests/compiler/test_exhausted_min_dirty_reemit_2544.cpp
-    tests/compiler/test_instr_level_relower_pass_2133.cpp
-    tests/compiler/test_ir_soa_layout_stamp_2432.cpp
-    tests/compiler/test_isolation_stamp_resolve_2224.cpp
-    tests/compiler/test_layout_stamp_2170.cpp
-    tests/compiler/test_layout_stamp_equality_8field_2519.cpp
-    tests/compiler/test_linear_state_stamp_apply_2129.cpp
-    tests/compiler/test_live_closure_full_restamp_2542.cpp
-    tests/compiler/test_partial_relower_cascade_2041.cpp
-    tests/compiler/test_partial_relower_storm_gate_2190.cpp
-    tests/compiler/test_pereval_reemit_region_independence_2606.cpp
-    tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp
-    tests/compiler/test_reload_recovery_query_2367.cpp
-    tests/compiler/test_relower_fallback_reason_2193.cpp
-    tests/compiler/test_shape_storm_partial_relower_2212.cpp
-    tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp
-    tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp
-    tests/compiler/test_workload_adaptive_relower_2127.cpp
+    tests/compiler/test_adaptive_partial_relower_threshold.cpp
+    tests/compiler/test_aot_anonymous_closure_policy.cpp
+    tests/compiler/test_aot_hot_update_health.cpp
+    tests/compiler/test_aot_jit_joint_versioning.cpp
+    tests/compiler/test_aot_version_triple.cpp
+    tests/compiler/test_cache_stamp_restamp_contract.cpp
+    tests/compiler/test_closure_cow_gen_stamp.cpp
+    tests/compiler/test_coercion_stamp_at_add.cpp
+    tests/compiler/test_exhausted_min_dirty_reemit.cpp
+    tests/compiler/test_instr_level_relower_pass.cpp
+    tests/compiler/test_ir_soa_layout_stamp.cpp
+    tests/compiler/test_isolation_stamp_resolve.cpp
+    tests/compiler/test_layout_stamp.cpp
+    tests/compiler/test_layout_stamp_equality_8field.cpp
+    tests/compiler/test_linear_state_stamp_apply.cpp
+    tests/compiler/test_live_closure_full_restamp.cpp
+    tests/compiler/test_partial_relower_cascade.cpp
+    tests/compiler/test_partial_relower_storm_gate.cpp
+    tests/compiler/test_pereval_reemit_region_independence.cpp
+    tests/compiler/test_reemit_mutation_boundary_handshake.cpp
+    tests/compiler/test_reload_recovery_query.cpp
+    tests/compiler/test_relower_fallback_reason.cpp
+    tests/compiler/test_shape_storm_partial_relower.cpp
+    tests/compiler/test_specjit_per_eval_storm_isolation.cpp
+    tests/compiler/test_specjit_pereval_storm_e2e.cpp
+    tests/compiler/test_workload_adaptive_relower.cpp
 )
 set_property(TARGET test_aot_jit_stamp_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_aot_jit_stamp_batch PRIVATE src tests)
@@ -4248,36 +4248,36 @@ endif()
 
 # Gate runtime exception: #2352/#2554 chaos PR hard-fail needs a dedicated
 # binary (build.py gate). Also kept as member of test_mailbox_fiber_batch.
-aura_add_issue_test(test_chaos_mutate_steal_gc_mailbox_2352)
-aura_issue_test_link_light(test_chaos_mutate_steal_gc_mailbox_2352)
-add_dependencies(all_test_issue_targets test_chaos_mutate_steal_gc_mailbox_2352)
+aura_add_issue_test(test_chaos_mutate_steal_gc_mailbox)
+aura_issue_test_link_light(test_chaos_mutate_steal_gc_mailbox)
+add_dependencies(all_test_issue_targets test_chaos_mutate_steal_gc_mailbox)
 
 add_executable(test_mailbox_fiber_batch
     tests/serve/test_mailbox_fiber_batch.cpp
-    tests/compiler/test_residual_gc_defer_assert_2211.cpp
-    tests/orch/test_fiber_native_keepalive_2159.cpp
-    tests/orch/test_join_drain_reclaim_2227.cpp
-    tests/orch/test_mailbox_bp_admit_2228.cpp
-    tests/orch/test_mailbox_bp_admit_default_2535.cpp
-    tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp
-    tests/serve/test_fiber_migration_refresh_2194.cpp
-    tests/serve/test_fiber_reclaim_orphan_release_2498.cpp
-    tests/serve/test_is_stealable_snapshot_gate_2549.cpp
-    tests/serve/test_join_drain_timeout_2153.cpp
-    tests/serve/test_mailbox_hold_exit_drain_2511.cpp
-    tests/serve/test_mailbox_hold_starvation_hard_2551.cpp
-    tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp
-    tests/serve/test_mailbox_tenant_principal_2592.cpp
-    tests/serve/test_residual_defer_steal_hard_and_2546.cpp
-    tests/serve/test_residual_force_safepoint_2533.cpp
-    tests/serve/test_steal_complete_gc_defer_2203.cpp
-    tests/serve/test_steal_complete_restamp_txn_2510.cpp
-    tests/serve/test_steal_complete_strong_entry_2377.cpp
-    tests/serve/test_steal_densify_linear_type_hard_and_2609.cpp
-    tests/serve/test_steal_layout_stamp_2351.cpp
-    tests/serve/test_steal_safety_ticket_2518.cpp
-    tests/serve/test_steal_snapshot_hard_invariant_2346.cpp
-    tests/serve/test_steal_snapshot_soft_production_lock_2372.cpp
+    tests/compiler/test_residual_gc_defer_assert.cpp
+    tests/orch/test_fiber_native_keepalive.cpp
+    tests/orch/test_join_drain_reclaim.cpp
+    tests/orch/test_mailbox_bp_admit.cpp
+    tests/orch/test_mailbox_bp_admit_default.cpp
+    tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp
+    tests/serve/test_fiber_migration_refresh.cpp
+    tests/serve/test_fiber_reclaim_orphan_release.cpp
+    tests/serve/test_is_stealable_snapshot_gate.cpp
+    tests/serve/test_join_drain_timeout.cpp
+    tests/serve/test_mailbox_hold_exit_drain.cpp
+    tests/serve/test_mailbox_hold_starvation_hard.cpp
+    tests/serve/test_mailbox_recv_mutation_boundary.cpp
+    tests/serve/test_mailbox_tenant_principal.cpp
+    tests/serve/test_residual_defer_steal_hard_and.cpp
+    tests/serve/test_residual_force_safepoint.cpp
+    tests/serve/test_steal_complete_gc_defer.cpp
+    tests/serve/test_steal_complete_restamp_txn.cpp
+    tests/serve/test_steal_complete_strong_entry.cpp
+    tests/serve/test_steal_densify_linear_type_hard_and.cpp
+    tests/serve/test_steal_layout_stamp.cpp
+    tests/serve/test_steal_safety_ticket.cpp
+    tests/serve/test_steal_snapshot_hard_invariant.cpp
+    tests/serve/test_steal_snapshot_soft_production_lock.cpp
 )
 set_property(TARGET test_mailbox_fiber_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_mailbox_fiber_batch PRIVATE src tests)
@@ -4297,47 +4297,47 @@ endif()
 # Domain batch: Occurrence / cone / coercion / type gates (41 members + driver).
 add_executable(test_occurrence_coercion_batch
     tests/compiler/test_occurrence_coercion_batch.cpp
-    tests/compiler/test_adt_exhaustiveness_audit_2223.cpp
-    tests/compiler/test_adt_hard_gate_exhaustiveness_2264.cpp
-    tests/compiler/test_adt_match_goal_table_2564.cpp
-    tests/compiler/test_batch_dirty_cascade_2522.cpp
-    tests/compiler/test_batch_dirty_discipline_2615.cpp
-    tests/compiler/test_bidirectional_match_check_2348.cpp
-    tests/compiler/test_blame_complete_commit_gate_2221.cpp
-    tests/compiler/test_blame_soft_recover_2561.cpp
-    tests/compiler/test_boundary_solve_hard_gate_2260.cpp
-    tests/compiler/test_castop_density_closed_loop_2459.cpp
-    tests/compiler/test_castop_density_hard_2358.cpp
-    tests/compiler/test_castop_typed_meta_2624.cpp
-    tests/compiler/test_coercion_ban_weak_ir_2261.cpp
-    tests/compiler/test_coercion_dual_require_2562.cpp
-    tests/compiler/test_coercion_prov_slo_2558.cpp
-    tests/compiler/test_coercion_provenance_fast_strict_2147.cpp
-    tests/compiler/test_coercion_provenance_miss_force_audit_2102.cpp
-    tests/compiler/test_coercion_reject_production_defaults_2185.cpp
-    tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp
-    tests/compiler/test_composite_auto_partial_from_cone_2610.cpp
-    tests/compiler/test_composite_commit_cs_reuse_2180.cpp
-    tests/compiler/test_composite_cs_signature_matrix_2509.cpp
-    tests/compiler/test_composite_txn_commit_2105.cpp
-    tests/compiler/test_dead_coercion_columnar_2431.cpp
-    tests/compiler/test_dead_coercion_dirty_cone_2556.cpp
-    tests/compiler/test_dead_coercion_layered_2282.cpp
-    tests/compiler/test_instance_constraint_depth_cap_2607.cpp
-    tests/compiler/test_occurrence_cache_key_2461.cpp
-    tests/compiler/test_occurrence_dirty_key_authority_2622.cpp
-    tests/compiler/test_occurrence_goal_epoch_table_2278.cpp
-    tests/compiler/test_occurrence_goal_persist_rehydrate_2608.cpp
-    tests/compiler/test_partial_cone_cap_2560.cpp
-    tests/compiler/test_partial_cone_commit_gate_2621.cpp
-    tests/compiler/test_solve_delta_unresolved_export_2107.cpp
-    tests/compiler/test_type_dep_epoch_prune_2355.cpp
-    tests/compiler/test_type_dep_partial_merge_2283.cpp
-    tests/compiler/test_type_dirty_cone_dep_graph_2191.cpp
-    tests/compiler/test_type_linear_commit_health_2613.cpp
-    tests/compiler/test_type_system_health_2350.cpp
-    tests/compiler/test_type_system_health_next_action_2462.cpp
-    tests/compiler/test_type_timeout_repair_2284.cpp
+    tests/compiler/test_adt_exhaustiveness_audit.cpp
+    tests/compiler/test_adt_hard_gate_exhaustiveness.cpp
+    tests/compiler/test_adt_match_goal_table.cpp
+    tests/compiler/test_batch_dirty_cascade.cpp
+    tests/compiler/test_batch_dirty_discipline.cpp
+    tests/compiler/test_bidirectional_match_check.cpp
+    tests/compiler/test_blame_complete_commit_gate.cpp
+    tests/compiler/test_blame_soft_recover.cpp
+    tests/compiler/test_boundary_solve_hard_gate.cpp
+    tests/compiler/test_castop_density_closed_loop.cpp
+    tests/compiler/test_castop_density_hard.cpp
+    tests/compiler/test_castop_typed_meta.cpp
+    tests/compiler/test_coercion_ban_weak_ir.cpp
+    tests/compiler/test_coercion_dual_require.cpp
+    tests/compiler/test_coercion_prov_slo.cpp
+    tests/compiler/test_coercion_provenance_fast_strict.cpp
+    tests/compiler/test_coercion_provenance_miss_force_audit.cpp
+    tests/compiler/test_coercion_reject_production_defaults.cpp
+    tests/compiler/test_coercion_unify_incomplete_skip.cpp
+    tests/compiler/test_composite_auto_partial_from_cone.cpp
+    tests/compiler/test_composite_commit_cs_reuse.cpp
+    tests/compiler/test_composite_cs_signature_matrix.cpp
+    tests/compiler/test_composite_txn_commit.cpp
+    tests/compiler/test_dead_coercion_columnar.cpp
+    tests/compiler/test_dead_coercion_dirty_cone.cpp
+    tests/compiler/test_dead_coercion_layered.cpp
+    tests/compiler/test_instance_constraint_depth_cap.cpp
+    tests/compiler/test_occurrence_cache_key.cpp
+    tests/compiler/test_occurrence_dirty_key_authority.cpp
+    tests/compiler/test_occurrence_goal_epoch_table.cpp
+    tests/compiler/test_occurrence_goal_persist_rehydrate.cpp
+    tests/compiler/test_partial_cone_cap.cpp
+    tests/compiler/test_partial_cone_commit_gate.cpp
+    tests/compiler/test_solve_delta_unresolved_export.cpp
+    tests/compiler/test_type_dep_epoch_prune.cpp
+    tests/compiler/test_type_dep_partial_merge.cpp
+    tests/compiler/test_type_dirty_cone_dep_graph.cpp
+    tests/compiler/test_type_linear_commit_health.cpp
+    tests/compiler/test_type_system_health.cpp
+    tests/compiler/test_type_system_health_next_action.cpp
+    tests/compiler/test_type_timeout_repair.cpp
 )
 set_property(TARGET test_occurrence_coercion_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_occurrence_coercion_batch PRIVATE src tests)
@@ -4421,9 +4421,9 @@ endif()
 # Domain batch: Obs / health / epoch invariant leftovers (3 members + driver).
 add_executable(test_obs_misc_batch
     tests/compiler/test_obs_misc_batch.cpp
-    tests/compiler/test_memo_goal_epoch_health_2359.cpp
-    tests/compiler/test_mutation_concurrency_health_2379.cpp
-    tests/compiler/test_orch_hot_update_health_throttle_2543.cpp
+    tests/compiler/test_memo_goal_epoch_health.cpp
+    tests/compiler/test_mutation_concurrency_health.cpp
+    tests/compiler/test_orch_hot_update_health_throttle.cpp
 )
 set_property(TARGET test_obs_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_obs_misc_batch PRIVATE src tests)
@@ -4445,27 +4445,27 @@ endif()
 # Domain batch: Mutation hold / boundary / guard / steal×mutation (21 members + driver). Stream A1.
 add_executable(test_mutation_hold_boundary_batch
     tests/compiler/test_mutation_hold_boundary_batch.cpp
-    tests/compiler/test_effect_epoch_mutation_unify_2149.cpp
-    tests/compiler/test_guard_exit_occurrence_refresh_2144.cpp
-    tests/compiler/test_mutation_contention_2040.cpp
-    tests/compiler/test_mutation_guard_try_acquire_2124.cpp
-    tests/compiler/test_mutation_hold_estimate_2405.cpp
-    tests/compiler/test_mutation_hold_hard_timeout_2199.cpp
-    tests/compiler/test_mutation_hold_live_2517.cpp
-    tests/compiler/test_mutation_hold_slo_2349.cpp
-    tests/compiler/test_mutation_log_pressure_2201.cpp
-    tests/compiler/test_mutation_memory_blame_2196.cpp
-    tests/compiler/test_outermost_exit_order_2120.cpp
-    tests/compiler/test_post_steal_linear_revalidate_2197.cpp
-    tests/compiler/test_predicate_memo_boundary_selective_2104.cpp
-    tests/compiler/test_typed_mutation_audit_decision_2281.cpp
-    tests/core/test_gc_defer_mutation_hold_2204.cpp
-    tests/serve/test_boundary_yield_steal_metrics_2119.cpp
-    tests/serve/test_depth_safe_mutation_boundary_steal_2115.cpp
-    tests/serve/test_mutation_safety_snapshot_steal_2184.cpp
-    tests/serve/test_orch_agent_mutation_boundary_2118.cpp
-    tests/serve/test_orch_soft_boundary_unified_2515.cpp
-    tests/serve/test_yield_while_mutation_held_2200.cpp
+    tests/compiler/test_effect_epoch_mutation_unify.cpp
+    tests/compiler/test_guard_exit_occurrence_refresh.cpp
+    tests/compiler/test_mutation_contention.cpp
+    tests/compiler/test_mutation_guard_try_acquire_unit.cpp
+    tests/compiler/test_mutation_hold_estimate.cpp
+    tests/compiler/test_mutation_hold_hard_timeout.cpp
+    tests/compiler/test_mutation_hold_live.cpp
+    tests/compiler/test_mutation_hold_slo.cpp
+    tests/compiler/test_mutation_log_pressure.cpp
+    tests/compiler/test_mutation_memory_blame.cpp
+    tests/compiler/test_outermost_exit_order.cpp
+    tests/compiler/test_post_steal_linear_revalidate.cpp
+    tests/compiler/test_predicate_memo_boundary_selective.cpp
+    tests/compiler/test_typed_mutation_audit_decision.cpp
+    tests/core/test_gc_defer_mutation_hold.cpp
+    tests/serve/test_boundary_yield_steal_metrics.cpp
+    tests/serve/test_depth_safe_mutation_boundary_steal.cpp
+    tests/serve/test_mutation_safety_snapshot_steal.cpp
+    tests/serve/test_orch_agent_mutation_boundary.cpp
+    tests/serve/test_orch_soft_boundary_unified.cpp
+    tests/serve/test_yield_while_mutation_held.cpp
 )
 set_property(TARGET test_mutation_hold_boundary_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_mutation_hold_boundary_batch PRIVATE src tests)
@@ -4485,20 +4485,20 @@ endif()
 # Domain batch: Shape / SoA / storm isolation (14 members + driver). Stream A2.
 add_executable(test_shape_soa_storm_batch
     tests/compiler/test_shape_soa_storm_batch.cpp
-    tests/compiler/test_dirty_aware_shape_linear_passes_2130.cpp
-    tests/compiler/test_hot_pass_dirty_soa_2060.cpp
-    tests/compiler/test_shape_compact_storm_isolation_2617.cpp
-    tests/compiler/test_shape_high_mutation_storm_2433.cpp
-    tests/compiler/test_shape_storm_adaptive_2526.cpp
-    tests/compiler/test_soa_ban_residual_aos_bridge_2520.cpp
-    tests/compiler/test_soa_dirty_aware_pipeline_2143.cpp
-    tests/compiler/test_soa_generation_fence_2111.cpp
-    tests/compiler/test_soa_partial_desync_gate_2181.cpp
-    tests/compiler/test_soa_residual_production_smoke_2618.cpp
-    tests/compiler/test_soa_single_entry_dirty_sync_2139.cpp
-    tests/compiler/test_storm_isolation_2236.cpp
-    tests/core/test_hot_children_columnar_2614.cpp
-    tests/core/test_validate_post_restore_soa_2391.cpp
+    tests/compiler/test_dirty_aware_shape_linear_passes.cpp
+    tests/compiler/test_hot_pass_dirty_soa.cpp
+    tests/compiler/test_shape_compact_storm_isolation.cpp
+    tests/compiler/test_shape_high_mutation_storm.cpp
+    tests/compiler/test_shape_storm_adaptive.cpp
+    tests/compiler/test_soa_ban_residual_aos_bridge.cpp
+    tests/compiler/test_soa_dirty_aware_pipeline.cpp
+    tests/compiler/test_soa_generation_fence.cpp
+    tests/compiler/test_soa_partial_desync_gate.cpp
+    tests/compiler/test_soa_residual_production_smoke.cpp
+    tests/compiler/test_soa_single_entry_dirty_sync.cpp
+    tests/compiler/test_storm_isolation.cpp
+    tests/core/test_hot_children_columnar.cpp
+    tests/core/test_validate_post_restore_soa.cpp
 )
 set_property(TARGET test_shape_soa_storm_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_shape_soa_storm_batch PRIVATE src tests)
@@ -4518,29 +4518,29 @@ endif()
 # Domain batch: IR / closure / JIT / deopt / DCE / PrimCall (24 members + driver). Stream A3.
 add_executable(test_ir_closure_jit_misc_batch
     tests/compiler/test_ir_closure_jit_misc_batch.cpp
-    tests/compiler/test_anonymous_residual_stable_id_policy_2605.cpp
-    tests/compiler/test_aura_jit_unused_fn_lock_2475.cpp
-    tests/compiler/test_closure_call_must_deopt_toctou_2472.cpp
-    tests/compiler/test_comprehensive_live_closure_expire_2042.cpp
-    tests/compiler/test_dce_elided_deopt_meta_2611.cpp
-    tests/compiler/test_emit_object_deprecated_2477.cpp
-    tests/compiler/test_force_jit_repromote_2502.cpp
-    tests/compiler/test_ir_const_string_intern_2573.cpp
-    tests/compiler/test_ir_optimize_type_info_chain_2471.cpp
-    tests/compiler/test_jit_dual_string_heap_2575.cpp
-    tests/compiler/test_jit_interpreter_equivalence_oracle_2210.cpp
-    tests/compiler/test_jit_macro_deopt_hygiene_2100.cpp
-    tests/compiler/test_live_closure_stable_id_only_2369.cpp
-    tests/compiler/test_must_deopt_before_next_call_2128.cpp
-    tests/compiler/test_named_closure_stable_id_at_create_2550.cpp
-    tests/compiler/test_partial_recompile_single_evict_2476.cpp
-    tests/compiler/test_primcall_narg_2576.cpp
-    tests/compiler/test_primcall_str_intern_2577.cpp
-    tests/compiler/test_region_priority_deopt_throttle_2132.cpp
-    tests/compiler/test_remount_force_deopt_2503.cpp
-    tests/compiler/test_source_to_ir_desync_recovery_2206.cpp
-    tests/compiler/test_source_to_ir_map_consistency_2045.cpp
-    tests/compiler/test_tree_walker_fallback_strict_2213.cpp
+    tests/compiler/test_anonymous_residual_stable_id_policy.cpp
+    tests/compiler/test_aura_jit_unused_fn_lock.cpp
+    tests/compiler/test_closure_call_must_deopt_toctou.cpp
+    tests/compiler/test_comprehensive_live_closure_expire.cpp
+    tests/compiler/test_dce_elided_deopt_meta.cpp
+    tests/compiler/test_emit_object_deprecated.cpp
+    tests/compiler/test_force_jit_repromote.cpp
+    tests/compiler/test_ir_const_string_intern.cpp
+    tests/compiler/test_ir_optimize_type_info_chain.cpp
+    tests/compiler/test_jit_dual_string_heap.cpp
+    tests/compiler/test_jit_interpreter_equivalence_oracle.cpp
+    tests/compiler/test_jit_macro_deopt_hygiene.cpp
+    tests/compiler/test_live_closure_stable_id_only.cpp
+    tests/compiler/test_must_deopt_before_next_call.cpp
+    tests/compiler/test_named_closure_stable_id_at_create.cpp
+    tests/compiler/test_partial_recompile_single_evict.cpp
+    tests/compiler/test_primcall_narg.cpp
+    tests/compiler/test_primcall_str_intern.cpp
+    tests/compiler/test_region_priority_deopt_throttle.cpp
+    tests/compiler/test_remount_force_deopt.cpp
+    tests/compiler/test_source_to_ir_desync_recovery.cpp
+    tests/compiler/test_source_to_ir_map_consistency.cpp
+    tests/compiler/test_tree_walker_fallback_strict.cpp
 )
 set_property(TARGET test_ir_closure_jit_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_ir_closure_jit_misc_batch PRIVATE src tests)
@@ -4560,18 +4560,18 @@ endif()
 # Domain batch: Module load/rebind/export + query hygiene/index (12 members + driver). Stream A4.
 add_executable(test_module_query_batch
     tests/compiler/test_module_query_batch.cpp
-    tests/compiler/test_module_export_display_2572.cpp
-    tests/compiler/test_module_load_tail_export_2570.cpp
-    tests/compiler/test_module_partition_map_2524.cpp
-    tests/compiler/test_module_rebind_residual_2579.cpp
-    tests/compiler/test_module_require_freevar_2566.cpp
-    tests/compiler/test_query_and_replace_batch_2527.cpp
-    tests/compiler/test_query_by_marker_provenance_2242.cpp
-    tests/compiler/test_query_epoch_contract_2192.cpp
-    tests/compiler/test_query_hygiene_default_2525.cpp
-    tests/compiler/test_query_index_composite_2403.cpp
-    tests/compiler/test_query_pattern_default_hygiene_2123.cpp
-    tests/compiler/test_setcode_rebind_survive_2569.cpp
+    tests/compiler/test_module_export_display.cpp
+    tests/compiler/test_module_load_tail_export.cpp
+    tests/compiler/test_module_partition_map.cpp
+    tests/compiler/test_module_rebind_residual.cpp
+    tests/compiler/test_module_require_freevar.cpp
+    tests/compiler/test_query_and_replace_batch.cpp
+    tests/compiler/test_query_by_marker_provenance.cpp
+    tests/compiler/test_query_epoch_contract.cpp
+    tests/compiler/test_query_hygiene_default.cpp
+    tests/compiler/test_query_index_composite.cpp
+    tests/compiler/test_query_pattern_default_hygiene.cpp
+    tests/compiler/test_setcode_rebind_survive.cpp
 )
 set_property(TARGET test_module_query_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_module_query_batch PRIVATE src tests)
@@ -4591,16 +4591,16 @@ endif()
 # Domain batch: JSON / IO / cap / regex / channel / string escape (10 members + driver). Stream A5.
 add_executable(test_json_io_cap_batch
     tests/compiler/test_json_io_cap_batch.cpp
-    tests/compiler/test_channel_rendezvous_2483.cpp
-    tests/compiler/test_command_line_cap_io_read_2478.cpp
-    tests/compiler/test_eval_current_no_auto_fix_2484.cpp
-    tests/compiler/test_json_parse_number_exception_2480.cpp
-    tests/compiler/test_json_parse_object_grow_2481.cpp
-    tests/compiler/test_list_end_of_list_void_2482.cpp
-    tests/compiler/test_load_cap_io_read_2485.cpp
-    tests/compiler/test_regex_redos_timeout_2479.cpp
-    tests/compiler/test_sys_open_path_harden_2487.cpp
-    tests/compiler/test_write_string_escape_2574.cpp
+    tests/compiler/test_channel_rendezvous.cpp
+    tests/compiler/test_command_line_cap_io_read.cpp
+    tests/compiler/test_eval_current_no_auto_fix.cpp
+    tests/compiler/test_json_parse_number_exception.cpp
+    tests/compiler/test_json_parse_object_grow.cpp
+    tests/compiler/test_list_end_of_list_void.cpp
+    tests/compiler/test_load_cap_io_read.cpp
+    tests/compiler/test_regex_redos_timeout.cpp
+    tests/compiler/test_sys_open_path_harden.cpp
+    tests/compiler/test_write_string_escape.cpp
 )
 set_property(TARGET test_json_io_cap_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_json_io_cap_batch PRIVATE src tests)
@@ -4620,14 +4620,14 @@ endif()
 # Domain batch: StableNodeRef / validate / tenant / wire ACs (Stream A6) (8 members + driver). Stream S2.
 add_executable(test_stable_ref_validate_batch
     tests/compiler/test_stable_ref_validate_batch.cpp
-    tests/compiler/test_edsl_validate_or_refresh_2186.cpp
-    tests/compiler/test_stable_ref_cow_refresh_failclosed_2393.cpp
-    tests/compiler/test_stable_ref_export_validate_2404.cpp
-    tests/compiler/test_stable_ref_tenant_mandate_2056.cpp
-    tests/compiler/test_stable_ref_wire_v2_2198.cpp
-    tests/core/test_stable_ref_tenant_capture_2125.cpp
-    tests/core/test_stable_ref_wire_endian_2395.cpp
-    tests/core/test_validate_node_no_abort_2390.cpp
+    tests/compiler/test_edsl_validate_or_refresh.cpp
+    tests/compiler/test_stable_ref_cow_refresh_failclosed.cpp
+    tests/compiler/test_stable_ref_export_validate.cpp
+    tests/compiler/test_stable_ref_tenant_mandate.cpp
+    tests/compiler/test_stable_ref_wire_v2.cpp
+    tests/core/test_stable_ref_tenant_capture.cpp
+    tests/core/test_stable_ref_wire_endian.cpp
+    tests/core/test_validate_node_no_abort.cpp
 )
 set_property(TARGET test_stable_ref_validate_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_stable_ref_validate_batch PRIVATE src tests)
@@ -4646,14 +4646,14 @@ endif()
 # Domain batch: Production hardening / safety / readiness ACs (Stream A7) (8 members + driver). Stream S2.
 add_executable(test_production_hardening_batch
     tests/compiler/test_production_hardening_batch.cpp
-    tests/compiler/test_commit_readiness_score_2553.cpp
-    tests/compiler/test_lock_order_production_soft_2557.cpp
-    tests/compiler/test_production_hardening_985.cpp
-    tests/compiler/test_production_safety_1047.cpp
-    tests/compiler/test_production_safety_1097.cpp
-    tests/compiler/test_production_security_defaults_2053.cpp
-    tests/compiler/test_production_stability_1014.cpp
-    tests/compiler/test_stdlib_production_review_923.cpp
+    tests/compiler/test_commit_readiness_score.cpp
+    tests/compiler/test_lock_order_production_soft.cpp
+    tests/compiler/test_production_hardening.cpp
+    tests/compiler/test_production_safety_p1.cpp
+    tests/compiler/test_production_safety_p2.cpp
+    tests/compiler/test_production_security_defaults.cpp
+    tests/compiler/test_production_stability.cpp
+    tests/compiler/test_stdlib_production_review.cpp
 )
 set_property(TARGET test_production_hardening_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_production_hardening_batch PRIVATE src tests)
@@ -4672,13 +4672,13 @@ endif()
 # Domain batch: PCV / workspace isolation & contention ACs (Stream A8) (7 members + driver). Stream S2.
 add_executable(test_pcv_workspace_batch
     tests/core/test_pcv_workspace_batch.cpp
-    tests/compiler/test_workspace_mtx_contention_2523.cpp
-    tests/compiler/test_workspace_region_concurrency_2121.cpp
-    tests/core/test_pcv_exclusive_with_set_2140.cpp
-    tests/core/test_pcv_tls_default_on_2521.cpp
-    tests/core/test_pcv_tls_scratch_2406.cpp
-    tests/core/test_pcv_unique_hotpath_2058.cpp
-    tests/core/test_workspace_isolation_wire_2073.cpp
+    tests/compiler/test_workspace_mtx_contention.cpp
+    tests/compiler/test_workspace_region_concurrency.cpp
+    tests/core/test_pcv_exclusive_with_set.cpp
+    tests/core/test_pcv_tls_default_on.cpp
+    tests/core/test_pcv_tls_scratch.cpp
+    tests/core/test_pcv_unique_hotpath.cpp
+    tests/core/test_workspace_isolation_wire.cpp
 )
 set_property(TARGET test_pcv_workspace_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_pcv_workspace_batch PRIVATE src tests)
@@ -4697,13 +4697,13 @@ endif()
 # Domain batch: Arena compact hooks / dtor / force compact ACs (Stream A9) (7 members + driver). Stream S2.
 add_executable(test_arena_compact_hooks_batch
     tests/core/test_arena_compact_hooks_batch.cpp
-    tests/core/test_arena_adaptive_compact_2059.cpp
-    tests/core/test_arena_compact_hook_stats_2381.cpp
-    tests/core/test_arena_compact_notify_lifecycle_2438.cpp
-    tests/core/test_arena_dtor_clears_hooks_2382.cpp
-    tests/core/test_force_compact_hard_mutex_2157.cpp
-    tests/core/test_has_on_compact_hook_lock_2383.cpp
-    tests/core/test_incremental_restamp_2061.cpp
+    tests/core/test_arena_adaptive_compact.cpp
+    tests/core/test_arena_compact_hook_stats.cpp
+    tests/core/test_arena_compact_notify_lifecycle.cpp
+    tests/core/test_arena_dtor_clears_hooks.cpp
+    tests/core/test_force_compact_hard_mutex.cpp
+    tests/core/test_has_on_compact_hook_lock.cpp
+    tests/core/test_incremental_restamp.cpp
 )
 set_property(TARGET test_arena_compact_hooks_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_arena_compact_hooks_batch PRIVATE src tests)
@@ -4722,10 +4722,10 @@ endif()
 # Domain batch: Epoch invariant walk / soft-prod / complete ACs (Stream A10a) (4 members + driver). Stream S2.
 add_executable(test_epoch_invariant_misc_batch
     tests/compiler/test_epoch_invariant_misc_batch.cpp
-    tests/compiler/test_epoch_bump_invariant_2304.cpp
-    tests/compiler/test_epoch_invariant_complete_2501.cpp
-    tests/compiler/test_epoch_invariant_soft_prod_2541.cpp
-    tests/compiler/test_epoch_invariant_walk_2366.cpp
+    tests/compiler/test_epoch_bump_invariant.cpp
+    tests/compiler/test_epoch_invariant_complete.cpp
+    tests/compiler/test_epoch_invariant_soft_prod.cpp
+    tests/compiler/test_epoch_invariant_walk.cpp
 )
 set_property(TARGET test_epoch_invariant_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_epoch_invariant_misc_batch PRIVATE src tests)
@@ -4744,11 +4744,11 @@ endif()
 # Domain batch: GC heap/closures/coord leftover ACs (Stream A10b) (5 members + driver). Stream S2.
 add_executable(test_gc_misc_batch
     tests/compiler/test_gc_misc_batch.cpp
-    tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp
-    tests/compiler/test_gc_coord_scope_2131.cpp
-    tests/compiler/test_gc_heap_cells_clear_2486.cpp
-    tests/serve/test_atomic_mark_bitvector_2117.cpp
-    tests/serve/test_gc_mark_size_inject_2084.cpp
+    tests/compiler/test_gc_closures_mtx_flush_sweep.cpp
+    tests/compiler/test_gc_coord_scope.cpp
+    tests/compiler/test_gc_heap_cells_clear.cpp
+    tests/serve/test_atomic_mark_bitvector.cpp
+    tests/serve/test_gc_mark_size_inject.cpp
 )
 set_property(TARGET test_gc_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_gc_misc_batch PRIVATE src tests)
@@ -4767,11 +4767,11 @@ endif()
 # Domain batch: Hot-pass / hot-contract / strategy ACs (Stream A10c) (5 members + driver). Stream S2.
 add_executable(test_hot_pass_contract_batch
     tests/compiler/test_hot_pass_contract_batch.cpp
-    tests/compiler/test_hot_contract_placement_2435.cpp
-    tests/compiler/test_hot_contract_unify_2142.cpp
-    tests/compiler/test_hot_pass_hard_dod_2434.cpp
-    tests/compiler/test_hot_pass_pure_wrap_2258.cpp
-    tests/compiler/test_hot_strategy_2582.cpp
+    tests/compiler/test_hot_contract_placement.cpp
+    tests/compiler/test_hot_contract_unify.cpp
+    tests/compiler/test_hot_pass_hard_dod.cpp
+    tests/compiler/test_hot_pass_pure_wrap.cpp
+    tests/compiler/test_hot_strategy.cpp
 )
 set_property(TARGET test_hot_pass_contract_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_hot_pass_contract_batch PRIVATE src tests)
@@ -4790,12 +4790,12 @@ endif()
 # Domain batch: Macro hygiene / checkpoint ACs (Stream A10d) (4 members + driver). Stream S2.
 add_executable(test_macro_hygiene_batch
     tests/compiler/test_macro_hygiene_batch.cpp
-    tests/compiler/test_hygiene_checkpoint_2099.cpp
-    tests/compiler/test_macro_cross_flat_hygiene_2235.cpp
-    tests/compiler/test_macro_hygiene_limits_2101.cpp
-    tests/reflect/test_hygiene_diagnostic_2167.cpp
-    tests/compiler/test_rest_param_hygiene_2169.cpp
-    tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp
+    tests/compiler/test_hygiene_checkpoint.cpp
+    tests/compiler/test_macro_cross_flat_hygiene.cpp
+    tests/compiler/test_macro_hygiene_limits.cpp
+    tests/reflect/test_hygiene_diagnostic.cpp
+    tests/compiler/test_rest_param_hygiene.cpp
+    tests/compiler/test_rest_param_nested_qq_hygiene.cpp
 )
 set_property(TARGET test_macro_hygiene_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_macro_hygiene_batch PRIVATE src tests)
@@ -4814,14 +4814,14 @@ endif()
 # Domain batch: Cascade / adaptive thr / instr impact ACs (Stream A10e) (8 members + driver). Stream S2.
 add_executable(test_cascade_impact_batch
     tests/compiler/test_cascade_impact_batch.cpp
-    tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp
-    tests/compiler/test_adaptive_reverify_limit_2146.cpp
-    tests/compiler/test_cascade_incremental_pass_suite_2044.cpp
-    tests/compiler/test_cascade_skip_metrics_2106.cpp
-    tests/compiler/test_dep_graph_hybrid_cascade_2110.cpp
-    tests/compiler/test_frame_budget_cascade_isolation_2137.cpp
-    tests/compiler/test_instr_impact_minimal_dirty_2126.cpp
-    tests/compiler/test_instruction_level_impact_partial_2109.cpp
+    tests/compiler/test_adaptive_cascade_depth_partial_thr.cpp
+    tests/compiler/test_adaptive_reverify_limit.cpp
+    tests/compiler/test_cascade_incremental_pass_suite.cpp
+    tests/compiler/test_cascade_skip_metrics.cpp
+    tests/compiler/test_dep_graph_hybrid_cascade.cpp
+    tests/compiler/test_frame_budget_cascade_isolation.cpp
+    tests/compiler/test_instr_impact_minimal_dirty.cpp
+    tests/compiler/test_instruction_level_impact_partial.cpp
 )
 set_property(TARGET test_cascade_impact_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_cascade_impact_batch PRIVATE src tests)
@@ -4840,8 +4840,8 @@ endif()
 # Domain batch: Cross-COW soft migrate / drift contract (Stream A10f) (2 members + driver). Stream S2.
 add_executable(test_cross_cow_batch
     tests/compiler/test_cross_cow_batch.cpp
-    tests/compiler/test_cross_cow_drift_contract_2505.cpp
-    tests/compiler/test_cross_cow_soft_migrate_2371.cpp
+    tests/compiler/test_cross_cow_drift_contract.cpp
+    tests/compiler/test_cross_cow_soft_migrate.cpp
 )
 set_property(TARGET test_cross_cow_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_cross_cow_batch PRIVATE src tests)
@@ -4860,8 +4860,8 @@ endif()
 # Domain batch: Lock-order audit ACs (Stream C soft-home for 2316/2354) (2 members + driver). Stream S2.
 add_executable(test_lock_order_audit_batch
     tests/compiler/test_lock_order_audit_batch.cpp
-    tests/compiler/test_lock_order_audit_2316.cpp
-    tests/compiler/test_lock_order_audit_2354.cpp
+    tests/compiler/test_lock_order_audit.cpp
+    tests/compiler/test_lock_order_audit_hard.cpp
 )
 set_property(TARGET test_lock_order_audit_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_lock_order_audit_batch PRIVATE src tests)
@@ -4880,8 +4880,8 @@ endif()
 # Domain batch: Reemit production default defer (Stream C soft-home for 2205/2208) (2 members + driver). Stream S2.
 add_executable(test_reemit_defer_batch
     tests/compiler/test_reemit_defer_batch.cpp
-    tests/compiler/test_reemit_production_default_defer_2205.cpp
-    tests/compiler/test_reemit_production_default_defer_2208.cpp
+    tests/compiler/test_reemit_production_default_defer.cpp
+    tests/compiler/test_reemit_production_default_defer_v2.cpp
 )
 set_property(TARGET test_reemit_defer_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_reemit_defer_batch PRIVATE src tests)
@@ -4901,15 +4901,15 @@ endif()
 # Domain batch: Type/txn/predicate leftover ACs (Stream A10g) (9 members + driver). Stream S2.
 add_executable(test_type_txn_misc_batch
     tests/compiler/test_type_txn_misc_batch.cpp
-    tests/compiler/test_dispatch_required_effects_2152.cpp
-    tests/compiler/test_hard_gate_full_strict_2145.cpp
-    tests/compiler/test_mutate_type_gate_2219.cpp
-    tests/compiler/test_partial_cs_single_source_2262.cpp
-    tests/compiler/test_persistent_typechecker_2220.cpp
-    tests/compiler/test_predicate_meet_join_lattice_2148.cpp
-    tests/compiler/test_subtype_constraint_meet_2195.cpp
-    tests/compiler/test_timeout_repair_rich_roots_2548.cpp
-    tests/compiler/test_type_dirty_txn_order_2516.cpp
+    tests/compiler/test_dispatch_required_effects.cpp
+    tests/compiler/test_hard_gate_full_strict.cpp
+    tests/compiler/test_mutate_type_gate.cpp
+    tests/compiler/test_partial_cs_single_source.cpp
+    tests/compiler/test_persistent_typechecker.cpp
+    tests/compiler/test_predicate_meet_join_lattice.cpp
+    tests/compiler/test_subtype_constraint_meet.cpp
+    tests/compiler/test_timeout_repair_rich_roots.cpp
+    tests/compiler/test_type_dirty_txn_order.cpp
 )
 set_property(TARGET test_type_txn_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_type_txn_misc_batch PRIVATE src tests)
@@ -4932,8 +4932,8 @@ add_executable(test_serve_legacy_issue_batch
     tests/serve/test_issue_1991.cpp
     tests/serve/test_issue_1992.cpp
     tests/serve/test_issue_1993.cpp
-    tests/serve/test_mutate_mailbox_starvation_throttle_2587.cpp
-    tests/serve/test_spawn_quota_no_leak_2155.cpp
+    tests/serve/test_mutate_mailbox_starvation_throttle.cpp
+    tests/serve/test_spawn_quota_no_leak.cpp
 )
 set_property(TARGET test_serve_legacy_issue_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_serve_legacy_issue_batch PRIVATE src tests)
@@ -4952,8 +4952,8 @@ endif()
 # Domain batch: Value-tag hotpath ban/path ACs (Stream A10i) (2 members + driver). Stream S2.
 add_executable(test_value_tag_hotpath_batch
     tests/compiler/test_value_tag_hotpath_batch.cpp
-    tests/compiler/test_value_tag_hot_path_2259.cpp
-    tests/compiler/test_value_tag_hotpath_ban_2616.cpp
+    tests/compiler/test_value_tag_hot_path.cpp
+    tests/compiler/test_value_tag_hotpath_ban.cpp
 )
 set_property(TARGET test_value_tag_hotpath_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_value_tag_hotpath_batch PRIVATE src tests)
@@ -4971,36 +4971,36 @@ endif()
 
 add_executable(test_misc_issue_fold_batch
     tests/compiler/test_misc_issue_fold_batch.cpp
-    tests/compiler/test_aether_denseness_residual_2578.cpp
-    tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp
-    tests/compiler/test_aura_sandbox_env_2076.cpp
-    tests/compiler/test_bugfix_968.cpp
-    tests/compiler/test_commercial_tenant_profile_2584.cpp
-    tests/compiler/test_compact_policy_2500.cpp
-    tests/compiler/test_delta_truncate_goal_priority_2508.cpp
-    tests/compiler/test_dual_path_desync_hard_fail_2116.cpp
-    tests/compiler/test_escape_move_elision_gate_2263.cpp
-    tests/compiler/test_incremental_soundness_oracle_2113.cpp
-    tests/compiler/test_isolation_audit_mid_2156.cpp
-    tests/compiler/test_mutate_capability_force_2052.cpp
-    tests/compiler/test_orch_scope_child_2631.cpp
-    tests/compiler/test_post_compact_lifecycle_2436.cpp
-    tests/compiler/test_reverify_expand_2356.cpp
-    tests/compiler/test_rollback_by_marker_2237.cpp
-    tests/compiler/test_selfevo_bugfix_941.cpp
-    tests/compiler/test_shape_profiler_concurrency_2141.cpp
-    tests/compiler/test_symbol_eq_2568.cpp
-    tests/compiler/test_truncate_commit_gate_2458.cpp
-    tests/compiler/test_try_catch_bind_2567.cpp
-    tests/compiler/test_while_define_oneshot_2571.cpp
-    tests/core/test_fixup_deltas_2392.cpp
-    tests/core/test_reset_slot_parent_edges_2412.cpp
-    tests/core/test_restamp_sla_observability_2528.cpp
-    tests/core/test_subtree_dirty_bounds_2424.cpp
-    tests/core/test_transaction_guard_2555.cpp
-    tests/reflect/test_ir_pod_phase4_2291.cpp
-    tests/reflect/test_opcode_reflect_2289.cpp
-    tests/reflect/test_reflect_isolation_2290.cpp
+    tests/compiler/test_aether_denseness_residual.cpp
+    tests/compiler/test_audit_wal_force_multi_tenant.cpp
+    tests/compiler/test_aura_sandbox_env.cpp
+    tests/compiler/test_bugfix.cpp
+    tests/compiler/test_commercial_tenant_profile.cpp
+    tests/compiler/test_compact_policy.cpp
+    tests/compiler/test_delta_truncate_goal_priority.cpp
+    tests/compiler/test_dual_path_desync_hard_fail.cpp
+    tests/compiler/test_escape_move_elision_gate.cpp
+    tests/compiler/test_incremental_soundness_oracle.cpp
+    tests/compiler/test_isolation_audit_mid.cpp
+    tests/compiler/test_mutate_capability_force.cpp
+    tests/compiler/test_orch_scope_child.cpp
+    tests/compiler/test_post_compact_lifecycle.cpp
+    tests/compiler/test_reverify_expand.cpp
+    tests/compiler/test_rollback_by_marker.cpp
+    tests/compiler/test_selfevo_bugfix.cpp
+    tests/compiler/test_shape_profiler_concurrency.cpp
+    tests/compiler/test_symbol_eq.cpp
+    tests/compiler/test_truncate_commit_gate.cpp
+    tests/compiler/test_try_catch_bind.cpp
+    tests/compiler/test_while_define_oneshot.cpp
+    tests/core/test_fixup_deltas.cpp
+    tests/core/test_reset_slot_parent_edges.cpp
+    tests/core/test_restamp_sla_observability.cpp
+    tests/core/test_subtree_dirty_bounds.cpp
+    tests/core/test_transaction_guard.cpp
+    tests/reflect/test_ir_pod_phase4.cpp
+    tests/reflect/test_opcode_reflect.cpp
+    tests/reflect/test_reflect_isolation.cpp
 )
 set_property(TARGET test_misc_issue_fold_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_misc_issue_fold_batch PRIVATE src tests)
@@ -5414,4 +5414,4 @@ add_dependencies(all_test_issue_targets test_orphan_reap_stress)
 # tenant_scope_mismatch_total on forged ambient). Closes the
 # #2491 residual: ambient principal must match target fiber's
 # assigned_tenant_id before handler runs. Test in
-# tests/serve/test_mailbox_tenant_principal_2592.cpp
+# tests/serve/test_mailbox_tenant_principal.cpp

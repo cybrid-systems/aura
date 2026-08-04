@@ -1,7 +1,5 @@
 // test_reemit_defer_batch.cpp — thematic multi-TU batch
-// Reemit production default defer (Stream C soft-home for 2205/2208)
-// Stream S2 of tests/CONSOLIDATION_PLAN.md.
-// Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
+// Stream S4 disambiguated names.
 
 #include "test_harness.hpp"
 
@@ -9,43 +7,37 @@
 
 import std;
 
-extern int run_test_reemit_production_default_defer_2205();
-extern int run_test_reemit_production_default_defer_2208();
+extern int run_test_reemit_production_default_defer();
+extern int run_test_reemit_production_default_defer_v2();
 
 int main() {
     using aura::test::g_failed;
     using aura::test::g_passed;
-    int members_failed = 0;
-    int members_passed = 0;
+    int members_failed = 0, members_passed = 0;
     std::println("=== test_reemit_defer_batch (2 members) ===");
 
-    std::println("\n──── test_reemit_production_default_defer_2205 ────");
+    std::println("\n──── test_reemit_production_default_defer ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_reemit_production_default_defer_2205() != 0 || g_failed != 0) {
+    if (run_test_reemit_production_default_defer() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_reemit_production_default_defer_2205 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL test_reemit_production_default_defer");
     } else {
         ++members_passed;
-        std::println("OK member test_reemit_production_default_defer_2205 ({} checks)", g_passed);
+        std::println("OK test_reemit_production_default_defer");
     }
 
-    std::println("\n──── test_reemit_production_default_defer_2208 ────");
+    std::println("\n──── test_reemit_production_default_defer_v2 ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_reemit_production_default_defer_2208() != 0 || g_failed != 0) {
+    if (run_test_reemit_production_default_defer_v2() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_reemit_production_default_defer_2208 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL test_reemit_production_default_defer_v2");
     } else {
         ++members_passed;
-        std::println("OK member test_reemit_production_default_defer_2208 ({} checks)", g_passed);
+        std::println("OK test_reemit_production_default_defer_v2");
     }
 
-    std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
-                 members_passed, members_failed);
+    std::println("\n=== {} ok, {} failed ===", members_passed, members_failed);
     return members_failed ? 1 : 0;
 }

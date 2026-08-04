@@ -5,25 +5,25 @@
   "checks": [
     {"ac": "AC1", "path": "src/compiler/castop_typed_meta.h", "contains": ["Issue #2624", "stamp_castop_typed_meta"]},
     {"ac": "AC1", "path": "src/compiler/lowering_impl.cpp", "contains": ["stamp_last_castop_typed_meta", "castop_typed_meta.h"]},
-    {"ac": "AC1", "path": "tests/compiler/test_castop_typed_meta_2624.cpp", "contains": ["ac1_non_elided_coercion_stamps"]},
+    {"ac": "AC1", "path": "tests/compiler/test_castop_typed_meta.cpp", "contains": ["ac1_non_elided_coercion_stamps"]},
 
     {"ac": "AC2", "path": "src/compiler/lowering_impl.cpp", "contains": ["can_elide_coercion_cast", "#2624 AC2"]},
-    {"ac": "AC2", "path": "tests/compiler/test_castop_typed_meta_2624.cpp", "contains": ["ac2_identity_elision_no_cast"]},
+    {"ac": "AC2", "path": "tests/compiler/test_castop_typed_meta.cpp", "contains": ["ac2_identity_elision_no_cast"]},
 
     {"ac": "AC3", "path": "src/compiler/castop_typed_meta.h", "contains": ["castop_typed_meta_missing_total", "lookup_castop_typed_meta"]},
-    {"ac": "AC3", "path": "tests/compiler/test_castop_typed_meta_2624.cpp", "contains": ["ac3_missing_meta_no_crash"]},
+    {"ac": "AC3", "path": "tests/compiler/test_castop_typed_meta.cpp", "contains": ["ac3_missing_meta_no_crash"]},
 
     {"ac": "AC4", "path": "src/compiler/castop_typed_meta.h", "contains": ["side table", "kCastOpTypedMetaCap", "not persisted"]},
-    {"ac": "AC4", "path": "tests/compiler/test_castop_typed_meta_2624.cpp", "contains": ["ac4_side_table_not_soa"]},
+    {"ac": "AC4", "path": "tests/compiler/test_castop_typed_meta.cpp", "contains": ["ac4_side_table_not_soa"]},
 
     {"ac": "AC5", "path": "src/compiler/pass_impls.ixx", "contains": ["castop_typed_meta_present", "castop_typed_meta_identity_elide_total", "#2624"]},
-    {"ac": "AC5", "path": "tests/compiler/test_castop_typed_meta_2624.cpp", "contains": ["ac5_dce_with_meta"]},
+    {"ac": "AC5", "path": "tests/compiler/test_castop_typed_meta.cpp", "contains": ["ac5_dce_with_meta"]},
 
     {"ac": "AC6", "path": "src/compiler/evaluator_primitives_query.cpp", "contains": ["schema-2624", "castop-typed-meta-stamped-total", "castop-typed-meta-missing-total", "castop-typed-meta-phase-a"]},
     {"ac": "AC6", "path": "src/compiler/castop_typed_meta.h", "contains": ["Phase B", "Phase C"]},
-    {"ac": "AC6", "path": "CMakeLists.txt", "contains": ["test_castop_typed_meta_2624"]},
+    {"ac": "AC6", "path": "CMakeLists.txt", "contains": ["test_castop_typed_meta"]},
     {"ac": "AC6", "path": "build.py", "contains": ["check_castop_typed_meta_2624", "cmd_castop_typed_meta_coverage"]},
-    {"ac": "AC6", "path": "tests/compiler/test_castop_typed_meta_2624.cpp", "contains": ["ac6_schema_source"]},
+    {"ac": "AC6", "path": "tests/compiler/test_castop_typed_meta.cpp", "contains": ["ac6_schema_source"]},
     {"ac": "AC6", "path": "scripts/coverage/checks/check_castop_typed_meta_2624.py", "contains": ["Issue #2624"]},
     {
       "ac": "AC6",

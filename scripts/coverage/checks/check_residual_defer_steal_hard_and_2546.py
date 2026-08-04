@@ -40,7 +40,7 @@ def main() -> int:
     qjit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     qev = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     qy = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/serve/test_residual_defer_steal_hard_and_2546.cpp")
+    test = _read("tests/serve/test_residual_defer_steal_hard_and.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -79,7 +79,7 @@ def main() -> int:
     must("residual_defer_steal_hard_fail_total", "AC5", qy)
     must("residual_hard_fail_total", "AC5", qy)
     must("ac5_soak_lineage", "AC5", test)
-    must("test_residual_defer_steal_hard_and_2546", "AC5", cmake)
+    must("test_residual_defer_steal_hard_and", "AC5", cmake)
     must("check_residual_defer_steal_hard_and_2546", "AC5", build)
     must("cmd_residual_defer_steal_hard_and_coverage", "AC5", build)
 

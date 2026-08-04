@@ -5,7 +5,7 @@
   "checks": [
     {
       "ac": "AC1",
-      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
       "contains": [
         "AURA_CHAOS_SOAK",
         "AURA_CHAOS_FIBERS",
@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
       "contains": [
         "steal_snapshot_hard_fail",
         "join_drain_residual_still_running",
@@ -27,7 +27,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
       "contains": [
         "ac2513_reclaim_residual_still_running",
         "mark_reclaimed",
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
       "contains": [
         "non_yield_spins",
         "ac2513_docs_and_source"

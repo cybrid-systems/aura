@@ -40,7 +40,7 @@ def main() -> int:
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     bh = _read("src/compiler/aura_jit_bridge.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_named_closure_stable_id_at_create_2550.cpp")
+    test = _read("tests/compiler/test_named_closure_stable_id_at_create.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -68,7 +68,7 @@ def main() -> int:
     # AC5 wiring
     must("ac1_named_create_nonzero", "AC5", test)
     must("ac2_reemit_no_backfill_growth", "AC5", test)
-    must("test_named_closure_stable_id_at_create_2550", "AC5", cmake)
+    must("test_named_closure_stable_id_at_create", "AC5", cmake)
     must("check_named_closure_stable_id_at_create_2550", "AC5", build)
     must("cmd_named_closure_stable_id_at_create_coverage", "AC5", build)
 

@@ -36,7 +36,7 @@ def main() -> int:
     mb = _read("src/serve/multi_fiber_mailbox.h")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     epm = _read("src/compiler/evaluator_primitives_messaging.cpp")
-    test = _read("tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp")
+    test = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
     bp = _read("build.py")
 
     # AC1

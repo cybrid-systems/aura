@@ -200,7 +200,7 @@ int run_test_orch_obs_facade() {
         std::println("\n--- #2636 AC1+AC2+AC5: body-age + env-opt-in facade ---");
         // Snapshot Fiber process-wide counters (delta-based to avoid touching
         // Fiber statics from this file — Fiber statics reset lives in
-        // test_residual_force_safepoint_2533.cpp unit test).
+        // test_residual_force_safepoint.cpp unit test).
         const auto age_max_before = aura::serve::Fiber::join_drain_residual_body_age_ms_max();
         const auto age_sum_before = aura::serve::Fiber::join_drain_residual_body_age_ms_sum();
         const auto age_samples_before = aura::serve::Fiber::join_drain_residual_body_age_samples();

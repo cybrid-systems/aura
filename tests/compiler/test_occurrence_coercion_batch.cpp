@@ -1,7 +1,6 @@
 // test_occurrence_coercion_batch.cpp — thematic multi-TU batch
-// Occurrence / cone / coercion / type gates
-// Members export run_<name>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
-// Policy: tests/HOMES.md — extend this batch, do not add test_*_<issue>.cpp.
+// Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
+// Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
 #include "test_harness.hpp"
 
@@ -9,47 +8,47 @@
 
 import std;
 
-extern int run_test_adt_exhaustiveness_audit_2223();
-extern int run_test_adt_hard_gate_exhaustiveness_2264();
-extern int run_test_adt_match_goal_table_2564();
-extern int run_test_batch_dirty_cascade_2522();
-extern int run_test_batch_dirty_discipline_2615();
-extern int run_test_bidirectional_match_check_2348();
-extern int run_test_blame_complete_commit_gate_2221();
-extern int run_test_blame_soft_recover_2561();
-extern int run_test_boundary_solve_hard_gate_2260();
-extern int run_test_castop_density_closed_loop_2459();
-extern int run_test_castop_density_hard_2358();
-extern int run_test_castop_typed_meta_2624();
-extern int run_test_coercion_ban_weak_ir_2261();
-extern int run_test_coercion_dual_require_2562();
-extern int run_test_coercion_prov_slo_2558();
-extern int run_test_coercion_provenance_fast_strict_2147();
-extern int run_test_coercion_provenance_miss_force_audit_2102();
-extern int run_test_coercion_reject_production_defaults_2185();
-extern int run_test_coercion_unify_incomplete_skip_2620();
-extern int run_test_composite_auto_partial_from_cone_2610();
-extern int run_test_composite_commit_cs_reuse_2180();
-extern int run_test_composite_cs_signature_matrix_2509();
-extern int run_test_composite_txn_commit_2105();
-extern int run_test_dead_coercion_columnar_2431();
-extern int run_test_dead_coercion_dirty_cone_2556();
-extern int run_test_dead_coercion_layered_2282();
-extern int run_test_instance_constraint_depth_cap_2607();
-extern int run_test_occurrence_cache_key_2461();
-extern int run_test_occurrence_dirty_key_authority_2622();
-extern int run_test_occurrence_goal_epoch_table_2278();
-extern int run_test_occurrence_goal_persist_rehydrate_2608();
-extern int run_test_partial_cone_cap_2560();
-extern int run_test_partial_cone_commit_gate_2621();
-extern int run_test_solve_delta_unresolved_export_2107();
-extern int run_test_type_dep_epoch_prune_2355();
-extern int run_test_type_dep_partial_merge_2283();
-extern int run_test_type_dirty_cone_dep_graph_2191();
-extern int run_test_type_linear_commit_health_2613();
-extern int run_test_type_system_health_2350();
-extern int run_test_type_system_health_next_action_2462();
-extern int run_test_type_timeout_repair_2284();
+extern int run_test_adt_exhaustiveness_audit();
+extern int run_test_adt_hard_gate_exhaustiveness();
+extern int run_test_adt_match_goal_table();
+extern int run_test_batch_dirty_cascade();
+extern int run_test_batch_dirty_discipline();
+extern int run_test_bidirectional_match_check();
+extern int run_test_blame_complete_commit_gate();
+extern int run_test_blame_soft_recover();
+extern int run_test_boundary_solve_hard_gate();
+extern int run_test_castop_density_closed_loop();
+extern int run_test_castop_density_hard();
+extern int run_test_castop_typed_meta();
+extern int run_test_coercion_ban_weak_ir();
+extern int run_test_coercion_dual_require();
+extern int run_test_coercion_prov_slo();
+extern int run_test_coercion_provenance_fast_strict();
+extern int run_test_coercion_provenance_miss_force_audit();
+extern int run_test_coercion_reject_production_defaults();
+extern int run_test_coercion_unify_incomplete_skip();
+extern int run_test_composite_auto_partial_from_cone();
+extern int run_test_composite_commit_cs_reuse();
+extern int run_test_composite_cs_signature_matrix();
+extern int run_test_composite_txn_commit();
+extern int run_test_dead_coercion_columnar();
+extern int run_test_dead_coercion_dirty_cone();
+extern int run_test_dead_coercion_layered();
+extern int run_test_instance_constraint_depth_cap();
+extern int run_test_occurrence_cache_key();
+extern int run_test_occurrence_dirty_key_authority();
+extern int run_test_occurrence_goal_epoch_table();
+extern int run_test_occurrence_goal_persist_rehydrate();
+extern int run_test_partial_cone_cap();
+extern int run_test_partial_cone_commit_gate();
+extern int run_test_solve_delta_unresolved_export();
+extern int run_test_type_dep_epoch_prune();
+extern int run_test_type_dep_partial_merge();
+extern int run_test_type_dirty_cone_dep_graph();
+extern int run_test_type_linear_commit_health();
+extern int run_test_type_system_health();
+extern int run_test_type_system_health_next_action();
+extern int run_test_type_timeout_repair();
 
 int main() {
     using aura::test::g_failed;
@@ -58,521 +57,460 @@ int main() {
     int members_passed = 0;
     std::println("=== test_occurrence_coercion_batch (41 members) ===");
 
-    std::println("\n──── test_adt_exhaustiveness_audit_2223 ────");
+    std::println("\n──── test_adt_exhaustiveness_audit ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_adt_exhaustiveness_audit_2223() != 0 || g_failed != 0) {
+    if (run_test_adt_exhaustiveness_audit() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_adt_exhaustiveness_audit_2223 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_adt_exhaustiveness_audit ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_adt_exhaustiveness_audit_2223 ({} checks)", g_passed);
+        std::println("OK member test_adt_exhaustiveness_audit ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_adt_hard_gate_exhaustiveness_2264 ────");
+    std::println("\n──── test_adt_hard_gate_exhaustiveness ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_adt_hard_gate_exhaustiveness_2264() != 0 || g_failed != 0) {
+    if (run_test_adt_hard_gate_exhaustiveness() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_adt_hard_gate_exhaustiveness_2264 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_adt_hard_gate_exhaustiveness ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_adt_hard_gate_exhaustiveness_2264 ({} checks)", g_passed);
+        std::println("OK member test_adt_hard_gate_exhaustiveness ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_adt_match_goal_table_2564 ────");
+    std::println("\n──── test_adt_match_goal_table ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_adt_match_goal_table_2564() != 0 || g_failed != 0) {
+    if (run_test_adt_match_goal_table() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_adt_match_goal_table_2564 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_adt_match_goal_table ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_adt_match_goal_table_2564 ({} checks)", g_passed);
+        std::println("OK member test_adt_match_goal_table ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_batch_dirty_cascade_2522 ────");
+    std::println("\n──── test_batch_dirty_cascade ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_batch_dirty_cascade_2522() != 0 || g_failed != 0) {
+    if (run_test_batch_dirty_cascade() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_batch_dirty_cascade_2522 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_batch_dirty_cascade ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_batch_dirty_cascade_2522 ({} checks)", g_passed);
+        std::println("OK member test_batch_dirty_cascade ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_batch_dirty_discipline_2615 ────");
+    std::println("\n──── test_batch_dirty_discipline ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_batch_dirty_discipline_2615() != 0 || g_failed != 0) {
+    if (run_test_batch_dirty_discipline() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_batch_dirty_discipline_2615 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_batch_dirty_discipline ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_batch_dirty_discipline_2615 ({} checks)", g_passed);
+        std::println("OK member test_batch_dirty_discipline ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_bidirectional_match_check_2348 ────");
+    std::println("\n──── test_bidirectional_match_check ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_bidirectional_match_check_2348() != 0 || g_failed != 0) {
+    if (run_test_bidirectional_match_check() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_bidirectional_match_check_2348 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_bidirectional_match_check ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_bidirectional_match_check_2348 ({} checks)", g_passed);
+        std::println("OK member test_bidirectional_match_check ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_blame_complete_commit_gate_2221 ────");
+    std::println("\n──── test_blame_complete_commit_gate ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_blame_complete_commit_gate_2221() != 0 || g_failed != 0) {
+    if (run_test_blame_complete_commit_gate() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_blame_complete_commit_gate_2221 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_blame_complete_commit_gate ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_blame_complete_commit_gate_2221 ({} checks)", g_passed);
+        std::println("OK member test_blame_complete_commit_gate ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_blame_soft_recover_2561 ────");
+    std::println("\n──── test_blame_soft_recover ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_blame_soft_recover_2561() != 0 || g_failed != 0) {
+    if (run_test_blame_soft_recover() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_blame_soft_recover_2561 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_blame_soft_recover ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_blame_soft_recover_2561 ({} checks)", g_passed);
+        std::println("OK member test_blame_soft_recover ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_boundary_solve_hard_gate_2260 ────");
+    std::println("\n──── test_boundary_solve_hard_gate ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_boundary_solve_hard_gate_2260() != 0 || g_failed != 0) {
+    if (run_test_boundary_solve_hard_gate() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_boundary_solve_hard_gate_2260 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_boundary_solve_hard_gate ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_boundary_solve_hard_gate_2260 ({} checks)", g_passed);
+        std::println("OK member test_boundary_solve_hard_gate ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_castop_density_closed_loop_2459 ────");
+    std::println("\n──── test_castop_density_closed_loop ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_castop_density_closed_loop_2459() != 0 || g_failed != 0) {
+    if (run_test_castop_density_closed_loop() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_castop_density_closed_loop_2459 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_castop_density_closed_loop ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_castop_density_closed_loop_2459 ({} checks)", g_passed);
+        std::println("OK member test_castop_density_closed_loop ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_castop_density_hard_2358 ────");
+    std::println("\n──── test_castop_density_hard ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_castop_density_hard_2358() != 0 || g_failed != 0) {
+    if (run_test_castop_density_hard() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_castop_density_hard_2358 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_castop_density_hard ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_castop_density_hard_2358 ({} checks)", g_passed);
+        std::println("OK member test_castop_density_hard ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_castop_typed_meta_2624 ────");
+    std::println("\n──── test_castop_typed_meta ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_castop_typed_meta_2624() != 0 || g_failed != 0) {
+    if (run_test_castop_typed_meta() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_castop_typed_meta_2624 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_castop_typed_meta ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_castop_typed_meta_2624 ({} checks)", g_passed);
+        std::println("OK member test_castop_typed_meta ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_coercion_ban_weak_ir_2261 ────");
+    std::println("\n──── test_coercion_ban_weak_ir ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_coercion_ban_weak_ir_2261() != 0 || g_failed != 0) {
+    if (run_test_coercion_ban_weak_ir() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_coercion_ban_weak_ir_2261 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_coercion_ban_weak_ir ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_coercion_ban_weak_ir_2261 ({} checks)", g_passed);
+        std::println("OK member test_coercion_ban_weak_ir ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_coercion_dual_require_2562 ────");
+    std::println("\n──── test_coercion_dual_require ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_coercion_dual_require_2562() != 0 || g_failed != 0) {
+    if (run_test_coercion_dual_require() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_coercion_dual_require_2562 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_coercion_dual_require ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_coercion_dual_require_2562 ({} checks)", g_passed);
+        std::println("OK member test_coercion_dual_require ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_coercion_prov_slo_2558 ────");
+    std::println("\n──── test_coercion_prov_slo ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_coercion_prov_slo_2558() != 0 || g_failed != 0) {
+    if (run_test_coercion_prov_slo() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_coercion_prov_slo_2558 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_coercion_prov_slo ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_coercion_prov_slo_2558 ({} checks)", g_passed);
+        std::println("OK member test_coercion_prov_slo ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_coercion_provenance_fast_strict_2147 ────");
+    std::println("\n──── test_coercion_provenance_fast_strict ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_coercion_provenance_fast_strict_2147() != 0 || g_failed != 0) {
+    if (run_test_coercion_provenance_fast_strict() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_coercion_provenance_fast_strict_2147 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_coercion_provenance_fast_strict ({}/{})", g_passed,
+                     g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_coercion_provenance_fast_strict_2147 ({} checks)", g_passed);
+        std::println("OK member test_coercion_provenance_fast_strict ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_coercion_provenance_miss_force_audit_2102 ────");
+    std::println("\n──── test_coercion_provenance_miss_force_audit ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_coercion_provenance_miss_force_audit_2102() != 0 || g_failed != 0) {
+    if (run_test_coercion_provenance_miss_force_audit() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_coercion_provenance_miss_force_audit_2102 (checks: {} "
-                     "passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_coercion_provenance_miss_force_audit ({}/{})", g_passed,
+                     g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_coercion_provenance_miss_force_audit_2102 ({} checks)",
-                     g_passed);
+        std::println("OK member test_coercion_provenance_miss_force_audit ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_coercion_reject_production_defaults_2185 ────");
+    std::println("\n──── test_coercion_reject_production_defaults ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_coercion_reject_production_defaults_2185() != 0 || g_failed != 0) {
+    if (run_test_coercion_reject_production_defaults() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_coercion_reject_production_defaults_2185 (checks: {} "
-                     "passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_coercion_reject_production_defaults ({}/{})", g_passed,
+                     g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_coercion_reject_production_defaults_2185 ({} checks)",
-                     g_passed);
+        std::println("OK member test_coercion_reject_production_defaults ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_coercion_unify_incomplete_skip_2620 ────");
+    std::println("\n──── test_coercion_unify_incomplete_skip ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_coercion_unify_incomplete_skip_2620() != 0 || g_failed != 0) {
+    if (run_test_coercion_unify_incomplete_skip() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_coercion_unify_incomplete_skip_2620 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_coercion_unify_incomplete_skip ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_coercion_unify_incomplete_skip_2620 ({} checks)", g_passed);
+        std::println("OK member test_coercion_unify_incomplete_skip ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_composite_auto_partial_from_cone_2610 ────");
+    std::println("\n──── test_composite_auto_partial_from_cone ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_composite_auto_partial_from_cone_2610() != 0 || g_failed != 0) {
+    if (run_test_composite_auto_partial_from_cone() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_composite_auto_partial_from_cone_2610 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_composite_auto_partial_from_cone ({}/{})", g_passed,
+                     g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_composite_auto_partial_from_cone_2610 ({} checks)", g_passed);
+        std::println("OK member test_composite_auto_partial_from_cone ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_composite_commit_cs_reuse_2180 ────");
+    std::println("\n──── test_composite_commit_cs_reuse ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_composite_commit_cs_reuse_2180() != 0 || g_failed != 0) {
+    if (run_test_composite_commit_cs_reuse() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_composite_commit_cs_reuse_2180 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_composite_commit_cs_reuse ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_composite_commit_cs_reuse_2180 ({} checks)", g_passed);
+        std::println("OK member test_composite_commit_cs_reuse ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_composite_cs_signature_matrix_2509 ────");
+    std::println("\n──── test_composite_cs_signature_matrix ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_composite_cs_signature_matrix_2509() != 0 || g_failed != 0) {
+    if (run_test_composite_cs_signature_matrix() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_composite_cs_signature_matrix_2509 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_composite_cs_signature_matrix ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_composite_cs_signature_matrix_2509 ({} checks)", g_passed);
+        std::println("OK member test_composite_cs_signature_matrix ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_composite_txn_commit_2105 ────");
+    std::println("\n──── test_composite_txn_commit ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_composite_txn_commit_2105() != 0 || g_failed != 0) {
+    if (run_test_composite_txn_commit() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_composite_txn_commit_2105 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_composite_txn_commit ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_composite_txn_commit_2105 ({} checks)", g_passed);
+        std::println("OK member test_composite_txn_commit ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_dead_coercion_columnar_2431 ────");
+    std::println("\n──── test_dead_coercion_columnar ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_dead_coercion_columnar_2431() != 0 || g_failed != 0) {
+    if (run_test_dead_coercion_columnar() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_dead_coercion_columnar_2431 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_dead_coercion_columnar ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_dead_coercion_columnar_2431 ({} checks)", g_passed);
+        std::println("OK member test_dead_coercion_columnar ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_dead_coercion_dirty_cone_2556 ────");
+    std::println("\n──── test_dead_coercion_dirty_cone ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_dead_coercion_dirty_cone_2556() != 0 || g_failed != 0) {
+    if (run_test_dead_coercion_dirty_cone() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_dead_coercion_dirty_cone_2556 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_dead_coercion_dirty_cone ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_dead_coercion_dirty_cone_2556 ({} checks)", g_passed);
+        std::println("OK member test_dead_coercion_dirty_cone ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_dead_coercion_layered_2282 ────");
+    std::println("\n──── test_dead_coercion_layered ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_dead_coercion_layered_2282() != 0 || g_failed != 0) {
+    if (run_test_dead_coercion_layered() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_dead_coercion_layered_2282 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_dead_coercion_layered ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_dead_coercion_layered_2282 ({} checks)", g_passed);
+        std::println("OK member test_dead_coercion_layered ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_instance_constraint_depth_cap_2607 ────");
+    std::println("\n──── test_instance_constraint_depth_cap ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_instance_constraint_depth_cap_2607() != 0 || g_failed != 0) {
+    if (run_test_instance_constraint_depth_cap() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_instance_constraint_depth_cap_2607 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_instance_constraint_depth_cap ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_instance_constraint_depth_cap_2607 ({} checks)", g_passed);
+        std::println("OK member test_instance_constraint_depth_cap ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_occurrence_cache_key_2461 ────");
+    std::println("\n──── test_occurrence_cache_key ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_occurrence_cache_key_2461() != 0 || g_failed != 0) {
+    if (run_test_occurrence_cache_key() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_occurrence_cache_key_2461 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_occurrence_cache_key ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_occurrence_cache_key_2461 ({} checks)", g_passed);
+        std::println("OK member test_occurrence_cache_key ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_occurrence_dirty_key_authority_2622 ────");
+    std::println("\n──── test_occurrence_dirty_key_authority ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_occurrence_dirty_key_authority_2622() != 0 || g_failed != 0) {
+    if (run_test_occurrence_dirty_key_authority() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_occurrence_dirty_key_authority_2622 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_occurrence_dirty_key_authority ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_occurrence_dirty_key_authority_2622 ({} checks)", g_passed);
+        std::println("OK member test_occurrence_dirty_key_authority ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_occurrence_goal_epoch_table_2278 ────");
+    std::println("\n──── test_occurrence_goal_epoch_table ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_occurrence_goal_epoch_table_2278() != 0 || g_failed != 0) {
+    if (run_test_occurrence_goal_epoch_table() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_occurrence_goal_epoch_table_2278 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_occurrence_goal_epoch_table ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_occurrence_goal_epoch_table_2278 ({} checks)", g_passed);
+        std::println("OK member test_occurrence_goal_epoch_table ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_occurrence_goal_persist_rehydrate_2608 ────");
+    std::println("\n──── test_occurrence_goal_persist_rehydrate ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_occurrence_goal_persist_rehydrate_2608() != 0 || g_failed != 0) {
+    if (run_test_occurrence_goal_persist_rehydrate() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_occurrence_goal_persist_rehydrate_2608 (checks: {} passed, "
-                     "{} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_occurrence_goal_persist_rehydrate ({}/{})", g_passed,
+                     g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_occurrence_goal_persist_rehydrate_2608 ({} checks)", g_passed);
+        std::println("OK member test_occurrence_goal_persist_rehydrate ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_partial_cone_cap_2560 ────");
+    std::println("\n──── test_partial_cone_cap ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_partial_cone_cap_2560() != 0 || g_failed != 0) {
+    if (run_test_partial_cone_cap() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_partial_cone_cap_2560 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_partial_cone_cap ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_partial_cone_cap_2560 ({} checks)", g_passed);
+        std::println("OK member test_partial_cone_cap ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_partial_cone_commit_gate_2621 ────");
+    std::println("\n──── test_partial_cone_commit_gate ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_partial_cone_commit_gate_2621() != 0 || g_failed != 0) {
+    if (run_test_partial_cone_commit_gate() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_partial_cone_commit_gate_2621 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_partial_cone_commit_gate ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_partial_cone_commit_gate_2621 ({} checks)", g_passed);
+        std::println("OK member test_partial_cone_commit_gate ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_solve_delta_unresolved_export_2107 ────");
+    std::println("\n──── test_solve_delta_unresolved_export ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_solve_delta_unresolved_export_2107() != 0 || g_failed != 0) {
+    if (run_test_solve_delta_unresolved_export() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_solve_delta_unresolved_export_2107 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_solve_delta_unresolved_export ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_solve_delta_unresolved_export_2107 ({} checks)", g_passed);
+        std::println("OK member test_solve_delta_unresolved_export ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_type_dep_epoch_prune_2355 ────");
+    std::println("\n──── test_type_dep_epoch_prune ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_type_dep_epoch_prune_2355() != 0 || g_failed != 0) {
+    if (run_test_type_dep_epoch_prune() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_type_dep_epoch_prune_2355 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_type_dep_epoch_prune ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_type_dep_epoch_prune_2355 ({} checks)", g_passed);
+        std::println("OK member test_type_dep_epoch_prune ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_type_dep_partial_merge_2283 ────");
+    std::println("\n──── test_type_dep_partial_merge ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_type_dep_partial_merge_2283() != 0 || g_failed != 0) {
+    if (run_test_type_dep_partial_merge() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_type_dep_partial_merge_2283 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_type_dep_partial_merge ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_type_dep_partial_merge_2283 ({} checks)", g_passed);
+        std::println("OK member test_type_dep_partial_merge ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_type_dirty_cone_dep_graph_2191 ────");
+    std::println("\n──── test_type_dirty_cone_dep_graph ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_type_dirty_cone_dep_graph_2191() != 0 || g_failed != 0) {
+    if (run_test_type_dirty_cone_dep_graph() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_type_dirty_cone_dep_graph_2191 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_type_dirty_cone_dep_graph ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_type_dirty_cone_dep_graph_2191 ({} checks)", g_passed);
+        std::println("OK member test_type_dirty_cone_dep_graph ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_type_linear_commit_health_2613 ────");
+    std::println("\n──── test_type_linear_commit_health ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_type_linear_commit_health_2613() != 0 || g_failed != 0) {
+    if (run_test_type_linear_commit_health() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_type_linear_commit_health_2613 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_type_linear_commit_health ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_type_linear_commit_health_2613 ({} checks)", g_passed);
+        std::println("OK member test_type_linear_commit_health ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_type_system_health_2350 ────");
+    std::println("\n──── test_type_system_health ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_type_system_health_2350() != 0 || g_failed != 0) {
+    if (run_test_type_system_health() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_type_system_health_2350 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_type_system_health ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_type_system_health_2350 ({} checks)", g_passed);
+        std::println("OK member test_type_system_health ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_type_system_health_next_action_2462 ────");
+    std::println("\n──── test_type_system_health_next_action ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_type_system_health_next_action_2462() != 0 || g_failed != 0) {
+    if (run_test_type_system_health_next_action() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_type_system_health_next_action_2462 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_type_system_health_next_action ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_type_system_health_next_action_2462 ({} checks)", g_passed);
+        std::println("OK member test_type_system_health_next_action ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_type_timeout_repair_2284 ────");
+    std::println("\n──── test_type_timeout_repair ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_type_timeout_repair_2284() != 0 || g_failed != 0) {
+    if (run_test_type_timeout_repair() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_type_timeout_repair_2284 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_type_timeout_repair ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_type_timeout_repair_2284 ({} checks)", g_passed);
+        std::println("OK member test_type_timeout_repair ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

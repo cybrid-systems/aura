@@ -52,7 +52,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_regex_redos_timeout_2479.cpp",
+      "path": "tests/compiler/test_regex_redos_timeout.cpp",
       "contains": [
         "2479 AC2"
       ]
@@ -69,12 +69,12 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_regex_redos_timeout_2479"
+        "test_regex_redos_timeout"
       ]
     },
     {
       "ac": "gate",
-      "path": "tests/compiler/test_regex_redos_timeout_2479.cpp",
+      "path": "tests/compiler/test_regex_redos_timeout.cpp",
       "contains": [
         "2479 AC5"
       ]

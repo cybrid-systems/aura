@@ -33,7 +33,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     arena = _read("src/core/arena.ixx")
-    test = _read("tests/core/test_arena_dtor_clears_hooks_2382.cpp")
+    test = _read("tests/core/test_arena_dtor_clears_hooks.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -73,7 +73,7 @@ def main() -> int:
     must("invoke_on_compact_hook_for_test", "AC3", test)
 
     # AC4 registration
-    must("test_arena_dtor_clears_hooks_2382", "AC4", cmake)
+    must("test_arena_dtor_clears_hooks", "AC4", cmake)
     must("check_arena_dtor_clears_hooks_2382", "AC4", build)
     must("cmd_arena_dtor_clears_hooks_coverage", "AC4", build)
     must("ac4_source_and_registration", "AC4", test)

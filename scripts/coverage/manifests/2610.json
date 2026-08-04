@@ -34,7 +34,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone.cpp",
       "contains": [
         "ac1_auto_partial_hard_miss"
       ]
@@ -48,7 +48,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone.cpp",
       "contains": [
         "ac2_explicit_expected_has_work"
       ]
@@ -65,7 +65,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone.cpp",
       "contains": [
         "ac3_soft_observe"
       ]
@@ -98,14 +98,14 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone.cpp",
       "contains": [
         "ac4_readiness_and_schema"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone.cpp",
       "contains": [
         "ac5_source_cite"
       ]
@@ -114,7 +114,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_composite_auto_partial_from_cone_2610"
+        "test_composite_auto_partial_from_cone"
       ]
     },
     {

@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "path": "tests/compiler/test_query_hygiene_default.cpp",
       "contains": [
         "ac1_default_skip"
       ]
@@ -30,7 +30,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "path": "tests/compiler/test_query_hygiene_default.cpp",
       "contains": [
         "ac2_index_marker_dimension"
       ]
@@ -62,28 +62,28 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "path": "tests/compiler/test_query_hygiene_default.cpp",
       "contains": [
         "ac3_stats_surface"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "path": "tests/compiler/test_query_hygiene_default.cpp",
       "contains": [
         "ac4_concurrent"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_query_pattern_default_hygiene_2123.cpp",
+      "path": "tests/compiler/test_query_pattern_default_hygiene.cpp",
       "contains": [
         "#2123"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "path": "tests/compiler/test_query_hygiene_default.cpp",
       "contains": [
         "ac5_ac6_lineage_and_contract"
       ]
@@ -106,7 +106,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_query_hygiene_default_2525"
+        "test_query_hygiene_default"
       ]
     },
     {

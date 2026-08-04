@@ -20,7 +20,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_partial_cs_single_source_2262.cpp",
+      "path": "tests/compiler/test_partial_cs_single_source.cpp",
       "contains": [
         "AC5",
         "apply_production_audit_defaults"
@@ -43,14 +43,14 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_partial_cs_single_source_2262.cpp",
+      "path": "tests/compiler/test_partial_cs_single_source.cpp",
       "contains": [
         "AC6"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_partial_cs_single_source_2262.cpp",
+      "path": "tests/compiler/test_partial_cs_single_source.cpp",
       "contains": [
         "AC7"
       ]
@@ -98,7 +98,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_partial_cs_single_source_2262.cpp",
+      "path": "tests/compiler/test_partial_cs_single_source.cpp",
       "contains": [
         "AC8"
       ]
@@ -107,7 +107,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_partial_cs_single_source_2262"
+        "test_partial_cs_single_source"
       ]
     }
   ],

@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "path": "tests/compiler/test_coercion_prov_slo.cpp",
       "contains": [
         "ac1_production_slo_force"
       ]
@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "path": "tests/compiler/test_coercion_prov_slo.cpp",
       "contains": [
         "ac2_soft_observe"
       ]
@@ -43,7 +43,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "path": "tests/compiler/test_coercion_prov_slo.cpp",
       "contains": [
         "ac3_vacuous"
       ]
@@ -71,7 +71,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "path": "tests/compiler/test_coercion_prov_slo.cpp",
       "contains": [
         "ac4_stamp_backstop"
       ]
@@ -89,7 +89,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_coercion_prov_slo_2558"
+        "test_coercion_prov_slo"
       ]
     },
     {
@@ -102,7 +102,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "path": "tests/compiler/test_coercion_prov_slo.cpp",
       "contains": [
         "ac5_source_schema"
       ]

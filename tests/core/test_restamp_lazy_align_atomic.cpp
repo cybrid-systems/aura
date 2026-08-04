@@ -26,7 +26,7 @@ using aura::ast::SyntaxMarker;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
-// Same helper as test_incremental_restamp_2061 (#2061/#2122).
+// Same helper as test_incremental_restamp (#2061/#2122).
 void force_one_wrap(FlatAST& ast) {
     constexpr std::uint64_t kBumpsPerWrap = 65536;
     for (std::uint64_t i = 0; i < kBumpsPerWrap; ++i)

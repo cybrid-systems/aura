@@ -21,7 +21,7 @@ AC4: Soft / no live closures → zero extra work. Lock taken +
      parallel-vector size check + empty loop. Counts only bump
      when at least one named closure exists.
 AC5: Source-cite + test extended in
-     tests/compiler/test_live_closure_full_restamp_2542.cpp
+     tests/compiler/test_live_closure_full_restamp.cpp
      (#81934 / #81967: same module test, new ac2602_* sections).
 
 Rationale (Issue #2602 body):
@@ -52,7 +52,7 @@ RUNTIME_CPP = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 RUNTIME_H = ROOT / "src" / "compiler" / "runtime_shared.h"
 METRICS = ROOT / "src" / "compiler" / "observability_metrics.h"
 OBS_EVAL = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
-TEST = ROOT / "tests" / "compiler" / "test_live_closure_full_restamp_2542.cpp"
+TEST = ROOT / "tests" / "compiler" / "test_live_closure_full_restamp.cpp"
 
 
 def _extract_body(text: str, open_idx: int) -> str:
@@ -248,7 +248,7 @@ def main() -> int:
 
     # AC5 (cont.): test file has ac2602_* sections.
     if not TEST.exists():
-        failures.append("AC5: tests/compiler/test_live_closure_full_restamp_2542.cpp not found")
+        failures.append("AC5: tests/compiler/test_live_closure_full_restamp.cpp not found")
     else:
         test_text = TEST.read_text(encoding="utf-8", errors="replace")
         for ac_fn in (
@@ -260,7 +260,7 @@ def main() -> int:
         ):
             if ac_fn not in test_text:
                 failures.append(
-                    f"AC5: tests/compiler/test_live_closure_full_restamp_2542.cpp "
+                    f"AC5: tests/compiler/test_live_closure_full_restamp.cpp "
                     f"missing test function {ac_fn} (issue #2602 coverage)"
                 )
         if "main()" in test_text:

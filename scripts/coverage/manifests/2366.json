@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "path": "tests/compiler/test_epoch_invariant_walk.cpp",
       "contains": [
         "ac1_soft_off"
       ]
@@ -36,7 +36,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "path": "tests/compiler/test_epoch_invariant_walk.cpp",
       "contains": [
         "ac2_soft_detect_stale_aot"
       ]
@@ -52,7 +52,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "path": "tests/compiler/test_epoch_invariant_walk.cpp",
       "contains": [
         "ac3_soft_clean"
       ]
@@ -74,7 +74,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "path": "tests/compiler/test_epoch_invariant_walk.cpp",
       "contains": [
         "ac4_hard_mode"
       ]
@@ -92,7 +92,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_epoch_invariant_walk_2366"
+        "test_epoch_invariant_walk"
       ]
     },
     {
@@ -105,7 +105,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "path": "tests/compiler/test_epoch_invariant_walk.cpp",
       "contains": [
         "ac5_source_and_query"
       ]

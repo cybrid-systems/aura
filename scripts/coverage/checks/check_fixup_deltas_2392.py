@@ -36,7 +36,7 @@ def main() -> int:
 
     impl = _read("src/core/ast_impl.cpp")
     ixx = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_fixup_deltas_2392.cpp")
+    test = _read("tests/core/test_fixup_deltas.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -54,7 +54,7 @@ def main() -> int:
 
     # AC4 registration
     must("2392", "AC4", ixx)
-    must("test_fixup_deltas_2392", "AC4", cmake)
+    must("test_fixup_deltas", "AC4", cmake)
     must("check_fixup_deltas_2392", "AC4", build)
     must("cmd_fixup_deltas_coverage", "AC4", build)
     must("ac4_source_and_gate", "AC4", test)

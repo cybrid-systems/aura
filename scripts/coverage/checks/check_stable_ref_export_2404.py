@@ -40,7 +40,7 @@ def main() -> int:
     ws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     stamp = _read("scripts/coverage/checks/check_stamp_resolve_coverage.py")
-    test = _read("tests/compiler/test_stable_ref_export_validate_2404.cpp")
+    test = _read("tests/compiler/test_stable_ref_export_validate.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -81,7 +81,7 @@ def main() -> int:
     must("2404 AC5", "AC5", test)
     must("check_stable_ref_export_2404", "AC5", build)
     must("cmd_stable_ref_export_coverage", "AC5", build)
-    must("test_stable_ref_export_validate_2404", "AC5", cmake)
+    must("test_stable_ref_export_validate", "AC5", cmake)
 
     # stamp-resolve --strict must pass
     r = subprocess.run(

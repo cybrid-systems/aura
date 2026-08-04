@@ -80,7 +80,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_anonymous_residual_stable_id_policy_2605.cpp",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
       "contains": [
         "ac1_named_soak_no_residual_growth",
         "ac3_residual_one_shot_backfill"
@@ -90,7 +90,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_anonymous_residual_stable_id_policy_2605"
+        "test_anonymous_residual_stable_id_policy"
       ]
     },
     {

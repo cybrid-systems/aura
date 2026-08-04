@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip.cpp",
       "contains": [
         "ac1_soft_no_incomplete_insert"
       ]
@@ -30,7 +30,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip.cpp",
       "contains": [
         "ac2_soft_arms_force_full"
       ]
@@ -45,7 +45,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip.cpp",
       "contains": [
         "ac3_dual_require_unchanged"
       ]
@@ -61,7 +61,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip.cpp",
       "contains": [
         "ac4_canary_restores_insert"
       ]
@@ -86,7 +86,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip.cpp",
       "contains": [
         "ac5_schema_source"
       ]
@@ -95,7 +95,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_coercion_unify_incomplete_skip_2620"
+        "test_coercion_unify_incomplete_skip"
       ]
     },
     {
@@ -108,14 +108,14 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip.cpp",
       "contains": [
         "ac6_source_cite"
       ]
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "path": "tests/compiler/test_coercion_dual_require.cpp",
       "contains": [
         "AC2: Soft Sampled incomplete skips insert"
       ]

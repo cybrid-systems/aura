@@ -10,7 +10,7 @@ lambda body calls ``workspace_flat_->make_ref(`` / ``ws->make_ref(`` /
 
 This is the static / CI gate for Phase A of #2224 — mirrors
 ``check_side_effect_security.py`` (which guards Phase A of #2152 dispatch
-required_effects). The test ``test_isolation_stamp_resolve_2224`` (AC1)
+required_effects). The test ``test_isolation_stamp_resolve`` (AC1)
 covers the runtime check; this script locks the source-cite pattern so
 future Agent-facing prims can't regress.
 

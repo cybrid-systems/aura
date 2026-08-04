@@ -29,7 +29,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_residual_force_safepoint_2533"
+        "test_residual_force_safepoint"
       ]
     },
     {

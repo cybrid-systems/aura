@@ -38,7 +38,7 @@ def main() -> int:
             fails.append(f"{label}: must not contain {n!r}")
 
     ir = _read("src/compiler/ir.ixx")
-    test = _read("tests/compiler/test_ir_optimize_type_info_chain_2471.cpp")
+    test = _read("tests/compiler/test_ir_optimize_type_info_chain.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -63,7 +63,7 @@ def main() -> int:
 
     must("check_ir_optimize_type_info_chain_2471", "gate", build)
     must("cmd_ir_optimize_type_info_chain_coverage", "gate", build)
-    must("test_ir_optimize_type_info_chain_2471", "gate", cmake)
+    must("test_ir_optimize_type_info_chain", "gate", cmake)
     must("2471 AC5", "gate", test)
 
     if fails:

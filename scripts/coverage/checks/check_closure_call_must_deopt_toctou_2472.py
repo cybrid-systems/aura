@@ -34,7 +34,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     rt = _read("src/compiler/aura_jit_runtime.cpp")
-    test = _read("tests/compiler/test_closure_call_must_deopt_toctou_2472.cpp")
+    test = _read("tests/compiler/test_closure_call_must_deopt_toctou.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -62,7 +62,7 @@ def main() -> int:
 
     must("check_closure_call_must_deopt_toctou_2472", "gate", build)
     must("cmd_closure_call_must_deopt_toctou_coverage", "gate", build)
-    must("test_closure_call_must_deopt_toctou_2472", "gate", cmake)
+    must("test_closure_call_must_deopt_toctou", "gate", cmake)
     must("2472 AC5", "gate", test)
 
     if fails:

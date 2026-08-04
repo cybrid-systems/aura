@@ -23,7 +23,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "path": "tests/serve/test_residual_force_safepoint.cpp",
       "contains": [
         "2636 AC1"
       ]
@@ -49,7 +49,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "path": "tests/serve/test_residual_force_safepoint.cpp",
       "contains": [
         "2636 AC2"
       ]
@@ -77,7 +77,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "path": "tests/serve/test_residual_force_safepoint.cpp",
       "contains": [
         "2636 AC3"
       ]
@@ -109,7 +109,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "path": "tests/serve/test_residual_force_safepoint.cpp",
       "contains": [
         "2636 AC4"
       ]
@@ -138,7 +138,7 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "path": "tests/serve/test_residual_force_safepoint.cpp",
       "contains": [
         "2636 AC6"
       ]
@@ -155,7 +155,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_residual_force_safepoint_2533"
+        "test_residual_force_safepoint"
       ]
     }
   ],

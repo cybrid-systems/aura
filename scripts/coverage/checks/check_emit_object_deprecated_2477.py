@@ -40,7 +40,7 @@ def main() -> int:
 
     jit = _read("src/compiler/aura_jit.cpp")
     hdr = _read("src/compiler/aura_jit.h")
-    test = _read("tests/compiler/test_emit_object_deprecated_2477.cpp")
+    test = _read("tests/compiler/test_emit_object_deprecated.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
     bridge = _read("src/compiler/aura_jit_bridge.cpp")
@@ -82,7 +82,7 @@ def main() -> int:
 
     must("check_emit_object_deprecated_2477", "gate", build)
     must("cmd_emit_object_deprecated_coverage", "gate", build)
-    must("test_emit_object_deprecated_2477", "gate", cmake)
+    must("test_emit_object_deprecated", "gate", cmake)
     must("2477 AC5", "gate", test)
 
     if fails:

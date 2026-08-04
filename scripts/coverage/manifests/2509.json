@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "path": "tests/compiler/test_composite_cs_signature_matrix.cpp",
       "contains": [
         "AC1",
         "apply_production_audit_defaults"
@@ -39,14 +39,14 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "path": "tests/compiler/test_composite_cs_signature_matrix.cpp",
       "contains": [
         "AC2"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "path": "tests/compiler/test_composite_cs_signature_matrix.cpp",
       "contains": [
         "AC3"
       ]
@@ -81,7 +81,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "path": "tests/compiler/test_composite_cs_signature_matrix.cpp",
       "contains": [
         "AC4"
       ]
@@ -116,7 +116,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_composite_cs_signature_matrix_2509"
+        "test_composite_cs_signature_matrix"
       ]
     },
     {

@@ -53,7 +53,7 @@ def main() -> int:
     fc = _read("src/serve/fiber.cpp")
     env = _read("src/compiler/evaluator_env.cpp")
     _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    test = _read("tests/serve/test_fiber_reclaim_orphan_release_2498.cpp")
+    test = _read("tests/serve/test_fiber_reclaim_orphan_release.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -104,9 +104,9 @@ def main() -> int:
     must("Issue #2498", "AC5", env)
     must("Issue #2498", "AC5", test)
     must("AC5", "AC5", test)
-    must("aura_add_issue_test(test_fiber_reclaim_orphan_release_2498)", "AC5", cmake)
-    must("aura_issue_test_link_light(test_fiber_reclaim_orphan_release_2498)", "AC5", cmake)
-    must("add_dependencies(all_test_issue_targets test_fiber_reclaim_orphan_release_2498)", "AC5", cmake)
+    must("aura_add_issue_test(test_fiber_reclaim_orphan_release)", "AC5", cmake)
+    must("aura_issue_test_link_light(test_fiber_reclaim_orphan_release)", "AC5", cmake)
+    must("add_dependencies(all_test_issue_targets test_fiber_reclaim_orphan_release)", "AC5", cmake)
     must("check_fiber_reclaim_orphan_release_2498", "AC5", build)
 
     # Optional: query surface exposure (the accessor is registered as a

@@ -57,7 +57,7 @@ HOT_UPDATE_CPP = ROOT / "src" / "compiler" / "hot_update_registry.cpp"
 METRICS = ROOT / "src" / "compiler" / "observability_metrics.h"
 OBS_EVAL = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
 MUTATE = ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp"
-TEST = ROOT / "tests" / "compiler" / "test_exhausted_min_dirty_reemit_2544.cpp"
+TEST = ROOT / "tests" / "compiler" / "test_exhausted_min_dirty_reemit.cpp"
 
 
 def _extract_body(text: str, open_idx: int) -> str:
@@ -350,7 +350,7 @@ def main() -> int:
 
     # AC5 (cont.): test file has #2601 ACs.
     if not TEST.exists():
-        failures.append("AC5: tests/compiler/test_exhausted_min_dirty_reemit_2544.cpp not found")
+        failures.append("AC5: tests/compiler/test_exhausted_min_dirty_reemit.cpp not found")
     else:
         test_text = TEST.read_text(encoding="utf-8", errors="replace")
         for ac_fn in (
@@ -362,7 +362,7 @@ def main() -> int:
         ):
             if ac_fn not in test_text:
                 failures.append(
-                    f"AC5: tests/compiler/test_exhausted_min_dirty_reemit_2544.cpp "
+                    f"AC5: tests/compiler/test_exhausted_min_dirty_reemit.cpp "
                     f"missing test function {ac_fn} (issue #2601 coverage)"
                 )
         if "main()" in test_text:

@@ -47,7 +47,7 @@ def check() -> list:
     met = _read("src/compiler/observability_metrics.h")
     eval_ixx = _read("src/compiler/evaluator.ixx")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/compiler/test_layout_stamp_2170.cpp")
+    test = _read("tests/compiler/test_layout_stamp.cpp")
 
     # AC1 — Fiber POD has 6 stamp fields + has_resume_layout_stamp set flag
     _must("set_resume_layout_stamp" in fiber_h, "AC1: Fiber::set_resume_layout_stamp helper missing", fails)

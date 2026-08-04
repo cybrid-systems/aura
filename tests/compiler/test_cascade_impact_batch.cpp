@@ -1,6 +1,5 @@
 // test_cascade_impact_batch.cpp — thematic multi-TU batch
-// Cascade / adaptive thr / instr impact ACs (Stream A10e)
-// Stream S2 of tests/CONSOLIDATION_PLAN.md.
+// Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
 #include "test_harness.hpp"
@@ -9,14 +8,14 @@
 
 import std;
 
-extern int run_test_adaptive_cascade_depth_partial_thr_2209();
-extern int run_test_adaptive_reverify_limit_2146();
-extern int run_test_cascade_incremental_pass_suite_2044();
-extern int run_test_cascade_skip_metrics_2106();
-extern int run_test_dep_graph_hybrid_cascade_2110();
-extern int run_test_frame_budget_cascade_isolation_2137();
-extern int run_test_instr_impact_minimal_dirty_2126();
-extern int run_test_instruction_level_impact_partial_2109();
+extern int run_test_adaptive_cascade_depth_partial_thr();
+extern int run_test_adaptive_reverify_limit();
+extern int run_test_cascade_incremental_pass_suite();
+extern int run_test_cascade_skip_metrics();
+extern int run_test_dep_graph_hybrid_cascade();
+extern int run_test_frame_budget_cascade_isolation();
+extern int run_test_instr_impact_minimal_dirty();
+extern int run_test_instruction_level_impact_partial();
 
 int main() {
     using aura::test::g_failed;
@@ -25,107 +24,94 @@ int main() {
     int members_passed = 0;
     std::println("=== test_cascade_impact_batch (8 members) ===");
 
-    std::println("\n──── test_adaptive_cascade_depth_partial_thr_2209 ────");
+    std::println("\n──── test_adaptive_cascade_depth_partial_thr ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_adaptive_cascade_depth_partial_thr_2209() != 0 || g_failed != 0) {
+    if (run_test_adaptive_cascade_depth_partial_thr() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_adaptive_cascade_depth_partial_thr_2209 (checks: {} passed, "
-                     "{} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_adaptive_cascade_depth_partial_thr ({}/{})", g_passed,
+                     g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_adaptive_cascade_depth_partial_thr_2209 ({} checks)",
-                     g_passed);
+        std::println("OK member test_adaptive_cascade_depth_partial_thr ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_adaptive_reverify_limit_2146 ────");
+    std::println("\n──── test_adaptive_reverify_limit ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_adaptive_reverify_limit_2146() != 0 || g_failed != 0) {
+    if (run_test_adaptive_reverify_limit() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_adaptive_reverify_limit_2146 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_adaptive_reverify_limit ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_adaptive_reverify_limit_2146 ({} checks)", g_passed);
+        std::println("OK member test_adaptive_reverify_limit ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_cascade_incremental_pass_suite_2044 ────");
+    std::println("\n──── test_cascade_incremental_pass_suite ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_cascade_incremental_pass_suite_2044() != 0 || g_failed != 0) {
+    if (run_test_cascade_incremental_pass_suite() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_cascade_incremental_pass_suite_2044 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_cascade_incremental_pass_suite ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_cascade_incremental_pass_suite_2044 ({} checks)", g_passed);
+        std::println("OK member test_cascade_incremental_pass_suite ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_cascade_skip_metrics_2106 ────");
+    std::println("\n──── test_cascade_skip_metrics ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_cascade_skip_metrics_2106() != 0 || g_failed != 0) {
+    if (run_test_cascade_skip_metrics() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_cascade_skip_metrics_2106 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_cascade_skip_metrics ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_cascade_skip_metrics_2106 ({} checks)", g_passed);
+        std::println("OK member test_cascade_skip_metrics ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_dep_graph_hybrid_cascade_2110 ────");
+    std::println("\n──── test_dep_graph_hybrid_cascade ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_dep_graph_hybrid_cascade_2110() != 0 || g_failed != 0) {
+    if (run_test_dep_graph_hybrid_cascade() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_dep_graph_hybrid_cascade_2110 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_dep_graph_hybrid_cascade ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_dep_graph_hybrid_cascade_2110 ({} checks)", g_passed);
+        std::println("OK member test_dep_graph_hybrid_cascade ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_frame_budget_cascade_isolation_2137 ────");
+    std::println("\n──── test_frame_budget_cascade_isolation ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_frame_budget_cascade_isolation_2137() != 0 || g_failed != 0) {
+    if (run_test_frame_budget_cascade_isolation() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_frame_budget_cascade_isolation_2137 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_frame_budget_cascade_isolation ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_frame_budget_cascade_isolation_2137 ({} checks)", g_passed);
+        std::println("OK member test_frame_budget_cascade_isolation ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_instr_impact_minimal_dirty_2126 ────");
+    std::println("\n──── test_instr_impact_minimal_dirty ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_instr_impact_minimal_dirty_2126() != 0 || g_failed != 0) {
+    if (run_test_instr_impact_minimal_dirty() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_instr_impact_minimal_dirty_2126 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_instr_impact_minimal_dirty ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_instr_impact_minimal_dirty_2126 ({} checks)", g_passed);
+        std::println("OK member test_instr_impact_minimal_dirty ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_instruction_level_impact_partial_2109 ────");
+    std::println("\n──── test_instruction_level_impact_partial ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_instruction_level_impact_partial_2109() != 0 || g_failed != 0) {
+    if (run_test_instruction_level_impact_partial() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_instruction_level_impact_partial_2109 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_instruction_level_impact_partial ({}/{})", g_passed,
+                     g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_instruction_level_impact_partial_2109 ({} checks)", g_passed);
+        std::println("OK member test_instruction_level_impact_partial ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

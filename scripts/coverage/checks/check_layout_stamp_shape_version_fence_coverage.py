@@ -49,7 +49,7 @@ def check() -> list:
     shape_h = _read("src/compiler/shape_profiler.h")
     met = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/compiler/test_layout_stamp_2170.cpp")
+    test = _read("tests/compiler/test_layout_stamp.cpp")
 
     # AC1 - LayoutStamp.shape_version field (7th)
     _must(

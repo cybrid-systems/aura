@@ -34,7 +34,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     src = _read("src/compiler/evaluator_primitives_file.cpp")
-    test = _read("tests/compiler/test_command_line_cap_io_read_2478.cpp")
+    test = _read("tests/compiler/test_command_line_cap_io_read.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -56,12 +56,12 @@ def main() -> int:
     # Capture deny_io in lambda (not bare [&ev])
     must("deny_io]", "AC3", body)  # [&ev, deny_io]
 
-    must("test_command_line_cap_io_read_2478", "AC4", test)
+    must("test_command_line_cap_io_read", "AC4", test)
     must("kCapIoRead", "AC4", test)
 
     must("check_command_line_cap_io_read_2478", "gate", build)
     must("cmd_command_line_cap_io_read_coverage", "gate", build)
-    must("test_command_line_cap_io_read_2478", "gate", cmake)
+    must("test_command_line_cap_io_read", "gate", cmake)
     must("2478 AC5", "gate", test)
 
     if fails:

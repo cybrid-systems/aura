@@ -7,8 +7,8 @@
 // on destruction) — not production code.
 //
 // 4 test files use it:
-//   - tests/orch/test_join_drain_reclaim_2227.cpp
-//   - tests/orch/test_mailbox_bp_admit_2228.cpp
+//   - tests/orch/test_join_drain_reclaim.cpp
+//   - tests/orch/test_mailbox_bp_admit.cpp
 //   - tests/orch/test_agent_failure_policy.cpp
 //   - tests/orch/test_agent_ask.cpp
 //

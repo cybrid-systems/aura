@@ -63,7 +63,7 @@ def main() -> int:
     sph = _read("src/compiler/shape_profiler.h")
     spc = _read("src/compiler/shape_profiler.cpp")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/compiler/test_shape_compact_storm_isolation_2617.cpp")
+    test = _read("tests/compiler/test_shape_compact_storm_isolation.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -131,7 +131,7 @@ def main() -> int:
     must("compact-storm-isolated-wired", "AC5", q)
     must("deopt-storm-compact-suppressed", "AC5", q)
     must("shape_compact_storm_isolation_wired", "AC5", sph)
-    must("test_shape_compact_storm_isolation_2617", "AC5", cmake)
+    must("test_shape_compact_storm_isolation", "AC5", cmake)
     must("check_shape_compact_storm_isolation_2617", "AC5", build)
     must("cmd_shape_compact_storm_isolation_coverage", "AC5", build)
     must("ac5_source_cite", "AC5", test)

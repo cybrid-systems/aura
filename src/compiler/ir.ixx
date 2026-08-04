@@ -209,7 +209,7 @@ export inline constexpr IROpcodeClass opcode_class(IROpcode op) noexcept {
 // imports std, so IR types are mirrored under ir_pod_reflect.hh.
 //
 //   ir_pod_reflect.hh / ir_reflect_serialize.cpp /
-//   tests/reflect/test_ir_pod_phase4_2291.cpp
+//   tests/reflect/test_ir_pod_phase4.cpp
 //
 // Next types: same POD + auto_serialize pattern; C ABI back to
 // module code. Nested IRModule still bin_write. Display names live

@@ -37,7 +37,7 @@ def main() -> int:
     impl = _read("src/compiler/type_checker_impl.cpp")
     obs = _read("src/compiler/observability_metrics.h")
     fields = _read("src/compiler/compiler_metrics_fields.inc")
-    test = _read("tests/compiler/test_partial_cone_commit_gate_2621.cpp")
+    test = _read("tests/compiler/test_partial_cone_commit_gate.cpp")
     build = _read("build.py")
 
     # AC1+AC2: wiring present

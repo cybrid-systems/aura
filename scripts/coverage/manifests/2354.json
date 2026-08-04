@@ -17,14 +17,14 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
       "contains": [
         "ac1_audit_off_zero_cost"
       ]
     },
     {
       "ac": "AC1b",
-      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
       "contains": [
         "ac1b_nested_acquire_if_needed_no_deadlock"
       ]
@@ -45,7 +45,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
       "contains": [
         "ac2_correct_order"
       ]
@@ -61,7 +61,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
       "contains": [
         "ac3_reverse_order_detected"
       ]
@@ -107,7 +107,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
       "contains": [
         "ac4_rank_table_and_source_cite"
       ]
@@ -116,7 +116,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_lock_order_audit_2354"
+        "test_lock_order_audit_hard"
       ]
     },
     {
@@ -129,7 +129,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
       "contains": [
         "ac5_env_and_mode"
       ]

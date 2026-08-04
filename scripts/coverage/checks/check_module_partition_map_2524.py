@@ -42,7 +42,7 @@ def main() -> int:
     core = _read("src/compiler/pass_pipeline_core.ixx")
     impls = _read("src/compiler/pass_impls.ixx")
     cmake = _read("cmake/AuraModules.cmake")
-    test = _read("tests/compiler/test_module_partition_map_2524.cpp")
+    test = _read("tests/compiler/test_module_partition_map.cpp")
     build = _read("build.py")
     clists = _read("CMakeLists.txt")
 
@@ -95,7 +95,7 @@ def main() -> int:
     must("ac5_no_cycles", "AC5", test)
 
     # Gate
-    must("test_module_partition_map_2524", "gate", clists)
+    must("test_module_partition_map", "gate", clists)
     must("check_module_partition_map_2524", "gate", build)
     must("cmd_module_partition_map_coverage", "gate", build)
 

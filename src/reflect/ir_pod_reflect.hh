@@ -12,7 +12,7 @@
 //       live in a non-import-std -freflection TU without std module).
 //    3. Serialize/validate/inspect only via auto_serialize /
 //       auto_deserialize / auto_validate / to_json.
-//    4. Round-trip under -freflection (test_ir_pod_phase4_2291.cpp).
+//    4. Round-trip under -freflection (test_ir_pod_phase4.cpp).
 //
 //  Non-goals: nested containers as primary types, full AST SoA,
 //  or dropping aura-reflect while business TUs still import std.

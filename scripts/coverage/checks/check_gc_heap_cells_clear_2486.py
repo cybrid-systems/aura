@@ -33,7 +33,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     src = _read("src/compiler/evaluator_primitives_memory.cpp")
-    test = _read("tests/compiler/test_gc_heap_cells_clear_2486.cpp")
+    test = _read("tests/compiler/test_gc_heap_cells_clear.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -62,7 +62,7 @@ def main() -> int:
     must("2486 AC1", "AC4", test)
     must("check_gc_heap_cells_clear_2486", "gate", build)
     must("cmd_gc_heap_cells_clear_coverage", "gate", build)
-    must("test_gc_heap_cells_clear_2486", "gate", cmake)
+    must("test_gc_heap_cells_clear", "gate", cmake)
     must("2486 AC4", "gate", test)
 
     if fails:

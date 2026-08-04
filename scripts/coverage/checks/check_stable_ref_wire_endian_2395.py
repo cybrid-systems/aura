@@ -39,7 +39,7 @@ def main() -> int:
 
     stab = _read("src/core/ast_stability.cpp")
     ixx = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_stable_ref_wire_endian_2395.cpp")
+    test = _read("tests/core/test_stable_ref_wire_endian.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -71,7 +71,7 @@ def main() -> int:
     must("ac5_source_and_gate", "AC5", test)
 
     # AC5 registration
-    must("test_stable_ref_wire_endian_2395", "AC5", cmake)
+    must("test_stable_ref_wire_endian", "AC5", cmake)
     must("check_stable_ref_wire_endian_2395", "AC5", build)
     must("cmd_stable_ref_wire_endian_coverage", "AC5", build)
 

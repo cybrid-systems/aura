@@ -17,7 +17,7 @@ AC4: #2604 auto-drain / #2601 exhausted-retry / #2502 re-promote
 AC5: Query surface on hot-update-registry-stats / reload-recovery-
      state + schema-2639 / issue-2639 / wired sentinel; #2605 axes
      preserved.
-AC6: src-aligned test (extend test_exhausted_min_dirty_reemit_2544
+AC6: src-aligned test (extend test_exhausted_min_dirty_reemit
      or sibling) + coverage gate (this linter + build.py gate step).
 
 Default: non-strict (exit 0, prints coverage summary). Use --strict
@@ -35,7 +35,7 @@ HOT_UPDATE_CPP = ROOT / "src" / "compiler" / "hot_update_registry.cpp"
 HOT_UPDATE_HH = ROOT / "src" / "compiler" / "hot_update_registry.hh"
 METRICS = ROOT / "src" / "compiler" / "observability_metrics.h"
 BUILD = ROOT / "build.py"
-TEST_2544 = ROOT / "tests" / "compiler" / "test_exhausted_min_dirty_reemit_2544.cpp"
+TEST_2544 = ROOT / "tests" / "compiler" / "test_exhausted_min_dirty_reemit.cpp"
 
 
 def _read(rel: str) -> str:
@@ -119,7 +119,7 @@ def main() -> int:
         TEST_2544, "ac2639_storm_reenters_mid_pass_skips", "AC6: test missing ac2639_storm_reenters_mid_pass_skips"
     )
     must_present(TEST_2544, "ac2639_schema_and_source", "AC6: test missing ac2639_schema_and_source")
-    test_text = _read("tests/compiler/test_exhausted_min_dirty_reemit_2544.cpp")
+    test_text = _read("tests/compiler/test_exhausted_min_dirty_reemit.cpp")
     if "main()" in test_text:
         for ac_fn in (
             "ac2639_storm_clear_fires_on_transition",

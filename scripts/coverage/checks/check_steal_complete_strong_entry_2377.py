@@ -38,7 +38,7 @@ def main() -> int:
     fm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     gh = _read("src/core/gc_hooks.h")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    test = _read("tests/serve/test_steal_complete_strong_entry_2377.cpp")
+    test = _read("tests/serve/test_steal_complete_strong_entry.cpp")
     cmake = _read("CMakeLists.txt")
     bp = _read("build.py")
 
@@ -74,7 +74,7 @@ def main() -> int:
     must("schema-2377", "AC5", q)
     must("steal-complete-entry-missing-total", "AC5", q)
     must("steal-complete-strong-required-wired", "AC5", q)
-    must("test_steal_complete_strong_entry_2377", "AC5", cmake)
+    must("test_steal_complete_strong_entry", "AC5", cmake)
     must("cmd_steal_complete_strong_entry_coverage", "AC5", bp)
     must("check_steal_complete_strong_entry_2377.py", "AC5", bp)
     must("AC1:", "AC5", test)

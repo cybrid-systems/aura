@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "path": "tests/core/test_incremental_restamp.cpp",
       "contains": [
         "2402 AC1"
       ]
@@ -31,14 +31,14 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "path": "tests/core/test_incremental_restamp.cpp",
       "contains": [
         "2402 AC2"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "path": "tests/core/test_incremental_restamp.cpp",
       "contains": [
         "2402 AC3"
       ]
@@ -66,14 +66,14 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "path": "tests/core/test_incremental_restamp.cpp",
       "contains": [
         "2402 AC4"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "path": "tests/core/test_incremental_restamp.cpp",
       "contains": [
         "2402 AC5"
       ]
@@ -90,7 +90,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_incremental_restamp_2061"
+        "test_incremental_restamp"
       ]
     }
   ],

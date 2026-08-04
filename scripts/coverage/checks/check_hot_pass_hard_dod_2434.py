@@ -41,7 +41,7 @@ def main() -> int:
     )
     cc = _read("src/core/concept_constraints.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_hot_pass_hard_dod_2434.cpp")
+    test = _read("tests/compiler/test_hot_pass_hard_dod.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -77,7 +77,7 @@ def main() -> int:
     must("2434 AC5", "AC5", test)
     must("check_hot_pass_hard_dod_2434", "gate", build)
     must("cmd_hot_pass_hard_dod_coverage", "gate", build)
-    must("test_hot_pass_hard_dod_2434", "gate", cmake)
+    must("test_hot_pass_hard_dod", "gate", cmake)
 
     if fails:
         for f in fails:

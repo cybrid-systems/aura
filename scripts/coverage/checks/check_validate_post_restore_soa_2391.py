@@ -34,7 +34,7 @@ def main() -> int:
 
     impl = _read("src/core/ast_impl.cpp")
     ixx = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_validate_post_restore_soa_2391.cpp")
+    test = _read("tests/core/test_validate_post_restore_soa.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -54,7 +54,7 @@ def main() -> int:
 
     # AC3 registration
     must("2391", "AC3", ixx)
-    must("test_validate_post_restore_soa_2391", "AC3", cmake)
+    must("test_validate_post_restore_soa", "AC3", cmake)
     must("check_validate_post_restore_soa_2391", "AC3", build)
     must("cmd_validate_post_restore_soa_coverage", "AC3", build)
     must("ac3_source_and_gate", "AC3", test)

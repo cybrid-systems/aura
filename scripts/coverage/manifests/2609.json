@@ -41,7 +41,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/serve/test_steal_densify_linear_type_hard_and_2609.cpp",
+      "path": "tests/serve/test_steal_densify_linear_type_hard_and.cpp",
       "contains": [
         "ac1_hard_linear_force_cancels"
       ]
@@ -55,7 +55,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/serve/test_steal_densify_linear_type_hard_and_2609.cpp",
+      "path": "tests/serve/test_steal_densify_linear_type_hard_and.cpp",
       "contains": [
         "ac2_clean_zero_cost"
       ]
@@ -65,7 +65,7 @@
       "paths": [
         "src/compiler/evaluator_fiber_mutation.cpp",
         "src/compiler/observability_metrics.h",
-        "tests/serve/test_steal_densify_linear_type_hard_and_2609.cpp"
+        "tests/serve/test_steal_densify_linear_type_hard_and.cpp"
       ],
       "contains": [
         "soft_observe"
@@ -73,7 +73,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/serve/test_steal_densify_linear_type_hard_and_2609.cpp",
+      "path": "tests/serve/test_steal_densify_linear_type_hard_and.cpp",
       "contains": [
         "ac3_soft_observe"
       ]
@@ -146,7 +146,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/serve/test_steal_densify_linear_type_hard_and_2609.cpp",
+      "path": "tests/serve/test_steal_densify_linear_type_hard_and.cpp",
       "contains": [
         "ac4_pure_evaluate_priority",
         "ac5_source_and_schema"
@@ -156,7 +156,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_steal_densify_linear_type_hard_and_2609"
+        "test_steal_densify_linear_type_hard_and"
       ]
     },
     {

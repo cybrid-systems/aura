@@ -41,7 +41,7 @@ def main() -> int:
     low = _read("src/compiler/lowering_impl.cpp")
     met = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_soa_ban_residual_aos_bridge_2520.cpp")
+    test = _read("tests/compiler/test_soa_ban_residual_aos_bridge.cpp")
     dual = _read("tests/compiler/test_ir_soa_dual_emit_batch.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
@@ -77,7 +77,7 @@ def main() -> int:
     must("residual-aos-bridge-test-only", "AC5", q)
     if "TEST-ONLY" not in met and "#2520" not in met:
         fails.append("AC5: metrics missing TEST-ONLY / #2520 residual note")
-    must("test_soa_ban_residual_aos_bridge_2520", "AC5", cmake)
+    must("test_soa_ban_residual_aos_bridge", "AC5", cmake)
     must("check_soa_ban_residual_aos_bridge_2520", "AC5", build)
     must("cmd_soa_ban_residual_aos_bridge_coverage", "AC5", build)
     must("ac5_observability", "AC5", test)

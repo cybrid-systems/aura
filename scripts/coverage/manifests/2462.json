@@ -13,7 +13,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "path": "tests/compiler/test_type_system_health_next_action.cpp",
       "contains": [
         "AC1: healthy empty"
       ]
@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "path": "tests/compiler/test_type_system_health_next_action.cpp",
       "contains": [
         "AC2: truncated"
       ]
@@ -44,7 +44,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "path": "tests/compiler/test_type_system_health_next_action.cpp",
       "contains": [
         "AC3: expand-dirty"
       ]
@@ -59,7 +59,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "path": "tests/compiler/test_type_system_health_next_action.cpp",
       "contains": [
         "AC4: annotate-dynamic"
       ]
@@ -87,7 +87,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_system_health_next_action_2462"
+        "test_type_system_health_next_action"
       ]
     },
     {
@@ -100,7 +100,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "path": "tests/compiler/test_type_system_health_next_action.cpp",
       "contains": [
         "AC5: pure"
       ]
