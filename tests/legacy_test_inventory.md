@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 747 | Preferred destination suites |
-| **Total scanned** | **747** | |
+| `tests/core/test_*.cpp` | 749 | Preferred destination suites |
+| **Total scanned** | **749** | |
 
 ### Related artifacts
 
@@ -37,8 +37,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 94 | 94 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 41 | 41 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 77 | 77 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 48 | 48 | P2 — small-medium; soa_batch precedent |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 49 | 49 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 129 | 129 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 43 | 43 | P3 — review case-by-case |
 
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **76**
+- Existing `*_batch` drivers (migration milestones): **78**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -126,11 +126,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_linear_ownership_batch.cpp` → theme `linear_ownership`
 - `tests/compiler/test_macro_reflect_batch.cpp` → theme `edsl_hygiene`
 - `tests/serve/test_mailbox_fiber_batch.cpp` → theme `fiber_orch`
-- `tests/compiler/test_misc_issue_fold_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_misc_issue_fold_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_mutate_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` → theme `observability`
 - `tests/compiler/test_mutation_boundary_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutation_guard_unit_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_mutation_hold_boundary_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutation_occurrence_dirty_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutation_typed_audit_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_obs_metrics_smoke_batch.cpp` → theme `observability`
@@ -150,6 +151,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/core/test_resource_quota_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_security_capability_batch.cpp` → theme `uncategorized`
+- `tests/compiler/test_shape_soa_storm_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_shape_soa_unit_batch.cpp` → theme `shape_soa`
 - `tests/core/test_soa_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_stable_ref_batch.cpp` → theme `mutation_dirty`
@@ -586,6 +588,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_mutation_guard_try_acquire.cpp`
 - `tests/compiler/test_mutation_guard_try_acquire_2124.cpp`
 - `tests/compiler/test_mutation_guard_unit_batch.cpp`
+- `tests/compiler/test_mutation_hold_boundary_batch.cpp`
 - `tests/compiler/test_mutation_hold_estimate_2405.cpp`
 - `tests/compiler/test_mutation_hold_hard_timeout_2199.cpp`
 - `tests/compiler/test_mutation_hold_live_2517.cpp`
@@ -788,6 +791,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp`
 - `tests/compiler/test_shape_profiler_concurrency_2141.cpp`
 - `tests/compiler/test_shape_profiler_stability_deopt_fiber_task4.cpp`
+- `tests/compiler/test_shape_soa_storm_batch.cpp`
 - `tests/compiler/test_shape_soa_unit_batch.cpp`
 - `tests/compiler/test_shape_storm_adaptive_2526.cpp`
 - `tests/compiler/test_shape_storm_partial_relower_2212.cpp`
@@ -1142,7 +1146,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_intro_restamp.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_macro_restamp_after_flat.cpp (which covers
 - `tests/compiler/test_macro_schema_dirty_propagate.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2098 + file-level atomic + C-linkage reader +
 - `tests/core/test_marker_metadata_lock.cpp` (—) [domain_suite, theme_core] — Issue #1783 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — leftover issue-suffixed tests (W_other)
 - `tests/core/test_module_boundary.cpp` (—) [domain_suite, theme_core] — Issue #1885 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_module_rebind_residual_2579.cpp` (#2579) [domain_suite, theme_compiler] — AC1: set-code multi-define (define g (f)) binds call result, not procedure
 - `tests/compiler/test_module_require_freevar_2566.cpp` (#2566) [domain_suite, theme_compiler] — AC1: (require "std/mutate" all:) inside non-std module → closures
@@ -1158,6 +1161,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_mutation_guard_try_acquire.cpp` (—) [domain_suite, theme_serve] — Issue #1547/#1556/#1590/#1628 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_mutation_guard_try_acquire_2124.cpp` (#2124) [domain_suite, theme_compiler] — AC1: check_mutation_guard_coverage.py --strict → 0 legacy ctor residual
 - `tests/compiler/test_mutation_guard_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_guard_unit_batch.cpp — consolidated mutation-theme drivers
+- `tests/compiler/test_mutation_hold_boundary_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_mutation_hold_boundary_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_mutation_hold_estimate_2405.cpp` (#2405) [domain_suite, theme_compiler] — AC1: Query returns budget/slo + recent hold distribution (no side effects)
 - `tests/compiler/test_mutation_hold_hard_timeout_2199.cpp` (#2199) [domain_suite, theme_compiler] — AC1: Strict on + synthetic long mutate → outermost exit fails,
 - `tests/compiler/test_mutation_hold_live_2517.cpp` (#2517) [domain_suite, theme_compiler] — AC1: outermost enter/exit maintain live max probe
@@ -1435,13 +1439,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_symbol_eq_2568.cpp` (#2568) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 
-### `jit_incremental` — JIT / AOT / incremental relower (77)
+### `jit_incremental` — JIT / AOT / incremental relower (78)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (77)
+#### domain/ (78)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp` (#2209) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp` (#2112) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1496,6 +1500,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_jit_metrics_stub.cpp` (—) [small, domain_suite, theme_compiler] — test_jit_metrics_stub.cpp — Stub for the JIT test.
 - `tests/compiler/test_live_closure_stable_id_only_2369.cpp` (#2369) [domain_suite, theme_compiler] — AC1: positive — stable_func_id present → remap, name-fallback counter 0
 - `tests/compiler/test_lock_order_audit_2316.cpp` (#2316) [domain_suite, theme_compiler] — test_lock_order_audit_2316.cpp — Issue #2316:
+- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_module_partition_map_2524.cpp` (#2524) [domain_suite, theme_compiler] — AC1: Measurable reduction OR clear partition map (pass_manager facade
 - `tests/compiler/test_obs_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_obs_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_optimization_passes_contracts.cpp` (—) [domain_suite, theme_compiler] — AC1: 4 core passes satisfy Pass / DirtyAware / PureAnalysis where applicable
@@ -1521,13 +1526,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower_2127.cpp` (#2127) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape_2574.cpp` (#2574) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (48)
+### `shape_soa` — Shape / SoA / column layout (49)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (48)
+#### domain/ (49)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — Issue #2444 — region_by_sym_dense_ concurrent set_function_region +
@@ -1558,6 +1563,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #406/#407/#570/#605 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape_profiler_concurrency_2141.cpp` (#2141) [domain_suite, theme_compiler] — AC1: docs model A (shared_mutex) in shape_profiler.h
 - `tests/compiler/test_shape_profiler_stability_deopt_fiber_task4.cpp` (—) [domain_suite, theme_compiler] — test_shape_profiler_stability_deopt_fiber_task4.cpp — Issue #570:
+- `tests/compiler/test_shape_soa_storm_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_shape_soa_storm_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_shape_soa_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_shape_soa_unit_batch.cpp — Wave 36+ (#1957) shape_soa theme
 - `tests/compiler/test_shape_storm_adaptive_2526.cpp` (#2526) [domain_suite, theme_compiler] — AC1: Compact-only sequences do not alone drive process-global storm
 - `tests/compiler/test_shapeprofiler_stability_deopt_jit_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shapeprofiler_stability_deopt_jit_mutate.cpp — Issue #605:
