@@ -401,6 +401,16 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 240  # #2636 belt-and-suspenders: same rationale as
+                          # asan-build + ubsan-smoke + deployment-health.
+                          # cmd_repro does its own cmake configure +
+                          # build (build.py:8092) and does NOT currently
+                          # honor AURA_LINK_JOBS — only timeout can
+                          # bound the wall clock for now. Next main push
+                          # will reveal if the arena.ixx.o rebuild
+                          # deadlock also bites here; if so, the
+                          # follow-up is teaching cmd_repro to consume
+                          # AURA_LINK_JOBS (separate PR).
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.5
     env:
