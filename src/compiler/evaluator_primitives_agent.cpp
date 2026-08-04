@@ -2812,6 +2812,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // local threshold. Gauge stays process-global; v1 isolates
             // policy per spawn, not per gauge.
             std::optional<std::uint64_t> bp_admit_threshold{};
+            // Issue #2633: scope-local BP gauge key. empty = process
+            // bucket (legacy / backward-compat with #2591); non-empty =
+            // per-scope recent counter + admit (storm in A no longer
+            // poisons B/C). Wired to AgentSpec::bp_scope_id at line 2883.
+            std::string bp_scope_id{};
             for (; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -2839,6 +2844,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     if (raw >= 0) {
                         bp_admit_threshold = static_cast<std::uint64_t>(raw);
                     }
+                } else if ((k == "bp-scope-id" || k == "bp_scope_id") && types::is_string(val)) {
+                    // Issue #2633: scope-local BP gauge key. Routing
+                    // string is interned via the per-Evaluator string
+                    // heap so the lookup at admit preflight is O(1)
+                    // (avoids re-interning on every spawn). empty
+                    // string keeps the process-bucket default.
+                    const auto sid = types::as_string_idx(val);
+                    if (sid < ev.string_heap_.size())
+                        bp_scope_id = ev.string_heap_[sid];
                 }
             }
 
@@ -2880,6 +2894,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             spec.keepalive_interval_ms = keepalive_interval_ms;
             spec.max_no_yield_ms = max_no_yield_ms;       // Issue #2540
             spec.bp_admit_threshold = bp_admit_threshold; // Issue #2591
+            spec.bp_scope_id = std::move(bp_scope_id);    // Issue #2633
             auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
             // Issue #2009: move-only handle; snapshot then put on success.
             const bool ok = handle.ok;

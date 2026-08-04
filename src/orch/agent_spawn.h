@@ -95,6 +95,13 @@ inline constexpr int kMailboxBpRecentWindowIssue = 2398;
 inline constexpr int kMailboxBpAdmitDefaultOnIssue = 2535;
 // Issue #2399: AgentScope concurrent access detection (metric + optional abort).
 inline constexpr int kAgentScopeConcurrentMisuseIssue = 2399;
+// Issue #2633: scope-local mailbox BP recent gauge. Cap on the bounded
+// map of per-scope gauges; overflow falls back to process bucket +
+// spawn_bp_scope_overflow_total metric. 256 covers typical multi-tenant
+// hosts without per-scope allocation storms (each entry = ~24 bytes
+// atomic + string copy on insert).
+inline constexpr std::size_t kMailboxBpScopeMapCap = 256;
+inline constexpr int kMailboxBpScopeGaugeIssue = 2633;
 
 // Issue #2228 / #2535: env resolution for the BP admit threshold.
 // Returns the configured threshold (0 = admit control off). Parses
@@ -160,6 +167,23 @@ inline std::atomic<std::uint64_t> g_mailbox_bp_last_decay_us{0};
 // Issue #2398: last BP event timestamp (orch_now_us). Quiet-period
 // decay triggers when now - last_event > window_ms (no new BP).
 inline std::atomic<std::uint64_t> g_mailbox_bp_last_event_us{0};
+
+// Issue #2633: per-scope BP gauge. recent counter + last_event_us for
+// per-bucket quiet-period decay. Heap-allocated only on first touch
+// of a scope (sparse: most processes use <10 scopes).
+struct ScopeBpGauge {
+    std::atomic<std::uint64_t> recent{0};
+    std::atomic<std::uint64_t> last_event_us{0};
+};
+
+// Issue #2633: bounded map of scope-local BP gauges. Insert-only on
+// first touch (idempotent), mutex-protected since insertions are
+// rare but lookups can race with fiber push/fanout under load. Cap
+// = kMailboxBpScopeMapCap (256); overflow falls back to process
+// bucket + spawn_bp_scope_overflow_total metric (so dashboards can
+// alert when a multi-tenant host crosses the cap).
+inline std::mutex g_scope_bp_map_mtx{};
+inline std::unordered_map<std::string, std::unique_ptr<ScopeBpGauge>> g_scope_bp_map{};
 
 // Short drain for keepalive helper fiber after body join (#2159).
 inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
@@ -237,6 +261,17 @@ struct OrchModuleStats {
     // hot against per-spec threshold — usually a single noisy scope
     // or producer).
     std::atomic<std::uint64_t> spawn_bp_admit_reject_override_total{0};
+    // Issue #2633: per-scope BP admit deny counter. Multi-tenant hosts
+    // can distinguish "process default storm" (spawn_bp_admit_reject_total)
+    // vs "local override storm" (spawn_bp_admit_reject_override_total,
+    // #2591) vs "scope-local storm" (this counter, #2633). Each storm
+    // type bumps its own counter — no double-counting.
+    std::atomic<std::uint64_t> spawn_bp_admit_reject_scope_total{0};
+    // Issue #2633: scope-map overflow counter. Bumped when a new
+    // bp_scope_id exceeds kMailboxBpScopeMapCap (256); the event falls
+    // back to the process bucket + bumps mailbox_bp_recent_total so
+    // production dashboards can alert before scope fragmentation.
+    std::atomic<std::uint64_t> spawn_bp_scope_overflow_total{0};
     std::atomic<std::uint64_t> send_closed_total{0};
     std::atomic<std::uint64_t> recv_empty_total{0};
     std::atomic<std::uint64_t> join_wait_us_total{0};
@@ -455,14 +490,69 @@ inline OrchModuleStats g_orch_module_stats{};
 // admit "recent" gauge + last-event clock. Called from push/fanout BP
 // sites (via aura_orch_note_mailbox_backpressure strong def) and from
 // orch agent_send / emit_keepalive when those paths already counted BP.
-inline void note_mailbox_bp_recent_event() noexcept {
-    g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
-    g_mailbox_bp_last_event_us.store(orch_now_us(), std::memory_order_release);
+// Issue #2633: optional scope_id routes the bump to a per-scope gauge
+// (bounded map, cap kMailboxBpScopeMapCap). empty scope_id = process
+// bucket (legacy / backward-compat with #2591). Overflow falls back
+// to process bucket + spawn_bp_scope_overflow_total metric.
+inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcept {
+    const auto now_us = orch_now_us();
+    if (scope_id.empty()) {
+        g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
+        g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
+        return;
+    }
+    ScopeBpGauge* gauge = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+        auto it = g_scope_bp_map.find(std::string{scope_id});
+        if (it == g_scope_bp_map.end()) {
+            if (g_scope_bp_map.size() >= kMailboxBpScopeMapCap) {
+                g_orch_module_stats.spawn_bp_scope_overflow_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                // Fall back to process bucket (graceful degradation:
+                // storm still bumps the global gauge so production
+                // dashboards see it; new scope id is dropped to keep
+                // the map bounded under adversarial / misconfigured
+                // tenants).
+                g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
+                g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
+                return;
+            }
+            auto g = std::make_unique<ScopeBpGauge>();
+            gauge = g.get();
+            g_scope_bp_map.emplace(std::string{scope_id}, std::move(g));
+        } else {
+            gauge = it->second.get();
+        }
+    }
+    gauge->recent.fetch_add(1, std::memory_order_relaxed);
+    gauge->last_event_us.store(now_us, std::memory_order_release);
+    g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
+}
+
+// Issue #2633: lookup helper for scope-local gauge. Returns the gauge
+// pointer (heap-owned by g_scope_bp_map) or nullptr if not yet inserted.
+// Caller is responsible for atomic reads. Empty scope_id → nullptr
+// (caller should fall back to process bucket).
+inline ScopeBpGauge* lookup_scope_bp_gauge(std::string_view scope_id) noexcept {
+    if (scope_id.empty())
+        return nullptr;
+    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    auto it = g_scope_bp_map.find(std::string{scope_id});
+    if (it == g_scope_bp_map.end())
+        return nullptr;
+    return it->second.get();
 }
 
 // Issue #2398: quiet-period decay of mailbox_bp_recent_total.
 // Zero-cost when window_ms==0. Admit preflight calls this only when
 // threshold>0 (zero cost when admit control is off). One CAS winner zeros.
+// Issue #2633: also decays every per-scope gauge in g_scope_bp_map under
+// the same shared window clock. Per-bucket zero preserves scope isolation
+// (a quiet scope self-heals independently of stormy peers). The shared
+// window check uses g_mailbox_bp_last_event_us — same last-event clock
+// as the process bucket — so the per-scope + process decay fire on the
+// same admit preflight tick (no extra clock work).
 inline void maybe_decay_mailbox_bp_recent() noexcept {
     const auto window_ms = resolve_mailbox_bp_window_ms();
     if (window_ms == 0)
@@ -474,10 +564,23 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
     if (now_us - last_bp <= window_ms * 1000ULL)
         return; // still inside quiet window after last BP
     auto last_decay = g_mailbox_bp_last_decay_us.load(std::memory_order_acquire);
-    if (g_mailbox_bp_last_decay_us.compare_exchange_strong(last_decay, now_us,
-                                                           std::memory_order_acq_rel)) {
-        g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
+    if (!g_mailbox_bp_last_decay_us.compare_exchange_strong(last_decay, now_us,
+                                                            std::memory_order_acq_rel)) {
+        return; // another thread won the CAS this tick
     }
+    g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
+    // Issue #2633: per-scope decay — zero every bucket under the same
+    // shared window. Snapshot the map under lock to avoid holding the
+    // mutex across N atomic stores (which would block scope-bp inserts).
+    std::vector<ScopeBpGauge*> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+        snapshot.reserve(g_scope_bp_map.size());
+        for (const auto& [_, g] : g_scope_bp_map)
+            snapshot.push_back(g.get());
+    }
+    for (ScopeBpGauge* g : snapshot)
+        g->recent.store(0, std::memory_order_release);
 }
 
 inline void snapshot_orch_stats(std::uint64_t& spawned, std::uint64_t& joined, std::uint64_t& sends,
@@ -687,6 +790,13 @@ struct AgentSpec {
     // still process-global). Wire surface: Aura kwarg
     // :bp-admit-threshold n on (orch:spawn-agent).
     std::optional<std::uint64_t> bp_admit_threshold{};
+    // Issue #2633: scope-local BP gauge key. empty = process-default
+    // bucket (backward compatible with #2591). non-empty = the spawn's
+    // mailbox BP events and admit preflight are routed to a per-scope
+    // gauge (bounded map, cap kMailboxBpScopeMapCap). storm in scope A
+    // no longer poisons unrelated scopes B/C. Wire surface: Aura kwarg
+    // :bp-scope-id "tenant-a" on (orch:spawn-agent).
+    std::string bp_scope_id{};
 };
 
 // Issue #2585: production default for AgentSpec.max_no_yield_ms.
@@ -893,21 +1003,45 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         // admit off for THIS spawn (always reject when attach_mailbox);
         // N > 0 → local threshold (per-spawn policy isolation, gauge
         // is still process-global).
+        // Issue #2633: spec.bp_scope_id (optional) routes the recent
+        // gauge to a per-scope bucket (bounded map, cap 256). empty →
+        // process-global bucket (backward compat with #2535/#2591);
+        // non-empty → scope-local gauge + per-scope decay (storm in A
+        // does not poison B/C). Threshold still resolved from
+        // bp_admit_threshold / env (process or per-spec); only the
+        // gauge that the threshold reads against changes.
         const auto override_threshold = spec.bp_admit_threshold;
         const auto process_threshold = resolve_mailbox_bp_admit_threshold();
         const auto threshold = override_threshold ? *override_threshold : process_threshold;
         const bool override_active = override_threshold.has_value();
+        const bool scope_active = !spec.bp_scope_id.empty();
         if (threshold > 0) {
             // Issue #2398: quiet-period decay — if no BP events for
             // window_ms (AURA_ORCH_BP_WINDOW_MS / AURA_ORCH_BP_DECAY_MS),
             // zero mailbox_bp_recent_total so storms self-heal without
             // process restart. send_backpressure_total stays cumulative.
+            // Issue #2633: also decays every per-scope gauge in
+            // g_scope_bp_map under the same shared window clock.
             maybe_decay_mailbox_bp_recent();
-            const auto bp_recent =
-                g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+            std::uint64_t bp_recent = 0;
+            if (scope_active) {
+                // #2633: scope-local gauge. If the scope hasn't seen
+                // any BP events yet (lookup returns nullptr), recent=0
+                // (silent admit — the scope is "clean" by default).
+                if (auto* gauge = lookup_scope_bp_gauge(spec.bp_scope_id))
+                    bp_recent = gauge->recent.load(std::memory_order_relaxed);
+            } else {
+                bp_recent =
+                    g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+            }
             if (bp_recent >= threshold) {
                 g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
-                if (override_active) {
+                if (scope_active) {
+                    // #2633: scope-local storm deny (third counter;
+                    // process / override / scope — no double-count).
+                    g_orch_module_stats.spawn_bp_admit_reject_scope_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                } else if (override_active) {
                     // #2591: per-spec override deny (separate counter
                     // so multi-tenant hosts can distinguish "process
                     // default storm" from "local override storm").
