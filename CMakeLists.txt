@@ -4247,6 +4247,13 @@ endif()
 
 
 # Domain batch: Mailbox / fiber / residual / steal / chaos (24 members + driver).
+
+# Gate runtime exception: #2352/#2554 chaos PR hard-fail needs a dedicated
+# binary (build.py gate). Also kept as member of test_mailbox_fiber_batch.
+aura_add_issue_test(test_chaos_mutate_steal_gc_mailbox_2352)
+aura_issue_test_link_light(test_chaos_mutate_steal_gc_mailbox_2352)
+add_dependencies(all_test_issue_targets test_chaos_mutate_steal_gc_mailbox_2352)
+
 add_executable(test_mailbox_fiber_batch
     tests/serve/test_mailbox_fiber_batch.cpp
     tests/compiler/test_residual_gc_defer_assert_2211.cpp
