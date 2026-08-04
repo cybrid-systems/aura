@@ -2693,6 +2693,29 @@ def cmd_orphan_reap_tick_coverage():
     return 0
 
 
+def cmd_storm_clear_health_pass_coverage():
+    """Issue #2639: storm-clear → forced region health check + auto min-dirty / deferred drain.
+
+    Lazy hook on non-None → None storm level transition with pending
+    state (deferred/force-JIT/region mask). Fires a health pass that
+    drives the existing #2604 auto-drain / #2601 exhausted-min-dirty
+    retry machinery. Soft zero-cost on quiet path (storm already
+    None, no pending). Storm re-entry mid-pass → skip + bump
+    skipped_reentered (deferred not silently dropped).
+    """
+    print(f"{B}=== storm-clear health pass coverage (#2639) ==={N}")
+    script = ROOT / "scripts" / "check_storm_clear_health_pass_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("storm-clear health pass (#2639) coverage contract rows failed")
+        return 1
+    ok("storm-clear health pass (#2639) coverage clean")
+    return 0
+
+
 def cmd_residual_sid0_cap_coverage():
     """Issue #2638: residual sid=0 growth hard cap + fail-closed drop/MustDeopt.
 
@@ -7437,6 +7460,7 @@ def cmd_gate():
         or cmd_residual_body_age_coverage()
         or cmd_sync_remount_anon_coverage()
         or cmd_residual_sid0_cap_coverage()
+        or cmd_storm_clear_health_pass_coverage()
         or cmd_mailbox_bp_recent_window_coverage()
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()

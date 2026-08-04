@@ -445,6 +445,13 @@ public:
         std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered = 0;
         std::int64_t schema_2601 = 2601;
         std::int64_t issue_2601 = 2601;
+        // Issue #2639: storm-clear health pass counters (lazy hook fired on
+        // non-None → None storm level transition with pending state).
+        std::int64_t reemit_storm_clear_health_pass_total = 0;
+        std::int64_t reemit_storm_clear_health_pass_success_total = 0;
+        std::int64_t reemit_storm_clear_health_pass_skipped_reentered_storm_total = 0;
+        std::int64_t schema_2639 = 2639;
+        std::int64_t issue_2639 = 2639;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -583,6 +590,11 @@ private:
     std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_storm_skip_total_{0};
     std::atomic<std::uint64_t> aot_exhausted_min_dirty_retry_cap_hit_total_{0};
     std::atomic<std::uint8_t> force_jit_repromote_allow_pending_idle_when_force_jit_covered_{0};
+    // Issue #2639: storm-clear edge detection (lazy hook).
+    std::atomic<StormLevel> prev_storm_level_{StormLevel::None};
+    std::atomic<std::uint64_t> reemit_storm_clear_health_pass_total_{0};
+    std::atomic<std::uint64_t> reemit_storm_clear_health_pass_success_total_{0};
+    std::atomic<std::uint64_t> reemit_storm_clear_health_pass_skipped_reentered_storm_total_{0};
 
     // Issue #2014: sliding window deopt rate.
     std::atomic<std::uint64_t> deopt_window_start_ms_{0};
@@ -730,6 +742,26 @@ public:
     // Test isolation: clear retry state + counters without touching
     // force_jit_regions_mask_ (use on_reload_success for that).
     void reset_exhausted_min_dirty_retry_for_test() noexcept;
+
+    // Issue #2639: storm-clear edge detection. Detects non-None → None
+    // storm level transition with pending state (deferred/force-JIT/
+    // region mask) and fires a health pass. Soft zero-cost on quiet
+    // path (storm already None, no deferred/force-JIT). Amortized —
+    // call from on_reemit_pipeline_call (cheap read path).
+    void maybe_storm_clear_health_pass() noexcept;
+    [[nodiscard]] std::uint64_t reemit_storm_clear_health_pass_total() const noexcept {
+        return reemit_storm_clear_health_pass_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t reemit_storm_clear_health_pass_success_total() const noexcept {
+        return reemit_storm_clear_health_pass_success_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t
+    reemit_storm_clear_health_pass_skipped_reentered_storm_total() const noexcept {
+        return reemit_storm_clear_health_pass_skipped_reentered_storm_total_.load(
+            std::memory_order_relaxed);
+    }
+    // Test isolation: reset storm-clear health pass state.
+    void reset_storm_clear_health_pass_for_test() noexcept;
 
     // Issue #2367: force-JIT observability (paired with recovery query).
     [[nodiscard]] std::uint64_t force_jit_for_reason_total() const noexcept {
@@ -956,6 +988,12 @@ struct aura_reload_recovery_snapshot {
     std::int64_t exhausted_min_dirty_retry_last_reason;
     std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered;
     std::int64_t schema_2601; // 2601 when wired
+    // Issue #2639: storm-clear health pass counters (additive).
+    std::int64_t reemit_storm_clear_health_pass_total;
+    std::int64_t reemit_storm_clear_health_pass_success_total;
+    std::int64_t reemit_storm_clear_health_pass_skipped_reentered_storm_total;
+    std::int64_t schema_2639; // 2639 when wired
+    std::int64_t issue_2639;  // 2639
     // recovery-active: 1 when any non-idle recovery signal is set
     // (force-jit mask, attempts_left, pending dirty, deferred reemit,
     // storm_level != None). Soft empty path → 0.
@@ -1005,6 +1043,9 @@ std::uint64_t aura_specjit_storm_clear_total_v_read(void);
 // explicit drain on the bridge exhaust path. Bounded by attempts_cap +
 // backoff_ms, so recursion within a single reemit pipeline call is safe.
 extern "C" void aura_hot_update_maybe_retry_exhausted_min_dirty(void);
+// Issue #2639: storm-clear edge detection hook (lazy — called from
+// on_reemit_pipeline_call amortized path).
+extern "C" void aura_hot_update_maybe_storm_clear_health_pass(void);
 }
 
 #endif // AURA_COMPILER_HOT_UPDATE_REGISTRY_HH
