@@ -5406,6 +5406,24 @@ def cmd_dce_elided_deopt_meta_coverage():
     return 0
 
 
+def cmd_castop_typed_meta_coverage():
+    """Issue #2624 Phase A: CastOp type_id + narrow_evidence downflow side table.
+
+    Non-elided lower stamps src/dst; Soft zero-cost when absent; no executor change.
+    """
+    print(f"{B}=== castop typed meta Phase A coverage (#2624) ==={N}")
+    script = ROOT / "scripts" / "check_castop_typed_meta_2624.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("castop typed meta (#2624) coverage contract rows failed")
+        return 1
+    ok("castop typed meta Phase A (#2624) coverage clean")
+    return 0
+
+
 def cmd_type_linear_commit_health_coverage():
     """Issue #2613: query:type-linear-commit-health unified Agent face.
 
@@ -7477,6 +7495,7 @@ def cmd_gate():
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()
+        or cmd_castop_typed_meta_coverage()
         or cmd_type_linear_commit_health_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
@@ -8205,6 +8224,7 @@ def main():
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
+        "castop-typed-meta": cmd_castop_typed_meta_coverage,
         "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
