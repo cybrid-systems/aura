@@ -3787,6 +3787,11 @@ aura_add_issue_test(test_dce_elided_deopt_meta_2611)
 aura_issue_test_link_light(test_dce_elided_deopt_meta_2611)
 add_dependencies(all_test_issue_targets test_dce_elided_deopt_meta_2611)
 
+# Issue #2624 Phase A: CastOp type_id + narrow_evidence downflow side table.
+aura_add_issue_test(test_castop_typed_meta_2624)
+aura_issue_test_link_light(test_castop_typed_meta_2624)
+add_dependencies(all_test_issue_targets test_castop_typed_meta_2624)
+
 # Issue #2551: outermost hold-exit residual under production → hard + Agent throttle.
 aura_add_issue_test(test_mailbox_hold_starvation_hard_2551)
 aura_issue_test_link_light(test_mailbox_hold_starvation_hard_2551)

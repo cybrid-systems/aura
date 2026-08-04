@@ -44,6 +44,7 @@ module;
 #include "serve/fiber.h"                     // Issue #2184: publish MutationSafetySnapshot
 #include "serve/multi_fiber_mailbox.h"       // Issue #2347: clear recv boundary reject window
 #include "compiler/shape_profiler.h"         // Issue #2255: current_global_shape_version
+#include "orch/security_schedule_gate.h"     // Issue #2630: evaluate_security_schedule admit
 #include <cassert>
 #include <chrono>
 #include <cstdlib>

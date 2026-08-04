@@ -19,6 +19,7 @@ module;
 #include "hash_meta.h"                             // FNV constants (#901)
 #include "typed_mutation_audit.h"                  // Issue #1613 macro hygiene audit trail
 #include "compiler/dce_elided_deopt_meta.h"        // Issue #2611: elided CastOp deopt meta
+#include "compiler/castop_typed_meta.h"            // Issue #2624 Phase A: CastOp typed meta
 #include "linear_occurrence_mutate_stats.h"        // Issue #2030 occurrence hit-rate ratios
 #include "basis_points.h"                          // Issue #2030 ratio bp helpers
 #include "core/provenance_tracker.hh"              // Issue #2030 linear-provenance consistency bp
@@ -7931,7 +7932,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         "query:dead-coercion-layered-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            auto* ht = FlatHashTable::create(64);
+            // Capacity 128: base + #2556/#2562/#2611/#2624 keys (was 64).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8040,6 +8042,44 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           static_cast<std::int64_t>(
                               dce_deopt_meta_last_site_key.load(std::memory_order_relaxed)));
                 insert_kv("deopt-meta-wired", 1);
+            }
+            // Issue #2624 Phase A: CastOp typed meta side table (src/dst/evidence).
+            // Not persisted in IR cache; missing on legacy IR → missing_total only.
+            // Phase B executor Strict / Phase C JIT deopt are out of scope.
+            {
+                using namespace ::aura::compiler::castop_meta;
+                insert_kv("schema-2624", 2624);
+                insert_kv("issue-2624", 2624);
+                insert_kv("castop-typed-meta-stamped-total",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_stamped_total.load(std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-missing-total",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_missing_total.load(std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-map-size",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_map_size.load(std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-lookup-hits",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_lookup_hits.load(std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-identity-elide-total",
+                          static_cast<std::int64_t>(castop_typed_meta_identity_elide_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-last-src",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_last_src.load(std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-last-dst",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_last_dst.load(std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-last-evidence",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_last_evidence.load(std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-wired",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_wired.load(std::memory_order_relaxed)));
+                insert_kv("castop-typed-meta-phase-a",
+                          static_cast<std::int64_t>(
+                              castop_typed_meta_phase_a.load(std::memory_order_relaxed)));
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

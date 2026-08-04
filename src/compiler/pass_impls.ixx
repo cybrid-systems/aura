@@ -25,6 +25,7 @@ module;
 #include "compiler/observability_metrics.h"
 #include "compiler/jit_typed_mutation_stats.h"
 #include "compiler/dce_elided_deopt_meta.h" // Issue #2611: elided CastOp deopt meta stamp
+#include "compiler/castop_typed_meta.h"     // Issue #2624 Phase A: CastOp src/dst typed meta
 
 export module aura.compiler.pass_impls;
 import std;
@@ -1313,6 +1314,27 @@ public:
                         }
                     }
                 }
+                // Issue #2624 Phase A: side-table src==dst identity when map non-empty
+                // (Soft zero-cost when meta absent — skip consult entirely).
+                if (aura::compiler::castop_meta::castop_typed_meta_present()) {
+                    const auto site = aura::compiler::castop_meta::make_site_key(
+                        block.id, static_cast<std::uint32_t>(i), ops[0]);
+                    if (auto meta = aura::compiler::castop_meta::lookup_castop_typed_meta(site)) {
+                        if (meta->src_type_id != 0 && meta->src_type_id == meta->dst_type_id) {
+                            block.instructions[i] = aura::ir::IRInstruction{
+                                .opcode = aura::ir::IROpcode::Local,
+                                .operands = {ops[0], ops[1], 0, 0},
+                                .type_id = meta->dst_type_id,
+                            };
+                            ++eliminated_;
+                            ++type_prop_hits_;
+                            aura::compiler::castop_meta::castop_typed_meta_identity_elide_total
+                                .fetch_add(1, std::memory_order_relaxed);
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
 
                 // Rule 2: nested cast — (cast (cast x T1) T2)
                 if (auto* src = find_source(ops[1])) {
@@ -1588,6 +1610,21 @@ private:
                             // Rule 1 identity: no evidence → no deopt meta stamp (AC2).
                             elide_local(i, cast_tid, 0, target_tag);
                             ++type_prop_hits_;
+                            continue;
+                        }
+                    }
+                }
+                // Issue #2624 Phase A: side-table src==dst identity (SoA path).
+                // Soft zero-cost when map empty (castop_typed_meta_present guard).
+                if (aura::compiler::castop_meta::castop_typed_meta_present()) {
+                    const auto site = aura::compiler::castop_meta::make_site_key(
+                        /*block_id=*/0, static_cast<std::uint32_t>(i), result_slot);
+                    if (auto meta = aura::compiler::castop_meta::lookup_castop_typed_meta(site)) {
+                        if (meta->src_type_id != 0 && meta->src_type_id == meta->dst_type_id) {
+                            elide_local(i, meta->dst_type_id, 0, target_tag);
+                            ++type_prop_hits_;
+                            aura::compiler::castop_meta::castop_typed_meta_identity_elide_total
+                                .fetch_add(1, std::memory_order_relaxed);
                             continue;
                         }
                     }

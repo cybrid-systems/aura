@@ -2,6 +2,7 @@ module;
 #include <bit>
 
 #include "jit_typed_mutation_stats.h"
+#include "castop_typed_meta.h" // Issue #2624 Phase A: CastOp src/dst typed meta side table
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Issue #2254: production SoA-only default. Macro must be in this TU's
@@ -69,6 +70,25 @@ void LoweringState::emit_with_metadata(aura::ir::IROpcode op, std::uint32_t tid,
             }
         }
     }
+}
+
+// Issue #2624 Phase A: stamp src/dst type meta for a just-emitted CastOp.
+// Side table only (no SoA ABI change; not persisted in IR module cache).
+// Soft zero-cost when both type ids, tag, and evidence are zero.
+static void stamp_last_castop_typed_meta(LoweringState& state, std::uint32_t src_type_id,
+                                         std::uint32_t dst_type_id, std::uint32_t narrow_evidence,
+                                         std::uint32_t type_tag) noexcept {
+    if (!state.cur_func || state.cur_block >= state.cur_func->blocks.size())
+        return;
+    auto& instrs = state.cur_func->blocks[state.cur_block].instructions;
+    if (instrs.empty() || instrs.back().opcode != IROpcode::CastOp)
+        return;
+    const auto instr_idx = static_cast<std::uint32_t>(instrs.size() - 1);
+    const auto result_slot = instrs.back().operands[0];
+    const auto site = castop_meta::make_site_key(state.cur_block, instr_idx, result_slot);
+    // Prefer explicit dst; fall back to instruction type_id if caller passed 0.
+    const auto dst = dst_type_id != 0 ? dst_type_id : instrs.back().type_id;
+    castop_meta::stamp_castop_typed_meta(site, src_type_id, dst, narrow_evidence, type_tag);
 }
 
 const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept {
@@ -1024,6 +1044,9 @@ static std::uint32_t lower_flat_expr(
                                 state.emit_with_type(IROpcode::CastOp, expected_type.index,
                                                      cast_slot, val_slot, cast_tag, 0);
                             }
+                            // Issue #2624 Phase A: stamp src/dst typed meta (non-elided).
+                            stamp_last_castop_typed_meta(state, arg_type, expected_type.index,
+                                                         narrow_ev, cast_tag);
                             state.emit(IROpcode::Local,
                                        arg_base + static_cast<std::uint32_t>(i - 1), cast_slot);
                             state.alloc_local();
@@ -1586,6 +1609,9 @@ static std::uint32_t lower_flat_expr(
                     state.emit_with_type(IROpcode::CastOp, ann_type_id, slot, inner_slot, type_tag,
                                          blame_loc);
                 }
+                // Issue #2624 Phase A: stamp src/dst typed meta (non-elided).
+                stamp_last_castop_typed_meta(state, inner_type_id, ann_type_id, narrow_ev,
+                                             type_tag);
                 return slot;
             }
             return inner_slot;
@@ -1601,6 +1627,7 @@ static std::uint32_t lower_flat_expr(
                 entry_narrow_ev != 0 ? entry_narrow_ev : state.current_narrowing_evidence;
             // Issue #691 / #1925: expanded lower-time elision (identity,
             // Dynamic passthrough, narrow_ev + type match).
+            // Issue #1425 / #2025 / #2624 AC2: identity elision → no CastOp, no meta stamp.
             if (can_elide_coercion_cast(target_type_id, inner_type_id, type_tag, narrow_ev,
                                         state.type_reg)) {
                 return inner;
@@ -1619,6 +1646,8 @@ static std::uint32_t lower_flat_expr(
                 state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag,
                                      blame_loc);
             }
+            // Issue #2624 Phase A: non-elided CoercionNode → CastOp + typed meta.
+            stamp_last_castop_typed_meta(state, inner_type_id, target_type_id, narrow_ev, type_tag);
             return slot;
         }
         case NodeTag::Linear:
