@@ -401,21 +401,14 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [gate]
     runs-on: ubuntu-latest
-    timeout-minutes: 240  # #2636 belt-and-suspenders: same rationale as
-                          # asan-build + ubsan-smoke + deployment-health.
-                          # cmd_repro does its own cmake configure +
-                          # build (build.py:8092) and does NOT currently
-                          # honor AURA_LINK_JOBS — only timeout can
-                          # bound the wall clock for now. Next main push
-                          # will reveal if the arena.ixx.o rebuild
-                          # deadlock also bites here; if so, the
-                          # follow-up is teaching cmd_repro to consume
-                          # AURA_LINK_JOBS (separate PR).
+    timeout-minutes: 240  # Dual Release builds (~2× wall). AURA_LINK_JOBS=1
+                          # serializes link to avoid arena.ixx.o deadlock (#2636).
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.5
     env:
       SOURCE_DATE_EPOCH: "1704067200"
       CCACHE_DISABLE: 1
+      AURA_LINK_JOBS: "1"
     steps:
     - uses: actions/checkout@v7
 
@@ -427,6 +420,9 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
+    # Dual-build bit-identity (build_repro_a vs build_repro_b). Compile
+    # failure on evaluator_mutation_boundary was restamp dual-def
+    # (lifetime_pin.hh + .ixx) — fixed by dropping free funcs from .hh.
     - name: Verify reproducible builds match
       run: python3 build.py repro --verify
 
