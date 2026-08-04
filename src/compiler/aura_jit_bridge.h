@@ -791,6 +791,24 @@ void aura_set_hard_timeout_us(std::uint64_t us);
 std::uint64_t aura_get_hard_timeout_us(void);
 std::uint64_t aura_get_long_mutation_forced_abort_total(void);
 
+// Issue #2640: production Restricted default periodic epoch-invariant soft walk
+// (physically clear generation-behind AOT slots + MustDeopt stale live
+// closures on a steady-clock interval under production Soft mode).
+// Counters + setters + main hook.
+[[nodiscard]] std::uint64_t aura_epoch_invariant_periodic_walks_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_periodic_last_walk_at_ms_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_periodic_skipped_off_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_periodic_skipped_wrong_mode_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_periodic_skipped_disabled_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_periodic_period_ms_v_read(void);
+void aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms);
+// Main hook — gated by mode=Soft + production_defaults_active +
+// steady_ms_now rate limit. Cheap on the quiet path; runs the existing
+// #2541 soft walk on the active path. Called from
+// MutationBoundaryGuard::~MutationBoundaryGuard outermost success exit.
+void aura_periodic_epoch_invariant_walk_if_due(void);
+
 } // extern "C"
 
 #endif // AURA_COMPILER_AURA_JIT_BRIDGE_H

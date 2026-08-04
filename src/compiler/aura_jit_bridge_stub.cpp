@@ -753,6 +753,53 @@ aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept {
     if (n > 0)
         g_epoch_invariant_closure_must_deopt_total_stub.fetch_add(n, std::memory_order_relaxed);
 }
+
+// Issue #2640: production Restricted default periodic epoch-invariant soft walk
+// (full impl in aura_jit_bridge.cpp; light stub = no-op + zero counters).
+static std::atomic<std::uint64_t> g_epoch_invariant_periodic_walks_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_periodic_last_walk_at_ms_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_off_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_wrong_mode_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_rate_limited_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_disabled_total_stub{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_periodic_period_ms_stub{5000};
+
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_periodic_walks_total_v_read(void) {
+    return g_epoch_invariant_periodic_walks_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_periodic_last_walk_at_ms_v_read(void) {
+    return g_epoch_invariant_periodic_last_walk_at_ms_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_periodic_skipped_off_total_v_read(void) {
+    return g_epoch_invariant_periodic_skipped_off_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_periodic_skipped_wrong_mode_total_v_read(void) {
+    return g_epoch_invariant_periodic_skipped_wrong_mode_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read(void) {
+    return g_epoch_invariant_periodic_skipped_rate_limited_total_stub.load(
+        std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_periodic_skipped_disabled_total_v_read(void) {
+    return g_epoch_invariant_periodic_skipped_disabled_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_periodic_period_ms_v_read(void) {
+    return g_epoch_invariant_periodic_period_ms_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms) {
+    g_epoch_invariant_periodic_period_ms_stub.store(ms, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void aura_periodic_epoch_invariant_walk_if_due(void) {
+    // No-op in light bundles (no AOT table, no JIT). Counters stay zero.
+}
 // No AOT slot table in light stubs — always 0 generation-behind.
 extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behind_slots(void) {
     return 0;

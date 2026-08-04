@@ -9004,6 +9004,32 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           static_cast<std::int64_t>(snap.remount_ok_total));
                 insert_kv("component-epoch-invariant-violation-total",
                           static_cast<std::int64_t>(snap.epoch_invariant_violation_total));
+                // Issue #2640: production Restricted default periodic
+                // epoch-invariant soft walk counters (additive).
+                insert_kv(
+                    "component-epoch-invariant-periodic-walks-total",
+                    static_cast<std::int64_t>(aura_epoch_invariant_periodic_walks_total_v_read()));
+                insert_kv("component-epoch-invariant-periodic-last-walk-at-ms",
+                          static_cast<std::int64_t>(
+                              aura_epoch_invariant_periodic_last_walk_at_ms_v_read()));
+                insert_kv(
+                    "component-epoch-invariant-periodic-period-ms",
+                    static_cast<std::int64_t>(aura_epoch_invariant_periodic_period_ms_v_read()));
+                insert_kv("component-epoch-invariant-periodic-skipped-off-total",
+                          static_cast<std::int64_t>(
+                              aura_epoch_invariant_periodic_skipped_off_total_v_read()));
+                insert_kv("component-epoch-invariant-periodic-skipped-wrong-mode-total",
+                          static_cast<std::int64_t>(
+                              aura_epoch_invariant_periodic_skipped_wrong_mode_total_v_read()));
+                insert_kv("component-epoch-invariant-periodic-skipped-rate-limited-total",
+                          static_cast<std::int64_t>(
+                              aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read()));
+                insert_kv("component-epoch-invariant-periodic-skipped-disabled-total",
+                          static_cast<std::int64_t>(
+                              aura_epoch_invariant_periodic_skipped_disabled_total_v_read()));
+                insert_kv("epoch-invariant-periodic-wired", 1);
+                insert_kv("schema-2640", 2640);
+                insert_kv("issue-2640", 2640);
                 // force-reason code sentinels (docs)
                 insert_kv("force-reason-ok", 0);
                 insert_kv("force-reason-storm", 1);

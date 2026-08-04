@@ -4,6 +4,17 @@
 #include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
 
 #include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
+#include "observability_metrics.h" // CompilerMetrics full def (aura_get_aot_metrics returns it)
+
+// Forward decls for symbols defined in aura_jit_bridge.cpp (extern "C").
+// Issue #2637 anon / residual sync remount counters.
+extern "C" void aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t ok,
+                                                                std::uint64_t fail);
+// Issue #2638 residual sid=0 cap-hit counter.
+extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
+// Process-global aot_metrics getter (defined in aura_jit_bridge.cpp; the
+// file-static aot_metrics() accessor there is not externally visible).
+extern "C" void* aura_get_aot_metrics(void);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Issue #173: stable-id type aliases (Phase 2 of #145 workstream 2)
@@ -1932,7 +1943,7 @@ extern "C" int aura_sync_remount_anon_enabled_default() {
 // Soft / sandbox=off / tests where the cap is observe-only. Cached
 // on first call so the env lookup runs at most once per process.
 extern "C" std::uint64_t aura_residual_sid0_cap_default() {
-    static const std::uint64_t cached = []() {
+    static const std::uint64_t cached = []() -> std::uint64_t {
         const char* e = std::getenv("AURA_RESIDUAL_SID0_CAP");
         if (!e || *e == '\0')
             return 256; // production-safe default per AC1
@@ -2209,14 +2220,15 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             // further ids (fail-closed). env AURA_RESIDUAL_SID0_CAP=0
             // → unlimited (Soft / sandbox=off / tests). Weak default
             // 0 when orch module not linked (fn ? fn() : 0 ternary).
-            const std::uint64_t cap_2638 = aura_residual_sid0_cap_default
-                                               ? aura_residual_sid0_cap_default()
-                                               : 0; // weak default = unlimited
+            // aura_residual_sid0_cap_default is defined in this TU
+            // (line 1934) so no ternary needed; aura_get_aot_metrics
+            // returns g_aot_metrics from aura_jit_bridge.cpp.
+            const std::uint64_t cap_2638 = aura_residual_sid0_cap_default();
             if (cap_2638 > 0) {
+                auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics());
                 const std::uint64_t cur_backfill =
-                    aot_metrics() ? aot_metrics()->live_closure_stable_id_backfill_total.load(
-                                        std::memory_order_relaxed)
-                                  : 0;
+                    m ? m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed)
+                      : 0;
                 if (cur_backfill >= cap_2638) {
                     aura_bump_live_closure_residual_cap_hit_total(1);
                     aura_closure_set_must_deopt(cid, 1);

@@ -6536,6 +6536,26 @@ def cmd_epoch_invariant_walk_coverage():
     return 0
 
 
+def cmd_epoch_invariant_periodic_coverage():
+    """Issue #2640: production Restricted default periodic epoch-invariant
+    soft walk (physically clear generation-behind AOT slots + MustDeopt
+    stale live closures on a steady-clock interval under production Soft
+    mode). Hook at MutationBoundaryGuard outermost success exit, gated
+    by mode=Soft + production_defaults_active + period_ms rate limit.
+    """
+    print(f"{B}=== epoch invariant periodic coverage (#2640) ==={N}")
+    script = ROOT / "scripts" / "check_epoch_invariant_periodic_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("epoch invariant periodic (#2640) coverage contract rows failed")
+        return 1
+    ok("epoch invariant periodic (#2640) coverage clean")
+    return 0
+
+
 def cmd_reload_recovery_query_coverage():
     """Issue #2367: ReloadRecovery query primitive + recovery-state snapshot.
 
@@ -7664,6 +7684,7 @@ def cmd_gate():
         or cmd_panic_defer_after_densify_coverage()
         or cmd_densify_root_closure_closed_loop_coverage()
         or cmd_epoch_invariant_walk_coverage()
+        or cmd_epoch_invariant_periodic_coverage()
         or cmd_reload_recovery_query_coverage()
         or cmd_densify_remap_pairing_coverage()
         or cmd_live_closure_stable_id_only_coverage()
