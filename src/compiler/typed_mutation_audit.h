@@ -142,6 +142,13 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> delta_timeout_full_solve_total{0};
     std::atomic<std::uint64_t> delta_timeout_reject_total{0};
     std::atomic<std::uint32_t> delta_timeout_hard_gate_wired{1};
+    // Issue #2642: Phase 5 densify post-compact linear-root scan counters.
+    // linear_densify_scan_mismatch_observe_total: Soft path bumps this
+    //     counter (no force-rollback); Agents can watch the scan fire.
+    // linear_densify_scan_mismatch_total: hard path bump on real
+    //     mismatch (force_linear_rollback(LinearDensifyRootMismatch)).
+    std::atomic<std::uint64_t> linear_densify_scan_mismatch_observe_total{0};
+    std::atomic<std::uint64_t> linear_densify_scan_mismatch_total{0};
     // Issue #1882: AOT hot-update + JIT hotpath audit coverage.
     std::atomic<std::uint64_t> aot_hotupdate_attempts{0};
     std::atomic<std::uint64_t> aot_hotupdate_audits{0};

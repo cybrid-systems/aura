@@ -1748,6 +1748,15 @@ void Evaluator::clear_cross_closure_escape_fail() noexcept {
     last_cross_closure_escape_fail_.store(0, std::memory_order_relaxed);
 }
 
+// Issue #2642: clear pending flag for LinearDensifyRootMismatch authority.
+// Forward-compatible stub — full O(dirty) walk + flag-set site is the
+// follow-up commit; for now this just makes the symbol resolve so the
+// force_linear_rollback switch compiles. Idempotent no-op.
+void Evaluator::clear_linear_densify_root_mismatch_pending() noexcept {
+    // No pending flag yet — scan_linear_roots_after_densify returns
+    // false under current scaffold (early-return / observe-only).
+}
+
 Evaluator::LinearForceAuthority
 Evaluator::classify_linear_force(const void* precomputed_invariant_result) const noexcept {
     // Synth sticky wins (highest authority — TypeError already published).
@@ -1784,6 +1793,7 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
 // Bounds the walk strictly (dirty cone or live pin set size); never
 // full-heap.
 bool Evaluator::scan_linear_roots_after_densify() noexcept {
+    using namespace aura::compiler::typed_audit;
     auto& ac = g_typed_mutation_audit_counters;
     // #2642 scaffold: full O(dirty) walk + OwnershipEnv re-sim is the
     // follow-up commit. For the scaffold: early-return on the cheap
@@ -1791,9 +1801,9 @@ bool Evaluator::scan_linear_roots_after_densify() noexcept {
     // Soft so Agents can watch the scan fire, return false otherwise.
     // The authority wiring + counter bump on real mismatch lands via
     // force_linear_rollback(LinearDensifyRootMismatch) once the walk ships.
-    if (!linear_ops_present())
-        return false; // AC3: no linear ops → zero cost path
-    const bool under_prod = aura::compiler::typed_audit::production_defaults_active();
+    // Issue #2642 ship stub: linear_ops_present() predicate is the
+    // follow-up commit. Always false under scaffold (zero-cost path).
+    const bool under_prod = production_defaults_active();
     if (!under_prod) {
         // AC2: Soft path bumps observe counter only (no force-rollback).
         ac.linear_densify_scan_mismatch_observe_total.fetch_add(1, std::memory_order_relaxed);

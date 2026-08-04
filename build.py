@@ -308,6 +308,20 @@ def cmd_lint():
     if r != 0:
         fail("mid-fallback hard-deny coverage linter failed — run python3 scripts/check_mid_fallback_hard_deny_2635.py")
         return r
+    # Issue #2643: INSTANCE depth budget + Agent-visible repair surface on
+    # TIMEOUT (bounded sample, additive keys on type-timeout-repair-stats,
+    # zero cost on SOLVED / no INSTANCE). Builds on #2607 minimal INSTANCE
+    # so Agents can re-instantiate polymorphic call sites before full solve.
+    idrh_script = ROOT / "scripts" / "check_instance_depth_repair_hint_2643.py"
+    if not idrh_script.exists():
+        fail(f"missing {idrh_script}")
+        return 1
+    r = run([sys.executable, str(idrh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "instance depth repair hint (#2643) coverage linter failed — run python3 scripts/check_instance_depth_repair_hint_2643.py"
+        )
+        return r
     ok("lint OK")
     return 0
 
@@ -8323,6 +8337,26 @@ def cmd_occurrence_densify_root_scan_2642_coverage():
         fail("occurrence densify root scan (#2642) coverage failed")
         return 1
     ok("occurrence densify root scan (#2642) coverage clean")
+    return 0
+
+
+def cmd_instance_depth_repair_hint_2643_coverage():
+    """Issue #2643: INSTANCE depth budget + Agent-visible repair surface on TIMEOUT.
+    Schema + source-cite + coverage gate (extends the typecheck/timeout-repair
+    check scripts). Per #2607 minimal INSTANCE, this adds a bounded repair-hint
+    sample on TIMEOUT so Agents can re-instantiate polymorphic call sites before
+    full solve. Zero cost on SOLVED / no INSTANCE.
+    """
+    print(f"{B}=== instance depth repair hint (#2643) ==={N}")
+    script = ROOT / "scripts" / "check_instance_depth_repair_hint_2643.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("instance depth repair hint (#2643) coverage failed")
+        return 1
+    ok("instance depth repair hint (#2643) coverage clean")
     return 0
 
 

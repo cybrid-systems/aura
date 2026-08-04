@@ -91,8 +91,5 @@ extern "C" std::uint64_t aura_jit_equivalence_deopt_force_v_read(void) noexcept;
 // This helper is what the dtor's outermost-success branch should call.
 // Soft / sandbox=off / env=0 paths return 0 from the inner gate, so the
 // call is a no-op in those cases (preserves #2608 AC2 zero-cost).
-namespace aura::compiler {
-struct TypeChecker;
-}
 extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                                                           std::uint64_t mutation_id) noexcept;

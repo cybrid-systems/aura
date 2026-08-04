@@ -1,6 +1,9 @@
 // @category: unit
 // @reason: Issue #2607 — minimal INSTANCE constraint kind with
 //          depth-capped ∀ peel to reduce false TIMEOUT / full-solve.
+//          Issue #2643 — Agent-visible depth-cap repair surface
+//          (bounded sample, additive keys on type-timeout-repair-stats,
+//          zero cost on SOLVED / no INSTANCE).
 //
 //   AC1: Polymorphic INSTANCE mono reaches SOLVED via instantiate+unify
 //        (EQUAL path conflicts; INSTANCE does not need full-solve).
@@ -11,6 +14,13 @@
 //   AC4: query:type-timeout-repair-stats / fidelity show INSTANCE counters
 //        + schema-2607; SuggestedRootReason::Instance = 6.
 //   AC5: Source-cite + cmake + coverage linter.
+//   #2643 AC1: depth-cap hit → TIMEOUT + Instance reason on suggested root.
+//   #2643 AC2: repair hint carries depth_used == kInstanceDepthCap and
+//              poly TypeId.
+//   #2643 AC3: SOLVED path → empty hints, zero extra alloc.
+//   #2643 AC4: query surface exposes sample without free-form parse.
+//   #2643 AC5: schema + source-cite + soak test.
+//   #2643 AC6: production escalate_if_production behavior unchanged.
 
 #include "test_harness.hpp"
 
@@ -36,7 +46,9 @@ using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::Constraint;
 using aura::compiler::ConstraintSystem;
+using aura::compiler::InstanceRepairHint;
 using aura::compiler::kInstanceDepthCap;
+using aura::compiler::kInstanceRepairHintCap;
 using aura::compiler::solve_delta_occurrence;
 using aura::compiler::SolveResult;
 using aura::compiler::SuggestedRootReason;
@@ -290,13 +302,193 @@ static void ac5_source_cite() {
 
 } // namespace
 
+// ── #2643 AC1+AC2+AC6: depth-cap → TIMEOUT with repair hint sample,
+//                              escalate_if_production unchanged ──
+static void ac2643_repair_hint_on_timeout() {
+    std::println("\n--- #2643 AC1+AC2+AC6: depth-cap → TIMEOUT + repair hint sample ---");
+    // Build a goal that is guaranteed to hit kInstanceDepthCap (nest > cap + 4
+    // layers against a mono Int) so the worklist re-queues until pass limit.
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics{};
+    cs.set_metrics(&metrics);
+
+    const int nest = kInstanceDepthCap + 4;
+    auto body = reg.int_type();
+    auto poly = nest_forall(reg, nest, body);
+    auto mono = reg.int_type();
+    Constraint c;
+    c.kind = Constraint::INSTANCE;
+    c.lhs = poly;
+    c.rhs = mono;
+    c.affected_node = 2643;
+    cs.set_active_mutation_id(43);
+    cs.add_delta(std::move(c));
+
+    auto r = solve_delta_occurrence(cs, {}, nullptr, &metrics);
+    // AC1: TIMEOUT with non-empty worklist ⇒ cap-hit.
+    CHECK(r.status == SolveResult::TIMEOUT, "#2643 AC1: depth-cap → TIMEOUT");
+    // AC1: Instance reason ranks above occurrence on ties — at least one
+    // suggested root carries SuggestedRootReason::Instance when worklist
+    // contains INSTANCE constraints.
+    if (!r.unresolved.empty()) {
+        bool saw_instance = false;
+        for (auto why : r.suggested_root_reasons) {
+            if (why == static_cast<std::uint8_t>(SuggestedRootReason::Instance))
+                saw_instance = true;
+        }
+        CHECK(saw_instance, "#2643 AC1: Instance reason on suggested root");
+    }
+    // AC2: bounded sample (cap ≤ kInstanceRepairHintCap) carrying the
+    // depth_used == depth_cap == kInstanceDepthCap + the poly TypeId.
+    CHECK(!r.instance_repair_hints.empty(), "#2643 AC2: non-empty bounded sample on TIMEOUT");
+    CHECK(r.instance_repair_hints.size() <= kInstanceRepairHintCap,
+          "#2643 AC2: sample bounded at kInstanceRepairHintCap");
+    if (!r.instance_repair_hints.empty()) {
+        const auto& h = r.instance_repair_hints.front();
+        CHECK(h.depth_used == static_cast<std::uint32_t>(kInstanceDepthCap),
+              "#2643 AC2: depth_used == kInstanceDepthCap");
+        CHECK(h.depth_cap == static_cast<std::uint32_t>(kInstanceDepthCap),
+              "#2643 AC2: depth_cap == kInstanceDepthCap");
+        CHECK(h.poly.valid(), "#2643 AC2: poly TypeId populated");
+        CHECK(h.site_node == 2643u, "#2643 AC2: site_node stamped from Constraint");
+        CHECK(h.var_rep != 0u, "#2643 AC2: var_rep = UF rep of poly endpoint");
+    }
+    // Aggregate counter bumped by sample size.
+    CHECK(load_u64(metrics.instance_depth_cap_repair_hint_total) >=
+              static_cast<std::uint64_t>(r.instance_repair_hints.size()),
+          "#2643 AC2: instance_depth_cap_repair_hint_total bumped");
+    // AC6: escalate_if_production behavior unchanged — same return value
+    // shape as #2607 AC2 (full-solve path under production_defaults, or
+    // pass-through TIMEOUT under soft).
+    const auto escalated = cs.escalate_if_production(r.status, nullptr);
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        CHECK(escalated == SolveResult::TIMEOUT || escalated == SolveResult::CONFLICT ||
+                  escalated == SolveResult::SOLVED,
+              "#2643 AC6: escalate returns defined result");
+    } else {
+        CHECK(escalated == SolveResult::TIMEOUT, "#2643 AC6: soft escalate pass-through TIMEOUT");
+    }
+}
+
+// ── #2643 AC3: SOLVED path → empty hints, zero extra alloc ──
+static void ac2643_solved_no_hints() {
+    std::println("\n--- #2643 AC3: SOLVED path → empty hints ---");
+    // Shallow INSTANCE peel (≤ kInstanceDepthCap) solves cleanly. The
+    // bounded sample must be empty and no repair-hint atomics touched.
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics before{};
+    before.instance_depth_cap_repair_hint_total.store(0, std::memory_order_relaxed);
+    before.type_repair_instance_hint_count.store(0, std::memory_order_relaxed);
+    CompilerMetrics metrics = before;
+    cs.set_metrics(&metrics);
+
+    auto a = reg.make_var("a");
+    auto poly = reg.register_forall(a, reg.register_func({a}, a));
+    auto mono = reg.register_func({reg.int_type()}, reg.int_type());
+    Constraint c;
+    c.kind = Constraint::INSTANCE;
+    c.lhs = poly;
+    c.rhs = mono;
+    c.affected_node = 43;
+    cs.add_delta(std::move(c));
+
+    auto r = solve_delta_occurrence(cs, {}, nullptr, &metrics);
+    CHECK(r.status == SolveResult::SOLVED, "#2643 AC3: shallow INSTANCE SOLVED");
+    CHECK(r.instance_repair_hints.empty(), "#2643 AC3: empty hints on SOLVED");
+    CHECK(load_u64(metrics.instance_depth_cap_repair_hint_total) == 0,
+          "#2643 AC3: no aggregate counter bump on SOLVED");
+    CHECK(metrics.type_repair_instance_hint_count.load(std::memory_order_relaxed) == 0u,
+          "#2643 AC3: type_repair_instance_hint_count = 0 on SOLVED");
+}
+
+// ── #2643 AC4: query surface exposes sample without free-form parse ──
+static void ac2643_query_surface() {
+    std::println("\n--- #2643 AC4: query surface exposes sample ---");
+    CompilerService cs;
+    // Schema-additive keys present.
+    CHECK(href(cs, "query:type-timeout-repair-stats", "schema-2643") == 2643,
+          "#2643 AC4: schema-2643");
+    CHECK(href(cs, "query:type-timeout-repair-stats", "issue-2643") == 2643,
+          "#2643 AC4: issue-2643");
+    CHECK(href(cs, "query:type-timeout-repair-stats", "instance-depth-cap-repair-hint-wired") == 1,
+          "#2643 AC4: wired sentinel");
+    CHECK(href(cs, "query:type-timeout-repair-stats", "instance-depth-cap-repair-hint-cap") ==
+              static_cast<std::int64_t>(kInstanceRepairHintCap),
+          "#2643 AC4: cap sentinel");
+    // Sample slot 0 fields exist (sentinel = 0 on fresh service).
+    CHECK(href(cs, "query:type-timeout-repair-stats",
+               "instance-depth-cap-repair-hint-0-depth-used") >= 0,
+          "#2643 AC4: slot-0 depth-used key");
+    CHECK(href(cs, "query:type-timeout-repair-stats", "instance-depth-cap-repair-hint-0-poly") >= 0,
+          "#2643 AC4: slot-0 poly key");
+    CHECK(href(cs, "query:type-timeout-repair-stats", "instance-depth-cap-repair-hint-0-var-rep") >=
+              0,
+          "#2643 AC4: slot-0 var-rep key");
+    CHECK(href(cs, "query:type-timeout-repair-stats",
+               "instance-depth-cap-repair-hint-0-site-node") >= 0,
+          "#2643 AC4: slot-0 site-node key");
+    CHECK(href(cs, "query:type-timeout-repair-stats", "instance-depth-cap-repair-hint-count") >= 0,
+          "#2643 AC4: sample count key");
+    CHECK(href(cs, "query:type-timeout-repair-stats", "instance-depth-cap-repair-hint-total") >= 0,
+          "#2643 AC4: aggregate total key");
+}
+
+// ── #2643 AC5: source-cite + linter + cmake wiring ──
+static void ac2643_source_cite() {
+    std::println("\n--- #2643 AC5: source-cite + wiring ---");
+    auto ix = read_file("src/compiler/type_checker.ixx");
+    auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
+    auto linter = read_file("scripts/check_instance_depth_repair_hint_2643.py");
+    auto cmake = read_file("CMakeLists.txt");
+
+    CHECK(ix.find("kInstanceRepairHintCap") != std::string::npos,
+          "#2643 AC5: kInstanceRepairHintCap declared");
+    CHECK(ix.find("InstanceRepairHint") != std::string::npos,
+          "#2643 AC5: InstanceRepairHint struct declared");
+    CHECK(ix.find("instance_repair_hints") != std::string::npos,
+          "#2643 AC5: instance_repair_hints field on SolveDeltaOccurrenceResult");
+    CHECK(ix.find("hint_out") != std::string::npos,
+          "#2643 AC5: consistent_instance hint_out parameter");
+    CHECK(impl.find("instance_repair_hints") != std::string::npos,
+          "#2643 AC5: solve_delta_occurrence populates hints");
+    CHECK(impl.find("instance_depth_cap_repair_hint_total") != std::string::npos,
+          "#2643 AC5: aggregate counter bumped on TIMEOUT");
+    CHECK(impl.find("type_repair_instance_hint_depth_used") != std::string::npos,
+          "#2643 AC5: bounded sample mirror wired");
+    CHECK(obs.find("instance_depth_cap_repair_hint_total") != std::string::npos,
+          "#2643 AC5: observability_metrics.h counter");
+    CHECK(obs.find("type_repair_instance_hint_depth_used") != std::string::npos,
+          "#2643 AC5: observability_metrics.h sample arrays");
+    CHECK(fields.find("instance_depth_cap_repair_hint_total") != std::string::npos,
+          "#2643 AC5: fields.inc entry");
+    CHECK(q.find("schema-2643") != std::string::npos, "#2643 AC5: query schema-2643");
+    CHECK(q.find("instance-depth-cap-repair-hint") != std::string::npos,
+          "#2643 AC5: bounded sample keys exposed");
+    CHECK(linter.find("#2643") != std::string::npos, "#2643 AC5: linter exists and cites #2643");
+    CHECK(linter.find("InstanceRepairHint") != std::string::npos,
+          "#2643 AC5: linter scans InstanceRepairHint");
+    CHECK(cmake.find("check_instance_depth_repair_hint_2643") != std::string::npos,
+          "#2643 AC5: cmake wires linter");
+}
+
+} // namespace
+
 int main() {
-    std::println("=== test_instance_constraint_depth_cap_2607 ===");
+    std::println("=== test_instance_constraint_depth_cap_2607 + #2643 ===");
     ac1_instance_solves_poly();
     ac2_depth_cap_timeout();
     ac3_soft_vs_conflict();
     ac4_query_schema();
     ac5_source_cite();
+    ac2643_repair_hint_on_timeout();
+    ac2643_solved_no_hints();
+    ac2643_query_surface();
+    ac2643_source_cite();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

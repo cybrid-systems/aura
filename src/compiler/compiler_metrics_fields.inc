@@ -1880,4 +1880,11 @@ AURA_COMPILER_METRICS_FIELD(full_relower_cost_samples)
 // typecheck entry while production_locked && mode == Soft. Mirrors
 // mutate_type_gate::soft_in_production_alarm_total.
 AURA_COMPILER_METRICS_FIELD(mutate_type_gate_soft_in_production_alarm_total)
+// Issue #2643: bounded sample of INSTANCE depth-cap hints for Agent
+// self-repair (TIMEOUT path only — zero cost on SOLVED). Mirror of
+// SolveDeltaOccurrenceResult::instance_repair_hints so
+// query:type-timeout-repair-stats can publish without holding a live
+// result.
+AURA_COMPILER_METRICS_FIELD(instance_depth_cap_repair_hint_total)
+AURA_COMPILER_METRICS_FIELD(type_repair_instance_hint_count)
 #undef AURA_COMPILER_METRICS_FIELD

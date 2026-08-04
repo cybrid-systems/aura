@@ -7778,6 +7778,55 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("instance-depth-cap",
                       static_cast<std::int64_t>(aura::compiler::kInstanceDepthCap));
             insert_kv("instance-goal-wired", 1);
+            // Issue #2643: bounded INSTANCE depth-cap repair hint sample
+            // (TIMEOUT path only — zero-cost on SOLVED / no INSTANCE).
+            // Agents see per-goal depth_used / depth_cap / poly / var_rep /
+            // site_node and re-instantiate polymorphic call sites before
+            // full solve. Schema-additive (schema-2607 keys intact).
+            insert_kv("instance-depth-cap-repair-hint-total",
+                      m ? static_cast<std::int64_t>(m->instance_depth_cap_repair_hint_total.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("instance-depth-cap-repair-hint-count",
+                      m ? static_cast<std::int64_t>(
+                              m->type_repair_instance_hint_count.load(std::memory_order_relaxed))
+                        : 0);
+            insert_kv("instance-depth-cap-repair-hint-cap",
+                      static_cast<std::int64_t>(aura::compiler::kInstanceRepairHintCap));
+            insert_kv("instance-depth-cap-repair-hint-wired", 1);
+            for (std::size_t i = 0; i < 8; ++i) {
+                const std::uint32_t depth_used =
+                    m ? m->type_repair_instance_hint_depth_used[i].load(std::memory_order_relaxed)
+                      : 0u;
+                const std::uint32_t depth_cap =
+                    m ? m->type_repair_instance_hint_depth_cap[i].load(std::memory_order_relaxed)
+                      : 0u;
+                const std::uint32_t poly =
+                    m ? m->type_repair_instance_hint_poly[i].load(std::memory_order_relaxed) : 0u;
+                const std::uint32_t var_rep =
+                    m ? m->type_repair_instance_hint_var_rep[i].load(std::memory_order_relaxed)
+                      : 0u;
+                const std::uint32_t site_node =
+                    m ? m->type_repair_instance_hint_site_node[i].load(std::memory_order_relaxed)
+                      : 0u;
+                std::snprintf(field_buf, sizeof(field_buf),
+                              "instance-depth-cap-repair-hint-%zu-depth-used", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(depth_used));
+                std::snprintf(field_buf, sizeof(field_buf),
+                              "instance-depth-cap-repair-hint-%zu-depth-cap", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(depth_cap));
+                std::snprintf(field_buf, sizeof(field_buf),
+                              "instance-depth-cap-repair-hint-%zu-poly", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(poly));
+                std::snprintf(field_buf, sizeof(field_buf),
+                              "instance-depth-cap-repair-hint-%zu-var-rep", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(var_rep));
+                std::snprintf(field_buf, sizeof(field_buf),
+                              "instance-depth-cap-repair-hint-%zu-site-node", i);
+                insert_kv(field_buf, static_cast<std::int64_t>(site_node));
+            }
+            insert_kv("schema-2643", 2643);
+            insert_kv("issue-2643", 2643);
             insert_kv("schema-2607", 2607);
             insert_kv("issue-2607", 2607);
             insert_kv("type-repair-edge-cap", 64);
