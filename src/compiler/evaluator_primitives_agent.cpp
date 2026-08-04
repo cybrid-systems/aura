@@ -2490,6 +2490,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             // Issue #2163 AC3: snapshot defuse for pure-contract probe.
                             const auto defuse_before =
                                 pure_mode ? ev.defuse_version() : std::uint64_t{0};
+                            // Issue #2634 AC1: extend the pure-contract probe with
+                            // total_mutations() + workspace_generation() snapshots.
+                            // Indirect writers (engine:metrics, side caches,
+                            // persistent TypeChecker reuse #2220) may mutate
+                            // without bumping defuse_version; the additional
+                            // snapshots catch that class of pure-contract
+                            // violation. Zero cost when !pure_mode (the
+                            // ?-expressions short-circuit to literal 0 below).
+                            const auto mut_before =
+                                pure_mode ? ev.total_mutations() : std::uint64_t{0};
+                            const auto ws_gen_before =
+                                pure_mode ? ev.workspace_generation() : std::uint64_t{0};
                             auto opt = ev.apply_closure(cid, {});
                             if (!opt) {
                                 tr.ok = false;
@@ -2497,6 +2509,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                 ash->errors[i] = tr.error;
                             } else if (pure_mode && !force_lock &&
                                        (ev.defuse_version() != defuse_before ||
+                                        ev.total_mutations() != mut_before ||
+                                        ev.workspace_generation() != ws_gen_before ||
                                         ev.mutation_boundary_held() ||
                                         ev.mutation_boundary_depth() > 0)) {
                                 // Mutating thunk under :pure #t — fail task (policy).

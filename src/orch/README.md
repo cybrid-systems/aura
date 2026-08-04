@@ -44,10 +44,16 @@ AST/mutate safety is preserved across fibers. The batch hash carries `eval-seria
 1. **Caller guarantees** each thunk is free of mutate/AST write. Prefer **shallow**
    pure arithmetic / pure reads — deep concurrent recursion on a shared
    `Evaluator` can still race internal heaps (pure is not a full reentrant VM).
-2. **Best-effort probe**: after an unlocked apply, if `defuse_version` advanced or a
-   mutation boundary is held, the task fails with error `pure-contract-violated`
-   and `pure_contract_violated_total` advances (AC3). Does not roll back sibling
-   concurrent pure applies — pure is not a transactional isolation level.
+2. **Best-effort probe** (Issue #2163 + Issue #2634 hardening): after an unlocked apply,
+   if `defuse_version` advanced, `total_mutations()` advanced,
+   `workspace_generation()` advanced, or a mutation boundary is held, the
+   task fails with error `pure-contract-violated` and
+   `pure_contract_violated_total` advances (AC3). The #2634 snapshots
+   catch indirect writers (engine:metrics, side caches, persistent
+   TypeChecker reuse #2220) that don't bump defuse_version. Zero cost on
+   `:pure #f` (the snapshot expressions short-circuit to literal 0 when
+   `!pure_mode`). Does not roll back sibling concurrent pure applies —
+   pure is not a transactional isolation level.
 3. **Fallback lock**: if a mutation boundary is already held when a pure task starts,
    that task takes `eval_mu` and bumps `pure_fallback_locked_total`.
 4. FailurePolicy / timeout / quota (`#2007` / `#1600`) are unchanged under pure (AC4).
