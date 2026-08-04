@@ -269,6 +269,20 @@ def cmd_lint():
     if r != 0:
         fail("export-held handoff coverage linter failed — run python3 scripts/check_export_held_handoff_coverage.py")
         return r
+    # Issue #2633: scope-local mailbox BP recent gauge coverage contract
+    # (AgentSpec::bp_scope_id + note_mailbox_bp_recent_event(scope_id) overload
+    # + spawn admit preflight + per-bucket decay + counters + map cap +
+    # :bp-scope-id kw + build.py wiring). Wired next to the export-held
+    # handoff coverage linter (#2632) so a regression in the #2633 AC
+    # surface fails the same gate.
+    sbp_script = ROOT / "scripts" / "check_scope_bp_gauge_coverage.py"
+    if not sbp_script.exists():
+        fail(f"missing {sbp_script}")
+        return 1
+    r = run([sys.executable, str(sbp_script)], cwd=ROOT)
+    if r != 0:
+        fail("scope BP gauge coverage linter failed — run python3 scripts/check_scope_bp_gauge_coverage.py")
+        return r
     ok("lint OK")
     return 0
 

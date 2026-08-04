@@ -1620,7 +1620,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_longrunning_infra_primitives.cpp` (—) [domain_suite, theme_compiler] — test_longrunning_infra_primitives.cpp — Issue #753:
 - `tests/compiler/test_longrunning_recovery_latency.cpp` (—) [domain_suite, theme_compiler] — AC1: panic-restore path instruments recovery latency
 - `tests/compiler/test_lookup_stats_impl_heterogeneous.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1671 (#1978 renamed): issue# moved from filename to header.
-- `tests/orch/test_mailbox_bp_admit_2228.cpp` (#2228) [domain_suite, theme_orch] — AC1: Spawn soft reject — fill a mailbox to high_water (triggers
+- `tests/orch/test_mailbox_bp_admit_2228.cpp` (#2228) [large, domain_suite, theme_orch] — AC1: Spawn soft reject — fill a mailbox to high_water (triggers
 - `tests/compiler/test_module_export_cache.cpp` (—) [domain_suite, theme_compiler] — Issue #1680 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_must_deopt_before_next_call_2128.cpp` (#2128) [domain_suite, theme_compiler] — AC1: flag set on remap miss; aura_closure_call force-deopts (no silent native)
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_aot_unit_batch.cpp — consolidated mutation-theme drivers
