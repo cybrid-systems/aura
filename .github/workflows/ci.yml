@@ -312,6 +312,12 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 240  # #2636 belt-and-suspenders: same rationale as
+                          # asan-build (same SLIM matrix + AURA_LINK_JOBS=2
+                          # races the arena.ixx.o rebuild deadlock). UBSAN
+                          # is materially slower than normal builds after
+                          # recent header changes (#2632-#2635) trigger
+                          # full rebuild of all arena.ixx dependents.
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
@@ -330,7 +336,8 @@ jobs:
     - name: Build with UBSAN
       env:
         AURA_ISSUE_BUILD: none
-        AURA_LINK_JOBS: "2"
+        AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
+                               # rebuild deadlock (mirrors asan-build fix).
       run: python3 build.py --sanitizer=ubsan build
 
     - name: Run unit tests under UBSAN
