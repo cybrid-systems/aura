@@ -95,6 +95,12 @@ Evaluator::Evaluator() {
     top_.set_owner(this);
     top_.set_parent_id(alloc_env_frame(NULL_ENV_ID /* no parent */, &primitives_));
     primitives_.set_string_heap(&string_heap_);
+    // Issue #2652: reserve string_heap_[0] as immortal empty string so
+    // make_string(0) / default error causes stay a stable empty sentinel
+    // (never confused with a corrupted non-empty key that became "").
+    // Use push_string_heap (not bare push_back) — #1668 dead-heap audit.
+    if (string_heap_.empty())
+        (void)push_string_heap("");
     arena_group_ = std::make_unique<aura::ast::ArenaGroup>();
     init_pair_primitives();
 

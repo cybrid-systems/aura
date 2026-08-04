@@ -3759,6 +3759,11 @@ aura_add_issue_test(test_pmr_alloc_fiber_safe)
 aura_issue_test_link_light(test_pmr_alloc_fiber_safe)
 add_dependencies(all_test_issue_targets test_pmr_alloc_fiber_safe)
 
+# Issue #2652 / #2649 H12: empty stats keys / NUL display / hash races.
+aura_add_issue_test(test_string_heap_corruption_guard)
+aura_issue_test_link_light(test_string_heap_corruption_guard)
+add_dependencies(all_test_issue_targets test_string_heap_corruption_guard)
+
 # Issue #2469: Scheduler::reap_orphans_now() two-phase extraction —
 # orphan_mutex_ released before per-fiber cleanup (wait_map_mutex_,
 # joiner_map_mutex_, owned_fibers_mutex_ acquisitions). Minimizes
