@@ -605,7 +605,16 @@ def cmd_build():
     # Build main binaries one target at a time. A single multi-target
     # ninja -jN invocation races ast.ixx across aura/test_ir and can
     # trigger a flaky GCC 16 ICE in the ealias pass under -O2.
-    for target in ("aura", "test_ir", "test_concurrent"):
+    #
+    # AURA_BUILD_TARGETS=aura[,test_ir,...] — restrict the main matrix
+    # (deployment-health only needs the aura binary for --health-server).
+    targets_env = os.environ.get("AURA_BUILD_TARGETS", "").strip()
+    if targets_env:
+        main_targets = tuple(t.strip() for t in targets_env.split(",") if t.strip())
+        info(f"build targets (AURA_BUILD_TARGETS): {', '.join(main_targets)}")
+    else:
+        main_targets = ("aura", "test_ir", "test_concurrent")
+    for target in main_targets:
         t0 = time.time()
         r = run(
             [
@@ -637,6 +646,17 @@ def cmd_build():
         if r != 0:
             fail(f"build {target} failed")
             return r
+
+    # Aura-only builds (deployment-health) skip the issue matrix unless
+    # AURA_ISSUE_BUILD=all is forced.
+    if (
+        targets_env
+        and set(main_targets) == {"aura"}
+        and os.environ.get("AURA_ISSUE_BUILD", "none").strip().lower() != "all"
+    ):
+        ok("build OK (aura-only; issue matrix skipped)")
+        _phase("total build", t_all)
+        return 0
 
     # Build test_issue_* targets. Full tier uses the aggregate
     # (profile bundles + true standalones; dual standalones that
