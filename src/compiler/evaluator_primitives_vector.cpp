@@ -53,6 +53,145 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+namespace {
+
+    // Issue #2654: language hash key hash (FNV for strings, mix for ints).
+    // Keep in sync with hash / hash-set! / grow rehash placement.
+    [[nodiscard]] std::uint64_t
+    eval_hash_key_hash(const EvalValue& k, const std::pmr::vector<std::string>& sh) noexcept {
+        if (is_int(k))
+            return static_cast<std::uint64_t>(as_int(k)) * 0x9e3779b97f4a7c15ull;
+        if (is_string(k)) {
+            auto i = as_string_idx(k);
+            if (i < sh.size()) {
+                auto& s = sh[i];
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (char c : s)
+                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                return h;
+            }
+        }
+        return 0x9e3779b97f4a7c15ull;
+    }
+
+    [[nodiscard]] std::uint8_t eval_hash_fingerprint(std::uint64_t h) noexcept {
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+        if (fp == 0xFF)
+            fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
+        return fp;
+    }
+
+    // Issue #2654 / #2481 sibling: grow FlatHashTable at 0.7 load or when full.
+    // Interpreter path stores EvalValue bits + fingerprint meta — cannot use
+    // FlatHashTable::rebuild (JIT HASH_OCCUPIED + splitmix64). Replaces *htp.
+    //
+    // destroy_old: free the previous block. Only safe when the table is not
+    // yet reachable via g_hash_tables / JIT bridges (those use workspace
+    // locks, not hash_tables_mutex_). Published tables: leave old block
+    // orphaned so concurrent readers cannot UAF after pointer swap.
+    [[nodiscard]] bool flat_hash_grow_eval(FlatHashTable*& htp,
+                                           const std::pmr::vector<std::string>& sh,
+                                           bool destroy_old) {
+        auto* ht = htp;
+        if (!ht)
+            return false;
+        auto old_cap = ht->capacity;
+        auto new_cap = old_cap * 2;
+        if (new_cap < 8)
+            new_cap = 8;
+        auto* new_ht = FlatHashTable::create(new_cap);
+        if (!new_ht)
+            return false;
+        auto old_meta = ht->metadata();
+        auto old_keys = ht->keys();
+        auto old_vals = ht->values();
+        auto new_meta = new_ht->metadata();
+        auto new_keys = new_ht->keys();
+        auto new_vals = new_ht->values();
+        for (std::uint64_t i = 0; i < old_cap; ++i) {
+            if (old_meta[i] == 0xFF)
+                continue;
+            EvalValue kv{old_keys[i]};
+            auto kh = eval_hash_key_hash(kv, sh);
+            auto fp = old_meta[i];
+            bool placed = false;
+            for (std::uint64_t at = 0; at < new_cap; ++at) {
+                auto idx = ((kh >> 1) + at) & (new_cap - 1);
+                if (new_meta[idx] == 0xFF) {
+                    new_meta[idx] = fp;
+                    new_keys[idx] = old_keys[i];
+                    new_vals[idx] = old_vals[i];
+                    new_ht->size++;
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) {
+                FlatHashTable::destroy(new_ht);
+                return false;
+            }
+        }
+        if (destroy_old)
+            FlatHashTable::destroy(ht);
+        htp = new_ht;
+        return true;
+    }
+
+    // Insert key/val into ht (must not already contain key). Grows as needed.
+    // destroy_old_on_grow: see flat_hash_grow_eval (false for published tables).
+    [[nodiscard]] bool flat_hash_insert_eval(FlatHashTable*& htp, const EvalValue& key,
+                                             const EvalValue& val,
+                                             const std::pmr::vector<std::string>& sh,
+                                             bool destroy_old_on_grow) {
+        if (!htp)
+            return false;
+        auto kh = eval_hash_key_hash(key, sh);
+        auto fp = eval_hash_fingerprint(kh);
+
+        auto try_insert = [&]() -> bool {
+            auto meta = htp->metadata();
+            auto keys = htp->keys();
+            auto vals = htp->values();
+            auto cap = htp->capacity;
+            for (std::uint64_t at = 0; at < cap; ++at) {
+                auto idx = ((kh >> 1) + at) & (cap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    keys[idx] = key.val;
+                    vals[idx] = val.val;
+                    htp->size++;
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // Grow at 0.7 load factor (same threshold as aura_hash_set / #2481).
+        if (htp->size * 10 > htp->capacity * 7) {
+            if (!flat_hash_grow_eval(htp, sh, destroy_old_on_grow))
+                return false;
+        }
+        if (try_insert())
+            return true;
+        // Full table (collisions): force grow + retry once.
+        if (!flat_hash_grow_eval(htp, sh, destroy_old_on_grow))
+            return false;
+        return try_insert();
+    }
+
+    [[nodiscard]] bool eval_hash_keys_eq(const EvalValue& a, const EvalValue& b,
+                                         const std::pmr::vector<std::string>& sh) noexcept {
+        if (is_int(a) && is_int(b))
+            return as_int(a) == as_int(b);
+        if (is_string(a) && is_string(b)) {
+            auto ai = as_string_idx(a), bi = as_string_idx(b);
+            return (ai < sh.size() && bi < sh.size()) && sh[ai] == sh[bi];
+        }
+        return a.val == b.val;
+    }
+
+} // namespace
+
 void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                          std::pmr::vector<std::string>& string_heap,
                                          std::vector<EvalValue>& error_values,
@@ -149,51 +288,32 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
 
     add("hash", [&ev, &string_heap](std::span<const EvalValue> a) {
         // Issue #2652: lock string_heap reads + g_hash_tables push.
+        // Issue #2654: grow past fixed capacity 8 so 16+ k/v pairs are not
+        // silently dropped (same class as #2481 json-parse). Pre-size so
+        // common N≤16 literals need no grow.
         std::lock_guard hlock(ev.hash_tables_mutex());
         std::lock_guard slock(ev.alloc_storage_lock_);
-        auto sh = &string_heap;
-        auto* ht = FlatHashTable::create(8);
+        const std::size_t npairs = a.size() / 2;
+        // Min capacity 32 so sequential hash-set! of 16 keys (AC2 / denseness
+        // stats) never needs an immediate grow under multi-fiber pressure.
+        std::uint64_t init_cap = 32;
+        while (npairs * 10 > init_cap * 7)
+            init_cap *= 2;
+        auto* ht = FlatHashTable::create(init_cap);
         if (!ht)
             return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto cap = ht->capacity;
-        auto khash = [sh](const EvalValue& k) -> std::uint64_t {
-            if (is_int(k))
-                return static_cast<std::uint64_t>(as_int(k)) * 0x9e3779b97f4a7c15ull;
-            if (is_string(k)) {
-                auto i = as_string_idx(k);
-                if (i < sh->size()) {
-                    auto& s = (*sh)[i];
-                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                    for (char c : s)
-                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                    return h;
-                }
-            }
-            return 0x9e3779b97f4a7c15ull;
-        };
         for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
             // Skip empty string keys (corruption / make_string(0) sentinel).
             if (is_string(a[i])) {
                 auto ki = as_string_idx(a[i]);
-                if (ki >= sh->size() || (*sh)[ki].empty())
+                if (ki >= string_heap.size() || string_heap[ki].empty())
                     continue;
             }
-            auto h = khash(a[i]);
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE; // Issue #258: avoid HASH_EMPTY collision
-            for (std::size_t at = 0; at < cap; ++at) {
-                auto idx = ((h >> 1) + at) & (cap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = a[i].val;
-                    vals[idx] = a[i + 1].val;
-                    ht->size++;
-                    break;
-                }
+            // Unpublished table: safe to free old blocks on grow.
+            if (!flat_hash_insert_eval(ht, a[i], a[i + 1], string_heap,
+                                       /*destroy_old_on_grow=*/true)) {
+                FlatHashTable::destroy(ht);
+                return make_void();
             }
         }
         auto hidx = g_hash_tables.size();
@@ -269,6 +389,7 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         // Issue #2652: aether:stats-bump! path — concurrent hash-set! + string
         // key compare must not race g_hash_tables or string_heap_ (empty ""
         // keys / zero counters under overnight fanout).
+        // Issue #2654: grow when full / load > 0.7 — never silent-drop keys.
         std::lock_guard hlock(ev.hash_tables_mutex());
         std::lock_guard slock(ev.alloc_storage_lock_);
         auto hidx = as_hash_idx(a[0]);
@@ -278,51 +399,28 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
-        auto sh = &string_heap;
         // Issue #2652: refuse empty string keys (corruption / sentinel make_string(0)).
         if (is_string(a[1])) {
             auto bi = as_string_idx(a[1]);
-            if (bi >= sh->size() || (*sh)[bi].empty())
+            if (bi >= string_heap.size() || string_heap[bi].empty())
                 return make_void();
         }
         for (std::size_t i = 0; i < ht->capacity; ++i) {
             if (meta[i] == 0xFF)
                 continue;
             auto k = EvalValue{keys[i]};
-            bool eq = false;
-            if (is_int(k) && is_int(a[1]))
-                eq = as_int(k) == as_int(a[1]);
-            else if (is_string(k) && is_string(a[1])) {
-                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
-                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
-            } else
-                eq = keys[i] == a[1].val;
-            if (eq) {
+            if (eval_hash_keys_eq(k, a[1], string_heap)) {
                 vals[i] = a[2].val;
                 return make_void();
             }
         }
-        for (std::size_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF) {
-                std::uint64_t h = 0x9e3779b97f4a7c15ull;
-                if (is_int(a[1]))
-                    h = static_cast<std::uint64_t>(as_int(a[1])) * h;
-                else if (is_string(a[1])) {
-                    auto idx = as_string_idx(a[1]);
-                    if (idx < sh->size()) {
-                        h = ::aura::compiler::stats::kFnvOffsetBasis;
-                        for (char c : (*sh)[idx])
-                            h = (h ^ static_cast<std::uint8_t>(c)) *
-                                ::aura::compiler::stats::kFnvPrime;
-                    }
-                }
-                meta[i] = static_cast<std::uint8_t>(h >> 57) | 0x80;
-                keys[i] = a[1].val;
-                vals[i] = a[2].val;
-                ht->size++;
-                return make_void();
-            }
-        }
+        // New key: insert with grow. Published table — do NOT free old
+        // blocks (JIT / concurrent readers may still hold the prior
+        // pointer under workspace lock, not hash_tables_mutex_). Always
+        // publish the possibly-new pointer.
+        (void)flat_hash_insert_eval(ht, a[1], a[2], string_heap,
+                                    /*destroy_old_on_grow=*/false);
+        g_hash_tables[hidx] = ht;
         return make_void();
     });
     add("hash-length", [&ev](std::span<const EvalValue> a) {
