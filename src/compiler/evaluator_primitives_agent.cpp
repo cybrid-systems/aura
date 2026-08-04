@@ -3151,54 +3151,53 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // (hierarchical scope bound to per-Evaluator scope map, no process-wide
     // discoverable agent map). Issue #2537 is the C++ primitive.
     // Returns hash {ok, name, schema=2631, schema=2588, schema=2537, status}.
-    add("orch:scope-child",
-        [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !types::is_string(a[0])) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:scope-child: usage (orch:scope-child name [:kw val]…)",
-                    ev.primitive_error_counter_ptr());
-            }
-            orch_sched.ensure(2);
-            auto& parent = aura::orch::get_or_create_agent_scope(
-                static_cast<void*>(&ev), *orch_sched.sched);
-            auto name = heap_str_from(ev.string_heap_, a[0]);
-            try {
-                (void)parent.spawn_child();
-                const auto cidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(name);
-                aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(true)},
-                    {"name", make_string(cidx)},
-                    {"schema", make_int(2631)},
-                    {"schema-2588", make_int(2588)},
-                    {"schema-2537", make_int(2537)},
-                    {"status",
-                     [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("ok");
-                         return make_string(s);
-                     }()},
-                };
-                return build_orch_hash(kv);
-            } catch (...) {
-                aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
-                    {"schema", make_int(2631)},
-                    {"status",
-                     [&] {
-                         auto s = ev.string_heap_.size();
-                         ev.string_heap_.push_back("scope-child-failed");
-                         return make_string(s);
-                     }()},
-                };
-                return build_orch_hash(kv);
-            }
-        });
+    add("orch:scope-child", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0])) {
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                "orch:scope-child: usage (orch:scope-child name [:kw val]…)",
+                ev.primitive_error_counter_ptr());
+        }
+        orch_sched.ensure(2);
+        auto& parent =
+            aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+        auto name = heap_str_from(ev.string_heap_, a[0]);
+        try {
+            (void)parent.spawn_child();
+            const auto cidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(name);
+            aura::orch::g_orch_module_stats.scope_child_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},
+                {"name", make_string(cidx)},
+                {"schema", make_int(2631)},
+                {"schema-2588", make_int(2588)},
+                {"schema-2537", make_int(2537)},
+                {"status",
+                 [&] {
+                     auto s = ev.string_heap_.size();
+                     ev.string_heap_.push_back("ok");
+                     return make_string(s);
+                 }()},
+            };
+            return build_orch_hash(kv);
+        } catch (...) {
+            aura::orch::g_orch_module_stats.scope_child_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(false)},
+                {"schema", make_int(2631)},
+                {"status",
+                 [&] {
+                     auto s = ev.string_heap_.size();
+                     ev.string_heap_.push_back("scope-child-failed");
+                     return make_string(s);
+                 }()},
+            };
+            return build_orch_hash(kv);
+        }
+    });
 
     // Issue #2588 AC1 + AC4: orch:scope-watch — scope-level liveness + optional
     // RestartN. Maps to AgentScope::watch_all(stall_timeout_ms, AgentFailurePolicy).
@@ -4031,9 +4030,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // (parent.spawn_child() on existing per-Evaluator scope). The
             // child is owned by the parent; cancel_all propagates top-down
             // (#2537). Not a global registry — linter stays green.
-            insert_kv("scope-child-total",
-                      static_cast<std::int64_t>(os.scope_child_total.load(
-                          std::memory_order_relaxed)));
+            insert_kv("scope-child-total", static_cast<std::int64_t>(os.scope_child_total.load(
+                                               std::memory_order_relaxed)));
             insert_kv("scope-child-wired", 1);
             insert_kv("schema-2631", 2631);
             insert_kv("issue-2631", 2631);
