@@ -1602,7 +1602,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_fine_dirty_relower.cpp` (—) [domain_suite, theme_compiler] — test_fine_dirty_relower.cpp — Issue #1657 (standalone; bump metrics ACs drift)
 - `tests/compiler/test_frame_budget_cascade_isolation_2137.cpp` (#2137) [domain_suite, theme_compiler] — AC1: under FrameBudget / render hotpath, non-render cascade deferred
 - `tests/compiler/test_inline_typecheck_exception.cpp` (—) [domain_suite, theme_compiler] — Issue #1769 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_instance_constraint_depth_cap_2607.cpp` (#2607) [domain_suite, theme_compiler] — AC1: Polymorphic INSTANCE mono reaches SOLVED via instantiate+unify
+- `tests/compiler/test_instance_constraint_depth_cap_2607.cpp` (#2607) [domain_suite, theme_compiler] — Issue #2643 — Agent-visible depth-cap repair surface
 - `tests/compiler/test_instr_impact_minimal_dirty_2126.cpp` (#2126) [minimal, domain_suite, theme_compiler] — AC1: nested lambda free-var body-only → no mark_all_blocks_dirty;
 - `tests/compiler/test_instr_level_impact_scope.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2031; ImpactScope::InstrRef + SourceIrLoc + affected_instrs
 - `tests/compiler/test_instruction_level_impact_partial_2109.cpp` (#2109) [domain_suite, theme_compiler] — AC1: compute_impact_scope returns non-empty affected_instrs / affected_insts
