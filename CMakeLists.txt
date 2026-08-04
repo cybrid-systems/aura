@@ -4516,41 +4516,76 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_shape_soa_storm_batch)
 endif()
 
+
+# Domain batch: IR / closure / JIT / deopt / DCE / PrimCall (24 members + driver). Stream A3.
+add_executable(test_ir_closure_jit_misc_batch
+    tests/compiler/test_ir_closure_jit_misc_batch.cpp
+    tests/compiler/test_anonymous_residual_stable_id_policy_2605.cpp
+    tests/compiler/test_aura_jit_unused_fn_lock_2475.cpp
+    tests/compiler/test_closure_call_must_deopt_toctou_2472.cpp
+    tests/compiler/test_comprehensive_live_closure_expire_2042.cpp
+    tests/compiler/test_dce_elided_deopt_meta_2611.cpp
+    tests/compiler/test_emit_object_deprecated_2477.cpp
+    tests/compiler/test_force_jit_repromote_2502.cpp
+    tests/compiler/test_ir_const_string_intern_2573.cpp
+    tests/compiler/test_ir_optimize_type_info_chain_2471.cpp
+    tests/compiler/test_jit_dual_string_heap_2575.cpp
+    tests/compiler/test_jit_interpreter_equivalence_oracle_2210.cpp
+    tests/compiler/test_jit_macro_deopt_hygiene_2100.cpp
+    tests/compiler/test_live_closure_stable_id_only_2369.cpp
+    tests/compiler/test_must_deopt_before_next_call_2128.cpp
+    tests/compiler/test_named_closure_stable_id_at_create_2550.cpp
+    tests/compiler/test_partial_recompile_single_evict_2476.cpp
+    tests/compiler/test_primcall_narg_2576.cpp
+    tests/compiler/test_primcall_str_intern_2577.cpp
+    tests/compiler/test_region_priority_deopt_throttle_2132.cpp
+    tests/compiler/test_remount_force_deopt_2503.cpp
+    tests/compiler/test_source_to_ir_desync_recovery_2206.cpp
+    tests/compiler/test_source_to_ir_map_consistency_2045.cpp
+    tests/compiler/test_tree_walker_fallback_strict_2213.cpp
+)
+set_property(TARGET test_ir_closure_jit_misc_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_ir_closure_jit_misc_batch PRIVATE src tests)
+target_compile_definitions(test_ir_closure_jit_misc_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_ir_closure_jit_misc_batch)
+target_link_libraries(test_ir_closure_jit_misc_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_ir_closure_jit_misc_batch)
+add_test(NAME test_ir_closure_jit_misc_batch_verification COMMAND ./test_ir_closure_jit_misc_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_ir_closure_jit_misc_batch)
+endif()
+
 add_executable(test_misc_issue_fold_batch
     tests/compiler/test_misc_issue_fold_batch.cpp
     tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp
     tests/compiler/test_adaptive_reverify_limit_2146.cpp
     tests/compiler/test_aether_denseness_residual_2578.cpp
-    tests/compiler/test_anonymous_residual_stable_id_policy_2605.cpp
     tests/compiler/test_audit_wal_force_multi_tenant_2150.cpp
-    tests/compiler/test_aura_jit_unused_fn_lock_2475.cpp
     tests/compiler/test_aura_sandbox_env_2076.cpp
     tests/compiler/test_bugfix_968.cpp
     tests/compiler/test_cascade_incremental_pass_suite_2044.cpp
     tests/compiler/test_cascade_skip_metrics_2106.cpp
     tests/compiler/test_channel_rendezvous_2483.cpp
-    tests/compiler/test_closure_call_must_deopt_toctou_2472.cpp
     tests/compiler/test_command_line_cap_io_read_2478.cpp
     tests/compiler/test_commercial_tenant_profile_2584.cpp
     tests/compiler/test_commit_readiness_score_2553.cpp
     tests/compiler/test_compact_policy_2500.cpp
-    tests/compiler/test_comprehensive_live_closure_expire_2042.cpp
     tests/compiler/test_cross_cow_drift_contract_2505.cpp
     tests/compiler/test_cross_cow_soft_migrate_2371.cpp
-    tests/compiler/test_dce_elided_deopt_meta_2611.cpp
     tests/compiler/test_delta_truncate_goal_priority_2508.cpp
     tests/compiler/test_dep_graph_hybrid_cascade_2110.cpp
     tests/compiler/test_dispatch_required_effects_2152.cpp
     tests/compiler/test_dual_path_desync_hard_fail_2116.cpp
     tests/compiler/test_edsl_validate_or_refresh_2186.cpp
-    tests/compiler/test_emit_object_deprecated_2477.cpp
     tests/compiler/test_epoch_bump_invariant_2304.cpp
     tests/compiler/test_epoch_invariant_complete_2501.cpp
     tests/compiler/test_epoch_invariant_soft_prod_2541.cpp
     tests/compiler/test_epoch_invariant_walk_2366.cpp
     tests/compiler/test_escape_move_elision_gate_2263.cpp
     tests/compiler/test_eval_current_no_auto_fix_2484.cpp
-    tests/compiler/test_force_jit_repromote_2502.cpp
     tests/compiler/test_frame_budget_cascade_isolation_2137.cpp
     tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp
     tests/compiler/test_gc_coord_scope_2131.cpp
@@ -4565,16 +4600,10 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_incremental_soundness_oracle_2113.cpp
     tests/compiler/test_instr_impact_minimal_dirty_2126.cpp
     tests/compiler/test_instruction_level_impact_partial_2109.cpp
-    tests/compiler/test_ir_const_string_intern_2573.cpp
-    tests/compiler/test_ir_optimize_type_info_chain_2471.cpp
     tests/compiler/test_isolation_audit_mid_2156.cpp
-    tests/compiler/test_jit_dual_string_heap_2575.cpp
-    tests/compiler/test_jit_interpreter_equivalence_oracle_2210.cpp
-    tests/compiler/test_jit_macro_deopt_hygiene_2100.cpp
     tests/compiler/test_json_parse_number_exception_2480.cpp
     tests/compiler/test_json_parse_object_grow_2481.cpp
     tests/compiler/test_list_end_of_list_void_2482.cpp
-    tests/compiler/test_live_closure_stable_id_only_2369.cpp
     tests/compiler/test_load_cap_io_read_2485.cpp
     tests/compiler/test_lock_order_audit_2316.cpp
     tests/compiler/test_lock_order_audit_2354.cpp
@@ -4586,18 +4615,13 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_module_partition_map_2524.cpp
     tests/compiler/test_module_rebind_residual_2579.cpp
     tests/compiler/test_module_require_freevar_2566.cpp
-    tests/compiler/test_must_deopt_before_next_call_2128.cpp
     tests/compiler/test_mutate_capability_force_2052.cpp
     tests/compiler/test_mutate_type_gate_2219.cpp
-    tests/compiler/test_named_closure_stable_id_at_create_2550.cpp
     tests/compiler/test_orch_scope_child_2631.cpp
     tests/compiler/test_partial_cs_single_source_2262.cpp
-    tests/compiler/test_partial_recompile_single_evict_2476.cpp
     tests/compiler/test_persistent_typechecker_2220.cpp
     tests/compiler/test_post_compact_lifecycle_2436.cpp
     tests/compiler/test_predicate_meet_join_lattice_2148.cpp
-    tests/compiler/test_primcall_narg_2576.cpp
-    tests/compiler/test_primcall_str_intern_2577.cpp
     tests/compiler/test_production_hardening_985.cpp
     tests/compiler/test_production_safety_1047.cpp
     tests/compiler/test_production_safety_1097.cpp
@@ -4610,8 +4634,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_query_index_composite_2403.cpp
     tests/compiler/test_query_pattern_default_hygiene_2123.cpp
     tests/compiler/test_regex_redos_timeout_2479.cpp
-    tests/compiler/test_region_priority_deopt_throttle_2132.cpp
-    tests/compiler/test_remount_force_deopt_2503.cpp
     tests/compiler/test_rest_param_hygiene_2169.cpp
     tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp
     tests/compiler/test_reverify_expand_2356.cpp
@@ -4619,8 +4641,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_selfevo_bugfix_941.cpp
     tests/compiler/test_setcode_rebind_survive_2569.cpp
     tests/compiler/test_shape_profiler_concurrency_2141.cpp
-    tests/compiler/test_source_to_ir_desync_recovery_2206.cpp
-    tests/compiler/test_source_to_ir_map_consistency_2045.cpp
     tests/compiler/test_stable_ref_cow_refresh_failclosed_2393.cpp
     tests/compiler/test_stable_ref_export_validate_2404.cpp
     tests/compiler/test_stable_ref_tenant_mandate_2056.cpp
@@ -4630,7 +4650,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_symbol_eq_2568.cpp
     tests/compiler/test_sys_open_path_harden_2487.cpp
     tests/compiler/test_timeout_repair_rich_roots_2548.cpp
-    tests/compiler/test_tree_walker_fallback_strict_2213.cpp
     tests/compiler/test_truncate_commit_gate_2458.cpp
     tests/compiler/test_try_catch_bind_2567.cpp
     tests/compiler/test_type_dirty_txn_order_2516.cpp
@@ -4661,7 +4680,6 @@ add_executable(test_misc_issue_fold_batch
     tests/core/test_validate_node_no_abort_2390.cpp
     tests/core/test_workspace_isolation_wire_2073.cpp
     tests/reflect/test_hygiene_diagnostic_2167.cpp
-    tests/reflect/test_ir_pod_phase4_2291.cpp
     tests/reflect/test_opcode_reflect_2289.cpp
     tests/reflect/test_reflect_isolation_2290.cpp
     tests/serve/test_atomic_mark_bitvector_2117.cpp
@@ -4672,6 +4690,7 @@ add_executable(test_misc_issue_fold_batch
     tests/serve/test_issue_1993.cpp
     tests/serve/test_mutate_mailbox_starvation_throttle_2587.cpp
     tests/serve/test_spawn_quota_no_leak_2155.cpp
+    tests/reflect/test_ir_pod_phase4_2291.cpp
 )
 set_property(TARGET test_misc_issue_fold_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_misc_issue_fold_batch PRIVATE src tests)
