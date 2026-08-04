@@ -65,6 +65,9 @@ extern "C" void aura_hot_update_set_shape_storm_active(int active);
 // File-scope so module partitions can call them from register_stats_impl
 // lambdas (block-scope extern "C" is not visible reliably under -fmodules-ts).
 extern "C" std::uint64_t aura_anonymous_aot_reject_total_v_read(void) noexcept;
+extern "C" std::uint64_t
+aura_residual_sid0_cap_default() noexcept; // Issue #2638: residual sid=0 growth cap (defs in
+                                           // aura_jit_runtime.cpp)
 extern "C" int aura_get_require_stable_id_for_aot(void) noexcept;
 // Issue #2241: macro fiber hygiene filter / budget C ABI (macro_expansion.cpp).
 extern "C" std::uint64_t
@@ -14554,6 +14557,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             // from call-time closure_capture_remount_ok / _fail).
             std::uint64_t sync_remount_ok = 0;
             std::uint64_t sync_remount_fail = 0;
+            // Issue #2637: anon / residual sync remount walk counters
+            // (sid == 0 branch). Distinct from #2602 named sync counters.
+            std::uint64_t sync_remount_anon_ok = 0;
+            std::uint64_t sync_remount_anon_fail = 0;
             // Issue #2605: residual / assign / preserve / named-invent axes.
             std::uint64_t residual_backfill = 0;
             std::uint64_t sid_assign = 0;
@@ -14571,6 +14578,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     m->live_closure_sync_remount_ok_total.load(std::memory_order_relaxed);
                 sync_remount_fail =
                     m->live_closure_sync_remount_fail_total.load(std::memory_order_relaxed);
+                // Issue #2637: anon sync remount counters (#2637 ship round).
+                sync_remount_anon_ok =
+                    m->live_closure_sync_remount_anon_ok_total.load(std::memory_order_relaxed);
+                sync_remount_anon_fail =
+                    m->live_closure_sync_remount_anon_fail_total.load(std::memory_order_relaxed);
                 residual_backfill =
                     m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
                 sid_assign = m->stable_func_id_assigned_total.load(std::memory_order_relaxed);
@@ -14679,9 +14691,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-residual-cap-hit-total",
                  make_int(static_cast<std::int64_t>(residual_cap_hit))},
                 {"live-closure-residual-sid0-cap",
-                 make_int(static_cast<std::int64_t>(aura_residual_sid0_cap_default
-                                                        ? aura_residual_sid0_cap_default()
-                                                        : 0))}, // weak default = unlimited
+                 make_int(static_cast<std::int64_t>(
+                     aura_residual_sid0_cap_default()))}, // weak default = unlimited
                 {"live-closure-residual-cap-wired", make_int(1)},
                 {"schema-2638", make_int(2638)},
                 {"issue-2638", make_int(2638)},
