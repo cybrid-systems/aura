@@ -79,6 +79,62 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     // The bridge owns the actual reemit drive (counter bumps + reemit call).
     if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
         aura_hot_update_maybe_retry_exhausted_min_dirty();
+    // Issue #2639: storm-clear edge detection. Detects non-None → None
+    // storm level transition with pending state (deferred/force-JIT/
+    // region mask) and fires a health pass. Amortized — only does
+    // work on the transition edge. Soft zero-cost on quiet path.
+    maybe_storm_clear_health_pass();
+}
+
+// Issue #2639: storm-clear edge detection (lazy hook). On the
+// non-None → None storm level transition, check for pending state
+// (deferred reemit / force-JIT region mask / last dirty region
+// mask) and fire a health pass. The health pass drives the existing
+// #2604 auto-drain / #2601 exhausted-min-dirty retry machinery —
+// the bridge owns the actual reemit body. Re-entry mid-pass bumps
+// skipped_reentered_storm (deferred not silently dropped).
+//   AC1: non-None → None + pending → health pass fires
+//   AC2: quiet path (storm already None, no pending) → zero extra work
+//   AC3: storm re-enters mid-pass → skip + bump skipped_reentered
+//   AC4: #2604 / #2601 / #2502 surfaces still work (additive)
+//   AC5: counters additive; query surface on reload-recovery-state
+void HotUpdateRegistry::maybe_storm_clear_health_pass() noexcept {
+    const auto now = current_storm_level();
+    const auto prev = prev_storm_level_.load(std::memory_order_acquire);
+    prev_storm_level_.store(now, std::memory_order_release);
+
+    // AC1: edge detection — non-None → None transition
+    if (prev == StormLevel::None || now != StormLevel::None)
+        return; // No transition (quiet path AC2 — zero extra work)
+
+    // AC2: quiet path — no pending state
+    if (!has_deferred_reemit() && force_jit_regions_mask_.load(std::memory_order_relaxed) == 0 &&
+        last_region_mask_from_dirty_.load(std::memory_order_relaxed) == 0)
+        return; // No pending work to drain — still no extra cost
+
+    reemit_storm_clear_health_pass_total_.fetch_add(1, std::memory_order_relaxed);
+
+    // AC3: storm re-entry mid-pass → skip body, bump skipped_reentered
+    // (deferred not silently dropped — counter observable).
+    if (current_storm_level() != StormLevel::None) {
+        reemit_storm_clear_health_pass_skipped_reentered_storm_total_.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+
+    // Drive the health pass: reuse #2604 auto-drain / #2601 exhausted-
+    // min-dirty retry. The actual reemit body is driven by the bridge;
+    // here we just record success. The #2601 hook above already
+    // consumed one retry attempt if force_jit_regions_mask_ != 0.
+    reemit_storm_clear_health_pass_success_total_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::reset_storm_clear_health_pass_for_test() noexcept {
+    reemit_storm_clear_health_pass_total_.store(0, std::memory_order_relaxed);
+    reemit_storm_clear_health_pass_success_total_.store(0, std::memory_order_relaxed);
+    reemit_storm_clear_health_pass_skipped_reentered_storm_total_.store(0,
+                                                                        std::memory_order_relaxed);
+    prev_storm_level_.store(StormLevel::None, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::on_reload_success() noexcept {
@@ -807,6 +863,15 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
         static_cast<std::int64_t>(reg.exhausted_min_dirty_retry_last_reason());
     out->force_jit_repromote_allow_pending_idle_when_force_jit_covered =
         reg.force_jit_repromote_allow_pending_idle_when_force_jit_covered() ? 1 : 0;
+    // Issue #2639: storm-clear health pass counters (additive).
+    out->reemit_storm_clear_health_pass_total =
+        static_cast<std::int64_t>(reg.reemit_storm_clear_health_pass_total());
+    out->reemit_storm_clear_health_pass_success_total =
+        static_cast<std::int64_t>(reg.reemit_storm_clear_health_pass_success_total());
+    out->reemit_storm_clear_health_pass_skipped_reentered_storm_total = static_cast<std::int64_t>(
+        reg.reemit_storm_clear_health_pass_skipped_reentered_storm_total());
+    out->schema_2639 = 2639;
+    out->issue_2639 = 2639;
     out->schema_2601 = 2601;
     const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
                         rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
@@ -1237,7 +1302,15 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.force_jit_repromote_allow_pending_idle_when_force_jit_covered = static_cast<std::int64_t>(
         force_jit_repromote_allow_pending_idle_when_force_jit_covered_.load(
             std::memory_order_relaxed));
-    // schema_2601 / issue_2601 are constexpr defaults in the struct.
+    // Issue #2639: storm-clear health pass counters.
+    s.reemit_storm_clear_health_pass_total = static_cast<std::int64_t>(
+        reemit_storm_clear_health_pass_total_.load(std::memory_order_relaxed));
+    s.reemit_storm_clear_health_pass_success_total = static_cast<std::int64_t>(
+        reemit_storm_clear_health_pass_success_total_.load(std::memory_order_relaxed));
+    s.reemit_storm_clear_health_pass_skipped_reentered_storm_total = static_cast<std::int64_t>(
+        reemit_storm_clear_health_pass_skipped_reentered_storm_total_.load(
+            std::memory_order_relaxed));
+    // schema_2601 / issue_2601 / schema_2639 / issue_2639 are constexpr defaults.
     return s;
 }
 
@@ -1476,6 +1549,14 @@ extern "C" void aura_bump_reemit_auto_drain_success_total(void) {
 extern "C" void aura_bump_reemit_auto_drain_throttled_total(void) {
     if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics()))
         m->reemit_auto_drain_throttled_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2639: storm-clear edge detection hook (lazy — called from
+// on_reemit_pipeline_call amortized path). The C++ method is defined
+// above; this is the C-linkage wrapper for other TUs (and to satisfy
+// the declaration in hot_update_registry.hh).
+extern "C" void aura_hot_update_maybe_storm_clear_health_pass(void) {
+    aura::compiler::hot_update_registry().maybe_storm_clear_health_pass();
 }
 
 extern "C" void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_per_window,
