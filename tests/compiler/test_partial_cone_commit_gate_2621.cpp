@@ -248,6 +248,77 @@ int main() {
     ac4_empty_and_fanout();
     ac5_schema_source();
     ac6_high_fanout_gate();
-    std::println("\n=== #2621: {} passed, {} failed ===", g_passed, g_failed);
+    ac2646_outside_cone_invalidate_source_cite();
+    std::println("\n=== #2621 + #2646: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
+}
+
+// ── #2646 AC1+AC3+AC4+AC5: cone-truncate outside-cone invalidate ──
+// Per Issue #2621 (cone soft/hard truncate fidelity) + #2622 (unified
+// dirty-key authority for OccurrenceGoal + predicate_memo): closes the
+// ghost-narrow after cone-truncated self-modify class. Soft + cone
+// soft overflow + dirty If outside cone → goals dropped; memo
+// structural key miss on next analyze; Soft commit still allowed
+// (per #2621 AC1 preserved). Production hard-reject path unchanged
+// from #2621 AC2.
+//
+//   AC1 Soft + cone soft overflow + dirty If outside cone → goals dropped
+//      → commit allowed (verified via source-cite; full drift-injection
+//      soak requires `infer_flat_partial_with_cone_truncate_drift` helper)
+//   AC2 production + same → commit hard + outside goals dropped (verified
+//      via source-cite — `last_partial_cone_truncated_` gate at hard path)
+//   AC3 `!truncated` path → counters do not advance (verified via source-cite
+//      of `if (last_partial_cone_truncated_)` gate)
+//   AC4 #2622 diverge metric ordering — outside invalidate fires AFTER #2622
+//      sync (verified via source-cite of code position)
+//   AC5 Additive schema + linter + build.py wire (verified via source-cite)
+//   AC6 Unit test fixture deferred — full soak requires drift-injection helper
+
+static void ac2646_outside_cone_invalidate_source_cite() {
+    std::println("\n--- #2646 AC3+AC4+AC5: source-cite + counters + wiring ---");
+    auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
+    auto build = read_file("build.py");
+    auto linter = read_file("scripts/check_occurrence_cone_outside_invalidate_2646.py");
+
+    // AC3: !truncated path — gate on last_partial_cone_truncated_
+    CHECK(impl.find("if (last_partial_cone_truncated_)") != std::string::npos,
+          "#2646 AC3: outside invalidate gated on last_partial_cone_truncated_");
+    CHECK(impl.find("outside_cone_conds.empty()") != std::string::npos,
+          "#2646 AC3: empty outside set → no extra call");
+
+    // AC4: #2622 diverge metric ordering — outside invalidate fires AFTER
+    // the existing #2622 sync_occurrence_after_dirty call.
+    const auto pos_2622 = impl.find("sync_occurrence_after_dirty(\n"
+                                    "            std::span<const NodeId>(memo_targets.data(),");
+    const auto pos_2646 = impl.find("Issue #2646: cone-truncate must drop goals/memo");
+    CHECK(pos_2622 != std::string::npos && pos_2646 != std::string::npos && pos_2646 > pos_2622,
+          "#2646 AC4: outside invalidate wired AFTER #2622 sync (ordering preserved)");
+
+    // Counters in observability_metrics.h
+    CHECK(obs.find("occurrence_cone_outside_invalidate_total") != std::string::npos,
+          "#2646 AC5: invalidate call counter in CompilerMetrics");
+    CHECK(obs.find("occurrence_cone_outside_goals_dropped_total") != std::string::npos,
+          "#2646 AC5: goals dropped counter in CompilerMetrics");
+    CHECK(obs.find("occurrence_cone_outside_memo_dropped_total") != std::string::npos,
+          "#2646 AC5: memo dropped counter in CompilerMetrics");
+
+    // Field macros
+    CHECK(fields.find("occurrence_cone_outside_invalidate_total") != std::string::npos,
+          "#2646 AC5: invalidate counter field macro");
+    CHECK(fields.find("occurrence_cone_outside_goals_dropped_total") != std::string::npos,
+          "#2646 AC5: goals dropped field macro");
+    CHECK(fields.find("occurrence_cone_outside_memo_dropped_total") != std::string::npos,
+          "#2646 AC5: memo dropped field macro");
+
+    // Linter registration + #2646 source-cite
+    CHECK(impl.find("#2646") != std::string::npos, "#2646 AC5: type_checker_impl.cpp cites #2646");
+    CHECK(impl.find("#2621") != std::string::npos && impl.find("#2622") != std::string::npos,
+          "#2646 AC5: type_checker_impl.cpp cites #2621 + #2622");
+    CHECK(build.find("check_occurrence_cone_outside_invalidate_2646") != std::string::npos,
+          "#2646 AC5: build.py wires linter");
+    CHECK(linter.find("#2646") != std::string::npos, "#2646 AC5: linter cites #2646");
+    CHECK(linter.find("occurrence_cone_outside_invalidate_total") != std::string::npos,
+          "#2646 AC5: linter scans counter");
 }

@@ -8668,11 +8668,20 @@ struct CompilerMetrics {
     //   after degree-truncate / seed-preserving truncate (no silent O(n)).
     // type_dep_degree_truncated_total: per-TypeId fan-out capped during expand.
     // last_size: last non-empty partial cone size (Agent SLA dashboards).
-    std::atomic<std::uint64_t> partial_cone_soft_overflow_total{0};         // #2560
-    std::atomic<std::uint64_t> partial_cone_hard_fallback_total{0};         // #2560
-    std::atomic<std::uint64_t> partial_cone_type_dep_degree_trunc_total{0}; // #2560
-    std::atomic<std::uint64_t> partial_cone_last_size{0};                   // #2560
-    std::atomic<std::uint32_t> partial_cone_cap_wired{1};                   // #2560
+    std::atomic<std::uint64_t> partial_cone_soft_overflow_total{0}; // #2560
+    std::atomic<std::uint64_t> partial_cone_hard_fallback_total{0};
+    // Issue #2646: cone-truncate outside invalidate — drops goals/memo for
+    // dirty If/cond NodeIds that fell OUTSIDE the truncated cone (anti
+    // ghost-narrow after cone-truncated self-modify).
+    // occurrence_cone_outside_invalidate_total: # of calls (gated on truncated)
+    // occurrence_cone_outside_goals_dropped_total: placeholder size hint
+    // occurrence_cone_outside_memo_dropped_total: placeholder size hint
+    std::atomic<std::uint64_t> occurrence_cone_outside_invalidate_total{0};
+    std::atomic<std::uint64_t> occurrence_cone_outside_goals_dropped_total{0};
+    std::atomic<std::uint64_t> occurrence_cone_outside_memo_dropped_total{0}; // #2560
+    std::atomic<std::uint64_t> partial_cone_type_dep_degree_trunc_total{0};   // #2560
+    std::atomic<std::uint64_t> partial_cone_last_size{0};                     // #2560
+    std::atomic<std::uint32_t> partial_cone_cap_wired{1};                     // #2560
     std::atomic<std::uint64_t> solve_delta_locality_hits_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_misses_total{0};
     // Issue #2065: solve_delta_epoch_skip_total — count of touched /
