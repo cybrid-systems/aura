@@ -362,6 +362,21 @@ aura_bump_live_closure_remap_name_fallback_total(std::uint64_t /*n*/) {}
 // Issue #2602 / #2628: weak stub for sync remount counter bumper (runtime.cpp).
 extern "C" __attribute__((weak)) void
 aura_bump_live_closure_sync_remount_totals(std::uint64_t /*ok*/, std::uint64_t /*fail*/) {}
+// Issue #2637: anon sync remount counter bumper (sid == 0 branch).
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t /*ok*/, std::uint64_t /*fail*/) {}
+// Issue #2637: anon sync remount walk stub (mirrors #2602 named stub above).
+extern "C" __attribute__((weak)) void
+aura_sync_remount_anon_live_closures(std::uint64_t* ok_count, std::uint64_t* fail_count) {
+    if (ok_count)
+        *ok_count = 0;
+    if (fail_count)
+        *fail_count = 0;
+}
+// Issue #2637: env opt-in flag weak stub (default 0 = off per AC1).
+extern "C" __attribute__((weak)) int aura_sync_remount_anon_enabled_default() {
+    return 0;
+}
 // Issue #2175: weak stub for legacy sid=0 backfill counter bumper.
 // Production impl is in aura_jit_bridge.cpp; light bundles compile
 // aura_jit_runtime.cpp + this stub (not the full bridge). Without

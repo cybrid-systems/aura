@@ -8873,6 +8873,15 @@ struct CompilerMetrics {
     // call-time closure_capture_remount_* — sync path uses these).
     std::atomic<std::uint64_t> live_closure_sync_remount_ok_total{0};   // #2602
     std::atomic<std::uint64_t> live_closure_sync_remount_fail_total{0}; // #2602
+    // Issue #2637: anonymous/residual sync remount walk counters (sid == 0
+    // branch). Distinct from #2602 named sync counters — they live in
+    // different locks (g_closure_table_mtx exclusive + workspace write
+    // shared with named path), but never double-count because named and
+    // anon paths filter on the opposite sid. Soft zero-cost when env
+    // AURA_SYNC_REMOUNT_ANON unset (default off, per AC1) OR no live
+    // anonymous closures (nslots==0 short-circuit).
+    std::atomic<std::uint64_t> live_closure_sync_remount_anon_ok_total{0};   // #2637
+    std::atomic<std::uint64_t> live_closure_sync_remount_anon_fail_total{0}; // #2637
     // Issue #2092: live closures retargeted via the (off-by-default)
     // name fallback path because their stable_func_id stamp was 0
     // (legacy closure / define processed after set_name). Non-zero

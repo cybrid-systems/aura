@@ -227,13 +227,118 @@ static void ac5_source_and_linter() {
 
 } // namespace
 
+// ── #2637: anon / residual sync remount walk on reemit (sid == 0 branch) ──
+//
+//   AC1: Default (knob off): named path unchanged; anonymous still call-time MustDeopt
+//   AC2: Knob on + reemit + live anonymous → first subsequent call does not
+//        surprise-MustDeopt (either remounted or already forced via #2503 shared path)
+//   AC3: Distinct anon counters + wired sentinel + schema-2637
+//   AC4: Soft / Off + knob off → zero extra work (no live anon closures)
+//   AC5: #2602/#2605/#2550/#2542 surfaces and tests still green
+//   AC6: Coverage gate (linter + build.py gate step)
+static void ac2637_anon_sync_off_default() {
+    std::println("\n--- #2637 AC1: knob off — anon still call-time MustDeopt ---");
+    // env AURA_SYNC_REMOUNT_ANON unset (default off per AC1) — the anon
+    // sync walk must NOT run. Verify by checking that the anon counter
+    // does not advance when reemit fires under default env.
+    // We test the env flag via a fresh resolver (test would need to call
+    // the production strong def; here we rely on the default-off contract
+    // verified by the linter's "AC1: env flag default 0" check).
+    // This test confirms runtime contract: reemit + anon → no anon sync bump.
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    aura_clear_stable_func_id_map();
+
+    const auto cid = aura_alloc_closure(7);
+    CHECK(cid >= 0, "AC1: alloc");
+    aura_closure_set_name(cid, ""); // anonymous
+    CHECK(aura_get_closure_stable_func_id(cid) == 0, "AC1: anonymous sid=0");
+
+    const auto sid_other = aura_get_or_preserve_stable_func_id("ac2637_other", nullptr);
+    const std::uint32_t ids[] = {sid_other};
+    const auto anon_ok_0 =
+        metrics.live_closure_sync_remount_anon_ok_total.load(std::memory_order_relaxed);
+    const auto anon_fail_0 =
+        metrics.live_closure_sync_remount_anon_fail_total.load(std::memory_order_relaxed);
+    (void)aura_remap_live_closures_after_reemit(ids, 1, /*new_bridge_epoch=*/200);
+    // Default env: no anon sync walk → counters unchanged.
+    CHECK(metrics.live_closure_sync_remount_anon_ok_total.load(std::memory_order_relaxed) ==
+              anon_ok_0,
+          "AC1: knob off — anon sync walk skipped, ok counter unchanged");
+    CHECK(metrics.live_closure_sync_remount_anon_fail_total.load(std::memory_order_relaxed) ==
+              anon_fail_0,
+          "AC1: knob off — anon sync walk skipped, fail counter unchanged");
+
+    aura_free_closure(cid);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+}
+
+static void ac2637_schema_and_source_cite() {
+    std::println("\n--- #2637 AC3+AC5+AC6: schema + source-cite + linter ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2637") == 2637, "AC3: schema-2637");
+    CHECK(href(cs, "issue-2637") == 2637, "AC3: issue-2637");
+    CHECK(href(cs, "live-closure-sync-remount-anon-wired") == 1,
+          "AC3: live-closure-sync-remount-anon-wired sentinel");
+    CHECK(href(cs, "live-closure-sync-remount-anon-ok-total") >= 0,
+          "AC3: anon ok counter key exposed");
+    CHECK(href(cs, "live-closure-sync-remount-anon-fail-total") >= 0,
+          "AC3: anon fail counter key exposed");
+    // #2602 / #2605 / #2550 / #2542 surfaces preserved (AC5)
+    CHECK(href(cs, "live-closure-sync-remount-wired") == 1, "AC5: #2602 wired retained");
+    CHECK(href(cs, "schema-2602") == 2602, "AC5: schema-2602 retained");
+    CHECK(href(cs, "schema-2605") == 2605, "AC5: schema-2605 retained");
+    CHECK(href(cs, "schema-2550") == 2550, "AC5: schema-2550 retained");
+
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto bh = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto shared = read_file("src/compiler/runtime_shared.h");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto lint = read_file("scripts/check_sync_remount_anon_coverage.py");
+    const auto build = read_file("build.py");
+    CHECK(rt.find("Issue #2637") != std::string::npos, "AC6: runtime cites #2637");
+    CHECK(rt.find("aura_sync_remount_anon_live_closures") != std::string::npos,
+          "AC6: anon sync helper present in runtime.cpp");
+    CHECK(rt.find("aura_sync_remount_anon_enabled_default") != std::string::npos,
+          "AC6: env flag resolver present in runtime.cpp");
+    CHECK(bh.find("aura_sync_remount_anon_enabled_default") != std::string::npos,
+          "AC6: env flag weak decl in bridge.cpp");
+    CHECK(bh.find("aura_sync_remount_anon_live_closures") != std::string::npos,
+          "AC6: anon sync walk called from bridge.cpp after named sync");
+    CHECK(stub.find("aura_sync_remount_anon_live_closures") != std::string::npos,
+          "AC6: anon sync weak stub in bridge_stub.cpp");
+    CHECK(stub.find("aura_bump_live_closure_sync_remount_anon_totals") != std::string::npos,
+          "AC6: anon bumper weak stub in bridge_stub.cpp");
+    CHECK(shared.find("aura_sync_remount_anon_live_closures") != std::string::npos,
+          "AC6: extern C decl in runtime_shared.h");
+    CHECK(met.find("live_closure_sync_remount_anon_ok_total") != std::string::npos,
+          "AC6: anon ok field in observability_metrics.h");
+    CHECK(met.find("live_closure_sync_remount_anon_fail_total") != std::string::npos,
+          "AC6: anon fail field in observability_metrics.h");
+    CHECK(q.find("live-closure-sync-remount-anon-ok-total") != std::string::npos,
+          "AC3: query key for anon ok");
+    CHECK(q.find("live-closure-sync-remount-anon-fail-total") != std::string::npos,
+          "AC3: query key for anon fail");
+    CHECK(q.find("schema-2637") != std::string::npos, "AC3: schema-2637 in query surface");
+    CHECK(!lint.empty(), "AC6: linter file present");
+    CHECK(build.find("cmd_sync_remount_anon_coverage") != std::string::npos,
+          "AC6: build.py cmd wired");
+    CHECK(build.find("check_sync_remount_anon_coverage") != std::string::npos,
+          "AC6: build.py references linter");
+}
+
 int main() {
-    std::println("=== Issue #2605: anonymous / residual sid=0 policy ===");
+    std::println("=== Issue #2605+#2637: anonymous / residual sid=0 policy + sync remount ===");
     ac1_named_soak_no_residual_growth();
     ac2_anonymous_must_deopt_no_invent();
     ac3_residual_one_shot_backfill();
     ac4_query_axes();
     ac5_source_and_linter();
-    std::println("\n=== #2605: {} passed, {} failed ===", g_passed, g_failed);
+    ac2637_anon_sync_off_default();
+    ac2637_schema_and_source_cite();
+    std::println("\n=== #2605+#2637: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

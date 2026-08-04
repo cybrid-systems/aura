@@ -14652,6 +14652,19 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-sync-remount-wired", make_int(1)},
                 {"schema-2602", make_int(2602)},
                 {"issue-2602", make_int(2602)},
+                // Issue #2637: anon / residual sync remount walk on
+                // reemit (sid == 0 branch). Distinct from #2602 named
+                // sync counters — never double-counts because named / anon
+                // paths filter on the opposite sid. Soft zero-cost when
+                // env AURA_SYNC_REMOUNT_ANON unset (default off, per AC1)
+                // OR no live anonymous closures (nslots==0 short-circuit).
+                {"live-closure-sync-remount-anon-ok-total",
+                 make_int(static_cast<std::int64_t>(sync_remount_anon_ok))},
+                {"live-closure-sync-remount-anon-fail-total",
+                 make_int(static_cast<std::int64_t>(sync_remount_anon_fail))},
+                {"live-closure-sync-remount-anon-wired", make_int(1)},
+                {"schema-2637", make_int(2637)},
+                {"issue-2637", make_int(2637)},
             };
             return build_hash(kv);
         });

@@ -182,6 +182,24 @@ extern "C" void aura_bump_live_closure_sync_remount_totals(std::uint64_t ok, std
     }
 }
 
+// Issue #2637: anon sync remount bump hook (sid == 0 branch). Distinct
+// from #2602 named bump hook; mirrors the structure but routes to anon
+// counters. Weak decl in this TU; strong def in aura_jit_runtime.cpp.
+extern "C" void aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t ok,
+                                                                std::uint64_t fail) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_sync_remount_anon_ok_total.fetch_add(ok, std::memory_order_relaxed);
+        m->live_closure_sync_remount_anon_fail_total.fetch_add(fail, std::memory_order_relaxed);
+    }
+}
+
+// Issue #2637: env opt-in flag for anonymous sync remount on reemit.
+// Weak decl in this TU; strong def in aura_jit_runtime.cpp reads
+// AURA_SYNC_REMOUNT_ANON env (default 0 = OFF per AC1). Weak attribute
+// means tests / hosts without the production TU see the function as
+// nullptr — call sites handle via the `fn ? fn() : default` ternary.
+extern "C" int aura_sync_remount_anon_enabled_default() __attribute__((weak));
+
 // Issue #2175: legacy sid=0 backfill counter (one-shot lookup per
 // successful backfill during aura_remap_live_closures_after_reemit).
 // Independent of the name-fallback path (AC2) — fires whenever the
@@ -3313,6 +3331,21 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         std::uint64_t sync_ok = 0;
         std::uint64_t sync_fail = 0;
         aura_sync_remount_named_live_closures(&sync_ok, &sync_fail);
+
+        // Issue #2637: env-gated sync remount walk for anonymous / residual
+        // closures (sid == 0). Mirrors the #2602 named path on the
+        // opposite sid branch. Soft zero-cost when env knob off (default
+        // per AC1) OR no live anonymous closures (nslots==0 short-circuit
+        // same as named path). Bumps live_closure_sync_remount_anon_ok_total
+        // / _fail_total internally (distinct from named sync counters).
+        // Default OFF preserves the existing call-time MustDeopt-on-touch
+        // behavior for anonymous / residual closures (#2550 / #2605).
+        if (aura_sync_remount_anon_enabled_default ? (aura_sync_remount_anon_enabled_default() != 0)
+                                                   : false) {
+            std::uint64_t anon_ok = 0;
+            std::uint64_t anon_fail = 0;
+            aura_sync_remount_anon_live_closures(&anon_ok, &anon_fail);
+        }
     }
 
     // Issue #2016: adaptive region mask based on this call's dirty density

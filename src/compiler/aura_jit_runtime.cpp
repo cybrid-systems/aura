@@ -1903,6 +1903,90 @@ extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
         *fail_count = fail;
 }
 
+// Issue #2637: env opt-in flag for anonymous / residual sync remount
+// on reemit. Default OFF (per AC1) — preserves today's call-time
+// MustDeopt for anon / residual closures (#2550 / #2605). When ON,
+// reemit success path runs aura_sync_remount_anon_live_closures
+// alongside the named walk to close the first-call MustDeopt window
+// for the sid == 0 branch. Soft / sandbox off: default OFF, no
+// extra work. Production Restricted opt-in: set AURA_SYNC_REMOUNT_ANON=1
+// or rely on the strong-def default at compile time. Cached on first
+// call so the env lookup runs at most once per process.
+extern "C" int aura_sync_remount_anon_enabled_default() {
+    static const int cached = []() {
+        const char* e = std::getenv("AURA_SYNC_REMOUNT_ANON");
+        if (!e || *e == '\0')
+            return 0; // default = off (per AC1)
+        const std::string s(e);
+        const bool enabled = !(s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF");
+        return enabled ? 1 : 0;
+    }();
+    return cached;
+}
+
+// Issue #2637: anon / residual sync remount walk (sid == 0 branch).
+// Mirrors aura_sync_remount_named_live_closures (#2602) but filters
+// on the opposite sid. Closes the first-call MustDeopt window for
+// anon / residual closures under AURA_SYNC_REMOUNT_ANON=1. Bumps
+// live_closure_sync_remount_anon_ok_total / _fail_total (distinct
+// from named sync counters — never double-counts because named /
+// anon paths filter on the opposite sid). Soft zero-cost when env
+// off (call site gates before this) OR no live anonymous closures
+// (nslots==0 short-circuit same as named path).
+extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
+                                                     std::uint64_t* fail_count) {
+    std::uint64_t ok = 0;
+    std::uint64_t fail = 0;
+
+    {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        aura_lock_workspace_write();
+
+        const std::size_t nslots = g_closure_func_ids.size();
+        if (nslots == 0) {
+            aura_unlock_workspace_write();
+            if (ok_count)
+                *ok_count = 0;
+            if (fail_count)
+                *fail_count = 0;
+            return;
+        }
+
+        if (g_closure_stable_func_ids.size() < nslots)
+            g_closure_stable_func_ids.resize(nslots, 0);
+        if (g_closure_must_deopt.size() < nslots)
+            g_closure_must_deopt.resize(nslots, 0);
+
+        const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+
+        for (std::size_t cid = 0; cid < nslots; ++cid) {
+            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                continue;
+            // Only anonymous / residual closures with sid == 0 — named
+            // closures stay on the #2602 named sync walk (above).
+            const std::uint32_t sid = g_closure_stable_func_ids[cid];
+            if (sid != 0)
+                continue;
+            if (remount_or_force_deopt_unlocked_no_call_time_counter(
+                    static_cast<std::int64_t>(cid), live_env,
+                    /*linear_fp=*/0, table_epoch) != 0)
+                ++ok;
+            else
+                ++fail;
+        }
+
+        aura_unlock_workspace_write();
+    }
+
+    aura_bump_live_closure_sync_remount_anon_totals(ok, fail);
+
+    if (ok_count)
+        *ok_count = ok;
+    if (fail_count)
+        *fail_count = fail;
+}
+
 // Issue #660 / #2092 / #2550: set the closure's name after allocation.
 // Used by MakeClosure runtime to record the function's stable name
 // (assigned by cache_define). Named create / first set_name always
