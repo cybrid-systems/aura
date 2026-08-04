@@ -5920,6 +5920,16 @@ public:
     // failure returns nullopt and bumps export-stale-reject.
     [[nodiscard]] std::optional<ast::FlatAST::StableNodeRef>
     export_held_ref(ast::FlatAST::StableNodeRef ref) noexcept;
+    // Issue #2632: single internal handoff helper for cross-fiber / mailbox /
+    // orch result packaging. Wraps export_held_ref and bumps
+    // stable_ref_handoff_reject_total so handoff rejections are
+    // distinguishable from query-time rejections. Callers that hand a
+    // StableNodeRef across a fiber / mailbox / orch boundary MUST call this
+    // helper rather than touching export_held_ref directly: it guarantees
+    // the dedicated counter increments and the stamp-stale trace carries
+    // a "handoff" tag for the dashboard. Returns nullopt on unrefreshable.
+    [[nodiscard]] std::optional<ast::FlatAST::StableNodeRef>
+    handoff_ref(ast::FlatAST::StableNodeRef ref) noexcept;
     // Issue #2404: shared finalize for Agent export paths (stamp already applied).
     [[nodiscard]] ast::FlatAST::StableNodeRef
     finalize_agent_export(ast::FlatAST::StableNodeRef ref) noexcept;

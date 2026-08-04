@@ -784,6 +784,24 @@ Evaluator::export_held_ref(ast::FlatAST::StableNodeRef ref) noexcept {
     return out;
 }
 
+// Issue #2632: single internal handoff helper for cross-fiber / mailbox /
+// orch result packaging. Wraps export_held_ref and bumps a dedicated
+// stable_ref_handoff_reject_total counter so we can distinguish handoff
+// rejections from query-time rejections (export-stale-reject). Callers
+// that hand a StableNodeRef across a fiber / mailbox / orch boundary
+// MUST call this rather than touching the raw export_held_ref path:
+// the helper ensures the dedicated counter increments and the
+// stamp-stale trace carries a "handoff" tag for the dashboard.
+std::optional<ast::FlatAST::StableNodeRef>
+Evaluator::handoff_ref(ast::FlatAST::StableNodeRef ref) noexcept {
+    auto out = export_held_ref(std::move(ref));
+    if (!out) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
+            m->stable_ref_handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return out;
+}
+
 // Issue #2224: shared resolve entry — query / mutate / ast-walk paths
 // must call resolve_stamped before touching the slot. Order of checks:
 //   1. workspace_flat_ present? (no → nullopt)

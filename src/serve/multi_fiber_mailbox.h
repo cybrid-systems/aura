@@ -102,6 +102,12 @@ struct MultiFiberMailboxStats {
     // Issue #1595: linear claim checks / violations (prefix filter on push).
     std::atomic<std::uint64_t> linear_checks{0};
     std::atomic<std::uint64_t> linear_violations{0};
+    // Issue #2632: handoff reject counter (single internal helper gate, mirror
+    // of CompilerMetrics::stable_ref_handoff_reject_total). Bumped when an
+    // Agent hands a StableNodeRef across the mailbox / fanout boundary
+    // without first calling Evaluator::handoff_ref — agents reading the
+    // mailbox payload should observe this and force-resolve their held refs.
+    std::atomic<std::uint64_t> handoff_reject_total{0};
     // Issue #2010: fanout-specific backpressure (also counted in backpressure_rejects).
     std::atomic<std::uint64_t> fanout_backpressure_rejects{0};
     // Issue #2188: blocking recv refused while MutationBoundary is live

@@ -2589,6 +2589,25 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             tkv.push_back({"index", make_int(static_cast<std::int64_t>(i))});
             if (tr.ok) {
                 EvalValue val = (i < ash->values.size()) ? ash->values[i] : make_void();
+                // Issue #2632: closure values crossing the worker→main fiber
+                // boundary in a parallel-intend batch must be handoff_ref'd.
+                // Build a StableNodeRef from the closure's body_id and pipe
+                // through handoff_ref; on unrefreshable the dedicated
+                // stable_ref_handoff_reject_total counter bumps (distinct
+                // from query-time export-stale-reject — see AC2 / linter).
+                // 2632 AC4: parallel-intend result packaging wire-up.
+                if (types::is_closure(val) && workspace_flat_) {
+                    const auto cid = types::as_closure_id(val);
+                    if (cid < ev.closures_.size()) {
+                        const auto& cl = ev.closures_[cid];
+                        if (cl.body_id != aura::ast::NULL_NODE) {
+                            auto ref = workspace_flat_->make_ref(cl.body_id);
+                            ref.tenant_id = ev.capability_tenant_id_;
+                            ref.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
+                            (void)ev.handoff_ref(std::move(ref));
+                        }
+                    }
+                }
                 tkv.push_back({"value", val});
             } else {
                 std::string err =
@@ -3185,6 +3204,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         } catch (...) {
             // [SILENCE-PRIM-#2631]: scope-child failures surface as ok=false hash
             // (Agent-visible status); do not rethrow through prim dispatch.
+            // (Mergebot already shipped this annotation in origin/main;
+            // #2632 ship keeps the same wording rather than overwriting.)
             aura::orch::g_orch_module_stats.scope_child_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
             std::vector<std::pair<std::string, EvalValue>> kv = {

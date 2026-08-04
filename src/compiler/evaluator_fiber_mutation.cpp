@@ -2952,6 +2952,33 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
         bump_envframe_concurrent_steal_resync();
     }
 
+    // Issue #2632: fiber-steal handoff gate. After refresh_stale_frames_after_steal
+    // walks all closures + env_frames, every live StableNodeRef captured by those
+    // frames has effectively crossed a fiber boundary (the closure may now run on
+    // a different host fiber). Walk the refreshed frames once more, build a
+    // representative StableNodeRef per refreshed EnvId, and pipe it through
+    // handoff_ref so any unrefreshable ref bumps the dedicated counter and is
+    // observable in the dashboard as a handoff rejection (vs. a query-time
+    // export-stale-reject, which is a different failure surface).
+    // 2632 AC3: post-steal wire-up of handoff_ref (fiber-steal category).
+    if (refreshed > 0 && workspace_flat_) {
+        std::shared_lock<std::shared_mutex> ef_lock2(env_frames_mtx_);
+        for (const EnvId rid : refreshed_ids) {
+            if (rid >= env_frames_.size())
+                continue;
+            const auto& f = env_frames_[rid];
+            for (std::size_t bidx = 0; bidx < f.bindings.size(); ++bidx) {
+                const auto node_id = f.bindings[bidx];
+                if (node_id == aura::ast::NULL_NODE)
+                    continue;
+                ast::FlatAST::StableNodeRef ref = workspace_flat_->make_ref(node_id);
+                ref.tenant_id = capability_tenant_id_;
+                ref.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
+                (void)handoff_ref(std::move(ref));
+            }
+        }
+    }
+
     // Issue #1631: bridge drift → force active-closure walk (deopt/rebuild
     // fallback). Weak/stub no-ops when JIT is not linked.
     if (bridge_mismatch > 0) {
