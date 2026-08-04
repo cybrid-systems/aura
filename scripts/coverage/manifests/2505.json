@@ -1,7 +1,7 @@
 {
   "issue": 2505,
   "title": "Issue #2505: cross-COW soft-migrate drift threshold vs hard safe-fallback.",
-  "ok": "OK: Issue #2505 cross-COW drift contract — all AC rows satisfied",
+  "ok": "OK: Issue #2505 cross-COW drift contract \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -108,7 +108,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_cross_cow_drift_contract"
+        "tests/compiler/test_cross_cow_drift_contract.cpp"
       ]
     },
     {

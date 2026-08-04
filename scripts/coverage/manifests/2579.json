@@ -1,7 +1,7 @@
 {
   "issue": 2579,
   "title": "Issue #2579: module rebind / multi-define value-init residual contracts.",
-  "ok": "OK: Issue #2579 module rebind residual — all AC rows satisfied",
+  "ok": "OK: Issue #2579 module rebind residual \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -39,7 +39,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_module_rebind_residual"
+        "tests/compiler/test_module_rebind_residual.cpp"
       ]
     },
     {

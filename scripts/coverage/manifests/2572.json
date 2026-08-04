@@ -1,7 +1,7 @@
 {
   "issue": 2572,
   "title": "Issue #2572: module-export multi-display ConstString pool + JIT display.",
-  "ok": "OK: Issue #2572 module export multi-display — all AC rows satisfied",
+  "ok": "OK: Issue #2572 module export multi-display \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -56,7 +56,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_module_export_display"
+        "tests/compiler/test_module_export_display.cpp"
       ]
     },
     {

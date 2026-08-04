@@ -1,7 +1,7 @@
 {
   "issue": 2564,
   "title": "Issue #2564: ADT match exhaustiveness goal table coverage.",
-  "ok": "OK: Issue #2564 ADT match goal table — all AC rows satisfied",
+  "ok": "OK: Issue #2564 ADT match goal table \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -100,7 +100,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_adt_match_goal_table"
+        "tests/compiler/test_adt_match_goal_table.cpp"
       ]
     },
     {

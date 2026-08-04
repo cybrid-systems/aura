@@ -1,7 +1,7 @@
 {
   "issue": 2357,
   "title": "Issue #2357: Phase-1 linear Move/Drop first-class synthesize violation.",
-  "ok": "OK: Issue #2357 linear synth violation — all AC rows satisfied",
+  "ok": "OK: Issue #2357 linear synth violation \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -99,7 +99,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_linear_synth_violation"
+        "tests/compiler/test_linear_synth_violation.cpp"
       ]
     },
     {

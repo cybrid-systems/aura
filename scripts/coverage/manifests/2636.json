@@ -1,7 +1,7 @@
 {
   "issue": 2636,
-  "title": "Issue #2636: residual reclaim observability — body-age + env-opt-in force-safepoint.",
-  "ok": "OK: Issue #2636 residual body-age — all AC rows satisfied",
+  "title": "Issue #2636: residual reclaim observability \u2014 body-age + env-opt-in force-safepoint.",
+  "ok": "OK: Issue #2636 residual body-age \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -155,7 +155,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_residual_force_safepoint"
+        "tests/serve/test_residual_force_safepoint.cpp"
       ]
     }
   ],

@@ -1,7 +1,7 @@
 {
   "issue": 2364,
-  "title": "Issue #2364: PanicCheckpoint residual × densify closed-loop coverage.",
-  "ok": "OK: Issue #2364 PanicCheckpoint residual × densify — all AC rows satisfied",
+  "title": "Issue #2364: PanicCheckpoint residual \u00d7 densify closed-loop coverage.",
+  "ok": "OK: Issue #2364 PanicCheckpoint residual \u00d7 densify \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -86,7 +86,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_panic_defer_after_densify"
+        "tests/compiler/test_panic_defer_after_densify.cpp"
       ]
     },
     {

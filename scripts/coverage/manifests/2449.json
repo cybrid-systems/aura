@@ -62,7 +62,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_param_data_mutation_contract"
+        "tests/core/test_param_data_mutation_contract.cpp"
       ]
     }
   ],

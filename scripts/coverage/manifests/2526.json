@@ -1,7 +1,7 @@
 {
   "issue": 2526,
   "title": "Issue #2526: adaptive deopt-storm threshold closed-loop with LayoutStamp.",
-  "ok": "OK: Issue #2526 adaptive deopt-storm threshold — all AC rows satisfied",
+  "ok": "OK: Issue #2526 adaptive deopt-storm threshold \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -101,7 +101,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_shape_storm_adaptive"
+        "tests/compiler/test_shape_storm_adaptive.cpp"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "issue": 2389,
   "title": "Issue #2389: query:security-health single Agent score.",
-  "ok": "OK: Issue #2389 security-health — all AC rows satisfied",
+  "ok": "OK: Issue #2389 security-health \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -96,7 +96,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_security_health"
+        "tests/compiler/test_security_health.cpp"
       ]
     },
     {

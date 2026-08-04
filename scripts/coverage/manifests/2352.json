@@ -1,7 +1,7 @@
 {
   "issue": 2352,
-  "title": "Issue #2352: chaos mutate × steal × GC × mailbox production gate.",
-  "ok": "OK: Issue #2352 chaos mutate×steal×GC×mailbox — all AC rows satisfied",
+  "title": "Issue #2352: chaos mutate \u00d7 steal \u00d7 GC \u00d7 mailbox production gate.",
+  "ok": "OK: Issue #2352 chaos mutate\u00d7steal\u00d7GC\u00d7mailbox \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -59,7 +59,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_chaos_mutate_steal_gc_mailbox"
+        "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp"
       ]
     },
     {

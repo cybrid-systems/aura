@@ -1,7 +1,7 @@
 {
   "issue": 2551,
-  "title": "Issue #2551: mailbox hold-exit residual under production → hard + throttle.",
-  "ok": "OK: Issue #2551 mailbox hold starvation hard — all AC rows satisfied",
+  "title": "Issue #2551: mailbox hold-exit residual under production \u2192 hard + throttle.",
+  "ok": "OK: Issue #2551 mailbox hold starvation hard \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -96,7 +96,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mailbox_hold_starvation_hard"
+        "tests/serve/test_mailbox_hold_starvation_hard.cpp"
       ]
     },
     {

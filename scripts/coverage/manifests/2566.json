@@ -1,7 +1,7 @@
 {
   "issue": 2566,
   "title": "Issue #2566: non-std module free-var resolve of required std bindings.",
-  "ok": "OK: Issue #2566 module free-var require inject — all AC rows satisfied",
+  "ok": "OK: Issue #2566 module free-var require inject \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -79,7 +79,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_module_require_freevar"
+        "tests/compiler/test_module_require_freevar.cpp"
       ]
     },
     {

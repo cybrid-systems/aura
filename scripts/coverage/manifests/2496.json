@@ -1,7 +1,7 @@
 {
   "issue": 2496,
   "title": "Issue #2496: GeneralObjectPin adoption coverage gate (inventory vs wire_total).",
-  "ok": "OK: Issue #2496 GeneralObjectPin adoption coverage gate — all AC rows satisfied",
+  "ok": "OK: Issue #2496 GeneralObjectPin adoption coverage gate \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -87,9 +87,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_general_object_pin_coverage_gate",
-        "aura_add_issue_test(test_general_object_pin_coverage_gate)",
-        "aura_issue_test_link_light(test_general_object_pin_coverage_gate)"
+        "tests/core/test_general_object_pin_coverage_gate.cpp"
       ]
     },
     {

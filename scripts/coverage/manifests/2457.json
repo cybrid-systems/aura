@@ -43,7 +43,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mutation_log_cow_copy"
+        "tests/core/test_mutation_log_cow_copy.cpp"
       ]
     }
   ],

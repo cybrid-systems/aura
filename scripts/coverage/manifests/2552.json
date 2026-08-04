@@ -1,7 +1,7 @@
 {
   "issue": 2552,
   "title": "Issue #2552: steal/densify joint OccurrenceGoal + type_dep freshness fence.",
-  "ok": "OK: Issue #2552 type freshness steal/densify fence — all AC rows satisfied",
+  "ok": "OK: Issue #2552 type freshness steal/densify fence \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -111,7 +111,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_freshness_steal_densify"
+        "tests/compiler/test_type_freshness_steal_densify.cpp"
       ]
     },
     {

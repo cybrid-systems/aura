@@ -1,6 +1,6 @@
 {
   "issue": 2461,
-  "title": "Issue #2461: per-If stable narrowing cache key (shape × epoch × refined).",
+  "title": "Issue #2461: per-If stable narrowing cache key (shape \u00d7 epoch \u00d7 refined).",
   "ok": "OK: occurrence cache key #2461 coverage contract clean",
   "checks": [
     {
@@ -98,7 +98,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_occurrence_cache_key"
+        "tests/compiler/test_occurrence_cache_key.cpp"
       ]
     },
     {

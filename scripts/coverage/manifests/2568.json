@@ -1,7 +1,7 @@
 {
   "issue": 2568,
   "title": "Issue #2568: symbol eq?/equal? for quoted symbols (agent decision tags).",
-  "ok": "OK: Issue #2568 symbol eq? — all AC rows satisfied",
+  "ok": "OK: Issue #2568 symbol eq? \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -76,7 +76,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_symbol_eq"
+        "tests/compiler/test_symbol_eq.cpp"
       ]
     },
     {

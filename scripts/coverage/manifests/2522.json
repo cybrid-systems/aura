@@ -1,7 +1,7 @@
 {
   "issue": 2522,
-  "title": "Issue #2522: batch dirty cascade API — mark_blocks_dirty + single bump.",
-  "ok": "OK: Issue #2522 batch dirty cascade — all AC rows satisfied",
+  "title": "Issue #2522: batch dirty cascade API \u2014 mark_blocks_dirty + single bump.",
+  "ok": "OK: Issue #2522 batch dirty cascade \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -95,7 +95,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_batch_dirty_cascade"
+        "tests/compiler/test_batch_dirty_cascade.cpp"
       ]
     },
     {

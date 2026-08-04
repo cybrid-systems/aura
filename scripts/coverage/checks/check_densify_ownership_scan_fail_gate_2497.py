@@ -59,7 +59,10 @@ def main() -> int:
     must("envframe_lifetime_densify_ownership_scan_fail_total", "AC1", emb)
     must("scan_fail_after", "AC1", emb)
     must("scan_fail_delta", "AC1", emb)
-    must("!scan_fail_delta", "AC1", emb)
+    # #2599: production gates via envframe_block = prod && scan_fail_delta,
+    # then envframe_ok &= !envframe_block (was direct !scan_fail_delta).
+    must("envframe_block = prod_for_densify && scan_fail_delta", "AC1", emb)
+    must("!envframe_block", "AC1", emb)
     # Issue stamp + fail-closed rationale comment.
     must("Issue #2497", "AC1", emb)
     must("pin_contract_held", "AC1", emb)  # source-cite proximity to #2266
@@ -112,9 +115,7 @@ def main() -> int:
     must("AC5", "AC5", test)
     must("scan_fail_baseline", "AC5", test)
     must("!scan_fail_delta", "AC5", test)
-    must("aura_add_issue_test(test_densify_ownership_scan_fail_gate)", "AC5", cmake)
-    must("aura_issue_test_link_light(test_densify_ownership_scan_fail_gate)", "AC5", cmake)
-    must("add_dependencies(all_test_issue_targets test_densify_ownership_scan_fail_gate)", "AC5", cmake)
+    must("tests/compiler/test_densify_ownership_scan_fail_gate.cpp", "AC5", cmake)  # batch member source (S5)
     must("check_densify_ownership_scan_fail_gate_2497", "AC5", build)
 
     # Self-test pass — exit 0 with no fails (rows above already encode the

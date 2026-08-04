@@ -1,7 +1,7 @@
 {
   "issue": 2562,
   "title": "Issue #2562: dual-field (pred+mid) require-or-drop coverage.",
-  "ok": "OK: Issue #2562 dual-field require-or-drop — all AC rows satisfied",
+  "ok": "OK: Issue #2562 dual-field require-or-drop \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -85,7 +85,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_coercion_dual_require"
+        "tests/compiler/test_coercion_dual_require.cpp"
       ]
     },
     {

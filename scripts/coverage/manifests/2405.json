@@ -104,7 +104,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mutation_hold_estimate"
+        "tests/compiler/test_mutation_hold_estimate.cpp"
       ]
     }
   ],

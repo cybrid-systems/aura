@@ -1,7 +1,7 @@
 {
   "issue": 2371,
   "title": "Issue #2371: cross-COW dual-epoch soft restamp vs hard-reject.",
-  "ok": "OK: Issue #2371 cross-COW soft migrate — all AC rows satisfied",
+  "ok": "OK: Issue #2371 cross-COW soft migrate \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -78,7 +78,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_cross_cow_soft_migrate"
+        "tests/compiler/test_cross_cow_soft_migrate.cpp"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "issue": 2348,
   "title": "Issue #2348: bidirectional check-mode for ADT match + GuardShape.",
-  "ok": "OK: Issue #2348 bidirectional match check-mode — all AC rows satisfied",
+  "ok": "OK: Issue #2348 bidirectional match check-mode \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -107,7 +107,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_bidirectional_match_check"
+        "tests/compiler/test_bidirectional_match_check.cpp"
       ]
     },
     {

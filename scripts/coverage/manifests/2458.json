@@ -95,7 +95,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_truncate_commit_gate"
+        "tests/compiler/test_truncate_commit_gate.cpp"
       ]
     }
   ],

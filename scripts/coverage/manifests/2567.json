@@ -1,7 +1,7 @@
 {
   "issue": 2567,
   "title": "Issue #2567: try/catch binds catch parameter for handler use.",
-  "ok": "OK: Issue #2567 try/catch bind — all AC rows satisfied",
+  "ok": "OK: Issue #2567 try/catch bind \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -73,7 +73,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_try_catch_bind"
+        "tests/compiler/test_try_catch_bind.cpp"
       ]
     },
     {

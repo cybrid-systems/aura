@@ -70,7 +70,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_verification_dirty_bits_lock"
+        "tests/core/test_verification_dirty_bits_lock.cpp"
       ]
     }
   ],

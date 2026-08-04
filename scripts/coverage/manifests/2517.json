@@ -1,7 +1,7 @@
 {
   "issue": 2517,
   "title": "Issue #2517: real-time longest outermost MutationBoundary hold probe.",
-  "ok": "OK: Issue #2517 mutation-hold-live — all AC rows satisfied",
+  "ok": "OK: Issue #2517 mutation-hold-live \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -113,7 +113,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mutation_hold_live"
+        "tests/compiler/test_mutation_hold_live.cpp"
       ]
     },
     {

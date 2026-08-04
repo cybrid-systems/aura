@@ -1,7 +1,7 @@
 {
   "issue": 2493,
-  "title": "Issue #2493: unify mutation_id source — WorkspaceEpoch Mutation over",
-  "ok": "OK: Issue #2493 audit mutation_id unify — all AC rows satisfied",
+  "title": "Issue #2493: unify mutation_id source \u2014 WorkspaceEpoch Mutation over",
+  "ok": "OK: Issue #2493 audit mutation_id unify \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -91,9 +91,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_audit_mutation_id_unify",
-        "aura_add_issue_test(test_audit_mutation_id_unify)",
-        "aura_issue_test_link_light(test_audit_mutation_id_unify)"
+        "tests/compiler/test_audit_mutation_id_unify.cpp"
       ]
     },
     {

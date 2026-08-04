@@ -55,7 +55,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_get_nodeview_snapshot"
+        "tests/core/test_get_nodeview_snapshot.cpp"
       ]
     }
   ],

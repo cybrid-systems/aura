@@ -40,7 +40,7 @@
       "path": "tests/core/test_gc_defer_overflow_policy_atomic.cpp",
       "contains": [
         "2429 AC4",
-        "HardFail overflow → false"
+        "HardFail overflow \u2192 false"
       ]
     },
     {
@@ -55,7 +55,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_gc_defer_overflow_policy_atomic"
+        "tests/core/test_gc_defer_overflow_policy_atomic.cpp"
       ]
     }
   ],

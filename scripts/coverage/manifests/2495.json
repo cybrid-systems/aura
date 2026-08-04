@@ -1,7 +1,7 @@
 {
   "issue": 2495,
   "title": "Issue #2495: Moving densify fail-closed on untracked external roots.",
-  "ok": "OK: Issue #2495 moving densify fail-closed — all AC rows satisfied",
+  "ok": "OK: Issue #2495 moving densify fail-closed \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -65,9 +65,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_moving_densify_fail_closed",
-        "aura_add_issue_test(test_moving_densify_fail_closed)",
-        "aura_issue_test_link_light(test_moving_densify_fail_closed)"
+        "tests/core/test_moving_densify_fail_closed.cpp"
       ]
     },
     {

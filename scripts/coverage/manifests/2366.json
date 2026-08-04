@@ -1,7 +1,7 @@
 {
   "issue": 2366,
   "title": "Issue #2366: per-entry epoch invariant walk + MustDeopt (#2304 follow-up).",
-  "ok": "OK: Issue #2366 epoch invariant per-entry walk — all AC rows satisfied",
+  "ok": "OK: Issue #2366 epoch invariant per-entry walk \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -92,7 +92,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_epoch_invariant_walk"
+        "tests/compiler/test_epoch_invariant_walk.cpp"
       ]
     },
     {

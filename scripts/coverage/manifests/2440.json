@@ -83,7 +83,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_soa_column_atomic"
+        "tests/core/test_soa_column_atomic.cpp"
       ]
     }
   ],

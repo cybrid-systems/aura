@@ -1,7 +1,7 @@
 {
   "issue": 2582,
   "title": "Issue #2582: pure-Aura hot strategy contracts.",
-  "ok": "OK: Issue #2582 pure-Aura hot strategy — all AC rows satisfied",
+  "ok": "OK: Issue #2582 pure-Aura hot strategy \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -41,7 +41,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_hot_strategy"
+        "tests/compiler/test_hot_strategy.cpp"
       ]
     },
     {

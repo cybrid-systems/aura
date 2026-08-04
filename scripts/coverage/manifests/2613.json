@@ -1,7 +1,7 @@
 {
   "issue": 2613,
   "title": "Issue #2613: unified query:type-linear-commit-health coverage.",
-  "ok": "OK: Issue #2613 type-linear-commit-health — all AC rows satisfied",
+  "ok": "OK: Issue #2613 type-linear-commit-health \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -84,7 +84,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_linear_commit_health"
+        "tests/compiler/test_type_linear_commit_health.cpp"
       ]
     },
     {

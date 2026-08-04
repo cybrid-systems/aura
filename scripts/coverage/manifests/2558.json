@@ -1,7 +1,7 @@
 {
   "issue": 2558,
   "title": "Issue #2558: coercion provenance completeness SLO coverage.",
-  "ok": "OK: Issue #2558 coercion provenance SLO — all AC rows satisfied",
+  "ok": "OK: Issue #2558 coercion provenance SLO \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -89,7 +89,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_coercion_prov_slo"
+        "tests/compiler/test_coercion_prov_slo.cpp"
       ]
     },
     {

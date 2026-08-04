@@ -1,7 +1,7 @@
 {
   "issue": 2557,
   "title": "Issue #2557: production soft lock-order audit coverage.",
-  "ok": "OK: Issue #2557 production soft lock-order audit — all AC rows satisfied",
+  "ok": "OK: Issue #2557 production soft lock-order audit \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -70,7 +70,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_lock_order_production_soft"
+        "tests/compiler/test_lock_order_production_soft.cpp"
       ]
     },
     {

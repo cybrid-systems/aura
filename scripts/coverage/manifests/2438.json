@@ -68,7 +68,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_arena_compact_notify_lifecycle"
+        "tests/core/test_arena_compact_notify_lifecycle.cpp"
       ]
     }
   ],

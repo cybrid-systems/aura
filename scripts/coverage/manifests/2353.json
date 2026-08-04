@@ -1,7 +1,7 @@
 {
   "issue": 2353,
   "title": "Issue #2353: post-densify / post-steal Linear+Type revalidate coverage.",
-  "ok": "OK: Issue #2353 post-densify Linear+Type revalidate — all AC rows satisfied",
+  "ok": "OK: Issue #2353 post-densify Linear+Type revalidate \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -144,7 +144,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_post_densify_linear_type_revalidate"
+        "tests/compiler/test_post_densify_linear_type_revalidate.cpp"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "issue": 2402,
   "title": "Issue #2402: incremental restamp default + generation wrap cost control.",
-  "ok": "OK: Issue #2402 restamp incremental default — all AC rows satisfied",
+  "ok": "OK: Issue #2402 restamp incremental default \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -90,7 +90,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_incremental_restamp"
+        "tests/core/test_incremental_restamp.cpp"
       ]
     }
   ],

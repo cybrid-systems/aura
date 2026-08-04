@@ -15,7 +15,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_grant_bound_mid_force"
+        "tests/compiler/test_grant_bound_mid_force.cpp"
       ]
     },
     {

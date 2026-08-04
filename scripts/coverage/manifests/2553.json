@@ -1,7 +1,7 @@
 {
   "issue": 2553,
   "title": "Issue #2553: single Agent commit-readiness score.",
-  "ok": "OK: Issue #2553 commit-readiness score — all AC rows satisfied",
+  "ok": "OK: Issue #2553 commit-readiness score \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -73,7 +73,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_commit_readiness_score"
+        "tests/compiler/test_commit_readiness_score.cpp"
       ]
     },
     {
