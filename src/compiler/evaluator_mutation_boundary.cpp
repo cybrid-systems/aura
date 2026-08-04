@@ -70,31 +70,11 @@ import aura.compiler.type_checker;    // Issue #2608: maybe_persist_occurrence_s
 
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
 
-namespace aura::compiler {
-struct TypeChecker {
-    std::size_t maybe_persist_occurrence_snapshot(std::uint64_t mutation_id = 0) noexcept {
-        (void)mutation_id;
-        return 0;
-    }
-};
-inline std::uint64_t current_ir_soa_generation_fence() noexcept {
-    return 0;
-}
-inline std::uint64_t coercion_provenance_completeness_bp() noexcept {
-    return 0;
-}
-inline bool maybe_soft_recover_or_escalate_blame(aura::ast::FlatAST& flat, std::uint64_t mid,
-                                                 bool had_miss_signal) noexcept {
-    (void)flat;
-    (void)mid;
-    (void)had_miss_signal;
-    return false;
-}
 // Issue #2640: production Restricted default periodic epoch-invariant soft walk
 // (gated by mode=Soft + production_defaults_active + steady_ms rate limit;
 // cheap on the quiet path, runs the existing #2541 soft walk when due).
-} // namespace aura::compiler
-
+// Note: do NOT stub TypeChecker here — module import aura.compiler.type_checker
+// is authoritative (#2641 / f0d7ca50).
 
 // Issue #2021: snapshot macro depth / concurrent peak into CompilerMetrics
 // on outermost MutationBoundaryGuard exit (module-safe C entry).
@@ -107,6 +87,18 @@ extern "C" std::uint64_t aura_jit_equivalence_runs_v_read(void) noexcept;
 extern "C" std::uint64_t aura_jit_equivalence_ok_v_read(void) noexcept;
 extern "C" std::uint64_t aura_jit_equivalence_mismatch_v_read(void) noexcept;
 extern "C" std::uint64_t aura_jit_equivalence_deopt_force_v_read(void) noexcept;
+
+// Issue #2641: C ABI for outermost-success OccurrenceGoal persist (tests + dtor).
+// Soft / env=0 / no type-checker → zero cost inside maybe_persist_occurrence_snapshot.
+extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
+                                                          std::uint64_t mutation_id) noexcept {
+    if (!ev_ptr)
+        return;
+    auto* ev = static_cast<aura::compiler::Evaluator*>(ev_ptr);
+    if (auto* tc = static_cast<aura::compiler::TypeChecker*>(ev->commit_type_checker_handle())) {
+        (void)tc->maybe_persist_occurrence_snapshot(mutation_id);
+    }
+}
 
 namespace aura::compiler {
 
@@ -2562,13 +2554,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_linear_revalidations.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #2608: optional OccurrenceGoal persist for cross-delta
+        // Issue #2608 / #2641: optional OccurrenceGoal persist for cross-delta
         // / multi-session replay after steal/densify prune. Soft default
         // OFF (zero cost); production or AURA_OCCURRENCE_PERSIST=1 writes.
-        if (auto* tc =
-                static_cast<aura::compiler::TypeChecker*>(ev_->commit_type_checker_handle())) {
+        // Production-default ON when env unset (#2641). Via C ABI so tests
+        // can exercise the same path without dtor internals.
+        {
             const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
-            (void)tc->maybe_persist_occurrence_snapshot(mid);
+            aura_outermost_success_persist_occurrence(ev_, mid);
         }
     } else if (outermost && !success) {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
