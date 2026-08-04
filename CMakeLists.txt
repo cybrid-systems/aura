@@ -4589,6 +4589,35 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_module_query_batch)
 endif()
 
+
+# Domain batch: JSON / IO / cap / regex / channel / string escape (10 members + driver). Stream A5.
+add_executable(test_json_io_cap_batch
+    tests/compiler/test_json_io_cap_batch.cpp
+    tests/compiler/test_channel_rendezvous_2483.cpp
+    tests/compiler/test_command_line_cap_io_read_2478.cpp
+    tests/compiler/test_eval_current_no_auto_fix_2484.cpp
+    tests/compiler/test_json_parse_number_exception_2480.cpp
+    tests/compiler/test_json_parse_object_grow_2481.cpp
+    tests/compiler/test_list_end_of_list_void_2482.cpp
+    tests/compiler/test_load_cap_io_read_2485.cpp
+    tests/compiler/test_regex_redos_timeout_2479.cpp
+    tests/compiler/test_sys_open_path_harden_2487.cpp
+    tests/compiler/test_write_string_escape_2574.cpp
+)
+set_property(TARGET test_json_io_cap_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_json_io_cap_batch PRIVATE src tests)
+target_compile_definitions(test_json_io_cap_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_json_io_cap_batch)
+target_link_libraries(test_json_io_cap_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_json_io_cap_batch)
+add_test(NAME test_json_io_cap_batch_verification COMMAND ./test_json_io_cap_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_json_io_cap_batch)
+endif()
+
 add_executable(test_misc_issue_fold_batch
     tests/compiler/test_misc_issue_fold_batch.cpp
     tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp
@@ -4599,8 +4628,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_bugfix_968.cpp
     tests/compiler/test_cascade_incremental_pass_suite_2044.cpp
     tests/compiler/test_cascade_skip_metrics_2106.cpp
-    tests/compiler/test_channel_rendezvous_2483.cpp
-    tests/compiler/test_command_line_cap_io_read_2478.cpp
     tests/compiler/test_commercial_tenant_profile_2584.cpp
     tests/compiler/test_commit_readiness_score_2553.cpp
     tests/compiler/test_compact_policy_2500.cpp
@@ -4616,7 +4643,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_epoch_invariant_soft_prod_2541.cpp
     tests/compiler/test_epoch_invariant_walk_2366.cpp
     tests/compiler/test_escape_move_elision_gate_2263.cpp
-    tests/compiler/test_eval_current_no_auto_fix_2484.cpp
     tests/compiler/test_frame_budget_cascade_isolation_2137.cpp
     tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp
     tests/compiler/test_gc_coord_scope_2131.cpp
@@ -4632,10 +4658,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_instr_impact_minimal_dirty_2126.cpp
     tests/compiler/test_instruction_level_impact_partial_2109.cpp
     tests/compiler/test_isolation_audit_mid_2156.cpp
-    tests/compiler/test_json_parse_number_exception_2480.cpp
-    tests/compiler/test_json_parse_object_grow_2481.cpp
-    tests/compiler/test_list_end_of_list_void_2482.cpp
-    tests/compiler/test_load_cap_io_read_2485.cpp
     tests/compiler/test_lock_order_audit_2316.cpp
     tests/compiler/test_lock_order_audit_2354.cpp
     tests/compiler/test_lock_order_production_soft_2557.cpp
@@ -4653,7 +4675,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_production_safety_1097.cpp
     tests/compiler/test_production_security_defaults_2053.cpp
     tests/compiler/test_production_stability_1014.cpp
-    tests/compiler/test_regex_redos_timeout_2479.cpp
     tests/compiler/test_rest_param_hygiene_2169.cpp
     tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp
     tests/compiler/test_reverify_expand_2356.cpp
@@ -4667,7 +4688,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_stdlib_production_review_923.cpp
     tests/compiler/test_subtype_constraint_meet_2195.cpp
     tests/compiler/test_symbol_eq_2568.cpp
-    tests/compiler/test_sys_open_path_harden_2487.cpp
     tests/compiler/test_timeout_repair_rich_roots_2548.cpp
     tests/compiler/test_truncate_commit_gate_2458.cpp
     tests/compiler/test_try_catch_bind_2567.cpp
@@ -4677,7 +4697,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_while_define_oneshot_2571.cpp
     tests/compiler/test_workspace_mtx_contention_2523.cpp
     tests/compiler/test_workspace_region_concurrency_2121.cpp
-    tests/compiler/test_write_string_escape_2574.cpp
     tests/core/test_arena_adaptive_compact_2059.cpp
     tests/core/test_arena_compact_hook_stats_2381.cpp
     tests/core/test_arena_compact_notify_lifecycle_2438.cpp

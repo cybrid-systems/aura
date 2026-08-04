@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 751 | Preferred destination suites |
-| **Total scanned** | **751** | |
+| `tests/core/test_*.cpp` | 752 | Preferred destination suites |
+| **Total scanned** | **752** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 49 | 49 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 129 | 129 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 44 | 44 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 45 | 45 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **80**
+- Existing `*_batch` drivers (migration milestones): **81**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -122,6 +122,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_issues_819_829_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` → theme `jit_incremental`
+- `tests/compiler/test_json_io_cap_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_linear_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_linear_misc_batch.cpp` → theme `linear_ownership`
 - `tests/compiler/test_linear_ownership_batch.cpp` → theme `linear_ownership`
@@ -498,6 +499,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_jit_metrics_stub.cpp`
 - `tests/orch/test_join_drain_reclaim_2227.cpp`
 - `tests/serve/test_join_drain_timeout_2153.cpp`
+- `tests/compiler/test_json_io_cap_batch.cpp`
 - `tests/compiler/test_json_parse_number_exception_2480.cpp`
 - `tests/compiler/test_json_parse_object_grow_2481.cpp`
 - `tests/core/test_last_validated_generation_atomic_2394.cpp`
@@ -1727,13 +1729,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention_2523.cpp` (#2523) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (44)
+### `uncategorized` — Uncategorized / mixed (45)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (44)
+#### domain/ (45)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1751,6 +1753,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_hash_iter_invalidation.cpp` (—) [domain_suite, theme_core] — test_hash_iter_invalidation.cpp - Issue #1398:
 - `tests/compiler/test_ir_const_string_intern_2573.cpp` (#2573) [domain_suite, theme_compiler] — AC1: IR-path loop with a string literal: heap growth O(1) not O(N)
 - `tests/compiler/test_ir_optimize_type_info_chain_2471.cpp` (#2471) [domain_suite, theme_compiler] — AC1: X→0→5 multi-step chain remaps uses to terminal source (not MAX)
+- `tests/compiler/test_json_io_cap_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_json_io_cap_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_json_parse_number_exception_2480.cpp` (#2480) [domain_suite, theme_compiler] — AC1: oversized integer → error (not crash)
 - `tests/compiler/test_json_parse_object_grow_2481.cpp` (#2481) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/compiler/test_list_end_of_list_void_2482.cpp` (#2482) [domain_suite, theme_compiler] — AC1: (null? 0) → false; (null? (list)) → true

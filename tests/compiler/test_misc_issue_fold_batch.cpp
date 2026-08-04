@@ -1,6 +1,6 @@
 // test_misc_issue_fold_batch.cpp — thematic multi-TU batch
 // Leftover issue-suffixed tests (W_other residual after Stream A splits)
-// Stream A4 of tests/CONSOLIDATION_PLAN.md — carved from misc_issue_fold.
+// Stream A5 of tests/CONSOLIDATION_PLAN.md — carved from misc_issue_fold.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
 #include "test_harness.hpp"
@@ -17,8 +17,6 @@ extern int run_test_aura_sandbox_env_2076();
 extern int run_test_bugfix_968();
 extern int run_test_cascade_incremental_pass_suite_2044();
 extern int run_test_cascade_skip_metrics_2106();
-extern int run_test_channel_rendezvous_2483();
-extern int run_test_command_line_cap_io_read_2478();
 extern int run_test_commercial_tenant_profile_2584();
 extern int run_test_commit_readiness_score_2553();
 extern int run_test_compact_policy_2500();
@@ -34,7 +32,6 @@ extern int run_test_epoch_invariant_complete_2501();
 extern int run_test_epoch_invariant_soft_prod_2541();
 extern int run_test_epoch_invariant_walk_2366();
 extern int run_test_escape_move_elision_gate_2263();
-extern int run_test_eval_current_no_auto_fix_2484();
 extern int run_test_frame_budget_cascade_isolation_2137();
 extern int run_test_gc_closures_mtx_flush_sweep_2473();
 extern int run_test_gc_coord_scope_2131();
@@ -50,10 +47,6 @@ extern int run_test_incremental_soundness_oracle_2113();
 extern int run_test_instr_impact_minimal_dirty_2126();
 extern int run_test_instruction_level_impact_partial_2109();
 extern int run_test_isolation_audit_mid_2156();
-extern int run_test_json_parse_number_exception_2480();
-extern int run_test_json_parse_object_grow_2481();
-extern int run_test_list_end_of_list_void_2482();
-extern int run_test_load_cap_io_read_2485();
 extern int run_test_lock_order_audit_2316();
 extern int run_test_lock_order_audit_2354();
 extern int run_test_lock_order_production_soft_2557();
@@ -71,7 +64,6 @@ extern int run_test_production_safety_1047();
 extern int run_test_production_safety_1097();
 extern int run_test_production_security_defaults_2053();
 extern int run_test_production_stability_1014();
-extern int run_test_regex_redos_timeout_2479();
 extern int run_test_rest_param_hygiene_2169();
 extern int run_test_rest_param_nested_qq_hygiene_2239();
 extern int run_test_reverify_expand_2356();
@@ -85,7 +77,6 @@ extern int run_test_stable_ref_wire_v2_2198();
 extern int run_test_stdlib_production_review_923();
 extern int run_test_subtype_constraint_meet_2195();
 extern int run_test_symbol_eq_2568();
-extern int run_test_sys_open_path_harden_2487();
 extern int run_test_timeout_repair_rich_roots_2548();
 extern int run_test_truncate_commit_gate_2458();
 extern int run_test_try_catch_bind_2567();
@@ -95,7 +86,6 @@ extern int run_test_value_tag_hotpath_ban_2616();
 extern int run_test_while_define_oneshot_2571();
 extern int run_test_workspace_mtx_contention_2523();
 extern int run_test_workspace_region_concurrency_2121();
-extern int run_test_write_string_escape_2574();
 extern int run_test_arena_adaptive_compact_2059();
 extern int run_test_arena_compact_hook_stats_2381();
 extern int run_test_arena_compact_notify_lifecycle_2438();
@@ -134,7 +124,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_misc_issue_fold_batch (119 members) ===");
+    std::println("=== test_misc_issue_fold_batch (109 members) ===");
 
     std::println("\n──── test_adaptive_cascade_depth_partial_thr_2209 ────");
     g_passed = 0;
@@ -235,31 +225,6 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_cascade_skip_metrics_2106 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_channel_rendezvous_2483 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_channel_rendezvous_2483() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_channel_rendezvous_2483 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_channel_rendezvous_2483 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_command_line_cap_io_read_2478 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_command_line_cap_io_read_2478() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println(
-            "FAIL member test_command_line_cap_io_read_2478 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_command_line_cap_io_read_2478 ({} checks)", g_passed);
     }
 
     std::println("\n──── test_commercial_tenant_profile_2584 ────");
@@ -452,19 +417,6 @@ int main() {
         std::println("OK member test_escape_move_elision_gate_2263 ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_eval_current_no_auto_fix_2484 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_eval_current_no_auto_fix_2484() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println(
-            "FAIL member test_eval_current_no_auto_fix_2484 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_eval_current_no_auto_fix_2484 ({} checks)", g_passed);
-    }
-
     std::println("\n──── test_frame_budget_cascade_isolation_2137 ────");
     g_passed = 0;
     g_failed = 0;
@@ -648,55 +600,6 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_isolation_audit_mid_2156 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_json_parse_number_exception_2480 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_json_parse_number_exception_2480() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println(
-            "FAIL member test_json_parse_number_exception_2480 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_json_parse_number_exception_2480 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_json_parse_object_grow_2481 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_json_parse_object_grow_2481() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_json_parse_object_grow_2481 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_json_parse_object_grow_2481 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_list_end_of_list_void_2482 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_list_end_of_list_void_2482() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_list_end_of_list_void_2482 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_list_end_of_list_void_2482 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_load_cap_io_read_2485 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_load_cap_io_read_2485() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_load_cap_io_read_2485 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_load_cap_io_read_2485 ({} checks)", g_passed);
     }
 
     std::println("\n──── test_lock_order_audit_2316 ────");
@@ -908,18 +811,6 @@ int main() {
         std::println("OK member test_production_stability_1014 ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_regex_redos_timeout_2479 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_regex_redos_timeout_2479() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_regex_redos_timeout_2479 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_regex_redos_timeout_2479 ({} checks)", g_passed);
-    }
-
     std::println("\n──── test_rest_param_hygiene_2169 ────");
     g_passed = 0;
     g_failed = 0;
@@ -1081,18 +972,6 @@ int main() {
         std::println("OK member test_symbol_eq_2568 ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_sys_open_path_harden_2487 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_sys_open_path_harden_2487() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_sys_open_path_harden_2487 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_sys_open_path_harden_2487 ({} checks)", g_passed);
-    }
-
     std::println("\n──── test_timeout_repair_rich_roots_2548 ────");
     g_passed = 0;
     g_failed = 0;
@@ -1202,18 +1081,6 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_workspace_region_concurrency_2121 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_write_string_escape_2574 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_write_string_escape_2574() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_write_string_escape_2574 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_write_string_escape_2574 ({} checks)", g_passed);
     }
 
     std::println("\n──── test_arena_adaptive_compact_2059 ────");
