@@ -74,12 +74,26 @@ std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_total_{0};
 // for AC1 root count bound + dashboards.
 std::atomic<std::uint64_t> Fiber::orphan_roots_dropped_on_reclaim_total_{0};
 std::atomic<std::uint64_t> Fiber::orphan_roots_hwm_{0};
+// Issue #2636: residual reclaim observability — process-wide body-age
+// + force-safepoint opt-in counters (max via CAS under contention).
+std::atomic<std::uint64_t> Fiber::join_drain_residual_body_age_ms_max_{0};
+std::atomic<std::uint64_t> Fiber::join_drain_residual_body_age_ms_sum_{0};
+std::atomic<std::uint64_t> Fiber::join_drain_residual_body_age_samples_{0};
+std::atomic<std::uint64_t> Fiber::force_safepoint_on_orphan_total_{0};
 
 // Issue #2397: optional orch dashboard mirror (weak no-op when orch not linked;
 // strong defs in evaluator_fiber_mutation.cpp bump OrchModuleStats).
 extern "C" void aura_orch_note_join_drain_reclaim_still_running() __attribute__((weak));
 extern "C" void aura_orch_note_join_drain_reclaim_body_retired() __attribute__((weak));
 extern "C" void aura_orch_note_join_drain_reclaim_still_running_drop() __attribute__((weak));
+// Issue #2636: residual reclaim observability — env flag + orch mirror hooks.
+// Weak no-op when orch module not linked; strong defs in
+// evaluator_fiber_mutation.cpp read AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN
+// (default ON = preserve #2533 production behavior) and bump the
+// OrchModuleStats counters for body-age + env-opt-in force-safepoint path.
+extern "C" int aura_force_safepoint_on_orphan_enabled_default() __attribute__((weak));
+extern "C" void aura_orch_note_residual_body_age_ms(std::uint64_t age_ms) __attribute__((weak));
+extern "C" void aura_orch_bump_force_safepoint_on_orphan_total() __attribute__((weak));
 
 namespace {
     // Saturating decrement for still-running gauge (never wraps under 0).
@@ -493,11 +507,33 @@ void Fiber::mark_reclaimed() noexcept {
     const bool was = reclaimed_.exchange(true, std::memory_order_acq_rel);
     if (was)
         return;
+    // Issue #2636: record body-age start timestamp (steady_clock ns).
+    // Read+cleared at note_body_exit_if_reclaimed / ~Fiber (abandon).
+    const auto now_ns =
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count());
+    body_reclaim_start_ns_.store(now_ns, std::memory_order_release);
     // Issue #2533: nudge residual body to cooperative edges (cancel +
     // force-safepoint). Ok/done path above returns early — zero cost.
+    // Issue #2636: env-gated — default ON preserves #2533 production
+    // behavior; env AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN=0 enables
+    // Soft/Off metric-only mode (cancel still fires, force-safepoint
+    // skipped, body-age still observed).
     request_cancel();
-    request_force_safepoint();
-    residual_force_safepoint_total_.fetch_add(1, std::memory_order_relaxed);
+    const bool force_safepoint_on = aura_force_safepoint_on_orphan_enabled_default
+                                        ? (aura_force_safepoint_on_orphan_enabled_default() != 0)
+                                        : true; // weak default = preserve #2533 behavior
+    if (force_safepoint_on) {
+        request_force_safepoint();
+        residual_force_safepoint_total_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2636: env-opt-in path counter (separate from #2533
+        // unconditional residual_force_safepoint_total_ semantic; tracks
+        // the actual env-ON force-safepoint calls).
+        force_safepoint_on_orphan_total_.fetch_add(1, std::memory_order_relaxed);
+        if (aura_orch_bump_force_safepoint_on_orphan_total)
+            aura_orch_bump_force_safepoint_on_orphan_total();
+    }
     // Body already returned — logical reclaim of a finished fiber
     // is a no-op for the still-running gauge (zero extra cost beyond
     // the exchange already paid by the reclaim path).
@@ -515,10 +551,53 @@ std::uint64_t Fiber::residual_force_safepoint_total() noexcept {
 std::uint64_t Fiber::residual_cpu_budget_exceeded_total() noexcept {
     return residual_cpu_budget_exceeded_total_.load(std::memory_order_relaxed);
 }
+// Issue #2636: residual reclaim observability accessors.
+std::uint64_t Fiber::join_drain_residual_body_age_ms_max() noexcept {
+    return join_drain_residual_body_age_ms_max_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::join_drain_residual_body_age_ms_sum() noexcept {
+    return join_drain_residual_body_age_ms_sum_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::join_drain_residual_body_age_samples() noexcept {
+    return join_drain_residual_body_age_samples_.load(std::memory_order_relaxed);
+}
+std::uint64_t Fiber::force_safepoint_on_orphan_total() noexcept {
+    return force_safepoint_on_orphan_total_.load(std::memory_order_relaxed);
+}
+bool Fiber::force_safepoint_on_orphan_enabled() noexcept {
+    // Weak default = preserve #2533 production behavior (no env set = on).
+    return aura_force_safepoint_on_orphan_enabled_default
+               ? (aura_force_safepoint_on_orphan_enabled_default() != 0)
+               : true;
+}
 
 void Fiber::note_body_exit_if_reclaimed() noexcept {
     if (!reclaimed_.load(std::memory_order_acquire))
         return;
+    // Issue #2636: finalize body-age — compute elapsed ms from
+    // mark_reclaimed → now, update max (CAS) / sum / samples, mirror
+    // via weak hook to OrchModuleStats, clear timestamp.
+    {
+        const auto start_ns = body_reclaim_start_ns_.load(std::memory_order_acquire);
+        if (start_ns != 0) {
+            const auto now_ns =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count());
+            const auto age_ms = (now_ns > start_ns) ? ((now_ns - start_ns) / 1000000ull) : 0ull;
+            auto cur = join_drain_residual_body_age_ms_max_.load(std::memory_order_relaxed);
+            while (age_ms > cur) {
+                if (join_drain_residual_body_age_ms_max_.compare_exchange_weak(
+                        cur, age_ms, std::memory_order_acq_rel, std::memory_order_relaxed))
+                    break;
+            }
+            join_drain_residual_body_age_ms_sum_.fetch_add(age_ms, std::memory_order_relaxed);
+            join_drain_residual_body_age_samples_.fetch_add(1, std::memory_order_relaxed);
+            if (aura_orch_note_residual_body_age_ms)
+                aura_orch_note_residual_body_age_ms(age_ms);
+            body_reclaim_start_ns_.store(0, std::memory_order_release);
+        }
+    }
     // Pair the still-running +1 from mark_reclaimed (exactly once).
     const bool counted =
         still_running_after_reclaim_counted_.exchange(false, std::memory_order_acq_rel);
@@ -540,6 +619,31 @@ std::uint64_t Fiber::join_drain_residual_body_retired_total() noexcept {
 // ── Destructor ───────────────────────────────────────
 
 Fiber::~Fiber() {
+    // Issue #2636: finalize body-age for the abandon path (no
+    // note_body_exit_if_reclaimed in this case). Same CAS-update as
+    // note_body_exit_if_reclaimed — body may have been reclaimed
+    // then Fiber destroyed before body returned.
+    {
+        const auto start_ns = body_reclaim_start_ns_.load(std::memory_order_acquire);
+        if (start_ns != 0) {
+            const auto now_ns =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                               std::chrono::steady_clock::now().time_since_epoch())
+                                               .count());
+            const auto age_ms = (now_ns > start_ns) ? ((now_ns - start_ns) / 1000000ull) : 0ull;
+            auto cur = join_drain_residual_body_age_ms_max_.load(std::memory_order_relaxed);
+            while (age_ms > cur) {
+                if (join_drain_residual_body_age_ms_max_.compare_exchange_weak(
+                        cur, age_ms, std::memory_order_acq_rel, std::memory_order_relaxed))
+                    break;
+            }
+            join_drain_residual_body_age_ms_sum_.fetch_add(age_ms, std::memory_order_relaxed);
+            join_drain_residual_body_age_samples_.fetch_add(1, std::memory_order_relaxed);
+            if (aura_orch_note_residual_body_age_ms)
+                aura_orch_note_residual_body_age_ms(age_ms);
+            body_reclaim_start_ns_.store(0, std::memory_order_release);
+        }
+    }
     // Issue #2397: reaper destroyed Fiber while body never returned
     // (or body never started). Drop still-running gauge without
     // bumping retired — body did not exit cleanly after reclaim.

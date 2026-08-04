@@ -4121,6 +4121,32 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2533", 2533);
             insert_kv("issue-2533", 2533);
             insert_kv("residual-force-safepoint-wired", 1);
+            // Issue #2636: residual reclaim observability — body-age tracking
+            // (steady_clock ns at mark_reclaimed → body exit / Fiber dtor).
+            // gauge on max/sum (CAS on max under contention); counter on samples.
+            // Source of truth is Fiber statics; OrchModuleStats mirrors via
+            // aura_orch_note_residual_body_age_ms weak hook. force_safepoint_on_orphan_total
+            // tracks the env-opt-in path explicitly (separate from #2533
+            // unconditional residual_force_safepoint_total_ semantic).
+            insert_kv("join-drain-residual-body-age-ms-max",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::join_drain_residual_body_age_ms_max()));
+            insert_kv("join-drain-residual-body-age-ms-sum",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::join_drain_residual_body_age_ms_sum()));
+            insert_kv("join-drain-residual-body-age-samples",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::join_drain_residual_body_age_samples()));
+            insert_kv(
+                "force-safepoint-on-orphan-total",
+                static_cast<std::int64_t>(aura::serve::Fiber::force_safepoint_on_orphan_total()));
+            insert_kv("force-safepoint-on-orphan-enabled",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::force_safepoint_on_orphan_enabled() ? 1 : 0));
+            insert_kv("schema-2636", 2636);
+            insert_kv("issue-2636", 2636);
+            insert_kv("residual-body-age-wired", 1);
+            insert_kv("force-safepoint-on-orphan-wired", 1);
             // Issue #2540: cooperative yield contract (max_no_yield_ms).
             insert_kv("agent-forced-yield-total",
                       static_cast<std::int64_t>(

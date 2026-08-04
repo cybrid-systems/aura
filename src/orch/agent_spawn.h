@@ -298,6 +298,18 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> join_drain_residual_still_running{0};
     std::atomic<std::uint64_t> join_drain_residual_body_retired_total{0};
     std::atomic<std::uint64_t> join_drain_us_total{0};
+    // Issue #2636: residual reclaim observability — body-age tracking
+    // (steady_clock ns at mark_reclaimed → body exit / Fiber dtor).
+    // gauge on max/sum (CAS on max under contention); counter on samples.
+    // force_safepoint_on_orphan_total tracks the env-opt-in path
+    // explicitly (separate from #2533 unconditional residual_force_safepoint_total_
+    // which tracks the underlying nudge regardless of opt-in state).
+    // Mirrored from Fiber statics via aura_orch_note_residual_body_age_ms +
+    // aura_orch_bump_force_safepoint_on_orphan_total weak hooks.
+    std::atomic<std::uint64_t> join_drain_residual_body_age_ms_max{0};
+    std::atomic<std::uint64_t> join_drain_residual_body_age_ms_sum{0};
+    std::atomic<std::uint64_t> join_drain_residual_body_age_samples{0};
+    std::atomic<std::uint64_t> force_safepoint_on_orphan_total{0};
     // Issue #2229: supervision policy metrics (parallel batch
     // FailurePolicy #2007 + RestartN extension). Bumped by
     // AgentScope::watch_all(AgentFailurePolicy) when on_stall ==
@@ -384,6 +396,47 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> orch_hot_update_health_throttle_total{0};
     std::atomic<std::int64_t> orch_hot_update_health_last_force_reason{0};
 };
+
+// Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
+// Default ON preserves the existing #2533 unconditional force-safepoint
+// behavior (production baseline). Set AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN=0
+// for Soft / Off metric-only mode (no force-safepoint call — only observe).
+// Cached on first call; production-side resolver lives in
+// evaluator_fiber_mutation.cpp (aura_force_safepoint_on_orphan_enabled_default
+// weak hook). This orch-side accessor is the strong-def reader that the
+// weak hook falls back to when the orch module is linked into serve-only
+// binaries without the evaluator.
+[[nodiscard]] inline bool resolve_force_safepoint_on_orphan_enabled() noexcept {
+    static const bool cached = []() {
+        const char* e = std::getenv("AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN");
+        if (!e || *e == '\0')
+            return true; // default = production (preserve #2533 behavior)
+        const std::string s(e);
+        return !(s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF");
+    }();
+    return cached;
+}
+
+// Issue #2636: bump body-age stats — max via CAS, sum/samples always.
+// age_ms is the elapsed milliseconds from mark_reclaimed → body exit
+// or Fiber dtor abandon. Idempotent on zero (caller checks start_ns!=0).
+inline void note_residual_body_age_ms(std::uint64_t age_ms) noexcept {
+    auto& os = g_orch_module_stats;
+    auto cur = os.join_drain_residual_body_age_ms_max.load(std::memory_order_relaxed);
+    while (age_ms > cur) {
+        if (os.join_drain_residual_body_age_ms_max.compare_exchange_weak(
+                cur, age_ms, std::memory_order_acq_rel, std::memory_order_relaxed))
+            break;
+    }
+    os.join_drain_residual_body_age_ms_sum.fetch_add(age_ms, std::memory_order_relaxed);
+    os.join_drain_residual_body_age_samples.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2636: bump env-opt-in force-safepoint counter (called by
+// aura_orch_bump_force_safepoint_on_orphan_total weak hook from fiber.cpp).
+inline void bump_force_safepoint_on_orphan_total() noexcept {
+    g_orch_module_stats.force_safepoint_on_orphan_total.fetch_add(1, std::memory_order_relaxed);
+}
 
 // Issue #2008: conventional mailbox keepalive payload prefix.
 // Payload form: "keepalive:<steady_us>" with MailPriority::High.
