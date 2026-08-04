@@ -829,21 +829,27 @@ resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
     if (rq != 0)
         return rq;
     // Issue #2635: production mid-fallback SLO hard-deny. Under production
-    // defaults (or Full strategy / Strict — same hard-deny gate as the
-    // existing capture_security_correlated_audit path), if the live
-    // mid-fallback rate already exceeds the SLO threshold, refuse the
-    // last-resort process-origin stamp (return 0) so callers can deny
-    // or re-stamp with a real mid. The schedule-gate (#2630) is the
-    // primary *admission* control; this is the secondary *resolve-time*
-    // hard face so residual paths cannot silently degrade SE ↔
-    // TypedMutationAudit ↔ CapabilityGrant epoch alignment after the
-    // gate admits the call. Soft / AURA_SANDBOX=off / Sampled callers
-    // continue to allow fallback + only bump counters (AC parity with
-    // #2594; AC3 explicit). The input snapshot is best-effort
-    // (load-relaxed) — same generation check race window as #2594.
-    const bool hard_deny_eligible = production_defaults_active() ||
-                                    get_strategy() == AuditStrategy::Full ||
-                                    get_strategy() == AuditStrategy::Strict;
+    // defaults (or Full strategy — same hard-deny gate as the existing
+    // capture_security_correlated_audit path at line 362/363), if the
+    // live mid-fallback rate already exceeds the SLO threshold, refuse
+    // the last-resort process-origin stamp (return 0) so callers can
+    // deny or re-stamp with a real mid. The schedule-gate (#2630) is
+    // the primary *admission* control; this is the secondary
+    // *resolve-time* hard face so residual paths cannot silently
+    // degrade SE ↔ TypedMutationAudit ↔ CapabilityGrant epoch
+    // alignment after the gate admits the call. Soft /
+    // AURA_SANDBOX=off / Sampled callers continue to allow fallback +
+    // only bump counters (AC parity with #2594; AC3 explicit). The
+    // input snapshot is best-effort (load-relaxed) — same generation
+    // check race window as #2594.
+    //
+    // #2636 follow-up: removed the erroneous `AuditStrategy::Strict`
+    // arm that the repro build's -Werror caught — AuditStrategy only
+    // has {Off, Sampled, Full}; the "Strict" gating is expressed via
+    // the separate `strict_sandbox` bool passed to the existing
+    // capture_security_correlated_audit path, not via an enum value.
+    const bool hard_deny_eligible =
+        production_defaults_active() || get_strategy() == AuditStrategy::Full;
     if (hard_deny_eligible) {
         const MidFallbackSloInput slo{
             .fallback_gen = g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(

@@ -2610,12 +2610,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // stable_ref_handoff_reject_total counter bumps (distinct
                 // from query-time export-stale-reject — see AC2 / linter).
                 // 2632 AC4: parallel-intend result packaging wire-up.
-                if (types::is_closure(val) && workspace_flat_) {
+                if (types::is_closure(val) && ev.workspace_flat_) {
                     const auto cid = types::as_closure_id(val);
                     if (cid < ev.closures_.size()) {
                         const auto& cl = ev.closures_[cid];
                         if (cl.body_id != aura::ast::NULL_NODE) {
-                            auto ref = workspace_flat_->make_ref(cl.body_id);
+                            auto ref = ev.workspace_flat_->make_ref(cl.body_id);
                             ref.tenant_id = ev.capability_tenant_id_;
                             ref.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
                             (void)ev.handoff_ref(std::move(ref));

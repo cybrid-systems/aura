@@ -65,7 +65,15 @@ def main() -> int:
     # AC3: Soft / sandbox off → fallback always allowed
     # (The hard_deny_eligible gate is the production+strict path; soft
     # paths skip the gate and fall through to the existing fallback.)
-    must("get_strategy() == AuditStrategy::Strict", "AC3", tma)  # hard_deny_eligible arm
+    # #2636 follow-up: removed 'AuditStrategy::Strict' — the AuditStrategy enum
+    # at typed_mutation_audit.h:39-43 only has {Off, Sampled, Full}. The issue
+    # body (#2635) mentioned "Strict" as a security profile, but the actual
+    # enum value doesn't exist (the related boolean is the separate
+    # strict_sandbox parameter). Existing code at typed_mutation_audit.h:362-363
+    # uses 'AuditStrategy::Full' only. The hard_deny_eligible gate therefore
+    # reads 'production_defaults_active() || AuditStrategy::Full' — verified.
+    must("hard_deny_eligible", "AC3", tma)  # gate is production_defaults || Full
+    must("AuditStrategy::Full", "AC3", tma)  # the actual enum value used
     must("soft_mode", "AC3", slo)  # SLO soft_mode field (§#2594)
 
     # AC4: schedule-gate (#2630) sees the same SLO signal
