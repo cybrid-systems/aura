@@ -651,6 +651,29 @@ public:
     // Process-wide metrics (#2533).
     [[nodiscard]] static std::uint64_t residual_force_safepoint_total() noexcept;
     [[nodiscard]] static std::uint64_t residual_cpu_budget_exceeded_total() noexcept;
+    // Issue #2636: residual reclaim observability — process-wide body-age
+    // gauges + samples counter (set at mark_reclaimed, observed at body
+    // exit / Fiber dtor abandon). force_safepoint_on_orphan_total tracks
+    // the env-opt-in path explicitly (separate from #2533 unconditional
+    // residual_force_safepoint_total_). force_safepoint_on_orphan_enabled
+    // returns the cached env-flag value (default true = preserve #2533).
+    [[nodiscard]] static std::uint64_t join_drain_residual_body_age_ms_max() noexcept;
+    [[nodiscard]] static std::uint64_t join_drain_residual_body_age_ms_sum() noexcept;
+    [[nodiscard]] static std::uint64_t join_drain_residual_body_age_samples() noexcept;
+    [[nodiscard]] static std::uint64_t force_safepoint_on_orphan_total() noexcept;
+    [[nodiscard]] static bool force_safepoint_on_orphan_enabled() noexcept;
+    // Issue #2636: per-fiber body-age timestamp — steady_clock ns at
+    // mark_reclaimed (0 = no active reclaim). Read+cleared at
+    // note_body_exit_if_reclaimed and ~Fiber (abandon path).
+    [[nodiscard]] std::uint64_t body_reclaim_start_ns() const noexcept {
+        return body_reclaim_start_ns_.load(std::memory_order_acquire);
+    }
+    void set_body_reclaim_start_ns(std::uint64_t ns) noexcept {
+        body_reclaim_start_ns_.store(ns, std::memory_order_release);
+    }
+    void clear_body_reclaim_start_ns() noexcept {
+        body_reclaim_start_ns_.store(0, std::memory_order_release);
+    }
     // Issue #2227: owner Scheduler back-pointer accessor. Returns
     // nullptr for fibers created outside a Scheduler (test / host
     // thread / static Fibers); the orch join path skips the
@@ -1001,6 +1024,9 @@ private:
     // still-running gauge (mark_reclaimed while !Done). Cleared by
     // note_body_exit_if_reclaimed or ~Fiber (abandon without retired).
     std::atomic<bool> still_running_after_reclaim_counted_{false};
+    // Issue #2636: steady_clock ns at mark_reclaimed (0 = no active reclaim).
+    // Read+cleared at note_body_exit_if_reclaimed / ~Fiber (abandon path).
+    std::atomic<std::uint64_t> body_reclaim_start_ns_{0};
 
     // Issue #2498: per-fiber off-stack orphan-root table. Protected by
     // orphan_roots_mtx_ — registrations come from the body's worker thread
@@ -1034,6 +1060,12 @@ private:
     // Issue #2533: force-safepoint / residual CPU budget metrics.
     static std::atomic<std::uint64_t> residual_force_safepoint_total_;
     static std::atomic<std::uint64_t> residual_cpu_budget_exceeded_total_;
+    // Issue #2636: residual reclaim observability — process-wide body-age
+    // + force-safepoint opt-in counters (max via CAS under contention).
+    static std::atomic<std::uint64_t> join_drain_residual_body_age_ms_max_;
+    static std::atomic<std::uint64_t> join_drain_residual_body_age_ms_sum_;
+    static std::atomic<std::uint64_t> join_drain_residual_body_age_samples_;
+    static std::atomic<std::uint64_t> force_safepoint_on_orphan_total_;
     // Issue #1597 join latency histogram (process-wide).
     static std::atomic<std::uint64_t> join_latency_hist_[kJoinLatencyHistBuckets];
 };

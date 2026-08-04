@@ -1308,7 +1308,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_prompt6_full_memory_safety_fuzz_stress.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_full_memory_safety_fuzz_stress.cpp — Issue #602:
 - `tests/compiler/test_propagate_marker_cycle_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1679/#1682/#1782 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_residual_defer_steal_hard_and_2546.cpp` (#2546) [domain_suite, theme_serve] — AC1: Hard + residual non-zero after clear → fiber Cancel+Done; hard-fail +1
-- `tests/serve/test_residual_force_safepoint_2533.cpp` (#2533) [small, domain_suite, theme_serve] — AC1: mark_reclaimed requests force_safepoint + cancel
+- `tests/serve/test_residual_force_safepoint_2533.cpp` (#2533) [domain_suite, theme_serve] — Issue #2636 — residual reclaim body-age + env-opt-in force-safepoint
 - `tests/core/test_restore_children_structural_lock_2455.cpp` (#2455) [domain_suite, theme_core] — AC1: restore_children without external guard restores correctly (self-locks)
 - `tests/compiler/test_runtime_concurrent_full_cycle_chaos.cpp` (—) [domain_suite, theme_compiler] — test_runtime_concurrent_full_cycle_chaos.cpp — Issue #755:
 - `tests/serve/test_runtime_mutation_boundary_steal_safety.cpp` (—) [domain_suite, theme_serve] — test_runtime_mutation_boundary_steal_safety.cpp — Issue #588:

@@ -194,6 +194,40 @@ int main() {
         reset_counters();
     }
 
-    std::println("\n=== #2589: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    // ── #2636 AC1 + AC2 + AC5: body-age + force-safepoint opt-in facade keys ──
+    // 2636 AC5 — facade keys + schema/sentinel/wired flags (linter marker).
+    {
+        std::println("\n--- #2636 AC1+AC2+AC5: body-age + env-opt-in facade ---");
+        // Snapshot Fiber process-wide counters (delta-based to avoid touching
+        // Fiber statics from this file — Fiber statics reset lives in
+        // test_residual_force_safepoint_2533.cpp unit test).
+        const auto age_max_before = aura::serve::Fiber::join_drain_residual_body_age_ms_max();
+        const auto age_sum_before = aura::serve::Fiber::join_drain_residual_body_age_ms_sum();
+        const auto age_samples_before = aura::serve::Fiber::join_drain_residual_body_age_samples();
+        const auto fso_before = aura::serve::Fiber::force_safepoint_on_orphan_total();
+
+        // AC5: query keys + schema/sentinel/wired flags present.
+        CHECK(href(cs, "join-drain-residual-body-age-ms-max") ==
+                  static_cast<std::int64_t>(age_max_before),
+              "AC5: facade exposes join-drain-residual-body-age-ms-max");
+        CHECK(href(cs, "join-drain-residual-body-age-ms-sum") ==
+                  static_cast<std::int64_t>(age_sum_before),
+              "AC5: facade exposes join-drain-residual-body-age-ms-sum");
+        CHECK(href(cs, "join-drain-residual-body-age-samples") ==
+                  static_cast<std::int64_t>(age_samples_before),
+              "AC5: facade exposes join-drain-residual-body-age-samples");
+        CHECK(href(cs, "force-safepoint-on-orphan-total") == static_cast<std::int64_t>(fso_before),
+              "AC5: facade exposes force-safepoint-on-orphan-total");
+        CHECK(href(cs, "force-safepoint-on-orphan-enabled") == 1,
+              "AC5/AC3: default env = ON (preserves #2533 production behavior)");
+        CHECK(href(cs, "schema-2636") == 2636, "AC5: schema-2636 present");
+        CHECK(href(cs, "issue-2636") == 2636, "AC5: issue-2636 present");
+        CHECK(href(cs, "residual-body-age-wired") == 1,
+              "AC5: residual-body-age-wired sentinel = 1");
+        CHECK(href(cs, "force-safepoint-on-orphan-wired") == 1,
+              "AC5: force-safepoint-on-orphan-wired sentinel = 1");
+    }
+
+    std::println("\n=== #2589+#2636: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

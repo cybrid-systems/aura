@@ -2302,6 +2302,36 @@ extern "C" void aura_orch_note_join_drain_reclaim_still_running_drop() {
     }
 }
 
+// Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
+// Weak default ON (preserve #2533 production behavior when orch not linked).
+// When orch/evaluator is linked, this strong def reads the env once and
+// caches the result. Set AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN=0 for Soft /
+// Off metric-only mode (cancel still fires, force-safepoint skipped).
+extern "C" int aura_force_safepoint_on_orphan_enabled_default() {
+    static const int cached = []() {
+        const char* e = std::getenv("AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN");
+        if (!e || *e == '\0')
+            return 1; // default = production (preserve #2533 behavior)
+        const std::string s(e);
+        const bool enabled = !(s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF");
+        return enabled ? 1 : 0;
+    }();
+    return cached;
+}
+
+// Issue #2636: residual body-age → OrchModuleStats mirror (called by
+// fiber.cpp on body exit / dtor). Strong def bumps g_orch_module_stats
+// body_age_ms_max via CAS + _sum + _samples.
+extern "C" void aura_orch_note_residual_body_age_ms(std::uint64_t age_ms) {
+    aura::orch::note_residual_body_age_ms(age_ms);
+}
+
+// Issue #2636: env-opt-in force-safepoint counter mirror (called by
+// fiber.cpp mark_reclaimed when env flag is on).
+extern "C" void aura_orch_bump_force_safepoint_on_orphan_total() {
+    aura::orch::bump_force_safepoint_on_orphan_total();
+}
+
 // Returns 0 if deliverable, 1 if linear/StableNodeRef violation (drop message).
 extern "C" int aura_evaluator_mailbox_linear_check(std::uint64_t from_fiber, std::uint64_t to_fiber,
                                                    const char* payload, std::size_t payload_len) {

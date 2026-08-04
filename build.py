@@ -2712,6 +2712,28 @@ def cmd_join_drain_reclaim_still_running_coverage():
     return 0
 
 
+def cmd_residual_body_age_coverage():
+    """Issue #2636: residual reclaim observability — body-age + env-opt-in force-safepoint.
+
+    Per-fiber body_reclaim_start_ns timestamp at mark_reclaimed; finalize
+    on body exit or Fiber dtor (CAS-update age_ms_max, age_ms_sum,
+    age_samples); OrchModuleStats mirror; env-flag-gated force-safepoint
+    on the env-opt-in path (default ON preserves #2533 production);
+    query:orch-module-stats keys + schema/issue/wired sentinels.
+    """
+    print(f"{B}=== residual body-age coverage (#2636) ==={N}")
+    script = ROOT / "scripts" / "check_residual_body_age_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual body-age (#2636) coverage contract rows failed")
+        return 1
+    ok("residual body-age (#2636) coverage clean")
+    return 0
+
+
 def cmd_mailbox_bp_recent_window_coverage():
     """Issue #2398: mailbox_bp_recent_total quiet-period window for BP admit.
 
@@ -7369,6 +7391,7 @@ def cmd_gate():
         or cmd_stable_ref_wire_endian_coverage()
         or cmd_orphan_reap_tick_coverage()
         or cmd_join_drain_reclaim_still_running_coverage()
+        or cmd_residual_body_age_coverage()
         or cmd_mailbox_bp_recent_window_coverage()
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()
