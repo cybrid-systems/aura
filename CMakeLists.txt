@@ -4558,6 +4558,37 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_ir_closure_jit_misc_batch)
 endif()
 
+
+# Domain batch: Module load/rebind/export + query hygiene/index (12 members + driver). Stream A4.
+add_executable(test_module_query_batch
+    tests/compiler/test_module_query_batch.cpp
+    tests/compiler/test_module_export_display_2572.cpp
+    tests/compiler/test_module_load_tail_export_2570.cpp
+    tests/compiler/test_module_partition_map_2524.cpp
+    tests/compiler/test_module_rebind_residual_2579.cpp
+    tests/compiler/test_module_require_freevar_2566.cpp
+    tests/compiler/test_query_and_replace_batch_2527.cpp
+    tests/compiler/test_query_by_marker_provenance_2242.cpp
+    tests/compiler/test_query_epoch_contract_2192.cpp
+    tests/compiler/test_query_hygiene_default_2525.cpp
+    tests/compiler/test_query_index_composite_2403.cpp
+    tests/compiler/test_query_pattern_default_hygiene_2123.cpp
+    tests/compiler/test_setcode_rebind_survive_2569.cpp
+)
+set_property(TARGET test_module_query_batch PROPERTY CXX_MODULE_STD ON)
+target_include_directories(test_module_query_batch PRIVATE src tests)
+target_compile_definitions(test_module_query_batch PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    AURA_ISSUE_BATCH_MEMBER=1)
+aura_test_compile_options(test_module_query_batch)
+target_link_libraries(test_module_query_batch PRIVATE
+    aura_test_objects pthread stdc++ stdc++exp aura-reflect)
+aura_issue_test_link_light(test_module_query_batch)
+add_test(NAME test_module_query_batch_verification COMMAND ./test_module_query_batch)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_module_query_batch)
+endif()
+
 add_executable(test_misc_issue_fold_batch
     tests/compiler/test_misc_issue_fold_batch.cpp
     tests/compiler/test_adaptive_cascade_depth_partial_thr_2209.cpp
@@ -4610,11 +4641,6 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_lock_order_production_soft_2557.cpp
     tests/compiler/test_macro_cross_flat_hygiene_2235.cpp
     tests/compiler/test_macro_hygiene_limits_2101.cpp
-    tests/compiler/test_module_export_display_2572.cpp
-    tests/compiler/test_module_load_tail_export_2570.cpp
-    tests/compiler/test_module_partition_map_2524.cpp
-    tests/compiler/test_module_rebind_residual_2579.cpp
-    tests/compiler/test_module_require_freevar_2566.cpp
     tests/compiler/test_mutate_capability_force_2052.cpp
     tests/compiler/test_mutate_type_gate_2219.cpp
     tests/compiler/test_orch_scope_child_2631.cpp
@@ -4627,19 +4653,12 @@ add_executable(test_misc_issue_fold_batch
     tests/compiler/test_production_safety_1097.cpp
     tests/compiler/test_production_security_defaults_2053.cpp
     tests/compiler/test_production_stability_1014.cpp
-    tests/compiler/test_query_and_replace_batch_2527.cpp
-    tests/compiler/test_query_by_marker_provenance_2242.cpp
-    tests/compiler/test_query_epoch_contract_2192.cpp
-    tests/compiler/test_query_hygiene_default_2525.cpp
-    tests/compiler/test_query_index_composite_2403.cpp
-    tests/compiler/test_query_pattern_default_hygiene_2123.cpp
     tests/compiler/test_regex_redos_timeout_2479.cpp
     tests/compiler/test_rest_param_hygiene_2169.cpp
     tests/compiler/test_rest_param_nested_qq_hygiene_2239.cpp
     tests/compiler/test_reverify_expand_2356.cpp
     tests/compiler/test_rollback_by_marker_2237.cpp
     tests/compiler/test_selfevo_bugfix_941.cpp
-    tests/compiler/test_setcode_rebind_survive_2569.cpp
     tests/compiler/test_shape_profiler_concurrency_2141.cpp
     tests/compiler/test_stable_ref_cow_refresh_failclosed_2393.cpp
     tests/compiler/test_stable_ref_export_validate_2404.cpp
@@ -4680,6 +4699,7 @@ add_executable(test_misc_issue_fold_batch
     tests/core/test_validate_node_no_abort_2390.cpp
     tests/core/test_workspace_isolation_wire_2073.cpp
     tests/reflect/test_hygiene_diagnostic_2167.cpp
+    tests/reflect/test_ir_pod_phase4_2291.cpp
     tests/reflect/test_opcode_reflect_2289.cpp
     tests/reflect/test_reflect_isolation_2290.cpp
     tests/serve/test_atomic_mark_bitvector_2117.cpp
@@ -4690,7 +4710,6 @@ add_executable(test_misc_issue_fold_batch
     tests/serve/test_issue_1993.cpp
     tests/serve/test_mutate_mailbox_starvation_throttle_2587.cpp
     tests/serve/test_spawn_quota_no_leak_2155.cpp
-    tests/reflect/test_ir_pod_phase4_2291.cpp
 )
 set_property(TARGET test_misc_issue_fold_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_misc_issue_fold_batch PRIVATE src tests)
