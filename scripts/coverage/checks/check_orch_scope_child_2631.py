@@ -21,7 +21,7 @@ AC4: Structured hash + query:orch-module-stats metric / schema keys.
      must be present in the query surface.
 AC5: README explicit: hierarchy bound to Evaluator/session; not a
      global registry. #2537 / #2588 references preserved.
-AC6: src-aligned test (extend test_orch_scope_2588 or new
+AC6: src-aligned test (extend test_orch_scope or new
      test_orch_scope_child_*) + coverage gate source-cite.
 
 Rationale (Issue #2631 body):

@@ -9,10 +9,10 @@
 // 4 test files use it:
 //   - tests/orch/test_join_drain_reclaim_2227.cpp
 //   - tests/orch/test_mailbox_bp_admit_2228.cpp
-//   - tests/orch/test_agent_failure_policy_2229.cpp
-//   - tests/orch/test_agent_ask_2231.cpp
+//   - tests/orch/test_agent_failure_policy.cpp
+//   - tests/orch/test_agent_ask.cpp
 //
-// (test_agent_ask_2231 originally had `aura::orch::SchedRunner` — wrong
+// (test_agent_ask originally had `aura::orch::SchedRunner` — wrong
 // namespace; #2288 build fix updates it to `aura::serve::SchedRunner`.)
 #pragma once
 

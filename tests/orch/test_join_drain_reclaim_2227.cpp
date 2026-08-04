@@ -229,7 +229,7 @@ int run_test_join_drain_reclaim_2227() {
         // Source-cite only — the parallel_orch Timeout path is exercised
         // by tests/serve/test_fiber_orch_parallel_quota_batch.cpp
         // (cover the existing batch tests) and tests/orch/
-        // test_parallel_intend_pure_2163.cpp. The #2227 wire-up
+        // test_parallel_intend_pure.cpp. The #2227 wire-up
         // mirrors the orch path: after residual bumps, note_orphan_fiber
         // is called on each non-done fiber, and
         // g_parallel_orch_stats.join_drain_residual_reclaim_total is

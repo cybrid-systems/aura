@@ -37,7 +37,7 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     svc = _read("src/compiler/service.ixx")
-    test = _read("tests/core/test_defines_referencing_sym_2448.cpp")
+    test = _read("tests/core/test_defines_referencing_sym.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -64,7 +64,7 @@ def main() -> int:
     must("2448 AC3", "AC3", test)
     must("check_defines_referencing_sym_2448", "gate", build)
     must("cmd_defines_referencing_sym_coverage", "gate", build)
-    must("test_defines_referencing_sym_2448", "gate", cmake)
+    must("test_defines_referencing_sym", "gate", cmake)
 
     if fails:
         for f in fails:

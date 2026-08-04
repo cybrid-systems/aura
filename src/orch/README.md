@@ -69,7 +69,7 @@ For CPU-only pure work that must never touch the Evaluator, prefer direct
 
 The `:pure #t` contract is a *best-effort probe*, not a transactional isolation
 level. Production Agents must NOT treat pure parallel as a full reentrant VM.
-Documented footguns (locked by `tests/orch/test_parallel_intend_pure_contract_2230`):
+Documented footguns (locked by `tests/orch/test_parallel_intend_pure_contract`):
 
 1. **Sibling concurrent pure applies are NOT rolled back.** If a pure task
    fails with `pure-contract-violated` mid-batch, the other pure tasks may
@@ -89,7 +89,7 @@ Documented footguns (locked by `tests/orch/test_parallel_intend_pure_contract_22
    counts thunks that wrote AST post-apply. A healthy batch shows
    `unlocked > 0`, `fallback = 0`, `violated = 0`; non-zero values in any
    slot indicate the corresponding class of risk. The test suite
-   (`tests/orch/test_parallel_intend_pure_contract_2230`) locks all three
+   (`tests/orch/test_parallel_intend_pure_contract`) locks all three
    paths with explicit ACs.
 4. **Probe is NOT a transaction.** There is a small window between the
    `apply_closure` call and the post-apply `defuse_version` check where
@@ -171,8 +171,8 @@ Cancel / destroy order:
 Single-owner serial model (#2399) still applies per scope. `watch_all` /
 RestartN remain scope-local (no cross-scope restart map).
 
-Regression: `tests/orch/test_agent_scope_2083` (AC1-AC6 + #2161 watch_all);
-`tests/orch/test_agent_scope_hierarchy_2537` (hierarchy AC1-AC6).
+Regression: `tests/orch/test_agent_scope` (AC1-AC6 + #2161 watch_all);
+`tests/orch/test_agent_scope_hierarchy` (hierarchy AC1-AC6).
 
 ### `AgentFailurePolicy` (Issue #2229, supervision surface)
 
@@ -262,7 +262,7 @@ Metrics: `agent-forced-yield-total`, `schema-2540`, `agent-max-no-yield-wired`,
 `agent-no-yield-default-applied-total` (#2585, bumped once per default injection).
 Complements residual force-safepoint (#2533): cooperate first, hard-reclaim second.
 
-Regression: `tests/orch/test_agent_max_no_yield_2540` (extends #2540 ACs with #2585 default
+Regression: `tests/orch/test_agent_max_no_yield` (extends #2540 ACs with #2585 default
 + opt-out coverage; same binary, same `AURA_SANDBOX` env discipline).
 
 ### FailurePolicy ↔ AgentFailurePolicy bridge (Issue #2539)
@@ -306,8 +306,8 @@ Semantic boundary:
 5. Optional sugar (`orch:supervise-batch` / auto-apply after batch fail) is
    deferred; this issue ships the mapping API only.
 
-Regression: `tests/orch/test_failure_policy_bridge_2539` (mapping table);
-`tests/orch/test_agent_failure_policy_2229` (#2229 unchanged).
+Regression: `tests/orch/test_failure_policy_bridge` (mapping table);
+`tests/orch/test_agent_failure_policy` (#2229 unchanged).
 
 ### `agent-ask` / `agent-reply` (Issue #2231 / #2401 / #2538, cross-agent request/response)
 
@@ -427,7 +427,7 @@ Metrics (`query:orch-module-stats`, schema-2588):
 - `scope-dropped-total` — scopes dropped after join_all (empty scope released).
 - `orch-scope-wired` — sentinel 1.
 
-Regression: `tests/orch/test_orch_scope_2588` (Aura prims + scope lifecycle).
+Regression: `tests/orch/test_orch_scope` (Aura prims + scope lifecycle).
 `scripts/coverage/checks/check_orch_mvp_scope.py` (reintroduction guard) is unchanged
 but the new surface introduces no removed-identifier symbols.
 
@@ -479,7 +479,7 @@ memory quota in different ways. Scope-local recent BP counter is the
 natural follow-up (heavier; v1 keeps process-global gauge +
 per-spawn threshold only).
 
-Regression: `tests/orch/test_per_scope_bp_admit_2591`.
+Regression: `tests/orch/test_per_scope_bp_admit`.
 
 ## Observability facade (Issue #2589)
 
@@ -512,7 +512,7 @@ query:orch-module-stats
 internally. The facade is additive — `ParallelOrchStats` remains the
 source of truth for parallel-only regression tests.
 
-Regression: `tests/orch/test_orch_obs_facade_2589`.
+Regression: `tests/orch/test_orch_obs_facade`.
 
 ## Security schedule gate (Issue #2590)
 
@@ -577,6 +577,6 @@ deny via existing typed Aura errors). The #2543 AOT throttle pattern
 (`decide_hot_update_throttle` in `aot_hot_update_health.hh`) is the
 direct precedent.
 
-Regression: `tests/orch/test_security_schedule_gate_2590` (pure
+Regression: `tests/orch/test_security_schedule_gate` (pure
 idempotency + production/soft mode matrix + counter bumps + query
 surface + README source-cite). No docs/design/ per #1655.

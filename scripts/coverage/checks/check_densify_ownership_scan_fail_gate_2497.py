@@ -49,7 +49,7 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     efl = _read("src/core/envframe_lifetime.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    test = _read("tests/compiler/test_densify_ownership_scan_fail_gate_2497.cpp")
+    test = _read("tests/compiler/test_densify_ownership_scan_fail_gate.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -112,9 +112,9 @@ def main() -> int:
     must("AC5", "AC5", test)
     must("scan_fail_baseline", "AC5", test)
     must("!scan_fail_delta", "AC5", test)
-    must("aura_add_issue_test(test_densify_ownership_scan_fail_gate_2497)", "AC5", cmake)
-    must("aura_issue_test_link_light(test_densify_ownership_scan_fail_gate_2497)", "AC5", cmake)
-    must("add_dependencies(all_test_issue_targets test_densify_ownership_scan_fail_gate_2497)", "AC5", cmake)
+    must("aura_add_issue_test(test_densify_ownership_scan_fail_gate)", "AC5", cmake)
+    must("aura_issue_test_link_light(test_densify_ownership_scan_fail_gate)", "AC5", cmake)
+    must("add_dependencies(all_test_issue_targets test_densify_ownership_scan_fail_gate)", "AC5", cmake)
     must("check_densify_ownership_scan_fail_gate_2497", "AC5", build)
 
     # Self-test pass — exit 0 with no fails (rows above already encode the

@@ -60,7 +60,7 @@ Binary sprawl is largely fixed: issue TUs are **members** of thematic batches, n
 
 CMake still has `# folded: aura_add_issue_test(...)` comment needles so coverage contracts stay green.
 
-**Remaining problem:** filenames still look like `test_add_node_builder_contract_2445.cpp`, and **189 files dump into one misc mega-batch**, which is hard to run/debug and teaches the wrong habit.
+**Remaining problem:** filenames still look like `test_add_node_builder_contract.cpp`, and **189 files dump into one misc mega-batch**, which is hard to run/debug and teaches the wrong habit.
 
 ---
 
@@ -109,7 +109,7 @@ Do **after** Stream A homes are stable so renames land in the right batch.
 
 **Rules:**
 
-- `test_add_node_builder_contract_2445.cpp` → `test_add_node_builder_contract.cpp`
+- `test_add_node_builder_contract.cpp` → `test_add_node_builder_contract.cpp`
 - Keep `_NNNN` only on **collision** (same base, multiple issues — Stream C).
 - Update in the same PR:
   - CMake source list
@@ -208,7 +208,7 @@ Approximate keyword buckets (a file may fit multiple; primary used for routing):
 | **S1** (rest) | A1–A5 done earlier | — |
 | **S2** (done) | A6–A10 residual splits + Stream C homes | misc ≤40 (30); co-locate C pairs |
 | **S2** | Stream A6–A10 + Stream C merges | misc ≤40; 3 content merges |
-| **S3** | Stream B1–B5 renames | those batches have **zero** `_NNNN` filenames |
+| **S3** (done) | Stream B1–B5 renames (117 files) | flatast/security/densify/linear_misc/orch_agent zero `_NNNN` |
 | **S4** | Stream B6–B10 renames | issue-suffix file count → **&lt; 30** specials only |
 | **S5** | Stream D contract cleanup | remove `# folded:` block |
 

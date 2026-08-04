@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_param_annot_mutation_contract_2450.cpp",
+      "path": "tests/core/test_param_annot_mutation_contract.cpp",
       "contains": [
         "2450 AC1"
       ]
@@ -30,14 +30,14 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_param_annot_mutation_contract_2450.cpp",
+      "path": "tests/core/test_param_annot_mutation_contract.cpp",
       "contains": [
         "2450 AC2"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_param_annot_mutation_contract_2450.cpp",
+      "path": "tests/core/test_param_annot_mutation_contract.cpp",
       "contains": [
         "2450 AC3"
       ]
@@ -54,7 +54,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_param_annot_mutation_contract_2450"
+        "test_param_annot_mutation_contract"
       ]
     }
   ],

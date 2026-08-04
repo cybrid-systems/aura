@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_binding_gens_atomic_2417.cpp")
+    test = _read("tests/core/test_binding_gens_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -63,7 +63,7 @@ def main() -> int:
 
     must("check_binding_gens_atomic_2417", "gate", build)
     must("cmd_binding_gens_atomic_coverage", "gate", build)
-    must("test_binding_gens_atomic_2417", "gate", cmake)
+    must("test_binding_gens_atomic", "gate", cmake)
 
     if fails:
         for f in fails:

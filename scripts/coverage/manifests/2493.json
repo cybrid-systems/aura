@@ -46,42 +46,42 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
       "contains": [
         "ac1_prefers_caller_then_mutation_epoch"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
       "contains": [
         "ac2_resource_quota_fallback"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
       "contains": [
         "ac3_aot_hotupdate_uses_resolve"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
       "contains": [
         "ac4_soft_no_activity_fallback"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
       "contains": [
         "ac5_correlated_audit_join"
       ]
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "path": "tests/compiler/test_audit_mutation_id_unify.cpp",
       "contains": [
         "ac6_source_and_gate",
         "Issue #2493"
@@ -91,9 +91,9 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_audit_mutation_id_unify_2493",
-        "aura_add_issue_test(test_audit_mutation_id_unify_2493)",
-        "aura_issue_test_link_light(test_audit_mutation_id_unify_2493)"
+        "test_audit_mutation_id_unify",
+        "aura_add_issue_test(test_audit_mutation_id_unify)",
+        "aura_issue_test_link_light(test_audit_mutation_id_unify)"
       ]
     },
     {

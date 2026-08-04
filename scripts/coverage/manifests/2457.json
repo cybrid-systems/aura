@@ -26,7 +26,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_mutation_log_cow_copy_2457.cpp",
+      "path": "tests/core/test_mutation_log_cow_copy.cpp",
       "contains": [
         "2457 AC3"
       ]
@@ -43,7 +43,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mutation_log_cow_copy_2457"
+        "test_mutation_log_cow_copy"
       ]
     }
   ],

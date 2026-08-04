@@ -691,11 +691,11 @@ inline std::atomic<std::uint64_t> g_moving_compact_pin_contract_fail_total{0};
 
 // Issue #2324: the AC5 reader function for the contract-fail counter.
 // The atomic above is bumped by verify_pins_under_moving_compact when
-// it returns false (#2266 contract). test_moving_compact_2166.cpp's
+// it returns false (#2266 contract). test_moving_compact.cpp's
 // AC_M6 negative test reads this counter to verify the bump. The
 // function was missing from the source (the comment above said it was
 // 'declared earlier in the file' but never actually defined), causing
-// the build to fail on `tests/core/test_moving_compact_2166.cpp` with
+// the build to fail on `tests/core/test_moving_compact.cpp` with
 // "lifetime_pin_contract_fail_total is not a member of aura::core::lifetime".
 inline std::uint64_t lifetime_pin_contract_fail_total() noexcept {
     return g_moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);

@@ -11,7 +11,7 @@ Contract (5 AC from #2294, building on #2267 surface):
   AC4: Fail-closed unmapped densify candidates + optional
        AURA_ROOT_REMAP_CONTRACT=hard.
   AC5: Observability (query keys + schema-2267 lineage + rewrite-ok metrics)
-       + tests/compiler/test_root_remap_pass_2267.cpp + Evaluator install.
+       + tests/compiler/test_root_remap_pass.cpp + Evaluator install.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def check() -> list:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     eval_gc = _read("src/compiler/evaluator_gc.cpp")
     eval_ixx = _read("src/compiler/evaluator.ixx")
-    test_cpp = _read("tests/compiler/test_root_remap_pass_2267.cpp")
+    test_cpp = _read("tests/compiler/test_root_remap_pass.cpp")
     modules = _read("cmake/AuraModules.cmake")
 
     # AC1: Pass surface + real rewrite.
@@ -207,27 +207,27 @@ def check() -> list:
     )
     _must(
         "ac2339_1_raii_helper_lifecycle" in test_cpp,
-        "AC6: test_root_remap_pass_2267.cpp must define ac2339_1_raii_helper_lifecycle",
+        "AC6: test_root_remap_pass.cpp must define ac2339_1_raii_helper_lifecycle",
         fails,
     )
     _must(
         "ac2339_2_auto_register_counter_accessible" in test_cpp,
-        "AC6: test_root_remap_pass_2267.cpp must define ac2339_2_auto_register_counter_accessible",
+        "AC6: test_root_remap_pass.cpp must define ac2339_2_auto_register_counter_accessible",
         fails,
     )
     _must(
         "ac2339_3_query_schema" in test_cpp,
-        "AC6: test_root_remap_pass_2267.cpp must define ac2339_3_query_schema",
+        "AC6: test_root_remap_pass.cpp must define ac2339_3_query_schema",
         fails,
     )
     _must(
         "ac2339_4_source_cite" in test_cpp,
-        "AC6: test_root_remap_pass_2267.cpp must define ac2339_4_source_cite",
+        "AC6: test_root_remap_pass.cpp must define ac2339_4_source_cite",
         fails,
     )
     _must(
         "Issue #2339" in test_cpp,
-        "AC6: test_root_remap_pass_2267.cpp must cite Issue #2339",
+        "AC6: test_root_remap_pass.cpp must cite Issue #2339",
         fails,
     )
     _must(
@@ -253,7 +253,7 @@ def check() -> list:
         and "AC4" in test_cpp
         and "AC5" in test_cpp
         and "run_root_remap_pass" in test_cpp,
-        "AC5: tests/compiler/test_root_remap_pass_2267.cpp must cover AC1-AC5 + real rewrite",
+        "AC5: tests/compiler/test_root_remap_pass.cpp must cover AC1-AC5 + real rewrite",
         fails,
     )
 

@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_restamp_lazy_align_atomic_2421.cpp")
+    test = _read("tests/core/test_restamp_lazy_align_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -58,7 +58,7 @@ def main() -> int:
     must("2421 AC4", "AC4", test)
     must("check_restamp_lazy_align_atomic_2421", "gate", build)
     must("cmd_restamp_lazy_align_atomic_coverage", "gate", build)
-    must("test_restamp_lazy_align_atomic_2421", "gate", cmake)
+    must("test_restamp_lazy_align_atomic", "gate", cmake)
 
     if fails:
         for f in fails:

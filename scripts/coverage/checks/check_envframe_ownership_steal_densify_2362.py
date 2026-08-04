@@ -40,7 +40,7 @@ def main() -> int:
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = _read("src/compiler/evaluator_primitives_mutate.cpp")
     lf = _read("src/core/envframe_lifetime.ixx")
-    test = _read("tests/compiler/test_envframe_ownership_steal_densify_2362.cpp")
+    test = _read("tests/compiler/test_envframe_ownership_steal_densify.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -80,7 +80,7 @@ def main() -> int:
     must("envframe-ownership-protocol-steal-wired", "AC5", q)
     must("envframe-ownership-protocol-densify-wired", "AC5", q)
     must("should_block_compact_for_guards", "AC5", lf)
-    must("test_envframe_ownership_steal_densify_2362", "AC5", cmake)
+    must("test_envframe_ownership_steal_densify", "AC5", cmake)
     must("check_envframe_ownership_steal_densify_2362", "AC5", build)
     must("cmd_envframe_ownership_steal_densify_coverage", "AC5", build)
     must("ac5_query_and_surface", "AC5", test)

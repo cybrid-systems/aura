@@ -40,7 +40,7 @@ def main() -> int:
     scope = _read("src/orch/agent_scope.h")
     spawn = _read("src/orch/agent_spawn.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
-    test = _read("tests/orch/test_agent_scope_2083.cpp")
+    test = _read("tests/orch/test_agent_scope.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
     mvp = _read("scripts/coverage/checks/check_orch_mvp_scope.py")
@@ -77,7 +77,7 @@ def main() -> int:
     must("2399 AC5", "AC5", test)
     must("check_agent_scope_concurrent_2399", "AC5", build)
     must("cmd_agent_scope_concurrent_coverage", "AC5", build)
-    must("test_agent_scope_2083", "AC5", cmake)
+    must("test_agent_scope", "AC5", cmake)
     # MVP scope linter still forbids process-global registry identifiers.
     must("AgentRegistry", "AC5", mvp)
 

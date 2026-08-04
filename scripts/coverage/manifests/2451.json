@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_param_begin_count_publish_2451.cpp",
+      "path": "tests/core/test_param_begin_count_publish.cpp",
       "contains": [
         "2451 AC1"
       ]
@@ -31,7 +31,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_param_begin_count_publish_2451.cpp",
+      "path": "tests/core/test_param_begin_count_publish.cpp",
       "contains": [
         "2451 AC2"
       ]
@@ -45,7 +45,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_param_begin_count_publish_2451.cpp",
+      "path": "tests/core/test_param_begin_count_publish.cpp",
       "contains": [
         "2451 AC3"
       ]
@@ -62,7 +62,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_param_begin_count_publish_2451"
+        "test_param_begin_count_publish"
       ]
     }
   ],

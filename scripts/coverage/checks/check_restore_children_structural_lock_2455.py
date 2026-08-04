@@ -32,7 +32,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_restore_children_structural_lock_2455.cpp")
+    test = _read("tests/core/test_restore_children_structural_lock.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -55,7 +55,7 @@ def main() -> int:
     must("2455 AC3", "AC3", test)
     must("check_restore_children_structural_lock_2455", "gate", build)
     must("cmd_restore_children_structural_lock_coverage", "gate", build)
-    must("test_restore_children_structural_lock_2455", "gate", cmake)
+    must("test_restore_children_structural_lock", "gate", cmake)
 
     if fails:
         for f in fails:

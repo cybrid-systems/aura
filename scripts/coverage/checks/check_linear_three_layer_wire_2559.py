@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     esc = _read("src/compiler/ownership_escape_lowering_gate.h")
     irx = _read("src/compiler/ir_executor_impl.cpp")
     arx = _read("src/core/arena.ixx")
-    test = _read("tests/compiler/test_linear_three_layer_wire_2559.cpp")
+    test = _read("tests/compiler/test_linear_three_layer_wire.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
     this = _read("scripts/coverage/checks/check_linear_three_layer_wire_2559.py")
@@ -204,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     must("ac4_soft_densify_shape", "AC6", test)
     must("ac5_source_inventory", "AC6", test)
     must("ac6_linter_self_test", "AC6", test)
-    must("test_linear_three_layer_wire_2559", "AC6", cmake)
+    must("test_linear_three_layer_wire", "AC6", cmake)
     must("check_linear_three_layer_wire_2559", "AC6", build)
     must("cmd_linear_three_layer_wire_coverage", "AC6", build)
 

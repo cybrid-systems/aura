@@ -17,7 +17,7 @@ Contract (5 AC from issue body):
           CompilerMetrics mirror arena_live_compact_remapped_pins_total).
           Extend query:arena-live-compact-stats with schema-2265 /
           issue-2265 lineage (additive, no schema break).
-  AC5 — Tests: extend tests/core/test_moving_compact_2166.cpp — pin →
+  AC5 — Tests: extend tests/core/test_moving_compact.cpp — pin →
           Moving → validate(cur_gen, arena_id) succeeds AND ptr() equals
           the densified address. Negative: pin a non-arena address →
           pin invalidates after Moving.
@@ -55,7 +55,7 @@ def check() -> list:
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     gc = _read("src/compiler/evaluator_gc.cpp")
     ev = _read("src/compiler/evaluator.ixx")
-    test = _read("tests/core/test_moving_compact_2166.cpp")
+    test = _read("tests/core/test_moving_compact.cpp")
 
     # AC1 — API surface
     _must(
@@ -201,12 +201,12 @@ def check() -> list:
     # selective invalidate without densify.)
     _must(
         "AC_M5: live arena pin blocks Moving densify" in test or "AC_M5: Moving blocked with live pin" in test,
-        "AC5: live-pin blocks Moving densify AC_M5 missing in test_moving_compact_2166.cpp",
+        "AC5: live-pin blocks Moving densify AC_M5 missing in test_moving_compact.cpp",
         fails,
     )
     _must(
         "AC_M5: Moving blocked with live non-arena pin" in test or "non-arena pin also blocks Moving" in test,
-        "AC5: non-arena pin block path missing in test_moving_compact_2166.cpp",
+        "AC5: non-arena pin block path missing in test_moving_compact.cpp",
         fails,
     )
     _must(
@@ -337,7 +337,7 @@ def check() -> list:
     )
     _must(
         "Issue #2342" in test,
-        "AC_2342: test_moving_compact_2166.cpp must cite Issue #2342",
+        "AC_2342: test_moving_compact.cpp must cite Issue #2342",
         fails,
     )
 

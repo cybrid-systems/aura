@@ -35,7 +35,7 @@ def main() -> int:
 
     cap = _read("src/core/capability_model.hh")
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
-    test = _read("tests/compiler/test_grant_macro_self_evo_stamp_2386.cpp")
+    test = _read("tests/compiler/test_grant_macro_self_evo_stamp.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -62,7 +62,7 @@ def main() -> int:
     must("grant_macro_self_evo", "AC5", sec)
 
     # AC5 registration
-    must("test_grant_macro_self_evo_stamp_2386", "AC5", cmake)
+    must("test_grant_macro_self_evo_stamp", "AC5", cmake)
     must("check_grant_macro_self_evo_stamp_2386", "AC5", build)
     must("cmd_grant_macro_self_evo_stamp_coverage", "AC5", build)
     must("ac5_source_and_gate", "AC5", test)

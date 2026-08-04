@@ -15,14 +15,14 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "path": "tests/core/test_capability_effect_stats_snapshot.cpp",
       "contains": [
         "2430 AC1"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "path": "tests/core/test_capability_effect_stats_snapshot.cpp",
       "contains": [
         "2430 AC2",
         "concurrent check + snapshot"
@@ -39,7 +39,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "path": "tests/core/test_capability_effect_stats_snapshot.cpp",
       "contains": [
         "2430 AC3"
       ]
@@ -54,7 +54,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "path": "tests/core/test_capability_effect_stats_snapshot.cpp",
       "contains": [
         "2430 AC4"
       ]
@@ -71,7 +71,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_capability_effect_stats_snapshot_2430"
+        "test_capability_effect_stats_snapshot"
       ]
     }
   ],

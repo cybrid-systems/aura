@@ -23,8 +23,8 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_grant_epoch_retain_restricted_2529",
-        "aura_issue_test_link_light(test_grant_epoch_retain_restricted_2529)"
+        "test_grant_epoch_retain_restricted",
+        "aura_issue_test_link_light(test_grant_epoch_retain_restricted)"
       ]
     },
     {

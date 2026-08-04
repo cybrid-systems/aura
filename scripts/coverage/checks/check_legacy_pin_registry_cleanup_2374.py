@@ -39,7 +39,7 @@ def main() -> int:
 
     arena = _read("src/core/arena.ixx")
     pin = _read("src/core/lifetime_pin.ixx")
-    test = _read("tests/core/test_moving_compact_2166.cpp")
+    test = _read("tests/core/test_moving_compact.cpp")
     bp = _read("build.py")
 
     # AC1: densify no longer walks legacy registry

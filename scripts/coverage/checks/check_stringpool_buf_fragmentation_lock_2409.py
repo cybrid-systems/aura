@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_stringpool_buf_fragmentation_lock_2409.cpp")
+    test = _read("tests/core/test_stringpool_buf_fragmentation_lock.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -71,7 +71,7 @@ def main() -> int:
 
     must("check_stringpool_buf_fragmentation_lock_2409", "gate", build)
     must("cmd_stringpool_buf_fragmentation_lock_coverage", "gate", build)
-    must("test_stringpool_buf_fragmentation_lock_2409", "gate", cmake)
+    must("test_stringpool_buf_fragmentation_lock", "gate", cmake)
 
     # #2408 helper still present
     must("string_bytes_total_unlocked", "lineage", ast)

@@ -14,14 +14,14 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "path": "tests/core/test_gc_defer_overflow_policy_atomic.cpp",
       "contains": [
         "2429 AC1"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "path": "tests/core/test_gc_defer_overflow_policy_atomic.cpp",
       "contains": [
         "2429 AC2",
         "concurrent policy flip"
@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "path": "tests/core/test_gc_defer_overflow_policy_atomic.cpp",
       "contains": [
         "2429 AC3",
         "false return never marks evaluator deferred"
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "path": "tests/core/test_gc_defer_overflow_policy_atomic.cpp",
       "contains": [
         "2429 AC4",
         "HardFail overflow → false"
@@ -55,7 +55,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_gc_defer_overflow_policy_atomic_2429"
+        "test_gc_defer_overflow_policy_atomic"
       ]
     }
   ],

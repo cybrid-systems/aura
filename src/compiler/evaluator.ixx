@@ -5631,7 +5631,7 @@ public:
     // TU-local static OrchAgentNameTable that lived in
     // evaluator_primitives_agent.cpp — multiple CompilerService
     // instances collided on the same agent name and tests were
-    // non-hermetic. Public so tests/orch/test_agent_name_table_isolation_2078
+    // non-hermetic. Public so tests/orch/test_agent_name_table_isolation
     // can verify the storage-layer isolation directly; the orch primitives
     // (in evaluator_primitives_agent.cpp) and cleanup_orch_agents (in
     // evaluator_ctor.cpp) are part of the same module so they have access
@@ -5652,7 +5652,7 @@ public:
     // multi-workspace agent workloads can apply concurrently. Single-
     // Evaluator multi-agent still serializes (AST / closure-heap safety).
     // parallel-intend keeps its own batch-local eval_mu (out of scope).
-    // Public for tests/orch/test_agent_apply_mutex_2158 concurrent ACs.
+    // Public for tests/orch/test_agent_apply_mutex concurrent ACs.
     mutable std::mutex agent_apply_mu_;
 
 private:

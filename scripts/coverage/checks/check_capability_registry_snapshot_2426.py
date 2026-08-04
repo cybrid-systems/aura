@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     hh = _read("src/core/capability_model.hh")
-    test = _read("tests/core/test_capability_registry_snapshot_2426.cpp")
+    test = _read("tests/core/test_capability_registry_snapshot.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -64,7 +64,7 @@ def main() -> int:
     must("2426 AC4", "AC4", test)
     must("check_capability_registry_snapshot_2426", "gate", build)
     must("cmd_capability_registry_snapshot_coverage", "gate", build)
-    must("test_capability_registry_snapshot_2426", "gate", cmake)
+    must("test_capability_registry_snapshot", "gate", cmake)
 
     if fails:
         for f in fails:

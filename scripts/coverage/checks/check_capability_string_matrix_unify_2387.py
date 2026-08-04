@@ -36,7 +36,7 @@ def main() -> int:
     cap = _read("src/core/capability_model.hh")
     sec = _read("src/compiler/evaluator_security.cpp")
     sch = _read("src/compiler/security_capabilities.h")
-    test = _read("tests/compiler/test_capability_string_matrix_unify_2387.cpp")
+    test = _read("tests/compiler/test_capability_string_matrix_unify.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -60,7 +60,7 @@ def main() -> int:
     # AC5
     if "2387" not in sec:
         fails.append("AC5: evaluator_security.cpp missing #2387 cite")
-    must("test_capability_string_matrix_unify_2387", "AC5", cmake)
+    must("test_capability_string_matrix_unify", "AC5", cmake)
     must("check_capability_string_matrix_unify_2387", "AC5", build)
     must("cmd_capability_string_matrix_unify_coverage", "AC5", build)
     must("ac5_source_and_gate", "AC5", test)

@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "path": "tests/core/test_gc_defer_reconcile_cas.cpp",
       "contains": [
         "2437 AC1"
       ]
@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "path": "tests/core/test_gc_defer_reconcile_cas.cpp",
       "contains": [
         "2437 AC2"
       ]
@@ -43,14 +43,14 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "path": "tests/core/test_gc_defer_reconcile_cas.cpp",
       "contains": [
         "2437 AC4"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "path": "tests/core/test_gc_defer_reconcile_cas.cpp",
       "contains": [
         "2437 AC3"
       ]
@@ -67,7 +67,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_gc_defer_reconcile_cas_2437"
+        "test_gc_defer_reconcile_cas"
       ]
     }
   ],

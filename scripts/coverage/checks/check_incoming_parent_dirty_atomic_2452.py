@@ -37,7 +37,7 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     conc = _read("tests/core/test_ast_concurrency.cpp")
-    test2416 = _read("tests/core/test_incoming_parent_dirty_atomic_2416.cpp")
+    test2416 = _read("tests/core/test_incoming_parent_dirty_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -57,7 +57,7 @@ def main() -> int:
     must("check_incoming_parent_dirty_atomic_2452", "gate", build)
     must("cmd_incoming_parent_dirty_atomic_2452_coverage", "gate", build)
     must("test_ast_concurrency", "gate", cmake)
-    must("test_incoming_parent_dirty_atomic_2416", "gate", cmake)
+    must("test_incoming_parent_dirty_atomic", "gate", cmake)
 
     if fails:
         for f in fails:

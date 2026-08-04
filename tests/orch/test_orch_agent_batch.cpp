@@ -1,7 +1,7 @@
 // test_orch_agent_batch.cpp — thematic multi-TU batch
-// Orch / agent / parallel-intend
-// Members export run_<name>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
-// Policy: tests/HOMES.md — extend this batch, do not add test_*_<issue>.cpp.
+// test_orch_agent_batch (S3 renamed members)
+// Stream S3: member filenames stripped of _NNNN issue suffixes.
+// Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
 #include "test_harness.hpp"
 
@@ -9,21 +9,21 @@
 
 import std;
 
-extern int run_test_agent_apply_mutex_2158();
-extern int run_test_agent_ask_2231();
-extern int run_test_agent_ask_typed_corr_2538();
-extern int run_test_agent_failure_policy_2229();
-extern int run_test_agent_max_no_yield_2540();
-extern int run_test_agent_name_table_isolation_2078();
-extern int run_test_agent_scope_2083();
-extern int run_test_agent_scope_hierarchy_2537();
-extern int run_test_failure_policy_bridge_2539();
-extern int run_test_orch_obs_facade_2589();
-extern int run_test_orch_scope_2588();
-extern int run_test_parallel_intend_pure_2163();
-extern int run_test_parallel_intend_pure_contract_2230();
-extern int run_test_per_scope_bp_admit_2591();
-extern int run_test_security_schedule_gate_2590();
+extern int run_test_agent_apply_mutex();
+extern int run_test_agent_ask();
+extern int run_test_agent_ask_typed_corr();
+extern int run_test_agent_failure_policy();
+extern int run_test_agent_max_no_yield();
+extern int run_test_agent_name_table_isolation();
+extern int run_test_agent_scope();
+extern int run_test_agent_scope_hierarchy();
+extern int run_test_failure_policy_bridge();
+extern int run_test_orch_obs_facade();
+extern int run_test_orch_scope();
+extern int run_test_parallel_intend_pure();
+extern int run_test_parallel_intend_pure_contract();
+extern int run_test_per_scope_bp_admit();
+extern int run_test_security_schedule_gate();
 
 int main() {
     using aura::test::g_failed;
@@ -32,186 +32,185 @@ int main() {
     int members_passed = 0;
     std::println("=== test_orch_agent_batch (15 members) ===");
 
-    std::println("\n──── test_agent_apply_mutex_2158 ────");
+    std::println("\n──── test_agent_apply_mutex ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_agent_apply_mutex_2158() != 0 || g_failed != 0) {
+    if (run_test_agent_apply_mutex() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_agent_apply_mutex_2158 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_agent_apply_mutex_2158 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_agent_ask_2231 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_agent_ask_2231() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_agent_ask_2231 (checks: {} passed, {} failed)", g_passed,
+        std::println("FAIL member test_agent_apply_mutex (checks: {} passed, {} failed)", g_passed,
                      g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_agent_ask_2231 ({} checks)", g_passed);
+        std::println("OK member test_agent_apply_mutex ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_agent_ask_typed_corr_2538 ────");
+    std::println("\n──── test_agent_ask ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_agent_ask_typed_corr_2538() != 0 || g_failed != 0) {
+    if (run_test_agent_ask() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_agent_ask_typed_corr_2538 (checks: {} passed, {} failed)",
+        std::println("FAIL member test_agent_ask (checks: {} passed, {} failed)", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_agent_ask ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_agent_ask_typed_corr ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_agent_ask_typed_corr() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_agent_ask_typed_corr (checks: {} passed, {} failed)",
                      g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_agent_ask_typed_corr_2538 ({} checks)", g_passed);
+        std::println("OK member test_agent_ask_typed_corr ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_agent_failure_policy_2229 ────");
+    std::println("\n──── test_agent_failure_policy ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_agent_failure_policy_2229() != 0 || g_failed != 0) {
+    if (run_test_agent_failure_policy() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_agent_failure_policy_2229 (checks: {} passed, {} failed)",
+        std::println("FAIL member test_agent_failure_policy (checks: {} passed, {} failed)",
                      g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_agent_failure_policy_2229 ({} checks)", g_passed);
+        std::println("OK member test_agent_failure_policy ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_agent_max_no_yield_2540 ────");
+    std::println("\n──── test_agent_max_no_yield ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_agent_max_no_yield_2540() != 0 || g_failed != 0) {
+    if (run_test_agent_max_no_yield() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_agent_max_no_yield_2540 (checks: {} passed, {} failed)",
+        std::println("FAIL member test_agent_max_no_yield (checks: {} passed, {} failed)", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_agent_max_no_yield ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_agent_name_table_isolation ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_agent_name_table_isolation() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_agent_name_table_isolation (checks: {} passed, {} failed)",
                      g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_agent_max_no_yield_2540 ({} checks)", g_passed);
+        std::println("OK member test_agent_name_table_isolation ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_agent_name_table_isolation_2078 ────");
+    std::println("\n──── test_agent_scope ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_agent_name_table_isolation_2078() != 0 || g_failed != 0) {
+    if (run_test_agent_scope() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_agent_scope (checks: {} passed, {} failed)", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_agent_scope ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_agent_scope_hierarchy ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_agent_scope_hierarchy() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_agent_scope_hierarchy (checks: {} passed, {} failed)",
+                     g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_agent_scope_hierarchy ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_failure_policy_bridge ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_failure_policy_bridge() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_failure_policy_bridge (checks: {} passed, {} failed)",
+                     g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_failure_policy_bridge ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_orch_obs_facade ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_orch_obs_facade() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_orch_obs_facade (checks: {} passed, {} failed)", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_orch_obs_facade ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_orch_scope ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_orch_scope() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_orch_scope (checks: {} passed, {} failed)", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_orch_scope ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_parallel_intend_pure ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_parallel_intend_pure() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_parallel_intend_pure (checks: {} passed, {} failed)",
+                     g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_parallel_intend_pure ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_parallel_intend_pure_contract ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_parallel_intend_pure_contract() != 0 || g_failed != 0) {
         ++members_failed;
         std::println(
-            "FAIL member test_agent_name_table_isolation_2078 (checks: {} passed, {} failed)",
+            "FAIL member test_parallel_intend_pure_contract (checks: {} passed, {} failed)",
             g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_agent_name_table_isolation_2078 ({} checks)", g_passed);
+        std::println("OK member test_parallel_intend_pure_contract ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_agent_scope_2083 ────");
+    std::println("\n──── test_per_scope_bp_admit ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_agent_scope_2083() != 0 || g_failed != 0) {
+    if (run_test_per_scope_bp_admit() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_agent_scope_2083 (checks: {} passed, {} failed)", g_passed,
+        std::println("FAIL member test_per_scope_bp_admit (checks: {} passed, {} failed)", g_passed,
                      g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_agent_scope_2083 ({} checks)", g_passed);
+        std::println("OK member test_per_scope_bp_admit ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_agent_scope_hierarchy_2537 ────");
+    std::println("\n──── test_security_schedule_gate ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_agent_scope_hierarchy_2537() != 0 || g_failed != 0) {
+    if (run_test_security_schedule_gate() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_agent_scope_hierarchy_2537 (checks: {} passed, {} failed)",
+        std::println("FAIL member test_security_schedule_gate (checks: {} passed, {} failed)",
                      g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_agent_scope_hierarchy_2537 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_failure_policy_bridge_2539 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_failure_policy_bridge_2539() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_failure_policy_bridge_2539 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_failure_policy_bridge_2539 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_orch_obs_facade_2589 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_orch_obs_facade_2589() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_orch_obs_facade_2589 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_orch_obs_facade_2589 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_orch_scope_2588 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_orch_scope_2588() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_orch_scope_2588 (checks: {} passed, {} failed)", g_passed,
-                     g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_orch_scope_2588 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_parallel_intend_pure_2163 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_parallel_intend_pure_2163() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_parallel_intend_pure_2163 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_parallel_intend_pure_2163 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_parallel_intend_pure_contract_2230 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_parallel_intend_pure_contract_2230() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println(
-            "FAIL member test_parallel_intend_pure_contract_2230 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_parallel_intend_pure_contract_2230 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_per_scope_bp_admit_2591 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_per_scope_bp_admit_2591() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_per_scope_bp_admit_2591 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_per_scope_bp_admit_2591 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_security_schedule_gate_2590 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_security_schedule_gate_2590() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_security_schedule_gate_2590 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_security_schedule_gate_2590 ({} checks)", g_passed);
+        std::println("OK member test_security_schedule_gate ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

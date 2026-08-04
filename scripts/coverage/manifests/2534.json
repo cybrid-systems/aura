@@ -16,7 +16,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_security_posture_trail_2534"
+        "test_security_posture_trail"
       ]
     },
     {

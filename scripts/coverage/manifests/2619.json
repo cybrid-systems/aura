@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "path": "tests/compiler/test_arena_moving_densify_health.cpp",
       "contains": [
         "ac1_query_exposes_window"
       ]
@@ -51,7 +51,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "path": "tests/compiler/test_arena_moving_densify_health.cpp",
       "contains": [
         "ac2_incomplete_denies_mutate"
       ]
@@ -74,7 +74,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "path": "tests/compiler/test_arena_moving_densify_health.cpp",
       "contains": [
         "ac3_soft_observe_only"
       ]
@@ -89,7 +89,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "path": "tests/compiler/test_arena_moving_densify_health.cpp",
       "contains": [
         "ac4_no_densify_healthy"
       ]
@@ -123,7 +123,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_arena_moving_densify_health_2619"
+        "test_arena_moving_densify_health"
       ]
     },
     {
@@ -136,7 +136,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "path": "tests/compiler/test_arena_moving_densify_health.cpp",
       "contains": [
         "ac5_source_cite"
       ]

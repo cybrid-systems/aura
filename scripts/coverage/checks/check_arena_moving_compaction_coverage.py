@@ -46,7 +46,7 @@ def check() -> list:
     soa = _read("src/compiler/ir_soa.ixx")
     met = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/core/test_moving_compact_2166.cpp")
+    test = _read("tests/core/test_moving_compact.cpp")
 
     # AC1 - production default ON + adaptive-on-threshold
     _must(
@@ -102,7 +102,7 @@ def check() -> list:
     )
     _must(_mut_shape, "AC4: ShapeProfiler::on_arena_compact must feed compact_count + remap_us", fails)
 
-    # AC5 - test surface covers #2256 (ac2256 in test_moving_compact_2166.cpp)
+    # AC5 - test surface covers #2256 (ac2256 in test_moving_compact.cpp)
     _must(
         ("ac2256_moving_compact_production_default" in test) or ("AC #2256" in test),
         "AC5: ac2256 test function (or AC #2256 inline block) missing",

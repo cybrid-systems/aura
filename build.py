@@ -3200,7 +3200,7 @@ def cmd_lifetime_pin_remap_coverage():
            + CompilerMetrics.arena_live_compact_remapped_pins_total mirror +
            query:arena-live-compact-stats surfaces remapped-pins-total key +
            schema-2265 / issue-2265 lineage (additive, no schema break)
-      AC5: tests/core/test_moving_compact_2166.cpp — pin → Moving →
+      AC5: tests/core/test_moving_compact.cpp — pin → Moving →
            validate(cur_gen, arena_id) succeeds AND ptr() equals the densified
            address; negative pin (non-arena address) → invalidate after Moving
     """

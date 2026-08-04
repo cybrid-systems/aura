@@ -50,42 +50,42 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp",
+      "path": "tests/compiler/test_side_effect_security_gate_hardfail.cpp",
       "contains": [
         "ac1_broken_fixture_fails"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp",
+      "path": "tests/compiler/test_side_effect_security_gate_hardfail.cpp",
       "contains": [
         "ac2_existing_prim_set_passes"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp",
+      "path": "tests/compiler/test_side_effect_security_gate_hardfail.cpp",
       "contains": [
         "ac3_ci_gate_runs_script"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp",
+      "path": "tests/compiler/test_side_effect_security_gate_hardfail.cpp",
       "contains": [
         "ac4_allowlist_reason_enforced"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp",
+      "path": "tests/compiler/test_side_effect_security_gate_hardfail.cpp",
       "contains": [
         "ac5_source_cite"
       ]
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp",
+      "path": "tests/compiler/test_side_effect_security_gate_hardfail.cpp",
       "contains": [
         "ac6_registrations",
         "Issue #2494"
@@ -95,9 +95,9 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_side_effect_security_gate_hardfail_2494",
-        "aura_add_issue_test(test_side_effect_security_gate_hardfail_2494)",
-        "aura_issue_test_link_light(test_side_effect_security_gate_hardfail_2494)"
+        "test_side_effect_security_gate_hardfail",
+        "aura_add_issue_test(test_side_effect_security_gate_hardfail)",
+        "aura_issue_test_link_light(test_side_effect_security_gate_hardfail)"
       ]
     },
     {

@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_dirty_column_lock_2423.cpp")
+    test = _read("tests/core/test_dirty_column_lock.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -60,7 +60,7 @@ def main() -> int:
     must("2423 AC4", "AC4", test)
     must("check_dirty_column_lock_2423", "gate", build)
     must("cmd_dirty_column_lock_coverage", "gate", build)
-    must("test_dirty_column_lock_2423", "gate", cmake)
+    must("test_dirty_column_lock", "gate", cmake)
 
     if fails:
         for f in fails:

@@ -31,7 +31,7 @@
     },
     {
       "ac": "test",
-      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "path": "tests/compiler/test_panic_defer_after_densify.cpp",
       "contains": [
         "Issue #2598",
         "ac6_production_lock_helper_source_cite",

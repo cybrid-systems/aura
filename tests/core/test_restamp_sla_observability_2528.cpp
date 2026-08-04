@@ -99,14 +99,14 @@ static void ac3_is_valid_correct_after_incremental() {
     std::println("\n--- AC3: is_valid / refresh_if_stale correct after incremental restamp ---");
     // AC3 is covered by the existing fixture lineage (per AC6: additive
     // schema only). This test reuses the test_incremental_restamp_2061 +
-    // test_last_validated_generation_atomic_2394 + test_restamp_lazy_align_
+    // test_last_validated_generation_atomic + test_restamp_lazy_align_
     // atomic_2421 fixtures — which already verify is_valid / refresh_if_stale
     // correctness after incremental restamp. The Issue #2528 SLA surface is
     // purely additive observability on top of the already-correct
     // #2402/#2122/#2393 logic.
     const auto t2061 = read_file("tests/core/test_incremental_restamp_2061.cpp");
-    const auto t2394 = read_file("tests/core/test_last_validated_generation_atomic_2394.cpp");
-    const auto t2421 = read_file("tests/core/test_restamp_lazy_align_atomic_2421.cpp");
+    const auto t2394 = read_file("tests/core/test_last_validated_generation_atomic.cpp");
+    const auto t2421 = read_file("tests/core/test_restamp_lazy_align_atomic.cpp");
     CHECK(!t2061.empty(), "AC3: #2061 incremental restamp fixture preserved");
     CHECK(!t2394.empty(), "AC3: #2394 last_validated_generation fixture preserved");
     CHECK(!t2421.empty(), "AC3: #2421 lazy-align atomic fixture preserved");

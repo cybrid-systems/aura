@@ -41,7 +41,7 @@ def main() -> int:
     aud = _read("src/compiler/typed_mutation_audit.h")
     q = _read("src/compiler/evaluator_primitives_security.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
-    test = _read("tests/compiler/test_linear_force_unified_2545.cpp")
+    test = _read("tests/compiler/test_linear_force_unified.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -87,7 +87,7 @@ def main() -> int:
     must("linear-force-unified", "AC6", q)
     must("schema-2545", "AC6", mut)
     must("schema-2514", "AC6", q)  # lineage retained
-    must("test_linear_force_unified_2545", "AC6", cmake)
+    must("test_linear_force_unified", "AC6", cmake)
     must("check_linear_force_unified_2545", "AC6", build)
     must("cmd_linear_force_unified_coverage", "AC6", build)
     must("ac6_source_and_schema", "AC6", test)

@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_get_nodeview_snapshot_2453.cpp",
+      "path": "tests/core/test_get_nodeview_snapshot.cpp",
       "contains": [
         "2453 AC1"
       ]
@@ -30,7 +30,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_get_nodeview_snapshot_2453.cpp",
+      "path": "tests/core/test_get_nodeview_snapshot.cpp",
       "contains": [
         "2453 AC2",
         "concurrent multi-reader"
@@ -38,7 +38,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_get_nodeview_snapshot_2453.cpp",
+      "path": "tests/core/test_get_nodeview_snapshot.cpp",
       "contains": [
         "2453 AC3"
       ]
@@ -55,7 +55,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_get_nodeview_snapshot_2453"
+        "test_get_nodeview_snapshot"
       ]
     }
   ],

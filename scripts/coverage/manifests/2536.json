@@ -45,8 +45,8 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_hard_fiber_restricted_2536",
-        "aura_issue_test_link_light(test_hard_fiber_restricted_2536)"
+        "test_hard_fiber_restricted",
+        "aura_issue_test_link_light(test_hard_fiber_restricted)"
       ]
     },
     {
@@ -58,7 +58,7 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_hard_fiber_restricted_2536.cpp",
+      "path": "tests/compiler/test_hard_fiber_restricted.cpp",
       "contains": [
         "AC1"
       ]
