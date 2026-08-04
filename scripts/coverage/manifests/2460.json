@@ -17,7 +17,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "path": "tests/compiler/test_linear_partial_revalidate.cpp",
       "contains": [
         "AC1: partial ownership fail is first-class"
       ]
@@ -31,7 +31,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "path": "tests/compiler/test_linear_partial_revalidate.cpp",
       "contains": [
         "AC2: Phase-1 synthesize path retained"
       ]
@@ -47,14 +47,14 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "path": "tests/compiler/test_linear_partial_revalidate.cpp",
       "contains": [
         "AC3: Soft Warning vs production TypeError"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "path": "tests/compiler/test_linear_partial_revalidate.cpp",
       "contains": [
         "AC4: escape gate + #2108 retained"
       ]
@@ -105,7 +105,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_linear_partial_revalidate_2460"
+        "test_linear_partial_revalidate"
       ]
     },
     {
@@ -118,7 +118,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "path": "tests/compiler/test_linear_partial_revalidate.cpp",
       "contains": [
         "AC5: empty dirty + schema-2460"
       ]

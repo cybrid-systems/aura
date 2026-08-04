@@ -79,7 +79,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_flatast_add_node_lock_2413.cpp")
+    test = _read("tests/core/test_flatast_add_node_lock.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -127,7 +127,7 @@ def main() -> int:
 
     must("check_flatast_add_node_lock_2413", "gate", build)
     must("cmd_flatast_add_node_lock_coverage", "gate", build)
-    must("test_flatast_add_node_lock_2413", "gate", cmake)
+    must("test_flatast_add_node_lock", "gate", cmake)
 
     if fails:
         for f in fails:

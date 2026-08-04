@@ -36,7 +36,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate.cpp",
       "contains": [
         "ac1_densify_with_linear_runs"
       ]
@@ -72,7 +72,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate.cpp",
       "contains": [
         "ac2_fail_closed_report"
       ]
@@ -87,7 +87,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate.cpp",
       "contains": [
         "ac3_soft_no_densify_zero_cost"
       ]
@@ -120,7 +120,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate.cpp",
       "contains": [
         "ac4_query_schema"
       ]
@@ -135,7 +135,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate.cpp",
       "contains": [
         "ac5_source_cite"
       ]
@@ -144,7 +144,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_post_densify_linear_type_revalidate_2353"
+        "test_post_densify_linear_type_revalidate"
       ]
     },
     {

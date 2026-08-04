@@ -58,7 +58,7 @@
     },
     {
       "ac": "test",
-      "path": "tests/core/test_general_object_pin_coverage_gate_2496.cpp",
+      "path": "tests/core/test_general_object_pin_coverage_gate.cpp",
       "contains": [
         "Issue #2597",
         "ac16_production_default_required",

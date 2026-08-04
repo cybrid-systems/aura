@@ -23,7 +23,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "path": "tests/compiler/test_linear_synth_violation.cpp",
       "contains": [
         "ac1_double_move_first_class"
       ]
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "path": "tests/compiler/test_linear_synth_violation.cpp",
       "contains": [
         "ac2_valid_move_and_escape_gate"
       ]
@@ -53,7 +53,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "path": "tests/compiler/test_linear_synth_violation.cpp",
       "contains": [
         "ac3_production_hard_policy"
       ]
@@ -67,7 +67,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "path": "tests/compiler/test_linear_synth_violation.cpp",
       "contains": [
         "ac4_post_mutation_and_2108"
       ]
@@ -99,7 +99,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_linear_synth_violation_2357"
+        "test_linear_synth_violation"
       ]
     },
     {
@@ -112,7 +112,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "path": "tests/compiler/test_linear_synth_violation.cpp",
       "contains": [
         "ac5_query_and_source"
       ]

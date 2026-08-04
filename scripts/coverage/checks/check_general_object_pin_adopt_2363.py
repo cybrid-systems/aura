@@ -38,7 +38,7 @@ def main() -> int:
     qw = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     ev = _read("src/compiler/evaluator_primitives_eval.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/core/test_general_object_pin_adopt_2363.cpp")
+    test = _read("tests/core/test_general_object_pin_adopt.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -80,7 +80,7 @@ def main() -> int:
     must("general-object-pin-adopt-site-count", "AC5", mem)
     must("kGeneralObjectPinAdoptSiteCount", "AC5", mem)
     must("schema-2363", "AC5", q)  # also kept on obs_eval for dual path
-    must("test_general_object_pin_adopt_2363", "AC5", cmake)
+    must("test_general_object_pin_adopt", "AC5", cmake)
     must("check_general_object_pin_adopt_2363", "AC5", build)
     must("cmd_general_object_pin_adopt_coverage", "AC5", build)
     must("ac2_pin_moving_validate", "AC5", test)

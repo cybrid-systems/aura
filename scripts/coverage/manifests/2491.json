@@ -17,7 +17,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp",
+      "path": "tests/compiler/test_tenant_scope_fiber_mandate.cpp",
       "contains": [
         "ac1_assigned_tenant_id_accessor"
       ]
@@ -49,7 +49,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp",
+      "path": "tests/compiler/test_tenant_scope_fiber_mandate.cpp",
       "contains": [
         "ac2_resume_reinstalls_and_release_restores"
       ]
@@ -66,14 +66,14 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp",
+      "path": "tests/compiler/test_tenant_scope_fiber_mandate.cpp",
       "contains": [
         "ac3_cross_tenant_isolation_deny"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp",
+      "path": "tests/compiler/test_tenant_scope_fiber_mandate.cpp",
       "contains": [
         "ac4_nested_reentry_preserves_outer"
       ]
@@ -87,14 +87,14 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp",
+      "path": "tests/compiler/test_tenant_scope_fiber_mandate.cpp",
       "contains": [
         "ac5_off_sandbox_no_force"
       ]
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp",
+      "path": "tests/compiler/test_tenant_scope_fiber_mandate.cpp",
       "contains": [
         "ac6_multi_tenant_stress_no_bleed"
       ]
@@ -108,7 +108,7 @@
     },
     {
       "ac": "AC7",
-      "path": "tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp",
+      "path": "tests/compiler/test_tenant_scope_fiber_mandate.cpp",
       "contains": [
         "ac7_source_and_gate"
       ]
@@ -124,9 +124,9 @@
       "ac": "AC7",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_tenant_scope_fiber_mandate_2491",
-        "aura_add_issue_test(test_tenant_scope_fiber_mandate_2491)",
-        "aura_issue_test_link_light(test_tenant_scope_fiber_mandate_2491)"
+        "test_tenant_scope_fiber_mandate",
+        "aura_add_issue_test(test_tenant_scope_fiber_mandate)",
+        "aura_issue_test_link_light(test_tenant_scope_fiber_mandate)"
       ]
     },
     {

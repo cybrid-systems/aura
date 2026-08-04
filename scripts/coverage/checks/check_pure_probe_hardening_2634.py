@@ -12,7 +12,7 @@ Contract (one row per AC):
      !pure_mode (zero cost on the serialized path)
   AC4 Wording gate (scripts/coverage/checks/check_pure_parallel_isolation_wording.py)
      still fails injected "transactional isolation" claims
-  AC5 test_parallel_intend_pure_contract_2230 extended with AC for
+  AC5 test_parallel_intend_pure_contract extended with AC for
      mutations_/gen probe (probe catches indirect writers)
   AC6 README probe section updated; schema keys #2163/#2400/#2593 preserved
   AC7 AgentSpec / OrchModuleStats untouched (pure probe is internal to
@@ -47,7 +47,7 @@ def main() -> int:
     ev = _read("src/compiler/evaluator.ixx")
     ag = _read("src/compiler/evaluator_primitives_agent.cpp")
     rd = _read("src/orch/README.md")
-    test = _read("tests/orch/test_parallel_intend_pure_contract_2230.cpp")
+    test = _read("tests/orch/test_parallel_intend_pure_contract.cpp")
     build = _read("build.py")
     linter = _read("scripts/coverage/checks/check_pure_parallel_isolation_wording.py")
 

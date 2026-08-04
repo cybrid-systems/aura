@@ -38,7 +38,7 @@ def main() -> int:
     wal = _read("src/core/security_event_wal.hh")
     se = _read("src/core/security_event.hh")
     sec = _read("src/compiler/evaluator_security.cpp")
-    test = _read("tests/compiler/test_security_audit_fold_2388.cpp")
+    test = _read("tests/compiler/test_security_audit_fold.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -78,7 +78,7 @@ def main() -> int:
     must("ac4_sentinel", "AC4", test)
 
     # AC5 registration
-    must("test_security_audit_fold_2388", "AC5", cmake)
+    must("test_security_audit_fold", "AC5", cmake)
     must("check_security_audit_fold_2388", "AC5", build)
     must("cmd_security_audit_fold_coverage", "AC5", build)
     must("ac5_source_and_gate", "AC5", test)

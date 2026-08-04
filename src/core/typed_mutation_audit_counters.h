@@ -18,14 +18,15 @@ namespace aura::core {
 // Production paths should use aura::compiler::TypedMutationAuditCounters
 // and aura::compiler::typed_audit::g_typed_mutation_audit_counters
 // directly from compiler/typed_mutation_audit.h.
-using TypedMutationAuditCounters = ::aura::compiler::TypedMutationAuditCounters;
+using TypedMutationAuditCounters = ::aura::compiler::typed_audit::TypedMutationAuditCounters;
 
 } // namespace aura::core
 
 // Re-export the global counter instance at the core:: namespace level.
 // Tests use aura::core::g_typed_mutation_audit_counters via using-declaration.
 namespace aura::core::typed_audit {
-inline ::aura::compiler::TypedMutationAuditCounters& g_typed_mutation_audit_counters() noexcept {
+inline ::aura::compiler::typed_audit::TypedMutationAuditCounters&
+g_typed_mutation_audit_counters() noexcept {
     return ::aura::compiler::typed_audit::g_typed_mutation_audit_counters;
 }
 } // namespace aura::core::typed_audit

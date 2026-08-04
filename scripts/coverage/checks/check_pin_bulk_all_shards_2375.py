@@ -9,7 +9,7 @@ Contract:
   AC1 arena_id==0 walks all kPinRegistryShardCount shards
   AC2 arena_id!=0 still single-shard
   AC3 lock order 0..15 (for loop over i)
-  AC4 unit test ac2375 in test_moving_compact_2166
+  AC4 unit test ac2375 in test_moving_compact
   AC5 production callers still named (restamp/invalidate_all)
   AC6 Issue #2375 cite + gate wire
 
@@ -60,7 +60,7 @@ def main() -> int:
             fails.append(msg)
 
     pin = _read("src/core/lifetime_pin.ixx")
-    test = _read("tests/core/test_moving_compact_2166.cpp")
+    test = _read("tests/core/test_moving_compact.cpp")
     bp = _read("build.py")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     gc = _read("src/compiler/evaluator_gc.cpp")

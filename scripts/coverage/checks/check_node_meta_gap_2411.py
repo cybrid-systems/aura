@@ -39,7 +39,7 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     impl = _read("src/core/ast_impl.cpp")
-    test = _read("tests/core/test_node_meta_gap_2411.cpp")
+    test = _read("tests/core/test_node_meta_gap.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -74,7 +74,7 @@ def main() -> int:
 
     must("check_node_meta_gap_2411", "gate", build)
     must("cmd_node_meta_gap_coverage", "gate", build)
-    must("test_node_meta_gap_2411", "gate", cmake)
+    must("test_node_meta_gap", "gate", cmake)
 
     if fails:
         for f in fails:

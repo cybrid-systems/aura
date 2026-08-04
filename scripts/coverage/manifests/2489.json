@@ -55,9 +55,9 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_capability_high_risk_promote_2489",
-        "aura_add_issue_test(test_capability_high_risk_promote_2489)",
-        "aura_issue_test_link_light(test_capability_high_risk_promote_2489)"
+        "test_capability_high_risk_promote",
+        "aura_add_issue_test(test_capability_high_risk_promote)",
+        "aura_issue_test_link_light(test_capability_high_risk_promote)"
       ]
     },
     {
@@ -70,42 +70,42 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "path": "tests/compiler/test_capability_high_risk_promote.cpp",
       "contains": [
         "ac1_registry_only_promoted_caps"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "path": "tests/compiler/test_capability_high_risk_promote.cpp",
       "contains": [
         "ac2_revoke_clears_both"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "path": "tests/compiler/test_capability_high_risk_promote.cpp",
       "contains": [
         "ac3_strict_deny_and_audit"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "path": "tests/compiler/test_capability_high_risk_promote.cpp",
       "contains": [
         "ac4_epoch_fence"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "path": "tests/compiler/test_capability_high_risk_promote.cpp",
       "contains": [
         "ac5_hard_fiber_deny"
       ]
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "path": "tests/compiler/test_capability_high_risk_promote.cpp",
       "contains": [
         "ac6_source_and_security_exempt_doc"
       ]

@@ -55,7 +55,7 @@ def check() -> list:
     eval_ = _read("src/compiler/evaluator_mutation_boundary.cpp")
     gc = _read("src/compiler/evaluator_gc.cpp")
     ev = _read("src/compiler/evaluator.ixx")
-    test = _read("tests/core/test_moving_compact_2166.cpp")
+    test = _read("tests/core/test_moving_compact.cpp")
 
     # AC1 — Semantics: verify_pins_under_moving_compact takes (arena_id, old_addresses)
     # and returns false on contract fail (pin's ptr_ in old_addresses).

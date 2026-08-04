@@ -147,7 +147,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "file": "tests/compiler/test_arena_moving_densify_health.cpp",
       "category": "unit",
       "reason": "Issue #2619 — Agent-visible Moving densify health + untracked hard",
       "issue": null
@@ -195,19 +195,19 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_audit_mid_fallback_slo_2594.cpp",
+      "file": "tests/compiler/test_audit_mid_fallback_slo.cpp",
       "category": "unit",
       "reason": "Issue #2594 — pure `decide_audit_mid_fallback_slo()` synthesizes",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "file": "tests/compiler/test_audit_mutation_id_unify.cpp",
       "category": "unit",
       "reason": "Issue #2493 — unify mutation_id source — WorkspaceEpoch Mutation",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_audit_ring_publish_2530.cpp",
+      "file": "tests/compiler/test_audit_ring_publish.cpp",
       "category": "unit",
       "reason": "Issue #2530 — Capability + Isolation kAuditRing=1024 + Isolation publish_seq.",
       "issue": null
@@ -321,13 +321,13 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_cap_write_effect_matrix_2532.cpp",
+      "file": "tests/compiler/test_cap_write_effect_matrix.cpp",
       "category": "unit",
       "reason": "Issue #2532 — workspace/fiber write-control into Effect matrix.",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_capability_effect_force_2072.cpp",
+      "file": "tests/compiler/test_capability_effect_force.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
@@ -339,19 +339,19 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "file": "tests/compiler/test_capability_high_risk_promote.cpp",
       "category": "unit",
       "reason": "Issue #2489 — promote remaining high-risk string-only caps into the",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_capability_string_matrix_unify_2387.cpp",
+      "file": "tests/compiler/test_capability_string_matrix_unify.cpp",
       "category": "unit",
       "reason": "Issue #2387 — unify string-only sensitive caps with Effect matrix",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_capability_unified_2077.cpp",
+      "file": "tests/compiler/test_capability_unified.cpp",
       "category": "unit",
       "reason": "Issue #2077 — unify has_capability string path with Effect matrix",
       "issue": null
@@ -711,31 +711,31 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_densify_envframe_ok_2361.cpp",
+      "file": "tests/compiler/test_densify_envframe_ok.cpp",
       "category": "unit",
       "reason": "Issue #2361 — DensifyConsistencyReport.envframe_ok is a real",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_densify_last_call_axes_2376.cpp",
+      "file": "tests/compiler/test_densify_last_call_axes.cpp",
       "category": "unit",
       "reason": "Issue #2376 — DensifyConsistencyReport per-call last-result",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_densify_ownership_scan_fail_gate_2497.cpp",
+      "file": "tests/compiler/test_densify_ownership_scan_fail_gate.cpp",
       "category": "unit",
       "reason": "Issue #2497 — DensifyConsistencyReport.envframe_ok hard-binds",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_densify_remap_pairing_2368.cpp",
+      "file": "tests/compiler/test_densify_remap_pairing.cpp",
       "category": "unit",
       "reason": "Issue #2368 — force densify remap-context pairing on all Moving",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_densify_root_closure_closed_loop_2365.cpp",
+      "file": "tests/compiler/test_densify_root_closure_closed_loop.cpp",
       "category": "unit",
       "reason": "Issue #2365 — RootRemap + densify pointer consistency closed-loop",
       "issue": null
@@ -873,7 +873,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_envframe_ownership_steal_densify_2362.cpp",
+      "file": "tests/compiler/test_envframe_ownership_steal_densify.cpp",
       "category": "unit",
       "reason": "Issue #2362 — close EnvFrameRef ownership under concurrent",
       "issue": null
@@ -927,7 +927,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_escape_gate_steal_densify_clear_2507.cpp",
+      "file": "tests/compiler/test_escape_gate_steal_densify_clear.cpp",
       "category": "unit",
       "reason": "Issue #2507 — clear OwnershipEscapeSummary / MoveOp elision",
       "issue": null
@@ -1029,37 +1029,37 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_grant_bound_mid_force_2531.cpp",
+      "file": "tests/compiler/test_grant_bound_mid_force.cpp",
       "category": "unit",
       "reason": "Issue #2531 — force non-zero bound_mutation_id under Restricted/Strict.",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_grant_epoch_fiber_bind_2055.cpp",
+      "file": "tests/compiler/test_grant_epoch_fiber_bind.cpp",
       "category": "unit",
       "reason": "Issue #2055 — bind grant/revoke to WorkspaceEpoch Mutation + fiber",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_grant_epoch_invalidation_2074.cpp",
+      "file": "tests/compiler/test_grant_epoch_invalidation.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_grant_epoch_retain_restricted_2529.cpp",
+      "file": "tests/compiler/test_grant_epoch_retain_restricted.cpp",
       "category": "unit",
       "reason": "Issue #2529 — Restricted single-tenant grant_epoch_retain K=16.",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_grant_epoch_retain_window_2154.cpp",
+      "file": "tests/compiler/test_grant_epoch_retain_window.cpp",
       "category": "unit",
       "reason": "Issue #2154 — Sliding grant_min_valid_epoch window on Mutation",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_grant_macro_self_evo_stamp_2386.cpp",
+      "file": "tests/compiler/test_grant_macro_self_evo_stamp.cpp",
       "category": "unit",
       "reason": "Issue #2386 — grant_macro_self_evo stamps grant_epoch + grant_fiber_id",
       "issue": null
@@ -1071,13 +1071,13 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_hard_fiber_isolation_2151.cpp",
+      "file": "tests/compiler/test_hard_fiber_isolation.cpp",
       "category": "unit",
       "reason": "Issue #2151 — Optional hard-deny on grant_fiber_id mismatch",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_hard_fiber_restricted_2536.cpp",
+      "file": "tests/compiler/test_hard_fiber_restricted.cpp",
       "category": "unit",
       "reason": "Issue #2536 — Restricted same-tenant multi-fiber soft by default;",
       "issue": null
@@ -1443,7 +1443,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_lifetime_contract_snapshot_2300.cpp",
+      "file": "tests/compiler/test_lifetime_contract_snapshot.cpp",
       "category": "unit",
       "reason": "Issue #2300 — query:lifetime-contract-snapshot pure Agent surface",
       "issue": null
@@ -1467,43 +1467,43 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_enforce_boundary_align_2222.cpp",
+      "file": "tests/compiler/test_linear_enforce_boundary_align.cpp",
       "category": "unit",
       "reason": "Issue #2222 — align IR LinearEnforceMode Soft/Strict with",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_enforce_production_defaults_2182.cpp",
+      "file": "tests/compiler/test_linear_enforce_production_defaults.cpp",
       "category": "unit",
       "reason": "Issue #2182 — production defaults Strict LinearEnforceMode",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_enforce_strict_2103.cpp",
+      "file": "tests/compiler/test_linear_enforce_strict.cpp",
       "category": "unit",
       "reason": "Issue #2103 — optional Strict require_complete on",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_enforce_strict_default_2207.cpp",
+      "file": "tests/compiler/test_linear_enforce_strict_default.cpp",
       "category": "unit",
       "reason": "Issue #2207 — LinearEnforceMode Strict production process",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_escape_commit_hardblock_2108.cpp",
+      "file": "tests/compiler/test_linear_escape_commit_hardblock.cpp",
       "category": "unit",
       "reason": "Issue #2108 — hard-block composite cross-batch linear escape",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_force_unified_2545.cpp",
+      "file": "tests/compiler/test_linear_force_unified.cpp",
       "category": "unit",
       "reason": "Issue #2545 — unify hard-fail decision entry (synth + post-mutate",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_gc_window_2043.cpp",
+      "file": "tests/compiler/test_linear_gc_window.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
@@ -1539,13 +1539,13 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "file": "tests/compiler/test_linear_partial_revalidate.cpp",
       "category": "unit",
       "reason": "Issue #2460 — Phase-2 dirty-set OwnershipEnv re-sim during",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_pin_moving_compact_2280.cpp",
+      "file": "tests/compiler/test_linear_pin_moving_compact.cpp",
       "category": "unit",
       "reason": "Issue #2280 — epoch-scoped OccurrenceGoal table (epoch-scoped",
       "issue": null
@@ -1569,19 +1569,19 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_synth_boundary_authority_2514.cpp",
+      "file": "tests/compiler/test_linear_synth_boundary_authority.cpp",
       "category": "unit",
       "reason": "Issue #2514 — unify linear_synth_hard_fail with MutationBoundary",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "file": "tests/compiler/test_linear_synth_violation.cpp",
       "category": "unit",
       "reason": "Issue #2357 — Phase-1 linear Move/Drop violations as first-class",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_linear_three_layer_wire_2559.cpp",
+      "file": "tests/compiler/test_linear_three_layer_wire.cpp",
       "category": "unit",
       "reason": "Issue #2559 — three-layer linear invariant wire inventory gate",
       "issue": null
@@ -2097,7 +2097,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "file": "tests/compiler/test_panic_defer_after_densify.cpp",
       "category": "unit",
       "reason": "Issue #2364 — harden PanicCheckpoint residual clear × GC defer",
       "issue": null
@@ -2187,7 +2187,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "file": "tests/compiler/test_post_densify_linear_type_revalidate.cpp",
       "category": "unit",
       "reason": "Issue #2353 — post-densify / post-steal unified Linear+Type",
       "issue": null
@@ -2493,13 +2493,13 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_require_effect_auto_isolation_2490.cpp",
+      "file": "tests/compiler/test_require_effect_auto_isolation.cpp",
       "category": "unit",
       "reason": "Issue #2490 — require_effect is the single side-effect entry.",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_require_effect_live_mid_2384.cpp",
+      "file": "tests/compiler/test_require_effect_live_mid.cpp",
       "category": "unit",
       "reason": "Issue #2384 — require_effect stamps live mutation_id (not 0)",
       "issue": null
@@ -2541,13 +2541,13 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_root_remap_pass_2267.cpp",
+      "file": "tests/compiler/test_root_remap_pass.cpp",
       "category": "unit",
       "reason": "Issue #2294 / #2267 — RootRemapPass real Stable-object + Closure",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_root_remap_pin_contract_unified_2499.cpp",
+      "file": "tests/compiler/test_root_remap_pin_contract_unified.cpp",
       "category": "unit",
       "reason": "Issue #2499 — unify RootRemapPass fail with pin_contract_held",
       "issue": null
@@ -2577,25 +2577,25 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_security_audit_fold_2388.cpp",
+      "file": "tests/compiler/test_security_audit_fold.cpp",
       "category": "unit",
       "reason": "Issue #2388 — fold Capability + Isolation private audit rings",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_security_audit_trail_2075.cpp",
+      "file": "tests/compiler/test_security_audit_trail.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_security_audit_unify_2054.cpp",
+      "file": "tests/compiler/test_security_audit_unify.cpp",
       "category": "unit",
       "reason": "Issue #2054 — unify capability / mutation / TypedMutationAudit",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_security_audit_wal_force_restricted_2492.cpp",
+      "file": "tests/compiler/test_security_audit_wal_force_restricted.cpp",
       "category": "unit",
       "reason": "Issue #2492 — force SecurityEvent WAL under Restricted (not only",
       "issue": null
@@ -2607,25 +2607,25 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_security_event_wal_replay_2225.cpp",
+      "file": "tests/compiler/test_security_event_wal_replay.cpp",
       "category": "unit",
       "reason": "Issue #2225 — durable side-car SecurityEvent WAL + expand ring",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_security_health_2389.cpp",
+      "file": "tests/compiler/test_security_health.cpp",
       "category": "unit",
       "reason": "Issue #2389 — query:security-health single Agent score",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_security_posture_trail_2534.cpp",
+      "file": "tests/compiler/test_security_posture_trail.cpp",
       "category": "unit",
       "reason": "Issue #2534 — query:security-posture + security-correlated-trail.",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_security_schedule_mutate_admit_2630.cpp",
+      "file": "tests/compiler/test_security_schedule_mutate_admit.cpp",
       "category": "unit",
       "reason": "Issue #2630 — wire security-schedule-gate into mutate admission",
       "issue": null
@@ -2733,13 +2733,13 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_side_effect_inherit_2057.cpp",
+      "file": "tests/compiler/test_side_effect_inherit.cpp",
       "category": "unit",
       "reason": "Issue #2057 — side-effect primitives inherit capability /",
       "issue": null
     },
     {
-      "file": "tests/compiler/test_side_effect_security_gate_hardfail_2494.cpp",
+      "file": "tests/compiler/test_side_effect_security_gate_hardfail.cpp",
       "category": "unit",
       "reason": "Issue #2494 — ci(security): hard-fail",
       "issue": null
@@ -2859,7 +2859,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_stable_ref_pin_lifecycle_2189.cpp",
+      "file": "tests/compiler/test_stable_ref_pin_lifecycle.cpp",
       "category": "unit",
       "reason": "Issue #2189 — Agent-visible pin lifecycle RAII for StableNodeRef",
       "issue": null
@@ -2949,7 +2949,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_tenant_scope_fiber_mandate_2491.cpp",
+      "file": "tests/compiler/test_tenant_scope_fiber_mandate.cpp",
       "category": "unit",
       "reason": "Issue #2491 — TenantScope mandated at fiber spawn/resume entry",
       "issue": null
@@ -3015,7 +3015,7 @@
       "issue": null
     },
     {
-      "file": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "file": "tests/compiler/test_type_freshness_steal_densify.cpp",
       "category": "unit",
       "reason": "Issue #2552 — steal/densify joint freshness for OccurrenceGoal",
       "issue": null
@@ -3189,7 +3189,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_add_node_builder_contract_2445.cpp",
+      "file": "tests/core/test_add_node_builder_contract.cpp",
       "category": "unit",
       "reason": "Issue #2445 — document add_node + add_* builder mutation contract.",
       "issue": null
@@ -3285,25 +3285,25 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_binding_gens_atomic_2417.cpp",
+      "file": "tests/core/test_binding_gens_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2417 — binding_gens_ atomic shared_ptr + COW bump.",
       "issue": null
     },
     {
-      "file": "tests/core/test_capability_audit_publish_2425.cpp",
+      "file": "tests/core/test_capability_audit_publish.cpp",
       "category": "unit",
       "reason": "Issue #2425 — CapabilityRegistry audit_ring published slots",
       "issue": null
     },
     {
-      "file": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "file": "tests/core/test_capability_effect_stats_snapshot.cpp",
       "category": "unit",
       "reason": "Issue #2430 — snapshot_capability_effect_stats double-check",
       "issue": null
     },
     {
-      "file": "tests/core/test_capability_registry_snapshot_2426.cpp",
+      "file": "tests/core/test_capability_registry_snapshot.cpp",
       "category": "unit",
       "reason": "Issue #2426 — CapabilityRegistry::snapshot_registry_state()",
       "issue": null
@@ -3315,13 +3315,13 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_capability_single_use_consume_2586.cpp",
+      "file": "tests/core/test_capability_single_use_consume.cpp",
       "category": "unit",
       "reason": "Issue #2586 — single-use / mutation-bound grant (auto-revoke",
       "issue": null
     },
     {
-      "file": "tests/core/test_clear_macro_dirty_concurrent_2442.cpp",
+      "file": "tests/core/test_clear_macro_dirty_concurrent.cpp",
       "category": "unit",
       "reason": "Issue #2442 — clear_macro_dirty_all concurrent with macro_dirty(id)",
       "issue": null
@@ -3345,7 +3345,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_defines_referencing_sym_2448.cpp",
+      "file": "tests/core/test_defines_referencing_sym.cpp",
       "category": "unit",
       "reason": "Issue #2448 — defines_referencing_sym skips only the mutated",
       "issue": null
@@ -3363,7 +3363,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_dirty_column_lock_2423.cpp",
+      "file": "tests/core/test_dirty_column_lock.cpp",
       "category": "unit",
       "reason": "Issue #2423 — dirty_nodes_in_range / is_subtree_dirty_node",
       "issue": null
@@ -3381,7 +3381,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_flatast_add_node_lock_2413.cpp",
+      "file": "tests/core/test_flatast_add_node_lock.cpp",
       "category": "unit",
       "reason": "Issue #2413 — FlatAST add_node multi-column SoA lock contract.",
       "issue": null
@@ -3393,7 +3393,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_flatast_soa_read_guard_2488.cpp",
+      "file": "tests/core/test_flatast_soa_read_guard.cpp",
       "category": "unit",
       "reason": "Issue #2488 — FlatAST SoAReadGuard / get_soa_safe vs concurrent",
       "issue": null
@@ -3405,7 +3405,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_gc_defer_arm_fetch_or_2428.cpp",
+      "file": "tests/core/test_gc_defer_arm_fetch_or.cpp",
       "category": "unit",
       "reason": "Issue #2428 — arm_defer uses fetch_or so first-arm metrics",
       "issue": null
@@ -3417,13 +3417,13 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "file": "tests/core/test_gc_defer_overflow_policy_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2429 — policy check + overflow arm under same mutex",
       "issue": null
     },
     {
-      "file": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "file": "tests/core/test_gc_defer_reconcile_cas.cpp",
       "category": "unit",
       "reason": "Issue #2437 — reconcile_gc_defer_bits_after_clear TOCTOU: concurrent",
       "issue": null
@@ -3435,25 +3435,25 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_general_object_pin_2298.cpp",
+      "file": "tests/core/test_general_object_pin.cpp",
       "category": "unit",
       "reason": "Issue #2298 — pin-or-remap for non-render general objects",
       "issue": null
     },
     {
-      "file": "tests/core/test_general_object_pin_adopt_2363.cpp",
+      "file": "tests/core/test_general_object_pin_adopt.cpp",
       "category": "unit",
       "reason": "Issue #2363 — complete GeneralObjectPin adoption for mutate /",
       "issue": null
     },
     {
-      "file": "tests/core/test_general_object_pin_coverage_gate_2496.cpp",
+      "file": "tests/core/test_general_object_pin_coverage_gate.cpp",
       "category": "unit",
       "reason": "Issue #2496 — GeneralObjectPin adoption coverage gate",
       "issue": null
     },
     {
-      "file": "tests/core/test_get_nodeview_snapshot_2453.cpp",
+      "file": "tests/core/test_get_nodeview_snapshot.cpp",
       "category": "unit",
       "reason": "Issue #2453 — get(NodeId) NodeView multi-column snapshot contract.",
       "issue": null
@@ -3495,7 +3495,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_incoming_parent_dirty_atomic_2416.cpp",
+      "file": "tests/core/test_incoming_parent_dirty_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2416 — incoming_parent_index_dirty_ is std::atomic<bool>.",
       "issue": null
@@ -3507,7 +3507,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_last_validated_generation_atomic_2394.cpp",
+      "file": "tests/core/test_last_validated_generation_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2394 — last_validated_generation is concurrent-safe",
       "issue": null
@@ -3519,7 +3519,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_macro_dirty_bits_lock_2441.cpp",
+      "file": "tests/core/test_macro_dirty_bits_lock.cpp",
       "category": "unit",
       "reason": "Issue #2441 — apply_macro_dirty_bits newly_set metric must not",
       "issue": null
@@ -3537,31 +3537,31 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_moving_compact_2166.cpp",
+      "file": "tests/core/test_moving_compact.cpp",
       "category": "unit",
       "reason": "Issue #2166 — opt-in LiveCompactMode::Moving densify + object_remap_.",
       "issue": null
     },
     {
-      "file": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "file": "tests/core/test_moving_densify_fail_closed.cpp",
       "category": "unit",
       "reason": "Issue #2495 — Moving densify fail-closed on untracked external",
       "issue": null
     },
     {
-      "file": "tests/core/test_mutation_log_cow_copy_2457.cpp",
+      "file": "tests/core/test_mutation_log_cow_copy.cpp",
       "category": "unit",
       "reason": "Issue #2457 — FlatAST copy shares mutation_log_ / narrowing_log_",
       "issue": null
     },
     {
-      "file": "tests/core/test_node_meta_bounds_2410.cpp",
+      "file": "tests/core/test_node_meta_bounds.cpp",
       "category": "unit",
       "reason": "Issue #2410 — meta(NodeTag) bounds-checked; OOB returns sentinel.",
       "issue": null
     },
     {
-      "file": "tests/core/test_node_meta_gap_2411.cpp",
+      "file": "tests/core/test_node_meta_gap.cpp",
       "category": "unit",
       "reason": "Issue #2411 — kNodeMeta gap entry is_gap + tag 0x0C; full tag/name check.",
       "issue": null
@@ -3591,19 +3591,19 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_param_annot_mutation_contract_2450.cpp",
+      "file": "tests/core/test_param_annot_mutation_contract.cpp",
       "category": "unit",
       "reason": "Issue #2450 — param_annot_data_ single-threaded mutation contract",
       "issue": null
     },
     {
-      "file": "tests/core/test_param_begin_count_publish_2451.cpp",
+      "file": "tests/core/test_param_begin_count_publish.cpp",
       "category": "unit",
       "reason": "Issue #2451 — param_begin_ + param_count_ publish order",
       "issue": null
     },
     {
-      "file": "tests/core/test_param_data_mutation_contract_2449.cpp",
+      "file": "tests/core/test_param_data_mutation_contract.cpp",
       "category": "unit",
       "reason": "Issue #2449 — param_data_ single-threaded mutation contract",
       "issue": null
@@ -3663,7 +3663,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_raii_guard_flatast_lifetime_2454.cpp",
+      "file": "tests/core/test_raii_guard_flatast_lifetime.cpp",
       "category": "unit",
       "reason": "Issue #2454 — RAII mutation guards must not outlive FlatAST",
       "issue": null
@@ -3675,7 +3675,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_region_dense_atomic_2443.cpp",
+      "file": "tests/core/test_region_dense_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2443 — region_by_sym_dense_ / region_by_lambda_dense_",
       "issue": null
@@ -3693,7 +3693,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_restamp_lazy_align_atomic_2421.cpp",
+      "file": "tests/core/test_restamp_lazy_align_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2421 — restamp_lazy_align_enabled_ is std::atomic<bool>.",
       "issue": null
@@ -3705,13 +3705,13 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_restore_children_structural_lock_2455.cpp",
+      "file": "tests/core/test_restore_children_structural_lock.cpp",
       "category": "unit",
       "reason": "Issue #2455 — restore_children takes structural exclusive lock",
       "issue": null
     },
     {
-      "file": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "file": "tests/core/test_restricted_unset_principal.cpp",
       "category": "unit",
       "reason": "Issue #2385 — Restricted sandbox denies side-effects when",
       "issue": null
@@ -3723,7 +3723,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_sandbox_mode_atomic_2427.cpp",
+      "file": "tests/core/test_sandbox_mode_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2427 — CapabilityRegistry::sandbox_mode (and default_tenant)",
       "issue": null
@@ -3747,7 +3747,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_soa_column_atomic_2440.cpp",
+      "file": "tests/core/test_soa_column_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2440 — 4 SoA side-table columns concurrent-safe via",
       "issue": null
@@ -3777,13 +3777,13 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_stringpool_buf_fragmentation_lock_2409.cpp",
+      "file": "tests/core/test_stringpool_buf_fragmentation_lock.cpp",
       "category": "unit",
       "reason": "Issue #2409 — StringPool::buf_fragmentation samples buf_.size()",
       "issue": null
     },
     {
-      "file": "tests/core/test_stringpool_bytes_total_lock_2408.cpp",
+      "file": "tests/core/test_stringpool_bytes_total_lock.cpp",
       "category": "unit",
       "reason": "Issue #2408 — StringPool::string_bytes_total holds one shared_lock",
       "issue": null
@@ -3795,7 +3795,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_structural_metadata_lock_order_2418.cpp",
+      "file": "tests/core/test_structural_metadata_lock_order.cpp",
       "category": "unit",
       "reason": "Issue #2418 — structural_mtx_ → metadata_mtx_ lock order.",
       "issue": null
@@ -3807,37 +3807,37 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_subtree_gen_atomic_2422.cpp",
+      "file": "tests/core/test_subtree_gen_atomic.cpp",
       "category": "unit",
       "reason": "Issue #2422 — subtree_gen_ cells are atomic (uint32 + atomic_ref).",
       "issue": null
     },
     {
-      "file": "tests/core/test_subtree_uses_sym_template_bloat_2456.cpp",
+      "file": "tests/core/test_subtree_uses_sym_template_bloat.cpp",
       "category": "unit",
       "reason": "Issue #2456 — hoist subtree_uses_sym / find_define_by_name",
       "issue": null
     },
     {
-      "file": "tests/core/test_summary_flags_guard_2415.cpp",
+      "file": "tests/core/test_summary_flags_guard.cpp",
       "category": "unit",
       "reason": "Issue #2415 — summary_flags_ thread-safety annotation (atomic, not",
       "issue": null
     },
     {
-      "file": "tests/core/test_summary_recompute_sym_2414.cpp",
+      "file": "tests/core/test_summary_recompute_sym.cpp",
       "category": "unit",
       "reason": "Issue #2414 — summary_recompute(pool) restores HasKeywordVar +",
       "issue": null
     },
     {
-      "file": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "file": "tests/core/test_tag_arity_index_lock.cpp",
       "category": "unit",
       "reason": "Issue #2419 — tag_arity_index_ map protected vs concurrent rebuild.",
       "issue": null
     },
     {
-      "file": "tests/core/test_tag_arity_key_hash_2420.cpp",
+      "file": "tests/core/test_tag_arity_key_hash.cpp",
       "category": "unit",
       "reason": "Issue #2420 — TagArityKeyHash pack + splitmix finalizer.",
       "issue": null
@@ -3885,7 +3885,7 @@
       "issue": null
     },
     {
-      "file": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "file": "tests/core/test_verification_dirty_bits_lock.cpp",
       "category": "unit",
       "reason": "Issue #2439 — apply_verification_dirty_bits / apply_verify_dirty_bits",
       "issue": null
@@ -3909,55 +3909,55 @@
       "issue": null
     },
     {
-      "file": "tests/orch/test_agent_apply_mutex_2158.cpp",
+      "file": "tests/orch/test_agent_apply_mutex.cpp",
       "category": "unit",
       "reason": "Issue #2158 — per-Evaluator agent apply mutex (replace process-static",
       "issue": null
     },
     {
-      "file": "tests/orch/test_agent_ask_2231.cpp",
+      "file": "tests/orch/test_agent_ask.cpp",
       "category": "unit",
       "reason": "Issue #2231 / #2401 — agent-ask request/response + standard",
       "issue": null
     },
     {
-      "file": "tests/orch/test_agent_ask_typed_corr_2538.cpp",
+      "file": "tests/orch/test_agent_ask_typed_corr.cpp",
       "category": "unit",
       "reason": "Issue #2538 — typed correlation for agent-ask / agent-reply.",
       "issue": null
     },
     {
-      "file": "tests/orch/test_agent_failure_policy_2229.cpp",
+      "file": "tests/orch/test_agent_failure_policy.cpp",
       "category": "unit",
       "reason": "Issue #2229 — lift FailurePolicy / RestartPolicy onto",
       "issue": null
     },
     {
-      "file": "tests/orch/test_agent_max_no_yield_2540.cpp",
+      "file": "tests/orch/test_agent_max_no_yield.cpp",
       "category": "unit",
       "reason": "Issue #2540 — AgentSpec.max_no_yield_ms cooperative yield contract.",
       "issue": null
     },
     {
-      "file": "tests/orch/test_agent_name_table_isolation_2078.cpp",
+      "file": "tests/orch/test_agent_name_table_isolation.cpp",
       "category": "unit",
       "reason": "Issue #2078 — per-Evaluator orch agent name bookkeeping",
       "issue": null
     },
     {
-      "file": "tests/orch/test_agent_scope_2083.cpp",
+      "file": "tests/orch/test_agent_scope.cpp",
       "category": "unknown",
       "reason": "",
       "issue": null
     },
     {
-      "file": "tests/orch/test_agent_scope_hierarchy_2537.cpp",
+      "file": "tests/orch/test_agent_scope_hierarchy.cpp",
       "category": "unit",
       "reason": "Issue #2537 — Hierarchical AgentScope (parent/children cancel tree).",
       "issue": null
     },
     {
-      "file": "tests/orch/test_failure_policy_bridge_2539.cpp",
+      "file": "tests/orch/test_failure_policy_bridge.cpp",
       "category": "unit",
       "reason": "Issue #2539 — FailurePolicy (#2007) → AgentFailurePolicy (#2229)",
       "issue": null
@@ -3999,37 +3999,37 @@
       "issue": null
     },
     {
-      "file": "tests/orch/test_orch_obs_facade_2589.cpp",
+      "file": "tests/orch/test_orch_obs_facade.cpp",
       "category": "integration",
       "reason": "Issue #2589 — unify parallel_intend residual/reclaim metrics into",
       "issue": null
     },
     {
-      "file": "tests/orch/test_orch_scope_2588.cpp",
+      "file": "tests/orch/test_orch_scope.cpp",
       "category": "integration",
       "reason": "Issue #2588 — Aura language surface for AgentScope supervision",
       "issue": null
     },
     {
-      "file": "tests/orch/test_parallel_intend_pure_2163.cpp",
+      "file": "tests/orch/test_parallel_intend_pure.cpp",
       "category": "unit",
       "reason": "Issue #2163 — parallel-intend :pure #t path skips eval_mu for pure",
       "issue": null
     },
     {
-      "file": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "file": "tests/orch/test_parallel_intend_pure_contract.cpp",
       "category": "unit",
       "reason": "Issue #2230 — harden pure-parallel contract tests and document",
       "issue": null
     },
     {
-      "file": "tests/orch/test_per_scope_bp_admit_2591.cpp",
+      "file": "tests/orch/test_per_scope_bp_admit.cpp",
       "category": "integration",
       "reason": "Issue #2591 — per-spec BP admit threshold override",
       "issue": null
     },
     {
-      "file": "tests/orch/test_security_schedule_gate_2590.cpp",
+      "file": "tests/orch/test_security_schedule_gate.cpp",
       "category": "integration",
       "reason": "Issue #2590 — pure `decide_security_schedule()` synthesizes",
       "issue": null

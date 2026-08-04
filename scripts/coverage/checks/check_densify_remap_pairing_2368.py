@@ -37,7 +37,7 @@ def main() -> int:
     ixx = _read("src/compiler/evaluator.ixx")
     dcr = _read("src/core/densify_consistency_report.h")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    test = _read("tests/compiler/test_densify_remap_pairing_2368.cpp")
+    test = _read("tests/compiler/test_densify_remap_pairing.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -82,7 +82,7 @@ def main() -> int:
     # AC5 gate + Phase 5
     must("force_densify_remap_pairing", "AC5", emb)
     must("Issue #2368", "AC5", emb)
-    must("test_densify_remap_pairing_2368", "AC5", cmake)
+    must("test_densify_remap_pairing", "AC5", cmake)
     must("check_densify_remap_pairing_2368", "AC5", build)
     must("cmd_densify_remap_pairing_coverage", "AC5", build)
     must("ac5_phase5_source", "AC5", test)

@@ -53,7 +53,7 @@
     },
     {
       "ac": "test",
-      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
       "contains": [
         "Issue #2595",
         "ac6_unify_axes_in_report",

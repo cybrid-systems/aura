@@ -32,7 +32,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_add_node_builder_contract_2445.cpp")
+    test = _read("tests/core/test_add_node_builder_contract.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -56,7 +56,7 @@ def main() -> int:
     must("2445 AC3", "AC3", test)
     must("check_add_node_builder_contract_2445", "gate", build)
     must("cmd_add_node_builder_contract_coverage", "gate", build)
-    must("test_add_node_builder_contract_2445", "gate", cmake)
+    must("test_add_node_builder_contract", "gate", cmake)
 
     if fails:
         for f in fails:

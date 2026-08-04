@@ -22,7 +22,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "path": "tests/compiler/test_type_freshness_steal_densify.cpp",
       "contains": [
         "ac1_steal_fence_prunes_goals"
       ]
@@ -38,7 +38,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "path": "tests/compiler/test_type_freshness_steal_densify.cpp",
       "contains": [
         "ac2_hard_fail_no_fence"
       ]
@@ -54,7 +54,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "path": "tests/compiler/test_type_freshness_steal_densify.cpp",
       "contains": [
         "ac3_densify_wires_fence"
       ]
@@ -63,7 +63,7 @@
       "ac": "AC4",
       "paths": [
         "src/compiler/type_checker.ixx",
-        "tests/compiler/test_type_freshness_steal_densify_2552.cpp"
+        "tests/compiler/test_type_freshness_steal_densify.cpp"
       ],
       "contains": [
         "same epoch"
@@ -71,14 +71,14 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "path": "tests/compiler/test_type_freshness_steal_densify.cpp",
       "contains": [
         "ac4_same_epoch_zero_cost"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "path": "tests/compiler/test_type_freshness_steal_densify.cpp",
       "contains": [
         "ac5_multi_round_soak"
       ]
@@ -111,7 +111,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_freshness_steal_densify_2552"
+        "test_type_freshness_steal_densify"
       ]
     },
     {
@@ -124,7 +124,7 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "path": "tests/compiler/test_type_freshness_steal_densify.cpp",
       "contains": [
         "ac6_source_and_schema"
       ]

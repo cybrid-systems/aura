@@ -42,7 +42,7 @@ def main() -> int:
 
     tma = _read("src/compiler/typed_mutation_audit.h")
     slo = _read("src/compiler/audit_mid_fallback_slo.h")
-    test = _read("tests/compiler/test_audit_mid_fallback_slo_2594.cpp")
+    test = _read("tests/compiler/test_audit_mid_fallback_slo.cpp")
     build = _read("build.py")
     linter_2493 = _read("scripts/coverage/checks/check_audit_mutation_id_unify_2493.py")
     linter_2594 = _read("scripts/coverage/checks/check_audit_mid_fallback_slo_2594.py")

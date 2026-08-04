@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "path": "tests/core/test_restricted_unset_principal.cpp",
       "contains": [
         "ac1_restricted_unset_denies_side_effect",
         "isolation-deny:unset-principal"
@@ -24,28 +24,28 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "path": "tests/core/test_restricted_unset_principal.cpp",
       "contains": [
         "ac2_restricted_with_principal_allows"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "path": "tests/core/test_restricted_unset_principal.cpp",
       "contains": [
         "ac3_strict_unset_denies"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "path": "tests/core/test_restricted_unset_principal.cpp",
       "contains": [
         "ac4_off_unset_permissive"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "path": "tests/core/test_restricted_unset_principal.cpp",
       "contains": [
         "ac5_restricted_pure_read_allows"
       ]
@@ -54,7 +54,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_restricted_unset_principal_2385"
+        "test_restricted_unset_principal"
       ]
     },
     {
@@ -67,7 +67,7 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "path": "tests/core/test_restricted_unset_principal.cpp",
       "contains": [
         "ac6_source_and_gate",
         "Issue #2385"

@@ -131,7 +131,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/orch/test_orch_obs_facade_2589.cpp",
+      "path": "tests/orch/test_orch_obs_facade.cpp",
       "contains": [
         "2636 AC5"
       ]

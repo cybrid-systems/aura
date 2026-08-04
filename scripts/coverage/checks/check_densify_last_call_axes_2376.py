@@ -37,7 +37,7 @@ def main() -> int:
     env = _read("src/compiler/evaluator_env.cpp")
     dcr = _read("src/core/densify_consistency_report.h")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    test = _read("tests/compiler/test_densify_last_call_axes_2376.cpp")
+    test = _read("tests/compiler/test_densify_last_call_axes.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -78,7 +78,7 @@ def main() -> int:
     must("force_densify_remap_pairing", "AC5", emb)
     must("AURA_DENSIFY_CONTRACT", "AC5", emb)
     must("g_last_densify_call_seq", "AC5", dcr)
-    must("test_densify_last_call_axes_2376", "AC5", cmake)
+    must("test_densify_last_call_axes", "AC5", cmake)
     must("check_densify_last_call_axes_2376", "AC5", build)
     must("cmd_densify_last_call_axes_coverage", "AC5", build)
     must("ac5_source_cite", "AC5", test)

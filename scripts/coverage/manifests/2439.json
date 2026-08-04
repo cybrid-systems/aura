@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "path": "tests/core/test_verification_dirty_bits_lock.cpp",
       "contains": [
         "2439 AC1"
       ]
@@ -32,7 +32,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "path": "tests/core/test_verification_dirty_bits_lock.cpp",
       "contains": [
         "2439 AC2"
       ]
@@ -46,14 +46,14 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "path": "tests/core/test_verification_dirty_bits_lock.cpp",
       "contains": [
         "2439 AC3"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "path": "tests/core/test_verification_dirty_bits_lock.cpp",
       "contains": [
         "2439 AC4"
       ]
@@ -70,7 +70,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_verification_dirty_bits_lock_2439"
+        "test_verification_dirty_bits_lock"
       ]
     }
   ],

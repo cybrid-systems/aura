@@ -50,7 +50,7 @@
     },
     {
       "ac": "test",
-      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
       "contains": [
         "Issue #2596",
         "ac11_production_default_hard",

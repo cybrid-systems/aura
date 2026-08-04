@@ -19,7 +19,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_security_health_2389.cpp",
+      "path": "tests/compiler/test_security_health.cpp",
       "contains": [
         "ac1_vacuous_healthy"
       ]
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_security_health_2389.cpp",
+      "path": "tests/compiler/test_security_health.cpp",
       "contains": [
         "ac2_effect_deny_and_priority"
       ]
@@ -54,7 +54,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_security_health_2389.cpp",
+      "path": "tests/compiler/test_security_health.cpp",
       "contains": [
         "ac3_existing_queries_unchanged"
       ]
@@ -73,7 +73,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_security_health_2389.cpp",
+      "path": "tests/compiler/test_security_health.cpp",
       "contains": [
         "ac4_query_keys"
       ]
@@ -96,7 +96,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_security_health_2389"
+        "test_security_health"
       ]
     },
     {
@@ -109,7 +109,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_security_health_2389.cpp",
+      "path": "tests/compiler/test_security_health.cpp",
       "contains": [
         "ac5_source_cite"
       ]

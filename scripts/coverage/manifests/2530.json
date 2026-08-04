@@ -30,7 +30,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_audit_ring_publish_2530"
+        "test_audit_ring_publish"
       ]
     },
     {

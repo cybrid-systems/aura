@@ -13,7 +13,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "path": "tests/compiler/test_panic_defer_after_densify.cpp",
       "contains": [
         "ac1_soft_free"
       ]
@@ -28,7 +28,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "path": "tests/compiler/test_panic_defer_after_densify.cpp",
       "contains": [
         "ac2_clear_orphan_after_densify"
       ]
@@ -43,7 +43,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "path": "tests/compiler/test_panic_defer_after_densify.cpp",
       "contains": [
         "ac3_rearm_for_live_checkpoint"
       ]
@@ -86,7 +86,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_panic_defer_after_densify_2364"
+        "test_panic_defer_after_densify"
       ]
     },
     {
@@ -99,7 +99,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "path": "tests/compiler/test_panic_defer_after_densify.cpp",
       "contains": [
         "ac5_source_cite"
       ]

@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_raii_guard_flatast_lifetime_2454.cpp",
+      "path": "tests/core/test_raii_guard_flatast_lifetime.cpp",
       "contains": [
         "2454 AC1"
       ]
@@ -31,7 +31,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_raii_guard_flatast_lifetime_2454.cpp",
+      "path": "tests/core/test_raii_guard_flatast_lifetime.cpp",
       "contains": [
         "2454 AC2",
         "drop guard then move"
@@ -39,7 +39,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_raii_guard_flatast_lifetime_2454.cpp",
+      "path": "tests/core/test_raii_guard_flatast_lifetime.cpp",
       "contains": [
         "2454 AC3"
       ]
@@ -56,7 +56,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_raii_guard_flatast_lifetime_2454"
+        "test_raii_guard_flatast_lifetime"
       ]
     }
   ],

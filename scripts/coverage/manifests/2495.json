@@ -34,28 +34,28 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
       "contains": [
         "ac1_source_cite_live_compact_result"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
       "contains": [
         "ac3_soft_zero_extra_work"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
       "contains": [
         "ac4_query_stats_surface"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
       "contains": [
         "ac5_source_and_gate",
         "Issue #2495"
@@ -65,9 +65,9 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_moving_densify_fail_closed_2495",
-        "aura_add_issue_test(test_moving_densify_fail_closed_2495)",
-        "aura_issue_test_link_light(test_moving_densify_fail_closed_2495)"
+        "test_moving_densify_fail_closed",
+        "aura_add_issue_test(test_moving_densify_fail_closed)",
+        "aura_issue_test_link_light(test_moving_densify_fail_closed)"
       ]
     },
     {

@@ -47,42 +47,42 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_security_audit_wal_force_restricted_2492.cpp",
+      "path": "tests/compiler/test_security_audit_wal_force_restricted.cpp",
       "contains": [
         "ac1_restricted_forces_wal"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_security_audit_wal_force_restricted_2492.cpp",
+      "path": "tests/compiler/test_security_audit_wal_force_restricted.cpp",
       "contains": [
         "ac2_off_sandbox_skips_wal"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_security_audit_wal_force_restricted_2492.cpp",
+      "path": "tests/compiler/test_security_audit_wal_force_restricted.cpp",
       "contains": [
         "ac3_ring_and_replay"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_security_audit_wal_force_restricted_2492.cpp",
+      "path": "tests/compiler/test_security_audit_wal_force_restricted.cpp",
       "contains": [
         "ac4_wal_off_short_circuit"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_security_audit_wal_force_restricted_2492.cpp",
+      "path": "tests/compiler/test_security_audit_wal_force_restricted.cpp",
       "contains": [
         "ac5_metrics_and_source_cite"
       ]
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_security_audit_wal_force_restricted_2492.cpp",
+      "path": "tests/compiler/test_security_audit_wal_force_restricted.cpp",
       "contains": [
         "ac6_source_and_gate"
       ]
@@ -91,9 +91,9 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_security_audit_wal_force_restricted_2492",
-        "aura_add_issue_test(test_security_audit_wal_force_restricted_2492)",
-        "aura_issue_test_link_light(test_security_audit_wal_force_restricted_2492)"
+        "test_security_audit_wal_force_restricted",
+        "aura_add_issue_test(test_security_audit_wal_force_restricted)",
+        "aura_issue_test_link_light(test_security_audit_wal_force_restricted)"
       ]
     },
     {

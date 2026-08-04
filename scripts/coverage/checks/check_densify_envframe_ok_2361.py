@@ -37,7 +37,7 @@ def main() -> int:
     efl = _read("src/core/envframe_lifetime.ixx")
     dcr = _read("src/core/densify_consistency_report.h")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    test = _read("tests/compiler/test_densify_envframe_ok_2361.cpp")
+    test = _read("tests/compiler/test_densify_envframe_ok.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -75,7 +75,7 @@ def main() -> int:
     # AC5 gate
     must("scan_live_env_frame_refs_after_densify", "AC5", env)
     must("last_densify_envframe_ok", "AC5", dcr)
-    must("test_densify_envframe_ok_2361", "AC5", cmake)
+    must("test_densify_envframe_ok", "AC5", cmake)
     must("check_densify_envframe_ok_2361", "AC5", build)
     must("cmd_densify_envframe_ok_coverage", "AC5", build)
     must("ac5_source_cite", "AC5", test)

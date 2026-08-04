@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     sec = _read("src/compiler/evaluator_security.cpp")
-    test = _read("tests/compiler/test_require_effect_auto_isolation_2490.cpp")
+    test = _read("tests/compiler/test_require_effect_auto_isolation.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -91,9 +91,9 @@ def main() -> int:
     must("ac6_source_and_gate", "AC6", test)
     must("Issue #2490", "AC6", test)
     must("Issue #2490", "AC6", sec)
-    must("test_require_effect_auto_isolation_2490", "AC6", cmake)
-    must("aura_add_issue_test(test_require_effect_auto_isolation_2490)", "AC6", cmake)
-    must("aura_issue_test_link_light(test_require_effect_auto_isolation_2490)", "AC6", cmake)
+    must("test_require_effect_auto_isolation", "AC6", cmake)
+    must("aura_add_issue_test(test_require_effect_auto_isolation)", "AC6", cmake)
+    must("aura_issue_test_link_light(test_require_effect_auto_isolation)", "AC6", cmake)
     must("check_require_effect_auto_isolation_2490", "AC6", build)
     must("cmd_require_effect_auto_isolation_2490_coverage", "AC6", build)
 

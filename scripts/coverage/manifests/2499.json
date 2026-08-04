@@ -88,7 +88,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_root_remap_pin_contract_unified_2499.cpp",
+      "path": "tests/compiler/test_root_remap_pin_contract_unified.cpp",
       "contains": [
         "Issue #2499",
         "AC5"
@@ -98,9 +98,9 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "aura_add_issue_test(test_root_remap_pin_contract_unified_2499)",
-        "aura_issue_test_link_light(test_root_remap_pin_contract_unified_2499)",
-        "add_dependencies(all_test_issue_targets test_root_remap_pin_contract_unified_2499)"
+        "aura_add_issue_test(test_root_remap_pin_contract_unified)",
+        "aura_issue_test_link_light(test_root_remap_pin_contract_unified)",
+        "add_dependencies(all_test_issue_targets test_root_remap_pin_contract_unified)"
       ]
     },
     {

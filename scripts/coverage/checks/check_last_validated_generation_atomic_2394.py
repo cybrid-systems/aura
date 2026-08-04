@@ -35,7 +35,7 @@ def main() -> int:
 
     ixx = _read("src/core/ast.ixx")
     stab = _read("src/core/ast_stability.cpp")
-    test = _read("tests/core/test_last_validated_generation_atomic_2394.cpp")
+    test = _read("tests/core/test_last_validated_generation_atomic.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -62,7 +62,7 @@ def main() -> int:
     # AC4–AC5
     must("ac3_copy_and_assign", "AC4", test)
     must("ac4_ac5_source_and_gate", "AC5", test)
-    must("test_last_validated_generation_atomic_2394", "AC5", cmake)
+    must("test_last_validated_generation_atomic", "AC5", cmake)
     must("check_last_validated_generation_atomic_2394", "AC5", build)
     must("cmd_last_validated_generation_atomic_coverage", "AC5", build)
 

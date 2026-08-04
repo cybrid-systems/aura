@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "path": "tests/core/test_tag_arity_index_lock.cpp",
       "contains": [
         "2419 AC1"
       ]
@@ -31,21 +31,21 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "path": "tests/core/test_tag_arity_index_lock.cpp",
       "contains": [
         "2419 AC2"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "path": "tests/core/test_tag_arity_index_lock.cpp",
       "contains": [
         "2419 AC3"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "path": "tests/core/test_tag_arity_index_lock.cpp",
       "contains": [
         "2419 AC4"
       ]
@@ -62,7 +62,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_tag_arity_index_lock_2419"
+        "test_tag_arity_index_lock"
       ]
     }
   ],

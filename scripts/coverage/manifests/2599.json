@@ -32,7 +32,7 @@
     },
     {
       "ac": "test",
-      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
       "contains": [
         "Issue #2599",
         "EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967)",

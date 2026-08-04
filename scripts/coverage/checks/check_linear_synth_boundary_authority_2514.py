@@ -41,7 +41,7 @@ def main() -> int:
     aud = _read("src/compiler/typed_mutation_audit.h")
     q = _read("src/compiler/evaluator_primitives_security.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
-    test = _read("tests/compiler/test_linear_synth_boundary_authority_2514.cpp")
+    test = _read("tests/compiler/test_linear_synth_boundary_authority.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -80,7 +80,7 @@ def main() -> int:
     must("decision table", "AC5", etc.lower() + eixx.lower())
     must("Issue #2514", "AC5", emb)
     must("ac5_decision_table", "AC5", test)
-    must("test_linear_synth_boundary_authority_2514", "AC5", cmake)
+    must("test_linear_synth_boundary_authority", "AC5", cmake)
     must("check_linear_synth_boundary_authority_2514", "AC5", build)
     must("cmd_linear_synth_boundary_authority_coverage", "AC5", build)
 

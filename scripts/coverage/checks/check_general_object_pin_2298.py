@@ -13,7 +13,7 @@
   AC7: 4 new query keys on query:compact-stats + schema/issue sentinels.
   AC8: wire-up site in evaluator_primitives_mutate.cpp + import +
        GeneralObjectPin::pin calls + counter bump.
-  AC9: tests/core/test_general_object_pin_2298.cpp extended with
+  AC9: tests/core/test_general_object_pin.cpp extended with
        ac6_2337 / ac7_2337 / ac8_2337 functions + Issue #2337 cite.
 
 Exit 0 = all ACs satisfied.
@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[3]
 LP = ROOT / "src" / "core" / "lifetime_pin.ixx"
 Q = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
 M = ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp"
-TEST = ROOT / "tests" / "core" / "test_general_object_pin_2298.cpp"
+TEST = ROOT / "tests" / "core" / "test_general_object_pin.cpp"
 CMAKE = ROOT / "CMakeLists.txt"
 
 
@@ -77,7 +77,7 @@ def main() -> int:
     must("general-object-pin-wired", "AC5", q)
     must("schema-2298", "AC5", q)
     must("issue-2298", "AC5", q)
-    must("test_general_object_pin_2298", "AC5", cmake)
+    must("test_general_object_pin", "AC5", cmake)
     must("void ac1_pin_or_remap_after_moving", "AC5", test)
     must("void ac2_missing_pin_fail_closed", "AC5", test)
     must("void ac4_soft_zero_cost", "AC5", test)

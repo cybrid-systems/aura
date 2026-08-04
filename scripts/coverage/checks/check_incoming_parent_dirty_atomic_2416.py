@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_incoming_parent_dirty_atomic_2416.cpp")
+    test = _read("tests/core/test_incoming_parent_dirty_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -61,7 +61,7 @@ def main() -> int:
     must("2416 AC4", "AC4", test)
     must("check_incoming_parent_dirty_atomic_2416", "gate", build)
     must("cmd_incoming_parent_dirty_atomic_coverage", "gate", build)
-    must("test_incoming_parent_dirty_atomic_2416", "gate", cmake)
+    must("test_incoming_parent_dirty_atomic", "gate", cmake)
 
     if fails:
         for f in fails:

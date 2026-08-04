@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     hh = _read("src/core/capability_model.hh")
-    test = _read("tests/core/test_sandbox_mode_atomic_2427.cpp")
+    test = _read("tests/core/test_sandbox_mode_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -62,7 +62,7 @@ def main() -> int:
 
     must("check_sandbox_mode_atomic_2427", "gate", build)
     must("cmd_sandbox_mode_atomic_coverage", "gate", build)
-    must("test_sandbox_mode_atomic_2427", "gate", cmake)
+    must("test_sandbox_mode_atomic", "gate", cmake)
 
     # F4 together
     must("struct AtomicTenantId", "F4", hh)

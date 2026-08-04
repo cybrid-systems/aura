@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_subtree_gen_atomic_2422.cpp")
+    test = _read("tests/core/test_subtree_gen_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -62,7 +62,7 @@ def main() -> int:
 
     must("check_subtree_gen_atomic_2422", "gate", build)
     must("cmd_subtree_gen_atomic_coverage", "gate", build)
-    must("test_subtree_gen_atomic_2422", "gate", cmake)
+    must("test_subtree_gen_atomic", "gate", cmake)
 
     if fails:
         for f in fails:

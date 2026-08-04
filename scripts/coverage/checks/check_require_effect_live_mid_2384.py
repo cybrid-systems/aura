@@ -39,7 +39,7 @@ def main() -> int:
 
     sec = _read("src/compiler/evaluator_security.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
-    test = _read("tests/compiler/test_require_effect_live_mid_2384.cpp")
+    test = _read("tests/compiler/test_require_effect_live_mid.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -67,7 +67,7 @@ def main() -> int:
 
     # AC5 registration
     must("Issue #2384", "AC5", ixx)
-    must("test_require_effect_live_mid_2384", "AC5", cmake)
+    must("test_require_effect_live_mid", "AC5", cmake)
     must("check_require_effect_live_mid_2384", "AC5", build)
     must("cmd_require_effect_live_mid_coverage", "AC5", build)
     must("ac5_source_and_gate", "AC5", test)

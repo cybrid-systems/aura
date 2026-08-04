@@ -44,7 +44,7 @@ def main() -> int:
             fails.append(f"{label}: {fn_name} still contains {bad!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_stringpool_bytes_total_lock_2408.cpp")
+    test = _read("tests/core/test_stringpool_bytes_total_lock.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -65,7 +65,7 @@ def main() -> int:
 
     must("check_stringpool_bytes_total_lock_2408", "AC5", build)
     must("cmd_stringpool_bytes_total_lock_coverage", "AC5", build)
-    must("test_stringpool_bytes_total_lock_2408", "AC5", cmake)
+    must("test_stringpool_bytes_total_lock", "AC5", cmake)
 
     if fails:
         for f in fails:

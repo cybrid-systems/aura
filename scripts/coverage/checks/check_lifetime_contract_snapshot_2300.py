@@ -21,7 +21,7 @@ DCR = ROOT / "src" / "core" / "densify_consistency_report.h"  # Issue #2341
 RMP = ROOT / "src" / "compiler" / "root_remap_pass.ixx"  # Issue #2341
 EMB = ROOT / "src" / "compiler" / "evaluator_mutation_boundary.cpp"  # Issue #2341
 Q = ROOT / "src" / "compiler" / "evaluator_primitives_obs_jit.cpp"
-TEST = ROOT / "tests" / "compiler" / "test_lifetime_contract_snapshot_2300.cpp"
+TEST = ROOT / "tests" / "compiler" / "test_lifetime_contract_snapshot.cpp"
 CMAKE = ROOT / "CMakeLists.txt"
 
 
@@ -59,7 +59,7 @@ def main() -> int:
     must("issue-2300", "AC4", q)
     must("lifetime-contract-wired", "AC4", q)
     must("query:gc-defer-reason-stats", "AC4", q)
-    must("test_lifetime_contract_snapshot_2300", "AC4", cmake)
+    must("test_lifetime_contract_snapshot", "AC4", cmake)
 
     must("Formula", "AC5", h)
     must("ac5_source_cite", "AC5", test)
@@ -95,7 +95,7 @@ def main() -> int:
     must("densify-consistency-wired", "AC_2341", q)
     must("schema-2341", "AC_2341", q)
     must("issue-2341", "AC_2341", q)
-    # test_lifetime_contract_snapshot_2300.cpp: ac2341_* test functions.
+    # test_lifetime_contract_snapshot.cpp: ac2341_* test functions.
     must("void ac2341_1_report_default_ok", "AC_2341", test)
     must("void ac2341_2_force_reason_priority", "AC_2341", test)
     must("void ac2341_3_counter_queryable", "AC_2341", test)

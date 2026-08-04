@@ -153,8 +153,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_reflect_pattern_hygiene_batch",
     "test_render_agent_closedloop_2051",
     "test_rollback_by_marker_2237",
-    "test_security_audit_unify_2054",
-    "test_security_event_wal_replay_2225",
+    "test_security_audit_unify",
+    "test_security_event_wal_replay",
     "test_solve_delta_unresolved_export_2107",
     "test_storm_isolation_2236",
     # test_concurrent is discovered as a ninja target by the issues
@@ -176,16 +176,16 @@ PRE_EXISTING_FAILURES: set[str] = {
     # issues suite stops gating CI on them; individual ACs remain visible
     # with ⚠ markers. Categories:
     #   - heap/UAF under mutate+parallel (test_pair_slot_lock malloc corruption)
-    #   - agent/orch scope races (test_agent_ask_2231 SIGSEGV)
+    #   - agent/orch scope races (test_agent_ask SIGSEGV)
     #   - spec/doc rebaseline (test_stdlib_infrastructure, test_synthesize_namespace_demotion)
     #   - reflect/EDSL AC drift (test_static_reflect_selfmod_validation_task6)
     #   - type/coercion/constraint surface drift (rest)
     # Follow-ups: rebaseline specs, fix malloc corruption under mutate
     # stress, address SIGSEGV in agent_ask.
     "test_adt_exhaustiveness_audit_2223",
-    "test_agent_ask_2231",
-    "test_agent_failure_policy_2229",
-    "test_agent_scope_2083",
+    "test_agent_ask",
+    "test_agent_failure_policy",
+    "test_agent_scope",
     "test_ast_workspace_modules",
     "test_audit_wal_force_multi_tenant_2150",
     "test_boundary_yield_steal_metrics_2119",
@@ -208,17 +208,17 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_join_drain_reclaim_2227",
     "test_layout_stamp_2170",
     "test_mailbox_bp_admit_2228",
-    "test_moving_compact_2166",
+    "test_moving_compact",
     "test_mutation_safety_snapshot_steal_2184",
     "test_pair_slot_lock",
-    "test_parallel_intend_pure_contract_2230",
+    "test_parallel_intend_pure_contract",
     "test_partial_relower_storm_gate_2190",
     "test_query_and_replace_batch_2527",
     "test_query_epoch_contract_2192",
     "test_query_namespace_audit",
     "test_reflect_hygiene_unit_batch",
     "test_root_epoch_gc_safety_post_invalidate",
-    "test_root_remap_pin_contract_unified_2499",
+    "test_root_remap_pin_contract_unified",
     "test_safepoint_mutation",
     "test_soa_dirty_aware_pipeline_2143",
     "test_static_reflect_selfmod_validation_task6",
@@ -239,16 +239,16 @@ PRE_EXISTING_FAILURES: set[str] = {
     # fixes that unlocked them. Track as pre-existing so issues suite
     # stops gating CI; ACs remain visible with ⚠. Follow-ups: rebaseline
     # ACs, fix exit-path teardown crashers, fix schema query keys.
-    "test_agent_apply_mutex_2158",
-    "test_agent_max_no_yield_2540",
+    "test_agent_apply_mutex",
+    "test_agent_max_no_yield",
     "test_aot_hot_update_health_2506",
     "test_arena_auto_compact_intelligent",
     "test_atomic_batch_rollback_fiber_task1",
-    "test_capability_audit_publish_2425",
-    "test_capability_unified_2077",
+    "test_capability_audit_publish",
+    "test_capability_unified",
     "test_coercion_provenance_fast_strict_2147",
     "test_compiler_closure_env_safety_post_invalidate",
-    "test_densify_ownership_scan_fail_gate_2497",
+    "test_densify_ownership_scan_fail_gate",
     "test_dispatch_required_effects_2152",
     "test_exhausted_min_dirty_reemit_2544",
     "test_fiber_orch_core_batch",
@@ -257,8 +257,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_force_compact_hard_mutex_2157",
     "test_force_jit_repromote_2502",
     "test_gc_compact_sweep_batch",
-    "test_grant_epoch_fiber_bind_2055",
-    "test_grant_epoch_retain_window_2154",
+    "test_grant_epoch_fiber_bind",
+    "test_grant_epoch_retain_window",
     "test_incremental_perblock_closure_bridge_safety",
     "test_issue_1990",
     "test_issue_1993",
@@ -270,12 +270,12 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_obs_schema_matrix",
     "test_orch_agent_mutation_boundary_2118",
     "test_orch_soft_boundary_unified_2515",
-    "test_orch_scope_2588",
-    "test_per_scope_bp_admit_2591",
+    "test_orch_scope",
+    "test_per_scope_bp_admit",
     "test_reemit_mutation_boundary_handshake_2114",
     "test_refinement_closed_loop",
     "test_reload_recovery_query_2367",
-    "test_require_effect_live_mid_2384",
+    "test_require_effect_live_mid",
     "test_scan_skip_freed_closures",
     "test_scheduler_gc_defer_pending_panic_steal",
     "test_shape_storm_partial_relower_2212",
@@ -287,7 +287,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_stable_ref_provenance_fiber_cow",
     "test_atomic_batch_rollback_closed_loop",
     "test_issue_1991",
-    "test_parallel_intend_pure_2163",
+    "test_parallel_intend_pure",
     "test_flatast_atomic_lock_batch",
 }
 

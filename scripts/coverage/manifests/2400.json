@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "path": "tests/orch/test_parallel_intend_pure_contract.cpp",
       "contains": [
         "2400 AC1"
       ]
@@ -28,7 +28,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "path": "tests/orch/test_parallel_intend_pure_contract.cpp",
       "contains": [
         "2400 AC2"
       ]
@@ -43,7 +43,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "path": "tests/orch/test_parallel_intend_pure_contract.cpp",
       "contains": [
         "2400 AC3"
       ]
@@ -65,7 +65,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "path": "tests/orch/test_parallel_intend_pure_contract.cpp",
       "contains": [
         "2400 AC4"
       ]
@@ -82,7 +82,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "path": "tests/orch/test_parallel_intend_pure_contract.cpp",
       "contains": [
         "2400 AC5"
       ]
@@ -99,7 +99,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_parallel_intend_pure_contract_2230"
+        "test_parallel_intend_pure_contract"
       ]
     }
   ],

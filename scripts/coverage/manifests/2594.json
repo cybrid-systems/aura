@@ -47,7 +47,7 @@
     },
     {
       "ac": "test",
-      "path": "tests/compiler/test_audit_mid_fallback_slo_2594.cpp",
+      "path": "tests/compiler/test_audit_mid_fallback_slo.cpp",
       "contains": [
         "Issue #2594",
         "AC1",
@@ -80,9 +80,9 @@
       "ac": "cmake",
       "path": "CMakeLists.txt",
       "contains": [
-        "aura_add_issue_test(test_audit_mid_fallback_slo_2594)",
-        "aura_issue_test_link_light(test_audit_mid_fallback_slo_2594)",
-        "all_test_issue_targets test_audit_mid_fallback_slo_2594"
+        "aura_add_issue_test(test_audit_mid_fallback_slo)",
+        "aura_issue_test_link_light(test_audit_mid_fallback_slo)",
+        "all_test_issue_targets test_audit_mid_fallback_slo"
       ]
     }
   ],

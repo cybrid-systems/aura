@@ -34,7 +34,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     hh = _read("src/core/gc_hooks.h")
-    test = _read("tests/core/test_gc_defer_arm_fetch_or_2428.cpp")
+    test = _read("tests/core/test_gc_defer_arm_fetch_or.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -66,7 +66,7 @@ def main() -> int:
     must("2428 AC4", "AC4", test)
     must("check_gc_defer_arm_fetch_or_2428", "gate", build)
     must("cmd_gc_defer_arm_fetch_or_coverage", "gate", build)
-    must("test_gc_defer_arm_fetch_or_2428", "gate", cmake)
+    must("test_gc_defer_arm_fetch_or", "gate", cmake)
 
     if fails:
         for f in fails:

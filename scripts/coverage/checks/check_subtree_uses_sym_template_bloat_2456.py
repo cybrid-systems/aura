@@ -34,7 +34,7 @@ def main() -> int:
 
     ast = _read("src/core/ast.ixx")
     impl = _read("src/core/ast_impl.cpp")
-    test = _read("tests/core/test_subtree_uses_sym_template_bloat_2456.cpp")
+    test = _read("tests/core/test_subtree_uses_sym_template_bloat.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -64,7 +64,7 @@ def main() -> int:
     must("2456 AC3", "AC3", test)
     must("check_subtree_uses_sym_template_bloat_2456", "gate", build)
     must("cmd_subtree_uses_sym_template_bloat_coverage", "gate", build)
-    must("test_subtree_uses_sym_template_bloat_2456", "gate", cmake)
+    must("test_subtree_uses_sym_template_bloat", "gate", cmake)
 
     if fails:
         for f in fails:
