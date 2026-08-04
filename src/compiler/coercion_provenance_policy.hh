@@ -60,9 +60,15 @@ inline constexpr int kCoercionProvSloIssue = 2558;
 inline constexpr int kBlameSoftRecoverIssue = 2561;
 // Issue #2562 stamp for dual-field (pred+mid) require-or-drop.
 inline constexpr int kCoercionDualRequireIssue = 2562;
+// Issue #2648 stamp for Soft evidence-loss bp + one-shot Full arm.
+inline constexpr int kCoercionEvidenceLossIssue = 2648;
 // Completeness SLO in basis points (0–10000). Default 9500 = 95%.
 // Override via AURA_COERCION_PROV_SLO_BP when set (numeric).
 inline constexpr std::uint64_t kCoercionProvSloBpDefault = 9500;
+// Issue #2648: max acceptable Soft evidence-loss bp (skip / skip+good).
+// Default 500 = 5% loss, aligned with #2558 95% completeness family
+// (10000 - 9500). Override via AURA_COERCION_EVIDENCE_LOSS_BP.
+inline constexpr std::uint64_t kCoercionEvidenceLossBpDefault = 500;
 
 // Issue #2558: process-wide completeness SLO observability + force flag.
 inline std::atomic<std::uint64_t> g_coercion_prov_slo_breach_total{0};
@@ -77,6 +83,22 @@ inline std::atomic<std::uint32_t> g_coercion_prov_slo_force_full_pending{0};
 // Cached SLO budget (bp); env override applied lazily once.
 inline std::atomic<std::uint64_t> g_coercion_prov_slo_bp{kCoercionProvSloBpDefault};
 inline std::atomic<std::uint32_t> g_coercion_prov_slo_bp_resolved{0};
+
+// Issue #2648: Soft incomplete-skip evidence-loss SLO (process-wide).
+// loss_bp = soft_skip / (soft_skip + complete + ast_elided) as bp.
+// When loss_bp >= threshold under Soft/Sampled, arm same force-Full pending
+// channel as #2558 / #2620; boundary consumes once (no permanent Full).
+// Max acceptable loss bp (default 500); env AURA_COERCION_EVIDENCE_LOSS_BP.
+inline std::atomic<std::uint64_t> g_coercion_evidence_loss_threshold_bp{
+    kCoercionEvidenceLossBpDefault};
+inline std::atomic<std::uint32_t> g_coercion_evidence_loss_bp_resolved{0};
+// Times loss_bp crossed threshold (evaluate path).
+inline std::atomic<std::uint64_t> g_coercion_evidence_loss_breach_total{0};
+// Times evidence-loss path armed force-Full (first transition only).
+inline std::atomic<std::uint64_t> g_coercion_evidence_loss_force_armed_total{0};
+// Times boundary exit consumed force-Full under evidence-loss pressure.
+inline std::atomic<std::uint64_t> g_coercion_evidence_loss_force_consumed_total{0};
+inline std::atomic<std::uint32_t> g_coercion_evidence_loss_wired{1};
 
 // Issue #2561: Soft/Sampled blame-chain recovery + one-shot Full sample escalate.
 // Recover: cheap re-fill of dual provenance fields for mid's dirty cone.
@@ -192,7 +214,8 @@ inline void evaluate_coercion_provenance_slo(std::uint64_t completeness_bp,
 
 // Soft defaults (#2102 / #2185 AC3 / #2221 observe-only): force-audit on,
 // reject off, commit require off. Also clears #2558 SLO pending/state,
-// #2561 Soft escalate TLS, and #2562 dual-require flag.
+// #2561 Soft escalate TLS, #2562 dual-require flag, and #2648 evidence-loss
+// threshold (lifetime counters left for tests that zero them explicitly).
 inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
     g_force_audit_on_provenance_miss.store(1, std::memory_order_relaxed);
     g_reject_apply_on_provenance_miss.store(0, std::memory_order_relaxed);
@@ -207,6 +230,57 @@ inline void reset_coercion_provenance_miss_policy_for_test() noexcept {
     s_blame_soft_escalate_this_boundary = false;
     // Issue #2562: Soft default dual-require off (#2317 insert path).
     g_coercion_dual_require.store(0, std::memory_order_relaxed);
+    // Issue #2648: reset evidence-loss threshold to default (not lifetime counters).
+    g_coercion_evidence_loss_threshold_bp.store(kCoercionEvidenceLossBpDefault,
+                                                std::memory_order_relaxed);
+    g_coercion_evidence_loss_bp_resolved.store(1, std::memory_order_relaxed);
+}
+
+// ── Issue #2648: Soft evidence-loss SLO ────────────────────────────────
+// Max acceptable loss_bp (0–10000). Higher loss is worse.
+// AURA_COERCION_EVIDENCE_LOSS_BP overrides when set (numeric ≤ 10000).
+[[nodiscard]] inline std::uint64_t coercion_evidence_loss_threshold_bp() noexcept {
+    if (g_coercion_evidence_loss_bp_resolved.load(std::memory_order_relaxed) == 0) {
+        const char* e = std::getenv("AURA_COERCION_EVIDENCE_LOSS_BP");
+        if (e && *e) {
+            char* end = nullptr;
+            const auto v = std::strtoull(e, &end, 10);
+            if (end != e && v <= 10000u)
+                g_coercion_evidence_loss_threshold_bp.store(static_cast<std::uint64_t>(v),
+                                                            std::memory_order_relaxed);
+        }
+        g_coercion_evidence_loss_bp_resolved.store(1, std::memory_order_relaxed);
+    }
+    return g_coercion_evidence_loss_threshold_bp.load(std::memory_order_relaxed);
+}
+
+inline void set_coercion_evidence_loss_threshold_bp_for_test(std::uint64_t bp) noexcept {
+    if (bp > 10000u)
+        bp = 10000u;
+    g_coercion_evidence_loss_threshold_bp.store(bp, std::memory_order_relaxed);
+    g_coercion_evidence_loss_bp_resolved.store(1, std::memory_order_relaxed);
+}
+
+// Pure pressure check: loss_bp >= threshold (Agents + boundary Soft drop gate).
+[[nodiscard]] inline bool coercion_evidence_loss_pressure(std::uint64_t loss_bp) noexcept {
+    return loss_bp >= coercion_evidence_loss_threshold_bp();
+}
+
+// Evaluate Soft evidence-loss SLO. When loss_bp >= threshold, arm the shared
+// force-Full pending channel (same as #2558 / #2620) once. Does not permanently
+// flip strategy. Always bumps breach when pressure present.
+// Pre: loss_bp from coercion_evidence_loss_bp() (module; counters in map).
+// Post: pending may be 1; armed_total increments on first arm only.
+inline void evaluate_coercion_evidence_loss_slo(std::uint64_t loss_bp) noexcept {
+    if (!coercion_evidence_loss_pressure(loss_bp))
+        return;
+    g_coercion_evidence_loss_breach_total.fetch_add(1, std::memory_order_relaxed);
+    const auto prev = g_coercion_prov_slo_force_full_pending.exchange(1, std::memory_order_acq_rel);
+    if (prev == 0) {
+        g_coercion_evidence_loss_force_armed_total.fetch_add(1, std::memory_order_relaxed);
+        // Shared #2558 arm counter for Agents that already poll force-armed.
+        g_coercion_prov_slo_force_armed_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 // Issue #2561: Soft observe-by-default (AC3). AURA_BLAME_SOFT_ESCALATE=1|on

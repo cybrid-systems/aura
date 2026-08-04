@@ -4479,6 +4479,25 @@ def cmd_coercion_unify_incomplete_skip_coverage():
     return 0
 
 
+def cmd_coercion_evidence_loss_slo_coverage():
+    """Issue #2648: Soft incomplete-skip evidence-loss SLO + one-shot Full arm.
+
+    Single Agent bp; boundary consume under loss pressure; recover-first;
+    schema-2648 on fidelity / provenance-health / type-linear-commit-health.
+    """
+    print(f"{B}=== coercion evidence-loss SLO coverage (#2648) ==={N}")
+    script = COVERAGE_CHECKS / "check_coercion_evidence_loss_slo_2648.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("coercion evidence-loss SLO (#2648) coverage contract rows failed")
+        return 1
+    ok("coercion evidence-loss SLO (#2648) coverage clean")
+    return 0
+
+
 def cmd_partial_cone_commit_gate_coverage():
     """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
 
@@ -7790,6 +7809,7 @@ def cmd_gate():
         or cmd_instance_constraint_depth_cap_coverage()
         or cmd_occurrence_goal_persist_rehydrate_coverage()
         or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
+        or cmd_coercion_evidence_loss_slo_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()
@@ -8626,6 +8646,7 @@ def main():
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "arena-moving-densify-health": cmd_arena_moving_densify_health_coverage,
         "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
+        "coercion-evidence-loss-slo": cmd_coercion_evidence_loss_slo_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,

@@ -88,6 +88,18 @@ export using ::aura::compiler::set_coercion_prov_slo_bp_for_test;
 export using ::aura::compiler::evaluate_coercion_provenance_slo;
 export using ::aura::compiler::coercion_prov_slo_force_full_pending;
 export using ::aura::compiler::consume_coercion_prov_slo_force_full;
+// Issue #2648: Soft evidence-loss bp + one-shot Full arm on boundary.
+export using ::aura::compiler::kCoercionEvidenceLossIssue;
+export using ::aura::compiler::kCoercionEvidenceLossBpDefault;
+export using ::aura::compiler::g_coercion_evidence_loss_threshold_bp;
+export using ::aura::compiler::g_coercion_evidence_loss_breach_total;
+export using ::aura::compiler::g_coercion_evidence_loss_force_armed_total;
+export using ::aura::compiler::g_coercion_evidence_loss_force_consumed_total;
+export using ::aura::compiler::g_coercion_evidence_loss_wired;
+export using ::aura::compiler::coercion_evidence_loss_threshold_bp;
+export using ::aura::compiler::set_coercion_evidence_loss_threshold_bp_for_test;
+export using ::aura::compiler::coercion_evidence_loss_pressure;
+export using ::aura::compiler::evaluate_coercion_evidence_loss_slo;
 // Issue #2561: Soft blame recovery / escalate.
 export using ::aura::compiler::kBlameSoftRecoverIssue;
 export using ::aura::compiler::g_blame_soft_recover_total;
@@ -189,6 +201,19 @@ export [[nodiscard]] inline std::uint64_t coercion_provenance_completeness_bp() 
     const auto m = g_coercion_provenance_miss_total.load(std::memory_order_relaxed);
     const auto d = c + m;
     return d > 0 ? (c * 10000u) / d : 10000u; // no samples → vacuously complete
+}
+
+// Issue #2648: Soft evidence-loss rate as basis points (0–10000).
+// loss_bp = soft_incomplete_skip / (skip + complete + ast_elided) * 10000.
+// "applied_or_elided_complete" ≈ provenance complete samples + identity elides.
+// Zero samples → 0 (healthy vacuous: no observed loss; clean hosts never arm).
+// Contrast completeness_bp vacuous 10000 (high=good). Higher loss is worse.
+export [[nodiscard]] inline std::uint64_t coercion_evidence_loss_bp() noexcept {
+    const auto skip = g_coercion_soft_incomplete_skip_total.load(std::memory_order_relaxed);
+    const auto complete = g_coercion_provenance_complete_total.load(std::memory_order_relaxed);
+    const auto elided = g_dead_coercion_ast_elided_total.load(std::memory_order_relaxed);
+    const auto denom = skip + complete + elided;
+    return denom > 0 ? (skip * 10000u) / denom : 0u;
 }
 
 // ── CoercionEntry — one deferred coercion ────────────────
@@ -490,9 +515,17 @@ fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEntry& e,
 
 // Issue #2620: Soft/Sampled incomplete → observe + arm one-shot force Full
 // (no hard-reject; production dual-require / reject-on-miss remain separate).
+// Issue #2648: after skip bump, evaluate evidence-loss SLO so sustained Soft
+// loss auto-arms the same pending channel when loss_bp >= threshold (Agents
+// read single coercion-evidence-loss-bp; boundary guarantees one Full sample).
 inline void arm_soft_incomplete_force_full_observe() noexcept {
     g_coercion_soft_incomplete_skip_total.fetch_add(1, std::memory_order_relaxed);
     g_coercion_prov_slo_observe_only_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2648 first: when loss_bp >= threshold, arm pending + dedicated
+    // evidence-loss armed (must run before #2620 exchange so armed counts).
+    evaluate_coercion_evidence_loss_slo(coercion_evidence_loss_bp());
+    // #2620: always mark force-pending so Agents see Soft pressure immediately;
+    // #2648 boundary Soft-drops Full unless loss_bp still breaches (or recover).
     const auto prev = g_coercion_prov_slo_force_full_pending.exchange(1, std::memory_order_acq_rel);
     if (prev == 0)
         g_coercion_prov_slo_force_armed_total.fetch_add(1, std::memory_order_relaxed);
