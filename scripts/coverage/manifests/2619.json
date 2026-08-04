@@ -1,7 +1,7 @@
 {
   "issue": 2619,
   "title": "Issue #2619: Agent-visible Moving densify health (pairs #2596).",
-  "ok": "OK: Issue #2619 arena moving densify health — all AC rows satisfied",
+  "ok": "OK: Issue #2619 arena moving densify health \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -123,7 +123,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_arena_moving_densify_health"
+        "tests/compiler/test_arena_moving_densify_health.cpp"
       ]
     },
     {

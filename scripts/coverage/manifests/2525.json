@@ -1,7 +1,7 @@
 {
   "issue": 2525,
-  "title": "Issue #2525: unconstrained query hygiene residual — default MacroIntroduced skip.",
-  "ok": "OK: Issue #2525 query hygiene residual default — all AC rows satisfied",
+  "title": "Issue #2525: unconstrained query hygiene residual \u2014 default MacroIntroduced skip.",
+  "ok": "OK: Issue #2525 query hygiene residual default \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -106,7 +106,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_query_hygiene_default"
+        "tests/compiler/test_query_hygiene_default.cpp"
       ]
     },
     {

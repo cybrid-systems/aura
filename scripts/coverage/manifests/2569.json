@@ -1,7 +1,7 @@
 {
   "issue": 2569,
   "title": "Issue #2569: set-code / mutate:rebind must not kill unimpacted closures or hash state.",
-  "ok": "OK: Issue #2569 set-code/rebind survival — all AC rows satisfied",
+  "ok": "OK: Issue #2569 set-code/rebind survival \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -62,7 +62,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_setcode_rebind_survive"
+        "tests/compiler/test_setcode_rebind_survive.cpp"
       ]
     },
     {

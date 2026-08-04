@@ -105,7 +105,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_linear_partial_revalidate"
+        "tests/compiler/test_linear_partial_revalidate.cpp"
       ]
     },
     {

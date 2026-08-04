@@ -1,7 +1,7 @@
 {
   "issue": 2351,
   "title": "Issue #2351: steal-complete LayoutStamp dual-check before resume.",
-  "ok": "OK: Issue #2351 steal LayoutStamp dual-check — all AC rows satisfied",
+  "ok": "OK: Issue #2351 steal LayoutStamp dual-check \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -119,7 +119,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_steal_layout_stamp"
+        "tests/serve/test_steal_layout_stamp.cpp"
       ]
     },
     {

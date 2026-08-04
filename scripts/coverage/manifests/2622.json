@@ -1,28 +1,132 @@
 {
   "issue": 2622,
   "title": "occurrence dirty-key authority",
-  "ok": "OK: Issue #2622 occurrence dirty-key authority — all AC rows satisfied",
+  "ok": "OK: Issue #2622 occurrence dirty-key authority \u2014 all AC rows satisfied",
   "checks": [
-    {"ac": "AC1", "path": "src/compiler/type_checker.ixx", "contains": ["sync_occurrence_after_dirty", "cond_shape_hash"]},
-    {"ac": "AC1", "path": "src/compiler/type_checker_impl.cpp", "contains": ["sync_occurrence_after_dirty"]},
-    {"ac": "AC1", "paths": ["src/compiler/type_checker_impl.cpp", "src/compiler/observability_metrics.h"], "contains": ["occurrence_cache_key_miss"]},
-    {"ac": "AC1", "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp", "contains": ["ac1_shape_miss_refresh"]},
-
-    {"ac": "AC2", "path": "src/compiler/type_checker.ixx", "contains": ["drop_occurrence_goals_for_conds"]},
-    {"ac": "AC2", "path": "src/compiler/type_checker_impl.cpp", "contains": ["drop_occurrence_goals_for_conds", "solve_delta_cs_"]},
-    {"ac": "AC2", "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp", "contains": ["ac2_no_live_goal_after_sync"]},
-
-    {"ac": "AC3", "path": "src/compiler/type_checker.ixx", "contains": ["last_predicate_memo_stale_vs_epoch_ = 0", "Issue #2622"]},
-    {"ac": "AC3", "paths": ["src/compiler/type_checker.ixx", "src/compiler/observability_metrics.h"], "contains": ["occurrence_memo_goal_fence_joint_total"]},
-    {"ac": "AC3", "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp", "contains": ["ac3_fence_joint_memo"]},
-
-    {"ac": "AC4", "path": "src/compiler/type_checker_impl.cpp", "contains": ["affected.empty()", "AC4: zero cost when empty"]},
-    {"ac": "AC4", "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp", "contains": ["ac4_empty_zero_cost"]},
-
-    {"ac": "AC5", "path": "src/compiler/evaluator_primitives_query.cpp", "contains": ["schema-2622", "occurrence-memo-goal-diverge-total", "occurrence-sync-after-dirty-total"]},
-    {"ac": "AC5", "path": "src/compiler/compiler_metrics_fields.inc", "contains": ["occurrence_memo_goal_diverge_total"]},
-    {"ac": "AC5", "path": "src/compiler/observability_metrics.h", "contains": ["occurrence_dirty_key_authority_wired"]},
-    {"ac": "AC5", "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp", "contains": ["ac5_schema_source"]},
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "sync_occurrence_after_dirty",
+        "cond_shape_hash"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "sync_occurrence_after_dirty"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/type_checker_impl.cpp",
+        "src/compiler/observability_metrics.h"
+      ],
+      "contains": [
+        "occurrence_cache_key_miss"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp",
+      "contains": [
+        "ac1_shape_miss_refresh"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "drop_occurrence_goals_for_conds"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "drop_occurrence_goals_for_conds",
+        "solve_delta_cs_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp",
+      "contains": [
+        "ac2_no_live_goal_after_sync"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "last_predicate_memo_stale_vs_epoch_ = 0",
+        "Issue #2622"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "paths": [
+        "src/compiler/type_checker.ixx",
+        "src/compiler/observability_metrics.h"
+      ],
+      "contains": [
+        "occurrence_memo_goal_fence_joint_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp",
+      "contains": [
+        "ac3_fence_joint_memo"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "affected.empty()",
+        "AC4: zero cost when empty"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp",
+      "contains": [
+        "ac4_empty_zero_cost"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2622",
+        "occurrence-memo-goal-diverge-total",
+        "occurrence-sync-after-dirty-total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "occurrence_memo_goal_diverge_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "occurrence_dirty_key_authority_wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp",
+      "contains": [
+        "ac5_schema_source"
+      ]
+    },
     {
       "ac": "AC5",
       "forbid": [
@@ -31,10 +135,34 @@
         "design/2622.md"
       ]
     },
-
-    {"ac": "AC6", "path": "src/compiler/type_checker_impl.cpp", "contains": ["occurrence_memo_goal_diverge_total"]},
-    {"ac": "AC6", "path": "CMakeLists.txt", "contains": ["test_occurrence_dirty_key_authority"]},
-    {"ac": "AC6", "path": "build.py", "contains": ["check_occurrence_dirty_key_authority_2622", "cmd_occurrence_dirty_key_authority_coverage"]},
-    {"ac": "AC6", "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp", "contains": ["ac6_diverge_zero_ordered"]}
+    {
+      "ac": "AC6",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "occurrence_memo_goal_diverge_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "tests/compiler/test_occurrence_dirty_key_authority.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_occurrence_dirty_key_authority_2622",
+        "cmd_occurrence_dirty_key_authority_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_occurrence_dirty_key_authority.cpp",
+      "contains": [
+        "ac6_diverge_zero_ordered"
+      ]
+    }
   ]
 }

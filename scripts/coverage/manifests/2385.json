@@ -1,7 +1,7 @@
 {
   "issue": 2385,
   "title": "Issue #2385: Restricted sandbox denies side-effects when principal unset.",
-  "ok": "OK: Issue #2385 Restricted unset principal deny — all AC rows satisfied",
+  "ok": "OK: Issue #2385 Restricted unset principal deny \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -54,7 +54,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_restricted_unset_principal"
+        "tests/core/test_restricted_unset_principal.cpp"
       ]
     },
     {

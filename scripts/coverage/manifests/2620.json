@@ -1,7 +1,7 @@
 {
   "issue": 2620,
   "title": "Issue #2620: Soft must not ship incomplete CoercionNodes (unify proof surface).",
-  "ok": "OK: Issue #2620 coercion unify incomplete skip — all AC rows satisfied",
+  "ok": "OK: Issue #2620 coercion unify incomplete skip \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -95,7 +95,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_coercion_unify_incomplete_skip"
+        "tests/compiler/test_coercion_unify_incomplete_skip.cpp"
       ]
     },
     {

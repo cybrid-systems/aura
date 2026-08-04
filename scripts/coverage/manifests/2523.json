@@ -1,7 +1,7 @@
 {
   "issue": 2523,
   "title": "Issue #2523: residual workspace_mtx contention stats + soft path.",
-  "ok": "OK: Issue #2523 workspace_mtx residual contention — all AC rows satisfied",
+  "ok": "OK: Issue #2523 workspace_mtx residual contention \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -117,7 +117,7 @@
       "ac": "AC7",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_workspace_mtx_contention"
+        "tests/compiler/test_workspace_mtx_contention.cpp"
       ]
     },
     {

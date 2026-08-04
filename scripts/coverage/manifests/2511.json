@@ -1,7 +1,7 @@
 {
   "issue": 2511,
   "title": "Issue #2511: outermost Guard exit forced mailbox deferred drain under budget.",
-  "ok": "OK: Issue #2511 mailbox hold-exit drain — all AC rows satisfied",
+  "ok": "OK: Issue #2511 mailbox hold-exit drain \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -103,7 +103,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mailbox_hold_exit_drain"
+        "tests/serve/test_mailbox_hold_exit_drain.cpp"
       ]
     },
     {

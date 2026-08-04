@@ -94,7 +94,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_pcv_tls_scratch"
+        "tests/core/test_pcv_tls_scratch.cpp"
       ]
     }
   ],

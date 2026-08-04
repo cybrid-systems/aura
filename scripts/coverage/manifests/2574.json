@@ -1,7 +1,7 @@
 {
   "issue": 2574,
   "title": "Issue #2574: Scheme write string escape (JIT + TW).",
-  "ok": "OK: Issue #2574 write string escape — all AC rows satisfied",
+  "ok": "OK: Issue #2574 write string escape \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -36,7 +36,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_write_string_escape"
+        "tests/compiler/test_write_string_escape.cpp"
       ]
     },
     {

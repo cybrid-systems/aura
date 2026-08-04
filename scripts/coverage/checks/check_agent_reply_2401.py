@@ -74,7 +74,7 @@ def main() -> int:
     must("kAgentReplyIssue", "AC5", spawn)
     must("agent_reply", "AC5", readme)
     must("test_agent_ask", "AC5", cmake)
-    must("aura_add_issue_test(test_agent_ask)", "AC5", cmake)
+    must("tests/orch/test_agent_ask.cpp", "AC5", cmake)  # batch member source (S5)
     must("check_agent_reply_2401", "AC5", build)
     must("cmd_agent_reply_coverage", "AC5", build)
     must("AC5", "AC5", test)

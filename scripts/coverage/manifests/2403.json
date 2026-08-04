@@ -116,7 +116,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_query_index_composite"
+        "tests/compiler/test_query_index_composite.cpp"
       ]
     }
   ],

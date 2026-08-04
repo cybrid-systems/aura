@@ -1,7 +1,7 @@
 {
   "issue": 2509,
-  "title": "Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix.",
-  "ok": "OK: Issue #2509 composite CS signature matrix — all AC rows satisfied",
+  "title": "Issue #2509: symmetric expected_partial \u2194 commit_cs_has_work matrix.",
+  "ok": "OK: Issue #2509 composite CS signature matrix \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -116,7 +116,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_composite_cs_signature_matrix"
+        "tests/compiler/test_composite_cs_signature_matrix.cpp"
       ]
     },
     {

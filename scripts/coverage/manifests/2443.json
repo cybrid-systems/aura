@@ -64,7 +64,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_region_dense_atomic"
+        "tests/core/test_region_dense_atomic.cpp"
       ]
     }
   ],

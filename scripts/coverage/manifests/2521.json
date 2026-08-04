@@ -1,7 +1,7 @@
 {
   "issue": 2521,
   "title": "Issue #2521: production default-on PCV TLS freelist.",
-  "ok": "OK: Issue #2521 PCV TLS production default ON — all AC rows satisfied",
+  "ok": "OK: Issue #2521 PCV TLS production default ON \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -86,7 +86,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_pcv_tls_default_on"
+        "tests/core/test_pcv_tls_default_on.cpp"
       ]
     },
     {

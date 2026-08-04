@@ -1,7 +1,7 @@
 {
   "issue": 2621,
   "title": "Issue #2621: partial re-infer cone truncate must not silent-commit under production.",
-  "ok": "OK: Issue #2621 partial cone commit gate — all AC rows satisfied",
+  "ok": "OK: Issue #2621 partial cone commit gate \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -108,7 +108,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_partial_cone_commit_gate"
+        "tests/compiler/test_partial_cone_commit_gate.cpp"
       ]
     },
     {

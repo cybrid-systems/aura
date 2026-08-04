@@ -1,7 +1,7 @@
 {
   "issue": 2578,
   "title": "Issue #2578: Aether denseness host residual contracts (H1/H5/H6).",
-  "ok": "OK: Issue #2578 Aether denseness residuals — all AC rows satisfied",
+  "ok": "OK: Issue #2578 Aether denseness residuals \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -54,7 +54,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_aether_denseness_residual"
+        "tests/compiler/test_aether_denseness_residual.cpp"
       ]
     },
     {

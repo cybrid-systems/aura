@@ -1,7 +1,7 @@
 {
   "issue": 2608,
   "title": "Issue #2608: optional OccurrenceGoal persist / rehydrate.",
-  "ok": "OK: Issue #2608 + #2641 OccurrenceGoal persist/rehydrate — all AC rows satisfied",
+  "ok": "OK: Issue #2608 + #2641 OccurrenceGoal persist/rehydrate \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -125,7 +125,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_occurrence_goal_persist_rehydrate"
+        "tests/compiler/test_occurrence_goal_persist_rehydrate.cpp"
       ]
     },
     {

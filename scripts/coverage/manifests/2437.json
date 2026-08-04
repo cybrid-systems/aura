@@ -67,7 +67,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_gc_defer_reconcile_cas"
+        "tests/core/test_gc_defer_reconcile_cas.cpp"
       ]
     }
   ],

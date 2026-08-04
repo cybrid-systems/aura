@@ -1,6 +1,6 @@
 {
   "issue": 2436,
-  "title": "Issue #2436: post-compact Arena × IR SoA × Shape × fiber lifecycle.",
+  "title": "Issue #2436: post-compact Arena \u00d7 IR SoA \u00d7 Shape \u00d7 fiber lifecycle.",
   "ok": "OK: post compact lifecycle #2436 coverage contract clean",
   "checks": [
     {
@@ -108,7 +108,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_post_compact_lifecycle"
+        "tests/compiler/test_post_compact_lifecycle.cpp"
       ]
     }
   ],

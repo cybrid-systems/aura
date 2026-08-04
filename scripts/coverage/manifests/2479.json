@@ -69,7 +69,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_regex_redos_timeout"
+        "tests/compiler/test_regex_redos_timeout.cpp"
       ]
     },
     {

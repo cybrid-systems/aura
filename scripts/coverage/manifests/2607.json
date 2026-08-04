@@ -1,7 +1,7 @@
 {
   "issue": 2607,
   "title": "Issue #2607: minimal INSTANCE constraint + depth-capped instantiate.",
-  "ok": "OK: Issue #2607 INSTANCE depth-cap constraint — all AC rows satisfied",
+  "ok": "OK: Issue #2607 INSTANCE depth-cap constraint \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -106,7 +106,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_instance_constraint_depth_cap"
+        "tests/compiler/test_instance_constraint_depth_cap.cpp"
       ]
     },
     {

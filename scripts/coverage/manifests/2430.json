@@ -71,7 +71,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_capability_effect_stats_snapshot"
+        "tests/core/test_capability_effect_stats_snapshot.cpp"
       ]
     }
   ],

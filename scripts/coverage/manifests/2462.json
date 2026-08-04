@@ -87,7 +87,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_system_health_next_action"
+        "tests/compiler/test_type_system_health_next_action.cpp"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "issue": 2640,
   "title": "Issue #2640: production Restricted default periodic epoch-invariant soft walk",
-  "ok": "OK: Issue #2640 production Restricted default periodic epoch-invariant soft walk — all AC rows satisfied",
+  "ok": "OK: Issue #2640 production Restricted default periodic epoch-invariant soft walk \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -91,8 +91,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_epoch_invariant_walk",
-        "aura_issue_test_link_llvm_jit(test_epoch_invariant_walk)"
+        "tests/compiler/test_epoch_invariant_walk.cpp"
       ]
     },
     {

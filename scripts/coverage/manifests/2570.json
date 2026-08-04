@@ -1,7 +1,7 @@
 {
   "issue": 2570,
   "title": "Issue #2570: module load tail export + fail-closed nested require.",
-  "ok": "OK: Issue #2570 module load tail export — all AC rows satisfied",
+  "ok": "OK: Issue #2570 module load tail export \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -60,7 +60,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_module_load_tail_export"
+        "tests/compiler/test_module_load_tail_export.cpp"
       ]
     },
     {

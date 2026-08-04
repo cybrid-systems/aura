@@ -58,9 +58,9 @@ Binary sprawl is largely fixed: issue TUs are **members** of thematic batches, n
 | **`test_misc_issue_fold_batch`** | **189** | **Catch-all — next split priority** |
 | `test_linear_cross_closure` | (single file) | W0 true content merge |
 
-CMake still has `# folded: aura_add_issue_test(...)` comment needles so coverage contracts stay green.
+**S5 done:** coverage contracts require batch member `.cpp` paths (or active standalone target names); the `# folded: aura_add_issue_test(...)` comment alias block was removed from `CMakeLists.txt`.
 
-**Remaining problem:** filenames still look like `test_add_node_builder_contract.cpp`, and **189 files dump into one misc mega-batch**, which is hard to run/debug and teaches the wrong habit.
+**Remaining problem (historical):** misc mega-batch was split in S1–S2; issue-suffix renames finished in S3–S4. Optional later: Stream C content merges for co-located multi-issue bases.
 
 ---
 
@@ -99,7 +99,7 @@ CMake still has `# folded: aura_add_issue_test(...)` comment needles so coverage
 1. `python3 scripts/tools/fold_issue_test_wave.py` (extend) or hand-move sources in CMake.
 2. Move member paths from misc → new `add_executable(...)`.
 3. Regenerate driver `run_*` list.
-4. Refresh `# folded:` alias block if needed.
+4. Coverage manifests/checks should require the member `.cpp` path in CMake (batch source list), not `aura_add_issue_test` aliases.
 5. `cmake -S . -B build` + `ninja -C build <batch>` smoke.
 6. `./build.py gate` (coverage needles).
 
@@ -116,7 +116,6 @@ Do **after** Stream A homes are stable so renames land in the right batch.
   - `run_test_<new_stem>()` symbol (or keep old `run_` + alias — prefer rename both)
   - `scripts/coverage/manifests/*.json` paths
   - any `read_file("tests/.../test_*_NNNN.cpp")` in other tests
-  - `# folded:` comments
   - `docs/generated/test-registry.json` (regen)
 
 **Suggested rename waves** (by current thematic batch — lower risk first):
@@ -154,21 +153,16 @@ for each member in batch:
 
 Pattern: same as W0 `test_linear_cross_closure` — namespaces + one `main` / `run_all`.
 
-### Stream D — Contract modernization (parallel, low risk)
+### Stream D — Contract modernization (**S5 done**)
 
-Coverage / gate scripts still string-search:
+Coverage / gate scripts no longer depend on `# folded:` CMake comment needles.
 
-```text
-aura_add_issue_test(test_foo_NNNN)
-aura_issue_test_link_light(...)
-```
+Contracts now require:
 
-Today satisfied by `# folded:` comments. Prefer migrating contracts to:
+- batch member path listed in `CMakeLists.txt`: `tests/.../test_foo.cpp`
+- **or** active standalone target name still registered via `aura_add_issue_test(test_foo)` (e.g. `test_ast_concurrency`, `test_linear_cross_closure`)
 
-- path exists: `tests/.../test_foo.cpp`
-- **or** listed as source of a known batch target
-
-Then delete the comment alias block (smaller `CMakeLists.txt`).
+The ~1600-line folded alias block was deleted from `CMakeLists.txt`.
 
 ---
 
@@ -210,7 +204,7 @@ Approximate keyword buckets (a file may fit multiple; primary used for routing):
 | **S2** | Stream A6–A10 + Stream C merges | misc ≤40; 3 content merges |
 | **S3** (done) | Stream B1–B5 renames (117 files) | flatast/security/densify/linear_misc/orch_agent zero `_NNNN` |
 | **S4** (done) | Stream B6–B10 renames (~276 + 5 disambig) | issue-suffix left: 6 `test_issue_*` only |
-| **S5** | Stream D contract cleanup | remove `# folded:` block |
+| **S5** (done) | Stream D contract cleanup | `# folded:` block removed; 128 manifests + 6 full checks use path/target needles |
 
 Do **not** rename 400 files in one PR — batch-sized PRs (~20–40 files) keep pre-push/gate reviewable.
 
@@ -221,7 +215,7 @@ Do **not** rename 400 files in one PR — batch-sized PRs (~20–40 files) keep 
 - [ ] `rg '_\\d{3,5}\\.cpp$' tests --glob 'test_*.cpp'` → only allowlisted exceptions (e.g. none, or `test_issue_178*`)
 - [ ] No `test_misc_issue_fold_batch` over 40 members (or batch deleted)
 - [ ] Every theme in `HOMES.md` maps to a real suite path without issue digits
-- [ ] Coverage manifests point at thematic paths
+- [x] Coverage manifests point at thematic paths (S5)
 - [ ] `./build.py gate` green; sample `ninja -C build test_*_batch && ./build/test_*_batch`
 
 ---

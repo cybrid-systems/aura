@@ -1,7 +1,7 @@
 {
   "issue": 2358,
   "title": "Issue #2358: CastOp density HARD force-JIT policy coverage.",
-  "ok": "OK: Issue #2358 CastOp density HARD policy — all AC rows satisfied",
+  "ok": "OK: Issue #2358 CastOp density HARD policy \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -99,7 +99,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_castop_density_hard"
+        "tests/compiler/test_castop_density_hard.cpp"
       ]
     },
     {

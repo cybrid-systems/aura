@@ -1,7 +1,7 @@
 {
   "issue": 2397,
   "title": "Issue #2397: distinguish reclaimed vs body-still-running after residual.",
-  "ok": "OK: Issue #2397 reclaim still-running — all AC rows satisfied",
+  "ok": "OK: Issue #2397 reclaim still-running \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -120,7 +120,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_join_drain_reclaim"
+        "tests/orch/test_join_drain_reclaim.cpp"
       ]
     }
   ],

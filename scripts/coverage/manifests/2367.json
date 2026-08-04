@@ -1,7 +1,7 @@
 {
   "issue": 2367,
   "title": "Issue #2367: ReloadRecovery query primitive + recovery-state snapshot.",
-  "ok": "OK: Issue #2367 ReloadRecovery query primitive — all AC rows satisfied",
+  "ok": "OK: Issue #2367 ReloadRecovery query primitive \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -113,7 +113,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_reload_recovery_query"
+        "tests/compiler/test_reload_recovery_query.cpp"
       ]
     },
     {

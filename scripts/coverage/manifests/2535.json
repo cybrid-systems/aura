@@ -38,8 +38,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mailbox_bp_admit_default",
-        "aura_issue_test_link_light(test_mailbox_bp_admit_default)"
+        "tests/orch/test_mailbox_bp_admit_default.cpp"
       ]
     },
     {

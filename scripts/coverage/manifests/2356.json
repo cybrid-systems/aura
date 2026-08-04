@@ -1,7 +1,7 @@
 {
   "issue": 2356,
   "title": "Issue #2356: truncated reverify one-shot expand coverage.",
-  "ok": "OK: Issue #2356 reverify expand — all AC rows satisfied",
+  "ok": "OK: Issue #2356 reverify expand \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -90,7 +90,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_reverify_expand"
+        "tests/compiler/test_reverify_expand.cpp"
       ]
     },
     {

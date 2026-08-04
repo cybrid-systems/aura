@@ -77,7 +77,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_macro_dirty_bits_lock"
+        "tests/core/test_macro_dirty_bits_lock.cpp"
       ]
     }
   ],

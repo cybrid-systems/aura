@@ -1,7 +1,7 @@
 {
   "issue": 2594,
-  "title": "Issue #2594: audit mid-fallback 率 SLO → security-health 降级标志.",
-  "ok": "OK: Issue #2594 audit mid-fallback SLO — all AC rows satisfied",
+  "title": "Issue #2594: audit mid-fallback \u7387 SLO \u2192 security-health \u964d\u7ea7\u6807\u5fd7.",
+  "ok": "OK: Issue #2594 audit mid-fallback SLO \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "header",
@@ -80,9 +80,7 @@
       "ac": "cmake",
       "path": "CMakeLists.txt",
       "contains": [
-        "aura_add_issue_test(test_audit_mid_fallback_slo)",
-        "aura_issue_test_link_light(test_audit_mid_fallback_slo)",
-        "all_test_issue_targets test_audit_mid_fallback_slo"
+        "tests/compiler/test_audit_mid_fallback_slo.cpp"
       ]
     }
   ],

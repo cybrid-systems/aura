@@ -21,7 +21,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_cap_write_effect_matrix"
+        "tests/compiler/test_cap_write_effect_matrix.cpp"
       ]
     },
     {

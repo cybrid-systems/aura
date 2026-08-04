@@ -1,7 +1,7 @@
 {
   "issue": 2489,
   "title": "Issue #2489: promote remaining high-risk string-only caps into the Effect",
-  "ok": "OK: Issue #2489 high-risk cap promotion — all AC rows satisfied",
+  "ok": "OK: Issue #2489 high-risk cap promotion \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -55,9 +55,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_capability_high_risk_promote",
-        "aura_add_issue_test(test_capability_high_risk_promote)",
-        "aura_issue_test_link_light(test_capability_high_risk_promote)"
+        "tests/compiler/test_capability_high_risk_promote.cpp"
       ]
     },
     {

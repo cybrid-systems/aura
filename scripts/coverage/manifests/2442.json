@@ -62,7 +62,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_clear_macro_dirty_concurrent"
+        "tests/core/test_clear_macro_dirty_concurrent.cpp"
       ]
     }
   ],

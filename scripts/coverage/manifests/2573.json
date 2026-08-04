@@ -1,7 +1,7 @@
 {
   "issue": 2573,
-  "title": "Issue #2573: IR ConstString intern — no O(N) string_heap growth.",
-  "ok": "OK: Issue #2573 IR ConstString intern — all AC rows satisfied",
+  "title": "Issue #2573: IR ConstString intern \u2014 no O(N) string_heap growth.",
+  "ok": "OK: Issue #2573 IR ConstString intern \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -31,7 +31,7 @@
       "ac": "AC3",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_ir_const_string_intern"
+        "tests/compiler/test_ir_const_string_intern.cpp"
       ]
     },
     {

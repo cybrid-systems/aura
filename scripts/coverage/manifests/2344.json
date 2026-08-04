@@ -1,7 +1,7 @@
 {
   "issue": 2344,
-  "title": "Issue #2344: escape-gate publish key ↔ lower key contract (Option A).",
-  "ok": "OK: Issue #2344 escape-gate key contract — all AC rows satisfied",
+  "title": "Issue #2344: escape-gate publish key \u2194 lower key contract (Option A).",
+  "ok": "OK: Issue #2344 escape-gate key contract \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -93,7 +93,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_escape_move_elision_gate"
+        "tests/compiler/test_escape_move_elision_gate.cpp"
       ]
     }
   ],

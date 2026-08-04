@@ -1,7 +1,7 @@
 {
   "issue": 2518,
-  "title": "Issue #2518: MutationSafetySnapshot sequence ticket (sample→resume).",
-  "ok": "OK: Issue #2518 steal safety ticket — all AC rows satisfied",
+  "title": "Issue #2518: MutationSafetySnapshot sequence ticket (sample\u2192resume).",
+  "ok": "OK: Issue #2518 steal safety ticket \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -104,7 +104,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_steal_safety_ticket"
+        "tests/serve/test_steal_safety_ticket.cpp"
       ]
     },
     {

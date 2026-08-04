@@ -1,7 +1,7 @@
 {
   "issue": 2614,
   "title": "Issue #2614: force ChildColumnar/SoAColumnarFull on walk/query/PCV hot templates.",
-  "ok": "OK: Issue #2614 hot children ChildColumnar force — all AC rows satisfied",
+  "ok": "OK: Issue #2614 hot children ChildColumnar force \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -93,7 +93,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_hot_children_columnar"
+        "tests/core/test_hot_children_columnar.cpp"
       ]
     },
     {

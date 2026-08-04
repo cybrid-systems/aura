@@ -104,9 +104,7 @@ def main() -> int:
     must("Issue #2498", "AC5", env)
     must("Issue #2498", "AC5", test)
     must("AC5", "AC5", test)
-    must("aura_add_issue_test(test_fiber_reclaim_orphan_release)", "AC5", cmake)
-    must("aura_issue_test_link_light(test_fiber_reclaim_orphan_release)", "AC5", cmake)
-    must("add_dependencies(all_test_issue_targets test_fiber_reclaim_orphan_release)", "AC5", cmake)
+    must("tests/serve/test_fiber_reclaim_orphan_release.cpp", "AC5", cmake)  # batch member source (S5)
     must("check_fiber_reclaim_orphan_release_2498", "AC5", build)
 
     # Optional: query surface exposure (the accessor is registered as a

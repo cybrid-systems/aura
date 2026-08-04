@@ -1,7 +1,7 @@
 {
   "issue": 2504,
   "title": "Issue #2504: e2e PerEval dual-eval SpecJIT storm isolation regression gate.",
-  "ok": "OK: Issue #2504 SpecJIT PerEval storm e2e isolation — all AC rows satisfied",
+  "ok": "OK: Issue #2504 SpecJIT PerEval storm e2e isolation \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -75,7 +75,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_specjit_pereval_storm_e2e"
+        "tests/compiler/test_specjit_pereval_storm_e2e.cpp"
       ]
     },
     {

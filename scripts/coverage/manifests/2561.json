@@ -1,7 +1,7 @@
 {
   "issue": 2561,
   "title": "Issue #2561: Soft/Sampled blame chain recover + miss escalate coverage.",
-  "ok": "OK: Issue #2561 Soft blame recover/escalate — all AC rows satisfied",
+  "ok": "OK: Issue #2561 Soft blame recover/escalate \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -101,7 +101,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_blame_soft_recover"
+        "tests/compiler/test_blame_soft_recover.cpp"
       ]
     },
     {

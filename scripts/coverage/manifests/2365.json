@@ -1,7 +1,7 @@
 {
   "issue": 2365,
   "title": "Issue #2365: RootRemap + densify Closure/EnvFrame dual-epoch closed-loop.",
-  "ok": "OK: Issue #2365 densify RootRemap+closure dual-epoch — all AC rows satisfied",
+  "ok": "OK: Issue #2365 densify RootRemap+closure dual-epoch \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -101,7 +101,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_densify_root_closure_closed_loop"
+        "tests/compiler/test_densify_root_closure_closed_loop.cpp"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "issue": 2605,
   "title": "Issue #2605: explicit anonymous / residual sid=0 policy.",
-  "ok": "OK: Issue #2605 anonymous/residual sid=0 policy — all AC rows satisfied",
+  "ok": "OK: Issue #2605 anonymous/residual sid=0 policy \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -90,7 +90,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_anonymous_residual_stable_id_policy"
+        "tests/compiler/test_anonymous_residual_stable_id_policy.cpp"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "issue": 2354,
   "title": "Issue #2354: debug lock-order audit coverage (scheduler / workspace /",
-  "ok": "OK: Issue #2354 lock-order audit — all AC rows satisfied",
+  "ok": "OK: Issue #2354 lock-order audit \u2014 all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -116,7 +116,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_lock_order_audit_hard"
+        "tests/compiler/test_lock_order_audit_hard.cpp"
       ]
     },
     {
