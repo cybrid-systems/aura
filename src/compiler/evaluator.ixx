@@ -12839,12 +12839,19 @@ public:
     // (Issue #2220) bumps persistent_tc_workspace_gen_ on each create /
     // reuse / invalidate path; reading it as a best-effort probe for
     // "did an indirect mutation land inside this pure apply?" is cheaper
-    // than walking the workspace tree. Returned relaxed; the probe only
-    // needs ordering against the apply_closure that follows on the same
-    // fiber (which already provides release/acquire via apply_closure's
-    // own memory effects). Counter is advisory (not contractual).
+    // than walking the workspace tree.
+    //
+    // #2636 follow-up: removed the erroneous `.load(relaxed)` — the
+    // field is a plain std::uint64_t (declared at the TypeChecker
+    // persistence block below; the 4 sibling counters there are
+    // also plain, not atomic). Plain reads/writes on std::uint64_t
+    // have no atomic semantics; the counter is written only by the
+    // TypeChecker persist path on its own thread, and the probe is
+    // best-effort (advisory, not contractual). The original #2634
+    // comment claimed "returned relaxed" which was a hallucination —
+    // flagged by the repro build's -Werror.
     [[nodiscard]] std::uint64_t workspace_generation() const noexcept {
-        return persistent_tc_workspace_gen_.load(std::memory_order_relaxed);
+        return persistent_tc_workspace_gen_;
     }
 
     // ── Issue #250: atomic-batch accessors ───────────

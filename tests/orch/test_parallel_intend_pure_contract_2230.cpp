@@ -619,6 +619,27 @@ int main() {
               "2634 AC5: probe compares workspace_generation() snapshot");
     }
 
+    // ── #2636 AC: parallel-intend wire-up uses `ev.workspace_flat_` ───────────
+    // Pair-test for the #2636 repro-build fix: the handoff_ref wire-up in
+    // the parallel-intend body lambda was using bare `workspace_flat_` (not
+    // declared in the lambda's scope — the lambda captures `[&ev, ...]`).
+    // The repro build's -Werror caught it. Verify the source uses
+    // `ev.workspace_flat_->make_ref(...)` so the build compiles + the
+    // wire-up reaches the workspace through the captured `ev` reference.
+    {
+        std::ifstream ag_2636("src/compiler/evaluator_primitives_agent.cpp");
+        const std::string ag_2636_src((std::istreambuf_iterator<char>(ag_2636)),
+                                      std::istreambuf_iterator<char>());
+        CHECK(ag_2636_src.find("ev.workspace_flat_->make_ref") != std::string::npos,
+              "2636: parallel-intend handoff_ref wire-up uses ev.workspace_flat_ "
+              "(lambda captures [\&ev, ...]; bare workspace_flat_ was undeclared "
+              "in the repro build's -Werror)");
+        // Also verify the outer `if (types::is_closure(val) && ev.workspace_flat_)` gate
+        // is in place (not bare `workspace_flat_`).
+        CHECK(ag_2636_src.find("is_closure(val) && ev.workspace_flat_") != std::string::npos,
+              "2636: parallel-intend gate uses ev.workspace_flat_");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

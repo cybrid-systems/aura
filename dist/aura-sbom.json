@@ -1,0 +1,80 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:aura-sbom-dev",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-08-04T02:04:45Z",
+    "tools": [
+      {
+        "vendor": "Aura",
+        "name": "gen_sbom.py",
+        "version": "1.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "aura",
+      "version": "dev"
+    },
+    "properties": [
+      {
+        "name": "toolchain:gcc",
+        "value": "g++ (GCC) 16.1.0"
+      },
+      {
+        "name": "toolchain:cmake",
+        "value": "cmake version 4.4.0"
+      },
+      {
+        "name": "toolchain:ninja",
+        "value": "1.13.2"
+      },
+      {
+        "name": "source-date-epoch",
+        "value": "0"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "aura",
+      "version": "dev",
+      "description": "Aura language runtime and compiler",
+      "bom-ref": "aura",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "08ea26122604ea393fbeccda18f670187dd5d9012f156cbc7e455aaebb70798f"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "name": "runtime.c",
+      "version": "dev",
+      "bom-ref": "aura-runtime-c",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "6c841d08177a59ff8dacec2396bea8e11132b2cd6247b1b540a3e5a931464788"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ruff",
+      "version": "0.16.0",
+      "purl": "pkg:pypi/ruff@0.16.0",
+      "bom-ref": "pypi-ruff"
+    },
+    {
+      "type": "library",
+      "name": "pexpect",
+      "version": "4.9.0",
+      "purl": "pkg:pypi/pexpect@4.9.0",
+      "bom-ref": "pypi-pexpect"
+    }
+  ]
+}

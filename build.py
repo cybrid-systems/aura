@@ -8101,6 +8101,18 @@ def cmd_repro():
     BUILD.mkdir(parents=True, exist_ok=True)
     nproc = _build_jobs()
     cflags, cxxflags, ldflags = _repro_cmake_flags()
+    # Issue #2636 follow-up: resolve compiler paths via shutil.which so
+    # this works even when /usr/bin/{c++,g++} is a broken symlink
+    # (some local dev environments have alternatives pointing at
+    # nothing). CMake's auto-detect picks /usr/bin/c++ first and fails
+    # with "is not a full path to an existing compiler tool" if the
+    # symlink target is missing. Explicit -DCMAKE_{C,CXX}_COMPILER
+    # overrides the auto-detect and keeps the repro build reproducible
+    # across dev/CI image drift. CI container (ghcr.io/cybrid-systems/dev:v1.0.5)
+    # has working symlinks so this is belt-and-suspenders for CI but
+    # mandatory for local dev.
+    c_compiler = shutil.which("gcc") or shutil.which("cc") or "gcc"
+    cxx_compiler = shutil.which("g++") or shutil.which("c++") or "g++"
     env = {
         **os.environ,
         "SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", REPRO_SOURCE_DATE_EPOCH),
@@ -8114,8 +8126,10 @@ def cmd_repro():
             str(BUILD),
             "-G",
             "Ninja",
-            "-Wno-dev",
+            "-Wno-author",  # was -Wno-dev (CMake 4.x deprecated it)
             "-DCMAKE_BUILD_TYPE=Release",
+            f"-DCMAKE_C_COMPILER={c_compiler}",
+            f"-DCMAKE_CXX_COMPILER={cxx_compiler}",
             f"-DCMAKE_C_FLAGS={cflags}",
             f"-DCMAKE_CXX_FLAGS={cxxflags}",
             f"-DCMAKE_EXE_LINKER_FLAGS={ldflags}",
