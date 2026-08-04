@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 749 | Preferred destination suites |
-| **Total scanned** | **749** | |
+| `tests/core/test_*.cpp` | 750 | Preferred destination suites |
+| **Total scanned** | **750** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 49 | 49 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 129 | 129 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 43 | 43 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 44 | 44 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **78**
+- Existing `*_batch` drivers (migration milestones): **79**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -116,6 +116,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_incremental_relower_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_incremental_type_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_inline_pass_batch.cpp` → theme `jit_incremental`
+- `tests/compiler/test_ir_closure_jit_misc_batch.cpp` → theme `jit_incremental`
 - `tests/compiler/test_ir_soa_dual_emit_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_issues_809_817_batch.cpp` → theme `fiber_orch`
 - `tests/compiler/test_issues_819_829_batch.cpp` → theme `mutation_dirty`
@@ -126,7 +127,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_linear_ownership_batch.cpp` → theme `linear_ownership`
 - `tests/compiler/test_macro_reflect_batch.cpp` → theme `edsl_hygiene`
 - `tests/serve/test_mailbox_fiber_batch.cpp` → theme `fiber_orch`
-- `tests/compiler/test_misc_issue_fold_batch.cpp` → theme `jit_incremental`
+- `tests/compiler/test_misc_issue_fold_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_mutate_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` → theme `observability`
 - `tests/compiler/test_mutation_boundary_batch.cpp` → theme `mutation_dirty`
@@ -462,6 +463,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_invalidations_stats_workspace_lock.cpp`
 - `tests/compiler/test_ir.cpp`
 - `tests/reflect/test_ir_cache_v2.cpp`
+- `tests/compiler/test_ir_closure_jit_misc_batch.cpp`
 - `tests/compiler/test_ir_const_string_intern_2573.cpp`
 - `tests/compiler/test_ir_metadata_interpreter_jit_closed_loop.cpp`
 - `tests/compiler/test_ir_optimize_type_info_chain_2471.cpp`
@@ -1485,6 +1487,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_incremental_type_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_incremental_type_batch.cpp — batch driver for incremental_type family.
 - `tests/compiler/test_inline_pass_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_inline_pass_batch.cpp — inline_pass pair dup-merge (R19 phase 14).
 - `tests/compiler/test_instr_level_relower_pass_2133.cpp` (#2133) [domain_suite, theme_compiler] — AC1: has_instr_precision / instr_level_eligible under threshold
+- `tests/compiler/test_ir_closure_jit_misc_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_ir_closure_jit_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_jit_aot_hot_update_batch.cpp — consolidated AOT hot-update + steal-boundary drivers
 - `tests/compiler/test_jit_batch_deopt_clear.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_issue_1996.cpp — Issue #1996 (B-003): `g_batch_deopt_jit` raw
 - `tests/compiler/test_jit_closure_cache_race.cpp` (—) [domain_suite, theme_compiler] — Issue #1707 (#1978 renamed): issue# moved from filename to header.
@@ -1500,7 +1503,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_jit_metrics_stub.cpp` (—) [small, domain_suite, theme_compiler] — test_jit_metrics_stub.cpp — Stub for the JIT test.
 - `tests/compiler/test_live_closure_stable_id_only_2369.cpp` (#2369) [domain_suite, theme_compiler] — AC1: positive — stable_func_id present → remap, name-fallback counter 0
 - `tests/compiler/test_lock_order_audit_2316.cpp` (#2316) [domain_suite, theme_compiler] — test_lock_order_audit_2316.cpp — Issue #2316:
-- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_module_partition_map_2524.cpp` (#2524) [domain_suite, theme_compiler] — AC1: Measurable reduction OR clear partition map (pass_manager facade
 - `tests/compiler/test_obs_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_obs_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_optimization_passes_contracts.cpp` (—) [domain_suite, theme_compiler] — AC1: 4 core passes satisfy Pass / DirtyAware / PureAnalysis where applicable
@@ -1722,13 +1724,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention_2523.cpp` (#2523) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (43)
+### `uncategorized` — Uncategorized / mixed (44)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (43)
+#### domain/ (44)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1750,6 +1752,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_json_parse_object_grow_2481.cpp` (#2481) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/compiler/test_list_end_of_list_void_2482.cpp` (#2482) [domain_suite, theme_compiler] — AC1: (null? 0) → false; (null? (list)) → true
 - `tests/compiler/test_load_cap_io_read_2485.cpp` (#2485) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
+- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — leftover issue-suffixed tests (W_other residual after Stream A spli
 - `tests/compiler/test_module_export_display_2572.cpp` (#2572) [domain_suite, theme_compiler] — AC1: issue repro — (require) + multi-display export prints prefix + arg
 - `tests/compiler/test_module_load_tail_export_2570.cpp` (#2570) [domain_suite, theme_compiler] — AC1: tail defines always export after require
 - `tests/compiler/test_module_loader_dead_heap_circular.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1692 (#1978 renamed): issue# moved from filename to header.

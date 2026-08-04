@@ -202,7 +202,8 @@ Approximate keyword buckets (a file may fit multiple; primary used for routing):
 | **S0** (done) | Multi-TU fold + no standalone issue targets | gate green |
 | **S1 / A1** (done) | `test_mutation_hold_boundary_batch` (21 members) | misc 189→168; batch registered |
 | **S1 / A2** (done) | `test_shape_soa_storm_batch` (14 members) | misc 168→154; `shape_profiler_concurrency_2141` kept special exe |
-| **S1** (rest) | Stream A3–A5 (misc split continues) | misc ≤110; more new batches green |
+| **S1 / A3** (done) | `test_ir_closure_jit_misc_batch` (23 members) | misc 154→131; IR/closure/JIT/deopt/DCE/PrimCall |
+| **S1** (rest) | Stream A4–A5 (misc split continues) | misc ≤110; more new batches green |
 | **S2** | Stream A6–A10 + Stream C merges | misc ≤40; 3 content merges |
 | **S3** | Stream B1–B5 renames | those batches have **zero** `_NNNN` filenames |
 | **S4** | Stream B6–B10 renames | issue-suffix file count → **&lt; 30** specials only |
