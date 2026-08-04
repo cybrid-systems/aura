@@ -191,6 +191,17 @@ jobs:
   asan-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 240  # #2636 belt-and-suspenders: ASAN instrumentation
+                          # makes the build materially slower than the
+                          # default 360-min budget after recent header
+                          # changes (#2632 handoff_ref, #2633 scope BP,
+                          # #2634 workspace_generation, #2635 mid-fallback
+                          # hard-deny) triggered a full rebuild of all
+                          # arena.ixx dependents (~11 TUs). Bumping to
+                          # 4h + AURA_LINK_JOBS=1 avoids the documented
+                          # link-stage deadlock + the default-timeout
+                          # trap. Still uses slim matrix (no issue targets)
+                          # to avoid the disk-full failure mode.
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.5
     steps:
@@ -205,7 +216,9 @@ jobs:
     - name: Build with ASAN
       env:
         AURA_ISSUE_BUILD: none
-        AURA_LINK_JOBS: "2"
+        AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
+                               # rebuild deadlock (ninja -j2 has been
+                               # observed to hang on this stage).
       run: python3 build.py --sanitizer=asan build
 
     # aura / test_ir NEEDED libaura-reflect.so (P2996 SHARED, Issue #2290).
