@@ -1230,6 +1230,12 @@ struct CompilerMetrics {
     // under multi-round mutate). Distinct from
     // occurrence_goal_stale_drop_total (epoch-prune, #2278 lineage).
     std::atomic<std::uint64_t> occurrence_goal_refined_drift_total{0}; // #2321
+    // Issue #2647: empty dirty + live OccurrenceGoals must force reverify
+    // (no vacuous SOLVED). forced_reverify counts goal-priority passes taken
+    // because dirty_count_==0; vacuous_solve_prevented counts times live goals
+    // blocked the early SOLVED return.
+    std::atomic<std::uint64_t> occurrence_goal_forced_reverify_total{0};         // #2647
+    std::atomic<std::uint64_t> occurrence_goal_vacuous_solve_prevented_total{0}; // #2647
     // Issue #2552: joint steal/densify epoch fence (type narrowing freshness).
     // Fence call totals (advance actually applied) + entries dropped.
     // Distinct from generic occurrence_goal_stale_drop / type_dep stale drop

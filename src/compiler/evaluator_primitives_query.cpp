@@ -6240,6 +6240,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("occurrence_goal_stale_drop_total", occurrence_goal_stale_drop);
             insert_kv("schema-2278", 2278);
             insert_kv("issue-2278", 2278);
+            // Issue #2647: empty-dirty + live goals force reverify (anti vacuous SOLVED).
+            {
+                const std::int64_t forced =
+                    m ? static_cast<std::int64_t>(m->occurrence_goal_forced_reverify_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t prevented =
+                    m ? static_cast<std::int64_t>(
+                            m->occurrence_goal_vacuous_solve_prevented_total.load(
+                                std::memory_order_relaxed))
+                      : 0;
+                insert_kv("occurrence-goal-forced-reverify-total", forced);
+                insert_kv("occurrence_goal_forced_reverify_total", forced);
+                insert_kv("occurrence-goal-vacuous-solve-prevented-total", prevented);
+                insert_kv("occurrence_goal_vacuous_solve_prevented_total", prevented);
+                insert_kv("schema-2647", 2647);
+                insert_kv("issue-2647", 2647);
+            }
             // Issue #2564: ADT match exhaustiveness goal table + reverify roots.
             {
                 const std::int64_t adt_goal_note =

@@ -215,6 +215,8 @@ AURA_COMPILER_METRICS_FIELD(constraint_blame_chain_rich_complete_total)
 // Issue #2278: epoch-scoped OccurrenceGoal table — replay + stale-drop.
 AURA_COMPILER_METRICS_FIELD(occurrence_goal_replay_total)
 AURA_COMPILER_METRICS_FIELD(occurrence_goal_stale_drop_total)
+AURA_COMPILER_METRICS_FIELD(occurrence_goal_forced_reverify_total)
+AURA_COMPILER_METRICS_FIELD(occurrence_goal_vacuous_solve_prevented_total)
 AURA_COMPILER_METRICS_FIELD(occurrence_goal_steal_prune_total)
 AURA_COMPILER_METRICS_FIELD(occurrence_goal_steal_prune_entries_total)
 // Issue #2622: single dirty-key authority (memo + goals).
