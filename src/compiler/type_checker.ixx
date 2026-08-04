@@ -2087,8 +2087,19 @@ export struct TypeChecker {
         // persist side buffer so priority roots stay non-empty when
         // production/env snapshot was written on prior boundary exit.
         // Soft: disabled path returns 0 (zero cost).
-        if (goals_dropped > 0 && solve_delta_cs_.occurrence_goals_size() == 0)
-            (void)solve_delta_cs_.rehydrate_occurrence_from_persist(/*preferred_mid=*/0);
+        // Issue #2641: capture return value — if rehydrate returns 0
+        // under production (persist_enabled but no entries / wrong mid
+        // / buffer empty), bump occurrence_persist_rehydrate_miss_total
+        // so the empty-after-fence failure is Agent-visible, not silent.
+        if (goals_dropped > 0 && solve_delta_cs_.occurrence_goals_size() == 0) {
+            const auto n_reh = solve_delta_cs_.rehydrate_occurrence_from_persist(
+                /*preferred_mid=*/0);
+            if (n_reh == 0 && solve_delta_cs_.occurrence_persist_enabled() &&
+                aura::compiler::typed_audit::production_defaults_active() && metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(metrics_);
+                m->occurrence_persist_rehydrate_miss_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
         if (metrics_) {
             auto* m = static_cast<CompilerMetrics*>(metrics_);
             m->occurrence_goal_steal_prune_total.fetch_add(1, std::memory_order_relaxed);

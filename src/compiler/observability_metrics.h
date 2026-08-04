@@ -1251,6 +1251,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> occurrence_persist_write_total{0}; // #2608
     std::atomic<std::uint64_t> occurrence_rehydrate_total{0};     // #2608
     std::atomic<std::uint64_t> occurrence_persist_trunc_total{0}; // #2608
+    // Issue #2641: production-default persist ON; bump when rehydrate
+    // returns 0 under production after a steal/densify fence (Agent-
+    // visible fidelity signal that priority roots are empty with no
+    // rehydrate source — silent in #2608 opt-in mode).
+    std::atomic<std::uint64_t> occurrence_persist_rehydrate_miss_total{0}; // #2641
     // Issue #1873: derived completeness rate (0–100) =
     // rich_complete / (rich_complete + incomplete) * 100.
     // Updated on each blame dump so AI self-repair can watch the trend.

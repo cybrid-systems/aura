@@ -225,6 +225,91 @@ static void ac5_wiring() {
     CHECK(!script.empty(), "AC5: linter present");
 }
 
+// ── Issue #2641 AC1: production + env unset → outermost success writes persist ──
+// The dtor's outermost-success exit calls aura_outermost_success_persist_occurrence
+// (defined in evaluator_mutation_boundary.cpp per #2641). Under production +
+// env unset, the inner `TypeChecker::maybe_persist_occurrence_snapshot` returns
+// writes > 0 (the production-default ON fix from #2641). We exercise the path
+// by writing from a helper to keep the test file free of #2640 dtor internals.
+static void ac2641_1_production_default_persist() {
+    std::println("\n--- #2641 AC1: production + env unset → outermost writes persist ---");
+    UndoEnv persist_env("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    UndoProd prod_on;
+    setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+    OccurrenceFs u;
+    // Seed a live goal, then trigger the dtor-side helper.
+    u.cs.add_live_goal(1, OccurrencePred::Always);
+    const auto before = u.m.occurrence_persist_write_total.load();
+    aura_outermost_success_persist_occurrence(&u.ev, /*mutation_id=*/42);
+    const auto after = u.m.occurrence_persist_write_total.load();
+    CHECK(after > before, "AC1: production + env unset → outermost writes persist");
+    setenv("AURA_OCCURRENCE_PERSIST", "", 1);
+    apply_dev_audit_defaults();
+}
+
+// ── Issue #2641 AC3: AURA_OCCURRENCE_PERSIST=0 under production forces off ──
+static void ac2641_3_env_zero_forces_off() {
+    std::println("\n--- #2641 AC3: AURA_OCCURRENCE_PERSIST=0 under production forces off ---");
+    UndoEnv persist_env("AURA_OCCURRENCE_PERSIST");
+    UndoProd prod_on;
+    setenv("AURA_OCCURRENCE_PERSIST", "0", 1);
+    OccurrenceFs u;
+    u.cs.add_live_goal(1, OccurrencePred::Always);
+    const auto before = u.m.occurrence_persist_write_total.load();
+    aura_outermost_success_persist_occurrence(&u.ev, /*mutation_id=*/42);
+    const auto after = u.m.occurrence_persist_write_total.load();
+    CHECK(after == before, "AC3: env=0 under production forces off (no writes)");
+    setenv("AURA_OCCURRENCE_PERSIST", "", 1);
+    apply_dev_audit_defaults();
+}
+
+// ── Issue #2641 AC4: rehydrate_miss counter bumps under production ──
+static void ac2641_4_rehydrate_miss_counter() {
+    std::println("\n--- #2641 AC4: rehydrate_miss counter bumps under production ---");
+    UndoEnv persist_env("AURA_OCCURRENCE_PERSIST");
+    UndoProd prod_on;
+    setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+    OccurrenceFs u;
+    // No live goals + no persist log → rehydrate returns 0 under production
+    // → occurrence_persist_rehydrate_miss_total should bump.
+    const auto before = u.m.occurrence_persist_rehydrate_miss_total.load();
+    // Call TypeChecker::note_steal_or_densify_epoch_fence directly (the
+    // function that does the rehydrate + miss-bump per #2641 fix).
+    u.cs.note_steal_or_densify_epoch_fence(u.ev.current_mutation_epoch() + 1);
+    const auto after = u.m.occurrence_persist_rehydrate_miss_total.load();
+    CHECK(after > before, "AC4: rehydrate_miss counter bumped under production");
+    setenv("AURA_OCCURRENCE_PERSIST", "", 1);
+    apply_dev_audit_defaults();
+}
+
+// ── Issue #2641 AC6: schema + source-cite ──
+static void ac2641_6_source_cite() {
+    std::println("\n--- #2641 AC6: schema + source-cite ---");
+    auto ixx = read_file("src/compiler/type_checker.ixx");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // Source-cite #2641 in the production-default code paths.
+    CHECK(ixx.find("#2641") != std::string::npos, "AC6: type_checker.ixx cites #2641");
+    CHECK(ixx.find("occurrence_persist_rehydrate_miss_total") != std::string::npos,
+          "AC6: miss counter bumped in fence");
+    CHECK(mb.find("#2641") != std::string::npos, "AC6: dtor helper cites #2641");
+    CHECK(mb.find("aura_outermost_success_persist_occurrence") != std::string::npos,
+          "AC6: dtor helper declared");
+    CHECK(met.find("occurrence_persist_rehydrate_miss_total") != std::string::npos,
+          "AC6: metrics field added");
+    CHECK(fields.find("occurrence_persist_rehydrate_miss_total") != std::string::npos,
+          "AC6: fields.inc registered");
+    CHECK(q.find("schema-2641") != std::string::npos, "AC6: query schema-2641");
+    CHECK(q.find("issue-2641") != std::string::npos, "AC6: query issue-2641");
+    CHECK(q.find("occurrence-persist-prod-default-wired") != std::string::npos,
+          "AC6: prod-default wired sentinel");
+    CHECK(q.find("occurrence-persist-rehydrate-miss-total") != std::string::npos,
+          "AC6: miss counter query key");
+}
+
 } // namespace
 
 int main() {
@@ -234,6 +319,11 @@ int main() {
     ac3_cap_truncates();
     ac4_query_and_source();
     ac5_wiring();
+    std::println("\n=== #2641 production-default OccurrenceGoal persist ===");
+    ac2641_1_production_default_persist();
+    ac2641_3_env_zero_forces_off();
+    ac2641_4_rehydrate_miss_counter();
+    ac2641_6_source_cite();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

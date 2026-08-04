@@ -6315,6 +6315,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("occurrence-persist-wired", 1);
                 insert_kv("schema-2608", 2608);
                 insert_kv("issue-2608", 2608);
+                // Issue #2641: production-default persist ON; Agent-visible
+                // fidelity signal when steal/densify fence leaves priority
+                // roots empty with no rehydrate source.
+                const std::int64_t rehydrate_miss =
+                    m ? static_cast<std::int64_t>(m->occurrence_persist_rehydrate_miss_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                insert_kv("occurrence-persist-rehydrate-miss-total", rehydrate_miss);
+                insert_kv("occurrence_persist_rehydrate_miss_total", rehydrate_miss);
+                insert_kv("occurrence-persist-prod-default-wired", 1);
+                insert_kv("schema-2641", 2641);
+                insert_kv("issue-2641", 2641);
             }
             // Issue #2307: sole-authority sentinel. solve_delta_occurrence
             // now seeds occurrence priority only from live occurrence_goals_
