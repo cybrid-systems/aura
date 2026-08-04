@@ -378,10 +378,11 @@ static void ac2643_solved_no_hints() {
     // bounded sample must be empty and no repair-hint atomics touched.
     TypeRegistry reg;
     ConstraintSystem cs(reg);
-    CompilerMetrics before{};
-    before.instance_depth_cap_repair_hint_total.store(0, std::memory_order_relaxed);
-    before.type_repair_instance_hint_count.store(0, std::memory_order_relaxed);
-    CompilerMetrics metrics = before;
+    // CompilerMetrics is non-copyable (atomics); default-construct then zero the
+    // counters we assert on (do not assign metrics = before).
+    CompilerMetrics metrics{};
+    metrics.instance_depth_cap_repair_hint_total.store(0, std::memory_order_relaxed);
+    metrics.type_repair_instance_hint_count.store(0, std::memory_order_relaxed);
     cs.set_metrics(&metrics);
 
     auto a = reg.make_var("a");
@@ -475,8 +476,6 @@ static void ac2643_source_cite() {
     CHECK(cmake.find("check_instance_depth_repair_hint_2643") != std::string::npos,
           "#2643 AC5: cmake wires linter");
 }
-
-} // namespace
 
 int run_test_instance_constraint_depth_cap() {
     std::println("=== test_instance_constraint_depth_cap + #2643 ===");

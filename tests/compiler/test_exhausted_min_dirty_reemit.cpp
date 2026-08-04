@@ -29,6 +29,9 @@
 extern "C" void aura_set_exhausted_min_dirty_retry_cap(std::uint32_t n) noexcept;
 extern "C" void aura_set_exhausted_min_dirty_retry_backoff_ms(std::uint64_t ms) noexcept;
 
+// force_jit_regions_mask inject: use HotUpdateRegistry::on_force_jit_for_reason /
+// on_reload_success (no C ABI). AotReloadFail from aura_jit_bridge.h.
+
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
@@ -699,18 +702,18 @@ static void ac2601_schema_and_source() {
 // bridge uses, then verify counter transitions on the lazy hook.
 static void ac2639_storm_clear_fires_on_transition() {
     std::println("\n--- #2639 AC1: storm-clear fires on non-None → None + pending ---");
-    // Reset to clean state.
-    aura_set_force_jit_for_reason_global(0);
-    aura_hot_update_set_shape_storm_active(0);
+    // Reset to clean state (on_reload_success clears force_jit_regions_mask_).
     auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    aura_hot_update_set_shape_storm_active(0);
     reg.reset_storm_clear_health_pass_for_test();
     const auto before = reg.reemit_storm_clear_health_pass_total();
     // Inject storm + force-JIT pending (simulate #2544 + #2601 state).
     aura_hot_update_set_shape_storm_active(1); // shape storm
     // Drive on_reemit_pipeline_call (which calls the lazy hook).
     reg.on_reemit_pipeline_call(0, 0);
-    // Clear storm → non-None → None transition with force_jit mask != 0.
-    aura_set_force_jit_for_reason_global(1);
+    // Seed force-JIT mask, then clear storm → non-None → None + pending.
+    reg.on_force_jit_for_reason(AotReloadFail::Version);
     aura_hot_update_set_shape_storm_active(0);
     reg.on_reemit_pipeline_call(0, 0);
     // AC1: health pass fires (counter advanced).
@@ -718,18 +721,18 @@ static void ac2639_storm_clear_fires_on_transition() {
           "AC1: storm-clear health pass fired on non-None → None transition + pending");
     CHECK(reg.reemit_storm_clear_health_pass_success_total() >= 1,
           "AC1: at least one success (no storm re-entry mid-pass)");
-    aura_set_force_jit_for_reason_global(0);
+    reg.on_reload_success(); // clear force-JIT mask for subsequent ACs
 }
 
 static void ac2639_quiet_path_zero_cost() {
     std::println(
         "\n--- #2639 AC2: quiet path (storm already None, no pending) → zero extra work ---");
     auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success(); // force_jit mask / deferred clean
     reg.reset_storm_clear_health_pass_for_test();
     const auto before = reg.reemit_storm_clear_health_pass_total();
     // Storm already None + no force-JIT + no deferred + no region mask.
     aura_hot_update_set_shape_storm_active(0);
-    aura_set_force_jit_for_reason_global(0);
     // Drive on_reemit_pipeline_call (lazy hook should no-op).
     reg.on_reemit_pipeline_call(0, 0);
     // AC2: quiet path — counter unchanged (zero extra work).
@@ -743,7 +746,7 @@ static void ac2639_storm_reenters_mid_pass_skips() {
     reg.reset_storm_clear_health_pass_for_test();
     const auto before_skip = reg.reemit_storm_clear_health_pass_skipped_reentered_storm_total();
     // Inject force-JIT pending so the lazy hook would fire.
-    aura_set_force_jit_for_reason_global(1);
+    reg.on_force_jit_for_reason(AotReloadFail::Version);
     // First call: no current storm (storm-clear edge not yet crossed).
     aura_hot_update_set_shape_storm_active(0);
     reg.on_reemit_pipeline_call(0, 0);
@@ -759,7 +762,7 @@ static void ac2639_storm_reenters_mid_pass_skips() {
     // cannot re-enter mid-pass under the current single-threaded test).
     CHECK(reg.reemit_storm_clear_health_pass_skipped_reentered_storm_total() == before_skip,
           "AC3: skipped_reentered unchanged (sync hook cannot re-enter mid-pass)");
-    aura_set_force_jit_for_reason_global(0);
+    reg.on_reload_success(); // clear force-JIT mask
 }
 
 static void ac2639_schema_and_source() {

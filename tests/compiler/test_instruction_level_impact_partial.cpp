@@ -317,11 +317,11 @@ void ac9_cross_function_unresolved_2246() {
     // Runtime helper smoke: empty-operands Apply should classify as unresolved.
     aura::ir::IRFunction fn;
     fn.name = "test_fn";
-    aura::ir::IRBlock blk;
+    aura::ir::BasicBlock blk;
     aura::ir::IRInstruction ins;
     ins.opcode = aura::ir::IROpcode::Apply;
     // ins.operands left empty — should classify as unresolved.
-    CHECK(is_unresolved_callish_for_2246(ins), "empty-operands Apply = unresolved");
+    CHECK(aura::compiler::is_unresolved_callish_for_2246(ins), "empty-operands Apply = unresolved");
     (void)blk;
     (void)fn;
 }
