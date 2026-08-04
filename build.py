@@ -5619,18 +5619,24 @@ def cmd_castop_typed_meta_coverage():
 
 
 def cmd_issue_coverage():
-    """Declarative issue-coverage manifests (architecture Phase 1).
+    """Declarative issue-coverage manifests (Phase 1 runner + Phase 2 --changed).
 
-    Runs scripts/coverage/runner.py over scripts/coverage/manifests/*.json.
-    Pilot issues: #2622 #2623 #2624 (thin check_*.py wrappers). New issues
-    should add a manifest, not a full hand-written check_*.py.
+    Default: --changed (only manifests whose paths intersect the git diff vs
+    origin/main + worktree). Pass --all for full run (nightly / CI).
+    Pilot issues: #2622 #2623 #2624. New issues should add a manifest JSON,
+    not a full hand-written check_*.py.
     """
-    print(f"{B}=== issue coverage manifests (Phase 1 runner) ==={N}")
+    print(f"{B}=== issue coverage manifests (Phase 1+2) ==={N}")
     runner = ROOT / "scripts" / "coverage" / "runner.py"
     if not runner.exists():
         fail(f"missing {runner}")
         return 1
-    r = subprocess.run([sys.executable, str(runner), "--all"], cwd=ROOT)
+    # argv after `build.py issue-coverage` may include --all / --base X
+    extra = [a for a in sys.argv[2:] if a in ("--all", "--changed", "--list", "--index") or a.startswith("--base")]
+    # Default Phase 2: --changed unless caller asked for --all/--list/--index
+    if not any(a in ("--all", "--changed", "--list", "--index") for a in extra):
+        extra = ["--changed", *extra]
+    r = subprocess.run([sys.executable, str(runner), *extra], cwd=ROOT)
     if r.returncode != 0:
         fail("issue coverage manifest runner failed")
         return 1
