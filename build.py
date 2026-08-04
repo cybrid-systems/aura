@@ -4574,6 +4574,25 @@ def cmd_string_heap_corruption_guard_coverage():
     return 0
 
 
+def cmd_hash_table_grow_coverage():
+    """Issue #2654: language (hash) / hash-set! grow FlatHashTable.
+
+    Fixed capacity 8 silently dropped keys; grow at 0.7 load factor
+    (flat_hash_grow_eval / flat_hash_insert_eval) same class as #2481.
+    """
+    print(f"{B}=== language hash table grow coverage (#2654) ==={N}")
+    script = COVERAGE_CHECKS / "check_hash_table_grow_2654.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("language hash table grow (#2654) coverage contract rows failed")
+        return 1
+    ok("language hash table grow (#2654) coverage clean")
+    return 0
+
+
 def cmd_partial_cone_commit_gate_coverage():
     """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
 
@@ -7890,6 +7909,7 @@ def cmd_gate():
         or cmd_module_path_refuse_coverage()
         or cmd_pmr_alloc_fiber_safe_coverage()
         or cmd_string_heap_corruption_guard_coverage()
+        or cmd_hash_table_grow_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()
@@ -8731,6 +8751,7 @@ def main():
         "module-path-refuse": cmd_module_path_refuse_coverage,
         "pmr-alloc-fiber-safe": cmd_pmr_alloc_fiber_safe_coverage,
         "string-heap-corruption-guard": cmd_string_heap_corruption_guard_coverage,
+        "hash-table-grow": cmd_hash_table_grow_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 773 | Preferred destination suites |
-| **Total scanned** | **773** | |
+| `tests/core/test_*.cpp` | 775 | Preferred destination suites |
+| **Total scanned** | **775** | |
 
 ### Related artifacts
 
@@ -33,14 +33,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 222 | 222 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 223 | 223 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 97 | 97 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 42 | 42 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 50 | 50 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 129 | 129 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 55 | 55 | P3 — review case-by-case |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 128 | 128 | P2 — often thin schema probes; collapse into obs matrix |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -452,6 +452,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_hardware_resource_linear_ownership.cpp`
 - `tests/core/test_has_on_compact_hook_lock.cpp`
 - `tests/core/test_hash_iter_invalidation.cpp`
+- `tests/compiler/test_hash_table_grow.cpp`
 - `tests/compiler/test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp`
 - `tests/core/test_highperf_full_hotpath_matrix.cpp`
 - `tests/core/test_hot_children_columnar.cpp`
@@ -798,6 +799,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_safe_yield_orchestration.cpp`
 - `tests/serve/test_safepoint_mutation.cpp`
 - `tests/core/test_sandbox_mode_atomic.cpp`
+- `tests/compiler/test_sandbox_mode_authority.cpp`
 - `tests/compiler/test_scan_skip_freed_closures.cpp`
 - `tests/serve/test_scheduler_gc_defer_pending_panic_steal.cpp`
 - `tests/serve/test_scheduler_gc_safepoint_mutation_coordination.cpp`
@@ -1074,13 +1076,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_buf_fragmentation_lock.cpp` (—) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (222)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (223)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (222)
+#### domain/ (223)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1288,6 +1290,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_bytes_total_lock.cpp` (—) [domain_suite, theme_core] — AC1: 4 threads concurrent intern + string_bytes_total (no crash; TSan clean)
 - `tests/core/test_subtree_dirty_bounds.cpp` (—) [domain_suite, theme_core] — AC1: no OOB on dirty_ (bounds use dirty_.size() only)
 - `tests/core/test_summary_recompute_sym.cpp` (—) [domain_suite, theme_core] — AC1: recompute(pool) sets keyword + query:/mutate: bits
+- `tests/core/test_tenant_isolation_enforcement.cpp` (—) [domain_suite, theme_core] — capability cross-tenant grant, provenance deny, Strict sandbox link,
 - `tests/compiler/test_type_dirty_cone_dep_graph.cpp` (—) [domain_suite, theme_compiler] — AC1: Mutate callee B → type cone of callers + IR cascade share
 - `tests/compiler/test_type_dirty_txn_order.cpp` (—) [domain_suite, theme_compiler] — AC1: Source-cite single ordered sequence on all production partial paths
 - `tests/compiler/test_type_system_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Score definition (header + pure compute)
@@ -1638,13 +1641,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (129)
+### `observability` — Observability / metrics / query:*-stats (128)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (129)
+#### domain/ (128)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1761,7 +1764,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_stats_module_unification.cpp` (—) [domain_suite, theme_compiler] — test_stats_module_unification.cpp — Issue #560:
 - `tests/compiler/test_stdlib_production_review.cpp` (—) [small, domain_suite, theme_compiler] — test_stdlib_production_review_923_940.cpp — Issues #923–#940 Phase 1
 - `tests/compiler/test_subtype_constraint_meet.cpp` (—) [domain_suite, theme_compiler] — AC1: SUBTYPE goals in solve_delta; CONFLICT exports kind=SUBTYPE
-- `tests/core/test_tenant_isolation_enforcement.cpp` (—) [domain_suite, theme_core] — capability cross-tenant grant, provenance deny, Strict sandbox link,
 - `tests/compiler/test_test_strategy.cpp` (—) [domain_suite, theme_compiler] — Issue #1623/#1624/#1627/#1887 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_tier_dispatch.cpp` (—) [domain_suite, theme_compiler] — test_tier_dispatch.cpp — Issue #1356: HotTierTable for kPrimPerfHot primitives
 - `tests/compiler/test_timeout_repair_rich_roots.cpp` (—) [domain_suite, theme_compiler] — AC1: TIMEOUT with live occurrence goals → suggested set includes
@@ -1776,13 +1778,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (55)
+### `uncategorized` — Uncategorized / mixed (57)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (55)
+#### domain/ (57)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1800,6 +1802,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_failure_policy_bridge.cpp` (—) [domain_suite, theme_orch] — AC1: to_agent_policy(FailurePolicy, max_restarts=...) callable under aura::orch
 - `tests/core/test_general_object_pin_coverage_gate.cpp` (—) [domain_suite, theme_core] — AC1: Linter fails when a listed inventory site lacks wire call
 - `tests/core/test_hash_iter_invalidation.cpp` (—) [domain_suite, theme_core] — test_hash_iter_invalidation.cpp - Issue #1398:
+- `tests/compiler/test_hash_table_grow.cpp` (—) [domain_suite, theme_compiler] — AC1: (hash) with 16 k/v pairs retains all keys
 - `tests/compiler/test_hot_pass_contract_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_hot_pass_contract_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_ir_const_string_intern.cpp` (—) [domain_suite, theme_compiler] — AC1: IR-path loop with a string literal: heap growth O(1) not O(N)
 - `tests/compiler/test_ir_optimize_type_info_chain.cpp` (—) [domain_suite, theme_compiler] — AC1: X→0→5 multi-step chain remaps uses to terminal source (not MAX)
@@ -1825,6 +1828,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_production_hardening_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_production_hardening_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_query_namespace_audit.cpp` (—) [domain_suite, theme_compiler] — test_query_namespace_audit.cpp — Issue #562:
 - `tests/compiler/test_reemit_defer_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_reemit_defer_batch.cpp — thematic multi-TU batch
+- `tests/compiler/test_sandbox_mode_authority.cpp` (—) [domain_suite, theme_compiler] — triple-state drift). Tests verify that the SOLE writer
 - `tests/compiler/test_security_capability_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_security_capability_batch.cpp — thematic multi-TU batch
 - `tests/serve/test_serve_legacy_issue_batch.cpp` (—) [small, batch_driver, domain_suite, theme_serve] — test_serve_legacy_issue_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_side_effect_security_gate_hardfail.cpp` (—) [domain_suite, theme_compiler] — AC1: Intentionally broken fixture prim (side-effect name, no
