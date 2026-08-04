@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 767 | Preferred destination suites |
-| **Total scanned** | **767** | |
+| `tests/core/test_*.cpp` | 768 | Preferred destination suites |
+| **Total scanned** | **768** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 220 | 220 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 221 | 221 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 94 | 94 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 42 | 42 | P1 — domain hygiene suite exists |
@@ -650,6 +650,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_occurrence_dirty_key_authority.cpp`
 - `tests/compiler/test_occurrence_goal_epoch_table.cpp`
 - `tests/compiler/test_occurrence_goal_persist_rehydrate.cpp`
+- `tests/compiler/test_occurrence_goal_vacuous_solve_prevent.cpp`
 - `tests/compiler/test_occurrence_mutate_narrowing.cpp`
 - `tests/compiler/test_occurrence_provenance_chain_completeness.cpp`
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_recovery.cpp`
@@ -1068,13 +1069,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_buf_fragmentation_lock.cpp` (—) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (220)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (221)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (220)
+#### domain/ (221)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1219,6 +1220,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_occurrence_coercion_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_occurrence_coercion_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_occurrence_dirty_blame_post_mutate.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_dirty_blame_post_mutate.cpp — restored standalone (AC drift under batch co-link)
 - `tests/compiler/test_occurrence_dirty_key_authority.cpp` (—) [domain_suite, theme_compiler] — AC1: cond shape path + cache key miss wiring present
+- `tests/compiler/test_occurrence_goal_vacuous_solve_prevent.cpp` (—) [domain_suite, theme_compiler] — AC1: Seed live goal; mark_clean (dirty=0) → solve_delta_occurrence
 - `tests/compiler/test_occurrence_mutate_narrowing.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_mutate_narrowing.cpp — Issue #518 P0 Phase 1:
 - `tests/compiler/test_occurrence_provenance_chain_completeness.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2024; fill_coercion_provenance_chain + sentinel
 - `tests/compiler/test_occurrence_typing_blame_post_mutate_recovery.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_typing_blame_post_mutate_recovery.cpp — restored standalone (AC drift under batch
