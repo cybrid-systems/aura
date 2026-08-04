@@ -21,7 +21,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "path": "tests/compiler/test_partial_cone_commit_gate.cpp",
       "contains": [
         "ac1_soft_observe_allow"
       ]
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "path": "tests/compiler/test_partial_cone_commit_gate.cpp",
       "contains": [
         "ac2_production_deny"
       ]
@@ -52,7 +52,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "path": "tests/compiler/test_partial_cone_commit_gate.cpp",
       "contains": [
         "ac3_hard_cap_never_silent"
       ]
@@ -74,7 +74,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "path": "tests/compiler/test_partial_cone_commit_gate.cpp",
       "contains": [
         "ac4_empty_and_fanout"
       ]
@@ -99,7 +99,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "path": "tests/compiler/test_partial_cone_commit_gate.cpp",
       "contains": [
         "ac5_schema_source"
       ]
@@ -108,7 +108,7 @@
       "ac": "AC6",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_partial_cone_commit_gate_2621"
+        "test_partial_cone_commit_gate"
       ]
     },
     {
@@ -121,7 +121,7 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "path": "tests/compiler/test_partial_cone_commit_gate.cpp",
       "contains": [
         "ac6_high_fanout_gate"
       ]

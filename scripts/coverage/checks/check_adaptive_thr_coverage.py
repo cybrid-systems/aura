@@ -42,7 +42,7 @@ def check() -> list:
     pure = _read("src/compiler/ir_cache_pure.ixx")
     met = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_adaptive_partial_relower_threshold_2112.cpp")
+    test = _read("tests/compiler/test_adaptive_partial_relower_threshold.cpp")
 
     # AC1/AC2/AC3 — policy + helpers in ir_cache_pure.ixx
     _must("AdaptiveThrPolicy" in pure, "AC1/AC2: AdaptiveThrPolicy struct missing in ir_cache_pure.ixx", fails)
@@ -94,7 +94,7 @@ def check() -> list:
     _must("adaptive-thr-wired" in q, "AC4: adaptive-thr-wired sentinel missing", fails)
     _must("schema-2248" in q and "issue-2248" in q, "AC4: schema-2248 / issue-2248 lineage missing", fails)
 
-    # AC5 — test surface covers #2248 (ac2248 in test_adaptive_partial_relower_threshold_2112.cpp)
+    # AC5 — test surface covers #2248 (ac2248 in test_adaptive_partial_relower_threshold.cpp)
     _must(
         "ac2248_agent_driven_adaptive_thr" in test, "AC5: ac2248_agent_driven_adaptive_thr test function missing", fails
     )

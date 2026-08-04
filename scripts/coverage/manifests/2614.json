@@ -30,14 +30,14 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "path": "tests/core/test_hot_children_columnar.cpp",
       "contains": [
         "ac1_constrained"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "path": "tests/core/test_hot_children_columnar.cpp",
       "contains": [
         "NonColumnarChildren",
         "!ChildColumnar<NonColumnarChildren>",
@@ -53,7 +53,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "path": "tests/core/test_hot_children_columnar.cpp",
       "contains": [
         "ac3_zero_runtime"
       ]
@@ -84,7 +84,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "path": "tests/core/test_hot_children_columnar.cpp",
       "contains": [
         "ac4_source_cite"
       ]
@@ -93,7 +93,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_hot_children_columnar_2614"
+        "test_hot_children_columnar"
       ]
     },
     {
@@ -106,7 +106,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "path": "tests/core/test_hot_children_columnar.cpp",
       "contains": [
         "ac5_walk_smoke"
       ]

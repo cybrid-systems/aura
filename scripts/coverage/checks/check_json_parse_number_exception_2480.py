@@ -36,7 +36,7 @@ def main() -> int:
     js = _read("src/compiler/evaluator_primitives_json.cpp")
     reg = _read("src/compiler/evaluator_primitives_registry.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
-    test = _read("tests/compiler/test_json_parse_number_exception_2480.cpp")
+    test = _read("tests/compiler/test_json_parse_number_exception.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -63,7 +63,7 @@ def main() -> int:
 
     must("check_json_parse_number_exception_2480", "gate", build)
     must("cmd_json_parse_number_exception_coverage", "gate", build)
-    must("test_json_parse_number_exception_2480", "gate", cmake)
+    must("test_json_parse_number_exception", "gate", cmake)
     must("2480 AC5", "gate", test)
 
     if fails:

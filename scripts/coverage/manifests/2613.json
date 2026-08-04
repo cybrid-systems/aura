@@ -28,7 +28,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_type_linear_commit_health_2613.cpp",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
       "contains": [
         "ac1_query_keys"
       ]
@@ -44,7 +44,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_type_linear_commit_health_2613.cpp",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
       "contains": [
         "ac2_force_reason_match"
       ]
@@ -59,7 +59,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_type_linear_commit_health_2613.cpp",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
       "contains": [
         "ac3_happy_path"
       ]
@@ -74,7 +74,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_type_linear_commit_health_2613.cpp",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
       "contains": [
         "ac4_pure_no_policy",
         "type-incremental-fidelity-stats"
@@ -84,7 +84,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_linear_commit_health_2613"
+        "test_type_linear_commit_health"
       ]
     },
     {
@@ -97,7 +97,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_type_linear_commit_health_2613.cpp",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
       "contains": [
         "ac5_source_cite"
       ]

@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_commit_readiness_score_2553.cpp",
+      "path": "tests/compiler/test_commit_readiness_score.cpp",
       "contains": [
         "ac1_clean_ok"
       ]
@@ -31,7 +31,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_commit_readiness_score_2553.cpp",
+      "path": "tests/compiler/test_commit_readiness_score.cpp",
       "contains": [
         "ac2_empty_cs_hard",
         "ac3_truncate_hard"
@@ -46,7 +46,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_commit_readiness_score_2553.cpp",
+      "path": "tests/compiler/test_commit_readiness_score.cpp",
       "contains": [
         "ac4_soft_observe"
       ]
@@ -73,7 +73,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_commit_readiness_score_2553"
+        "test_commit_readiness_score"
       ]
     },
     {
@@ -86,7 +86,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_commit_readiness_score_2553.cpp",
+      "path": "tests/compiler/test_commit_readiness_score.cpp",
       "contains": [
         "ac5_source_schema_live"
       ]

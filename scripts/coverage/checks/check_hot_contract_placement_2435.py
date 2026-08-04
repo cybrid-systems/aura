@@ -36,7 +36,7 @@ def main() -> int:
     hh = _read("src/core/cpp26_contract_stats.h")
     soa = _read("src/compiler/ir_soa.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_hot_contract_placement_2435.cpp")
+    test = _read("tests/compiler/test_hot_contract_placement.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -69,7 +69,7 @@ def main() -> int:
     must("2435 AC5", "AC5", test)
     must("check_hot_contract_placement_2435", "gate", build)
     must("cmd_hot_contract_placement_coverage", "gate", build)
-    must("test_hot_contract_placement_2435", "gate", cmake)
+    must("test_hot_contract_placement", "gate", cmake)
 
     if fails:
         for f in fails:

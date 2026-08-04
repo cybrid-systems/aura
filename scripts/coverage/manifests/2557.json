@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_lock_order_production_soft_2557.cpp",
+      "path": "tests/compiler/test_lock_order_production_soft.cpp",
       "contains": [
         "ac1_production_soft_inversion"
       ]
@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_lock_order_production_soft_2557.cpp",
+      "path": "tests/compiler/test_lock_order_production_soft.cpp",
       "contains": [
         "ac2_sandbox_off"
       ]
@@ -43,7 +43,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_lock_order_production_soft_2557.cpp",
+      "path": "tests/compiler/test_lock_order_production_soft.cpp",
       "contains": [
         "ac3_canary_precedence"
       ]
@@ -70,7 +70,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_lock_order_production_soft_2557"
+        "test_lock_order_production_soft"
       ]
     },
     {
@@ -83,7 +83,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_lock_order_production_soft_2557.cpp",
+      "path": "tests/compiler/test_lock_order_production_soft.cpp",
       "contains": [
         "ac5_source_schema"
       ]

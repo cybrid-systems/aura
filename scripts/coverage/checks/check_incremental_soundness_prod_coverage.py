@@ -46,7 +46,7 @@ def check() -> list:
     met = _read("src/compiler/observability_metrics.h")
     dirty = _read("src/compiler/service_dirty.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_incremental_soundness_oracle_2113.cpp")
+    test = _read("tests/compiler/test_incremental_soundness_oracle.cpp")
 
     # AC1 — sample policy helpers in ir_cache_pure.ixx
     _must("soundness_sample_bp" in pure, "AC1: soundness_sample_bp() helper missing in ir_cache_pure.ixx", fails)
@@ -148,7 +148,7 @@ def check() -> list:
     # AC1/AC2/AC3/AC5 — test surface covers 4 new ACs (AC6-AC9 in #2113 test file)
     _must(
         "ac6_prod_sample_rate" in test,
-        "AC1: AC6 (prod sample rate) missing in test_incremental_soundness_oracle_2113.cpp",
+        "AC1: AC6 (prod sample rate) missing in test_incremental_soundness_oracle.cpp",
         fails,
     )
     _must("ac7_prod_mismatch_forces_full" in test, "AC2: AC7 (prod mismatch) missing", fails)

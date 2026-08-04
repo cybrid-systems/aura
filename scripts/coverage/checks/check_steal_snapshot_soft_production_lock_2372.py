@@ -39,7 +39,7 @@ def main() -> int:
     sd = _read("src/compiler/security_defaults.hh")
     fb = _read("src/compiler/fiber_bridge.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/serve/test_steal_snapshot_soft_production_lock_2372.cpp")
+    test = _read("tests/serve/test_steal_snapshot_soft_production_lock.cpp")
     cmake = _read("CMakeLists.txt")
     bp = _read("build.py")
 
@@ -76,7 +76,7 @@ def main() -> int:
     must("issue-2372", "AC5", q)
     must("steal-snapshot-soft-forbidden-wired", "AC5", q)
     must("steal-snapshot-soft-production-locked", "AC5", q)
-    must("test_steal_snapshot_soft_production_lock_2372", "AC5", cmake)
+    must("test_steal_snapshot_soft_production_lock", "AC5", cmake)
     must("cmd_steal_snapshot_soft_production_lock_coverage", "AC5", bp)
     must("AC5:", "AC5", test)
     must("Issue #2372", "AC5", test)

@@ -94,7 +94,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_composite_commit_cs_reuse_2180.cpp",
+      "path": "tests/compiler/test_composite_commit_cs_reuse.cpp",
       "contains": [
         "#2644",
         "ac2644_empty_cs_no_drift_bump",

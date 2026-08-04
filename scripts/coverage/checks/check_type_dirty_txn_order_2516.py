@@ -42,7 +42,7 @@ def main() -> int:
     svc = _read("src/compiler/service.ixx")
     etc = _read("src/compiler/evaluator_typecheck.cpp")
     ev = _read("src/compiler/evaluator_primitives_eval.cpp")
-    test = _read("tests/compiler/test_type_dirty_txn_order_2516.cpp")
+    test = _read("tests/compiler/test_type_dirty_txn_order.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -89,7 +89,7 @@ def main() -> int:
     must("type-dirty-txn-phase3-mirror-total", "AC5", q)
     must("schema-2355", "AC5", q)
     must("type_dirty_cone_mirrored_total", "AC5", met)
-    must("test_type_dirty_txn_order_2516", "AC5", cmake)
+    must("test_type_dirty_txn_order", "AC5", cmake)
     must("check_type_dirty_txn_order_2516", "AC5", build)
     must("cmd_type_dirty_txn_order_coverage", "AC5", build)
     must("ac5_counters_and_query", "AC5", test)

@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "path": "tests/compiler/test_castop_density_hard.cpp",
       "contains": [
         "ac1_hard_off_soft_only"
       ]
@@ -30,7 +30,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "path": "tests/compiler/test_castop_density_hard.cpp",
       "contains": [
         "ac2_hard_on_force_jit"
       ]
@@ -51,7 +51,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "path": "tests/compiler/test_castop_density_hard.cpp",
       "contains": [
         "ac3_mutate_still_succeeds"
       ]
@@ -65,7 +65,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "path": "tests/compiler/test_castop_density_hard.cpp",
       "contains": [
         "ac4_under_budget_zero_extra"
       ]
@@ -99,7 +99,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_castop_density_hard_2358"
+        "test_castop_density_hard"
       ]
     },
     {
@@ -112,7 +112,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "path": "tests/compiler/test_castop_density_hard.cpp",
       "contains": [
         "ac5_query_and_source"
       ]

@@ -36,7 +36,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     src = _read("src/compiler/evaluator_primitives_eval.cpp")
-    test = _read("tests/compiler/test_eval_current_no_auto_fix_2484.cpp")
+    test = _read("tests/compiler/test_eval_current_no_auto_fix.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -64,7 +64,7 @@ def main() -> int:
     must("2484 AC1", "gate", test)
     must("check_eval_current_no_auto_fix_2484", "gate", build)
     must("cmd_eval_current_no_auto_fix_coverage", "gate", build)
-    must("test_eval_current_no_auto_fix_2484", "gate", cmake)
+    must("test_eval_current_no_auto_fix", "gate", cmake)
     must("2484 AC4", "gate", test)
 
     if fails:

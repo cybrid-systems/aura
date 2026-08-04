@@ -13,7 +13,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "path": "tests/compiler/test_module_require_freevar.cpp",
       "contains": [
         "ac1_module_freevar_parity"
       ]
@@ -34,7 +34,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "path": "tests/compiler/test_module_require_freevar.cpp",
       "contains": [
         "ac2_toplevel_inject"
       ]
@@ -49,7 +49,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "path": "tests/compiler/test_module_require_freevar.cpp",
       "contains": [
         "ac4_soa_live_top"
       ]
@@ -70,7 +70,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "path": "tests/compiler/test_module_require_freevar.cpp",
       "contains": [
         "ac3_source_cite_inject"
       ]
@@ -79,7 +79,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_module_require_freevar_2566"
+        "test_module_require_freevar"
       ]
     },
     {
@@ -92,7 +92,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "path": "tests/compiler/test_module_require_freevar.cpp",
       "contains": [
         "ac5_gate"
       ]

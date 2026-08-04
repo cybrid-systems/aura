@@ -63,7 +63,7 @@ def main() -> int:
     tags = _read("src/compiler/value_tags.h")
     value_ixx = _read("src/compiler/value.ixx")
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_value_tag_hotpath_ban_2616.cpp")
+    test = _read("tests/compiler/test_value_tag_hotpath_ban.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -141,7 +141,7 @@ def main() -> int:
     must("#2259", "AC5", tags)
     must("schema-2616", "AC5", obs)
     must("value-tag-hotpath-ban-2616-wired", "AC5", obs)
-    must("test_value_tag_hotpath_ban_2616", "AC5", cmake)
+    must("test_value_tag_hotpath_ban", "AC5", cmake)
     must("check_value_tag_hotpath_ban_2616", "AC5", build)
     must("cmd_value_tag_hotpath_ban_coverage", "AC5", build)
     must("ac5_source_cite", "AC5", test)

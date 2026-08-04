@@ -6876,7 +6876,7 @@ def cmd_chaos_pr_hard_fail_gate():
     if rc != 0:
         return rc
 
-    bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox_2352"
+    bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox"
     cmake_cache = BUILD / "CMakeCache.txt"
     if not bin_path.exists():
         if not cmake_cache.exists():
@@ -6886,7 +6886,7 @@ def cmd_chaos_pr_hard_fail_gate():
                 "— run after ./build.py build or via build-test CI"
             )
             return 0
-        info("building test_chaos_mutate_steal_gc_mailbox_2352…")
+        info("building test_chaos_mutate_steal_gc_mailbox…")
         nproc = os.cpu_count() or 4
         r = run(
             [
@@ -6894,14 +6894,14 @@ def cmd_chaos_pr_hard_fail_gate():
                 "--build",
                 str(BUILD),
                 "--target",
-                "test_chaos_mutate_steal_gc_mailbox_2352",
+                "test_chaos_mutate_steal_gc_mailbox",
                 "-j",
                 str(nproc),
             ],
             cwd=ROOT,
         )
         if r != 0:
-            fail("build test_chaos_mutate_steal_gc_mailbox_2352 failed")
+            fail("build test_chaos_mutate_steal_gc_mailbox failed")
             return r
     if not bin_path.exists():
         fail(f"missing {bin_path} — run ./build.py build first")
@@ -6971,7 +6971,7 @@ def cmd_production_concurrency():
     Soft steal (AURA_STEAL_SNAPSHOT_SOFT) is forbidden.
     Hard criteria (#2513): steal hard-fail delta 0, residual still-running 0,
     mailbox starvation ≤ AURA_CHAOS_MB_STARVE_MAX, no hang.
-    Builds test_chaos_mutate_steal_gc_mailbox_2352 if needed, then soaks.
+    Builds test_chaos_mutate_steal_gc_mailbox if needed, then soaks.
     Not part of PR CI smoke — use nightly or explicit local run.
     """
     print(f"{B}═══ production-concurrency gate (#2380/#2513) ═══{N}")
@@ -6980,9 +6980,9 @@ def cmd_production_concurrency():
     if rc != 0:
         return rc
 
-    bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox_2352"
+    bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox"
     if not bin_path.exists():
-        info("building test_chaos_mutate_steal_gc_mailbox_2352…")
+        info("building test_chaos_mutate_steal_gc_mailbox…")
         nproc = os.cpu_count() or 4
         r = run(
             [
@@ -6990,14 +6990,14 @@ def cmd_production_concurrency():
                 "--build",
                 str(BUILD),
                 "--target",
-                "test_chaos_mutate_steal_gc_mailbox_2352",
+                "test_chaos_mutate_steal_gc_mailbox",
                 "-j",
                 str(nproc),
             ],
             cwd=ROOT,
         )
         if r != 0:
-            fail("build test_chaos_mutate_steal_gc_mailbox_2352 failed")
+            fail("build test_chaos_mutate_steal_gc_mailbox failed")
             return r
     if not bin_path.exists():
         fail(f"missing {bin_path} — run ./build.py build first")
@@ -7182,7 +7182,7 @@ def cmd_layout_stamp_fence_coverage():
       AC2: hard compare + bump + force dual-check on mismatch
       AC3: zero-cost when stamps match
       AC4: metric + query + schema-2250 lineage
-      AC5: dual-worker integration AC (test_layout_stamp_2170.cpp)
+      AC5: dual-worker integration AC (test_layout_stamp.cpp)
     """
     print(f"{B}=== LayoutStamp fence coverage (#2250) ==={N}")
     script = COVERAGE_CHECKS / "check_layout_stamp_fence_coverage.py"
@@ -7306,7 +7306,7 @@ def cmd_reemit_auto_drain_boundary_2604_coverage():
       AC3: Storm throttle active → skip body, bump throttled counter.
       AC4: Common path (no deferred, mask=0) → zero extra work.
       AC5: Source-cite + unit test in
-           test_reemit_mutation_boundary_handshake_2114.cpp (extended
+           test_reemit_mutation_boundary_handshake.cpp (extended
            per #81967 with ac2604_* sections).
     """
     print(f"{B}=== reemit auto-drain boundary coverage (#2604) ==={N}")
@@ -7337,7 +7337,7 @@ def cmd_cross_cow_soft_migrate_obs_2603_coverage():
       AC3: AURA_CROSS_COW_SOFT_MIGRATE=0 → always hard; counters
            consistent.
       AC4: additive schema only; #2505 / #2547 surfaces preserved.
-      AC5: source-cite + unit test in test_cross_cow_soft_migrate_2371.cpp
+      AC5: source-cite + unit test in test_cross_cow_soft_migrate.cpp
            (extended per #81967 with ac2603_* sections).
     """
     print(f"{B}=== cross-COW soft-migrate observability coverage (#2603) ==={N}")
@@ -7439,7 +7439,7 @@ def cmd_cross_function_impact_scope_coverage():
     indirect / higher-order Apply callees + unresolved callish block-level
     over-approx). Self-test + --strict on real files. Script extended in
     #2246 to cover 2 new counters + 2 new query keys + schema-2246 lineage +
-    AC8/AC9 in test_instruction_level_impact_partial_2109.cpp.
+    AC8/AC9 in test_instruction_level_impact_partial.cpp.
     """
     print(f"{B}═══ cross-fn impact scope coverage (#2179 / #2246) ═══{N}")
     script = COVERAGE_CHECKS / "check_cross_function_impact_scope_coverage.py"

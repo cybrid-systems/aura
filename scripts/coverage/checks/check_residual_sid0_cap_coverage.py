@@ -31,7 +31,7 @@ BRIDGE_STUB = ROOT / "src" / "compiler" / "aura_jit_bridge_stub.cpp"
 RUNTIME_CPP = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 METRICS = ROOT / "src" / "compiler" / "observability_metrics.h"
 OBS_EVAL = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
-TEST_2605 = ROOT / "tests" / "compiler" / "test_anonymous_residual_stable_id_policy_2605.cpp"
+TEST_2605 = ROOT / "tests" / "compiler" / "test_anonymous_residual_stable_id_policy.cpp"
 CMAKE = ROOT / "CMakeLists.txt"
 BUILD = ROOT / "build.py"
 

@@ -20,7 +20,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_shape_high_mutation_storm_2433.cpp",
+      "path": "tests/compiler/test_shape_high_mutation_storm.cpp",
       "contains": [
         "2433 AC1"
       ]
@@ -50,7 +50,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_shape_high_mutation_storm_2433.cpp",
+      "path": "tests/compiler/test_shape_high_mutation_storm.cpp",
       "contains": [
         "2433 AC2"
       ]
@@ -64,7 +64,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_shape_high_mutation_storm_2433.cpp",
+      "path": "tests/compiler/test_shape_high_mutation_storm.cpp",
       "contains": [
         "2433 AC3"
       ]
@@ -85,7 +85,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_shape_high_mutation_storm_2433.cpp",
+      "path": "tests/compiler/test_shape_high_mutation_storm.cpp",
       "contains": [
         "2433 AC4"
       ]
@@ -102,7 +102,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_shape_high_mutation_storm_2433.cpp",
+      "path": "tests/compiler/test_shape_high_mutation_storm.cpp",
       "contains": [
         "2433 AC5"
       ]
@@ -119,7 +119,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_shape_high_mutation_storm_2433"
+        "test_shape_high_mutation_storm"
       ]
     }
   ],

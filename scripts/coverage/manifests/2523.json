@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "path": "tests/compiler/test_workspace_mtx_contention.cpp",
       "contains": [
         "ac1_source_docs"
       ]
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "path": "tests/compiler/test_workspace_mtx_contention.cpp",
       "contains": [
         "ac2_disjoint_not_dual_global"
       ]
@@ -52,14 +52,14 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "path": "tests/compiler/test_workspace_mtx_contention.cpp",
       "contains": [
         "ac3_global_and_fallback"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "path": "tests/compiler/test_workspace_mtx_contention.cpp",
       "contains": [
         "ac4_mixed_stress"
       ]
@@ -93,7 +93,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "path": "tests/compiler/test_workspace_mtx_contention.cpp",
       "contains": [
         "ac5_contention_query"
       ]
@@ -108,7 +108,7 @@
     },
     {
       "ac": "AC6",
-      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "path": "tests/compiler/test_workspace_mtx_contention.cpp",
       "contains": [
         "ac6_throughput"
       ]
@@ -117,7 +117,7 @@
       "ac": "AC7",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_workspace_mtx_contention_2523"
+        "test_workspace_mtx_contention"
       ]
     },
     {

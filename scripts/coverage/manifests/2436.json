@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "path": "tests/compiler/test_post_compact_lifecycle.cpp",
       "contains": [
         "2436 AC1"
       ]
@@ -39,7 +39,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "path": "tests/compiler/test_post_compact_lifecycle.cpp",
       "contains": [
         "2436 AC2"
       ]
@@ -54,7 +54,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "path": "tests/compiler/test_post_compact_lifecycle.cpp",
       "contains": [
         "2436 AC3"
       ]
@@ -69,7 +69,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "path": "tests/compiler/test_post_compact_lifecycle.cpp",
       "contains": [
         "2436 AC4"
       ]
@@ -91,7 +91,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "path": "tests/compiler/test_post_compact_lifecycle.cpp",
       "contains": [
         "2436 AC5"
       ]
@@ -108,7 +108,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_post_compact_lifecycle_2436"
+        "test_post_compact_lifecycle"
       ]
     }
   ],

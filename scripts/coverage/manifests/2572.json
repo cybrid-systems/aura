@@ -47,7 +47,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_module_export_display_2572.cpp",
+      "path": "tests/compiler/test_module_export_display.cpp",
       "contains": [
         "ac1_exported_multi_display"
       ]
@@ -56,7 +56,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_module_export_display_2572"
+        "test_module_export_display"
       ]
     },
     {

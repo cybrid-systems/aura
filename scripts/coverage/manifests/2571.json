@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_while_define_oneshot_2571.cpp",
+      "path": "tests/compiler/test_while_define_oneshot.cpp",
       "contains": [
         "ac1_define_in_while"
       ]
@@ -28,7 +28,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_while_define_oneshot_2571.cpp",
+      "path": "tests/compiler/test_while_define_oneshot.cpp",
       "contains": [
         "ac2_multi_define_in_while"
       ]
@@ -43,7 +43,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_while_define_oneshot_2571.cpp",
+      "path": "tests/compiler/test_while_define_oneshot.cpp",
       "contains": [
         "ac3_preferred_outer_set"
       ]
@@ -61,7 +61,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_while_define_oneshot_2571"
+        "test_while_define_oneshot"
       ]
     },
     {
@@ -74,7 +74,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_while_define_oneshot_2571.cpp",
+      "path": "tests/compiler/test_while_define_oneshot.cpp",
       "contains": [
         "ac4_source_gate"
       ]

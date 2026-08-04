@@ -1,6 +1,5 @@
 // test_shape_soa_storm_batch.cpp — thematic multi-TU batch
-// Shape / SoA / storm isolation ACs
-// Stream A2 of tests/CONSOLIDATION_PLAN.md — carved from misc_issue_fold.
+// Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
 #include "test_harness.hpp"
@@ -9,20 +8,20 @@
 
 import std;
 
-extern int run_test_dirty_aware_shape_linear_passes_2130();
-extern int run_test_hot_pass_dirty_soa_2060();
-extern int run_test_shape_compact_storm_isolation_2617();
-extern int run_test_shape_high_mutation_storm_2433();
-extern int run_test_shape_storm_adaptive_2526();
-extern int run_test_soa_ban_residual_aos_bridge_2520();
-extern int run_test_soa_dirty_aware_pipeline_2143();
-extern int run_test_soa_generation_fence_2111();
-extern int run_test_soa_partial_desync_gate_2181();
-extern int run_test_soa_residual_production_smoke_2618();
-extern int run_test_soa_single_entry_dirty_sync_2139();
-extern int run_test_storm_isolation_2236();
-extern int run_test_hot_children_columnar_2614();
-extern int run_test_validate_post_restore_soa_2391();
+extern int run_test_dirty_aware_shape_linear_passes();
+extern int run_test_hot_pass_dirty_soa();
+extern int run_test_shape_compact_storm_isolation();
+extern int run_test_shape_high_mutation_storm();
+extern int run_test_shape_storm_adaptive();
+extern int run_test_soa_ban_residual_aos_bridge();
+extern int run_test_soa_dirty_aware_pipeline();
+extern int run_test_soa_generation_fence();
+extern int run_test_soa_partial_desync_gate();
+extern int run_test_soa_residual_production_smoke();
+extern int run_test_soa_single_entry_dirty_sync();
+extern int run_test_storm_isolation();
+extern int run_test_hot_children_columnar();
+extern int run_test_validate_post_restore_soa();
 
 int main() {
     using aura::test::g_failed;
@@ -31,180 +30,159 @@ int main() {
     int members_passed = 0;
     std::println("=== test_shape_soa_storm_batch (14 members) ===");
 
-    std::println("\n──── test_dirty_aware_shape_linear_passes_2130 ────");
+    std::println("\n──── test_dirty_aware_shape_linear_passes ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_dirty_aware_shape_linear_passes_2130() != 0 || g_failed != 0) {
+    if (run_test_dirty_aware_shape_linear_passes() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_dirty_aware_shape_linear_passes_2130 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_dirty_aware_shape_linear_passes ({}/{})", g_passed,
+                     g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_dirty_aware_shape_linear_passes_2130 ({} checks)", g_passed);
+        std::println("OK member test_dirty_aware_shape_linear_passes ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_hot_pass_dirty_soa_2060 ────");
+    std::println("\n──── test_hot_pass_dirty_soa ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_hot_pass_dirty_soa_2060() != 0 || g_failed != 0) {
+    if (run_test_hot_pass_dirty_soa() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_hot_pass_dirty_soa_2060 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_hot_pass_dirty_soa ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_hot_pass_dirty_soa_2060 ({} checks)", g_passed);
+        std::println("OK member test_hot_pass_dirty_soa ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_shape_compact_storm_isolation_2617 ────");
+    std::println("\n──── test_shape_compact_storm_isolation ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_shape_compact_storm_isolation_2617() != 0 || g_failed != 0) {
+    if (run_test_shape_compact_storm_isolation() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_shape_compact_storm_isolation_2617 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_shape_compact_storm_isolation ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_shape_compact_storm_isolation_2617 ({} checks)", g_passed);
+        std::println("OK member test_shape_compact_storm_isolation ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_shape_high_mutation_storm_2433 ────");
+    std::println("\n──── test_shape_high_mutation_storm ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_shape_high_mutation_storm_2433() != 0 || g_failed != 0) {
+    if (run_test_shape_high_mutation_storm() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_shape_high_mutation_storm_2433 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_shape_high_mutation_storm ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_shape_high_mutation_storm_2433 ({} checks)", g_passed);
+        std::println("OK member test_shape_high_mutation_storm ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_shape_storm_adaptive_2526 ────");
+    std::println("\n──── test_shape_storm_adaptive ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_shape_storm_adaptive_2526() != 0 || g_failed != 0) {
+    if (run_test_shape_storm_adaptive() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_shape_storm_adaptive_2526 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_shape_storm_adaptive ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_shape_storm_adaptive_2526 ({} checks)", g_passed);
+        std::println("OK member test_shape_storm_adaptive ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_soa_ban_residual_aos_bridge_2520 ────");
+    std::println("\n──── test_soa_ban_residual_aos_bridge ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_soa_ban_residual_aos_bridge_2520() != 0 || g_failed != 0) {
+    if (run_test_soa_ban_residual_aos_bridge() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_soa_ban_residual_aos_bridge_2520 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_soa_ban_residual_aos_bridge ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_soa_ban_residual_aos_bridge_2520 ({} checks)", g_passed);
+        std::println("OK member test_soa_ban_residual_aos_bridge ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_soa_dirty_aware_pipeline_2143 ────");
+    std::println("\n──── test_soa_dirty_aware_pipeline ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_soa_dirty_aware_pipeline_2143() != 0 || g_failed != 0) {
+    if (run_test_soa_dirty_aware_pipeline() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_soa_dirty_aware_pipeline_2143 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_soa_dirty_aware_pipeline ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_soa_dirty_aware_pipeline_2143 ({} checks)", g_passed);
+        std::println("OK member test_soa_dirty_aware_pipeline ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_soa_generation_fence_2111 ────");
+    std::println("\n──── test_soa_generation_fence ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_soa_generation_fence_2111() != 0 || g_failed != 0) {
+    if (run_test_soa_generation_fence() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_soa_generation_fence_2111 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_soa_generation_fence ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_soa_generation_fence_2111 ({} checks)", g_passed);
+        std::println("OK member test_soa_generation_fence ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_soa_partial_desync_gate_2181 ────");
+    std::println("\n──── test_soa_partial_desync_gate ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_soa_partial_desync_gate_2181() != 0 || g_failed != 0) {
+    if (run_test_soa_partial_desync_gate() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_soa_partial_desync_gate_2181 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_soa_partial_desync_gate ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_soa_partial_desync_gate_2181 ({} checks)", g_passed);
+        std::println("OK member test_soa_partial_desync_gate ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_soa_residual_production_smoke_2618 ────");
+    std::println("\n──── test_soa_residual_production_smoke ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_soa_residual_production_smoke_2618() != 0 || g_failed != 0) {
+    if (run_test_soa_residual_production_smoke() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_soa_residual_production_smoke_2618 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_soa_residual_production_smoke ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_soa_residual_production_smoke_2618 ({} checks)", g_passed);
+        std::println("OK member test_soa_residual_production_smoke ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_soa_single_entry_dirty_sync_2139 ────");
+    std::println("\n──── test_soa_single_entry_dirty_sync ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_soa_single_entry_dirty_sync_2139() != 0 || g_failed != 0) {
+    if (run_test_soa_single_entry_dirty_sync() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_soa_single_entry_dirty_sync_2139 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_soa_single_entry_dirty_sync ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_soa_single_entry_dirty_sync_2139 ({} checks)", g_passed);
+        std::println("OK member test_soa_single_entry_dirty_sync ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_storm_isolation_2236 ────");
+    std::println("\n──── test_storm_isolation ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_storm_isolation_2236() != 0 || g_failed != 0) {
+    if (run_test_storm_isolation() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_storm_isolation_2236 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_storm_isolation ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_storm_isolation_2236 ({} checks)", g_passed);
+        std::println("OK member test_storm_isolation ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_hot_children_columnar_2614 ────");
+    std::println("\n──── test_hot_children_columnar ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_hot_children_columnar_2614() != 0 || g_failed != 0) {
+    if (run_test_hot_children_columnar() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_hot_children_columnar_2614 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_hot_children_columnar ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_hot_children_columnar_2614 ({} checks)", g_passed);
+        std::println("OK member test_hot_children_columnar ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_validate_post_restore_soa_2391 ────");
+    std::println("\n──── test_validate_post_restore_soa ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_validate_post_restore_soa_2391() != 0 || g_failed != 0) {
+    if (run_test_validate_post_restore_soa() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_validate_post_restore_soa_2391 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_validate_post_restore_soa ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_validate_post_restore_soa_2391 ({} checks)", g_passed);
+        std::println("OK member test_validate_post_restore_soa ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

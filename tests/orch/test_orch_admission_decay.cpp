@@ -12,7 +12,7 @@
 //   AC5: default decay constant = 30000ms (matches the existing
 //        kJoinDrainResidualHardMsDefault env-override pattern from #2155)
 //
-// Sibling of test_mailbox_bp_admit_2228.cpp (the BP-admit gate itself;
+// Sibling of test_mailbox_bp_admit.cpp (the BP-admit gate itself;
 // #2465 is the decay window that prevents the gate from permanently
 // denying after the first BP event). Lives in tests/orch/ per #81934/#81967.
 //
@@ -20,10 +20,10 @@
 // fetch_add (the same atomic op the production code uses in
 // emit_keepalive at agent_spawn.h:538 + agent_send at agent_spawn.h:1062).
 // This isolates the decay-logic test from the BP-trigger path which
-// test_mailbox_bp_admit_2228.cpp already covers end-to-end. Reset
+// test_mailbox_bp_admit.cpp already covers end-to-end. Reset
 // helper: no global reset exists for the BP counters; we baseline-
 // capture at AC start + restore at AC end (same pattern as
-// test_mailbox_bp_admit_2228.cpp).
+// test_mailbox_bp_admit.cpp).
 
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"

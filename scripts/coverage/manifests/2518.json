@@ -24,14 +24,14 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "path": "tests/serve/test_steal_safety_ticket.cpp",
       "contains": [
         "ac1_ticket_match_ok"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "path": "tests/serve/test_steal_safety_ticket.cpp",
       "contains": [
         "ac2_inject_mid_window",
         "publish_mutation_safety_mirrors"
@@ -64,7 +64,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "path": "tests/serve/test_steal_safety_ticket.cpp",
       "contains": [
         "ac3_coexist_2510"
       ]
@@ -88,7 +88,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "path": "tests/serve/test_steal_safety_ticket.cpp",
       "contains": [
         "ac4_cost_and_query"
       ]
@@ -104,7 +104,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_steal_safety_ticket_2518"
+        "test_steal_safety_ticket"
       ]
     },
     {
@@ -117,7 +117,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "path": "tests/serve/test_steal_safety_ticket.cpp",
       "contains": [
         "ac5_source_wiring"
       ]

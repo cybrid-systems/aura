@@ -21,7 +21,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "path": "tests/compiler/test_mutation_hold_slo.cpp",
       "contains": [
         "ac1_production_force_fail"
       ]
@@ -43,7 +43,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "path": "tests/compiler/test_mutation_hold_slo.cpp",
       "contains": [
         "ac2_soft_metric_only"
       ]
@@ -57,7 +57,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "path": "tests/compiler/test_mutation_hold_slo.cpp",
       "contains": [
         "ac3_under_slo_no_force"
       ]
@@ -82,7 +82,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "path": "tests/compiler/test_mutation_hold_slo.cpp",
       "contains": [
         "ac4_disable_and_query"
       ]
@@ -104,7 +104,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "path": "tests/compiler/test_mutation_hold_slo.cpp",
       "contains": [
         "ac5_source_cite"
       ]
@@ -113,7 +113,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mutation_hold_slo_2349"
+        "test_mutation_hold_slo"
       ]
     },
     {

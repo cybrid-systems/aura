@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "path": "tests/compiler/test_memo_goal_epoch_health.cpp",
       "contains": [
         "ac1_stable_successive_queries"
       ]
@@ -31,7 +31,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "path": "tests/compiler/test_memo_goal_epoch_health.cpp",
       "contains": [
         "prune_occurrence_goals",
         "invalidate_predicate_memo_for_min_gen",
@@ -40,7 +40,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "path": "tests/compiler/test_memo_goal_epoch_health.cpp",
       "contains": [
         "schema-2278",
         "occurrence-goal-sole-authority-wired",
@@ -68,7 +68,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "path": "tests/compiler/test_memo_goal_epoch_health.cpp",
       "contains": [
         "ac4_wired_sentinel"
       ]
@@ -92,7 +92,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_memo_goal_epoch_health_2359"
+        "test_memo_goal_epoch_health"
       ]
     },
     {
@@ -105,7 +105,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "path": "tests/compiler/test_memo_goal_epoch_health.cpp",
       "contains": [
         "ac5_source_cite"
       ]

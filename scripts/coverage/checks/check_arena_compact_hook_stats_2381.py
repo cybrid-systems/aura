@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: forbidden residual {n!r}")
 
     arena = _read("src/core/arena.ixx")
-    test = _read("tests/core/test_arena_compact_hook_stats_2381.cpp")
+    test = _read("tests/core/test_arena_compact_hook_stats.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -63,7 +63,7 @@ def main() -> int:
 
     # AC4 wiring
     must("invoke_compact_hook_()", "AC4", arena)
-    must("test_arena_compact_hook_stats_2381", "AC4", cmake)
+    must("test_arena_compact_hook_stats", "AC4", cmake)
     must("check_arena_compact_hook_stats_2381", "AC4", build)
     must("cmd_arena_compact_hook_stats_coverage", "AC4", build)
     must("ac4_wiring", "AC4", test)

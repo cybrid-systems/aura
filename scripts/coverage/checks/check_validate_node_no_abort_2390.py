@@ -35,7 +35,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     impl = _read("src/core/ast_impl.cpp")
-    test = _read("tests/core/test_validate_node_no_abort_2390.cpp")
+    test = _read("tests/core/test_validate_node_no_abort.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -75,7 +75,7 @@ def main() -> int:
             fails.append("AC4: validate_node missing invalid-id error return")
 
     # AC5 registration
-    must("test_validate_node_no_abort_2390", "AC5", cmake)
+    must("test_validate_node_no_abort", "AC5", cmake)
     must("check_validate_node_no_abort_2390", "AC5", build)
     must("cmd_validate_node_no_abort_coverage", "AC5", build)
     must("ac5_source_and_gate", "AC5", test)

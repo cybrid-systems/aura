@@ -21,7 +21,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
       "contains": [
         "2396 AC1"
       ]
@@ -42,7 +42,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
       "contains": [
         "2396 AC2"
       ]
@@ -64,21 +64,21 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
       "contains": [
         "2396 AC3"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
       "contains": [
         "AC3: residual not bumped on Ok"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
       "contains": [
         "2396 AC5"
       ]
@@ -95,7 +95,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_join_drain_reclaim_2227"
+        "test_join_drain_reclaim"
       ]
     }
   ],

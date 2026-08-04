@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "path": "tests/compiler/test_batch_dirty_cascade.cpp",
       "contains": [
         "ac1_batch_one_bump"
       ]
@@ -31,7 +31,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "path": "tests/compiler/test_batch_dirty_cascade.cpp",
       "contains": [
         "ac2_semantics_match"
       ]
@@ -46,7 +46,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "path": "tests/compiler/test_batch_dirty_cascade.cpp",
       "contains": [
         "ac3_full_function_single_bump"
       ]
@@ -60,7 +60,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "path": "tests/compiler/test_batch_dirty_cascade.cpp",
       "contains": [
         "ac4_fence_fewer_advances"
       ]
@@ -95,7 +95,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_batch_dirty_cascade_2522"
+        "test_batch_dirty_cascade"
       ]
     },
     {
@@ -108,7 +108,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "path": "tests/compiler/test_batch_dirty_cascade.cpp",
       "contains": [
         "ac5_finish_dirty_sync"
       ]

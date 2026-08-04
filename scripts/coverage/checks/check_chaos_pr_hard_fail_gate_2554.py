@@ -33,7 +33,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    test = _read("tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp")
+    test = _read("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp")
     build = _read("build.py")
 
     # AC1 inject

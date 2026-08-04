@@ -21,7 +21,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "path": "tests/serve/test_mailbox_hold_exit_drain.cpp",
       "contains": [
         "AC1"
       ]
@@ -36,7 +36,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "path": "tests/serve/test_mailbox_hold_exit_drain.cpp",
       "contains": [
         "AC2"
       ]
@@ -72,14 +72,14 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "path": "tests/serve/test_mailbox_hold_exit_drain.cpp",
       "contains": [
         "AC3"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "path": "tests/serve/test_mailbox_hold_exit_drain.cpp",
       "contains": [
         "AC4",
         "chaos"
@@ -94,7 +94,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "path": "tests/serve/test_mailbox_hold_exit_drain.cpp",
       "contains": [
         "AC5"
       ]
@@ -103,7 +103,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mailbox_hold_exit_drain_2511"
+        "test_mailbox_hold_exit_drain"
       ]
     },
     {

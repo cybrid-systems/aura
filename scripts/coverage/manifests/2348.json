@@ -28,7 +28,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "path": "tests/compiler/test_bidirectional_match_check.cpp",
       "contains": [
         "ac1_match_check_mode"
       ]
@@ -57,7 +57,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "path": "tests/compiler/test_bidirectional_match_check.cpp",
       "contains": [
         "ac2_guardshape_check"
       ]
@@ -71,7 +71,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "path": "tests/compiler/test_bidirectional_match_check.cpp",
       "contains": [
         "ac3_opt_out",
         "set_bidirectional_mode(false)"
@@ -91,14 +91,14 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "path": "tests/compiler/test_bidirectional_match_check.cpp",
       "contains": [
         "ac4_observability"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "path": "tests/compiler/test_bidirectional_match_check.cpp",
       "contains": [
         "ac5_source_cite"
       ]
@@ -107,7 +107,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_bidirectional_match_check_2348"
+        "test_bidirectional_match_check"
       ]
     },
     {

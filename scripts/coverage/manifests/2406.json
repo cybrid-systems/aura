@@ -15,7 +15,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "path": "tests/core/test_pcv_tls_scratch.cpp",
       "contains": [
         "2406 AC1"
       ]
@@ -32,7 +32,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "path": "tests/core/test_pcv_tls_scratch.cpp",
       "contains": [
         "2406 AC2"
       ]
@@ -46,7 +46,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "path": "tests/core/test_pcv_tls_scratch.cpp",
       "contains": [
         "2406 AC3"
       ]
@@ -70,14 +70,14 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "path": "tests/core/test_pcv_tls_scratch.cpp",
       "contains": [
         "2406 AC4"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "path": "tests/core/test_pcv_tls_scratch.cpp",
       "contains": [
         "2406 AC5"
       ]
@@ -94,7 +94,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_pcv_tls_scratch_2406"
+        "test_pcv_tls_scratch"
       ]
     }
   ],

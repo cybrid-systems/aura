@@ -25,7 +25,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "path": "tests/compiler/test_mutation_hold_live.cpp",
       "contains": [
         "AC1"
       ]
@@ -50,7 +50,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "path": "tests/compiler/test_mutation_hold_live.cpp",
       "contains": [
         "AC2"
       ]
@@ -65,7 +65,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "path": "tests/compiler/test_mutation_hold_live.cpp",
       "contains": [
         "AC3"
       ]
@@ -89,7 +89,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "path": "tests/compiler/test_mutation_hold_live.cpp",
       "contains": [
         "AC4"
       ]
@@ -104,7 +104,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "path": "tests/compiler/test_mutation_hold_live.cpp",
       "contains": [
         "AC5"
       ]
@@ -113,7 +113,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mutation_hold_live_2517"
+        "test_mutation_hold_live"
       ]
     },
     {

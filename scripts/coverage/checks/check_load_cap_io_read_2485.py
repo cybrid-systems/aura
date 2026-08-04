@@ -34,7 +34,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     src = _read("src/compiler/evaluator_primitives_eval.cpp")
-    test = _read("tests/compiler/test_load_cap_io_read_2485.cpp")
+    test = _read("tests/compiler/test_load_cap_io_read.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -56,12 +56,12 @@ def main() -> int:
     must("path_is_denied", "AC3", body)
     must("/proc/self/mem", "AC3", body + _read("src/compiler/security_capabilities.h"))
 
-    must("test_load_cap_io_read_2485", "AC4", test)
+    must("test_load_cap_io_read", "AC4", test)
     must("kCapIoRead", "AC4", test)
 
     must("check_load_cap_io_read_2485", "gate", build)
     must("cmd_load_cap_io_read_coverage", "gate", build)
-    must("test_load_cap_io_read_2485", "gate", cmake)
+    must("test_load_cap_io_read", "gate", cmake)
     must("2485 AC5", "gate", test)
 
     if fails:

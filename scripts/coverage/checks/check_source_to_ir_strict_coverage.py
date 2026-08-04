@@ -42,7 +42,7 @@ def check() -> list:
     met = _read("src/compiler/observability_metrics.h")
     dirty = _read("src/compiler/service_dirty.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
-    test = _read("tests/compiler/test_source_to_ir_map_consistency_2045.cpp")
+    test = _read("tests/compiler/test_source_to_ir_map_consistency.cpp")
 
     # AC1/AC2/AC3 — helper in ir_cache_pure.ixx
     _must(
@@ -122,17 +122,17 @@ def check() -> list:
     # AC5 — test surface covers 3 new ACs (AC7/8/9 in #2045 test file)
     _must(
         "ac7_ensure_helper_consistent" in test,
-        "AC5: AC7 (consistent path) missing in test_source_to_ir_map_consistency_2045.cpp",
+        "AC5: AC7 (consistent path) missing in test_source_to_ir_map_consistency.cpp",
         fails,
     )
     _must(
         "ac8_ensure_helper_strict_hard_fail" in test,
-        "AC5: AC8 (Strict desync) missing in test_source_to_ir_map_consistency_2045.cpp",
+        "AC5: AC8 (Strict desync) missing in test_source_to_ir_map_consistency.cpp",
         fails,
     )
     _must(
         "ac9_query_surface" in test,
-        "AC5: AC9 (query surface) missing in test_source_to_ir_map_consistency_2045.cpp",
+        "AC5: AC9 (query surface) missing in test_source_to_ir_map_consistency.cpp",
         fails,
     )
     _must("#2244" in test, "AC5: #2244 issue citation missing in test file comment", fails)

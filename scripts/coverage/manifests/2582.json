@@ -41,7 +41,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_hot_strategy_2582"
+        "test_hot_strategy"
       ]
     },
     {
@@ -53,7 +53,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_hot_strategy_2582.cpp",
+      "path": "tests/compiler/test_hot_strategy.cpp",
       "contains": [
         "ac1_swap"
       ]

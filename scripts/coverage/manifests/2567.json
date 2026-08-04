@@ -13,7 +13,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_try_catch_bind_2567.cpp",
+      "path": "tests/compiler/test_try_catch_bind.cpp",
       "contains": [
         "ac1_diagnostic_bind"
       ]
@@ -28,7 +28,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_try_catch_bind_2567.cpp",
+      "path": "tests/compiler/test_try_catch_bind.cpp",
       "contains": [
         "ac2_error_prim_bind"
       ]
@@ -43,7 +43,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_try_catch_bind_2567.cpp",
+      "path": "tests/compiler/test_try_catch_bind.cpp",
       "contains": [
         "ac4_bare_var"
       ]
@@ -64,7 +64,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_try_catch_bind_2567.cpp",
+      "path": "tests/compiler/test_try_catch_bind.cpp",
       "contains": [
         "ac5_source_gate"
       ]
@@ -73,7 +73,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_try_catch_bind_2567"
+        "test_try_catch_bind"
       ]
     },
     {

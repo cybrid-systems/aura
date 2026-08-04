@@ -13,7 +13,7 @@ Verifies the AC1-AC5 surface:
   - evaluator_primitives_query.cpp registers query:impact-scope-stats
     primitive with schema-2179 / issue-2179 / wired sentinel +
     blocks-total key + instrs-total key.
-  - test_instruction_level_impact_partial_2109.cpp has AC7
+  - test_instruction_level_impact_partial.cpp has AC7
     function call + Issue #2179 source-cite.
 
 --self-test validates the regex patterns against stub inputs.
@@ -83,7 +83,7 @@ CONTRACT_ROWS = [
     },
     {
         "name": "test AC7 + 2179 source-cite",
-        "path": "tests/compiler/test_instruction_level_impact_partial_2109.cpp",
+        "path": "tests/compiler/test_instruction_level_impact_partial.cpp",
         "patterns": [
             r"ac7_cross_function_instr_2179",
             r"Issue #2179",
@@ -93,7 +93,7 @@ CONTRACT_ROWS = [
     },
     {
         "name": "test AC8 + AC9 + #2246 source-cite",
-        "path": "tests/compiler/test_instruction_level_impact_partial_2109.cpp",
+        "path": "tests/compiler/test_instruction_level_impact_partial.cpp",
         "patterns": [
             r"ac8_cross_function_indirect_2246",
             r"ac9_cross_function_unresolved_2246",
@@ -182,7 +182,7 @@ def self_test() -> int:
         "src/compiler/observability_metrics.h": stub_om,
         "src/compiler/service_dirty.cpp": stub_dirty,
         "src/compiler/evaluator_primitives_query.cpp": stub_epq,
-        "tests/compiler/test_instruction_level_impact_partial_2109.cpp": stub_test,
+        "tests/compiler/test_instruction_level_impact_partial.cpp": stub_test,
     }
     failed = 0
     for row in CONTRACT_ROWS:

@@ -38,7 +38,7 @@ def main() -> int:
     opasses = _read("src/compiler/optimization_passes.ixx")
     ctxm = _read("src/compiler/castop_typed_meta.h")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/compiler/test_dead_coercion_layered_2282.cpp")
+    test = _read("tests/compiler/test_dead_coercion_layered.cpp")
     build = _read("build.py")
 
     # AC1: evidence != 0 → ast-elided++ and meta stamp

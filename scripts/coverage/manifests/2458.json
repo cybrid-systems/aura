@@ -20,7 +20,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_truncate_commit_gate_2458.cpp",
+      "path": "tests/compiler/test_truncate_commit_gate.cpp",
       "contains": [
         "2458 AC1"
       ]
@@ -37,14 +37,14 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_truncate_commit_gate_2458.cpp",
+      "path": "tests/compiler/test_truncate_commit_gate.cpp",
       "contains": [
         "2458 AC2"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_truncate_commit_gate_2458.cpp",
+      "path": "tests/compiler/test_truncate_commit_gate.cpp",
       "contains": [
         "2458 AC3"
       ]
@@ -58,7 +58,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_truncate_commit_gate_2458.cpp",
+      "path": "tests/compiler/test_truncate_commit_gate.cpp",
       "contains": [
         "2458 AC4"
       ]
@@ -95,7 +95,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_truncate_commit_gate_2458"
+        "test_truncate_commit_gate"
       ]
     }
   ],

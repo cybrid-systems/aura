@@ -17,7 +17,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "path": "tests/compiler/test_mutation_concurrency_health.cpp",
       "contains": [
         "ac1_vacuous_healthy"
       ]
@@ -35,7 +35,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "path": "tests/compiler/test_mutation_concurrency_health.cpp",
       "contains": [
         "ac2_force_reason_and_inject"
       ]
@@ -50,7 +50,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "path": "tests/compiler/test_mutation_concurrency_health.cpp",
       "contains": [
         "ac3_pure_identical"
       ]
@@ -69,7 +69,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "path": "tests/compiler/test_mutation_concurrency_health.cpp",
       "contains": [
         "ac4_query_surface"
       ]
@@ -92,7 +92,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_mutation_concurrency_health_2379"
+        "test_mutation_concurrency_health"
       ]
     },
     {
@@ -105,7 +105,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "path": "tests/compiler/test_mutation_concurrency_health.cpp",
       "contains": [
         "ac5_source_cite"
       ]

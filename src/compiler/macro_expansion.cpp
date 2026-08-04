@@ -774,7 +774,7 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
 // import. Returns the post-call violation count (== 0 in healthy
 // cross-flat clone; the first-pass restamp auto-clears the bit on
 // every MacroIntroduced node), or UINT64_MAX on a bad arg. Used by
-// tests/compiler/test_macro_cross_flat_hygiene_2235.cpp AC1-AC4.
+// tests/compiler/test_macro_cross_flat_hygiene.cpp AC1-AC4.
 extern "C" std::uint64_t
 aura_test_cross_flat_expand_consistency(void* target_flat, void* target_pool, void* source_flat,
                                         void* source_pool, std::uint32_t new_root) noexcept {

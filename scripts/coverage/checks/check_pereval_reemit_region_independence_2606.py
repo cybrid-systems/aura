@@ -41,7 +41,7 @@ def main() -> int:
     qe = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     dirty = _read("src/compiler/service_dirty.cpp")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
-    test = _read("tests/compiler/test_pereval_reemit_region_independence_2606.cpp")
+    test = _read("tests/compiler/test_pereval_reemit_region_independence.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
     q_surface = qq + qe
@@ -82,7 +82,7 @@ def main() -> int:
     must("ac2_invalidate_for_eval_isolation", "AC5", test)
     must("ac3_nullptr_path_no_filter", "AC5", test)
     must("ac4_query_and_single_eval_zero", "AC5", test)
-    must("test_pereval_reemit_region_independence_2606", "AC5", cmake)
+    must("test_pereval_reemit_region_independence", "AC5", cmake)
     must("check_pereval_reemit_region_independence_2606", "AC5", build)
     must("cmd_pereval_reemit_region_independence_coverage", "AC5", build)
     must("process-global", "AC5", bh + bc)

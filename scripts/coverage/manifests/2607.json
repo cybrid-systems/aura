@@ -96,7 +96,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_instance_constraint_depth_cap_2607.cpp",
+      "path": "tests/compiler/test_instance_constraint_depth_cap.cpp",
       "contains": [
         "ac1_instance_solves_poly",
         "ac2_depth_cap_timeout"
@@ -106,7 +106,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_instance_constraint_depth_cap_2607"
+        "test_instance_constraint_depth_cap"
       ]
     },
     {

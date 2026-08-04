@@ -45,7 +45,7 @@ def main() -> int:
 
     astx = _read("src/core/ast.ixx")
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
-    test = _read("tests/core/test_restamp_sla_observability_2528.cpp")
+    test = _read("tests/core/test_restamp_sla_observability.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -88,12 +88,12 @@ def main() -> int:
 
     # AC5 — chaos soak (TSan clean) — covered by existing #2061 fixture.
     # No new TSan surface introduced (SLA surface is additive observability).
-    # Verified by source-cite: existing test_incremental_restamp_2061 +
+    # Verified by source-cite: existing test_incremental_restamp +
     # test_stable_ref_provenance_fiber_cow fixtures preserved.
-    t2061 = _read("tests/core/test_incremental_restamp_2061.cpp")
+    t2061 = _read("tests/core/test_incremental_restamp.cpp")
     tcow = _read("tests/serve/test_stable_ref_provenance_fiber_cow.cpp")
     if not t2061:
-        fails.append("AC5: tests/core/test_incremental_restamp_2061.cpp removed (must preserve)")
+        fails.append("AC5: tests/core/test_incremental_restamp.cpp removed (must preserve)")
     if not tcow:
         fails.append("AC5: tests/serve/test_stable_ref_provenance_fiber_cow.cpp removed (must preserve)")
 
@@ -102,9 +102,9 @@ def main() -> int:
     must("Issue #2528", "AC6", test)  # test file references #2528
     must("AC6", "AC6", test)
     must("additive schema", "AC6", test)
-    must("aura_add_issue_test(test_restamp_sla_observability_2528)", "AC6", cmake)
-    must("aura_issue_test_link_light(test_restamp_sla_observability_2528)", "AC6", cmake)
-    must("add_dependencies(all_test_issue_targets test_restamp_sla_observability_2528)", "AC6", cmake)
+    must("aura_add_issue_test(test_restamp_sla_observability)", "AC6", cmake)
+    must("aura_issue_test_link_light(test_restamp_sla_observability)", "AC6", cmake)
+    must("add_dependencies(all_test_issue_targets test_restamp_sla_observability)", "AC6", cmake)
     must("check_restamp_sla_observability_2528", "AC6", build)
 
     if fails:

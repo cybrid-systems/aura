@@ -9,7 +9,7 @@ Contract (one row per AC):
   AC4 handoff_ref called in parallel-intend result packaging
      (evaluator_primitives_agent.cpp)
   AC5 multi_fiber_mailbox.h references handoff_ref (handoff gate)
-  AC6 test_stable_ref_export_validate_2404.cpp covers handoff_ref
+  AC6 test_stable_ref_export_validate.cpp covers handoff_ref
   AC7 build.py wires the linter into the lint / gate step
   AC8 schema-2632 keys appear in observability prims (stable-ref-handoff-*)
 
@@ -45,7 +45,7 @@ def main() -> int:
     fm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     ag = _read("src/compiler/evaluator_primitives_agent.cpp")
     mb = _read("src/serve/multi_fiber_mailbox.h")
-    test = _read("tests/compiler/test_stable_ref_export_validate_2404.cpp")
+    test = _read("tests/compiler/test_stable_ref_export_validate.cpp")
     build = _read("build.py")
     pe = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     _read("scripts/coverage/checks/check_stamp_resolve_coverage.py")

@@ -34,7 +34,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_type_timeout_repair_2284.cpp",
+      "path": "tests/compiler/test_type_timeout_repair.cpp",
       "contains": [
         "AC2: SOLVED"
       ]
@@ -55,7 +55,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_type_timeout_repair_2284.cpp",
+      "path": "tests/compiler/test_type_timeout_repair.cpp",
       "contains": [
         "AC3: production escalate"
       ]
@@ -92,7 +92,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_type_timeout_repair_2284.cpp",
+      "path": "tests/compiler/test_type_timeout_repair.cpp",
       "contains": [
         "AC5: source-cite",
         "#2343",
@@ -103,7 +103,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_timeout_repair_2284"
+        "test_type_timeout_repair"
       ]
     }
   ],

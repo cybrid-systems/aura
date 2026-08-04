@@ -23,7 +23,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "path": "tests/compiler/test_type_dep_epoch_prune.cpp",
       "contains": [
         "ac1_epoch_prune"
       ]
@@ -46,7 +46,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "path": "tests/compiler/test_type_dep_epoch_prune.cpp",
       "contains": [
         "ac2_session_bound"
       ]
@@ -61,7 +61,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "path": "tests/compiler/test_type_dep_epoch_prune.cpp",
       "contains": [
         "ac3_zero_cost_paths"
       ]
@@ -80,7 +80,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "path": "tests/compiler/test_type_dep_epoch_prune.cpp",
       "contains": [
         "ac4_query_schema"
       ]
@@ -94,7 +94,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "path": "tests/compiler/test_type_dep_epoch_prune.cpp",
       "contains": [
         "ac5_source_cite_and_invalidate"
       ]
@@ -103,7 +103,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_dep_epoch_prune_2355"
+        "test_type_dep_epoch_prune"
       ]
     },
     {

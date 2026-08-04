@@ -12,7 +12,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e.cpp",
       "contains": [
         "get_specialized",
         "ac1_dual_eval_pereval_hit_survives"
@@ -28,14 +28,14 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e.cpp",
       "contains": [
         "ac2_foreign_skip_and_owner_clear"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e.cpp",
       "contains": [
         "ac3_global_clears_both",
         "mode Global"
@@ -57,7 +57,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e.cpp",
       "contains": [
         "ac4_no_global_shape_bump_under_pereval"
       ]
@@ -75,7 +75,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_specjit_pereval_storm_e2e_2504"
+        "test_specjit_pereval_storm_e2e"
       ]
     },
     {
@@ -88,14 +88,14 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e.cpp",
       "contains": [
         "ac5_concurrent_and_source_gate"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation.cpp",
       "contains": [
         "ac2_ac3_two_eval_isolation"
       ]

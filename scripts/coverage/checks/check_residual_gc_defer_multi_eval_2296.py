@@ -21,7 +21,7 @@ GH = ROOT / "src" / "core" / "gc_hooks.h"
 MUT = ROOT / "src" / "compiler" / "evaluator_fiber_mutation.cpp"
 MET = ROOT / "src" / "compiler" / "observability_metrics.h"
 Q = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
-TEST = ROOT / "tests" / "compiler" / "test_residual_gc_defer_assert_2211.cpp"
+TEST = ROOT / "tests" / "compiler" / "test_residual_gc_defer_assert.cpp"
 
 
 def main() -> int:

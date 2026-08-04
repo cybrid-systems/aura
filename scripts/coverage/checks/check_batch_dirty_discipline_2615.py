@@ -46,7 +46,7 @@ def main() -> int:
     svc = _read("src/compiler/service.ixx")
     dce = _read("src/compiler/pass_impls.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    test = _read("tests/compiler/test_batch_dirty_discipline_2615.cpp")
+    test = _read("tests/compiler/test_batch_dirty_discipline.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -108,7 +108,7 @@ def main() -> int:
     must("schema-2615", "AC5", q)
     must("soa-batch-dirty-cascades-total", "AC5", q)
     must("soa-dirty-fence-total", "AC5", q)
-    must("test_batch_dirty_discipline_2615", "AC5", cmake)
+    must("test_batch_dirty_discipline", "AC5", cmake)
     must("check_batch_dirty_discipline_2615", "AC5", build)
     must("cmd_batch_dirty_discipline_coverage", "AC5", build)
     must("ac5_fence_rate", "AC5", test)

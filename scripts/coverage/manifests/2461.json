@@ -22,7 +22,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "path": "tests/compiler/test_occurrence_cache_key.cpp",
       "contains": [
         "AC1: same pred shape"
       ]
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "path": "tests/compiler/test_occurrence_cache_key.cpp",
       "contains": [
         "AC2: structural key isolates"
       ]
@@ -51,7 +51,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "path": "tests/compiler/test_occurrence_cache_key.cpp",
       "contains": [
         "AC3: goal note on miss path"
       ]
@@ -65,7 +65,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "path": "tests/compiler/test_occurrence_cache_key.cpp",
       "contains": [
         "AC4: epoch gate in resolve"
       ]
@@ -98,7 +98,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_occurrence_cache_key_2461"
+        "test_occurrence_cache_key"
       ]
     },
     {
@@ -111,7 +111,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "path": "tests/compiler/test_occurrence_cache_key.cpp",
       "contains": [
         "AC5: schema-2461"
       ]

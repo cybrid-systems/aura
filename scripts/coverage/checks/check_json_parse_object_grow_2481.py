@@ -34,7 +34,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     js = _read("src/compiler/evaluator_primitives_json.cpp")
-    test = _read("tests/compiler/test_json_parse_object_grow_2481.cpp")
+    test = _read("tests/compiler/test_json_parse_object_grow.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -58,7 +58,7 @@ def main() -> int:
 
     must("check_json_parse_object_grow_2481", "gate", build)
     must("cmd_json_parse_object_grow_coverage", "gate", build)
-    must("test_json_parse_object_grow_2481", "gate", cmake)
+    must("test_json_parse_object_grow", "gate", cmake)
     must("2481 AC5", "gate", test)
 
     if fails:

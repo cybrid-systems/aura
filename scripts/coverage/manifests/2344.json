@@ -26,7 +26,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_escape_move_elision_gate_2263.cpp",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
       "contains": [
         "AC12"
       ]
@@ -50,7 +50,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_escape_move_elision_gate_2263.cpp",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
       "contains": [
         "AC13"
       ]
@@ -64,7 +64,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_escape_move_elision_gate_2263.cpp",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
       "contains": [
         "AC15"
       ]
@@ -83,7 +83,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_escape_move_elision_gate_2263.cpp",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
       "contains": [
         "AC16",
         "#2344"
@@ -93,7 +93,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_escape_move_elision_gate_2263"
+        "test_escape_move_elision_gate"
       ]
     }
   ],

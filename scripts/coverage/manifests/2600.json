@@ -51,7 +51,7 @@
     },
     {
       "ac": "AC10",
-      "path": "tests/serve/test_orch_soft_boundary_unified_2515.cpp",
+      "path": "tests/serve/test_orch_soft_boundary_unified.cpp",
       "contains": [
         "Issue #2600",
         "ac6_header_source_cite",

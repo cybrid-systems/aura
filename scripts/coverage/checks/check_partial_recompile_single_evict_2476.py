@@ -38,7 +38,7 @@ def main() -> int:
             fails.append(f"{label}: must not contain {n!r}")
 
     jit = _read("src/compiler/aura_jit.cpp")
-    test = _read("tests/compiler/test_partial_recompile_single_evict_2476.cpp")
+    test = _read("tests/compiler/test_partial_recompile_single_evict.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -63,7 +63,7 @@ def main() -> int:
 
     must("check_partial_recompile_single_evict_2476", "gate", build)
     must("cmd_partial_recompile_single_evict_coverage", "gate", build)
-    must("test_partial_recompile_single_evict_2476", "gate", cmake)
+    must("test_partial_recompile_single_evict", "gate", cmake)
     must("2476 AC5", "gate", test)
 
     if fails:

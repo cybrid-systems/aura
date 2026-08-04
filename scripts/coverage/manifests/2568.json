@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_symbol_eq_2568.cpp",
+      "path": "tests/compiler/test_symbol_eq.cpp",
       "contains": [
         "ac1_literal_eq"
       ]
@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_symbol_eq_2568.cpp",
+      "path": "tests/compiler/test_symbol_eq.cpp",
       "contains": [
         "ac3_define_quote"
       ]
@@ -45,7 +45,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_symbol_eq_2568.cpp",
+      "path": "tests/compiler/test_symbol_eq.cpp",
       "contains": [
         "ac5_source_gate"
       ]
@@ -67,7 +67,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_symbol_eq_2568.cpp",
+      "path": "tests/compiler/test_symbol_eq.cpp",
       "contains": [
         "ac4_equal_and_tags"
       ]
@@ -76,7 +76,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_symbol_eq_2568"
+        "test_symbol_eq"
       ]
     },
     {

@@ -37,7 +37,7 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
-    test = _read("tests/core/test_reset_slot_parent_edges_2412.cpp")
+    test = _read("tests/core/test_reset_slot_parent_edges.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -72,7 +72,7 @@ def main() -> int:
 
     must("check_reset_slot_parent_edges_2412", "gate", build)
     must("cmd_reset_slot_parent_edges_coverage", "gate", build)
-    must("test_reset_slot_parent_edges_2412", "gate", cmake)
+    must("test_reset_slot_parent_edges", "gate", cmake)
 
     if fails:
         for f in fails:

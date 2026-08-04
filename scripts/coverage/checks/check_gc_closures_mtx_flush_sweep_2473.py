@@ -36,7 +36,7 @@ def main() -> int:
     gc = _read("src/compiler/evaluator_gc.cpp")
     met = _read("src/compiler/observability_metrics.h")
     ixx = _read("src/compiler/evaluator.ixx")
-    test = _read("tests/compiler/test_gc_closures_mtx_flush_sweep_2473.cpp")
+    test = _read("tests/compiler/test_gc_closures_mtx_flush_sweep.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -77,7 +77,7 @@ def main() -> int:
 
     must("check_gc_closures_mtx_flush_sweep_2473", "gate", build)
     must("cmd_gc_closures_mtx_flush_sweep_coverage", "gate", build)
-    must("test_gc_closures_mtx_flush_sweep_2473", "gate", cmake)
+    must("test_gc_closures_mtx_flush_sweep", "gate", cmake)
     must("2473 AC5", "gate", test)
 
     if fails:

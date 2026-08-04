@@ -39,9 +39,9 @@ def main() -> int:
     soa = _read("src/compiler/ir_soa.ixx")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     low = _read("src/compiler/lowering_impl.cpp")
-    test = _read("tests/compiler/test_soa_residual_production_smoke_2618.cpp")
+    test = _read("tests/compiler/test_soa_residual_production_smoke.cpp")
     dual = _read("tests/compiler/test_ir_soa_dual_emit_batch.cpp")
-    ban = _read("tests/compiler/test_soa_ban_residual_aos_bridge_2520.cpp")
+    ban = _read("tests/compiler/test_soa_ban_residual_aos_bridge.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -79,7 +79,7 @@ def main() -> int:
     must("aos_bridge_allowed", "AC5", test)
 
     # Gate / cmake / build wiring
-    must("test_soa_residual_production_smoke_2618", "gate", cmake)
+    must("test_soa_residual_production_smoke", "gate", cmake)
     must("check_soa_residual_production_smoke_2618", "gate", build)
     must("cmd_soa_residual_production_smoke_coverage", "gate", build)
     must("soa_residual_production_smoke_wired", "gate", soa)
@@ -99,7 +99,7 @@ def main() -> int:
     # Optional: if production smoke binary is built, run it under production env
     # (AURA_ALLOW_AOS_BRIDGE unset). Soft configs with env=1 are not run here.
     for build_dir in ("build", "build_asan", "build_release"):
-        binary = ROOT / build_dir / "test_soa_residual_production_smoke_2618"
+        binary = ROOT / build_dir / "test_soa_residual_production_smoke"
         if not binary.is_file():
             continue
         env = os.environ.copy()

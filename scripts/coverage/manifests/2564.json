@@ -24,7 +24,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_adt_match_goal_table_2564.cpp",
+      "path": "tests/compiler/test_adt_match_goal_table.cpp",
       "contains": [
         "ac1_note_invalidate_reverify"
       ]
@@ -38,7 +38,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_adt_match_goal_table_2564.cpp",
+      "path": "tests/compiler/test_adt_match_goal_table.cpp",
       "contains": [
         "ac2_zero_work"
       ]
@@ -59,7 +59,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_adt_match_goal_table_2564.cpp",
+      "path": "tests/compiler/test_adt_match_goal_table.cpp",
       "contains": [
         "ac3_cap"
       ]
@@ -76,7 +76,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_adt_match_goal_table_2564.cpp",
+      "path": "tests/compiler/test_adt_match_goal_table.cpp",
       "contains": [
         "ac4_schema"
       ]
@@ -100,7 +100,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_adt_match_goal_table_2564"
+        "test_adt_match_goal_table"
       ]
     },
     {
@@ -113,7 +113,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_adt_match_goal_table_2564.cpp",
+      "path": "tests/compiler/test_adt_match_goal_table.cpp",
       "contains": [
         "ac5_hard_gate_retained"
       ]

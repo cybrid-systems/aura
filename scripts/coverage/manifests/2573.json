@@ -22,7 +22,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_ir_const_string_intern_2573.cpp",
+      "path": "tests/compiler/test_ir_const_string_intern.cpp",
       "contains": [
         "ac1_loop_heap_growth_bounded"
       ]
@@ -31,7 +31,7 @@
       "ac": "AC3",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_ir_const_string_intern_2573"
+        "test_ir_const_string_intern"
       ]
     },
     {
@@ -44,7 +44,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_ir_const_string_intern_2573.cpp",
+      "path": "tests/compiler/test_ir_const_string_intern.cpp",
       "contains": [
         "AURA_FORCE_IR"
       ]

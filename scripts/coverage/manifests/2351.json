@@ -29,14 +29,14 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "path": "tests/serve/test_steal_layout_stamp.cpp",
       "contains": [
         "ac1_matching_stamp"
       ]
     },
     {
       "ac": "AC2",
-      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "path": "tests/serve/test_steal_layout_stamp.cpp",
       "contains": [
         "ac2_mismatched_stamp"
       ]
@@ -58,7 +58,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "path": "tests/serve/test_steal_layout_stamp.cpp",
       "contains": [
         "ac3_no_stamp_zero_cost"
       ]
@@ -96,14 +96,14 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "path": "tests/serve/test_steal_layout_stamp.cpp",
       "contains": [
         "ac4_schema_and_source"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "path": "tests/serve/test_steal_layout_stamp.cpp",
       "contains": [
         "ac5_concurrent_stress"
       ]
@@ -119,7 +119,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_steal_layout_stamp_2351"
+        "test_steal_layout_stamp"
       ]
     },
     {

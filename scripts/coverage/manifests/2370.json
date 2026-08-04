@@ -13,7 +13,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation.cpp",
       "contains": [
         "ac1_global_soft"
       ]
@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation.cpp",
       "contains": [
         "ac2_ac3_two_eval_isolation"
       ]
@@ -60,7 +60,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation.cpp",
       "contains": [
         "ac4_query"
       ]
@@ -97,7 +97,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_specjit_per_eval_storm_isolation_2370"
+        "test_specjit_per_eval_storm_isolation"
       ]
     },
     {
@@ -110,7 +110,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation.cpp",
       "contains": [
         "ac5_source_and_gate"
       ]

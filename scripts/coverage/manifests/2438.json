@@ -14,7 +14,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/core/test_arena_compact_notify_lifecycle_2438.cpp",
+      "path": "tests/core/test_arena_compact_notify_lifecycle.cpp",
       "contains": [
         "2438 AC1"
       ]
@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/core/test_arena_compact_notify_lifecycle_2438.cpp",
+      "path": "tests/core/test_arena_compact_notify_lifecycle.cpp",
       "contains": [
         "2438 AC2"
       ]
@@ -44,14 +44,14 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/core/test_arena_compact_notify_lifecycle_2438.cpp",
+      "path": "tests/core/test_arena_compact_notify_lifecycle.cpp",
       "contains": [
         "2438 AC3"
       ]
     },
     {
       "ac": "AC4",
-      "path": "tests/core/test_arena_compact_notify_lifecycle_2438.cpp",
+      "path": "tests/core/test_arena_compact_notify_lifecycle.cpp",
       "contains": [
         "2438 AC4"
       ]
@@ -68,7 +68,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_arena_compact_notify_lifecycle_2438"
+        "test_arena_compact_notify_lifecycle"
       ]
     }
   ],

@@ -17,7 +17,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_type_system_health_2350.cpp",
+      "path": "tests/compiler/test_type_system_health.cpp",
       "contains": [
         "ac1_vacuous_healthy"
       ]
@@ -34,7 +34,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_type_system_health_2350.cpp",
+      "path": "tests/compiler/test_type_system_health.cpp",
       "contains": [
         "ac2_force_reason_priority"
       ]
@@ -49,7 +49,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_type_system_health_2350.cpp",
+      "path": "tests/compiler/test_type_system_health.cpp",
       "contains": [
         "ac3_ac4_query_surface"
       ]
@@ -84,7 +84,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_type_system_health_2350"
+        "test_type_system_health"
       ]
     },
     {
@@ -97,7 +97,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_type_system_health_2350.cpp",
+      "path": "tests/compiler/test_type_system_health.cpp",
       "contains": [
         "ac5_source_cite"
       ]

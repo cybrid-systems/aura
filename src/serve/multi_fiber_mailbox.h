@@ -727,7 +727,7 @@ public:
         // enqueued is NOT killed (additive over #2188 mutation-boundary
         // gate). Soft / sandbox=off path is permissive (hook no-op when
         // production sandbox inactive — see fiber.cpp #2491). AC1 / AC2
-        // / AC4 verified by tests/orch/test_mailbox_tenant_principal_2592.
+        // / AC4 verified by tests/orch/test_mailbox_tenant_principal.
         if (g_current_fiber != nullptr && g_current_fiber->assigned_tenant_id() != 0) {
             aura_fiber_install_tenant_scope_for_resume(g_current_fiber);
         }

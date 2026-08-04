@@ -36,7 +36,7 @@ def main() -> int:
     stamp = _read("src/core/layout_stamp.hh")
     fm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
-    test = _read("tests/compiler/test_layout_stamp_equality_8field_2519.cpp")
+    test = _read("tests/compiler/test_layout_stamp_equality_8field.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -67,7 +67,7 @@ def main() -> int:
     must("kLayoutStampEqualitySchema", "AC5", stamp)
     must("layout-stamp-equality-8-field", "AC5", q)
     must("schema-2519", "AC5", q)
-    must("test_layout_stamp_equality_8field_2519", "AC5", cmake)
+    must("test_layout_stamp_equality_8field", "AC5", cmake)
     must("check_layout_stamp_equality_8field_2519", "AC5", build)
     must("cmd_layout_stamp_equality_8field_coverage", "AC5", build)
     must("ac5_query_schema", "AC5", test)

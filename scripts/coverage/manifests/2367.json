@@ -13,7 +13,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "path": "tests/compiler/test_reload_recovery_query.cpp",
       "contains": [
         "ac1_soft_empty"
       ]
@@ -42,7 +42,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "path": "tests/compiler/test_reload_recovery_query.cpp",
       "contains": [
         "ac2_force_jit_exhaustion"
       ]
@@ -56,7 +56,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "path": "tests/compiler/test_reload_recovery_query.cpp",
       "contains": [
         "ac3_success_clears"
       ]
@@ -72,7 +72,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "path": "tests/compiler/test_reload_recovery_query.cpp",
       "contains": [
         "ac4_hot_update_surface"
       ]
@@ -113,7 +113,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_reload_recovery_query_2367"
+        "test_reload_recovery_query"
       ]
     },
     {
@@ -126,7 +126,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "path": "tests/compiler/test_reload_recovery_query.cpp",
       "contains": [
         "ac5_source_and_gate"
       ]

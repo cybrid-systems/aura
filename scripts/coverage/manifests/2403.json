@@ -28,7 +28,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_query_index_composite_2403.cpp",
+      "path": "tests/compiler/test_query_index_composite.cpp",
       "contains": [
         "2403 AC1"
       ]
@@ -51,14 +51,14 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_query_index_composite_2403.cpp",
+      "path": "tests/compiler/test_query_index_composite.cpp",
       "contains": [
         "2403 AC2"
       ]
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_query_index_composite_2403.cpp",
+      "path": "tests/compiler/test_query_index_composite.cpp",
       "contains": [
         "2403 AC3"
       ]
@@ -92,14 +92,14 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_query_index_composite_2403.cpp",
+      "path": "tests/compiler/test_query_index_composite.cpp",
       "contains": [
         "2403 AC4"
       ]
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_query_index_composite_2403.cpp",
+      "path": "tests/compiler/test_query_index_composite.cpp",
       "contains": [
         "2403 AC5"
       ]
@@ -116,7 +116,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_query_index_composite_2403"
+        "test_query_index_composite"
       ]
     }
   ],

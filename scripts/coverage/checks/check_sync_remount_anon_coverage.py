@@ -20,7 +20,7 @@ AC4: Soft / Off + knob off → zero extra work. nslots==0 short-circuit
 AC5: #2602 / #2605 / #2550 / #2542 surfaces and tests still green
      (linter verifies schema-* keys preserved).
 AC6: Coverage gate (this linter + build.py gate step + src-aligned
-     test in test_anonymous_residual_stable_id_policy_2605.cpp).
+     test in test_anonymous_residual_stable_id_policy.cpp).
 
 Default: non-strict (exit 0, prints coverage summary). Use --strict
 to enforce (exit 1 if any AC fails — gate before merge).
@@ -48,7 +48,7 @@ RUNTIME_CPP = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 RUNTIME_H = ROOT / "src" / "compiler" / "runtime_shared.h"
 METRICS = ROOT / "src" / "compiler" / "observability_metrics.h"
 OBS_EVAL = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
-TEST_2605 = ROOT / "tests" / "compiler" / "test_anonymous_residual_stable_id_policy_2605.cpp"
+TEST_2605 = ROOT / "tests" / "compiler" / "test_anonymous_residual_stable_id_policy.cpp"
 
 
 def _extract_body(text: str, open_idx: int) -> str:
@@ -286,7 +286,7 @@ def main() -> int:
         "ac2637_schema_and_source_cite",
     ):
         if ac_fn not in test_text:
-            failures.append(f"AC6: test_anonymous_residual_stable_id_policy_2605.cpp missing {ac_fn}")
+            failures.append(f"AC6: test_anonymous_residual_stable_id_policy.cpp missing {ac_fn}")
     if "main()" in test_text:
         for ac_fn in (
             "ac2637_anon_sync_off_default",

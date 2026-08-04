@@ -13,7 +13,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary.cpp",
       "contains": [
         "ac2347_soft_only_soft_counter",
         "AC1 Soft"
@@ -31,7 +31,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary.cpp",
       "contains": [
         "ac2347_strict_hard_counter",
         "AC2 Strict"
@@ -78,7 +78,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary.cpp",
       "contains": [
         "ac2347_threshold_force_rollback",
         "AC3:"
@@ -86,7 +86,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary.cpp",
       "contains": [
         "ac2347_happy_path_no_hard",
         "AC4:"
@@ -121,7 +121,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary.cpp",
       "contains": [
         "ac2347_schema_and_contract"
       ]

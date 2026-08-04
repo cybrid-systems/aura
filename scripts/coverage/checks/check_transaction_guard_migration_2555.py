@@ -42,7 +42,7 @@ def main() -> int:
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     mbg = _read("src/compiler/evaluator_mutation_boundary.cpp")
     ixx = _read("src/compiler/evaluator.ixx")
-    test = _read("tests/core/test_transaction_guard_2555.cpp")
+    test = _read("tests/core/test_transaction_guard.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
@@ -80,7 +80,7 @@ def main() -> int:
     must("ac3_reject", "AC5", test)
     must("ac4_panic_recover", "AC5", test)
     must("ac5_live_and_schema", "AC5", test)
-    must("test_transaction_guard_2555", "AC5", cmake)
+    must("test_transaction_guard", "AC5", cmake)
     must("check_transaction_guard_migration_2555", "AC5", build)
     must("cmd_transaction_guard_migration_coverage", "AC5", build)
 

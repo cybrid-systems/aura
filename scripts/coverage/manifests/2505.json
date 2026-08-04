@@ -19,7 +19,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "path": "tests/compiler/test_cross_cow_drift_contract.cpp",
       "contains": [
         "ac1_near_drift_soft"
       ]
@@ -41,7 +41,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "path": "tests/compiler/test_cross_cow_drift_contract.cpp",
       "contains": [
         "ac2_far_drift_hard"
       ]
@@ -55,7 +55,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "path": "tests/compiler/test_cross_cow_drift_contract.cpp",
       "contains": [
         "ac3_linear_and_freed"
       ]
@@ -76,7 +76,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "path": "tests/compiler/test_cross_cow_drift_contract.cpp",
       "contains": [
         "ac4_soft_disabled"
       ]
@@ -108,7 +108,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_cross_cow_drift_contract_2505"
+        "test_cross_cow_drift_contract"
       ]
     },
     {
@@ -121,7 +121,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "path": "tests/compiler/test_cross_cow_drift_contract.cpp",
       "contains": [
         "ac5_docs_query_gate"
       ]

@@ -16,7 +16,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "path": "tests/compiler/test_cross_cow_soft_migrate.cpp",
       "contains": [
         "ac1_soft_migrate"
       ]
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "path": "tests/compiler/test_cross_cow_soft_migrate.cpp",
       "contains": [
         "ac2_hard_reject"
       ]
@@ -52,7 +52,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "path": "tests/compiler/test_cross_cow_soft_migrate.cpp",
       "contains": [
         "ac3_far_behind"
       ]
@@ -69,7 +69,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "path": "tests/compiler/test_cross_cow_soft_migrate.cpp",
       "contains": [
         "ac4_query"
       ]
@@ -78,7 +78,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_cross_cow_soft_migrate_2371"
+        "test_cross_cow_soft_migrate"
       ]
     },
     {
@@ -91,7 +91,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "path": "tests/compiler/test_cross_cow_soft_migrate.cpp",
       "contains": [
         "ac5_source_and_gate"
       ]

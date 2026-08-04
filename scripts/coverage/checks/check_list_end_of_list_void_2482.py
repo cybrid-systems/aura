@@ -41,7 +41,7 @@ def main() -> int:
     rt = _read("src/compiler/evaluator_primitives_runtime.cpp")
     low = _read("src/compiler/lowering_impl.cpp")
     jit = _read("src/compiler/aura_jit.cpp")
-    test = _read("tests/compiler/test_list_end_of_list_void_2482.cpp")
+    test = _read("tests/compiler/test_list_end_of_list_void.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
@@ -80,7 +80,7 @@ def main() -> int:
     must("2482 AC1", "AC5", test)
     must("check_list_end_of_list_void_2482", "gate", build)
     must("cmd_list_end_of_list_void_coverage", "gate", build)
-    must("test_list_end_of_list_void_2482", "gate", cmake)
+    must("test_list_end_of_list_void", "gate", cmake)
     must("2482 AC5", "gate", test)
 
     if fails:

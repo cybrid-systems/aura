@@ -1,6 +1,5 @@
 // test_hot_pass_contract_batch.cpp — thematic multi-TU batch
-// Hot-pass / hot-contract / strategy ACs (Stream A10c)
-// Stream S2 of tests/CONSOLIDATION_PLAN.md.
+// Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
 #include "test_harness.hpp"
@@ -9,11 +8,11 @@
 
 import std;
 
-extern int run_test_hot_contract_placement_2435();
-extern int run_test_hot_contract_unify_2142();
-extern int run_test_hot_pass_hard_dod_2434();
-extern int run_test_hot_pass_pure_wrap_2258();
-extern int run_test_hot_strategy_2582();
+extern int run_test_hot_contract_placement();
+extern int run_test_hot_contract_unify();
+extern int run_test_hot_pass_hard_dod();
+extern int run_test_hot_pass_pure_wrap();
+extern int run_test_hot_strategy();
 
 int main() {
     using aura::test::g_failed;
@@ -22,64 +21,59 @@ int main() {
     int members_passed = 0;
     std::println("=== test_hot_pass_contract_batch (5 members) ===");
 
-    std::println("\n──── test_hot_contract_placement_2435 ────");
+    std::println("\n──── test_hot_contract_placement ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_hot_contract_placement_2435() != 0 || g_failed != 0) {
+    if (run_test_hot_contract_placement() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_hot_contract_placement_2435 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_hot_contract_placement ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_hot_contract_placement_2435 ({} checks)", g_passed);
+        std::println("OK member test_hot_contract_placement ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_hot_contract_unify_2142 ────");
+    std::println("\n──── test_hot_contract_unify ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_hot_contract_unify_2142() != 0 || g_failed != 0) {
+    if (run_test_hot_contract_unify() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_hot_contract_unify_2142 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_hot_contract_unify ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_hot_contract_unify_2142 ({} checks)", g_passed);
+        std::println("OK member test_hot_contract_unify ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_hot_pass_hard_dod_2434 ────");
+    std::println("\n──── test_hot_pass_hard_dod ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_hot_pass_hard_dod_2434() != 0 || g_failed != 0) {
+    if (run_test_hot_pass_hard_dod() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_hot_pass_hard_dod_2434 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_hot_pass_hard_dod ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_hot_pass_hard_dod_2434 ({} checks)", g_passed);
+        std::println("OK member test_hot_pass_hard_dod ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_hot_pass_pure_wrap_2258 ────");
+    std::println("\n──── test_hot_pass_pure_wrap ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_hot_pass_pure_wrap_2258() != 0 || g_failed != 0) {
+    if (run_test_hot_pass_pure_wrap() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_hot_pass_pure_wrap_2258 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_hot_pass_pure_wrap ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_hot_pass_pure_wrap_2258 ({} checks)", g_passed);
+        std::println("OK member test_hot_pass_pure_wrap ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_hot_strategy_2582 ────");
+    std::println("\n──── test_hot_strategy ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_hot_strategy_2582() != 0 || g_failed != 0) {
+    if (run_test_hot_strategy() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_hot_strategy_2582 (checks: {} passed, {} failed)", g_passed,
-                     g_failed);
+        std::println("FAIL member test_hot_strategy ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_hot_strategy_2582 ({} checks)", g_passed);
+        std::println("OK member test_hot_strategy ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

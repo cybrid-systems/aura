@@ -23,7 +23,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "path": "tests/compiler/test_blame_soft_recover.cpp",
       "contains": [
         "ac1_recover_or_escalate"
       ]
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "path": "tests/compiler/test_blame_soft_recover.cpp",
       "contains": [
         "ac2_complete_zero_work"
       ]
@@ -60,7 +60,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "path": "tests/compiler/test_blame_soft_recover.cpp",
       "contains": [
         "ac3_full_and_soft_observe"
       ]
@@ -84,7 +84,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "path": "tests/compiler/test_blame_soft_recover.cpp",
       "contains": [
         "ac4_schema_source"
       ]
@@ -101,7 +101,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_blame_soft_recover_2561"
+        "test_blame_soft_recover"
       ]
     },
     {
@@ -114,7 +114,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "path": "tests/compiler/test_blame_soft_recover.cpp",
       "contains": [
         "ac5_existing_authoritative"
       ]

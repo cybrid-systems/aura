@@ -39,7 +39,7 @@
       "ac": "AC4",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_module_rebind_residual_2579"
+        "test_module_rebind_residual"
       ]
     },
     {
@@ -51,7 +51,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_module_rebind_residual_2579.cpp",
+      "path": "tests/compiler/test_module_rebind_residual.cpp",
       "contains": [
         "ac1_multidefine_call_init"
       ]

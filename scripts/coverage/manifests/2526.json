@@ -21,7 +21,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_shape_storm_adaptive_2526.cpp",
+      "path": "tests/compiler/test_shape_storm_adaptive.cpp",
       "contains": [
         "ac1_compact_only_no_storm"
       ]
@@ -43,7 +43,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_shape_storm_adaptive_2526.cpp",
+      "path": "tests/compiler/test_shape_storm_adaptive.cpp",
       "contains": [
         "ac2_mutation_still_storms"
       ]
@@ -59,7 +59,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_shape_storm_adaptive_2526.cpp",
+      "path": "tests/compiler/test_shape_storm_adaptive.cpp",
       "contains": [
         "ac3_adaptive_suppress"
       ]
@@ -77,7 +77,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_shape_storm_adaptive_2526.cpp",
+      "path": "tests/compiler/test_shape_storm_adaptive.cpp",
       "contains": [
         "ac4_query"
       ]
@@ -92,7 +92,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_shape_storm_adaptive_2526.cpp",
+      "path": "tests/compiler/test_shape_storm_adaptive.cpp",
       "contains": [
         "ac5_hard_fence"
       ]
@@ -101,7 +101,7 @@
       "ac": "gate",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_shape_storm_adaptive_2526"
+        "test_shape_storm_adaptive"
       ]
     },
     {

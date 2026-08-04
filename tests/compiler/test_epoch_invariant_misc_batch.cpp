@@ -1,6 +1,5 @@
 // test_epoch_invariant_misc_batch.cpp — thematic multi-TU batch
-// Epoch invariant walk / soft-prod / complete ACs (Stream A10a)
-// Stream S2 of tests/CONSOLIDATION_PLAN.md.
+// Stream S4: member filenames stripped of _NNNN issue suffixes where unique.
 // Members: run_<stem>(); standalones keep main via #ifndef AURA_ISSUE_BATCH_MEMBER.
 
 #include "test_harness.hpp"
@@ -9,10 +8,10 @@
 
 import std;
 
-extern int run_test_epoch_bump_invariant_2304();
-extern int run_test_epoch_invariant_complete_2501();
-extern int run_test_epoch_invariant_soft_prod_2541();
-extern int run_test_epoch_invariant_walk_2366();
+extern int run_test_epoch_bump_invariant();
+extern int run_test_epoch_invariant_complete();
+extern int run_test_epoch_invariant_soft_prod();
+extern int run_test_epoch_invariant_walk();
 
 int main() {
     using aura::test::g_failed;
@@ -21,54 +20,48 @@ int main() {
     int members_passed = 0;
     std::println("=== test_epoch_invariant_misc_batch (4 members) ===");
 
-    std::println("\n──── test_epoch_bump_invariant_2304 ────");
+    std::println("\n──── test_epoch_bump_invariant ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_epoch_bump_invariant_2304() != 0 || g_failed != 0) {
+    if (run_test_epoch_bump_invariant() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_epoch_bump_invariant_2304 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_epoch_bump_invariant ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_epoch_bump_invariant_2304 ({} checks)", g_passed);
+        std::println("OK member test_epoch_bump_invariant ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_epoch_invariant_complete_2501 ────");
+    std::println("\n──── test_epoch_invariant_complete ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_epoch_invariant_complete_2501() != 0 || g_failed != 0) {
+    if (run_test_epoch_invariant_complete() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_epoch_invariant_complete_2501 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_epoch_invariant_complete ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_epoch_invariant_complete_2501 ({} checks)", g_passed);
+        std::println("OK member test_epoch_invariant_complete ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_epoch_invariant_soft_prod_2541 ────");
+    std::println("\n──── test_epoch_invariant_soft_prod ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_epoch_invariant_soft_prod_2541() != 0 || g_failed != 0) {
+    if (run_test_epoch_invariant_soft_prod() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println(
-            "FAIL member test_epoch_invariant_soft_prod_2541 (checks: {} passed, {} failed)",
-            g_passed, g_failed);
+        std::println("FAIL member test_epoch_invariant_soft_prod ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_epoch_invariant_soft_prod_2541 ({} checks)", g_passed);
+        std::println("OK member test_epoch_invariant_soft_prod ({} checks)", g_passed);
     }
 
-    std::println("\n──── test_epoch_invariant_walk_2366 ────");
+    std::println("\n──── test_epoch_invariant_walk ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_epoch_invariant_walk_2366() != 0 || g_failed != 0) {
+    if (run_test_epoch_invariant_walk() != 0 || g_failed != 0) {
         ++members_failed;
-        std::println("FAIL member test_epoch_invariant_walk_2366 (checks: {} passed, {} failed)",
-                     g_passed, g_failed);
+        std::println("FAIL member test_epoch_invariant_walk ({}/{})", g_passed, g_failed);
     } else {
         ++members_passed;
-        std::println("OK member test_epoch_invariant_walk_2366 ({} checks)", g_passed);
+        std::println("OK member test_epoch_invariant_walk ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

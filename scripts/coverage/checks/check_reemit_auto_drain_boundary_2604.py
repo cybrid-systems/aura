@@ -17,7 +17,7 @@ AC4: Common path (no deferred, mask=0) → zero extra work. AC4
      short-circuits at the top: single relaxed load on the common
      path, no C ABI bumper calls.
 AC5: Source-cite + unit test in
-     test_reemit_mutation_boundary_handshake_2114.cpp (extended per
+     test_reemit_mutation_boundary_handshake.cpp (extended per
      #81967 with ac2604_* sections).
 
 Rationale (Issue #2604 body):
@@ -47,7 +47,7 @@ HUR = ROOT / "src" / "compiler" / "hot_update_registry.cpp"
 HUR_H = ROOT / "src" / "compiler" / "hot_update_registry.hh"
 METRICS = ROOT / "src" / "compiler" / "observability_metrics.h"
 OBS_EVAL = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
-TEST = ROOT / "tests" / "compiler" / "test_reemit_mutation_boundary_handshake_2114.cpp"
+TEST = ROOT / "tests" / "compiler" / "test_reemit_mutation_boundary_handshake.cpp"
 
 
 def _extract_body(text: str, open_idx: int) -> str:
@@ -266,7 +266,7 @@ def main() -> int:
 
     # AC5 (cont.): test file has ac2604_* sections
     if not TEST.exists():
-        failures.append("AC5: tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp not found")
+        failures.append("AC5: tests/compiler/test_reemit_mutation_boundary_handshake.cpp not found")
     else:
         test_text = TEST.read_text(encoding="utf-8", errors="replace")
         for ac_fn in (
@@ -278,7 +278,7 @@ def main() -> int:
         ):
             if ac_fn not in test_text:
                 failures.append(
-                    f"AC5: tests/compiler/test_reemit_mutation_boundary_handshake_2114.cpp "
+                    f"AC5: tests/compiler/test_reemit_mutation_boundary_handshake.cpp "
                     f"missing test function {ac_fn} (issue #2604 coverage)"
                 )
         if "main()" in test_text:

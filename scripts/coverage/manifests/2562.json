@@ -22,7 +22,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "path": "tests/compiler/test_coercion_dual_require.cpp",
       "contains": [
         "ac1_production_dual_drop"
       ]
@@ -37,7 +37,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "path": "tests/compiler/test_coercion_dual_require.cpp",
       "contains": [
         "ac2_soft_insert_no_drop"
       ]
@@ -51,7 +51,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "path": "tests/compiler/test_coercion_dual_require.cpp",
       "contains": [
         "ac3_complete_and_elision"
       ]
@@ -69,7 +69,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "path": "tests/compiler/test_coercion_dual_require.cpp",
       "contains": [
         "ac4_schema_source"
       ]
@@ -85,7 +85,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_coercion_dual_require_2562"
+        "test_coercion_dual_require"
       ]
     },
     {
@@ -98,7 +98,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "path": "tests/compiler/test_coercion_dual_require.cpp",
       "contains": [
         "ac5_authority"
       ]
