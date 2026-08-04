@@ -42,7 +42,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac1_discover_hard_soft"
       ]
@@ -57,7 +57,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac2_zero_and_existing"
       ]
@@ -79,7 +79,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac3_unified_entry"
       ]
@@ -102,7 +102,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac4_schema"
       ]
@@ -132,7 +132,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_linear_cross_closure_escape_2563"
+        "test_linear_cross_closure"
       ]
     },
     {
@@ -145,7 +145,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac5_cone_cap"
       ]

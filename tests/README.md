@@ -8,11 +8,13 @@ How and where to add tests in Aura.
 
 ---
 
-## ⛔ STOP — Before you write a test, follow this 5-step decision tree
+## ⛔ STOP — Before you write a test, follow this decision tree
+
+**Canonical home map + agent rules:** [`HOMES.md`](HOMES.md) (read first).
 
 ```
 ═══════════════════════════════════════════════════════════════════════════
- STOP — new work goes to tests/<src-aligned-subdir>/, not tests/issues/
+ STOP — extend an existing thematic suite; do NOT invent test_*_<issue>.cpp
 ═══════════════════════════════════════════════════════════════════════════
 
 1. New query:*-stats / engine:* schema gate?
@@ -20,29 +22,33 @@ How and where to add tests in Aura.
             (tests/compiler/production_sweep_cases.hpp if production flag)
             跑 ninja -C build test_obs_schema_matrix && ./build/test_obs_schema_matrix. STOP.
 
-2. Fits existing batched suite?
-   └─ fiber / hygiene / typed_mutate / obs matrix?
-        → extend that suite (test_arena_batch / test_hotpath_matrix_batch /
-          test_soa_batch / test_obs_schema_matrix)
-   └─ Family already batched (compact, soa, linear, …)?
-        → extend tests/compiler/test_<theme>_unit_batch.cpp
+2. Same feature family already has a suite? (see HOMES.md)
+   └─ YES → open that file, add AC + wire into main/run_all. STOP.
+   └─ Examples: test_linear_cross_closure, test_arena_batch,
+                test_mutation_occurrence_dirty_batch, test_obs_schema_matrix
 
-3. New test file (not just a row in an existing suite)?
-   └─ YES → copy tests/scaffolds/module_test_scaffold.cpp to
-            tests/<src-aligned-subdir>/test_<module>_<feature>[_<issue>].cpp
-            然后用 aura_add_issue_test() 在 CMakeLists.txt 注册
+3. Fits a batch / matrix suite?
+   └─ YES → extend tests/<module>/test_<theme>_batch.cpp (or unit_batch). STOP.
 
-4. NEVER new tests/issues/test_issue_N.cpp for routine work
-   (R1 2026-07-21 abandoned the tests/domain/ pilot in favor of src/-aligned layout)
+4. Truly new feature surface (no home)?
+   └─ copy scaffolds/module_test_scaffold.cpp →
+      tests/<src-module>/test_<module>_<feature>.cpp
+      (module + feature ONLY — NO trailing issue number)
+   └─ CMake: aura_add_issue_test + link_light + all_test_issue_targets
+   └─ Issue #N goes in the file banner comment only.
+
+5. HARD BANS (pre-commit rejects new files matching these):
+   ✗ tests/issues/test_issue_N.cpp
+   ✗ tests/**/test_issue_*.cpp
+   ✗ tests/**/test_*_<3–5 digit>.cpp   e.g. test_foo_2622.cpp
+   ✗ new tests/test_*.cpp at repo root
 ```
 
-**Templates:** [`tests/scaffolds/module_test_scaffold.cpp`](scaffolds/module_test_scaffold.cpp) (preferred) + [`tests/scaffolds/legacy_test_redirect.cpp`](scaffolds/legacy_test_redirect.cpp) (legacy redirect).
+**Templates:** [`scaffolds/module_test_scaffold.cpp`](scaffolds/module_test_scaffold.cpp) · [`HOMES.md`](HOMES.md)
 
-**Decision tree src** (these files contain the same tree + more detail — they're explicit "not CMake targets" templates):
-- `tests/scaffolds/module_test_scaffold.cpp` — R17 rewrite, 5-step decision tree + copy-paste checklist
-- `tests/scaffolds/legacy_test_redirect.cpp` — legacy redirect (STOP banner + 5-step tree)
-
-**Why this tree?** Every `tests/<src-aligned-subdir>/` mirrors a `src/<dir>/` (see 哲学 below). New tests should go in the matching suite, not in theme-named dirs like `tests/arena/` / `tests/fiber/` / `tests/edsl/` / `tests/observability/` (R1 abandoned scheme). Tests live where the code lives — agent 接入点.
+**Why?** `tests/<module>/` mirrors `src/<module>/`. Issue numbers in filenames
+spawn one binary per ticket and block consolidation. Coverage stays in
+`scripts/coverage/manifests/<N>.json` + banner comments.
 
 ---
 
@@ -77,38 +83,22 @@ tests/
 
 | 类别 | 例 | 说明 |
 |---|---|---|
-| 单元测试 | `test_jit_orc_deopt.cpp` | `<module>_<feature>` 二级分类 |
-| 批次聚合 | `test_jit_aot_hot_update_unit_batch.cpp` | 多 AC 合并 |
+| 单元 / 主题套件 | `test_linear_cross_closure.cpp` | `<module>_<feature>` — **无 issue 后缀** |
+| 批次聚合 | `test_jit_aot_hot_update_unit_batch.cpp` | 多 issue AC 合并 |
 | Bench | `bench_jit_orc_compile.cpp` | SLO gate 用 |
-| E2E `.aura` | `jit_deopt_basic.aura` | 按 module 命名 |
-| 回归 `.aura` | `closure_let_dangling.aura` | 不带数字前缀 |
+| E2E / 回归 `.aura` | `jit_deopt_basic.aura` | 不带数字前缀 |
 
-**issue 号处理**:主放 banner header (`// Issue #NNNN (#1978 renamed): issue# moved from filename to header.`)。
-文件名只在消歧义价值时带 issue 后缀。
+**Issue 号:** 只写在文件头 `@reason` / `// Issue #NNNN` 和
+`scripts/coverage/manifests/<N>.json`。历史遗留的 `test_*_NNNN.cpp` 按
+[`HOMES.md`](HOMES.md) 分波并入主题套件；**禁止新增**。
 
-## 添加新测试 (展开 — 在 5-step tree 之后用这个)
+## 添加新测试 (展开)
 
-```
-新 query:*-stats / engine:* schema gate?
-  └─ YES → tests/compiler/obs_schema_cases.hpp 加一行 + tests/compiler/production_sweep_cases.hpp (production flag)
-           跑 ninja -C build test_obs_schema_matrix && ./build/test_obs_schema_matrix. STOP.
+见 [`HOMES.md`](HOMES.md)。短版：
 
-新 stats surface (编译器/类型/shape)?
-  └─ tests/compiler/test_<feature>_<issue>.cpp (单 AC)
-     或扩 tests/compiler/test_<theme>_unit_batch.cpp (多 AC 聚合).
-
-新 behavioral gate (fiber / hygiene / typed mutate)?
-  └─ tests/serve/test_fiber_<feature>.cpp 或 tests/compiler/test_<feature>_unit_batch.cpp.
-
-跨模块 hot-path 场景?
-  └─ tests/core/test_hotpath_matrix_batch.cpp (Single mega binary).
-
-新 E2E .aura?
-  └─ tests/e2e/<feature>.aura 或 tests/suite/<feature>.aura
-
-新 benchmark?
-  └─ tests/bench/<module>/bench_<feature>.cpp 或 tests/bench/bench_<lang_bench>.aura
-```
+1. schema → `obs_schema_cases.hpp`
+2. 有主题家 → **改那个文件**
+3. 没有家 → `test_<module>_<feature>.cpp`（无 issue 号）+ CMake light link
 
 ## Harness
 
@@ -183,14 +173,16 @@ ninja -C build test_arena_batch test_gc_compact_batch  # EXCLUDE_FROM_ALL 目标
 ## 不要做
 
 - 不要再开 `tests/domain/`、`tests/arena/`、`tests/edsl/`、`tests/compiler_core/`、`tests/jit/`、`tests/fiber/`、`tests/mutation/`、`tests/observability/`、`tests/linear/`、`tests/shape/`、`tests/misc/`、`tests/stdlib/`、`tests/suite/` 等 theme-named dir
-- 不要再写 `tests/test_issue_NNNN.cpp` (legacy 模式,新代码写 `tests/<module>/test_<feature>_<issue>.cpp`)
+- 不要再写 `tests/test_issue_NNNN.cpp` / `tests/**/test_*_NNNN.cpp`（pre-commit hard fail）
 - 不要再写 `docs/design/NNNN-*.md` (per Anqi #1655 哲学:agent 仓库 plan 走 chat)
 - 顶层 `tests/<NAME>.cpp` 只在 fallback 时用 (老测试未迁移完),新代码必须放 `tests/<module>/` 下
+- 新 AC **先搜再写**：`rg` 主题关键词 → 扩现有 suite，不要新开 issue 号文件
 
 ## Related
 
 | Doc | Purpose |
 |-----|---------|
+| [`HOMES.md`](HOMES.md) | **Agent 必读** — theme → suite map + hard bans + consolidation waves |
 | [`STRATEGY.md`](STRATEGY.md) | Hot-path coverage matrix + SLO goals (#1887) |
 | [`legacy_test_inventory.md`](legacy_test_inventory.md) | #1957 inventory + migration waves |
 | [`root_test_classification.md`](root_test_classification.md) | Theme → module map + near-dups |

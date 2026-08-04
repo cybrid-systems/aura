@@ -13,7 +13,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac1_default_depth1",
         "default depth_cap == 1"
@@ -51,7 +51,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac2_depth2_discover_hard"
       ]
@@ -66,7 +66,7 @@
     },
     {
       "ac": "AC3",
-      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac3_cone_trunc"
       ]
@@ -81,7 +81,7 @@
     },
     {
       "ac": "AC4",
-      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac4_soft_observe"
       ]
@@ -99,7 +99,7 @@
       "ac": "AC5",
       "path": "CMakeLists.txt",
       "contains": [
-        "test_linear_cross_closure_depth2_2612"
+        "test_linear_cross_closure"
       ]
     },
     {
@@ -112,7 +112,7 @@
     },
     {
       "ac": "AC5",
-      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "path": "tests/compiler/test_linear_cross_closure.cpp",
       "contains": [
         "ac5_schema_source"
       ]

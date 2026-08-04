@@ -6,31 +6,31 @@
     {"ac": "AC1", "path": "src/compiler/type_checker_impl.cpp", "contains": ["discover_cross_closure_linear_escapes"]},
     {"ac": "AC1", "path": "src/compiler/typed_mutation_audit.h", "contains": ["linear_cross_closure_hard_enabled"]},
     {"ac": "AC1", "path": "src/compiler/evaluator_typecheck.cpp", "contains": ["CrossClosureEscape"]},
-    {"ac": "AC1", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac1_one_level_soft_prod"]},
+    {"ac": "AC1", "path": "tests/compiler/test_linear_cross_closure.cpp", "contains": ["ac1_one_level_soft_prod"]},
 
     {"ac": "AC2", "path": "src/compiler/typed_mutation_audit.h", "contains": ["production_defaults_active", "return 2"]},
     {"ac": "AC2", "path": "src/compiler/type_checker_impl.cpp", "contains": ["depth_remaining", "depth2_entries"]},
-    {"ac": "AC2", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac2_nested_depth2_prod"]},
+    {"ac": "AC2", "path": "tests/compiler/test_linear_cross_closure.cpp", "contains": ["ac2_nested_depth2_prod"]},
 
     {"ac": "AC3", "path": "src/compiler/typed_mutation_audit.h", "contains": ["linear_cross_closure_trunc_force_total"]},
     {"ac": "AC3", "path": "src/compiler/evaluator_typecheck.cpp", "contains": ["linear_cross_closure_trunc_force_total", "cap_truncations && hard", "force_cross_closure"]},
-    {"ac": "AC3", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac3_trunc_prod_force"]},
+    {"ac": "AC3", "path": "tests/compiler/test_linear_cross_closure.cpp", "contains": ["ac3_trunc_prod_force"]},
 
     {"ac": "AC4", "path": "src/compiler/evaluator_typecheck.cpp", "contains": ["linear_cross_closure_cap_trunc_total"]},
-    {"ac": "AC4", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac4_soft_trunc_observe"]},
+    {"ac": "AC4", "path": "tests/compiler/test_linear_cross_closure.cpp", "contains": ["ac4_soft_trunc_observe"]},
 
     {"ac": "AC5", "path": "src/compiler/typed_mutation_audit.h", "contains_any": ["e[0] == '0'", "e[0] == \"0\""]},
     {"ac": "AC5", "path": "src/compiler/type_checker_impl.cpp", "contains": ["depth <= 0"]},
-    {"ac": "AC5", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac5_depth0_disable"]},
+    {"ac": "AC5", "path": "tests/compiler/test_linear_cross_closure.cpp", "contains": ["ac5_depth0_disable"]},
 
     {"ac": "AC6", "path": "src/compiler/evaluator_primitives_security.cpp", "contains": ["schema-2623", "issue-2623", "linear-cross-closure-trunc-force-total", "linear-cross-closure-depth-max", "linear-cross-closure-prod-depth-default"]},
     {"ac": "AC6", "path": "src/compiler/typed_mutation_audit.h", "contains": ["#2623"]},
     {"ac": "AC6", "path": "src/compiler/type_checker_impl.cpp", "contains": ["#2623", "std::min(3, raw_depth)"]},
     {"ac": "AC6", "path": "src/compiler/evaluator_typecheck.cpp", "contains": ["#2623"]},
     {"ac": "AC6", "path": "src/compiler/type_checker.ixx", "contains": ["#2623"]},
-    {"ac": "AC6", "path": "CMakeLists.txt", "contains": ["test_linear_cross_closure_depth_trunc_2623"]},
+    {"ac": "AC6", "path": "CMakeLists.txt", "contains": ["test_linear_cross_closure"]},
     {"ac": "AC6", "path": "build.py", "contains": ["check_linear_cross_closure_depth_trunc_2623", "cmd_linear_cross_closure_depth_trunc_coverage"]},
-    {"ac": "AC6", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac6_schema_source"]},
+    {"ac": "AC6", "path": "tests/compiler/test_linear_cross_closure.cpp", "contains": ["ac6_schema_source"]},
     {"ac": "AC6", "path": "scripts/coverage/checks/check_linear_cross_closure_depth_trunc_2623.py", "contains": ["Issue #2623"]},
     {"ac": "AC6", "path": "src/compiler/typed_mutation_audit.h", "contains_any": ["kMax = 3", "kMax=3"]},
     {
@@ -44,6 +44,6 @@
 
     {"ac": "AC7", "path": "scripts/coverage/checks/check_linear_three_layer_wire_2559.py", "contains": ["LINEAR_CROSS_CLOSURE_ENV_KEYS", "AURA_LINEAR_CROSS_CLOSURE_HARD", "AURA_LINEAR_CROSS_CLOSURE_DEPTH"]},
     {"ac": "AC7", "path": "src/compiler/typed_mutation_audit.h", "contains": ["AURA_LINEAR_CROSS_CLOSURE_HARD", "AURA_LINEAR_CROSS_CLOSURE_DEPTH"]},
-    {"ac": "AC7", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac7_inventory_2559"]}
+    {"ac": "AC7", "path": "tests/compiler/test_linear_cross_closure.cpp", "contains": ["ac7_inventory_2559"]}
   ]
 }

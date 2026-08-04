@@ -254,33 +254,29 @@ if [ -n "$test_registry_files" ]; then
     echo "pre-commit: test-registry verify (--check) clean ✓"
 fi
 
-# ── test_issue_*.cpp habit change nudge (#1958) ──
-# Prefer tests/domain/ suites (and cases/obs_schema_cases.hpp) over new
-# per-issue binaries. Soft nudge only — see tests/README.md.
-new_test_issue_files=$(git diff --cached --name-only --diff-filter=A \
-    | grep -E '^tests/(issues/)?test_issue_[0-9].*\.cpp$' || true)
-if [ -n "$new_test_issue_files" ]; then
-    echo ""
-    echo "💡  pre-commit: NEW test_issue_*.cpp detected (A):"
-    echo "$new_test_issue_files" | sed 's/^/      /'
-    echo "   ↳ Prefer tests/domain/ (extend an existing suite or cases/*.hpp)."
-    echo "     Scaffold: tests/templates/test_domain_pattern.cpp"
-    echo "     Policy:   tests/README.md · tests/domain/README.md"
-    echo "     Inventory: tests/legacy_test_inventory.md (#1957)"
-    echo "     New test_issue_*.cpp only for justified exceptions (commit msg)."
-    echo "     (not a hard gate — habit nudge.)"
-    echo ""
+# ── Test naming policy (HARD) — tests/HOMES.md ──
+# Reject NEW issue-numbered / per-issue test files. Extend thematic suites.
+new_banned_tests=$(git diff --cached --name-only --diff-filter=A \
+    | grep -E '^tests/.+\.cpp$' \
+    | grep -E '(^tests/(issues/)?test_issue_[0-9])|(^tests/.*/test_issue_[0-9])|(^tests/.+/test_.+_[0-9]{3,5}\.cpp$)|(^tests/test_.+_[0-9]{3,5}\.cpp$)' \
+    || true)
+if [ -n "$new_banned_tests" ]; then
+    echo "❌ pre-commit: new issue-numbered test file(s) blocked:" >&2
+    echo "$new_banned_tests" | sed 's/^/      /' >&2
+    echo "   Policy: tests/HOMES.md + tests/README.md" >&2
+    echo "   Do: extend an existing thematic suite (rg theme under tests/<module>/)." >&2
+    echo "   Or: tests/<module>/test_<module>_<feature>.cpp  (NO trailing issue digits)." >&2
+    echo "   Issue #N goes in the file banner + scripts/coverage/manifests/<N>.json only." >&2
+    exit 1
 fi
 
-new_test_other_files=$(git diff --cached --name-only --diff-filter=A \
-    | grep -E '^tests/test_[a-z]' | grep -vE '(test_issue_[0-9].*\.cpp|test_(ir|adts?|fiber|mutation|observability|persist|smoke|repl|runtime_unit|harness|primitive|jit|contract|cli|regression|bash|spec|issue|production|optimizer|ast|safepoint|jit_metrics|jit_concurrent|jit_consistency|jit_full|jit_consistent|compiler_closure|compiler_core|compiler_runtime|contract_handler|contract_stub|core_builtins|test_ir|tests|testing|tools|test_))' || true)
-if [ -n "$new_test_other_files" ]; then
-    # Root tests/test_*.cpp that are not issue files — prefer domain/ for themes.
-    echo "ℹ️  pre-commit: NEW tests/test_*.cpp at root:"
-    echo "$new_test_other_files" | sed 's/^/      /'
-    echo "   ↳ Prefer tests/domain/test_domain_*.cpp when adding a theme suite."
-    echo "     (informational — not blocking)"
-    echo ""
+new_root_tests=$(git diff --cached --name-only --diff-filter=A \
+    | grep -E '^tests/test_[a-z].*\.cpp$' || true)
+if [ -n "$new_root_tests" ]; then
+    echo "❌ pre-commit: new tests/test_*.cpp at repo root blocked:" >&2
+    echo "$new_root_tests" | sed 's/^/      /' >&2
+    echo "   Put new suites under tests/<src-module>/ (see tests/HOMES.md)." >&2
+    exit 1
 fi
 
 # ── Aura philosophy guard: no docs/design/ in commits ─────────────
