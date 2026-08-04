@@ -204,7 +204,8 @@ Approximate keyword buckets (a file may fit multiple; primary used for routing):
 | **S1 / A2** (done) | `test_shape_soa_storm_batch` (14 members) | misc 168→154; `shape_profiler_concurrency_2141` kept special exe |
 | **S1 / A3** (done) | `test_ir_closure_jit_misc_batch` (23 members) | misc 154→131; IR/closure/JIT/deopt/DCE/PrimCall |
 | **S1 / A4** (done) | `test_module_query_batch` (12 members) | misc 131→119; module/rebind + query hygiene/index |
-| **S1** (rest) | Stream A5 (misc split continues) | misc ≤110; more new batches green |
+| **S1 / A5** (done) | `test_json_io_cap_batch` (10 members) | misc 119→109; JSON/IO/cap/regex/channel |
+| **S1** (rest) | Stream A6+ (misc split continues) | misc ≤110; more new batches green |
 | **S2** | Stream A6–A10 + Stream C merges | misc ≤40; 3 content merges |
 | **S3** | Stream B1–B5 renames | those batches have **zero** `_NNNN` filenames |
 | **S4** | Stream B6–B10 renames | issue-suffix file count → **&lt; 30** specials only |
