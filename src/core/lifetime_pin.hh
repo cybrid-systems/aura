@@ -196,46 +196,14 @@ private:
     bool ffi_handoff_ = false;
 };
 
-inline std::size_t restamp_all_pins_for_arena(std::uint64_t arena_id,
-                                              std::uint64_t new_gen = 0) noexcept {
-    std::lock_guard<std::mutex> lock(pin_registry_mtx());
-    auto& reg = pin_registry();
-    std::size_t n = 0;
-    for (auto* p : reg) {
-        if (!p || !p->pinned())
-            continue;
-        if (arena_id != 0 && p->arena_id() != arena_id)
-            continue;
-        p->restamp(new_gen, arena_id);
-        ++n;
-    }
-    return n;
-}
-
-inline std::size_t invalidate_all_pins_for_arena(std::uint64_t arena_id) noexcept {
-    std::lock_guard<std::mutex> lock(pin_registry_mtx());
-    auto& reg = pin_registry();
-    std::size_t n = 0;
-    for (auto* p : reg) {
-        if (!p || !p->pinned())
-            continue;
-        if (arena_id != 0 && p->arena_id() != arena_id)
-            continue;
-        p->unpin_on_compact();
-        ++n;
-    }
-    return n;
-}
-
-inline std::size_t live_pin_count() noexcept {
-    std::lock_guard<std::mutex> lock(pin_registry_mtx());
-    auto& reg = pin_registry();
-    std::size_t n = 0;
-    for (auto* p : reg)
-        if (p && p->pinned())
-            ++n;
-    return n;
-}
+// restamp_all_pins_for_arena / invalidate_all_pins_for_arena / live_pin_count
+// live ONLY in lifetime_pin.ixx (sharded registry, #2342/#2375).
+//
+// Do NOT reintroduce header-form free functions with those names: a TU that
+// both `#include "lifetime_pin.hh"` and `import aura.core.lifetime_pin` makes
+// the call ambiguous (GCC modules — asan/CI failure on evaluator_mutation_boundary).
+// Module consumers: import aura.core.lifetime_pin.
+// Non-module TUs that need bulk restamp/invalidate must become module consumers.
 
 // Issue #2280: epoch-scoped linear pin contract (header form for
 // non-module TUs). Live linear objects (linear_rt::Owned|Borrowed|

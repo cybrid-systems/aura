@@ -1801,7 +1801,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         (void)ev_->restamp_pinned_stable_refs();
         const std::uint64_t boundary_gen =
             ev_->workspace_flat() != nullptr ? ev_->workspace_flat()->generation() : 0;
-        const auto n_pins = aura::core::lifetime::restamp_all_pins_for_arena(0, boundary_gen);
+        // Module-only free function (lifetime_pin.ixx). Do not include
+        // lifetime_pin.hh in this TU — dual include+import is ambiguous.
+        const auto n_pins =
+            aura::core::lifetime::restamp_all_pins_for_arena(std::uint64_t{0}, boundary_gen);
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             if (n_pins > 0)
                 m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(n_pins),

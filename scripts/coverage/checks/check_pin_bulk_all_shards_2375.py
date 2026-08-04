@@ -83,8 +83,15 @@ def main() -> int:
             f"AC2: {name} still uses single-shard index for N!=0",
         )
 
-    # Production callers
-    must("restamp_all_pins_for_arena(0" in mb, "AC5: boundary dtor restamp_all(0)")
+    # Production callers (arg may be `0` or `std::uint64_t{0}`).
+    must(
+        re.search(
+            r"restamp_all_pins_for_arena\s*\(\s*(?:std::uint64_t\s*\{\s*0\s*\}|0)\s*,",
+            mb,
+        )
+        is not None,
+        "AC5: boundary dtor restamp_all arena_id==0",
+    )
     must("invalidate_all_pins_for_arena(0)" in gc, "AC5: GC invalidate_all(0)")
 
     # Unit test
