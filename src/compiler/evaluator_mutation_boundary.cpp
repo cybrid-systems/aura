@@ -12,7 +12,8 @@ module;
 // can name PersistentChildVector in the checkpoint snapshot type.
 #include "../core/persistent_child_vector.hh"
 #include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp capture + publisher
-#include "../core/lifetime_pin.hh" // Issue #2640: aura::core::lifetime namespace (for restamp_all_pins_for_arena)
+// lifetime_pin.hh omitted: import aura.core.lifetime_pin provides
+// restamp_all_pins_for_arena; dual include+import makes the call ambiguous.
 #include "../core/workspace_epoch.hh"    // Issue #2170: current_mutation_epoch() for capture
 #include "coercion_provenance_policy.hh" // Issue #2640: g_coercion_provenance_miss_force_audit_total + blame_soft_escalate_* + consume_provenance_miss_for_boundary
 
