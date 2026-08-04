@@ -299,7 +299,8 @@ int run_test_mutation_safety_snapshot_steal_2184() {
                 CHECK(f->mutation_safety_snapshot_inconsistent(s), "AC2: snapshot inconsistent");
             }
             // Production default: !is_steal_snapshot_soft_mode() → fail-closed.
-            CHECK(!is_steal_snapshot_soft_mode(), "AC2: production default fail-closed");
+            CHECK(!aura::serve::is_steal_snapshot_soft_mode(),
+                  "AC2: production default fail-closed");
             // The mismatch counter may have advanced if a steal attempt
             // observed the inconsistency. Steal attempts are timing-
             // dependent so we soft-assert.
