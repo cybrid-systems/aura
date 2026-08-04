@@ -10703,8 +10703,6 @@ std::size_t selective_adt_guardshape_renarrow(FlatAST& flat, const StringPool& p
     return sites;
 }
 
-} // namespace aura::compiler
-
 // Issue #2644: batch-level TypeVar refined consistency (anti SOLVED-but-drift).
 // Groups occurrence_goals_ by UF rep, checks pairwise consistent_unify both
 // directions. AC4 zero cost on empty table. Returns true when every pair
@@ -10740,3 +10738,5 @@ bool ConstraintSystem::check_occurrence_refined_consistency() noexcept {
     }
     return true;
 }
+
+} // namespace aura::compiler

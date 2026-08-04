@@ -9,20 +9,18 @@
 // Policy: tests/README.md (R1 src/-aligned layout)
 //
 // ── BEFORE YOU CREATE A NEW FILE ──────────────────────────────────────────
-// 1. Can this AC live in an existing suite?
-//      test_arena_batch / test_hotpath_matrix_batch / test_soa_batch
-//      test_obs_schema_matrix + tests/compiler/obs_schema_cases.hpp
-// 2. Is it only a stats schema? → add a row to obs_schema_cases.hpp, STOP.
-// 3. Only then copy this template to tests/<src-aligned-subdir>/ and register CMake.
-// 4. NEVER add tests/issues/test_issue_N.cpp for new work.
+// 1. Read tests/HOMES.md — prefer an existing thematic suite.
+// 2. Schema-only? → obs_schema_cases.hpp row, STOP.
+// 3. Same family already has a file? → extend it (add AC + run_all), STOP.
+// 4. Only then copy this template to tests/<src-module>/test_<module>_<feature>.cpp
+// 5. NEVER: test_issue_N.cpp or test_*_<issue_number>.cpp (pre-commit hard-fails).
 //
 // ── COPY-PASTE CHECKLIST ──────────────────────────────────────────────────
-//  [ ] Rename to tests/<src-aligned-subdir>/test_<module>_<feature>[_<issue>].cpp
-//  [ ] Replace THEME / NNNN / query names / ACs below
+//  [ ] Name: tests/<src-module>/test_<module>_<feature>.cpp  (NO issue suffix)
+//  [ ] Banner: // Issue #NNNN — …   (number in comment only)
 //  [ ] CMakeLists.txt:
-//        aura_add_issue_test(test_<module>_<feature>[_<issue>])
-//        aura_issue_test_link_light(test_<module>_<feature>[_<issue>])     # default (no LLVM)
-//        # aura_issue_test_link_llvm_jit(...)  ONLY if real OrcJIT / emit_native needed
-//        add_dependencies(all_test_issue_targets test_<module>_<feature>[_<issue>])
-//  [ ] ninja -C build test_<module>_<feature>[_<issue>] &&
-//  ./build/test_<module>_<feature>[_<issue>]
+//        aura_add_issue_test(test_<module>_<feature>)
+//        aura_issue_test_link_light(test_<module>_<feature>)   # default
+//        add_dependencies(all_test_issue_targets test_<module>_<feature>)
+//  [ ] Coverage: scripts/coverage/manifests/<N>.json if declarative AC
+//  [ ] ninja -C build test_<module>_<feature> && ./build/test_<module>_<feature>
