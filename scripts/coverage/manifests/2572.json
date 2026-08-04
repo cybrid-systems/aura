@@ -1,0 +1,80 @@
+{
+  "issue": 2572,
+  "title": "Issue #2572: module-export multi-display ConstString pool + JIT display.",
+  "ok": "OK: Issue #2572 module export multi-display — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "#2572",
+        "ir_cache_strings_[name] = ir_mod.string_pool",
+        "cache_module"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/lowering_impl.cpp",
+      "contains": [
+        "ConstString",
+        "cache_strings",
+        "add_string"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit.cpp",
+      "contains": [
+        "aura_display_value",
+        "PrimDisplay"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "aura_display_value",
+        "#2572"
+      ]
+    },
+    {
+      "ac": "AC3-aot",
+      "path": "lib/runtime.c",
+      "contains": [
+        "aura_display_value",
+        "#2572"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_module_export_display_2572.cpp",
+      "contains": [
+        "ac1_exported_multi_display"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_module_export_display_2572"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "check_module_export_display_2572",
+        "cmd_module_export_display_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "bind_in_env=*/false",
+        "#2572"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_module_export_display_2572.py"
+}

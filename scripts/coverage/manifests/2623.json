@@ -31,7 +31,7 @@
     {"ac": "AC6", "path": "CMakeLists.txt", "contains": ["test_linear_cross_closure_depth_trunc_2623"]},
     {"ac": "AC6", "path": "build.py", "contains": ["check_linear_cross_closure_depth_trunc_2623", "cmd_linear_cross_closure_depth_trunc_coverage"]},
     {"ac": "AC6", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac6_schema_source"]},
-    {"ac": "AC6", "path": "scripts/check_linear_cross_closure_depth_trunc_2623.py", "contains": ["Issue #2623"]},
+    {"ac": "AC6", "path": "scripts/coverage/checks/check_linear_cross_closure_depth_trunc_2623.py", "contains": ["Issue #2623"]},
     {"ac": "AC6", "path": "src/compiler/typed_mutation_audit.h", "contains_any": ["kMax = 3", "kMax=3"]},
     {
       "ac": "AC6",
@@ -42,7 +42,7 @@
       ]
     },
 
-    {"ac": "AC7", "path": "scripts/check_linear_three_layer_wire_2559.py", "contains": ["LINEAR_CROSS_CLOSURE_ENV_KEYS", "AURA_LINEAR_CROSS_CLOSURE_HARD", "AURA_LINEAR_CROSS_CLOSURE_DEPTH"]},
+    {"ac": "AC7", "path": "scripts/coverage/checks/check_linear_three_layer_wire_2559.py", "contains": ["LINEAR_CROSS_CLOSURE_ENV_KEYS", "AURA_LINEAR_CROSS_CLOSURE_HARD", "AURA_LINEAR_CROSS_CLOSURE_DEPTH"]},
     {"ac": "AC7", "path": "src/compiler/typed_mutation_audit.h", "contains": ["AURA_LINEAR_CROSS_CLOSURE_HARD", "AURA_LINEAR_CROSS_CLOSURE_DEPTH"]},
     {"ac": "AC7", "path": "tests/compiler/test_linear_cross_closure_depth_trunc_2623.cpp", "contains": ["ac7_inventory_2559"]}
   ]

@@ -1,0 +1,45 @@
+{
+  "issue": 2530,
+  "title": "Issue #2530: Audit ring 1024 + Isolation publish\"\"\"",
+  "ok": "OK: check_2530: OK",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "kAuditRing = 1024"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/workspace_isolation.hh",
+      "contains": [
+        "kAuditRing = 1024"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/workspace_isolation.hh",
+      "contains": [
+        "PublishedIsolationSlot",
+        "try_load_audit_seq",
+        "shared_mutex"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_audit_ring_publish_2530"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_2530"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2530.py"
+}

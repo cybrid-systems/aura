@@ -1,0 +1,112 @@
+{
+  "issue": 2405,
+  "title": "Issue #2405: query:mutation-hold-estimate Agent batch planning surface.",
+  "ok": "OK: mutation-hold-estimate #2405 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "query:mutation-hold-estimate",
+        "Issue #2405",
+        "hold-us-p50",
+        "hold-us-p99",
+        "budget-us",
+        "slo-us",
+        "recommend-split",
+        "dirty-node-estimate",
+        "dirty-upward-call-estimate"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_mutation_hold_estimate_2405.cpp",
+      "contains": [
+        "2405 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "mutation_hold_sample_ring",
+        "kMutationHoldSampleRing"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "mutation_hold_sample_ring",
+        "Issue #2405"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_mutation_hold_estimate_2405.cpp",
+      "contains": [
+        "2405 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_mutation_hold_estimate_2405.cpp",
+      "contains": [
+        "2405 AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "hold-estimate-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2405",
+        "issue-2405",
+        "schema-2349"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "mutation_hold_budget_us"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_mutation_hold_estimate_2405.cpp",
+      "contains": [
+        "2405 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_mutation_hold_estimate_2405.cpp",
+      "contains": [
+        "2405 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_mutation_hold_estimate_2405",
+        "cmd_mutation_hold_estimate_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_mutation_hold_estimate_2405"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_mutation_hold_estimate_2405.py"
+}

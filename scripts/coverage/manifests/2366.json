@@ -1,0 +1,115 @@
+{
+  "issue": 2366,
+  "title": "Issue #2366: per-entry epoch invariant walk + MustDeopt (#2304 follow-up).",
+  "ok": "OK: Issue #2366 epoch invariant per-entry walk — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "run_epoch_invariant_if_enabled",
+        "aura_epoch_invariant_mode()",
+        "mode == 0"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "contains": [
+        "ac1_soft_off"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "aura_aot_count_live_generation_behind_slots"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_aot_inject_live_stale_slot_for_test",
+        "aura_set_epoch_invariant_mode"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "contains": [
+        "ac2_soft_detect_stale_aot"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "version_stamp_.bridge_epoch",
+        "must_deopt_before_next_call",
+        "walk_active_closures"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "contains": [
+        "ac3_soft_clean"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "std::abort()",
+        "[#2366]"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "aura_set_epoch_invariant_hard_enabled"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "contains": [
+        "ac4_hard_mode"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2366",
+        "issue-2366",
+        "epoch-invariant-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_epoch_invariant_walk_2366"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_epoch_invariant_walk_2366",
+        "cmd_epoch_invariant_walk_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "contains": [
+        "ac5_source_and_query"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_epoch_invariant_walk_2366.py"
+}

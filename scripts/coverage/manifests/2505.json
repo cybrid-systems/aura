@@ -1,0 +1,131 @@
+{
+  "issue": 2505,
+  "title": "Issue #2505: cross-COW soft-migrate drift threshold vs hard safe-fallback.",
+  "ok": "OK: Issue #2505 cross-COW drift contract — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "cross_cow_soft_migrate_max_drift_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "contains": [
+        "ac1_near_drift_soft"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "FarBehind",
+        "Linear"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "cross_cow_hard_reject_far_behind_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "contains": [
+        "ac2_far_drift_hard"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "cross_cow_hard_reject_linear_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "contains": [
+        "ac3_linear_and_freed"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Disabled"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "cross_cow_hard_reject_disabled_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "contains": [
+        "ac4_soft_disabled"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "single-workspace MVP",
+        "call-time"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_bump_cross_cow_hard_reject_reason"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2505",
+        "cross-cow-call-time-only-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_cross_cow_drift_contract_2505"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_cross_cow_drift_contract_2505",
+        "cmd_cross_cow_drift_contract_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_cross_cow_drift_contract_2505.cpp",
+      "contains": [
+        "ac5_docs_query_gate"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_cross_cow_drift_contract_2505.py"
+}

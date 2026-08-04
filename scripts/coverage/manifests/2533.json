@@ -1,0 +1,44 @@
+{
+  "issue": 2533,
+  "title": "Issue #2533: Residual force safepoint\"\"\"",
+  "ok": "OK: check_2533: OK",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "request_force_safepoint"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "2533"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "residual-force-safepoint-total",
+        "schema-2533"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_residual_force_safepoint_2533"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_2533"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2533.py"
+}

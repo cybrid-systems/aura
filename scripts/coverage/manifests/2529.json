@@ -1,0 +1,39 @@
+{
+  "issue": 2529,
+  "title": "Issue #2529: Restricted grant retain K=16\"\"\"",
+  "ok": "OK: check_2529: OK",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "2529",
+        "kDefaultGrantEpochRetainWindowRestricted"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "kDefaultGrantEpochRetainWindowRestricted",
+        "16"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_grant_epoch_retain_restricted_2529",
+        "aura_issue_test_link_light(test_grant_epoch_retain_restricted_2529)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_2529"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2529.py"
+}

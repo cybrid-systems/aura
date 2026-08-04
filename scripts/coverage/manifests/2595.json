@@ -1,0 +1,85 @@
+{
+  "issue": 2595,
+  "title": "Issue #2595: unify densify success gate (pin ∧ untracked ∧ panic_residual).",
+  "ok": "OK: Issue #2595 densify unified gate — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "hdr",
+      "path": "src/core/densify_consistency_report.h",
+      "contains": [
+        "bool untracked_ok = true;",
+        "bool panic_residual_ok = true;",
+        "return pin_ok && untracked_ok && panic_residual_ok && linear_ok && type_ok &&",
+        "g_densify_unified_gate_fail_total",
+        "bump_densify_unified_gate_fail_total",
+        "densify_unified_gate_fail_total",
+        "reset_densify_unified_gate_for_test",
+        "g_densify_unified_gate_fail_total.store(0",
+        "Issue #2595"
+      ]
+    },
+    {
+      "ac": "driver",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "untracked_baseline",
+        "panic_depth_baseline",
+        "g_moving_untracked_external_roots_total.load",
+        "g_gc_defer_pending_panic_depth.load",
+        "densify_consistency.untracked_ok",
+        "densify_consistency.panic_residual_ok",
+        "gc_deferred_for_evaluator(static_cast<void*>(ev_))",
+        "bump_densify_unified_gate_fail_total",
+        "Issue #2595"
+      ]
+    },
+    {
+      "ac": "arena",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "g_moving_untracked_external_roots_total",
+        "moving_incomplete_remap",
+        "untracked_kept_count"
+      ]
+    },
+    {
+      "ac": "gc",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "g_gc_defer_pending_panic_depth",
+        "gc_deferred_for_evaluator",
+        "inline bool gc_deferred_for_evaluator(void* evaluator_id)"
+      ]
+    },
+    {
+      "ac": "test",
+      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "contains": [
+        "Issue #2595",
+        "ac6_unify_axes_in_report",
+        "ac7_force_reason_priority",
+        "ac8_unified_gate_fail_counter",
+        "ac9_phase5_driver_wiring",
+        "ac10_panic_state_source_cite",
+        "bool untracked_ok = true;",
+        "bool panic_residual_ok = true;",
+        "return pin_ok && untracked_ok && panic_residual_ok && linear_ok && type_ok &&",
+        "g_densify_unified_gate_fail_total",
+        "bump_densify_unified_gate_fail_total",
+        "reset_densify_unified_gate_for_test",
+        "g_moving_untracked_external_roots_total",
+        "g_gc_defer_pending_panic_depth",
+        "gc_deferred_for_evaluator"
+      ]
+    },
+    {
+      "ac": "build",
+      "path": "build.py",
+      "contains": [
+        "cmd_densify_unified_gate_2595_coverage",
+        "check_densify_unified_gate_2595"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_densify_unified_gate_2595.py"
+}

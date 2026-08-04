@@ -1,0 +1,129 @@
+{
+  "issue": 2517,
+  "title": "Issue #2517: real-time longest outermost MutationBoundary hold probe.",
+  "ok": "OK: Issue #2517 mutation-hold-live — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "Issue #2517",
+        "mutation_hold_live_note_enter",
+        "mutation_hold_live_note_exit",
+        "g_mutation_hold_live_fiber_id",
+        "g_mutation_hold_live_start_ns"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "mutation_hold_live_note_enter",
+        "mutation_hold_live_note_exit",
+        "Issue #2517"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "contains": [
+        "AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "query:mutation-hold-live",
+        "fiber-id",
+        "start-ns",
+        "duration-us",
+        "depth"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "mutation_hold_live_snapshot"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "contains": [
+        "AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "s.held = true",
+        "mutation_hold_live_reset_for_test"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "contains": [
+        "AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "held"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2517",
+        "schema-2405",
+        "hold-estimate-coexist",
+        "query:mutation-hold-estimate"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "contains": [
+        "AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "Best-effort",
+        "compare_exchange_strong"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_mutation_hold_live_2517.cpp",
+      "contains": [
+        "AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_mutation_hold_live_2517"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_mutation_hold_live_2517",
+        "cmd_mutation_hold_live_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_mutation_hold_live_2517.py"
+}

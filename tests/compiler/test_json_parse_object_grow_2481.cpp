@@ -139,7 +139,7 @@ static void ac5_gate() {
     CHECK(build.find("cmd_json_parse_object_grow_coverage") != std::string::npos,
           "AC5: coverage cmd");
     CHECK(cmake.find("test_json_parse_object_grow_2481") != std::string::npos, "AC5: cmake test");
-    CHECK(!read_file("scripts/check_json_parse_object_grow_2481.py").empty(),
+    CHECK(!read_file("scripts/coverage/checks/check_json_parse_object_grow_2481.py").empty(),
           "AC5: check script exists");
 }
 

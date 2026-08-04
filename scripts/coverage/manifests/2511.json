@@ -1,0 +1,126 @@
+{
+  "issue": 2511,
+  "title": "Issue #2511: outermost Guard exit forced mailbox deferred drain under budget.",
+  "ok": "OK: Issue #2511 mailbox hold-exit drain — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "drain_deferred_under_budget",
+        "Issue #2511",
+        "AURA_MAILBOX_HOLD_DRAIN_BUDGET_US"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "drain_deferred_under_budget"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "contains": [
+        "AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "mailbox_hold_exit_drain_total",
+        "had_open_defer"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "contains": [
+        "AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "mailbox_hold_exit_starvation_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/mutation_concurrency_health.hh",
+      "contains": [
+        "mailbox_hold_exit_starvation_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "schema-2511",
+        "mailbox-hold-exit-drain-wired"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2511"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "contains": [
+        "AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "contains": [
+        "AC4",
+        "chaos"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "depth0 == 0"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_mailbox_hold_exit_drain_2511.cpp",
+      "contains": [
+        "AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_mailbox_hold_exit_drain_2511"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_mailbox_hold_exit_drain_2511",
+        "cmd_mailbox_hold_exit_drain_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "schema-2378"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_mailbox_hold_exit_drain_2511.py"
+}

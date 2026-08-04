@@ -24,7 +24,7 @@
     {"ac": "AC6", "path": "CMakeLists.txt", "contains": ["test_castop_typed_meta_2624"]},
     {"ac": "AC6", "path": "build.py", "contains": ["check_castop_typed_meta_2624", "cmd_castop_typed_meta_coverage"]},
     {"ac": "AC6", "path": "tests/compiler/test_castop_typed_meta_2624.cpp", "contains": ["ac6_schema_source"]},
-    {"ac": "AC6", "path": "scripts/check_castop_typed_meta_2624.py", "contains": ["Issue #2624"]},
+    {"ac": "AC6", "path": "scripts/coverage/checks/check_castop_typed_meta_2624.py", "contains": ["Issue #2624"]},
     {
       "ac": "AC6",
       "forbid": [

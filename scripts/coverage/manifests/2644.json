@@ -1,0 +1,113 @@
+{
+  "issue": 2644,
+  "title": "Issue #2644: batch-level TypeVar refined consistency (anti SOLVED-but-drift).",
+  "ok": "OK: Issue #2644 batch-level TypeVar refined consistency — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "check_occurrence_refined_consistency"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "check_occurrence_refined_consistency"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "composite_type_scheme_drift_reject_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_type_scheme_drift_reject_total",
+        "production_defaults_active()",
+        "AuditStrategy::Full"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "composite_type_scheme_drift_observe_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_type_scheme_drift_observe_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "rep_first"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "occurrence_goals_.empty()",
+        "return true"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "#2644"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "#2644"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "#2644",
+        "composite_type_scheme_drift_reject_total",
+        "composite_type_scheme_drift_observe_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "#2644"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_composite_commit_cs_reuse_2180.cpp",
+      "contains": [
+        "#2644",
+        "ac2644_empty_cs_no_drift_bump",
+        "ac2644_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_occurrence_refined_consistency_2644"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_occurrence_refined_consistency_2644.py"
+}

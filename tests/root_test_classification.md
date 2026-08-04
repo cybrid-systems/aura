@@ -1,6 +1,6 @@
 # Root test classification
 
-**Generated:** 2026-07-21 by `scripts/classify_root_tests.py`
+**Generated:** 2026-07-21 by `scripts/tools/classify_root_tests.py`
 **Content hash:** `3be7599554a56e98`
 **Companion:** [`legacy_test_inventory.md`](legacy_test_inventory.md) (#1957 issues/)
 

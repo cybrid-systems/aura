@@ -1,0 +1,84 @@
+{
+  "issue": 2479,
+  "title": "Issue #2479: regex-* ReDoS wall-clock timeout + size caps.",
+  "ok": "OK: regex ReDoS timeout #2479 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_math.cpp",
+      "contains": [
+        "Issue #2479",
+        "run_regex_timed",
+        "AURA_REGEX_TIMEOUT_MS",
+        "AURA_REGEX_MAX_INPUT"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_math.cpp",
+      "contains": [
+        "regex input exceeds size limit",
+        "run_regex_timed"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "regex_timeout_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "bump_regex_timeout_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "regex-timeouts",
+        "schema-2479"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_math.cpp",
+      "contains": [
+        "regex execution exceeded timeout"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_regex_redos_timeout_2479.cpp",
+      "contains": [
+        "2479 AC2"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_regex_redos_timeout_2479",
+        "cmd_regex_redos_timeout_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_regex_redos_timeout_2479"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "tests/compiler/test_regex_redos_timeout_2479.cpp",
+      "contains": [
+        "2479 AC5"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_regex_redos_timeout_2479.py"
+}

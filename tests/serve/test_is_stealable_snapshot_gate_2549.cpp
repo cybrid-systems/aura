@@ -139,7 +139,7 @@ static void ac4_source_cite_and_gate() {
     const auto fh = read_file("src/serve/fiber.h");
     const auto wc = read_file("src/serve/worker.cpp");
     const auto wh = read_file("src/serve/worker.h");
-    const auto lint = read_file("scripts/check_is_stealable_snapshot_gate_2549.py");
+    const auto lint = read_file("scripts/coverage/checks/check_is_stealable_snapshot_gate_2549.py");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
 

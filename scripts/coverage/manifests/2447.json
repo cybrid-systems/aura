@@ -1,0 +1,56 @@
+{
+  "issue": 2447,
+  "title": "Issue #2447: region_by_sym_ concurrent insert + find race-free.",
+  "ok": "OK: region_by_sym_ map race #2447 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2447",
+        "region_by_sym_",
+        "set_function_region",
+        "region_table_mtx_",
+        "unique_lock",
+        "region_by_sym_[name] = region"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "get_function_region_for_sym",
+        "shared_lock",
+        "region_by_sym_.find",
+        "cold map fallback"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_ast_concurrency.cpp",
+      "contains": [
+        "Issue #2447",
+        "kRegionDenseCap",
+        "region_by_sym_ map",
+        "#2447: writers progressed",
+        "map fallback path exercised"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_region_sym_map_race_2447",
+        "cmd_region_sym_map_race_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_ast_concurrency"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_region_sym_map_race_2447.py"
+}

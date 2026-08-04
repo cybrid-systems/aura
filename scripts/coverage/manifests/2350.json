@@ -1,0 +1,107 @@
+{
+  "issue": 2350,
+  "title": "Issue #2350: query:type-system-health single Agent score.",
+  "ok": "OK: Issue #2350 type-system-health — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_system_health.hh",
+      "contains": [
+        "health_bp",
+        "coercion_provenance_completeness",
+        "timeout_reject_rate_bp",
+        "linear_pin_miss_rate_bp",
+        "layered_dce_efficiency_bp",
+        "compute_type_system_health"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_type_system_health_2350.cpp",
+      "contains": [
+        "ac1_vacuous_healthy"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_system_health.hh",
+      "contains": [
+        "timeout-reject",
+        "pin-miss",
+        "provenance-miss",
+        "castop-density"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_type_system_health_2350.cpp",
+      "contains": [
+        "ac2_force_reason_priority"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "query:type-system-health",
+        "register_stats_impl"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_type_system_health_2350.cpp",
+      "contains": [
+        "ac3_ac4_query_surface"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "health-bp",
+        "health-budget-bp",
+        "force-reason",
+        "schema-2350",
+        "type-system-health-wired",
+        "component-provenance-completeness-bp"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "Issue #2350"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_observability.cpp",
+      "contains": [
+        "query:type-system-health"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_type_system_health_2350"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_type_system_health_2350",
+        "cmd_type_system_health_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_type_system_health_2350.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_type_system_health_2350.py"
+}

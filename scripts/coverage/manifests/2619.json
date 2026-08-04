@@ -1,0 +1,154 @@
+{
+  "issue": 2619,
+  "title": "Issue #2619: Agent-visible Moving densify health (pairs #2596).",
+  "ok": "OK: Issue #2619 arena moving densify health — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "query:arena-moving-densify-health",
+        "pin-contract-held",
+        "untracked-kept",
+        "production-hard-active"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/moving_densify_health.hh",
+      "contains": [
+        "publish_last_moving_densify_window"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "publish_last_moving_densify_window"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "contains": [
+        "ac1_query_exposes_window"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "would-allow-mutate"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/moving_densify_health.hh",
+      "contains": [
+        "would_allow_mutate",
+        "kForceUntrackedIncomplete"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "contains": [
+        "ac2_incomplete_denies_mutate"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/moving_densify_health.hh",
+      "contains": [
+        "production_hard_active",
+        "g_moving_untracked_hard_abort_pref",
+        "agent_throttle_for_moving_densify"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "Issue #2596"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "contains": [
+        "ac3_soft_observe_only"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/moving_densify_health.hh",
+      "contains": [
+        "vacuous",
+        "reset_moving_densify_health_for_test"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "contains": [
+        "ac4_no_densify_healthy"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/core/moving_densify_health.hh",
+      "contains": [
+        "#2619",
+        "#2495"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2619",
+        "schema-2596",
+        "schema-2495"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "moving_incomplete_remap_any",
+        "untracked_kept_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_arena_moving_densify_health_2619"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_arena_moving_densify_health_2619",
+        "cmd_arena_moving_densify_health_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_arena_moving_densify_health_2619.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "docs",
+      "forbid": [
+        "design/2619.md",
+        "docs/arena_moving_densify_health_2619.md",
+        "docs/design/arena_moving_densify_health_2619.md"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_arena_moving_densify_health_2619.py"
+}

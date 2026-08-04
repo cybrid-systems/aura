@@ -138,7 +138,7 @@ static void ac4_source_and_gate() {
     const auto ixx = read_file("src/core/ast.ixx");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto linter = read_file("scripts/check_fixup_deltas_2392.py");
+    const auto linter = read_file("scripts/coverage/checks/check_fixup_deltas_2392.py");
 
     CHECK(impl.find("Issue #2392") != std::string::npos, "AC4: cites #2392");
     CHECK(impl.find("fixup_deltas") != std::string::npos, "AC4: fixup_deltas present");

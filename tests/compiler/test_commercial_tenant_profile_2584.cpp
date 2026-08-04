@@ -225,11 +225,12 @@ int main() {
               "AC6: posture key wired in evaluator_primitives_security.cpp");
 
         // Live security gate clean.
-        const int rc =
-            std::system("python3 scripts/check_side_effect_security.py --strict >/dev/null 2>&1");
-        const int rc2 = std::system("cd .. 2>/dev/null; "
-                                    "python3 scripts/check_side_effect_security.py --strict "
-                                    ">/dev/null 2>&1");
+        const int rc = std::system("python3 scripts/coverage/checks/check_side_effect_security.py "
+                                   "--strict >/dev/null 2>&1");
+        const int rc2 =
+            std::system("cd .. 2>/dev/null; "
+                        "python3 scripts/coverage/checks/check_side_effect_security.py --strict "
+                        ">/dev/null 2>&1");
         CHECK(rc == 0 || rc2 == 0, "AC6: live security gate passes");
     }
 

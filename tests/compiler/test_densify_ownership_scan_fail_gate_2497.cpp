@@ -241,7 +241,8 @@ static void ac5_source_cite() {
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto efl = read_file("src/core/envframe_lifetime.ixx");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
-    const auto linter_path = "scripts/check_densify_ownership_scan_fail_gate_2497.py";
+    const auto linter_path =
+        "scripts/coverage/checks/check_densify_ownership_scan_fail_gate_2497.py";
     const auto linter = read_file(linter_path);
 
     // #2497 cited in Phase 5 driver.
@@ -276,7 +277,7 @@ static void ac5_source_cite() {
     CHECK(q.find("densify-ownership-scan-fail-gate-wired") != std::string::npos,
           "AC5: query gate wired sentinel");
 
-    // Linter exists + covers AC1/AC5 source-cite (delegated to scripts/check_*).
+    // Linter exists + covers AC1/AC5 source-cite (delegated to scripts/coverage/checks/check_*).
     CHECK(!linter.empty(), "AC5: linter script present");
     CHECK(linter.find("AC5") != std::string::npos, "AC5: linter self-test mentions AC5");
 }

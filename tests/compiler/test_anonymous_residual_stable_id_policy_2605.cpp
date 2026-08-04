@@ -196,7 +196,8 @@ static void ac5_source_and_linter() {
     const auto bh = read_file("src/compiler/aura_jit_bridge.h");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     const auto met = read_file("src/compiler/observability_metrics.h");
-    const auto lint = read_file("scripts/check_anonymous_residual_stable_id_policy_2605.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_anonymous_residual_stable_id_policy_2605.py");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
 
@@ -297,7 +298,7 @@ static void ac2637_schema_and_source_cite() {
     const auto shared = read_file("src/compiler/runtime_shared.h");
     const auto met = read_file("src/compiler/observability_metrics.h");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
-    const auto lint = read_file("scripts/check_sync_remount_anon_coverage.py");
+    const auto lint = read_file("scripts/coverage/checks/check_sync_remount_anon_coverage.py");
     const auto build = read_file("build.py");
     CHECK(rt.find("Issue #2637") != std::string::npos, "AC6: runtime cites #2637");
     CHECK(rt.find("aura_sync_remount_anon_live_closures") != std::string::npos,
@@ -484,7 +485,7 @@ static void ac2638_source_and_schema_cite() {
     const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
     const auto met = read_file("src/compiler/observability_metrics.h");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
-    const auto lint = read_file("scripts/check_residual_sid0_cap_coverage.py");
+    const auto lint = read_file("scripts/coverage/checks/check_residual_sid0_cap_coverage.py");
     const auto build = read_file("build.py");
     CHECK(rt.find("Issue #2638") != std::string::npos, "AC6: runtime cites #2638");
     CHECK(rt.find("aura_residual_sid0_cap_default") != std::string::npos,

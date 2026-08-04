@@ -1,0 +1,130 @@
+{
+  "issue": 2348,
+  "title": "Issue #2348: bidirectional check-mode for ADT match + GuardShape.",
+  "ok": "OK: Issue #2348 bidirectional match check-mode — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "check_flat_match"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "check_flat_match",
+        "__match_tmp"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "bidirectional_match_check_total",
+        "bidirectional_match_refined_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "contains": [
+        "ac1_match_check_mode"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "bidirectional_guardshape_check_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "bidirectional_guardshape_check_total",
+        "check_flat_if_narrowing"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "selective_adt_guardshape_renarrow"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "contains": [
+        "ac2_guardshape_check"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "bidirectional_mode_"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "contains": [
+        "ac3_opt_out",
+        "set_bidirectional_mode(false)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_compile.cpp",
+      "contains": [
+        "schema-2348",
+        "issue-2348",
+        "match-check",
+        "match-refined",
+        "guardshape-check",
+        "match-check-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "contains": [
+        "ac4_observability"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_bidirectional_match_check_2348.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_bidirectional_match_check_2348"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_bidirectional_match_2348",
+        "cmd_bidirectional_match_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #2348"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_bidirectional_match_2348.py"
+}

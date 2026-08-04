@@ -1,0 +1,135 @@
+{
+  "issue": 2351,
+  "title": "Issue #2351: steal-complete LayoutStamp dual-check before resume.",
+  "ok": "OK: Issue #2351 steal LayoutStamp dual-check — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_evaluator_on_steal_complete",
+        "has_resume_layout_stamp"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "layout_stamp_steal_mismatch_total",
+        "scan_live_closures_for_linear_captures",
+        "aura_aot_record_deopt_on_steal"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "layout_stamp_steal_mismatch_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "contains": [
+        "ac1_matching_stamp"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "contains": [
+        "ac2_mismatched_stamp"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "layout_stamp_steal_missing_total",
+        "Does NOT clear the stamp"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "layout_stamp_steal_missing_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "contains": [
+        "ac3_no_stamp_zero_cost"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2351",
+        "layout-stamp-steal-mismatch-total",
+        "layout-stamp-steal-missing-total",
+        "layout-stamp-steal-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "get_layout_stamp_steal_mismatch_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "get_layout_stamp_steal_mismatch_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2351"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "contains": [
+        "ac4_schema_and_source"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_steal_layout_stamp_2351.cpp",
+      "contains": [
+        "ac5_concurrent_stress"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #2351"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_steal_layout_stamp_2351"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_steal_layout_stamp_2351",
+        "cmd_steal_layout_stamp_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_steal_layout_stamp_2351.py"
+}

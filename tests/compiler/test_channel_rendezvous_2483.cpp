@@ -179,7 +179,7 @@ static void ac4_gate() {
           "AC4: check script in build.py");
     CHECK(build.find("cmd_channel_rendezvous_coverage") != std::string::npos, "AC4: coverage cmd");
     CHECK(cmake.find("test_channel_rendezvous_2483") != std::string::npos, "AC4: cmake test");
-    CHECK(!read_file("scripts/check_channel_rendezvous_2483.py").empty(),
+    CHECK(!read_file("scripts/coverage/checks/check_channel_rendezvous_2483.py").empty(),
           "AC4: check script exists");
 }
 

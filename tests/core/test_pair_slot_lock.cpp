@@ -10,7 +10,7 @@
 // cycles via the IR executor must succeed and g_owned_pair_slots_ must
 // grow exactly by 1 per call (no lost slots from the race). Concurrent
 // threads doing make-pairs verify the slot count invariant under
-// contention. The linter (scripts/check_owned_pair_slots_lock_coverage.py)
+// contention. The linter (scripts/coverage/checks/check_owned_pair_slots_lock_coverage.py)
 // is the structural CI gate for the lock-around-push invariant.
 //
 // AC1: simple `(cons 1 2)` via CompilerService returns car=1, cdr=2
@@ -182,8 +182,9 @@ int main() {
     // Invoked via system() to keep the test self-contained (linter is
     // a separate Python script in scripts/).
     {
-        int rc = std::system(
-            "python3 scripts/check_owned_pair_slots_lock_coverage.py --self-test > /dev/null 2>&1");
+        int rc =
+            std::system("python3 scripts/coverage/checks/check_owned_pair_slots_lock_coverage.py "
+                        "--self-test > /dev/null 2>&1");
         check_eq_i64(rc, 0, "AC4: linter self-test exit code = 0 (structurally verifies lock fix)");
     }
 

@@ -1,0 +1,79 @@
+{
+  "issue": 2430,
+  "title": "Issue #2430: snapshot_capability_effect_stats double-check (#1840 pattern).",
+  "ok": "OK: capability effect stats snapshot #2430 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #2430",
+        "snapshot_capability_effect_stats",
+        "for (int attempt = 0; attempt < 16; ++attempt)",
+        "best-effort after retries"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "contains": [
+        "2430 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "contains": [
+        "2430 AC2",
+        "concurrent check + snapshot"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "std::memory_order_acquire",
+        "m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced",
+        "m.capability_effect_denied_total.load(std::memory_order_acquire) == s.denied"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "contains": [
+        "2430 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "s.enforced",
+        "s.denied"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_capability_effect_stats_snapshot_2430.cpp",
+      "contains": [
+        "2430 AC4"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_capability_effect_stats_snapshot_2430",
+        "cmd_capability_effect_stats_snapshot_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_capability_effect_stats_snapshot_2430"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_capability_effect_stats_snapshot_2430.py"
+}

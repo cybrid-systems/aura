@@ -213,7 +213,7 @@ static void ac6_source_and_schema() {
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/check_linear_force_unified_2545.py");
+    const auto lint = read_file("scripts/coverage/checks/check_linear_force_unified_2545.py");
 
     // All production call sites use force_linear_rollback (not only deny_if)
     CHECK(emb.find("force_linear_rollback") != std::string::npos, "AC6: boundary uses unified");

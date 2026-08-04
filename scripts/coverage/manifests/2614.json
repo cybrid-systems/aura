@@ -1,0 +1,124 @@
+{
+  "issue": 2614,
+  "title": "Issue #2614: force ChildColumnar/SoAColumnarFull on walk/query/PCV hot templates.",
+  "ok": "OK: Issue #2614 hot children ChildColumnar force — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/concepts.ixx",
+      "contains": [
+        "ChildrenColumnarProvider",
+        "walk_children_column",
+        "ChildColumnar<Col>"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "walk_children_hot",
+        "ChildrenColumnarProvider"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/query.ixx",
+      "contains": [
+        "children_columnar",
+        "walk_children_hot"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "contains": [
+        "ac1_constrained"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "contains": [
+        "NonColumnarChildren",
+        "!ChildColumnar<NonColumnarChildren>",
+        "ac2_non_columnar_isolated"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/concepts.ixx",
+      "contains": [
+        "constexpr std::size_t walk_children_column"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "contains": [
+        "ac3_zero_runtime"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/concepts.ixx",
+      "contains": [
+        "Issue #2614"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2614",
+        "ChildColumnar<SafePCVSpan",
+        "SoAColumnarFull<SafePCVSpan"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "Issue #2614",
+        "safe_pcv_child_columnar_shape"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "contains": [
+        "ac4_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_hot_children_columnar_2614"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_hot_children_columnar_2614",
+        "cmd_hot_children_columnar_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_hot_children_columnar_2614.cpp",
+      "contains": [
+        "ac5_walk_smoke"
+      ]
+    },
+    {
+      "ac": "docs",
+      "forbid": [
+        "design/2614.md",
+        "docs/design/hot_children_columnar_2614.md",
+        "docs/hot_children_columnar_2614.md"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_hot_children_columnar_2614.py"
+}

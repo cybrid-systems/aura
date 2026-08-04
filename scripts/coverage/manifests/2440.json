@@ -1,0 +1,91 @@
+{
+  "issue": 2440,
+  "title": "Issue #2440: 4 SoA side-table columns concurrent-safe (atomic_ref + lock).",
+  "ok": "OK: SoA column atomic #2440 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2440",
+        "std::atomic_ref<std::uint64_t>",
+        "stamp_last_seen_epoch",
+        "last_seen_epoch(NodeId id)",
+        "mark_occurrence_stale"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_soa_column_atomic_2440.cpp",
+      "contains": [
+        "is_occurrence_stale",
+        "2440 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "std::atomic_ref<std::uint8_t>",
+        "fetch_or(reasons",
+        "fetch_or(verify_reasons",
+        "apply_verification_dirty_bits",
+        "apply_verify_dirty_bits"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_soa_column_atomic_2440.cpp",
+      "contains": [
+        "2440 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "clear_verification_dirty",
+        "is_verification_dirty"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_soa_column_atomic_2440.cpp",
+      "contains": [
+        "2440 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "is_always_lock_free",
+        "std::atomic<std::uint8_t>::is_always_lock_free",
+        "std::atomic<std::uint64_t>::is_always_lock_free"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_soa_column_atomic_2440.cpp",
+      "contains": [
+        "2440 AC4"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_soa_column_atomic_2440",
+        "cmd_soa_column_atomic_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_soa_column_atomic_2440"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_soa_column_atomic_2440.py"
+}

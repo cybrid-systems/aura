@@ -1,0 +1,84 @@
+{
+  "issue": 2571,
+  "title": "Issue #2571: (define) inside (while) body loop-counter footgun.",
+  "ok": "OK: Issue #2571 while+define oneshot — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "#2571",
+        "lookup_cell_index",
+        "binding_index_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_while_define_oneshot_2571.cpp",
+      "contains": [
+        "ac1_define_in_while"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "reuse an existing cell"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_while_define_oneshot_2571.cpp",
+      "contains": [
+        "ac2_multi_define_in_while"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "#2571",
+        "define …) inside (while"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_while_define_oneshot_2571.cpp",
+      "contains": [
+        "ac3_preferred_outer_set"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_control.cpp",
+      "contains": [
+        "#2571",
+        "outer-define",
+        "set! x 0"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_while_define_oneshot_2571"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_while_define_oneshot_2571",
+        "cmd_while_define_oneshot_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_while_define_oneshot_2571.cpp",
+      "contains": [
+        "ac4_source_gate"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_while_define_oneshot_2571.py"
+}

@@ -175,7 +175,7 @@ static void ac5_source_cite() {
 // AC9: audit_panic_defer_after_densify modified to read production_lock +
 //     soft_override (mirrors #2338 / #2546 / #2596 pattern).
 // AC10: build.py wires cmd_panic_residual_densify_hard_2598_coverage +
-//      scripts/check_panic_residual_densify_hard_2598.py present.
+//      scripts/coverage/checks/check_panic_residual_densify_hard_2598.py present.
 static void ac6_production_lock_helper_source_cite() {
     std::println("\n--- #2598 AC6: gc_defer_production_locked helper source-cite ---");
     const auto gh = read_file("src/core/gc_hooks.h");

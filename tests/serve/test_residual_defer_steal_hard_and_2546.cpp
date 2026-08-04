@@ -208,7 +208,8 @@ static void ac4_source_and_schema() {
     const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/check_residual_defer_steal_hard_and_2546.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_residual_defer_steal_hard_and_2546.py");
 
     CHECK(efm.find("Issue #2546") != std::string::npos, "AC4: fiber_mutation cites #2546");
     CHECK(efm.find("hard-AND residual") != std::string::npos ||

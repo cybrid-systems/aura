@@ -14,7 +14,7 @@
 //   AC3: (gc-heap) clears state — eval still works post-clear
 //   AC4: (gc) clears state — eval still works post-clear
 //   AC5: Concurrent (gc-heap) + (gc) + eval stress — no crash, no UB
-//   AC6: linter self-test (scripts/check_gc_heap_lock_scope_coverage.py)
+//   AC6: linter self-test (scripts/coverage/checks/check_gc_heap_lock_scope_coverage.py)
 //
 // The actual lock-scope invariants (heap_mutex + module_mtx + workspace_mtx
 // acquired atomically for (gc-heap) body, workspace_mtx acquired for (gc)
@@ -155,7 +155,7 @@ int main() {
 
     // === AC6: linter self-test ===
     // The lock-scope invariants are enforced by
-    // scripts/check_gc_heap_lock_scope_coverage.py — see that script
+    // scripts/coverage/checks/check_gc_heap_lock_scope_coverage.py — see that script
     // for the source-level AC list. This test is a runtime smoke test;
     // the linter is the authoritative gate for the lock-scope fix.
 

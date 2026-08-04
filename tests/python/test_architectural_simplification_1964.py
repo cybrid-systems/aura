@@ -79,7 +79,7 @@ class ArchitecturalSimplification1964(unittest.TestCase):
         self.assertIn("bump_mutation_and_bridge_epochs", service)
 
     def test_epoch_migration_linter_strict_clean(self) -> None:
-        script = SCRIPTS / "check_workspace_epoch_migration.py"
+        script = SCRIPTS / "coverage" / "checks" / "check_workspace_epoch_migration.py"
         self.assertTrue(script.is_file())
         r = subprocess.run(
             [sys.executable, str(script), "--strict", "--quiet"],

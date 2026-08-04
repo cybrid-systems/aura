@@ -233,7 +233,8 @@ static void ac6_source_and_gate() {
     CHECK(build.find("check_require_effect_auto_isolation_2490") != std::string::npos ||
               build.find("cmd_require_effect_auto_isolation_2490_coverage") != std::string::npos,
           "AC6: build.py gate entry");
-    const auto gate = read_file("scripts/check_require_effect_auto_isolation_2490.py");
+    const auto gate =
+        read_file("scripts/coverage/checks/check_require_effect_auto_isolation_2490.py");
     CHECK(!gate.empty() && gate.find("Issue #2490") != std::string::npos,
           "AC6: coverage linter present");
 

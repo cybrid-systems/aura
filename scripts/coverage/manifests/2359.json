@@ -1,0 +1,115 @@
+{
+  "issue": 2359,
+  "title": "Issue #2359: occurrence_goals + predicate_memo epoch health query surface.",
+  "ok": "OK: Issue #2359 memo-goal epoch health — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "cache-epoch",
+        "occurrence-goals-live",
+        "predicate-memo-live",
+        "predicate-memo-stale-vs-epoch",
+        "memo-goal-epoch-delta"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "contains": [
+        "ac1_stable_successive_queries"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "occurrence_goals_stale_vs_epoch",
+        "predicate_memo_stale_vs_epoch"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "contains": [
+        "prune_occurrence_goals",
+        "invalidate_predicate_memo_for_min_gen",
+        "ac2_epoch_advance_prune_and_memo_lag"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "contains": [
+        "schema-2278",
+        "occurrence-goal-sole-authority-wired",
+        "schema-2308",
+        "ac3_lineage_no_schema_break"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2278",
+        "schema-2308",
+        "occurrence-goal-sole-authority-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "memo-goal-epoch-health-wired",
+        "schema-2359",
+        "issue-2359"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "contains": [
+        "ac4_wired_sentinel"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "Issue #2359"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "last_predicate_memo_live_",
+        "last_predicate_memo_stale_vs_epoch_"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_memo_goal_epoch_health_2359"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_memo_goal_epoch_health_2359",
+        "cmd_memo_goal_epoch_health_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_memo_goal_epoch_health_2359.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_memo_goal_epoch_health_2359.py"
+}

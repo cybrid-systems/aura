@@ -1,0 +1,90 @@
+{
+  "issue": 2594,
+  "title": "Issue #2594: audit mid-fallback 率 SLO → security-health 降级标志.",
+  "ok": "OK: Issue #2594 audit mid-fallback SLO — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "header",
+      "path": "src/compiler/audit_mid_fallback_slo.h",
+      "contains": [
+        "decide_audit_mid_fallback_slo",
+        "evaluate_audit_mid_fallback_slo",
+        "g_audit_mid_fallback_slo_counters",
+        "reset_audit_mid_fallback_slo_for_test",
+        "AURA_MID_FALLBACK_SLO_BP",
+        "compute_mid_fallback_rate_bp",
+        "MidFallbackSloInput",
+        "MidFallbackSloDecision",
+        "mid-fallback-slo-breach",
+        "soft-breach-observe",
+        "would_arm_degraded"
+      ]
+    },
+    {
+      "ac": "prim",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "audit_mid_fallback_gen_total",
+        "contextual_total",
+        "production_defaults_active",
+        "AURA_SANDBOX",
+        "evaluate_audit_mid_fallback_slo",
+        "audit-mid-fallback-slo-wired",
+        "schema-2594",
+        "issue-2594",
+        "rate-bp",
+        "slo-bp",
+        "breached",
+        "would-arm-degraded",
+        "soft-breach-observe-total",
+        "arm-degraded-total",
+        "last-rate-bp",
+        "last-slo-bp",
+        "last-breached",
+        "last-would-arm-degraded",
+        "compiler/audit_mid_fallback_slo.h"
+      ]
+    },
+    {
+      "ac": "test",
+      "path": "tests/compiler/test_audit_mid_fallback_slo_2594.cpp",
+      "contains": [
+        "Issue #2594",
+        "AC1",
+        "AC2",
+        "AC3",
+        "AC4",
+        "AC5",
+        "decide_audit_mid_fallback_slo",
+        "evaluate_audit_mid_fallback_slo",
+        "reset_audit_mid_fallback_slo_for_test",
+        "production_defaults_active",
+        "resolve_audit_mutation_id",
+        "audit_mid_fallback_gen_total",
+        "mid-fallback-slo-breach",
+        "soft-breach-observe",
+        "schema-2594",
+        "issue-2594",
+        "compute_mid_fallback_rate_bp"
+      ]
+    },
+    {
+      "ac": "build",
+      "path": "build.py",
+      "contains": [
+        "cmd_audit_mid_fallback_slo_2594_coverage",
+        "check_audit_mid_fallback_slo_2594"
+      ]
+    },
+    {
+      "ac": "cmake",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "aura_add_issue_test(test_audit_mid_fallback_slo_2594)",
+        "aura_issue_test_link_light(test_audit_mid_fallback_slo_2594)",
+        "all_test_issue_targets test_audit_mid_fallback_slo_2594"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_audit_mid_fallback_slo_2594.py"
+}

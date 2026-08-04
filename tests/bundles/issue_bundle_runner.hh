@@ -2,7 +2,7 @@
 
 // Shared issue-bundle driver (fork-isolated member runner).
 // Profile-specific mains only declare externs + a member table, then call
-// aura_run_issue_bundle(). See scripts/gen_issue_bundles.py.
+// aura_run_issue_bundle(). See scripts/tools/gen_issue_bundles.py.
 
 struct AuraBundleMember {
     const char* name;

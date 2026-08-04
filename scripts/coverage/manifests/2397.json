@@ -1,0 +1,128 @@
+{
+  "issue": 2397,
+  "title": "Issue #2397: distinguish reclaimed vs body-still-running after residual.",
+  "ok": "OK: Issue #2397 reclaim still-running — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "Issue #2397",
+        "note_body_exit_if_reclaimed",
+        "join_drain_residual_still_running",
+        "join_drain_residual_body_retired_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "void Fiber::mark_reclaimed()",
+        "note_body_exit_if_reclaimed",
+        "still_running_after_reclaim_counted_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "mark_reclaimed()"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2397 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2397 AC2",
+        "still-running unchanged on Ok join"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "join-drain-residual-still-running-total",
+        "join-drain-residual-body-retired-total",
+        "schema-2397",
+        "issue-2397",
+        "join-drain-reclaim-still-running-wired",
+        "join-drain-residual-reclaim-total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "join_drain_residual_still_running",
+        "join_drain_residual_body_retired_total",
+        "kJoinDrainReclaimStillRunningIssue"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2397 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "aura_orch_note_join_drain_reclaim_still_running"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_orch_note_join_drain_reclaim_body_retired",
+        "aura_orch_note_join_drain_reclaim_still_running_drop"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/fiber_bridge.cpp",
+      "contains": [
+        "aura_orch_note_join_drain_reclaim_still_running"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2397 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2397 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_join_drain_reclaim_still_running_2397",
+        "cmd_join_drain_reclaim_still_running_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_join_drain_reclaim_2227"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_join_drain_reclaim_still_running_2397.py"
+}

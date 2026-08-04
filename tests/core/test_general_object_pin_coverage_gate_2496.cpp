@@ -96,7 +96,8 @@ static void ac5_source_cite_registrations() {
     CHECK(build.find("check_general_object_pin_coverage_gate_2496") != std::string::npos ||
               build.find("cmd_general_object_pin_coverage_gate_2496_coverage") != std::string::npos,
           "AC5: build.py gate entry");
-    const auto gate = read_file("scripts/check_general_object_pin_coverage_gate_2496.py");
+    const auto gate =
+        read_file("scripts/coverage/checks/check_general_object_pin_coverage_gate_2496.py");
     CHECK(!gate.empty() && gate.find("Issue #2496") != std::string::npos,
           "AC5: coverage linter present");
 }

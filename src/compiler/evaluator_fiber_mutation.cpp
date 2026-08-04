@@ -2982,7 +2982,7 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
         // proper NodeId extraction is a follow-up (TODO in commit message).
         // The handoff_ref helper itself is exercised by the parallel-intend
         // wire-up in evaluator_primitives_agent.cpp (the actual surface
-        // that #2632 mandates; see scripts/check_export_held_handoff_coverage.py).
+        // that #2632 mandates; see scripts/coverage/checks/check_export_held_handoff_coverage.py).
         if (refreshed > 0 && workspace_flat_) {
             // STUB: TODO follow-up to walk EvalValue::cell/closure variants
             // and pipe proper StableNodeRefs through handoff_ref. For now,

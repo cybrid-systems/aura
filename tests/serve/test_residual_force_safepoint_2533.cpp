@@ -15,7 +15,7 @@
 //   #2636 AC3: Soft default = env ON preserves #2533 production behavior
 //   #2636 AC4: env-opt-in force-safepoint path source-cited + metric bumps
 //   #2636 AC5: query keys schema-2636 (covered in test_orch_obs_facade_2589)
-//   #2636 AC6: linter (scripts/check_residual_body_age_coverage.py)
+//   #2636 AC6: linter (scripts/coverage/checks/check_residual_body_age_coverage.py)
 
 #include "test_harness.hpp"
 #include "serve/fiber.h"

@@ -102,7 +102,7 @@ Agent-facing schema text. The issue's Phase C probe hardening (sampling
 `total_mutations_` / workspace generation) is a follow-up if the probe
 window proves too loose in production.
 
-MVP scope is single-agent only (`scripts/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`.
+MVP scope is single-agent only (`scripts/coverage/checks/check_orch_mvp_scope.py --strict`). C++ entry points: `spawn_agent_with_mailbox`, `join_agent`, `agent_send`/`agent_recv`, `parallel_intend`.
 
 ### `AgentScope` (Issue #2083, default multi-agent supervision root)
 
@@ -405,7 +405,7 @@ Semantics:
 4. **Hierarchy optional later** — v1 is flat scope per Evaluator/session
    (`orch:scope-child` deferred). `AgentScope::spawn_child` exists in C++
    (#2537) but is not yet exposed to Aura.
-5. **Not a global registry** — `scripts/check_orch_mvp_scope.py` still
+5. **Not a global registry** — `scripts/coverage/checks/check_orch_mvp_scope.py` still
    rejects `AgentRegistry` / `global_agent_registry` / `conduct_parallel`.
    The map `g_evaluator_agent_scopes()` is storage only; the `AgentScope`
    objects inside it are per-Evaluator. Name→handle bookkeeping stays
@@ -428,7 +428,7 @@ Metrics (`query:orch-module-stats`, schema-2588):
 - `orch-scope-wired` — sentinel 1.
 
 Regression: `tests/orch/test_orch_scope_2588` (Aura prims + scope lifecycle).
-`scripts/check_orch_mvp_scope.py` (reintroduction guard) is unchanged
+`scripts/coverage/checks/check_orch_mvp_scope.py` (reintroduction guard) is unchanged
 but the new surface introduces no removed-identifier symbols.
 
 See [`docs/architecture.md`](../../docs/architecture.md) § multi-agent.

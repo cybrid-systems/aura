@@ -1,0 +1,55 @@
+{
+  "issue": 2446,
+  "title": "Issue #2446: region_by_lambda_dense_ + region_by_lambda_id_ race-free.",
+  "ok": "OK: region_by_lambda_dense race #2446 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2446",
+        "region_by_lambda_dense_",
+        "region_by_lambda_id_",
+        "set_function_region_lambda",
+        "region_table_mtx_",
+        "std::atomic_ref<std::uint8_t>",
+        "unique_lock"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "get_function_region_for_lambda",
+        "shared_lock",
+        "memory_order_acquire"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_ast_concurrency.cpp",
+      "contains": [
+        "Issue #2446",
+        "set_function_region_lambda",
+        "get_function_region_for_lambda",
+        "#2446: writers progressed"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_region_lambda_dense_race_2446",
+        "cmd_region_lambda_dense_race_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_ast_concurrency"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_region_lambda_dense_race_2446.py"
+}

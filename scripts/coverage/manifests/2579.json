@@ -1,0 +1,61 @@
+{
+  "issue": 2579,
+  "title": "Issue #2579: module rebind / multi-define value-init residual contracts.",
+  "ok": "OK: Issue #2579 module rebind residual — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "#2579",
+        "#2581",
+        "two-pass"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "#2579",
+        "sync_workspace_value_cells_from_env",
+        "do NOT bind_value_define_via_ir here"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "sync_workspace_value_cells_fn_"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_eval.cpp",
+      "contains": [
+        "sync_workspace_value_cells_fn_"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_module_rebind_residual_2579"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "check_module_rebind_2579"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_module_rebind_residual_2579.cpp",
+      "contains": [
+        "ac1_multidefine_call_init"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_module_rebind_2579.py"
+}

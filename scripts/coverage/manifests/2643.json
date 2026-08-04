@@ -1,0 +1,138 @@
+{
+  "issue": 2643,
+  "title": "Issue #2643: INSTANCE depth budget + Agent-visible repair surface on TIMEOUT.",
+  "ok": "OK: Issue #2643 INSTANCE depth-cap repair hint — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "kInstanceRepairHintCap",
+        "instance_repair_hints"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "instance_repair_hints",
+        "SuggestedRootReason::Instance"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "InstanceRepairHint",
+        "depth_used",
+        "depth_cap",
+        "var_rep",
+        "site_node"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "kInstanceDepthCap",
+        "instance_repair_hints.push_back"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "if (r.status == SolveResult::TIMEOUT)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_instance_constraint_depth_cap_2607.cpp",
+      "contains": [
+        "r.instance_repair_hints.empty()"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "instance-depth-cap-repair-hint-total",
+        "type_repair_instance_hint_count",
+        "instance-depth-cap-repair-hint-cap",
+        "instance-depth-cap-repair-hint-wired",
+        "instance-depth-cap-repair-hint-%zu-depth-used",
+        "instance-depth-cap-repair-hint-%zu-depth-cap",
+        "instance-depth-cap-repair-hint-%zu-poly",
+        "instance-depth-cap-repair-hint-%zu-var-rep",
+        "instance-depth-cap-repair-hint-%zu-site-node",
+        "schema-2643",
+        "issue-2643"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "#2643",
+        "hint_out"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "#2643",
+        "type_repair_instance_hint_depth_used"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "#2643",
+        "instance_depth_cap_repair_hint_total",
+        "type_repair_instance_hint_depth_used",
+        "type_repair_instance_hint_depth_cap",
+        "type_repair_instance_hint_poly",
+        "type_repair_instance_hint_var_rep",
+        "type_repair_instance_hint_site_node",
+        "type_repair_instance_hint_count"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "#2643",
+        "instance_depth_cap_repair_hint_total",
+        "type_repair_instance_hint_count"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_instance_constraint_depth_cap_2607.cpp",
+      "contains": [
+        "#2643"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_instance_constraint_depth_cap_2607.cpp",
+      "contains": [
+        "escalate_if_production",
+        "ac2643_repair_hint_on_timeout",
+        "ac2643_solved_no_hints",
+        "ac2643_query_surface",
+        "ac2643_source_cite"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_instance_depth_repair_hint_2643"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_instance_depth_repair_hint_2643.py"
+}

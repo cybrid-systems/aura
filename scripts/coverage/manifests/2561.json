@@ -1,0 +1,124 @@
+{
+  "issue": 2561,
+  "title": "Issue #2561: Soft/Sampled blame chain recover + miss escalate coverage.",
+  "ok": "OK: Issue #2561 Soft blame recover/escalate — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "Issue #2561",
+        "g_blame_soft_recover_total",
+        "g_blame_soft_recover_fail_total",
+        "g_blame_soft_escalate_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "try_recover_blame_chain_soft",
+        "maybe_soft_recover_or_escalate_blame"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "contains": [
+        "ac1_recover_or_escalate"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "had_miss_signal"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "contains": [
+        "ac2_complete_zero_work"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "AURA_BLAME_SOFT_ESCALATE",
+        "observe-by-default",
+        "#2221"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "AuditStrategy::Full"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "contains": [
+        "ac3_full_and_soft_observe"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2561",
+        "blame-soft-recover-total",
+        "query:type-incremental-fidelity-stats"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "maybe_soft_recover_or_escalate_blame",
+        "#2561"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "contains": [
+        "ac4_schema_source"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "recovery_mode",
+        "if (!recovery_mode)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_blame_soft_recover_2561"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_blame_soft_recover_2561",
+        "cmd_blame_soft_recover_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_blame_soft_recover_2561.cpp",
+      "contains": [
+        "ac5_existing_authoritative"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_blame_soft_recover_2561.py"
+}

@@ -1,0 +1,63 @@
+{
+  "issue": 2453,
+  "title": "Issue #2453: get(NodeId) NodeView multi-column snapshot contract.",
+  "ok": "OK: get NodeView snapshot #2453 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2453",
+        "get(NodeId)",
+        "NodeView",
+        "torn"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_get_nodeview_snapshot_2453.cpp",
+      "contains": [
+        "2453 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "PRIMARY reader",
+        "workspace_mtx"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_get_nodeview_snapshot_2453.cpp",
+      "contains": [
+        "2453 AC2",
+        "concurrent multi-reader"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_get_nodeview_snapshot_2453.cpp",
+      "contains": [
+        "2453 AC3"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_get_nodeview_snapshot_2453",
+        "cmd_get_nodeview_snapshot_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_get_nodeview_snapshot_2453"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_get_nodeview_snapshot_2453.py"
+}

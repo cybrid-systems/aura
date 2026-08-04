@@ -1,0 +1,55 @@
+{
+  "issue": 2598,
+  "title": "Issue #2598: production densify-after panic residual → hard",
+  "ok": "OK: Issue #2598 panic residual densify hard — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC6",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "gc_defer_production_locked",
+        "set_gc_defer_production_locked",
+        "g_production_locked"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "panic_contract_soft_override"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "Issue #2598",
+        "production_lock && !soft_override",
+        "hard_from_env",
+        "hard_from_env || (production_lock && !soft_override)"
+      ]
+    },
+    {
+      "ac": "test",
+      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "contains": [
+        "Issue #2598",
+        "ac6_production_lock_helper_source_cite",
+        "ac7_soft_override_helper",
+        "ac8_production_lock_source_cite",
+        "ac9_build_gate_wiring_source_cite",
+        "panic_contract_soft_override",
+        "production_lock && !soft_override"
+      ]
+    },
+    {
+      "ac": "build",
+      "path": "build.py",
+      "contains": [
+        "cmd_panic_residual_densify_hard_2598_coverage",
+        "check_panic_residual_densify_hard_2598"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_panic_residual_densify_hard_2598.py"
+}

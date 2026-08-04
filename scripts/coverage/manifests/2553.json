@@ -1,0 +1,96 @@
+{
+  "issue": 2553,
+  "title": "Issue #2553: single Agent commit-readiness score.",
+  "ok": "OK: Issue #2553 commit-readiness score — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #2553",
+        "struct CommitReadiness",
+        "struct CommitReadinessInput",
+        "commit_readiness(const CommitReadinessInput"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_commit_readiness_score_2553.cpp",
+      "contains": [
+        "ac1_clean_ok"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "empty_cs",
+        "truncate",
+        "force_reason priority"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_commit_readiness_score_2553.cpp",
+      "contains": [
+        "ac2_empty_cs_hard",
+        "ac3_truncate_hard"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Soft/Sampled"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_commit_readiness_score_2553.cpp",
+      "contains": [
+        "ac4_soft_observe"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2553",
+        "commit-readiness-bp",
+        "commit-readiness-would-allow",
+        "commit-readiness-force-reason",
+        "commit-readiness-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "commit_readiness_live_policy"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_commit_readiness_score_2553"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_commit_readiness_score_2553",
+        "cmd_commit_readiness_score_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_commit_readiness_score_2553.cpp",
+      "contains": [
+        "ac5_source_schema_live"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_commit_readiness_score_2553.py"
+}

@@ -1,0 +1,132 @@
+{
+  "issue": 2522,
+  "title": "Issue #2522: batch dirty cascade API — mark_blocks_dirty + single bump.",
+  "ok": "OK: Issue #2522 batch dirty cascade — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "Issue #2522",
+        "mark_blocks_dirty",
+        "mark_instruction_range_dirty",
+        "kIrSoaBatchDirtyIssue",
+        "bump_generation(); // once regardless of block count"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "contains": [
+        "ac1_batch_one_bump"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "mark_block_dirty_no_bump",
+        "fill_instruction_dirty_range"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "contains": [
+        "ac2_semantics_match"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "std::fill(block_dirty_",
+        "std::fill(instruction_dirty_"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "contains": [
+        "ac3_full_function_single_bump"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "g_ir_soa_generation_fence"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "contains": [
+        "ac4_fence_fewer_advances"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "finish_dirty_sync",
+        "instruction_dirty_synced_with_blocks",
+        "mark_function_blocks_dirty"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2522",
+        "soa-batch-dirty-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "#2522",
+        "mark_blocks_dirty",
+        "force_soa_instruction_dirty_sync"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_batch_dirty_cascade_2522"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_batch_dirty_cascade_2522",
+        "cmd_batch_dirty_cascade_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_batch_dirty_cascade_2522.cpp",
+      "contains": [
+        "ac5_finish_dirty_sync"
+      ]
+    },
+    {
+      "ac": "retain",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2139"
+      ]
+    },
+    {
+      "ac": "retain",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "finish_dirty_sync"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_batch_dirty_cascade_2522.py"
+}

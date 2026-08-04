@@ -1,0 +1,94 @@
+{
+  "issue": 2556,
+  "title": "Issue #2556: DeadCoercion DCE dirty-cone scan limit coverage.",
+  "ok": "OK: Issue #2556 DCE dirty-cone scan limit — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/optimization_passes.ixx",
+      "contains": [
+        "Issue #2556",
+        "dead_coercion_dirty_cone_partial_runs",
+        "dead_coercion_dirty_cone_cast_sites_scanned",
+        "count_cast_ops_in_block",
+        "skipped_casts"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone_2556.cpp",
+      "contains": [
+        "ac1_partial_cone"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/optimization_passes.ixx",
+      "contains": [
+        "dead_coercion_full_scan_runs"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone_2556.cpp",
+      "contains": [
+        "ac2_full_scan"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/optimization_passes.ixx",
+      "contains": [
+        "Soft probe"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone_2556.cpp",
+      "contains": [
+        "ac4_soft_empty"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/dirty_propagation.ixx",
+      "contains": [
+        "type_ir_union_cone_size",
+        "type_ir_union_cone_nonempty"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2556",
+        "dirty-cone-cast-sites-scanned",
+        "full-scan-runs",
+        "dirty-cone-partial-runs"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_dead_coercion_dirty_cone_2556"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_dead_coercion_dirty_cone_2556",
+        "cmd_dead_coercion_dirty_cone_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone_2556.cpp",
+      "contains": [
+        "ac5_source_schema"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_dead_coercion_dirty_cone_2556.py"
+}

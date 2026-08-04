@@ -114,7 +114,7 @@ static void ac5_gate() {
     std::println("\n--- #2475 AC5: test + gate wiring ---");
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
-    auto script = read_file("scripts/check_aura_jit_unused_fn_lock_2475.py");
+    auto script = read_file("scripts/coverage/checks/check_aura_jit_unused_fn_lock_2475.py");
     CHECK(build.find("check_aura_jit_unused_fn_lock_2475") != std::string::npos,
           "AC5: check script in build.py");
     CHECK(build.find("cmd_aura_jit_unused_fn_lock_coverage") != std::string::npos,

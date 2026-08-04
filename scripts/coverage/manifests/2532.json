@@ -1,0 +1,36 @@
+{
+  "issue": 2532,
+  "title": "Issue #2532: Write caps into Effect matrix\"\"\"",
+  "ok": "OK: check_2532: OK",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "2532"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "read-only observability"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_cap_write_effect_matrix_2532"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_2532"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2532.py"
+}

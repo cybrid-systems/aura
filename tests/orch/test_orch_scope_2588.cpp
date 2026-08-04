@@ -121,7 +121,7 @@ int main() {
         std::println("\n--- #2588 AC2 + AC5: MVP linter guards + README doc ---");
         // Source-cite inline: the new scope surface introduces no
         // AgentRegistry / global_agent_registry / conduct_parallel
-        // symbols. The actual linter (scripts/check_orch_mvp_scope.py
+        // symbols. The actual linter (scripts/coverage/checks/check_orch_mvp_scope.py
         // --strict) is the authoritative check; here we only verify
         // that the README documents the "not a global registry"
         // contract explicitly (AC5) and that my new scope-surface

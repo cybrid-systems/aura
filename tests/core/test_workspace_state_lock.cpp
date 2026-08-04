@@ -15,7 +15,7 @@
 //   AC1: (workspace-state) is callable after the fix (smoke)
 //   AC2: (workspace-state) returns non-empty header when workspace is loaded
 //   AC3: Concurrent (workspace-state) + (workspace :create) don't crash
-//   AC4: linter self-test (scripts/check_workspace_state_lock_coverage.py)
+//   AC4: linter self-test (scripts/coverage/checks/check_workspace_state_lock_coverage.py)
 //
 // Note: (workspace:mutation-count) is registered via
 // ObservabilityPrims::register_stats_impl — a stats primitive, NOT
@@ -136,7 +136,7 @@ int main() {
 
     // === AC4: linter self-test ===
     // The lock-scope invariants are enforced by
-    // scripts/check_workspace_state_lock_coverage.py — see that script
+    // scripts/coverage/checks/check_workspace_state_lock_coverage.py — see that script
     // for the source-level AC list. This test is a runtime smoke test;
     // the linter is the authoritative gate for the lock-scope fix.
 

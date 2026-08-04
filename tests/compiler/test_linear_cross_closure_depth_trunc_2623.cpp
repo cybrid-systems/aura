@@ -388,7 +388,7 @@ static void ac6_schema_source() {
 static void ac7_inventory_2559() {
     std::println("\n--- #2623 AC7: #2559 inventory lists env keys ---");
     reset_2623();
-    const auto inv = read_file("scripts/check_linear_three_layer_wire_2559.py");
+    const auto inv = read_file("scripts/coverage/checks/check_linear_three_layer_wire_2559.py");
     CHECK(inv.find("LINEAR_CROSS_CLOSURE_ENV_KEYS") != std::string::npos,
           "AC7: inventory tuple present");
     CHECK(inv.find("AURA_LINEAR_CROSS_CLOSURE_HARD") != std::string::npos, "AC7: HARD env listed");

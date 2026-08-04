@@ -261,14 +261,15 @@ int main() {
                   al.find("SECURITY_EXEMPT:") != std::string::npos,
               "allowlist uses SECURITY_EXEMPT: token");
         // Gate script cites #2152 and checks reasons.
-        const auto script = read_file("scripts/check_side_effect_security.py");
+        const auto script = read_file("scripts/coverage/checks/check_side_effect_security.py");
         CHECK(script.find("2152") != std::string::npos, "gate cites #2152");
         CHECK(script.find("SECURITY_EXEMPT") != std::string::npos, "gate checks exempt reason");
         // Live allowlist is clean.
-        const int rc =
-            std::system("python3 scripts/check_side_effect_security.py --strict >/dev/null 2>&1");
+        const int rc = std::system("python3 scripts/coverage/checks/check_side_effect_security.py "
+                                   "--strict >/dev/null 2>&1");
         const int rc2 =
-            std::system("cd .. 2>/dev/null; python3 scripts/check_side_effect_security.py --strict "
+            std::system("cd .. 2>/dev/null; python3 "
+                        "scripts/coverage/checks/check_side_effect_security.py --strict "
                         ">/dev/null 2>&1");
         CHECK(rc == 0 || rc2 == 0, "AC3: live allowlist passes gate");
     }
@@ -288,12 +289,13 @@ int main() {
             out << "  add(\"mutate:evil-bypass-2152\", [](auto) { return 0; });\n";
             out << "}\n";
         }
-        const int rc =
-            std::system("python3 scripts/check_side_effect_security.py --strict >/dev/null 2>&1");
+        const int rc = std::system("python3 scripts/coverage/checks/check_side_effect_security.py "
+                                   "--strict >/dev/null 2>&1");
         std::remove(tmp.c_str());
         // Also try from parent if cwd is build/
         const int rc_clean =
-            std::system("python3 scripts/check_side_effect_security.py --strict >/dev/null 2>&1");
+            std::system("python3 scripts/coverage/checks/check_side_effect_security.py --strict "
+                        ">/dev/null 2>&1");
         CHECK(rc != 0, "AC4: bare mutate: without coverage fails --strict");
         CHECK(rc_clean == 0, "AC4: tree clean after probe removed");
         CHECK(is_side_effect_prim_name("mutate:evil-bypass-2152"), "prefix match");

@@ -47,7 +47,7 @@ static std::string read_file(const char* path) {
 
 // Helper: run the script via Python subprocess and capture exit code.
 static int run_script(const std::vector<std::string>& args) {
-    std::string cmd = "python3 scripts/check_side_effect_security.py";
+    std::string cmd = "python3 scripts/coverage/checks/check_side_effect_security.py";
     for (const auto& a : args)
         cmd += " " + a;
     cmd += " 2>&1 > /tmp/check_side_effect_security.out";
@@ -116,7 +116,7 @@ static void ac4_allowlist_reason_enforced() {
     CHECK(allow.find("SECURITY_EXEMPT:") != std::string::npos,
           "AC4: existing allowlist entries have SECURITY_EXEMPT reason");
     // Source-cite the EXEMPT_REASON_RE enforcement in the script.
-    const auto script = read_file("scripts/check_side_effect_security.py");
+    const auto script = read_file("scripts/coverage/checks/check_side_effect_security.py");
     CHECK(script.find("EXEMPT_REASON_RE") != std::string::npos,
           "AC4: script enforces SECURITY_EXEMPT reason token");
     CHECK(script.find("missing '# SECURITY_EXEMPT: <reason>'") != std::string::npos,
@@ -126,7 +126,7 @@ static void ac4_allowlist_reason_enforced() {
 // AC5: source-cite script + CI workflow path.
 static void ac5_source_cite() {
     std::println("\n--- #2494 AC5: source-cite script + CI workflow path ---");
-    const auto script = read_file("scripts/check_side_effect_security.py");
+    const auto script = read_file("scripts/coverage/checks/check_side_effect_security.py");
     CHECK(script.find("Issue #2494") != std::string::npos,
           "AC5: script cites #2494 (--path argument)");
     CHECK(script.find("--strict") != std::string::npos, "AC5: script supports --strict");
@@ -150,7 +150,8 @@ static void ac6_registrations() {
               build.find("cmd_side_effect_security_gate_hardfail_2494_coverage") !=
                   std::string::npos,
           "AC6: build.py gate entry");
-    const auto gate = read_file("scripts/check_side_effect_security_gate_hardfail_2494.py");
+    const auto gate =
+        read_file("scripts/coverage/checks/check_side_effect_security_gate_hardfail_2494.py");
     CHECK(!gate.empty() && gate.find("Issue #2494") != std::string::npos,
           "AC6: coverage linter present");
 }

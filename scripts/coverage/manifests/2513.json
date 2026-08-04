@@ -1,0 +1,80 @@
+{
+  "issue": 2513,
+  "title": "Issue #2513: production-grade multi-fiber soak extension for concurrency gate.",
+  "ok": "OK: Issue #2513 production-concurrency soak extension — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "AURA_CHAOS_SOAK",
+        "AURA_CHAOS_FIBERS",
+        "AURA_CHAOS_DURATION_S",
+        "ac2513_soak_optional",
+        "Issue #2513"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "steal_snapshot_hard_fail",
+        "join_drain_residual_still_running",
+        "AURA_CHAOS_MB_STARVE_MAX",
+        "mailbox_hold_exit_starvation",
+        "no hang"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "ac2513_reclaim_residual_still_running",
+        "mark_reclaimed",
+        "note_body_exit_if_reclaimed",
+        "maybe_reap_orphans_on_tick"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "non_yield_spins",
+        "ac2513_docs_and_source"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "check_production_concurrency_soak_2513",
+        "cmd_production_concurrency_soak_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "AURA_CHAOS_SOAK",
+        "production-concurrency",
+        "2513"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": ".github/workflows/nightly.yml",
+      "contains": [
+        "AURA_CHAOS_FULL",
+        "production-concurrency"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "scripts/coverage/checks/check_production_concurrency_gate_2380.py",
+      "contains": [
+        "AURA_PRODUCTION_CONCURRENCY_GATE"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_production_concurrency_soak_2513.py"
+}

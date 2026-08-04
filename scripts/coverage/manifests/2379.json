@@ -1,0 +1,115 @@
+{
+  "issue": 2379,
+  "title": "Issue #2379: query:mutation-concurrency-health single Agent score.",
+  "ok": "OK: Issue #2379 mutation-concurrency-health — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/mutation_concurrency_health.hh",
+      "contains": [
+        "health_bp",
+        "compute_mutation_concurrency_health",
+        "steal_force_deopt_total",
+        "densify_consistency_fail_total",
+        "mailbox_defer_starvation_total",
+        "hold_slo_violation_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "contains": [
+        "ac1_vacuous_healthy"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/mutation_concurrency_health.hh",
+      "contains": [
+        "steal-mismatch",
+        "residual-defer",
+        "densify-fail",
+        "hold-slo",
+        "mailbox-starvation"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "contains": [
+        "ac2_force_reason_and_inject"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "query:mutation-concurrency-health",
+        "register_stats_impl"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "contains": [
+        "ac3_pure_identical"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "health-bp",
+        "force-reason",
+        "force-reason-code",
+        "schema-2379",
+        "mutation-concurrency-health-wired",
+        "component-steal-force-deopt-total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "contains": [
+        "ac4_query_surface"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "Issue #2379"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_observability.cpp",
+      "contains": [
+        "query:mutation-concurrency-health"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_mutation_concurrency_health_2379"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_mutation_concurrency_health_2379",
+        "cmd_mutation_concurrency_health_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_mutation_concurrency_health_2379.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_mutation_concurrency_health_2379.py"
+}

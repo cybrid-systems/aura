@@ -114,7 +114,7 @@ static void ac5_source_and_gate() {
     CHECK(build.find("check_moving_densify_fail_closed_2495") != std::string::npos ||
               build.find("cmd_moving_densify_fail_closed_2495_coverage") != std::string::npos,
           "AC5: build.py gate entry");
-    const auto gate = read_file("scripts/check_moving_densify_fail_closed_2495.py");
+    const auto gate = read_file("scripts/coverage/checks/check_moving_densify_fail_closed_2495.py");
     CHECK(!gate.empty() && gate.find("Issue #2495") != std::string::npos,
           "AC5: coverage linter present");
 }

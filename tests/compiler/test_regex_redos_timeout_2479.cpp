@@ -146,7 +146,7 @@ static void ac5_gate() {
     std::println("\n--- #2479 AC5: test + gate wiring ---");
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
-    auto script = read_file("scripts/check_regex_redos_timeout_2479.py");
+    auto script = read_file("scripts/coverage/checks/check_regex_redos_timeout_2479.py");
     CHECK(build.find("check_regex_redos_timeout_2479") != std::string::npos,
           "AC5: check script in build.py");
     CHECK(build.find("cmd_regex_redos_timeout_coverage") != std::string::npos, "AC5: coverage cmd");

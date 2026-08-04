@@ -443,7 +443,7 @@ static void ac2643_source_cite() {
     auto obs = read_file("src/compiler/observability_metrics.h");
     auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
     auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
-    auto linter = read_file("scripts/check_instance_depth_repair_hint_2643.py");
+    auto linter = read_file("scripts/coverage/checks/check_instance_depth_repair_hint_2643.py");
     auto cmake = read_file("CMakeLists.txt");
 
     CHECK(ix.find("kInstanceRepairHintCap") != std::string::npos,

@@ -248,7 +248,7 @@ static void ac2644_source_cite() {
     auto audit_h = read_file("src/compiler/typed_mutation_audit.h");
     auto eval_tc = read_file("src/compiler/evaluator_typecheck.cpp");
     auto build = read_file("build.py");
-    auto linter = read_file("scripts/check_occurrence_refined_consistency_2644.py");
+    auto linter = read_file("scripts/coverage/checks/check_occurrence_refined_consistency_2644.py");
 
     // Helper declaration + implementation
     CHECK(tc.find("check_occurrence_refined_consistency") != std::string::npos,

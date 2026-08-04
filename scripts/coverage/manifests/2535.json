@@ -1,0 +1,61 @@
+{
+  "issue": 2535,
+  "title": "Issue #2535: production default mild mailbox BP admit (threshold=32).\"\"\"",
+  "ok": "OK: check_2535: OK",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kMailboxBpAdmitThresholdDefault = 32",
+        "2535",
+        "kMailboxBpAdmitDefaultOnIssue"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "AURA_ORCH_BP_ADMIT_THRESHOLD"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2535",
+        "mailbox-bp-admit-threshold-default"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/README.md",
+      "contains": [
+        "2535"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_mailbox_bp_admit_default_2535",
+        "aura_issue_test_link_light(test_mailbox_bp_admit_default_2535)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_2535"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/orch/test_mailbox_bp_admit_default_2535.cpp",
+      "contains": [
+        "AC1"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2535.py"
+}

@@ -216,7 +216,8 @@ static void ac5_zero_cost_pure_reasoning() {
     CHECK(s.depth == 0, "AC5: MutationSafetySnapshot.depth == 0");
 
     // Linter exists + mentions AC5.
-    const auto linter = read_file("scripts/check_orch_soft_boundary_unified_2515.py");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_orch_soft_boundary_unified_2515.py");
     CHECK(!linter.empty(), "AC5: linter script present");
 }
 

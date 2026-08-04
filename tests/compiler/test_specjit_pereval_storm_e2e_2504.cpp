@@ -294,7 +294,8 @@ static void ac5_concurrent_and_source_gate() {
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto script = read_file("scripts/check_specjit_pereval_storm_e2e_2504.py");
+    const auto script =
+        read_file("scripts/coverage/checks/check_specjit_pereval_storm_e2e_2504.py");
     CHECK(sj.find("g_specjit_per_eval_storm_skip_foreign_total") != std::string::npos,
           "AC5: foreign skip in SpecJIT");
     CHECK(sj.find("storm_isolation_is_per_eval") != std::string::npos, "AC5: PerEval gate");

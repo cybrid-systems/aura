@@ -1,0 +1,136 @@
+{
+  "issue": 2367,
+  "title": "Issue #2367: ReloadRecovery query primitive + recovery-state snapshot.",
+  "ok": "OK: Issue #2367 ReloadRecovery query primitive — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "reload_recovery_state",
+        "recovery_active"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "contains": [
+        "ac1_soft_empty"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "on_force_jit_for_reason"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "last_force_jit_at_epoch_notify_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "force-jit-regions-mask",
+        "last-force-jit-reason"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "contains": [
+        "ac2_force_jit_exhaustion"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "force_jit_regions_mask_.store(0"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "contains": [
+        "ac3_success_clears"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2367",
+        "issue-2367",
+        "query:hot-update-registry-stats"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "contains": [
+        "ac4_hot_update_surface"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "aura_reload_recovery_snapshot"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "aura_hot_update_reload_recovery_get_snapshot"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "query:reload-recovery-state",
+        "query:aot-reload-recovery-stats",
+        "storm-level",
+        "reemit-boundary-policy",
+        "reload-recovery-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_observability.cpp",
+      "contains": [
+        "query:reload-recovery-state"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_reload_recovery_query_2367"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_reload_recovery_query_2367",
+        "cmd_reload_recovery_query_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_reload_recovery_query_2367.cpp",
+      "contains": [
+        "ac5_source_and_gate"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_reload_recovery_query_2367.py"
+}

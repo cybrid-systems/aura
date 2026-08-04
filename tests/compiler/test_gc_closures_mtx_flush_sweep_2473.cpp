@@ -245,7 +245,7 @@ static void ac5_gate() {
     std::println("\n--- #2473 AC5: test + gate wiring ---");
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
-    auto script = read_file("scripts/check_gc_closures_mtx_flush_sweep_2473.py");
+    auto script = read_file("scripts/coverage/checks/check_gc_closures_mtx_flush_sweep_2473.py");
     CHECK(build.find("check_gc_closures_mtx_flush_sweep_2473") != std::string::npos,
           "AC5: check script in build.py");
     CHECK(build.find("cmd_gc_closures_mtx_flush_sweep_coverage") != std::string::npos,

@@ -1,0 +1,128 @@
+{
+  "issue": 2460,
+  "title": "Issue #2460: Phase-2 dirty OwnershipEnv re-sim during infer_flat_partial.",
+  "ok": "OK: linear partial revalidate #2460 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #2460",
+        "last_partial_linear_revalidate_fail_",
+        "linear_partial_revalidate_fail_total",
+        "validate_ownership",
+        "set_node_error",
+        "discover_linear_bindings_in_subtree"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "contains": [
+        "AC1: partial ownership fail is first-class"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "note_linear_synth_violation"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "contains": [
+        "AC2: Phase-1 synthesize path retained"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "production_defaults_active",
+        "ErrorKind::Warning",
+        "ErrorKind::TypeError"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "contains": [
+        "AC3: Soft Warning vs production TypeError"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "contains": [
+        "AC4: escape gate + #2108 retained"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "paths": [
+        "src/compiler/type_checker_impl.cpp",
+        "src/compiler/type_checker.ixx"
+      ],
+      "contains": [
+        "post_mutation_invariant_check"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "linear_partial_revalidate_total",
+        "linear_partial_revalidate_fail_total",
+        "linear_partial_revalidate_hard_fail_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "linear_partial_revalidate_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "schema-2460",
+        "linear-partial-revalidate-total",
+        "schema-2357"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "last_partial_linear_revalidate_fail"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_linear_partial_revalidate_2460"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_linear_partial_revalidate_2460",
+        "cmd_linear_partial_revalidate_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_linear_partial_revalidate_2460.cpp",
+      "contains": [
+        "AC5: empty dirty + schema-2460"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_linear_partial_revalidate_2460.py"
+}

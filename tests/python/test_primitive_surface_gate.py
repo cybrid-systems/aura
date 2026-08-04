@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # #1932: tests/python → repo
-SCRIPT = ROOT / "scripts" / "check_primitive_surface.py"
+SCRIPT = ROOT / "scripts" / "coverage" / "checks" / "check_primitive_surface.py"
 
 
 def _load_module():

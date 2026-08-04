@@ -1,0 +1,115 @@
+{
+  "issue": 2499,
+  "title": "Issue #2499: unify RootRemapPass fail with pin_contract_held (single Moving success gate).",
+  "ok": "OK: check_root_remap_pin_contract_unified_2499: OK (5/5 AC rows)",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "pin_contract_held = compact_r.pin_contract_held",
+        "Issue #2499",
+        "compact_r.root_remap_stable_ref_fail_total == 0",
+        "compact_r.root_remap_closure_capture_fail_total == 0",
+        "densify_root_remap_call_ok",
+        "densify_pin_axis_ok"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "invoke_root_remap_callback_",
+        "result.pin_contract_held = false",
+        "Issue #2499"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "AdaptiveCompactResult",
+        "root_remap_stable_ref_fail_total",
+        "root_remap_closure_capture_fail_total",
+        "compact_all_moving_pinned",
+        "out.root_remap_stable_ref_fail_total +=",
+        "out.root_remap_closure_capture_fail_total +=",
+        "out.pin_contract_held = false",
+        "LiveCompactResult",
+        "std::size_t root_remap_stable_ref_fail_total = 0",
+        "std::size_t root_remap_closure_capture_fail_total = 0"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "default true",
+        "last-call semantics"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "if (had_moving_densify && pin_contract_held)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/root_remap_pass.ixx",
+      "contains": [
+        "root_remap_stable_ref_fail_total",
+        "root_remap_closure_capture_fail_total",
+        "last_root_remap_any_fail"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "per-call",
+        "#2376"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #2499"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2499"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_root_remap_pin_contract_unified_2499.cpp",
+      "contains": [
+        "Issue #2499",
+        "AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "aura_add_issue_test(test_root_remap_pin_contract_unified_2499)",
+        "aura_issue_test_link_light(test_root_remap_pin_contract_unified_2499)",
+        "add_dependencies(all_test_issue_targets test_root_remap_pin_contract_unified_2499)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_root_remap_pin_contract_unified_2499"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_root_remap_pin_contract_unified_2499.py"
+}

@@ -178,7 +178,7 @@ static void ac6_source_and_gate() {
     CHECK(build.find("check_restricted_unset_principal_2385") != std::string::npos ||
               build.find("cmd_restricted_unset_principal_coverage") != std::string::npos,
           "AC6: build.py gate entry");
-    const auto gate = read_file("scripts/check_restricted_unset_principal_2385.py");
+    const auto gate = read_file("scripts/coverage/checks/check_restricted_unset_principal_2385.py");
     CHECK(!gate.empty() && gate.find("Issue #2385") != std::string::npos,
           "AC6: coverage linter present");
 }

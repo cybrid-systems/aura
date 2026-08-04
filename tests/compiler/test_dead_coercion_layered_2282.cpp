@@ -146,9 +146,10 @@ namespace _2282_detail {
         // AC5: Short comment in optimization_passes.ixx / coercion_map refers to live keys.
         {
             std::println("\n--- AC5: comment alignment ---");
-            // Source-level check: the linter scripts/check_dead_coercion_layered_coverage.py
-            // verifies both comments mention query:dead-coercion-layered-stats. Here
-            // we just verify the primitive is reachable end-to-end as a smoke test.
+            // Source-level check: the linter
+            // scripts/coverage/checks/check_dead_coercion_layered_coverage.py verifies both
+            // comments mention query:dead-coercion-layered-stats. Here we just verify the primitive
+            // is reachable end-to-end as a smoke test.
             CompilerService cs;
             const auto layered = query_layered_total(cs);
             // If the comment diverged from live keys, the primitive would still
@@ -363,7 +364,8 @@ static void run_2645_evidence_chain() {
     // AC5: gate script + source-cite #2611 / #2624 / this issue
     {
         std::println("\n--- AC5: gate script + source-cite ---");
-        auto linter = read_file("scripts/check_dead_coercion_layered_evidence_2645.py");
+        auto linter =
+            read_file("scripts/coverage/checks/check_dead_coercion_layered_evidence_2645.py");
         auto build = read_file("build.py");
         CHECK(linter.find("#2645") != std::string::npos, "AC5: linter cites #2645");
         CHECK(linter.find("#2611") != std::string::npos, "AC5: linter cites #2611");

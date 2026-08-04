@@ -1,0 +1,72 @@
+{
+  "issue": 2443,
+  "title": "Issue #2443: region_by_sym/lambda_dense concurrent-safe (atomic_ref + lock).",
+  "ok": "OK: region dense atomic #2443 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2443",
+        "region_table_mtx_",
+        "region_by_sym_dense_",
+        "region_by_lambda_dense_",
+        "std::atomic_ref<std::uint8_t>",
+        "set_function_region"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_region_dense_atomic_2443.cpp",
+      "contains": [
+        "2443 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "get_function_region_for_sym",
+        "get_function_region_for_lambda",
+        "shared_lock"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_region_dense_atomic_2443.cpp",
+      "contains": [
+        "2443 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "kRegionDenseCap"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_region_dense_atomic_2443.cpp",
+      "contains": [
+        "2443 AC3"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_region_dense_atomic_2443",
+        "cmd_region_dense_atomic_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_region_dense_atomic_2443"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_region_dense_atomic_2443.py"
+}

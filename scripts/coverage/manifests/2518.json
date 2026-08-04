@@ -1,0 +1,127 @@
+{
+  "issue": 2518,
+  "title": "Issue #2518: MutationSafetySnapshot sequence ticket (sample→resume).",
+  "ok": "OK: Issue #2518 steal safety ticket — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "Issue #2518",
+        "ticket",
+        "s.ticket = seq1",
+        "set_resume_safety_ticket",
+        "has_resume_safety_ticket_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "ticket_miss",
+        "bump_steal_safety_ticket_mismatch"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "contains": [
+        "ac1_ticket_match_ok"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "contains": [
+        "ac2_inject_mid_window",
+        "publish_mutation_safety_mirrors"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "check_and_enforce_resume_snapshot_invariant"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "paths": [
+        "src/serve/fiber.h",
+        "src/serve/worker.cpp"
+      ],
+      "contains": [
+        "2510"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/worker.cpp",
+      "contains": [
+        "set_resume_safety_ticket",
+        "call_steal_complete"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "contains": [
+        "ac3_coexist_2510"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "current_safety_ticket"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2518",
+        "steal-safety-ticket-mismatch-total",
+        "steal-safety-ticket-wired",
+        "schema-2346"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "contains": [
+        "ac4_cost_and_query"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/serve/worker.cpp",
+      "contains": [
+        "set_resume_safety_ticket(snap.ticket)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_steal_safety_ticket_2518"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_steal_safety_ticket_2518",
+        "cmd_steal_safety_ticket_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_steal_safety_ticket_2518.cpp",
+      "contains": [
+        "ac5_source_wiring"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_steal_safety_ticket_2518.py"
+}

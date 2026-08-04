@@ -1,0 +1,76 @@
+{
+  "issue": 2570,
+  "title": "Issue #2570: module load tail export + fail-closed nested require.",
+  "ok": "OK: Issue #2570 module load tail export — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_module_loader.cpp",
+      "contains": [
+        "#2570",
+        "fail-closed",
+        "fail_load"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_module_load_tail_export_2570.cpp",
+      "contains": [
+        "ac1_tail_exports"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_module_loader.cpp",
+      "contains": [
+        "unbound (void)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_module_load_tail_export_2570.cpp",
+      "contains": [
+        "ac2_mid_error_fail_closed"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "#2570",
+        "abort begin on first-class error"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_module_load_tail_export_2570.cpp",
+      "contains": [
+        "ac3_nested_require_fail"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_module.cpp",
+      "contains": [
+        "#2570",
+        "module-load-failed"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_module_load_tail_export_2570"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_module_load_tail_2570",
+        "cmd_module_load_tail_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_module_load_tail_2570.py"
+}

@@ -1,0 +1,115 @@
+{
+  "issue": 2345,
+  "title": "Issue #2345: production composite empty-CS hard-reject coverage.",
+  "ok": "OK: Issue #2345 composite empty-CS hard-reject — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "composite_empty_cs_hard_reject_enabled",
+        "composite_commit_empty_cs_hard_miss_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_commit_empty_cs_hard_miss_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_partial_cs_single_source_2262.cpp",
+      "contains": [
+        "AC5",
+        "apply_production_audit_defaults"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "composite_commit_empty_cs_observe_total",
+        "AURA_COMPOSITE_EMPTY_CS_HARD"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_commit_empty_cs_observe_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_partial_cs_single_source_2262.cpp",
+      "contains": [
+        "AC6"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_partial_cs_single_source_2262.cpp",
+      "contains": [
+        "AC7"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "commit_cs_has_work"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "txn_dirty"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2345",
+        "composite-commit-empty-cs-hard-miss-total",
+        "composite-commit-empty-cs-observe-total",
+        "composite-empty-cs-hard-wired",
+        "schema-2262",
+        "composite-commit-solve-empty-cs-total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2345"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_txn_commit",
+        "#2345"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_partial_cs_single_source_2262.cpp",
+      "contains": [
+        "AC8"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_partial_cs_single_source_2262"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_composite_empty_cs_hard_2345.py"
+}

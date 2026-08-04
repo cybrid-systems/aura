@@ -1,0 +1,64 @@
+{
+  "issue": 2454,
+  "title": "Issue #2454: RAII mutation guards FlatAST-move lifetime contract.",
+  "ok": "OK: RAII guard FlatAST lifetime #2454 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2454",
+        "StructuralMutationGuard",
+        "MUST NOT outlive"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_raii_guard_flatast_lifetime_2454.cpp",
+      "contains": [
+        "2454 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "ReaderLockGuard",
+        "MetadataWriteGuard",
+        "MetadataReadGuard",
+        "must not outlive"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_raii_guard_flatast_lifetime_2454.cpp",
+      "contains": [
+        "2454 AC2",
+        "drop guard then move"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_raii_guard_flatast_lifetime_2454.cpp",
+      "contains": [
+        "2454 AC3"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_raii_guard_flatast_lifetime_2454",
+        "cmd_raii_guard_flatast_lifetime_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_raii_guard_flatast_lifetime_2454"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_raii_guard_flatast_lifetime_2454.py"
+}

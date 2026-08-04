@@ -1,0 +1,122 @@
+{
+  "issue": 2357,
+  "title": "Issue #2357: Phase-1 linear Move/Drop first-class synthesize violation.",
+  "ok": "OK: Issue #2357 linear synth violation — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "note_linear_synth_violation",
+        "can_move",
+        "set_node_error",
+        "synthesize_flat_move",
+        "Issue #2357"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "note_linear_synth_violation"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "contains": [
+        "ac1_double_move_first_class"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "ownership_env_.mark"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "contains": [
+        "ac2_valid_move_and_escape_gate"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "production_defaults_active",
+        "ErrorKind::Warning",
+        "ErrorKind::TypeError"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "contains": [
+        "ac3_production_hard_policy"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "validate_ownership"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "contains": [
+        "ac4_post_mutation_and_2108"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "linear_synth_violation_total",
+        "linear_synth_hard_fail_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "linear_synth_violation_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "schema-2357",
+        "linear-synth-violation-total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_linear_synth_violation_2357"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_linear_synth_violation_2357",
+        "cmd_linear_synth_violation_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_linear_synth_violation_2357.cpp",
+      "contains": [
+        "ac5_query_and_source"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_linear_synth_violation_2357.py"
+}

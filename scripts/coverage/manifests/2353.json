@@ -1,0 +1,160 @@
+{
+  "issue": 2353,
+  "title": "Issue #2353: post-densify / post-steal Linear+Type revalidate coverage.",
+  "ok": "OK: Issue #2353 post-densify Linear+Type revalidate — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "run_post_densify_linear_type_revalidate"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "run_post_densify_linear_type_revalidate",
+        "linear_post_mutate_enforce_all"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "had_moving_densify",
+        "run_post_densify_linear_type_revalidate",
+        "Issue #2353"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "moved_live_objects"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "contains": [
+        "ac1_densify_with_linear_runs"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/densify_consistency_report.h",
+      "contains": [
+        "type_ok",
+        "overall_ok"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "type_ok"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "post_densify_linear_type_fail_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "post_densify_linear_type_fail_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "contains": [
+        "ac2_fail_closed_report"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "!had_moving_densify",
+        "AC3: Soft"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "contains": [
+        "ac3_soft_no_densify_zero_cost"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "post_densify_linear_type_revalidate_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "post_densify_linear_type_revalidate_total",
+        "post_densify_linear_type_fail_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2353",
+        "issue-2353",
+        "densify-type-ok",
+        "post-densify-linear-type-revalidate-total",
+        "post-densify-linear-type-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "contains": [
+        "ac4_query_schema"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "run_post_densify_linear_type_revalidate",
+        "Issue #2353"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_post_densify_linear_type_revalidate_2353.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_post_densify_linear_type_revalidate_2353"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_post_densify_linear_type_revalidate_2353",
+        "cmd_post_densify_linear_type_revalidate_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_post_densify_linear_type_revalidate_2353.py"
+}

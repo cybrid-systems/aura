@@ -1,0 +1,76 @@
+{
+  "issue": 2438,
+  "title": "Issue #2438: arena compact notify_* TOCTOU / lifecycle drain.",
+  "ok": "OK: arena compact notify lifecycle #2438 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "Issue #2438",
+        "clear_arena_compact_notify_hooks",
+        "g_arena_compact_hook_in_flight"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_arena_compact_notify_lifecycle_2438.cpp",
+      "contains": [
+        "2438 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "clear_arena_compact_notify_hooks",
+        "Issue #2438"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_arena_compact_notify_lifecycle_2438.cpp",
+      "contains": [
+        "2438 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "g_arena_compact_hook_in_flight.fetch_add",
+        "notify_auto_compact_trigger"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_arena_compact_notify_lifecycle_2438.cpp",
+      "contains": [
+        "2438 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_arena_compact_notify_lifecycle_2438.cpp",
+      "contains": [
+        "2438 AC4"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_arena_compact_notify_lifecycle_2438",
+        "cmd_arena_compact_notify_lifecycle_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_arena_compact_notify_lifecycle_2438"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_arena_compact_notify_lifecycle_2438.py"
+}

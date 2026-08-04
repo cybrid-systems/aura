@@ -110,7 +110,7 @@ static void ac5_gate() {
     std::println("\n--- #2476 AC5: test + gate wiring ---");
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
-    auto script = read_file("scripts/check_partial_recompile_single_evict_2476.py");
+    auto script = read_file("scripts/coverage/checks/check_partial_recompile_single_evict_2476.py");
     CHECK(build.find("check_partial_recompile_single_evict_2476") != std::string::npos,
           "AC5: check script in build.py");
     CHECK(build.find("cmd_partial_recompile_single_evict_coverage") != std::string::npos,

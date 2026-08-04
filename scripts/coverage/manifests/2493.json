@@ -1,0 +1,109 @@
+{
+  "issue": 2493,
+  "title": "Issue #2493: unify mutation_id source — WorkspaceEpoch Mutation over",
+  "ok": "OK: Issue #2493 audit mutation_id unify — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #2493",
+        "resolve_audit_mutation_id",
+        "caller_mid != 0",
+        "current_mutation_epoch"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "process_resource_quota_manager().provenance_mutation_id"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "audit_mid_fallback_gen_total",
+        "audit_mid_fallback_gen_total.fetch_add"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "resolve_audit_mutation_id()"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "capture_security_correlated_audit",
+        "resolve_audit_mutation_id(mutation_id)",
+        "epoch != 0 ? epoch : ::aura::core::current_mutation_epoch()"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "contains": [
+        "ac1_prefers_caller_then_mutation_epoch"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "contains": [
+        "ac2_resource_quota_fallback"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "contains": [
+        "ac3_aot_hotupdate_uses_resolve"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "contains": [
+        "ac4_soft_no_activity_fallback"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "contains": [
+        "ac5_correlated_audit_join"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_audit_mutation_id_unify_2493.cpp",
+      "contains": [
+        "ac6_source_and_gate",
+        "Issue #2493"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_audit_mutation_id_unify_2493",
+        "aura_add_issue_test(test_audit_mutation_id_unify_2493)",
+        "aura_issue_test_link_light(test_audit_mutation_id_unify_2493)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_audit_mutation_id_unify_2493",
+        "cmd_audit_mutation_id_unify_2493_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_audit_mutation_id_unify_2493.py"
+}

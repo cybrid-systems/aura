@@ -42,7 +42,7 @@ namespace aura::compiler::shape {
 // tests. shape_profiler is intentionally a non-module TU and cannot
 // import aura.core.lifetime_pin; module-inline atomics are not linkable
 // via plain extern. Names match lifetime_pin.ixx counters for source-cite
-// (scripts/check_arena_moving_compaction_coverage.py / test_moving_compact_2166).
+// (scripts/coverage/checks/check_arena_moving_compaction_coverage.py / test_moving_compact_2166).
 namespace {
     std::atomic<std::uint64_t> g_moving_compact_count_total{0};
     std::atomic<std::uint64_t> g_moving_compact_remap_us_total{0};
@@ -653,7 +653,7 @@ void ShapeProfiler::invalidate_all() noexcept {
 // *** COMPACT ↛ STORM RING (#2617) ***
 // Do NOT call update_deopt_storm_state_ from this path. Compact pressure
 // is expected GC pressure, not mutation churn. Gate:
-// scripts/check_shape_compact_storm_isolation_2617.py
+// scripts/coverage/checks/check_shape_compact_storm_isolation_2617.py
 std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);

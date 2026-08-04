@@ -1,0 +1,121 @@
+{
+  "issue": 2461,
+  "title": "Issue #2461: per-If stable narrowing cache key (shape × epoch × refined).",
+  "ok": "OK: occurrence cache key #2461 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "Issue #2461",
+        "cond_shape_hash",
+        "occurrence_cache_key_hits_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "cond_shape_hash",
+        "hash_node_shape"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "contains": [
+        "AC1: same pred shape"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "refined",
+        "invalidate_predicate_memo_for_var_names"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "contains": [
+        "AC2: structural key isolates"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "note_occurrence_goal"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "contains": [
+        "AC3: goal note on miss path"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "epoch == cache_epoch_"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "contains": [
+        "AC4: epoch gate in resolve"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2461",
+        "occurrence-cache-key-hit-total",
+        "occurrence-cache-key-miss-total",
+        "schema-2359"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "occurrence_cache_key_hit_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "occurrence_cache_key_hit_total"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_occurrence_cache_key_2461"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_occurrence_cache_key_2461",
+        "cmd_occurrence_cache_key_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_occurrence_cache_key_2461.cpp",
+      "contains": [
+        "AC5: schema-2461"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_occurrence_cache_key_2461.py"
+}

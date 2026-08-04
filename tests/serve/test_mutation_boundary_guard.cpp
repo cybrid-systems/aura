@@ -87,7 +87,7 @@ static void ac1_source() {
         {"src/compiler/mutation_guard_helpers.hh", "../src/compiler/mutation_guard_helpers.hh"});
     auto comp = read_first({"src/compiler/evaluator_primitives_compile.cpp",
                             "../src/compiler/evaluator_primitives_compile.cpp"});
-    auto lint = read_first({"scripts/check_mutation_guard_coverage.py",
+    auto lint = read_first({"scripts/coverage/checks/check_mutation_guard_coverage.py",
                             "../scripts/check_mutation_guard_coverage.py"});
     const std::string guard_src = ixx + "\n" + guard;
     CHECK(!guard_src.empty() && guard_src.find("#1931") != std::string::npos, "cites #1931");

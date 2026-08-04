@@ -1,0 +1,129 @@
+{
+  "issue": 2349,
+  "title": "Issue #2349: outermost hold SLO circuit-breaker (production default fail).",
+  "ok": "OK: Issue #2349 hold SLO circuit-breaker — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "mutation_hold_slo_us",
+        "mutation_hold_slo_violation_total",
+        "*flag_ = false"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "mutation_hold_slo_violation_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "contains": [
+        "ac1_production_force_fail"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "mutation_hold_slo_soft_mode",
+        "AURA_MUTATION_HOLD_SLO_SOFT"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "mutation_hold_slo_soft_mode"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "contains": [
+        "ac2_soft_metric_only"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "contains": [
+        "ac3_under_slo_no_force"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "AURA_MUTATION_HOLD_SLO_US"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2349",
+        "issue-2349",
+        "mutation-hold-slo-violation-total",
+        "mutation-hold-slo-us",
+        "mutation-hold-slo-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "contains": [
+        "ac4_disable_and_query"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "Decision table"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "no second timer",
+        "Issue #2349"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_mutation_hold_slo_2349.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_mutation_hold_slo_2349"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_mutation_hold_slo_2349",
+        "cmd_mutation_hold_slo_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_mutation_hold_slo_2349.py"
+}

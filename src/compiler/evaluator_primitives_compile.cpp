@@ -2702,7 +2702,8 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             insert_kv("dtor-batch-metrics-wired", 1);
             insert_kv("compile-mutate-guard-coverage-100pct", 1); // linter --strict
             insert_kv("shared-helper-header-wired", 1);           // mutation_guard_helpers.hh
-            insert_kv("coverage-linter-wired", 1); // scripts/check_mutation_guard_coverage.py
+            insert_kv("coverage-linter-wired",
+                      1); // scripts/coverage/checks/check_mutation_guard_coverage.py
             insert_kv("exception-auto-rollback-wired", 1); // uncaught_exceptions dtor flip
             insert_kv("run-under-mutation-guard-helper", 1);
             insert_kv("active", 1);

@@ -182,7 +182,7 @@ static void ac5_source_and_gate() {
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto script = read_file("scripts/check_cross_cow_soft_migrate_2371.py");
+    const auto script = read_file("scripts/coverage/checks/check_cross_cow_soft_migrate_2371.py");
     CHECK(rt.find("Issue #2371") != std::string::npos, "AC5: #2371 in runtime");
     CHECK(rt.find("try_cross_cow_soft_migrate_") != std::string::npos, "AC5: soft helper");
     CHECK(rt.find("cross_cow_soft_migrate_total") != std::string::npos, "AC5: soft metric");

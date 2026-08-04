@@ -1,0 +1,134 @@
+{
+  "issue": 2552,
+  "title": "Issue #2552: steal/densify joint OccurrenceGoal + type_dep freshness fence.",
+  "ok": "OK: Issue #2552 type freshness steal/densify fence — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "note_steal_or_densify_epoch_fence",
+        "Issue #2552",
+        "prune_occurrence_goals"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "occurrence_goal_steal_prune_total",
+        "type_dep_steal_prune_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "contains": [
+        "ac1_steal_fence_prunes_goals"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "note_type_freshness_after_steal_or_densify",
+        "hard_failed",
+        "Issue #2552"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "contains": [
+        "ac2_hard_fail_no_fence"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "note_type_freshness_after_steal_or_densify",
+        "note_escape_gate_clear_on_densify",
+        "had_moving_densify"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "contains": [
+        "ac3_densify_wires_fence"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "paths": [
+        "src/compiler/type_checker.ixx",
+        "tests/compiler/test_type_freshness_steal_densify_2552.cpp"
+      ],
+      "contains": [
+        "same epoch"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "contains": [
+        "ac4_same_epoch_zero_cost"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "contains": [
+        "ac5_multi_round_soak"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2552",
+        "occurrence-goal-steal-prune-total",
+        "type-dep-steal-prune-total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "occurrence_goal_steal_prune_total",
+        "type_dep_steal_prune_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "note_type_freshness_after_steal_or_densify"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_type_freshness_steal_densify_2552"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_type_freshness_steal_densify_2552",
+        "cmd_type_freshness_steal_densify_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_type_freshness_steal_densify_2552.cpp",
+      "contains": [
+        "ac6_source_and_schema"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_type_freshness_steal_densify_2552.py"
+}

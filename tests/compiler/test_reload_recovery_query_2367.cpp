@@ -208,7 +208,7 @@ static void ac5_source_and_gate() {
     const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto script = read_file("scripts/check_reload_recovery_query_2367.py");
+    const auto script = read_file("scripts/coverage/checks/check_reload_recovery_query_2367.py");
     CHECK(mut.find("query:reload-recovery-state") != std::string::npos,
           "AC5: query registered in mutate");
     CHECK(mut.find("schema-2367") != std::string::npos, "AC5: schema-2367 in mutate");

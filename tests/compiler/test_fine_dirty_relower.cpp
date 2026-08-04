@@ -14,7 +14,7 @@ import aura.compiler.evaluator;
 // reachable + bumpable, and that the helper APIs added to
 // src/compiler/ir_soa.ixx + src/compiler/service.ixx are wired correctly.
 //
-// ACs (matching the linter at scripts/check_fine_dirty_relower_coverage.py):
+// ACs (matching the linter at scripts/coverage/checks/check_fine_dirty_relower_coverage.py):
 //
 // AC1: relower_instruction_level_hits accessor exists and returns 0 initially
 // AC2: dep_graph_edge_miss_count accessor exists and returns 0 initially

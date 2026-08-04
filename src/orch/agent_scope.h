@@ -8,7 +8,7 @@
 // bottom-up (children unique_ptrs destroyed before this scope joins).
 //
 // STATUS: Default / Documented multi-agent supervision surface.
-// MVP linter (scripts/check_orch_mvp_scope.py --strict) still forbids
+// MVP linter (scripts/coverage/checks/check_orch_mvp_scope.py --strict) still forbids
 // the process-global registry identifiers removed in #1966
 // (AgentRegistry / global_agent_registry / conduct_parallel), so the
 // "no global registry" contract from #2083 is preserved by the linter,
@@ -458,7 +458,7 @@ private:
 // avoid circular include with compiler/evaluator.h) — the SCOPE itself
 // is per-Evaluator; the storage is just a convenience container for
 // Aura prims to find / own the lifetime. NOT a global agent registry
-// (MVP linter scripts/check_orch_mvp_scope.py still guards
+// (MVP linter scripts/coverage/checks/check_orch_mvp_scope.py still guards
 // AgentRegistry / global_agent_registry symbols).
 inline std::unordered_map<void*, std::unique_ptr<AgentScope>>& g_evaluator_agent_scopes() noexcept {
     static std::unordered_map<void*, std::unique_ptr<AgentScope>> m;

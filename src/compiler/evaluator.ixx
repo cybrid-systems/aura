@@ -7594,7 +7594,7 @@ public:
     // Issue #1904: public bump helper for the legacy mutate:* lock + bump
     // counter. Called from legacy migration sites (#1904 Commit 2) BEFORE
     // they are migrated to MutationBoundaryGuard RAII; the linter
-    // (scripts/check_legacy_mutate_lock.py) will fail the build when any
+    // (scripts/coverage/checks/check_legacy_mutate_lock.py) will fail the build when any
     // legacy pattern is reintroduced, so this counter monotonically
     // decreases to 0 as the migration completes. Public so tests +
     // Commit 2 migration use the same API and never touch the
@@ -7645,7 +7645,7 @@ public:
     // is bumped from the matching decision site in service.ixx::
     // mark_define_dirty / relower_define_blocks / dep_graph_
     // populate / lowering_impl.cpp consistency mismatch handler.
-    // See scripts/check_fine_dirty_relower_coverage.py for the
+    // See scripts/coverage/checks/check_fine_dirty_relower_coverage.py for the
     // source-level invariants enforced by the linter.
     void bump_relower_instruction_level_hit() const noexcept {
         if (compiler_metrics_) {

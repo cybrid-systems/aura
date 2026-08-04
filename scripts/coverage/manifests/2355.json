@@ -1,0 +1,126 @@
+{
+  "issue": 2355,
+  "title": "Issue #2355: type_dep_graph_ epoch prune + NodeId invalidation coverage.",
+  "ok": "OK: Issue #2355 type_dep epoch prune — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "TypeDepEdge",
+        "prune_type_dep_graph_epoch",
+        "set_cache_epoch",
+        "g_type_dep_graph_stale_drop_total",
+        "Issue #2355"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "type_dep_graph_stale_drop_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "contains": [
+        "ac1_epoch_prune"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "kTypeDepBucketCap",
+        "invalidate_type_dep_for_nodes",
+        "type_dep_graph_edge_count"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "invalidate_type_dep_for_nodes"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "contains": [
+        "ac2_session_bound"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "min_epoch == 0",
+        "dirty.empty()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "contains": [
+        "ac3_zero_cost_paths"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2355",
+        "issue-2355",
+        "type-dep-stale-drop-total",
+        "type-dep-size",
+        "type-dep-epoch-wired",
+        "schema-2320"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "contains": [
+        "ac4_query_schema"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "type_dep_graph_stale_drop_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_type_dep_epoch_prune_2355.cpp",
+      "contains": [
+        "ac5_source_cite_and_invalidate"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_type_dep_epoch_prune_2355"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_type_dep_epoch_prune_2355",
+        "cmd_type_dep_epoch_prune_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #2355"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_type_dep_epoch_prune_2355.py"
+}

@@ -1,0 +1,124 @@
+{
+  "issue": 2365,
+  "title": "Issue #2365: RootRemap + densify Closure/EnvFrame dual-epoch closed-loop.",
+  "ok": "OK: Issue #2365 densify RootRemap+closure dual-epoch — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "root_remap_ok = true",
+        "closure_remount_ok = true"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_densify_root_closure_closed_loop_2365.cpp",
+      "contains": [
+        "ac1_soft_vacuous"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "last_root_remap_any_fail",
+        "note_last_densify_root_remap_ok"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/root_remap_pass.ixx",
+      "contains": [
+        "inject_last_root_remap_any_fail_for_test"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_densify_root_closure_closed_loop_2365.cpp",
+      "contains": [
+        "ac2_root_remap_fail"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "force_densify_remap_pairing"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "revalidate_dual_epoch_after_densify",
+        "scan_live_closures_for_linear_captures"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/densify_consistency_report.h",
+      "contains": [
+        "densify-success closed-loop order",
+        "Issue #2365"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_densify_root_closure_closed_loop_2365.cpp",
+      "contains": [
+        "ac3_dual_epoch_closure"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2365",
+        "issue-2365",
+        "densify-root-remap-axis-wired",
+        "densify-closure-remount-axis-wired",
+        "densify-dual-epoch-closed-loop-wired",
+        "last_densify_root_remap_ok",
+        "last_densify_closure_remount_ok"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_densify_root_closure_closed_loop_2365.cpp",
+      "contains": [
+        "ac4_query"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2365"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_densify_root_closure_closed_loop_2365"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_densify_root_closure_closed_loop_2365",
+        "cmd_densify_root_closure_closed_loop_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_densify_root_closure_closed_loop_2365.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_densify_root_closure_closed_loop_2365.py"
+}

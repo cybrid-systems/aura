@@ -1,0 +1,120 @@
+{
+  "issue": 2370,
+  "title": "Issue #2370: real PerEval storm isolation for SpecJIT + shape version.",
+  "ok": "OK: Issue #2370 SpecJIT PerEval storm isolation — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/spec_jit_controller.cpp",
+      "contains": [
+        "Issue #2370",
+        "effective_shape_version"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "contains": [
+        "ac1_global_soft"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/spec_jit_controller.cpp",
+      "contains": [
+        "g_specjit_per_eval_storm_clear_total",
+        "g_specjit_per_eval_storm_skip_foreign_total",
+        "eval_owner_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "contains": [
+        "ac2_ac3_two_eval_isolation"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/spec_jit_controller.h",
+      "contains": [
+        "isolation_shape_epoch_",
+        "set_eval_owner"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/spec_jit_controller.cpp",
+      "contains": [
+        "install_specialization"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2370",
+        "storm-isolation-per-eval-wired",
+        "specjit-per-eval-storm-clear-total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "contains": [
+        "ac4_query"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/shape_profiler.cpp",
+      "contains": [
+        "aura_get_storm_isolation_mode"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "aura_get_storm_eval_context"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "PerEval"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "set_eval_owner"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_specjit_per_eval_storm_isolation_2370"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_specjit_per_eval_storm_isolation_2370",
+        "cmd_specjit_per_eval_storm_isolation_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "contains": [
+        "ac5_source_and_gate"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_specjit_per_eval_storm_isolation_2370.py"
+}

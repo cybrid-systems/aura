@@ -447,7 +447,7 @@ static_assert(kTagPatterns[0] == EvalValueTag::Fixnum && kTagPatterns[3] == Eval
 // every invoke does atomic RMW on value_classify_call_count. Use
 // is_fixnum_hot / is_string_v2_hot / is_* / as_* (value.ixx) or
 // classify_eval_value_tag_consteval instead. Gate:
-// scripts/check_value_tag_hotpath_ban_2616.py.
+// scripts/coverage/checks/check_value_tag_hotpath_ban_2616.py.
 //
 // Order matters: fixnums use (v<<1) so val=2,6,10… have (v&3)==2
 // but are NOT strings — string-v2 requires (v&3)==2 AND

@@ -1,0 +1,138 @@
+{
+  "issue": 2509,
+  "title": "Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix.",
+  "ok": "OK: Issue #2509 composite CS signature matrix — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_empty_cs_hard_reject_enabled",
+        "composite_commit_empty_cs_hard_miss_total",
+        "expected_partial"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "contains": [
+        "AC1",
+        "apply_production_audit_defaults"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "composite_commit_expected_has_work_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_commit_expected_has_work_total",
+        "composite_commit_sdo_entered_total",
+        "sdo_entered",
+        "require_sdo"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "contains": [
+        "AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "contains": [
+        "AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "commit_cs_has_work"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "txn_dirty"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "composite_commit_unexpected_cs_work_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "composite_commit_unexpected_cs_work_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_composite_cs_signature_matrix_2509.cpp",
+      "contains": [
+        "AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2509",
+        "composite-commit-unexpected-cs-work-total",
+        "composite-commit-expected-has-work-total",
+        "composite-commit-sdo-entered-total",
+        "composite-cs-signature-matrix-wired",
+        "schema-2345"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2509"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "Issue #2509"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_composite_cs_signature_matrix_2509"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "composite_cs_signature_matrix_wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_composite_cs_signature_matrix_2509"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_composite_cs_signature_matrix_2509.py"
+}

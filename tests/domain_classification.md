@@ -1,6 +1,6 @@
 # Phase 2 migration classification (tests/issues/ → 5 domain files)
 
-**Generated:** auto by `scripts/classify_test_issues.py`
+**Generated:** auto by `scripts/tools/classify_test_issues.py`
 **Total test_issue files:** 635
 
 ## Domain distribution

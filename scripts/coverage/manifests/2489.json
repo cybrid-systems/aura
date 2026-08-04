@@ -1,0 +1,133 @@
+{
+  "issue": 2489,
+  "title": "Issue #2489: promote remaining high-risk string-only caps into the Effect",
+  "ok": "OK: Issue #2489 high-risk cap promotion — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #2489",
+        "Effect::Syscall | Effect::Write",
+        "Effect::Syscall | Effect::Read",
+        "Effect::TenantAdmin",
+        "Effect::MacroSelfEvo"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #2489",
+        "revoke_effect_capability"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "effect_for_cap_name"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "capability_epoch_fence_hit_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "capability_fiber_hard_deny_total",
+        "hard_fiber_isolation_"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/security_capabilities.h",
+      "contains": [
+        "Issue #2489"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_capability_high_risk_promote_2489",
+        "aura_add_issue_test(test_capability_high_risk_promote_2489)",
+        "aura_issue_test_link_light(test_capability_high_risk_promote_2489)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_capability_high_risk_promote_2489",
+        "cmd_capability_high_risk_promote_2489_coverage"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "contains": [
+        "ac1_registry_only_promoted_caps"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "contains": [
+        "ac2_revoke_clears_both"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "contains": [
+        "ac3_strict_deny_and_audit"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "contains": [
+        "ac4_epoch_fence"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "contains": [
+        "ac5_hard_fiber_deny"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_capability_high_risk_promote_2489.cpp",
+      "contains": [
+        "ac6_source_and_security_exempt_doc"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "SECURITY_EXEMPT",
+        "compile-stats",
+        "query",
+        "sandbox"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/security_capabilities.h",
+      "contains": [
+        "kEffectTenantAdmin",
+        "kEffectSyscall"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_capability_high_risk_promote_2489.py"
+}

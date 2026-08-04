@@ -26,7 +26,7 @@
 // Removed from public orch/ (#1966 — was // DEFERRED under #1965 cycle 1):
 //   - AgentRegistry / global_agent_registry — evaluator-local name table
 //   - conduct_parallel alias — use parallel_intend directly
-// Reintroduction is blocked by scripts/check_orch_mvp_scope.py --strict.
+// Reintroduction is blocked by scripts/coverage/checks/check_orch_mvp_scope.py --strict.
 
 #ifndef AURA_ORCH_ORCH_H
 #define AURA_ORCH_ORCH_H

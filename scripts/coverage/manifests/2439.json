@@ -1,0 +1,78 @@
+{
+  "issue": 2439,
+  "title": "Issue #2439: apply_verification_dirty_bits / apply_verify_dirty_bits lock.",
+  "ok": "OK: verification dirty bits lock #2439 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2439",
+        "apply_verification_dirty_bits",
+        "dirty_column_mtx_.mutable_get()",
+        "fetch_or(reasons",
+        "newly_set = static_cast<std::uint8_t>(reasons & ~prev)"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "contains": [
+        "2439 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "apply_verify_dirty_bits",
+        "fetch_or(verify_reasons",
+        "newly_set = static_cast<std::uint8_t>(verify_reasons & ~prev)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "contains": [
+        "2439 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "verification_dirty(NodeId id)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "contains": [
+        "2439 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_verification_dirty_bits_lock_2439.cpp",
+      "contains": [
+        "2439 AC4"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_verification_dirty_bits_lock_2439",
+        "cmd_verification_dirty_bits_lock_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_verification_dirty_bits_lock_2439"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_verification_dirty_bits_lock_2439.py"
+}

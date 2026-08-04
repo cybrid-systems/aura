@@ -1,0 +1,138 @@
+{
+  "issue": 2610,
+  "title": "Issue #2610: auto-detect expected_partial from dirty cone.",
+  "ok": "OK: Issue #2610 composite auto-partial from cone — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "Issue #2610",
+        "auto_partial_from_cone"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/evaluator_typecheck.cpp",
+        "src/compiler/dirty_propagation.ixx"
+      ],
+      "contains": [
+        "type_ir_union_cone_nonempty"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/evaluator_typecheck.cpp",
+        "src/compiler/typed_mutation_audit.h",
+        "src/compiler/observability_metrics.h"
+      ],
+      "contains": [
+        "composite_commit_auto_partial_from_cone_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "contains": [
+        "ac1_auto_partial_hard_miss"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "agent_expected_partial"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "contains": [
+        "ac2_explicit_expected_has_work"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "paths": [
+        "src/compiler/evaluator_typecheck.cpp",
+        "src/compiler/typed_mutation_audit.h"
+      ],
+      "contains": [
+        "composite_commit_auto_partial_from_cone_observe_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "contains": [
+        "ac3_soft_observe"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "auto_partial_from_cone",
+        "auto_partial",
+        "return 6"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_mutate.cpp"
+      ],
+      "contains": [
+        "schema-2610"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "commit-readiness-force-reason-auto-partial"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "contains": [
+        "ac4_readiness_and_schema"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_composite_auto_partial_from_cone_2610.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_composite_auto_partial_from_cone_2610"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_composite_auto_partial_from_cone_2610",
+        "cmd_composite_auto_partial_from_cone_coverage"
+      ]
+    },
+    {
+      "ac": "retain",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "Issue #2509",
+        "composite_commit_empty_cs_hard_miss_total"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_composite_auto_partial_from_cone_2610.py"
+}

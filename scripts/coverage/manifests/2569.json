@@ -1,0 +1,78 @@
+{
+  "issue": 2569,
+  "title": "Issue #2569: set-code / mutate:rebind must not kill unimpacted closures or hash state.",
+  "ok": "OK: Issue #2569 set-code/rebind survival — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "#2569",
+        "Soft recover: keep IR dispatch alive",
+        "body_usable"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_setcode_rebind_survive_2569.cpp",
+      "contains": [
+        "ac1_closure_survive"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "#2569",
+        "soft-recover"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "#2569",
+        "soft_recover_2569"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/lowering_impl.cpp",
+      "contains": [
+        "#2569",
+        "hash-ref"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_vector.cpp",
+      "contains": [
+        "#2569",
+        "3rd-arg default"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_setcode_rebind_survive_2569.cpp",
+      "contains": [
+        "ac3_hash_ref_default"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_setcode_rebind_survive_2569"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "check_setcode_rebind_2569",
+        "cmd_setcode_rebind_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_setcode_rebind_2569.py"
+}

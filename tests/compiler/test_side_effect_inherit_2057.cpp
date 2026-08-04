@@ -157,18 +157,18 @@ int main() {
     // ── AC5: gate script present + rejects bare add ──
     {
         std::println("\n--- AC5: static gate script ---");
-        const auto script = read_file("scripts/check_side_effect_security.py");
+        const auto script = read_file("scripts/coverage/checks/check_side_effect_security.py");
         CHECK(!script.empty(), "gate script readable");
         CHECK(script.find("2057") != std::string::npos, "cites #2057");
         CHECK(script.find("add_mutate") != std::string::npos, "knows add_mutate");
         CHECK(script.find("require_effect") != std::string::npos, "knows require_effect");
         // Live gate must pass on current tree (run from repo root).
-        const int rc =
-            std::system("cd .. 2>/dev/null; python3 scripts/check_side_effect_security.py --strict "
-                        ">/dev/null 2>&1");
+        const int rc = std::system("cd .. 2>/dev/null; python3 "
+                                   "scripts/coverage/checks/check_side_effect_security.py --strict "
+                                   ">/dev/null 2>&1");
         // Also try from cwd if already at root.
-        const int rc2 =
-            std::system("python3 scripts/check_side_effect_security.py --strict >/dev/null 2>&1");
+        const int rc2 = std::system("python3 scripts/coverage/checks/check_side_effect_security.py "
+                                    "--strict >/dev/null 2>&1");
         CHECK(rc == 0 || rc2 == 0, "live gate clean on tree");
     }
 

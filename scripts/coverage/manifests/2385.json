@@ -1,0 +1,92 @@
+{
+  "issue": 2385,
+  "title": "Issue #2385: Restricted sandbox denies side-effects when principal unset.",
+  "ok": "OK: Issue #2385 Restricted unset principal deny — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/workspace_isolation.hh",
+      "contains": [
+        "Issue #2385",
+        "sandbox_restricted",
+        "need_principal",
+        "required_effects != 0",
+        "isolation-deny:unset-principal"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "contains": [
+        "ac1_restricted_unset_denies_side_effect",
+        "isolation-deny:unset-principal"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "contains": [
+        "ac2_restricted_with_principal_allows"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "contains": [
+        "ac3_strict_unset_denies"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "contains": [
+        "ac4_off_unset_permissive"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "contains": [
+        "ac5_restricted_pure_read_allows"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_restricted_unset_principal_2385"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_restricted_unset_principal_2385",
+        "cmd_restricted_unset_principal_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/core/test_restricted_unset_principal_2385.cpp",
+      "contains": [
+        "ac6_source_and_gate",
+        "Issue #2385"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/core/workspace_isolation.hh",
+      "contains": [
+        "Issue #2385"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #2388"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_restricted_unset_principal_2385.py"
+}

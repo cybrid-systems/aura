@@ -134,7 +134,8 @@ static void ac3_source_and_gate() {
     const auto ixx = read_file("src/core/ast.ixx");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto linter = read_file("scripts/check_validate_post_restore_soa_2391.py");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_validate_post_restore_soa_2391.py");
 
     CHECK(impl.find("Issue #2391") != std::string::npos, "AC3: cites #2391 in ast_impl");
     CHECK(impl.find("record_size_mismatch") != std::string::npos ||

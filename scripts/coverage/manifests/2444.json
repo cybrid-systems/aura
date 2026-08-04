@@ -1,0 +1,54 @@
+{
+  "issue": 2444,
+  "title": "Issue #2444: region_by_sym_dense_ race-free vs concurrent set_function_region.",
+  "ok": "OK: region_by_sym_dense race #2444 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2444",
+        "region_by_sym_dense_",
+        "set_function_region",
+        "region_table_mtx_",
+        "std::atomic_ref<std::uint8_t>(region_by_sym_dense_",
+        "unique_lock"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "get_function_region_for_sym",
+        "shared_lock",
+        "memory_order_acquire"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_ast_concurrency.cpp",
+      "contains": [
+        "Issue #2444",
+        "set_function_region",
+        "get_function_region_for_sym",
+        "#2444: writers progressed"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_region_sym_dense_race_2444",
+        "cmd_region_sym_dense_race_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_ast_concurrency"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_region_sym_dense_race_2444.py"
+}

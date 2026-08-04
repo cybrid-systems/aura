@@ -17,7 +17,7 @@
 //   AC3: aura_jit_deopt_pending_count after teardown returns 0
 //   AC4: Multiple CompilerService lifetimes: clear from one does
 //        NOT clobber a sibling's live wire
-//   AC5: linter self-test (scripts/check_jit_batch_deopt_clear_coverage.py)
+//   AC5: linter self-test (scripts/coverage/checks/check_jit_batch_deopt_clear_coverage.py)
 //
 // The actual lock/clear invariant (file-scope pointer must be
 // nulled in ~CompilerService) is enforced by the linter in CI. This
@@ -105,7 +105,7 @@ int main() {
 
     // === AC5: linter self-test ===
     // The clear-API + destructor-wiring invariants are enforced by
-    // scripts/check_jit_batch_deopt_clear_coverage.py — see that
+    // scripts/coverage/checks/check_jit_batch_deopt_clear_coverage.py — see that
     // script for the source-level AC list. This test is a runtime
     // smoke test; ASan/TSan in CI is the authoritative UAF gate.
 

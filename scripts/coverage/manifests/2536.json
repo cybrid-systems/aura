@@ -1,0 +1,68 @@
+{
+  "issue": 2536,
+  "title": "Issue #2536: Restricted hard-fiber optional policy contract.\"\"\"",
+  "ok": "OK: check_2536: OK",
+  "checks": [
+    {
+      "ac": "AC5",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "2536"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "AURA_HARD_FIBER_ISOLATION"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "Restricted alone"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "2536",
+        "TenantScope"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "schema-2536",
+        "fiber-mismatch-total",
+        "fiber-hard-deny-total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_hard_fiber_restricted_2536",
+        "aura_issue_test_link_light(test_hard_fiber_restricted_2536)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_2536"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_hard_fiber_restricted_2536.cpp",
+      "contains": [
+        "AC1"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2536.py"
+}

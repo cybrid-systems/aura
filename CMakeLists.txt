@@ -977,7 +977,7 @@ add_test(NAME ir_basic COMMAND ./test_ir
 
 # Phase-2 empty root stubs (test_fiber / test_mutation / test_observability /
 # test_persist) removed — coverage lives in core/arena + serve/gc + orch test suites
-# (see tests/root_test_classification.md Wave 0, scripts/classify_root_tests.py).
+# (see tests/root_test_classification.md Wave 0, scripts/tools/classify_root_tests.py).
 
 # IR mode tests via --ir flag
 macro(IRT N I E)
@@ -1912,7 +1912,7 @@ aura_issue_test_link_light(test_static_reflect_selfmod_validation_task6)
 # concurrent typed mutate + (gc-heap) + regression.
 # Non-duplicative with #536/#537/#526/#509/#518 (impl).
 # ── Issue test bundles (restored; accidentally dropped in wave 8 #1978) ──
-# One fat executable per link profile — see scripts/gen_issue_bundles.py
+# One fat executable per link profile — see scripts/tools/gen_issue_bundles.py
 # and tests/bundles/issue_bundle_runner.{hh,cpp}.
 aura_add_issue_bundle(light)
 aura_add_issue_bundle(jit_late1)
@@ -2185,7 +2185,7 @@ set_target_properties(test_fiber_orch_parallel_quota_batch PROPERTIES EXCLUDE_FR
 # Storage moves to src/compiler/agent_name_table.h::AgentNameTable
 # (Evaluator member), drained at ~Evaluator via
 # Evaluator::cleanup_orch_agents(). Single-agent MVP surface
-# preserved (scripts/check_orch_mvp_scope.py --strict still guards).
+# preserved (scripts/coverage/checks/check_orch_mvp_scope.py --strict still guards).
 aura_add_issue_test(test_agent_name_table_isolation_2078)
 aura_issue_test_link_light(test_agent_name_table_isolation_2078)
 
@@ -4382,7 +4382,7 @@ add_dependencies(all_test_issue_targets test_mutate_mailbox_starvation_throttle_
 # orch:scope-cancel-all). Per-Evaluator scope (not process-static —
 # g_evaluator_agent_scopes map in src/orch/agent_scope.h is storage;
 # AgentScope objects themselves are per-Evaluator). NO global registry
-# (MVP linter scripts/check_orch_mvp_scope.py still rejects
+# (MVP linter scripts/coverage/checks/check_orch_mvp_scope.py still rejects
 # AgentRegistry / global_agent_registry / conduct_parallel). Source-cite
 # in src/orch/agent_scope.h (per-Evaluator map + helpers) /
 # src/orch/agent_spawn.h (OrchModuleStats 6 new metrics) /

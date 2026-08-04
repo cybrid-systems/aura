@@ -1,0 +1,105 @@
+{
+  "issue": 2504,
+  "title": "Issue #2504: e2e PerEval dual-eval SpecJIT storm isolation regression gate.",
+  "ok": "OK: Issue #2504 SpecJIT PerEval storm e2e isolation — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/spec_jit_controller.cpp",
+      "contains": [
+        "g_specjit_per_eval_storm_skip_foreign_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "contains": [
+        "get_specialized",
+        "ac1_dual_eval_pereval_hit_survives"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/spec_jit_controller.cpp",
+      "contains": [
+        "eval_owner_",
+        "g_specjit_per_eval_storm_clear_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "contains": [
+        "ac2_foreign_skip_and_owner_clear"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "contains": [
+        "ac3_global_clears_both",
+        "mode Global"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/shape_profiler.cpp",
+      "contains": [
+        "aura_get_storm_isolation_mode() != 2"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/spec_jit_controller.h",
+      "contains": [
+        "isolation_shape_epoch_"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "contains": [
+        "ac4_no_global_shape_bump_under_pereval"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2504",
+        "specjit-pereval-e2e-isolation-wired",
+        "multi-eval-host-pereval-heuristic-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_specjit_pereval_storm_e2e_2504"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_specjit_pereval_storm_e2e_2504",
+        "cmd_specjit_pereval_storm_e2e_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_specjit_pereval_storm_e2e_2504.cpp",
+      "contains": [
+        "ac5_concurrent_and_source_gate"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_specjit_per_eval_storm_isolation_2370.cpp",
+      "contains": [
+        "ac2_ac3_two_eval_isolation"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_specjit_pereval_storm_e2e_2504.py"
+}

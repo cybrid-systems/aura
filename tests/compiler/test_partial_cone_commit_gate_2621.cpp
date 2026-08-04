@@ -280,7 +280,8 @@ static void ac2646_outside_cone_invalidate_source_cite() {
     auto obs = read_file("src/compiler/observability_metrics.h");
     auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
     auto build = read_file("build.py");
-    auto linter = read_file("scripts/check_occurrence_cone_outside_invalidate_2646.py");
+    auto linter =
+        read_file("scripts/coverage/checks/check_occurrence_cone_outside_invalidate_2646.py");
 
     // AC3: !truncated path — gate on last_partial_cone_truncated_
     CHECK(impl.find("if (last_partial_cone_truncated_)") != std::string::npos,

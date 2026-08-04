@@ -184,7 +184,7 @@ if [ -n "$src_files" ]; then
     # already had a stale snapshot). Without this, CI's
     # `./build.py gate → docs --check` is the only safety net
     # and the bad commit is already in history by then.
-    if ! python3 "$ROOT/scripts/gen_docs.py" --check > /tmp/docs_check.log 2>&1; then
+    if ! python3 "$ROOT/scripts/tools/gen_docs.py" --check > /tmp/docs_check.log 2>&1; then
         echo "❌ pre-commit: docs still stale after regen (gen_docs.py --check failed)" >&2
         cat /tmp/docs_check.log >&2
         echo "   Hint: run ./build.py docs manually, then git add docs/generated/" >&2
@@ -207,10 +207,10 @@ if [ -n "$test_files" ]; then
     fi
 
     echo "pre-commit: running test includes linter (tests/ has staged changes)..."
-    if ! python3 "$ROOT/scripts/check_test_includes.py" > /tmp/test_includes_check.log 2>&1; then
+    if ! python3 "$ROOT/scripts/coverage/checks/check_test_includes.py" > /tmp/test_includes_check.log 2>&1; then
         echo "❌ pre-commit: test includes linter failed. See /tmp/test_includes_check.log" >&2
         cat /tmp/test_includes_check.log >&2
-        echo "   Hint: run python3 scripts/check_test_includes.py to see which include is broken." >&2
+        echo "   Hint: run python3 scripts/coverage/checks/check_test_includes.py to see which include is broken." >&2
         exit 1
     fi
     echo "pre-commit: test includes linter clean ✓"
@@ -229,7 +229,7 @@ if [ -n "$test_registry_files" ]; then
     fi
 
     echo "pre-commit: regenerating test-registry (tests/ has staged changes)..."
-    if ! python3 "$ROOT/scripts/gen_test_registry.py" > /tmp/test_registry_regen.log 2>&1; then
+    if ! python3 "$ROOT/scripts/tools/gen_test_registry.py" > /tmp/test_registry_regen.log 2>&1; then
         echo "❌ pre-commit: gen_test_registry.py failed. See /tmp/test_registry_regen.log" >&2
         cat /tmp/test_registry_regen.log >&2
         exit 1
@@ -245,10 +245,10 @@ if [ -n "$test_registry_files" ]; then
     fi
     echo "pre-commit: test-registry regen clean ✓"
 
-    if ! python3 "$ROOT/scripts/gen_test_registry.py" --check > /tmp/test_registry_check.log 2>&1; then
+    if ! python3 "$ROOT/scripts/tools/gen_test_registry.py" --check > /tmp/test_registry_check.log 2>&1; then
         echo "❌ pre-commit: test-registry still stale after regen (--check failed)" >&2
         cat /tmp/test_registry_check.log >&2
-        echo "   Hint: run python3 scripts/gen_test_registry.py && git add $registry_path" >&2
+        echo "   Hint: run python3 scripts/tools/gen_test_registry.py && git add $registry_path" >&2
         exit 1
     fi
     echo "pre-commit: test-registry verify (--check) clean ✓"

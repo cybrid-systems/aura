@@ -1,0 +1,83 @@
+{
+  "issue": 2495,
+  "title": "Issue #2495: Moving densify fail-closed on untracked external roots.",
+  "ok": "OK: Issue #2495 moving densify fail-closed — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #2495",
+        "moving_incomplete_remap",
+        "untracked_kept_count",
+        "relocate_tracked_objects_for_moving_(&untracked_kept_local)",
+        "if (result.objects_moved > 0 && result.untracked_kept_count > 0)",
+        "result.moving_incomplete_remap = true",
+        "result.pin_contract_held = false"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "untracked_kept_count == 0"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "g_moving_untracked_external_roots_total",
+        "g_moving_untracked_external_roots_total.fetch_add",
+        "g_moving_untracked_hard_abort_pref"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "contains": [
+        "ac1_source_cite_live_compact_result"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "contains": [
+        "ac3_soft_zero_extra_work"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "contains": [
+        "ac4_query_stats_surface"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "contains": [
+        "ac5_source_and_gate",
+        "Issue #2495"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_moving_densify_fail_closed_2495",
+        "aura_add_issue_test(test_moving_densify_fail_closed_2495)",
+        "aura_issue_test_link_light(test_moving_densify_fail_closed_2495)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_moving_densify_fail_closed_2495",
+        "cmd_moving_densify_fail_closed_2495_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_moving_densify_fail_closed_2495.py"
+}

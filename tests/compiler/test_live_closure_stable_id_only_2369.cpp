@@ -181,7 +181,8 @@ static void ac5_source_and_gate() {
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto script = read_file("scripts/check_live_closure_stable_id_only_2369.py");
+    const auto script =
+        read_file("scripts/coverage/checks/check_live_closure_stable_id_only_2369.py");
     CHECK(rt.find("Issue #2369") != std::string::npos, "AC5: #2369 in runtime");
     CHECK(rt.find("stable_func_id") != std::string::npos ||
               rt.find("stable_func_id") != std::string::npos,

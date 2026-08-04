@@ -1,0 +1,63 @@
+{
+  "issue": 2582,
+  "title": "Issue #2582: pure-Aura hot strategy contracts.",
+  "ok": "OK: Issue #2582 pure-Aura hot strategy — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "lib/std/hot-strategy.aura",
+      "contains": [
+        "#2582",
+        "hot-strategy:swap!",
+        "hot-strategy:heal!",
+        "mutate:rebind",
+        "ast:snapshot"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "lib/std/hot-update.aura",
+      "contains": [
+        "#2582",
+        "hot-strategy",
+        "AOT"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "lib/std/INDEX.aura",
+      "contains": [
+        "hot-strategy"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "docs/stdlib/hot-strategy.md",
+      "contains": [
+        "#2582"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_hot_strategy_2582"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "check_hot_strategy_2582"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_hot_strategy_2582.cpp",
+      "contains": [
+        "ac1_swap"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_hot_strategy_2582.py"
+}
