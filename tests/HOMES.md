@@ -57,6 +57,9 @@ If unsure: `rg -n 'keyword' tests/compiler tests/core tests/serve tests/orch` an
 
 ## Consolidation waves (existing issue-suffixed files)
 
+**Detailed scan + merge plan:** [`CONSOLIDATION_PLAN.md`](CONSOLIDATION_PLAN.md).
+
+
 **Status (2026-08-04):** multi-TU thematic batches done. Historical files keep
 `_*NNNN` names as **member TUs** (`run_test_*` + `AURA_ISSUE_BATCH_MEMBER`);
 **standalone `aura_add_issue_test` for issue-suffixed targets is removed**

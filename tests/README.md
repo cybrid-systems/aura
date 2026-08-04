@@ -183,6 +183,7 @@ ninja -C build test_arena_batch test_gc_compact_batch  # EXCLUDE_FROM_ALL 目标
 | Doc | Purpose |
 |-----|---------|
 | [`HOMES.md`](HOMES.md) | **Agent 必读** — theme → suite map + hard bans + consolidation waves |
+| [`CONSOLIDATION_PLAN.md`](CONSOLIDATION_PLAN.md) | Issue 后缀测试全量扫描 + Stream A–D 合并/改名计划 |
 | [`STRATEGY.md`](STRATEGY.md) | Hot-path coverage matrix + SLO goals (#1887) |
 | [`legacy_test_inventory.md`](legacy_test_inventory.md) | #1957 inventory + migration waves |
 | [`root_test_classification.md`](root_test_classification.md) | Theme → module map + near-dups |
