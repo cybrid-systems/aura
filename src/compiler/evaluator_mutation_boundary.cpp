@@ -62,6 +62,12 @@ module;
 
 module aura.compiler.evaluator;
 
+import aura.core.lifetime_pin;
+import aura.compiler.coercion_map;    // Issue #2102: provenance-miss force-audit
+import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
+import aura.compiler.ir_soa;          // Issue #2432: current_ir_soa_generation_fence
+import aura.compiler.type_checker;    // Issue #2608: maybe_persist_occurrence_snapshot
+
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
 
 namespace aura::compiler {
@@ -89,11 +95,6 @@ inline bool maybe_soft_recover_or_escalate_blame(aura::ast::FlatAST& flat, std::
 // cheap on the quiet path, runs the existing #2541 soft walk when due).
 } // namespace aura::compiler
 
-import aura.core.lifetime_pin;
-import aura.compiler.coercion_map;    // Issue #2102: provenance-miss force-audit
-import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
-import aura.compiler.ir_soa;          // Issue #2432: current_ir_soa_generation_fence
-import aura.compiler.type_checker;    // Issue #2608: maybe_persist_occurrence_snapshot
 
 // Issue #2021: snapshot macro depth / concurrent peak into CompilerMetrics
 // on outermost MutationBoundaryGuard exit (module-safe C entry).
