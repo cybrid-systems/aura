@@ -1924,6 +1924,37 @@ extern "C" int aura_sync_remount_anon_enabled_default() {
     return cached;
 }
 
+// Issue #2638: env opt-in flag for residual sid=0 cap. Default 256
+// (production-safe per AC1) — clamps sustained residual growth so
+// the one-shot backfill cannot invent unlimited new ids under
+// long-running self-mod + reemit + occasional name-fallback edge
+// cases. Set AURA_RESIDUAL_SID0_CAP=0 (or "off" / "unlimited") for
+// Soft / sandbox=off / tests where the cap is observe-only. Cached
+// on first call so the env lookup runs at most once per process.
+extern "C" std::uint64_t aura_residual_sid0_cap_default() {
+    static const std::uint64_t cached = []() {
+        const char* e = std::getenv("AURA_RESIDUAL_SID0_CAP");
+        if (!e || *e == '\0')
+            return 256; // production-safe default per AC1
+        const std::string s(e);
+        if (s == "0" || s == "off" || s == "unlimited")
+            return 0; // unlimited (Soft / sandbox=off / tests)
+        try {
+            return static_cast<std::uint64_t>(std::stoull(s));
+        } catch (const std::invalid_argument&) {
+            // std::stoull throws invalid_argument when no conversion could be
+            // performed (non-numeric env value). Return production default.
+            return 256;
+        } catch (const std::out_of_range&) {
+            // std::stoull throws out_of_range when the converted value would
+            // fall out of the range of the result type. Return production
+            // default.
+            return 256;
+        }
+    }();
+    return cached;
+}
+
 // Issue #2637: anon / residual sync remount walk (sid == 0 branch).
 // Mirrors aura_sync_remount_named_live_closures (#2602) but filters
 // on the opposite sid. Closes the first-call MustDeopt window for
@@ -2172,6 +2203,26 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // exposed under stable-id-residual-backfill-* query aliases.
         bool via_backfill = false;
         if (cid_stable_id == 0 && named) {
+            // Issue #2638: hard cap on residual sid=0 backfill. When
+            // the cumulative backfill would exceed the configured cap,
+            // force MustDeopt + bump cap-hit counter rather than invent
+            // further ids (fail-closed). env AURA_RESIDUAL_SID0_CAP=0
+            // → unlimited (Soft / sandbox=off / tests). Weak default
+            // 0 when orch module not linked (fn ? fn() : 0 ternary).
+            const std::uint64_t cap_2638 = aura_residual_sid0_cap_default
+                                               ? aura_residual_sid0_cap_default()
+                                               : 0; // weak default = unlimited
+            if (cap_2638 > 0) {
+                const std::uint64_t cur_backfill =
+                    aot_metrics() ? aot_metrics()->live_closure_stable_id_backfill_total.load(
+                                        std::memory_order_relaxed)
+                                  : 0;
+                if (cur_backfill >= cap_2638) {
+                    aura_bump_live_closure_residual_cap_hit_total(1);
+                    aura_closure_set_must_deopt(cid, 1);
+                    continue;
+                }
+            }
             // Prefer existing map entry; preserve assigns if missing so
             // post-reemit restamp is not blocked by sid=0 residual.
             std::uint32_t looked_up = aura_lookup_stable_func_id(cname);

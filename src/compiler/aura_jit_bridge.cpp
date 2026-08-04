@@ -193,6 +193,25 @@ extern "C" void aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t ok
     }
 }
 
+// Issue #2638: residual sid=0 cap-hit counter bumper. Bumped when
+// the residual backfill branch in aura_remap_live_closures_after_reemit
+// sees cur_backfill >= cap (or 0 cap = unlimited → never). Distinct
+// from live_closure_stable_id_backfill_total (which counts successful
+// backfills).
+extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_residual_cap_hit_total.fetch_add(n, std::memory_order_relaxed);
+    }
+}
+
+// Issue #2638: env opt-in flag for residual sid=0 cap. Weak decl in
+// this TU; strong def in aura_jit_runtime.cpp reads AURA_RESIDUAL_SID0_CAP
+// (default 256 production-safe; 0 = unlimited for Soft / sandbox=off /
+// tests). Weak attribute means tests / hosts without the production TU
+// see the function as nullptr — call sites handle via the
+// `fn ? fn() : default` ternary.
+extern "C" std::uint64_t aura_residual_sid0_cap_default() __attribute__((weak));
+
 // Issue #2637: env opt-in flag for anonymous sync remount on reemit.
 // Weak decl in this TU; strong def in aura_jit_runtime.cpp reads
 // AURA_SYNC_REMOUNT_ANON env (default 0 = OFF per AC1). Weak attribute
