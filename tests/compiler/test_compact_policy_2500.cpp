@@ -207,7 +207,7 @@ static void ac5_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_compact_policy_2500() {
     std::println("=== Issue #2500: Agent compact policy ===");
     ac1_table();
     ac2_never_force_under_hold();
@@ -217,3 +217,9 @@ int main() {
     std::println("\n=== #2500 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_compact_policy_2500();
+}
+#endif

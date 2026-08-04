@@ -167,7 +167,7 @@ static void ac4_query_schema() {
 
 } // namespace
 
-int main() {
+int run_test_adaptive_cascade_depth_partial_thr_2209() {
     std::println("=== Issue #2209: cascade depth + dirty_rate adaptive thr ===");
     ac5_cold_start();
     ac1_high_depth_raises();
@@ -178,3 +178,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_adaptive_cascade_depth_partial_thr_2209();
+}
+#endif

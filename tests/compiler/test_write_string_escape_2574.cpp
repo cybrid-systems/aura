@@ -168,7 +168,7 @@ static void ac5_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_write_string_escape_2574() {
     std::println("=== Issue #2574: Scheme write string escape ===");
     ac1_write_embedded_quote();
     ac2_write_backslash();
@@ -178,3 +178,9 @@ int main() {
     std::println("\n=== #2574: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_write_string_escape_2574();
+}
+#endif

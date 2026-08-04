@@ -321,7 +321,7 @@ void ac9_query_surface() {
           "default Off (AC2)");
 }
 
-int main() {
+int run_test_source_to_ir_map_consistency_2045() {
     std::println("=== test_source_to_ir_map_consistency_2045 ===");
     ac1_source();
     ac2_pure_rebuild_assert();
@@ -335,3 +335,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_source_to_ir_map_consistency_2045();
+}
+#endif

@@ -309,7 +309,7 @@ static void ac10_build_gate_wiring_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_orch_soft_boundary_unified_2515() {
     std::println("=== Issue #2515: orch soft boundary unified with depth/held semantics ===");
     std::println("=== Issue #2600: shared exit helper (soft fiber + full Guard) (extends #2515 "
                  "test file per #81967) ===");
@@ -326,3 +326,9 @@ int main() {
     std::println("\n=== #2515 + #2600: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_orch_soft_boundary_unified_2515();
+}
+#endif

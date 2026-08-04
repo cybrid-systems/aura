@@ -231,7 +231,7 @@ void ac2248_agent_driven_adaptive_thr() {
 
 } // namespace
 
-int main() {
+int run_test_adaptive_partial_relower_threshold_2112() {
     std::println("=== Issue #2112: adaptive partial relower threshold ===");
     ac1_cold_start();
     ac2_adaptive_moves();
@@ -243,3 +243,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_adaptive_partial_relower_threshold_2112();
+}
+#endif

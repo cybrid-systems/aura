@@ -55,7 +55,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_ir_soa_layout_stamp_2432() {
     std::println("=== Issue #2432: IR SoA generation fence × LayoutStamp ===");
 
     // ── AC3 process-global fence advances on mark_dirty ────────────
@@ -171,3 +171,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_ir_soa_layout_stamp_2432();
+}
+#endif

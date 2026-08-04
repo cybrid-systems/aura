@@ -190,7 +190,7 @@ static void ac5_hard_gate_retained() {
 
 } // namespace
 
-int main() {
+int run_test_adt_match_goal_table_2564() {
     std::println("=== Issue #2564: ADT match goal table + reverify roots ===");
     ac1_note_invalidate_reverify();
     ac2_zero_work();
@@ -200,3 +200,9 @@ int main() {
     std::println("\n=== #2564: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_adt_match_goal_table_2564();
+}
+#endif

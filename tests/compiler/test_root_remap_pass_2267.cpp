@@ -442,7 +442,7 @@ static void ac2339_4_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_root_remap_pass_2267() {
     std::println("=== Issue #2294 / #2267 + #2339: RootRemapPass real rewrite + auto-register ===");
     CHECK(2294 == 2294, "issue stamp");
 
@@ -460,3 +460,9 @@ int main() {
     std::println("\n=== #2294 + #2339 RootRemapPass: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_root_remap_pass_2267();
+}
+#endif

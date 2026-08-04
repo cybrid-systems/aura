@@ -197,7 +197,7 @@ static void ac5_source_schema() {
 
 } // namespace
 
-int main() {
+int run_test_coercion_prov_slo_2558() {
     std::println("=== Issue #2558: coercion provenance completeness SLO ===");
     ac1_production_slo_force();
     ac2_soft_observe();
@@ -209,3 +209,9 @@ int main() {
     std::println("\n=== #2558: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_coercion_prov_slo_2558();
+}
+#endif

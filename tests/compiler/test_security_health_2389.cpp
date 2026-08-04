@@ -265,7 +265,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_security_health_2389() {
     std::println("=== Issue #2389: query:security-health single Agent score ===");
     ac1_vacuous_healthy();
     ac2_effect_deny_and_priority();
@@ -275,3 +275,9 @@ int main() {
     std::println("\n=== #2389 results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_security_health_2389();
+}
+#endif

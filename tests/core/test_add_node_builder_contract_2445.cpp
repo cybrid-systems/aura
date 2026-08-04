@@ -41,7 +41,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_add_node_builder_contract_2445() {
     std::println("=== Issue #2445: add_node + builder mutation contract ===");
 
     // ── AC1: single-threaded builders unchanged ────────────────────
@@ -148,3 +148,9 @@ int main() {
     std::println("\n=== #2445 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_add_node_builder_contract_2445();
+}
+#endif

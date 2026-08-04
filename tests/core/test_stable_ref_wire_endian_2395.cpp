@@ -238,7 +238,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_stable_ref_wire_endian_2395() {
     std::println("=== Issue #2395: StableNodeRef wire little-endian ===");
     ac1_roundtrip();
     ac2_golden_le_bytes();
@@ -248,3 +248,9 @@ int main() {
     std::println("\n=== #2395 results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stable_ref_wire_endian_2395();
+}
+#endif

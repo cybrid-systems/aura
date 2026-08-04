@@ -233,7 +233,7 @@ static void ac5_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_truncate_commit_gate_2458() {
     std::println("=== Issue #2458: truncate-commit gate ===");
     ac1_soft_observe();
     ac2_hard_full_solve();
@@ -243,3 +243,9 @@ int main() {
     std::println("\n=== #2458 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_truncate_commit_gate_2458();
+}
+#endif

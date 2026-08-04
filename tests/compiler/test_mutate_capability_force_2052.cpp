@@ -77,7 +77,7 @@ std::string read_src(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_mutate_capability_force_2052() {
     std::println("=== Issue #2052: force capability + isolation on mutate:* ===");
 
     // ── AC1: source cites force path ──
@@ -297,3 +297,9 @@ int main() {
     std::println("\n#2052 mutate capability force: {} passed, {} failed", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutate_capability_force_2052();
+}
+#endif

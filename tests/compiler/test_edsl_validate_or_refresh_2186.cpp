@@ -70,7 +70,7 @@ NodeId first_live(FlatAST& ws) {
 
 } // namespace
 
-int main() {
+int run_test_edsl_validate_or_refresh_2186() {
     std::println("=== Issue #2186: EDSL validate_or_refresh zero-tolerance ===");
     CHECK(kEdslValidateOrRefreshIssue == 2186, "issue stamp constant");
 
@@ -299,3 +299,9 @@ int main() {
     std::println("\n=== #2186 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_edsl_validate_or_refresh_2186();
+}
+#endif

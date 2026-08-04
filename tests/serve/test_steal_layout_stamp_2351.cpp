@@ -201,7 +201,7 @@ static void ac5_concurrent_stress() {
 
 } // namespace
 
-int main() {
+int run_test_steal_layout_stamp_2351() {
     std::println("=== Issue #2351: steal-complete LayoutStamp dual-check ===");
     ac1_matching_stamp();
     ac2_mismatched_stamp();
@@ -211,3 +211,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_steal_layout_stamp_2351();
+}
+#endif

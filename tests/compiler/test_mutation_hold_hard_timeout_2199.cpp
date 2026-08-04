@@ -245,7 +245,7 @@ static void ac6_query_schema() {
 
 } // namespace
 
-int main() {
+int run_test_mutation_hold_hard_timeout_2199() {
     std::println("=== Issue #2199: MutationBoundary hard timeout / force-fail ===");
     ac1_strict_force_fail();
     ac2_soft_no_force_fail();
@@ -256,3 +256,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_hold_hard_timeout_2199();
+}
+#endif

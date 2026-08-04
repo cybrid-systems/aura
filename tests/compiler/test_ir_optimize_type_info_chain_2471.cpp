@@ -177,7 +177,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_ir_optimize_type_info_chain_2471() {
     std::println("=== Issue #2471: optimize_type_info chain-walk termination ===");
     ac1_multistep_through_slot0();
     ac2_terminal_is_slot0();
@@ -187,3 +187,9 @@ int main() {
     std::println("\n=== #2471 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_ir_optimize_type_info_chain_2471();
+}
+#endif

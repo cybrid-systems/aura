@@ -273,7 +273,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_security_audit_fold_2388() {
     std::println("=== Issue #2388: fold Capability/Isolation audit into SecurityEvent WAL ===");
     CHECK(kSecurityAuditFoldIssue == 2388, "issue stamp");
 
@@ -286,3 +286,9 @@ int main() {
     std::println("\n=== #2388 results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_security_audit_fold_2388();
+}
+#endif

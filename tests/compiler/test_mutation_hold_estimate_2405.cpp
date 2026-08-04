@@ -62,7 +62,7 @@ static void spin_us(std::int64_t min_us) {
 
 } // namespace
 
-int main() {
+int run_test_mutation_hold_estimate_2405() {
     std::println("=== Issue #2405: query:mutation-hold-estimate ===");
 
     // ── AC3 soft / empty session ───────────────────────────────────
@@ -167,3 +167,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_hold_estimate_2405();
+}
+#endif

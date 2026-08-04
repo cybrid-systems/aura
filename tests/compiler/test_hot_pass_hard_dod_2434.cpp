@@ -94,7 +94,7 @@ static IRModule make_mod(std::size_t n_blocks) {
 
 } // namespace
 
-int main() {
+int run_test_hot_pass_hard_dod_2434() {
     std::println("=== Issue #2434: hard HotPassDodCompliant for all production stages ===");
 
     // ── AC1: pack stages HotPass + PureWrap ────────────────────────
@@ -242,3 +242,9 @@ int main() {
     std::println("\n=== #2434 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hot_pass_hard_dod_2434();
+}
+#endif

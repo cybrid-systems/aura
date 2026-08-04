@@ -506,7 +506,7 @@ static void ac16_schema_source_2344() {
 
 } // namespace
 
-int main() {
+int run_test_escape_move_elision_gate_2263() {
     std::println("=== Issue #2263 / #2286: escape summary → MoveOp elision gate ===");
     ac1_escape_blocks_elision();
     ac2_clean_path_elides();
@@ -528,3 +528,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_escape_move_elision_gate_2263();
+}
+#endif

@@ -270,7 +270,7 @@ static void ac5_schema_and_fields() {
 
 } // namespace
 
-int main() {
+int run_test_subtype_constraint_meet_2195() {
     std::println("=== Issue #2195: SUBTYPE goals + stronger meet/join ===");
     ac1_subtype_solve_and_conflict();
     ac2_meet_same_tag_no_widen();
@@ -280,3 +280,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_subtype_constraint_meet_2195();
+}
+#endif

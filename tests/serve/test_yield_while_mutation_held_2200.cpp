@@ -271,7 +271,7 @@ static void ac5_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_yield_while_mutation_held_2200() {
     std::println("=== Issue #2200: hard-block Fiber::yield under MutationBoundary ===");
     ac1_yield_rejected_under_guard();
     ac2_depth0_unchanged();
@@ -281,3 +281,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_yield_while_mutation_held_2200();
+}
+#endif

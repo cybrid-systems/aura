@@ -282,7 +282,7 @@ static void ac5_docs_query_gate() {
 
 } // namespace
 
-int main() {
+int run_test_cross_cow_drift_contract_2505() {
     std::println("test_cross_cow_drift_contract_2505");
     ac1_near_drift_soft();
     ac2_far_drift_hard();
@@ -294,3 +294,9 @@ int main() {
     std::println("cross-COW drift contract #2505: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_cross_cow_drift_contract_2505();
+}
+#endif

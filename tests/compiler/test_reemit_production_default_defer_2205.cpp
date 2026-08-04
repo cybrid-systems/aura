@@ -278,7 +278,7 @@ static void ac7_require_real_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_reemit_production_default_defer_2205() {
     std::println("=== Issue #2205: production default reemit Defer (no SoftEnter multi-fiber) ===");
     ac1_production_default_defer();
     ac2_outside_defers_no_soft();
@@ -293,3 +293,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_reemit_production_default_defer_2205();
+}
+#endif

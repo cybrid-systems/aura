@@ -69,7 +69,7 @@ void reset_all() {
 
 } // namespace
 
-int main() {
+int run_test_stable_ref_tenant_capture_2125() {
     std::println("=== Issue #2125: stamp_ref_tenant on all StableNodeRef capture paths ===");
     CHECK(kStableRefTenantCaptureIssue == 2125, "AC1: issue stamp constant");
 
@@ -233,3 +233,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stable_ref_tenant_capture_2125();
+}
+#endif

@@ -240,7 +240,7 @@ static void ac5_finish_dirty_sync() {
 
 } // namespace
 
-int main() {
+int run_test_batch_dirty_cascade_2522() {
     std::println("=== Issue #2522: batch dirty cascade (mark_blocks_dirty) ===");
     ac1_batch_one_bump();
     ac2_semantics_match();
@@ -250,3 +250,9 @@ int main() {
     std::println("\n=== #2522: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_batch_dirty_cascade_2522();
+}
+#endif

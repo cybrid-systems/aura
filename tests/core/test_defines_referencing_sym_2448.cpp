@@ -44,7 +44,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_defines_referencing_sym_2448() {
     std::println("=== Issue #2448: defines_referencing_sym exclude by NodeId ===");
 
     // ── AC1: well-formed unique names ──────────────────────────────
@@ -128,3 +128,9 @@ int main() {
     std::println("\n=== #2448 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_defines_referencing_sym_2448();
+}
+#endif

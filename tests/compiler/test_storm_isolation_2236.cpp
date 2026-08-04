@@ -264,7 +264,7 @@ static void ac2274_per_region_default() {
 
 } // namespace
 
-int main() {
+int run_test_storm_isolation_2236() {
     std::println("=== Issue #2236 — per-region / per-eval deopt-storm isolation ===");
     ac_dual_region_storm();
     ac_isolation_global_legacy();
@@ -277,3 +277,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_storm_isolation_2236();
+}
+#endif

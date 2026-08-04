@@ -233,7 +233,7 @@ static void ac5_no_docs() {
 
 } // namespace
 
-int main() {
+int run_test_dce_elided_deopt_meta_2611() {
     std::println("=== test_dce_elided_deopt_meta_2611 ===");
     ac1_production_elide_expose();
     ac2_no_evidence_no_stamp();
@@ -243,3 +243,9 @@ int main() {
     std::println("\n{} passed, {} failed", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_dce_elided_deopt_meta_2611();
+}
+#endif

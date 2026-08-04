@@ -263,7 +263,7 @@ static void ac4_combined_scenario() {
 
 } // namespace
 
-int main() {
+int run_test_query_by_marker_provenance_2242() {
     ac1_primitives_registered();
     ac2_pattern_default_hygiene();
     ac3_metrics_in_combined_surfaces();
@@ -273,3 +273,9 @@ int main() {
                  g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_query_by_marker_provenance_2242();
+}
+#endif

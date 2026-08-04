@@ -46,7 +46,7 @@ PCV make_n(std::size_t n) {
 
 } // namespace
 
-int main() {
+int run_test_pcv_unique_hotpath_2058() {
     std::println("=== Issue #2058: PCV unique hot-path ===");
     CHECK(kPcvHotpathIssue == 2058, "issue stamp");
 
@@ -217,3 +217,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_pcv_unique_hotpath_2058();
+}
+#endif

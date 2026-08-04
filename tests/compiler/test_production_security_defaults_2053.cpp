@@ -108,7 +108,7 @@ void reset_process() {
 
 } // namespace
 
-int main() {
+int run_test_production_security_defaults_2053() {
     std::println("=== Issue #2053: production security defaults ===");
     CHECK(kProductionSecurityDefaultsIssue == 2053, "issue stamp");
 
@@ -247,3 +247,9 @@ int main() {
     std::println("\n#2053 production security defaults: {} passed, {} failed", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_production_security_defaults_2053();
+}
+#endif

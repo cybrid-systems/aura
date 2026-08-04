@@ -192,7 +192,7 @@ static void ac6_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_audit_mutation_id_unify_2493() {
     std::println("=== Issue #2493: mutation_id source unify (WorkspaceEpoch Mutation) ===");
     ac1_prefers_caller_then_mutation_epoch();
     ac2_resource_quota_fallback();
@@ -203,3 +203,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_audit_mutation_id_unify_2493();
+}
+#endif

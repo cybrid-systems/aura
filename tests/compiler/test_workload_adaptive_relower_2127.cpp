@@ -74,7 +74,7 @@ static std::int64_t href(CompilerService& cs, std::string_view q, std::string_vi
 
 } // namespace
 
-int main() {
+int run_test_workload_adaptive_relower_2127() {
     std::println("=== Issue #2127: workload/deopt adaptive partial-relower thr ===");
 
     // ── AC1: default base 8, quiet workload ≈ #2032 ──
@@ -233,3 +233,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_workload_adaptive_relower_2127();
+}
+#endif

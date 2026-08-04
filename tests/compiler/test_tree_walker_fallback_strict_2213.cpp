@@ -231,7 +231,7 @@ static void ac4_happy_path_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_tree_walker_fallback_strict_2213() {
     std::println("=== Issue #2213: production tree-walker fallback gate ===");
     ac2_default_allow();
     ac1_forbidden_and_force_soa();
@@ -242,3 +242,9 @@ int main() {
                  g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_tree_walker_fallback_strict_2213();
+}
+#endif

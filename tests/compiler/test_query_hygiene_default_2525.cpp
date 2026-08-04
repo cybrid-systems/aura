@@ -205,7 +205,7 @@ static void ac5_ac6_lineage_and_contract() {
 
 } // namespace
 
-int main() {
+int run_test_query_hygiene_default_2525() {
     std::println("=== Issue #2525: unconstrained query hygiene residual ===");
     ac1_default_skip();
     ac2_index_marker_dimension();
@@ -215,3 +215,9 @@ int main() {
     std::println("\n=== #2525: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_query_hygiene_default_2525();
+}
+#endif

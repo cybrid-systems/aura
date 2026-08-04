@@ -152,7 +152,7 @@ static void ac4_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_while_define_oneshot_2571() {
     std::println("=== Issue #2571: while + define loop counter footgun ===");
     ac1_define_in_while();
     ac2_multi_define_in_while();
@@ -161,3 +161,9 @@ int main() {
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_while_define_oneshot_2571();
+}
+#endif

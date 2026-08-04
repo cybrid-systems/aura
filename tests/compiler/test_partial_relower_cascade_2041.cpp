@@ -201,7 +201,7 @@ void ac6_epoch_still_enforced() {
 
 } // namespace
 
-int main() {
+int run_test_partial_relower_cascade_2041() {
     std::println("=== Issue #2041: partial re-lower cascade + JIT partial ===");
     ac1_source();
     ac2_query_schema();
@@ -214,3 +214,9 @@ int main() {
     std::println("partial re-lower cascade (#2041): OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_partial_relower_cascade_2041();
+}
+#endif

@@ -157,7 +157,7 @@ static void ac3_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_validate_post_restore_soa_2391() {
     std::println("=== Issue #2391: validate_post_restore SoA size cross-check ===");
     ac1_soa_sym_id_drift();
     ac1b_metadata_drift();
@@ -166,3 +166,9 @@ int main() {
     std::println("\n=== #2391 results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_validate_post_restore_soa_2391();
+}
+#endif

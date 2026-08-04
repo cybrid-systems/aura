@@ -261,7 +261,7 @@ static void ac6_schema_source() {
 
 } // namespace
 
-int main() {
+int run_test_castop_typed_meta_2624() {
     std::println("=== Issue #2624: CastOp typed meta Phase A ===");
     ac1_non_elided_coercion_stamps();
     ac2_identity_elision_no_cast();
@@ -273,3 +273,9 @@ int main() {
     std::println("\n=== #2624: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_castop_typed_meta_2624();
+}
+#endif

@@ -518,7 +518,7 @@ static void ac2638_source_and_schema_cite() {
           "AC6: build.py references linter");
 }
 
-int main() {
+int run_test_anonymous_residual_stable_id_policy_2605() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
     // Set AURA_RESIDUAL_SID0_CAP=2 BEFORE any aura_* call so the
@@ -539,3 +539,9 @@ int main() {
     std::println("\n=== #2605+#2637+#2638: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_anonymous_residual_stable_id_policy_2605();
+}
+#endif

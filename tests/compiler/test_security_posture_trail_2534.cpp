@@ -58,7 +58,7 @@ std::string read_file(const char* path) {
 }
 } // namespace
 
-int main() {
+int run_test_security_posture_trail_2534() {
     std::println("=== Issue #2534: security posture + correlated trail ===");
     reset_capability_effects_for_test();
     aura::core::security_event::reset_security_event_ring_for_test();
@@ -94,3 +94,9 @@ int main() {
     std::println("\n=== #2534: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_security_posture_trail_2534();
+}
+#endif

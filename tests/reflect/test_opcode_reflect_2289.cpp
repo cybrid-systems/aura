@@ -97,7 +97,7 @@ struct Smoke {
 
 } // namespace
 
-int main() {
+int run_test_opcode_reflect_2289() {
     using aura::reflect::build_name_table;
     using aura::reflect::enum_count;
     using aura::reflect::list_opcodes;
@@ -149,3 +149,9 @@ int main() {
     std::printf("test_opcode_reflect_2289: %d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_opcode_reflect_2289();
+}
+#endif

@@ -555,7 +555,7 @@ static void ac2399_concurrent_detect() {
 
 } // namespace
 
-int main() {
+int run_test_agent_scope_2083() {
     std::println("=== Issue #2083 / #2161: AgentScope + watch_all ===");
     ac4_linter_and_source();
     ac2161_flag_and_linter_surface();
@@ -569,3 +569,9 @@ int main() {
     std::println("\n=== #2083/#2161/#2399: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_agent_scope_2083();
+}
+#endif

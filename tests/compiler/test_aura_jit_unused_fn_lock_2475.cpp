@@ -125,7 +125,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_aura_jit_unused_fn_lock_2475() {
     std::println("=== Issue #2475: remove unused fn_lock in AuraJIT::compile ===");
     ac1_fn_lock_removed();
     ac2_comments();
@@ -135,3 +135,9 @@ int main() {
     std::println("\n=== #2475 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_aura_jit_unused_fn_lock_2475();
+}
+#endif

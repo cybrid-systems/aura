@@ -57,7 +57,7 @@ static std::uint64_t load_u64(std::atomic<std::uint64_t>& a) {
 
 } // namespace
 
-int main() {
+int run_test_instr_impact_minimal_dirty_2126() {
     std::println("=== Issue #2126: instr/block impact prefer over full relower ===");
 
     // ── AC4: source cites #2126 + no capture full wipe ──
@@ -181,3 +181,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_instr_impact_minimal_dirty_2126();
+}
+#endif

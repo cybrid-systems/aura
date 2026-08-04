@@ -191,7 +191,7 @@ void ac6_suite_helper_source() {
 
 } // namespace
 
-int main() {
+int run_test_cascade_incremental_pass_suite_2044() {
     std::println("=== Issue #2044: cascade incremental pass suite ===");
     ac1_source();
     ac2_query();
@@ -204,3 +204,9 @@ int main() {
     std::println("cascade incremental pass suite (#2044): OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_cascade_incremental_pass_suite_2044();
+}
+#endif

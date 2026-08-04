@@ -30,7 +30,7 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
 
 } // namespace
 
-int main() {
+int run_test_production_safety_1047() {
     CompilerService cs;
 
     {
@@ -93,3 +93,9 @@ int main() {
     std::println("production safety #1047–#1071: OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_production_safety_1047();
+}
+#endif

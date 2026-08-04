@@ -125,7 +125,7 @@ static void ac6_linter_self_test() {
 
 } // namespace
 
-int main() {
+int run_test_linear_three_layer_wire_2559() {
     std::println("=== Issue #2559: three-layer linear wire inventory gate ===");
     ac1_boundary_force_linear();
     ac2_post_mutate_enforce();
@@ -136,3 +136,9 @@ int main() {
     std::println("\n=== #2559: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_three_layer_wire_2559();
+}
+#endif

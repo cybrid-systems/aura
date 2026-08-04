@@ -230,7 +230,7 @@ static void ac8_source_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_adt_hard_gate_exhaustiveness_2264() {
     std::println("=== Issue #2264 / #2288: ADT exhaustiveness hard-gate + partial-infer ===");
     ac1_full_hard_gate_fails();
     ac2_exhaustive_ok();
@@ -243,3 +243,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_adt_hard_gate_exhaustiveness_2264();
+}
+#endif

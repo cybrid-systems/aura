@@ -44,7 +44,7 @@ static std::string read_file(const char* path) {
 
 } // namespace
 
-int main() {
+int run_test_arena_compact_notify_lifecycle_2438() {
     std::println("=== Issue #2438: arena compact notify lifecycle ===");
     CHECK(gh::kArenaCompactNotifyLifecycleIssue == 2438, "issue stamp");
     CHECK(gh::arena_compact_notify_lifecycle_wired.load() == 1, "wired");
@@ -206,3 +206,9 @@ int main() {
     std::println("\n=== #2438 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_arena_compact_notify_lifecycle_2438();
+}
+#endif

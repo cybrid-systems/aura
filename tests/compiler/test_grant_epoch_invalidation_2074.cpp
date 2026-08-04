@@ -48,7 +48,7 @@ using aura::core::sandbox::set_mode;
 
 } // namespace
 
-int main() {
+int run_test_grant_epoch_invalidation_2074() {
     std::println("=== Issue #2074: grant_epoch binding + min_valid_epoch invalidation ===");
 
     // ── AC1: grant stamps non-zero grant_epoch when sandbox != Off ─
@@ -152,3 +152,9 @@ int main() {
     std::println("\n=== Results: passed ===");
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_grant_epoch_invalidation_2074();
+}
+#endif

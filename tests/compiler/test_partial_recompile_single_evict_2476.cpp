@@ -122,7 +122,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_partial_recompile_single_evict_2476() {
     std::println("=== Issue #2476: partial_recompile single-pass eviction ===");
     ac1_no_double_invalidate();
     ac2_prefix_only();
@@ -132,3 +132,9 @@ int main() {
     std::println("\n=== #2476 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_partial_recompile_single_evict_2476();
+}
+#endif

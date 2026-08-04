@@ -61,7 +61,7 @@ static std::int64_t href(CompilerService& cs, std::string_view prim, std::string
 
 } // namespace
 
-int main() {
+int run_test_shape_high_mutation_storm_2433() {
     std::println("=== Issue #2433: HighMutation default + storm × LayoutStamp ===");
 
     // ── AC1: HighMutation knobs applied without env ────────────────
@@ -205,3 +205,9 @@ int main() {
     std::println("\n=== #2433 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_shape_high_mutation_storm_2433();
+}
+#endif

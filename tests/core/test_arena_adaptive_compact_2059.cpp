@@ -296,7 +296,7 @@ static void ac9_lineage() {
 
 } // namespace
 
-int main() {
+int run_test_arena_adaptive_compact_2059() {
     std::println("=== Issue #2059: Adaptive arena compact + ShapeProfiler deopt coordination ===");
     ac1_adaptive_headroom();
     ac2_storm_soft_gate();
@@ -310,3 +310,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_arena_adaptive_compact_2059();
+}
+#endif

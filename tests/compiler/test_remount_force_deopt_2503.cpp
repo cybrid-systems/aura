@@ -308,7 +308,7 @@ static void ac5_stress() {
 
 } // namespace
 
-int main() {
+int run_test_remount_force_deopt_2503() {
     std::println("test_remount_force_deopt_2503");
     ac1_cell_remap_force_deopt();
     ac2_env_gen_force_deopt();
@@ -320,3 +320,9 @@ int main() {
     std::println("remount force-deopt #2503: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_remount_force_deopt_2503();
+}
+#endif

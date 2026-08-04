@@ -390,7 +390,7 @@ static void ac6_no_regression_non_dotted() {
 
 } // namespace
 
-int main() {
+int run_test_rest_param_nested_qq_hygiene_2239() {
     ac1_source();
     ac2_stamp_rest_param_hygiene_via_expand();
     ac3_pre_scan_qq_aware();
@@ -402,3 +402,9 @@ int main() {
     std::println("rest-param nested-qq hygiene (#2239): OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_rest_param_nested_qq_hygiene_2239();
+}
+#endif

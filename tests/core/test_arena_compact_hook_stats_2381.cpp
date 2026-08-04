@@ -127,7 +127,7 @@ static void ac4_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_arena_compact_hook_stats_2381() {
     std::println("=== Issue #2381: concurrent compact_hook shape_inval atomic ===");
     ac1_ac2_concurrent_hook_counter();
     ac3_source_audit();
@@ -135,3 +135,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_arena_compact_hook_stats_2381();
+}
+#endif

@@ -28,7 +28,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_summary_recompute_sym_2414() {
     std::println("=== Issue #2414: summary_recompute sym_id bits ===");
 
     // ── AC1 keyword + query bits after recompute(pool) ─────────────
@@ -137,3 +137,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_summary_recompute_sym_2414();
+}
+#endif

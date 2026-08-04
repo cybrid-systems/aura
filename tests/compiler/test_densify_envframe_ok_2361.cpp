@@ -182,7 +182,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_densify_envframe_ok_2361() {
     std::println("=== Issue #2361: densify envframe_ok real check ===");
     ac1_soft_envframe_ok();
     ac2_ownership_fail_envframe();
@@ -191,3 +191,9 @@ int main() {
     std::println("\n=== #2361: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_densify_envframe_ok_2361();
+}
+#endif

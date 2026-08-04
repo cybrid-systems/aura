@@ -40,7 +40,7 @@ void reset_reg() {
 
 } // namespace
 
-int main() {
+int run_test_capability_registry_snapshot_2426() {
     std::println("=== Issue #2426: snapshot_registry_state ===");
 
     // ── AC4 individual accessors still work ───────────────────────
@@ -206,3 +206,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_capability_registry_snapshot_2426();
+}
+#endif

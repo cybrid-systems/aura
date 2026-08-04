@@ -228,7 +228,7 @@ static void ac5_hard_fence() {
 
 } // namespace
 
-int main() {
+int run_test_shape_storm_adaptive_2526() {
     std::println("=== Issue #2526: adaptive deopt-storm threshold × LayoutStamp ===");
     ac1_compact_only_no_storm();
     ac2_mutation_still_storms();
@@ -238,3 +238,9 @@ int main() {
     std::println("\n=== #2526: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_shape_storm_adaptive_2526();
+}
+#endif

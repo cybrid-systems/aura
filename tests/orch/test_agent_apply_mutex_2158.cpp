@@ -87,7 +87,7 @@ void hold_apply_mu(std::mutex& mu, int hold_ms) {
 
 } // namespace
 
-int main() {
+int run_test_agent_apply_mutex_2158() {
     std::println("=== Issue #2158: per-Evaluator agent apply mutex ===");
     CHECK(kAgentApplyPerEvalMutexIssue == 2158, "issue stamp");
 
@@ -245,3 +245,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_agent_apply_mutex_2158();
+}
+#endif

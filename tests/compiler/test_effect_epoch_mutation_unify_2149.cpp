@@ -249,7 +249,7 @@ static void ac5_security_event_schema() {
 
 } // namespace
 
-int main() {
+int run_test_effect_epoch_mutation_unify_2149() {
     std::println("=== Issue #2149: effect epoch = Mutation (not Bridge) ===");
     CHECK(kEffectEpochUnifyIssue == 2149, "issue stamp");
 
@@ -262,3 +262,9 @@ int main() {
     std::println("\n=== #2149 effect epoch unify: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_effect_epoch_mutation_unify_2149();
+}
+#endif

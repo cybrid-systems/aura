@@ -164,7 +164,7 @@ static void ac5_source_query() {
 
 } // namespace
 
-int main() {
+int run_test_epoch_invariant_complete_2501() {
     std::println("=== Issue #2501: complete epoch invariant walk ===");
     ac3_mode_off();
     ac1_soft_detect_hard_clear();
@@ -174,3 +174,9 @@ int main() {
     std::println("\n=== #2501 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_epoch_invariant_complete_2501();
+}
+#endif

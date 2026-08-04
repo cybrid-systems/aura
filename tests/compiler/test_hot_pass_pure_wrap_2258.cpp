@@ -197,7 +197,7 @@ static void ac5_short_circuit_green() {
 
 } // namespace
 
-int main() {
+int run_test_hot_pass_pure_wrap_2258() {
     std::println("=== Issue #2258: HotPassDodCompliant + pure Wrap enforcement ===");
     ac1_hot_pass_mandatory();
     ac2_pure_property();
@@ -207,3 +207,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hot_pass_pure_wrap_2258();
+}
+#endif

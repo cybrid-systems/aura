@@ -38,7 +38,7 @@ constexpr int kThreads = 4;
 constexpr int kIterations = 16;
 } // namespace
 
-int main() {
+int run_test_issue_1993() {
     using aura::test::g_failed;
     using aura::test::g_passed;
 
@@ -164,3 +164,9 @@ int main() {
     std::println("issue 1993 gc-heap lock scope (D-001): OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_issue_1993();
+}
+#endif

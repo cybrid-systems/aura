@@ -104,7 +104,7 @@ static void ac4_gate() {
 
 } // namespace
 
-int main() {
+int run_test_eval_current_no_auto_fix_2484() {
     std::println("=== Issue #2484: eval-current no auto-fix ===");
     ac1_closure_unchanged();
     ac2_no_auto_call_arity0();
@@ -113,3 +113,9 @@ int main() {
     std::println("\n=== #2484 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_eval_current_no_auto_fix_2484();
+}
+#endif

@@ -162,7 +162,7 @@ static void ac5_eval_semantics() {
 
 } // namespace
 
-int main() {
+int run_test_value_tag_hot_path_2259() {
     std::println("=== Issue #2259: Value tag hot-path contracts + zero-overhead dispatch ===");
     ac1_pure_tag_tests();
     ac2_arithmetic_parity();
@@ -172,3 +172,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_value_tag_hot_path_2259();
+}
+#endif

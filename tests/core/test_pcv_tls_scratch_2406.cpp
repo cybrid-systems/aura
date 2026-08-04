@@ -60,7 +60,7 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_pcv_tls_scratch_2406() {
     std::println("=== Issue #2406: PCV TLS scratch freelist ===");
     CHECK(kPcvTlsScratchIssue == 2406, "issue stamp");
 
@@ -220,3 +220,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_pcv_tls_scratch_2406();
+}
+#endif

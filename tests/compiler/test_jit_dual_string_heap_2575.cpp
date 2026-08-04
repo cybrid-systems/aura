@@ -191,7 +191,7 @@ static void ac6_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_jit_dual_string_heap_2575() {
     std::println("=== Issue #2575: dual string heap PrimCall re-intern ===");
     ac1_string_append_display();
     ac2_number_to_string();
@@ -202,3 +202,9 @@ int main() {
     std::println("\n=== #2575: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_jit_dual_string_heap_2575();
+}
+#endif

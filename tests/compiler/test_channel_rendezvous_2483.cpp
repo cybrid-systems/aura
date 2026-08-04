@@ -185,7 +185,7 @@ static void ac4_gate() {
 
 } // namespace
 
-int main() {
+int run_test_channel_rendezvous_2483() {
     std::println("=== Issue #2483: channel rendezvous semantics ===");
     ac1_rendezvous_blocks();
     ac2_buffered();
@@ -194,3 +194,9 @@ int main() {
     std::println("\n=== #2483 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_channel_rendezvous_2483();
+}
+#endif

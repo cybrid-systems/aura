@@ -225,7 +225,7 @@ static void ac5_live_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_transaction_guard_2555() {
     std::println("=== Issue #2555: TransactionGuard real path ===");
     ac1_no_scaffold();
     ac2_call_sites();
@@ -236,3 +236,9 @@ int main() {
     std::println("\n=== #2555: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_transaction_guard_2555();
+}
+#endif

@@ -58,7 +58,7 @@ static NarrowingRecord make_narrow(const char* var) {
 
 } // namespace
 
-int main() {
+int run_test_mutation_log_cow_copy_2457() {
     std::println("=== Issue #2457: mutation_log_ / narrowing_log_ COW copy ===");
 
     // ── AC1: copy preserves log contents (shared or deep — visible equal) ──
@@ -137,3 +137,9 @@ int main() {
     std::println("\n=== #2457 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_log_cow_copy_2457();
+}
+#endif

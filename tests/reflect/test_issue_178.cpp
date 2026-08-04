@@ -87,7 +87,13 @@ int aura_issue_178_run() {
 }
 
 #ifndef AURA_ISSUE_BUNDLE_MEMBER
-int main() {
+int run_test_issue_178() {
     return aura_issue_178_run();
+}
+#endif
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_issue_178();
 }
 #endif

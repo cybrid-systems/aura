@@ -156,7 +156,7 @@ static void ac5_query_and_source() {
 
 } // namespace
 
-int main() {
+int run_test_castop_density_hard_2358() {
     std::println("=== Issue #2358: CastOp density HARD force-JIT policy ===");
     ac5_query_and_source();
     ac1_hard_off_soft_only();
@@ -166,3 +166,9 @@ int main() {
     std::println("\n=== #2358: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_castop_density_hard_2358();
+}
+#endif

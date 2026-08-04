@@ -323,7 +323,7 @@ static void ac2603_soft_no_cross_workspace_write() {
 
 } // namespace
 
-int main() {
+int run_test_cross_cow_soft_migrate_2371() {
     std::println("test_cross_cow_soft_migrate_2371");
     ac1_soft_migrate();
     ac2_hard_reject();
@@ -341,3 +341,9 @@ int main() {
     std::println("cross-COW soft migrate #2371 + #2603: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_cross_cow_soft_migrate_2371();
+}
+#endif

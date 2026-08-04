@@ -79,7 +79,7 @@ static void warm_define(CompilerService& cs, const char* body) {
 
 } // namespace
 
-int main() {
+int run_test_soa_partial_desync_gate_2181() {
     std::println("=== Issue #2181: SoA partial desync hard gate ===");
 
     // ── AC1: source wiring ──
@@ -239,3 +239,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_soa_partial_desync_gate_2181();
+}
+#endif

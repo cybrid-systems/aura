@@ -204,7 +204,7 @@ static void ac2_reverify_order() {
 
 } // namespace
 
-int main() {
+int run_test_closure_call_must_deopt_toctou_2472() {
     std::println("=== Issue #2472: aura_closure_call MustDeopt TOCTOU ===");
     ac3_baseline_force_deopt();
     ac1_free_realloc_stress();
@@ -215,3 +215,9 @@ int main() {
     std::println("\n=== #2472 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_closure_call_must_deopt_toctou_2472();
+}
+#endif

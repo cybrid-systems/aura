@@ -258,7 +258,7 @@ static void ac5_schema_source() {
 
 } // namespace
 
-int main() {
+int run_test_closure_cow_gen_stamp_2547() {
     std::println("=== Issue #2547: closure cow_gen stamp + hard mismatch ===");
     ac1_same_gen_soft();
     ac2_cross_gen_hard();
@@ -272,3 +272,9 @@ int main() {
     std::println("\n=== #2547: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_closure_cow_gen_stamp_2547();
+}
+#endif

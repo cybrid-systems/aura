@@ -185,7 +185,7 @@ static void ac4_source_and_registration() {
 
 } // namespace
 
-int main() {
+int run_test_arena_dtor_clears_hooks_2382() {
     std::println("=== Issue #2382: ASTArena dtor clears hooks before teardown ===");
     ac1_ac2_dtor_clears_all_hooks();
     ac2_take_clears_has();
@@ -194,3 +194,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_arena_dtor_clears_hooks_2382();
+}
+#endif

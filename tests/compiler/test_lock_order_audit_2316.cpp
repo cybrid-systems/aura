@@ -178,7 +178,7 @@ static void ac2316_inversion_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_lock_order_audit_2316() {
     std::println(
         "=== Issue #2316: extend lock-order audit (mailbox + hot-update + compact_env) ===");
     ac2316_rank_table();
@@ -189,3 +189,9 @@ int main() {
     std::println("\n=== #2316 lock-order audit: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_lock_order_audit_2316();
+}
+#endif

@@ -162,7 +162,7 @@ static void ac5_schema() {
 
 } // namespace
 
-int main() {
+int run_test_partial_cone_cap_2560() {
     std::println("=== Issue #2560: partial re-infer cone soft/hard cap ===");
     apply_dev_audit_defaults();
     ac1_soft_overflow_path();
@@ -174,3 +174,9 @@ int main() {
     std::println("\n=== #2560: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_partial_cone_cap_2560();
+}
+#endif

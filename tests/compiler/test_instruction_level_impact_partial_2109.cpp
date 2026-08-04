@@ -328,7 +328,7 @@ void ac9_cross_function_unresolved_2246() {
 
 } // namespace
 
-int main() {
+int run_test_instruction_level_impact_partial_2109() {
     std::println("=== Issue #2109: instruction-level impact + partial re-emit ===");
     ac1_impact_scope_instrs();
     ac2_partial_instr_skip_metrics();
@@ -342,3 +342,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_instruction_level_impact_partial_2109();
+}
+#endif

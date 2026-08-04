@@ -153,7 +153,7 @@ static void ac5_schema() {
 
 } // namespace
 
-int main() {
+int run_test_occurrence_cache_key_2461() {
     std::println("=== Issue #2461: per-If occurrence cache key ===");
     ac1_shape_stable();
     ac2_unrelated_docs();
@@ -163,3 +163,9 @@ int main() {
     std::println("\n=== #2461 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_occurrence_cache_key_2461();
+}
+#endif

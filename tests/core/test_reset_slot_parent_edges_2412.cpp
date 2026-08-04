@@ -25,7 +25,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_reset_slot_parent_edges_2412() {
     std::println("=== Issue #2412: reset_node_slot clears incoming edges ===");
 
     // ── AC1 dirty-index recycle still clears edges ─────────────────
@@ -132,3 +132,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_reset_slot_parent_edges_2412();
+}
+#endif

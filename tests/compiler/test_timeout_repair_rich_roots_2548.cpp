@@ -256,7 +256,7 @@ static void ac5_schema() {
 
 } // namespace
 
-int main() {
+int run_test_timeout_repair_rich_roots_2548() {
     std::println("=== Issue #2548: richer TIMEOUT repair suggested roots ===");
     ac3_solved_zero_cost();
     ac1_occurrence_priority();
@@ -268,3 +268,9 @@ int main() {
     std::println("\n=== #2548: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_timeout_repair_rich_roots_2548();
+}
+#endif

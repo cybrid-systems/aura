@@ -444,7 +444,7 @@ static void ac2602_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_live_closure_full_restamp_2542() {
     std::println("=== Issue #2542: full live-closure epoch restamp on reemit ===");
     ac1_named_full_restamp();
     ac2_anonymous_must_deopt();
@@ -462,3 +462,9 @@ int main() {
     std::println("\n=== #2542 + #2602 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_live_closure_full_restamp_2542();
+}
+#endif

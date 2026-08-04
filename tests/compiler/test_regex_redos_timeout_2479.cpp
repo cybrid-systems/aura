@@ -156,7 +156,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_regex_redos_timeout_2479() {
     std::println("=== Issue #2479: regex ReDoS timeout protection ===");
     // Set timeout before any static regex_timeout_ms_cfg() init if possible.
     // AC1 may init default 100ms first — AC2 still valid.
@@ -168,3 +168,9 @@ int main() {
     std::println("\n=== #2479 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_regex_redos_timeout_2479();
+}
+#endif

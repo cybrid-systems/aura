@@ -213,7 +213,7 @@ static void ac_schema() {
 
 } // namespace
 
-int main() {
+int run_test_mailbox_hold_exit_drain_2511() {
     std::println("test_mailbox_hold_exit_drain_2511");
     ac1_source_cite();
     ac2_hold_then_drain();
@@ -226,3 +226,9 @@ int main() {
     std::println("mailbox hold-exit drain #2511: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mailbox_hold_exit_drain_2511();
+}
+#endif

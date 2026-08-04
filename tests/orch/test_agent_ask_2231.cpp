@@ -92,7 +92,7 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_agent_ask_2231() {
     std::println("=== Issue #2231 / #2401: agent-ask + agent-reply ===");
     CHECK(true, "issue stamp #2231/#2401");
     CompilerService cs;
@@ -353,3 +353,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_agent_ask_2231();
+}
+#endif

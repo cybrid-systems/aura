@@ -72,7 +72,7 @@ static void run_on_fiber(std::function<void()> body) {
 
 } // namespace
 
-int main() {
+int run_test_steal_snapshot_hard_invariant_2346() {
     std::println("=== Issue #2346: resume snapshot hard-invariant ===");
 
     // AC1 Soft — force SOFT=1
@@ -175,3 +175,9 @@ int main() {
     std::println("\n=== #2346 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_steal_snapshot_hard_invariant_2346();
+}
+#endif

@@ -34,7 +34,7 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
 
 } // namespace
 
-int main() {
+int run_test_stdlib_production_review_923() {
     CompilerService cs;
 
     // #923: list-sort primitive registered
@@ -84,3 +84,9 @@ int main() {
     std::println("stdlib production review #923–#940: OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_stdlib_production_review_923();
+}
+#endif

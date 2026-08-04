@@ -179,7 +179,7 @@ static void ac5_gate_docs() {
 
 } // namespace
 
-int main() {
+int run_test_mutation_guard_try_acquire_2124() {
     ac1_zero_legacy_residual();
     ac2_try_acquire_in_mutate_paths();
     ac3_quota_reject_no_panic_checkpoint();
@@ -190,3 +190,9 @@ int main() {
                  g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_guard_try_acquire_2124();
+}
+#endif

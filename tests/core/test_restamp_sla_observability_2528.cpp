@@ -175,7 +175,7 @@ static void ac6_additive_schema_existing_fixtures() {
 
 } // namespace
 
-int main() {
+int run_test_restamp_sla_observability_2528() {
     std::println("=== Issue #2528: restamp SLA observability (long-session residual) ===");
     ac1_query_surface_reports_sla();
     ac2_soft_no_wrap_zero_overhead();
@@ -186,3 +186,9 @@ int main() {
     std::println("\n=== #2528: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_restamp_sla_observability_2528();
+}
+#endif

@@ -224,7 +224,7 @@ static void ac5_source_schema() {
 
 } // namespace
 
-int main() {
+int run_test_coercion_stamp_at_add_2512() {
     std::println("test_coercion_stamp_at_add_2512");
     ac1_stamp_at_add_fast_path();
     ac2_explicit_not_overwritten();
@@ -236,3 +236,9 @@ int main() {
     std::println("coercion stamp-at-add #2512: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_coercion_stamp_at_add_2512();
+}
+#endif

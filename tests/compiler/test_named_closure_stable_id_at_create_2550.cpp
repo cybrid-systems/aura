@@ -226,7 +226,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_named_closure_stable_id_at_create_2550() {
     std::println("=== Issue #2550: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
     ac2_reemit_no_backfill_growth();
@@ -236,3 +236,9 @@ int main() {
     std::println("\n=== #2550: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_named_closure_stable_id_at_create_2550();
+}
+#endif

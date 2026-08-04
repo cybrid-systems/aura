@@ -233,7 +233,7 @@ void ac8_wire_flags_source() {
 
 } // namespace
 
-int main() {
+int run_test_comprehensive_live_closure_expire_2042() {
     std::println("=== Issue #2042: comprehensive live-closure expire ===");
     ac1_source();
     ac2_metrics_and_public();
@@ -248,3 +248,9 @@ int main() {
     std::println("comprehensive live-closure expire (#2042): OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_comprehensive_live_closure_expire_2042();
+}
+#endif

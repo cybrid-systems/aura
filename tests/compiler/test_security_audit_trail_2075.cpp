@@ -59,7 +59,7 @@ using aura::core::security_event::SecurityEventKind;
 
 } // namespace
 
-int main() {
+int run_test_security_audit_trail_2075() {
     std::println("=== Issue #2075: unified SecurityEvent schema + audit trail ===");
 
     // ── AC1: shared event type used by effect + isolation deny paths ─
@@ -168,3 +168,9 @@ int main() {
     std::println("\n=== Results: passed ===");
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_security_audit_trail_2075();
+}
+#endif

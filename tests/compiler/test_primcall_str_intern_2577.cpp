@@ -115,7 +115,7 @@ static void ac4_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_primcall_str_intern_2577() {
     std::println("=== Issue #2577: PrimCall string re-intern growth ===");
     ac1_loop_heap_growth();
     ac2_display_ok();
@@ -124,3 +124,9 @@ int main() {
     std::println("\n=== #2577: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_primcall_str_intern_2577();
+}
+#endif

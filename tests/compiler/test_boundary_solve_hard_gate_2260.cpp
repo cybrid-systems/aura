@@ -254,7 +254,7 @@ static void ac5_schema_and_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_boundary_solve_hard_gate_2260() {
     std::println("=== Issue #2260: MutationBoundary type-proof hard-gate ===");
     ac1_hard_gate_truncated();
     ac2_soft_truncated_observe();
@@ -264,3 +264,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_boundary_solve_hard_gate_2260();
+}
+#endif

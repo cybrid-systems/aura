@@ -254,7 +254,7 @@ static void ac6_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_linear_force_unified_2545() {
     std::println("=== Issue #2545: force_linear_rollback unified entry ===");
     ac1_synth_force_via_unified();
     ac2_no_double_count();
@@ -268,3 +268,9 @@ int main() {
     std::println("\n=== #2545: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_force_unified_2545();
+}
+#endif

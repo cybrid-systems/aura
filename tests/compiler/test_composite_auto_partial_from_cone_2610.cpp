@@ -255,7 +255,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_composite_auto_partial_from_cone_2610() {
     std::println("=== test_composite_auto_partial_from_cone_2610 ===");
     ac1_auto_partial_hard_miss();
     ac2_explicit_expected_has_work();
@@ -265,3 +265,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_composite_auto_partial_from_cone_2610();
+}
+#endif

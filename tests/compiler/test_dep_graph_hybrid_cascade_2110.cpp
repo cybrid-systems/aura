@@ -347,7 +347,7 @@ void ac2247_dual_dep_graph_parity_gate() {
           "consistent after rebuild (AC1 recovery)");
 }
 
-int main() {
+int run_test_dep_graph_hybrid_cascade_2110() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
     ac2_body_only_not_nested();
@@ -363,3 +363,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_dep_graph_hybrid_cascade_2110();
+}
+#endif

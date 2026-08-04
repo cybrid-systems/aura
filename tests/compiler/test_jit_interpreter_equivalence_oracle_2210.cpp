@@ -185,7 +185,7 @@ static void ac_extra_eval_with_oracle() {
 
 } // namespace
 
-int main() {
+int run_test_jit_interpreter_equivalence_oracle_2210() {
     std::println("=== Issue #2210: JIT/Interpreter equivalence oracle ===");
     ac1_zero_cost_when_off();
     ac2_inject_mismatch();
@@ -196,3 +196,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_jit_interpreter_equivalence_oracle_2210();
+}
+#endif

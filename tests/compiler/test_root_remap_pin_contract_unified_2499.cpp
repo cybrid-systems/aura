@@ -207,7 +207,7 @@ static void ac5_source_cite_unified_gate() {
 
 } // namespace
 
-int main() {
+int run_test_root_remap_pin_contract_unified_2499() {
     std::println("=== Issue #2499: root_remap fail unified with pin_contract_held ===");
     ac1_root_remap_fail_suppresses_pin_contract();
     ac2_clean_densify_allows_success();
@@ -217,3 +217,9 @@ int main() {
     std::println("\n=== #2499: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_root_remap_pin_contract_unified_2499();
+}
+#endif

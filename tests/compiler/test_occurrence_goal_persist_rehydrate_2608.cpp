@@ -313,7 +313,7 @@ static void ac2641_6_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_occurrence_goal_persist_rehydrate_2608() {
     std::println("=== test_occurrence_goal_persist_rehydrate_2608 ===");
     ac2_soft_zero_writes();
     ac1_persist_prune_rehydrate();
@@ -328,3 +328,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_occurrence_goal_persist_rehydrate_2608();
+}
+#endif

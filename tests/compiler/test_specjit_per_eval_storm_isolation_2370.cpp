@@ -193,7 +193,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_specjit_per_eval_storm_isolation_2370() {
     std::println("test_specjit_per_eval_storm_isolation_2370");
     ac1_global_soft();
     ac2_ac3_two_eval_isolation();
@@ -204,3 +204,9 @@ int main() {
     std::println("SpecJIT PerEval storm isolation #2370: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_specjit_per_eval_storm_isolation_2370();
+}
+#endif

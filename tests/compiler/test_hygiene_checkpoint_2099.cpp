@@ -277,7 +277,7 @@ static void ac5_query_hygiene_checkpoint_stats_reports(CompilerService& cs) {
 
 } // namespace
 
-int main() {
+int run_test_hygiene_checkpoint_2099() {
     CompilerService cs;
     std::print("[test_hygiene_checkpoint_2099] running 5 ACs\n");
 
@@ -290,3 +290,9 @@ int main() {
     std::print("[test_hygiene_checkpoint_2099] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hygiene_checkpoint_2099();
+}
+#endif

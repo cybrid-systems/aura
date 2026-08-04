@@ -234,7 +234,7 @@ static void ac5_source_and_gate() {
 
 } // namespace
 
-int main() {
+int run_test_force_jit_repromote_2502() {
     std::println("test_force_jit_repromote_2502");
     ac1_repromote_after_window();
     ac2_storm_or_fail_blocks();
@@ -246,3 +246,9 @@ int main() {
     std::println("force-jit re-promote #2502: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_force_jit_repromote_2502();
+}
+#endif

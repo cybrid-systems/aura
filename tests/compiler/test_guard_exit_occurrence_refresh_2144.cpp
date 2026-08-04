@@ -246,7 +246,7 @@ static void ac5_schema() {
 
 } // namespace
 
-int main() {
+int run_test_guard_exit_occurrence_refresh_2144() {
     std::println("=== Issue #2144: Guard-exit occurrence refresh ===");
     ac1_selective_unrelated_survive();
     ac2_reanalyze_clears_stale();
@@ -256,3 +256,9 @@ int main() {
     std::println("\n=== #2144 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_guard_exit_occurrence_refresh_2144();
+}
+#endif

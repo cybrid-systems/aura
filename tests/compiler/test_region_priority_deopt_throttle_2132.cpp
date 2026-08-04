@@ -66,7 +66,7 @@ static void trip_soft_storm(std::uint64_t thr) {
 
 } // namespace
 
-int main() {
+int run_test_region_priority_deopt_throttle_2132() {
     std::println("=== Issue #2132: region/priority deopt-storm throttle ===");
 
     // ── AC5: source ──
@@ -189,3 +189,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_region_priority_deopt_throttle_2132();
+}
+#endif

@@ -214,7 +214,7 @@ static void ac_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_rollback_by_marker_2237() {
     std::println("=== Issue #2237 — agent-visible rollback + by-marker surface ===");
     ac_existing_primitives_registered();
     ac_counters_visible_via_stats();
@@ -225,3 +225,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_rollback_by_marker_2237();
+}
+#endif

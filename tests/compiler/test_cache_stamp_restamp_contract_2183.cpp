@@ -58,7 +58,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_cache_stamp_restamp_contract_2183() {
     std::println("=== Issue #2183: unified CacheEntryVersionStamp restamp ===");
 
     // ── AC1: pure restamp + source wiring ──
@@ -179,3 +179,9 @@ int main() {
     std::println("\n=== #2183 cache stamp restamp: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_cache_stamp_restamp_contract_2183();
+}
+#endif

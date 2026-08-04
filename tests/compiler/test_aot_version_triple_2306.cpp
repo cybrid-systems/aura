@@ -63,7 +63,7 @@ std::int64_t vhref(CompilerService& cs, const char* key) {
 
 } // namespace
 
-int main() {
+int run_test_aot_version_triple_2306() {
     std::println("=== Issue #2306: aot-version-triple C-linkage readers ===");
 
     // AC1: all 5 readers reachable + return non-zero types.
@@ -171,3 +171,9 @@ int main() {
     std::println("=== #2306 done: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_aot_version_triple_2306();
+}
+#endif

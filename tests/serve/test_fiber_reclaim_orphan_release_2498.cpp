@@ -244,7 +244,7 @@ static void ac5_source_cite_and_linter() {
 
 } // namespace
 
-int main() {
+int run_test_fiber_reclaim_orphan_release_2498() {
     std::println("=== Issue #2498: fiber reclaim orphan release (off-stack table) ===");
     ac1_reclaim_releases_orphan_roots();
     ac2_yielding_path_unchanged();
@@ -254,3 +254,9 @@ int main() {
     std::println("\n=== #2498: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_fiber_reclaim_orphan_release_2498();
+}
+#endif

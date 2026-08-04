@@ -195,7 +195,7 @@ static void ac5_no_cycles() {
 
 } // namespace
 
-int main() {
+int run_test_module_partition_map_2524() {
     std::println("=== Issue #2524: module partition map + pass_manager Phase C ===");
     ac1_size_and_map();
     ac2_public_api();
@@ -205,3 +205,9 @@ int main() {
     std::println("\n=== #2524: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_module_partition_map_2524();
+}
+#endif

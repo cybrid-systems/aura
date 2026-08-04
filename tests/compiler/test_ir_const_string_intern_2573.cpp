@@ -121,7 +121,7 @@ static void ac4_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_ir_const_string_intern_2573() {
     std::println("=== Issue #2573: IR ConstString intern / heap growth ===");
     ac1_loop_heap_growth_bounded();
     ac2_distinct_literals();
@@ -130,3 +130,9 @@ int main() {
     std::println("\n=== #2573: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_ir_const_string_intern_2573();
+}
+#endif

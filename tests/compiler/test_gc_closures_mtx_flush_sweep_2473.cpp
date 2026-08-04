@@ -257,7 +257,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_gc_closures_mtx_flush_sweep_2473() {
     std::println("=== Issue #2473: GC flush/sweep closures_mtx_ dual-lock ===");
     ac2_source();
     ac3_metrics();
@@ -267,3 +267,9 @@ int main() {
     std::println("\n=== #2473 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_gc_closures_mtx_flush_sweep_2473();
+}
+#endif

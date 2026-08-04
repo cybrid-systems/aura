@@ -213,7 +213,7 @@ static void ac5_decision_table() {
 
 } // namespace
 
-int main() {
+int run_test_linear_synth_boundary_authority_2514() {
     std::println("=== Issue #2514: linear_synth_hard_fail ↔ MutationBoundary authority ===");
     ac5_decision_table();
     ac1_production_force_rollback();
@@ -224,3 +224,9 @@ int main() {
     std::println("\n=== #2514: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_synth_boundary_authority_2514();
+}
+#endif

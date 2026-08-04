@@ -146,7 +146,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_load_cap_io_read_2485() {
     std::println("=== Issue #2485: load kCapIoRead capability gate ===");
     ac1_denied_without_cap();
     ac2_allowed_with_io_read();
@@ -158,3 +158,9 @@ int main() {
     std::println("\n=== #2485 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_load_cap_io_read_2485();
+}
+#endif

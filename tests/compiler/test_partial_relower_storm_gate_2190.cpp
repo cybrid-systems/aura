@@ -80,7 +80,7 @@ static void clear_storm() {
 
 } // namespace
 
-int main() {
+int run_test_partial_relower_storm_gate_2190() {
     std::println("=== Issue #2190: StormLevel gate on partial relower ===");
 
     // ── AC5: None → default threshold ──
@@ -271,3 +271,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_partial_relower_storm_gate_2190();
+}
+#endif

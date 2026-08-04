@@ -35,7 +35,7 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
 
 } // namespace
 
-int main() {
+int run_test_production_hardening_985() {
     CompilerService cs;
 
     {
@@ -90,3 +90,9 @@ int main() {
     std::println("production hardening #985–#1013: OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_production_hardening_985();
+}
+#endif

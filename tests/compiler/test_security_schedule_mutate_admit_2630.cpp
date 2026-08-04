@@ -182,7 +182,7 @@ static void ac2630_source_and_schema() {
 
 } // namespace
 
-int main() {
+int run_test_security_schedule_mutate_admit_2630() {
     std::println("=== Issue #2630: security-schedule-gate wiring into mutate admission ===");
     ac2630_production_commit_not_ready_rejects();
     ac2630_soft_falls_through();
@@ -192,3 +192,9 @@ int main() {
     std::println("\n=== #2630 Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_security_schedule_mutate_admit_2630();
+}
+#endif

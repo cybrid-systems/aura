@@ -289,7 +289,7 @@ static void ac_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_macro_cross_flat_hygiene_2235() {
     std::println("=== Issue #2235 — cross-flat macro clone hygiene gate ===");
     ac_cross_flat_baseline();
     ac_violation_wire_up();
@@ -301,3 +301,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_macro_cross_flat_hygiene_2235();
+}
+#endif

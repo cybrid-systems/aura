@@ -18,7 +18,7 @@ using aura::compiler::FFIRuntime;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 
-int main() {
+int run_test_bugfix_968() {
     // #982: parse_ffi_sig rejects missing ')'
     {
         int ret = 0;
@@ -64,3 +64,9 @@ int main() {
     std::println("bugfix #968–#984: OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_bugfix_968();
+}
+#endif

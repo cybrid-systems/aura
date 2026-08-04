@@ -65,7 +65,7 @@ std::string read_file(const char* path) {
 }
 } // namespace
 
-int main() {
+int run_test_mailbox_bp_admit_default_2535() {
     std::println("=== Issue #2535: mailbox BP admit default-on (threshold=32) ===");
     CHECK(kMailboxBpAdmitDefaultOnIssue == 2535, "issue stamp");
     CHECK(kMailboxBpAdmitThresholdDefault == 32, "AC1: default constant 32");
@@ -171,3 +171,9 @@ int main() {
     std::println("\n=== #2535: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mailbox_bp_admit_default_2535();
+}
+#endif

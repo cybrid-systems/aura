@@ -31,7 +31,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_node_meta_gap_2411() {
     std::println("=== Issue #2411: kNodeMeta gap is_gap + full consistency ===");
 
     // ── AC1 gap sentinel ───────────────────────────────────────────
@@ -105,3 +105,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_node_meta_gap_2411();
+}
+#endif

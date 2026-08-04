@@ -69,7 +69,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_mutation_safety_snapshot_steal_2184() {
     std::println("=== Issue #2184: MutationSafetySnapshot steal safety ===");
 
     // ── AC1: source wiring ──
@@ -512,3 +512,9 @@ int main() {
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_safety_snapshot_steal_2184();
+}
+#endif

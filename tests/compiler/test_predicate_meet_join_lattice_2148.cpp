@@ -194,7 +194,7 @@ static void ac_schema_2148() {
 
 } // namespace
 
-int main() {
+int run_test_predicate_meet_join_lattice_2148() {
     ac4_meet_join_matrix();
     ac1_and_number_integer();
     ac2_or_string_number_dynamic();
@@ -205,3 +205,9 @@ int main() {
                  g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_predicate_meet_join_lattice_2148();
+}
+#endif

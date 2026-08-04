@@ -365,7 +365,7 @@ static void ac18_source_cite_2599() {
 
 } // namespace
 
-int main() {
+int run_test_moving_densify_fail_closed_2495() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
         "=== Issue #2595: unify densify success gate (extends #2495 test file per #81967) ===");
@@ -400,3 +400,9 @@ int main() {
     return g_failed ? 1 : 0;
 }
 // production default AURA_MOVING_UNTRACKED=hard (extends #2495 test file per #81967)
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_moving_densify_fail_closed_2495();
+}
+#endif

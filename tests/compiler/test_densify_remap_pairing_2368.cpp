@@ -196,7 +196,7 @@ static void ac5_phase5_source() {
 
 } // namespace
 
-int main() {
+int run_test_densify_remap_pairing_2368() {
     std::println("test_densify_remap_pairing_2368");
     ac1_soft_vacuous();
     ac2_missed_remap_negative();
@@ -208,3 +208,9 @@ int main() {
     std::println("densify remap pairing #2368: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_densify_remap_pairing_2368();
+}
+#endif

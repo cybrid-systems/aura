@@ -256,8 +256,14 @@ namespace _2283_detail {
 
 } // namespace aura_type_dep_partial_merge_2283
 
-int main() {
+int run_test_type_dep_partial_merge_2283() {
     std::println("=== Issue #2283: type_dep_graph_ systematic merge ===");
     aura_type_dep_partial_merge_2283::_2283_detail::run_2283_type_dep_partial_merge();
     return RUN_ALL_TESTS();
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_dep_partial_merge_2283();
+}
+#endif

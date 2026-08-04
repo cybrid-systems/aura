@@ -49,7 +49,7 @@ static std::string read_file(const char* path) {
     return {};
 }
 
-int main() {
+int run_test_mutate_type_gate_2219() {
     std::println("=== Issue #2219: mutate type gate Soft/Hard ===");
     CHECK(kMutateTypeGateIssue == 2219, "issue stamp");
     CHECK(is_match_exhaustiveness_msg("match: missing constructor 'Bool'"), "msg helper");
@@ -335,3 +335,9 @@ int main() {
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutate_type_gate_2219();
+}
+#endif

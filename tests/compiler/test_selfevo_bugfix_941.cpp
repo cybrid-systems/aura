@@ -32,7 +32,7 @@ std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key)
 
 } // namespace
 
-int main() {
+int run_test_selfevo_bugfix_941() {
     CompilerService cs;
 
     // #941–#954: self-evo pipeline dashboard
@@ -95,3 +95,9 @@ int main() {
     std::println("self-evo + bugfix #941–#967: OK ({} passed)", ::aura::test::g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_selfevo_bugfix_941();
+}
+#endif

@@ -239,7 +239,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_memo_goal_epoch_health_2359() {
     std::println("=== Issue #2359: memo + goal epoch health query surface ===");
     ac1_stable_successive_queries();
     ac2_epoch_advance_prune_and_memo_lag();
@@ -249,3 +249,9 @@ int main() {
     std::println("\n=== #2359: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_memo_goal_epoch_health_2359();
+}
+#endif

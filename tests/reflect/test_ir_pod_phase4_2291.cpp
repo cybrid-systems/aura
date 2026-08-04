@@ -52,7 +52,7 @@ std::vector<char> hand_pack_instruction(const aura::ir_pod::IRInstruction& ins) 
 
 } // namespace
 
-int main() {
+int run_test_ir_pod_phase4_2291() {
     using namespace aura::ir_pod;
 
     // ── member anchors ───────────────────────────────────────
@@ -163,3 +163,9 @@ int main() {
                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_ir_pod_phase4_2291();
+}
+#endif

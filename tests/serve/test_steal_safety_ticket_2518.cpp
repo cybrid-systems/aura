@@ -206,7 +206,7 @@ static void ac5_source_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_steal_safety_ticket_2518() {
     std::println("=== Issue #2518: MutationSafetySnapshot safety ticket ===");
     ac1_ticket_match_ok();
     ac2_inject_mid_window();
@@ -220,3 +220,9 @@ int main() {
     std::println("\n=== #2518: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_steal_safety_ticket_2518();
+}
+#endif

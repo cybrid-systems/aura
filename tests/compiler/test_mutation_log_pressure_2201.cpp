@@ -232,7 +232,7 @@ static void ac4_schema_and_rollback() {
 
 } // namespace
 
-int main() {
+int run_test_mutation_log_pressure_2201() {
     std::println("=== Issue #2201: mutation-log pressure + forced compact ===");
     ac1_pressure_stats();
     ac2_high_volume_compact();
@@ -241,3 +241,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_log_pressure_2201();
+}
+#endif

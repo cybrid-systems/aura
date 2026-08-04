@@ -305,7 +305,7 @@ static void ac5_agent_closed_loop() {
 
 } // namespace
 
-int main() {
+int run_test_mutation_memory_blame_2196() {
     std::println("=== Issue #2196: query:mutation-memory / blame surface ===");
     ac1_single_query_surface();
     ac2_composite_txn_links();
@@ -315,3 +315,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_memory_blame_2196();
+}
+#endif

@@ -328,7 +328,7 @@ static void ac6_throughput() {
 
 } // namespace
 
-int main() {
+int run_test_workspace_mtx_contention_2523() {
     std::println("=== Issue #2523: workspace_mtx residual contention + soft path ===");
     ac1_source_docs();
     ac2_disjoint_not_dual_global();
@@ -339,3 +339,9 @@ int main() {
     std::println("\n=== #2523: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_workspace_mtx_contention_2523();
+}
+#endif

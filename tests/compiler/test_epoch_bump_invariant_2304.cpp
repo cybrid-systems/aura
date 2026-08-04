@@ -35,7 +35,7 @@ extern "C" void aura_set_epoch_invariant_hard_enabled(int enabled);
 using aura::test::g_failed;
 using aura::test::g_passed;
 
-int main() {
+int run_test_epoch_bump_invariant_2304() {
     std::println("=== Issue #2304: post-bump epoch invariant walk API ===");
 
     // 2304.1: Initial state — no walks, no violations.
@@ -95,3 +95,9 @@ int main() {
     std::println("=== #2304 done: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_epoch_bump_invariant_2304();
+}
+#endif

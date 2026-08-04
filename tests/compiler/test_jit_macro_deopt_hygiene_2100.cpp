@@ -334,7 +334,7 @@ static void ac7_aot_marker_parity_2177() {
 
 } // namespace
 
-int main() {
+int run_test_jit_macro_deopt_hygiene_2100() {
     std::println("=== Issue #2100: MacroIntroduced IR attrs + deopt restore ===");
     ac1_ir_attrs();
     ac2_deopt_restore_ast();
@@ -346,3 +346,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_jit_macro_deopt_hygiene_2100();
+}
+#endif

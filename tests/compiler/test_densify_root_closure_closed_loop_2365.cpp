@@ -194,7 +194,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_densify_root_closure_closed_loop_2365() {
     std::println("=== Issue #2365: densify RootRemap+closure dual-epoch closed-loop ===");
     ac1_soft_vacuous();
     ac2_root_remap_fail();
@@ -204,3 +204,9 @@ int main() {
     std::println("\n=== #2365: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_densify_root_closure_closed_loop_2365();
+}
+#endif

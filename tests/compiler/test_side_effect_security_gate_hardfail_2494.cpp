@@ -158,7 +158,7 @@ static void ac6_registrations() {
 
 } // namespace
 
-int main() {
+int run_test_side_effect_security_gate_hardfail_2494() {
     std::println("=== Issue #2494: side-effect security gate hard-fail ===");
     ac1_broken_fixture_fails();
     ac2_existing_prim_set_passes();
@@ -169,3 +169,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_side_effect_security_gate_hardfail_2494();
+}
+#endif

@@ -213,7 +213,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_densify_last_call_axes_2376() {
     std::println("=== Issue #2376: densify last-call envframe + closure axes ===");
     ac1_envframe_last_call_fail();
     ac2_closure_last_call_fail();
@@ -223,3 +223,9 @@ int main() {
     std::println("\n=== #2376: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_densify_last_call_axes_2376();
+}
+#endif

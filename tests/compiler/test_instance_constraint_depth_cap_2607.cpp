@@ -478,7 +478,7 @@ static void ac2643_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_instance_constraint_depth_cap_2607() {
     std::println("=== test_instance_constraint_depth_cap_2607 + #2643 ===");
     ac1_instance_solves_poly();
     ac2_depth_cap_timeout();
@@ -492,3 +492,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_instance_constraint_depth_cap_2607();
+}
+#endif

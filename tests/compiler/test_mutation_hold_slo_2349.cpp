@@ -213,7 +213,7 @@ static void ac5_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_mutation_hold_slo_2349() {
     std::println("=== Issue #2349: outermost hold SLO circuit-breaker ===");
     ac1_production_force_fail();
     ac2_soft_metric_only();
@@ -223,3 +223,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_mutation_hold_slo_2349();
+}
+#endif

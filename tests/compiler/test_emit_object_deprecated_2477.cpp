@@ -123,7 +123,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_emit_object_deprecated_2477() {
     std::println("=== Issue #2477: emit_object fail-closed deprecation ===");
     ac1_returns_false();
     ac2_no_files();
@@ -133,3 +133,9 @@ int main() {
     std::println("\n=== #2477 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_emit_object_deprecated_2477();
+}
+#endif

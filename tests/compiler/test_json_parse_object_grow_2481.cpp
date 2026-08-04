@@ -145,7 +145,7 @@ static void ac5_gate() {
 
 } // namespace
 
-int main() {
+int run_test_json_parse_object_grow_2481() {
     std::println("=== Issue #2481: json-parse object hash grow ===");
     ac1_eight_keys();
     ac2_sixteen_keys();
@@ -155,3 +155,9 @@ int main() {
     std::println("\n=== #2481 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_json_parse_object_grow_2481();
+}
+#endif

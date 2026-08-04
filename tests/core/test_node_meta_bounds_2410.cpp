@@ -27,7 +27,7 @@ using aura::test::g_passed;
 
 } // namespace
 
-int main() {
+int run_test_node_meta_bounds_2410() {
     std::println("=== Issue #2410: meta(NodeTag) bounds check ===");
 
     // ── AC1 default-constructed tag = 0 ────────────────────────────
@@ -106,3 +106,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_node_meta_bounds_2410();
+}
+#endif

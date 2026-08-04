@@ -80,7 +80,7 @@ static bool seed_adt_match(CompilerService& cs) {
 
 } // namespace
 
-int main() {
+int run_test_adt_exhaustiveness_audit_2223() {
     std::println("=== Issue #2223: ADT exhaustiveness TypedMutationAudit gate ===");
 
     // ── AC1 / AC5: source shape ──
@@ -230,3 +230,9 @@ int main() {
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_adt_exhaustiveness_audit_2223();
+}
+#endif

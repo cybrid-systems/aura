@@ -78,7 +78,7 @@ static std::int64_t find_user_node(CompilerService& cs) {
 
 } // namespace
 
-int main() {
+int run_test_hygiene_diagnostic_2167() {
     std::println("=== Issue #2167: hygiene-diagnostic + macro-provenance-chain ===");
 
     // ── AC6: source contract ──
@@ -273,3 +273,9 @@ int main() {
     std::println("\n=== #2167 hygiene diagnostic: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hygiene_diagnostic_2167();
+}
+#endif

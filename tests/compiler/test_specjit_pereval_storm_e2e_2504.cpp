@@ -315,7 +315,7 @@ static void ac5_concurrent_and_source_gate() {
 
 } // namespace
 
-int main() {
+int run_test_specjit_pereval_storm_e2e_2504() {
     std::println("test_specjit_pereval_storm_e2e_2504");
     ac1_dual_eval_pereval_hit_survives();
     ac2_foreign_skip_and_owner_clear();
@@ -327,3 +327,9 @@ int main() {
     std::println("SpecJIT PerEval storm e2e #2504: OK ({} passed)", g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_specjit_pereval_storm_e2e_2504();
+}
+#endif

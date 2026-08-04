@@ -266,7 +266,7 @@ static void ac6_source_wiring() {
 
 } // namespace
 
-int main() {
+int run_test_coercion_provenance_miss_force_audit_2102() {
     std::println("=== Issue #2102: coercion provenance miss → force audit ===");
     ac1_miss_force_audit();
     ac2_reject_on_miss();
@@ -277,3 +277,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_coercion_provenance_miss_force_audit_2102();
+}
+#endif

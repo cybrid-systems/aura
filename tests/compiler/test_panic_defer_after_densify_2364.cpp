@@ -221,7 +221,7 @@ static void ac9_build_gate_wiring_source_cite() {
 
 } // namespace
 
-int main() {
+int run_test_panic_defer_after_densify_2364() {
     std::println("=== Issue #2364: PanicCheckpoint residual × densify ===");
     std::println("=== Issue #2598: production densify-after panic residual → hard (extends #2364 "
                  "test file per #81967) ===");
@@ -237,3 +237,9 @@ int main() {
     std::println("\n=== #2364 + #2598: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_panic_defer_after_densify_2364();
+}
+#endif

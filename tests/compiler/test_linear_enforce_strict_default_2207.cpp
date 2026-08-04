@@ -223,7 +223,7 @@ static void ac5_composite_unchanged() {
 
 } // namespace
 
-int main() {
+int run_test_linear_enforce_strict_default_2207() {
     std::println("=== Issue #2207: LinearEnforceMode Strict process default ===");
     ac1_default_strict();
     ac2_strict_hard_fail();
@@ -235,3 +235,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_linear_enforce_strict_default_2207();
+}
+#endif

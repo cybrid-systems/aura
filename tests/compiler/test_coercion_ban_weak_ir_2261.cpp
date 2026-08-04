@@ -359,7 +359,7 @@ static void ac2317_source_cite_rows() {
 
 } // namespace
 
-int main() {
+int run_test_coercion_ban_weak_ir_2261() {
     std::println("=== Issue #2261: ban weak mid under Sampled; never stamp into IR ===");
     std::println("=== Issue #2317: Sampled incomplete insert canary (default skip #2620) ===");
     ac1_sampled_no_weak_insert();
@@ -377,3 +377,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_coercion_ban_weak_ir_2261();
+}
+#endif

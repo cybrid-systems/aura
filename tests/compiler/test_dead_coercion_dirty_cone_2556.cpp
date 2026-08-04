@@ -225,7 +225,7 @@ static void ac5_source_schema() {
 
 } // namespace
 
-int main() {
+int run_test_dead_coercion_dirty_cone_2556() {
     std::println("=== Issue #2556: DCE dirty-cone scan limit ===");
     ac1_partial_cone();
     ac2_full_scan();
@@ -235,3 +235,9 @@ int main() {
     std::println("\n=== #2556: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_dead_coercion_dirty_cone_2556();
+}
+#endif

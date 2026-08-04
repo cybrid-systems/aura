@@ -188,7 +188,7 @@ static void ac5_walk_smoke() {
 
 } // namespace
 
-int main() {
+int run_test_hot_children_columnar_2614() {
     std::println("=== Issue #2614: force ChildColumnar/SoAColumnarFull on hot walks ===");
     ac1_constrained();
     ac2_non_columnar_isolated();
@@ -198,3 +198,9 @@ int main() {
     std::println("\n=== #2614: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hot_children_columnar_2614();
+}
+#endif

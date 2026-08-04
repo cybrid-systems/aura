@@ -109,7 +109,7 @@ void reset_process() {
 
 } // namespace
 
-int main() {
+int run_test_security_audit_unify_2054() {
     std::println("=== Issue #2054: unified security audit surface ===");
     CHECK(kSecurityAuditUnifyIssue == 2054, "issue stamp");
     CHECK(kSecurityEventRingSize == 64, "AC8: ring size preserved at 64");
@@ -363,3 +363,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_security_audit_unify_2054();
+}
+#endif

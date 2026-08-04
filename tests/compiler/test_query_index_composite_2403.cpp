@@ -50,7 +50,7 @@ static bool setup_ws(CompilerService& cs, int n_defs = 80) {
 
 } // namespace
 
-int main() {
+int run_test_query_index_composite_2403() {
     std::println("=== test_query_index_composite_2403 ===");
 
     // ── AC3 soft path: no queries yet ──────────────────────────────
@@ -187,3 +187,9 @@ int main() {
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_query_index_composite_2403();
+}
+#endif

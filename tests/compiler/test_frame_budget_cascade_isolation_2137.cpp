@@ -71,7 +71,7 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
 
 } // namespace
 
-int main() {
+int run_test_frame_budget_cascade_isolation_2137() {
     std::println("=== Issue #2137: frame-budget cascade isolation ===");
     CHECK(kFrameBudgetIssue == 2137, "issue stamp");
     CHECK(kDefaultBudgetUs == 16000, "default ~60fps budget us (#2218 AC1)");
@@ -210,3 +210,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_frame_budget_cascade_isolation_2137();
+}
+#endif

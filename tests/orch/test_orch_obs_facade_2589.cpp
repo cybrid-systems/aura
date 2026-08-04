@@ -93,7 +93,7 @@ void reset_counters() {
 
 } // namespace
 
-int main() {
+int run_test_orch_obs_facade_2589() {
     std::println("=== Issue #2589: orch-module-stats facade (parallel residual) ===");
 
     // ── AC4: src/orch/README.md documents the unified facade ──
@@ -231,3 +231,9 @@ int main() {
     std::println("\n=== #2589+#2636: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_orch_obs_facade_2589();
+}
+#endif

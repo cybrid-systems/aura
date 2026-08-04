@@ -248,7 +248,7 @@ static void ac8_lineage() {
 
 } // namespace
 
-int main() {
+int run_test_hot_pass_dirty_soa_2060() {
     std::println("=== Issue #2060: HotPass dirty short-circuit + SoA-direct entry ===");
     ac1_concepts();
     ac2_pipeline_check();
@@ -261,3 +261,9 @@ int main() {
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hot_pass_dirty_soa_2060();
+}
+#endif
