@@ -12834,6 +12834,18 @@ public:
     [[nodiscard]] std::uint64_t total_mutations() const noexcept {
         return total_mutations_.load(std::memory_order_relaxed);
     }
+    // Issue #2634: workspace generation accessor for the pure-parallel
+    // probe (mutations_/workspace gen snapshot). The persistent TypeChecker
+    // (Issue #2220) bumps persistent_tc_workspace_gen_ on each create /
+    // reuse / invalidate path; reading it as a best-effort probe for
+    // "did an indirect mutation land inside this pure apply?" is cheaper
+    // than walking the workspace tree. Returned relaxed; the probe only
+    // needs ordering against the apply_closure that follows on the same
+    // fiber (which already provides release/acquire via apply_closure's
+    // own memory effects). Counter is advisory (not contractual).
+    [[nodiscard]] std::uint64_t workspace_generation() const noexcept {
+        return persistent_tc_workspace_gen_.load(std::memory_order_relaxed);
+    }
 
     // ── Issue #250: atomic-batch accessors ───────────
     [[nodiscard]] std::uint64_t atomic_batch_count() const noexcept {

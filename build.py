@@ -283,6 +283,19 @@ def cmd_lint():
     if r != 0:
         fail("scope BP gauge coverage linter failed — run python3 scripts/check_scope_bp_gauge_coverage.py")
         return r
+    # Issue #2634: pure-parallel probe hardening (mutations_/workspace gen
+    # snapshots in the unlocked pure apply path). Wording gate (#2593)
+    # remains in scripts/check_pure_parallel_isolation_wording.py — this
+    # linter verifies the new probe code lives in the right place and the
+    # zero-cost path on :pure #f stays unchanged.
+    pp_script = ROOT / "scripts" / "check_pure_probe_hardening_2634.py"
+    if not pp_script.exists():
+        fail(f"missing {pp_script}")
+        return 1
+    r = run([sys.executable, str(pp_script)], cwd=ROOT)
+    if r != 0:
+        fail("pure probe hardening coverage linter failed — run python3 scripts/check_pure_probe_hardening_2634.py")
+        return r
     ok("lint OK")
     return 0
 
