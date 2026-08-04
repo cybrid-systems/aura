@@ -2693,6 +2693,27 @@ def cmd_orphan_reap_tick_coverage():
     return 0
 
 
+def cmd_sync_remount_anon_coverage():
+    """Issue #2637: anon / residual sync remount walk on reemit (sid == 0).
+
+    Env-gated by AURA_SYNC_REMOUNT_ANON (default off per AC1). Mirrors
+    the #2602 named sync walk on the opposite sid branch; closes the
+    first-call MustDeopt window for anon / residual closures when opt-in.
+    Distinct anon counters + schema-2637 + soft zero-cost when knob off.
+    """
+    print(f"{B}=== sync remount anon coverage (#2637) ==={N}")
+    script = ROOT / "scripts" / "check_sync_remount_anon_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("sync remount anon (#2637) coverage contract rows failed")
+        return 1
+    ok("sync remount anon (#2637) coverage clean")
+    return 0
+
+
 def cmd_join_drain_reclaim_still_running_coverage():
     """Issue #2397: reclaimed vs body-still-running after join-drain residual.
 
@@ -7392,6 +7413,7 @@ def cmd_gate():
         or cmd_orphan_reap_tick_coverage()
         or cmd_join_drain_reclaim_still_running_coverage()
         or cmd_residual_body_age_coverage()
+        or cmd_sync_remount_anon_coverage()
         or cmd_mailbox_bp_recent_window_coverage()
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()

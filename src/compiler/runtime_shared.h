@@ -138,6 +138,16 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
 // closures. out params may be null.
 extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
                                                       std::uint64_t* fail_count);
+// Issue #2637: anonymous / residual (sid == 0) sync remount walk on
+// reemit. Mirrors the named path (#2602) on the opposite sid branch.
+// Out params may be null. Zero extra work when env AURA_SYNC_REMOUNT_ANON
+// is unset (default off, per AC1) OR no live anonymous closures
+// (nslots==0 short-circuit). Bumps
+// live_closure_sync_remount_anon_ok_total / _fail_total (distinct from
+// the named sync counters; no double-counting because named / anon
+// paths filter on the opposite sid).
+extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
+                                                     std::uint64_t* fail_count);
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
