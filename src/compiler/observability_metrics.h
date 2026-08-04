@@ -3145,6 +3145,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> typed_mutation_violations_caught_total{0};
     std::atomic<std::uint64_t> provenance_blame_chain_hits_total{0};
     std::atomic<std::uint64_t> typed_mutation_full_force_rollback_total{0};
+    // Issue #2642: Phase 5 O(dirty) live linear-root consistency scan.
+    // Bumps under production/Full when post-compact scan finds a linear
+    // root mismatch (entity-level linear∪Moving consistency beyond flag
+    // hard-AND #2609). Soft path bumps the observe-only counter.
+    std::atomic<std::uint64_t> linear_densify_scan_mismatch_total{0};         // #2642 hard
+    std::atomic<std::uint64_t> linear_densify_scan_mismatch_observe_total{0}; // #2642 soft observe
 
     // Issue #1615: linear ownership + coercion synergy.
     std::atomic<std::uint64_t> linear_coercion_reval_count{0};

@@ -3393,7 +3393,8 @@ public:
         SynthHardFail = 1,
         PostMutateLinear = 2,
         CrossBatchEscape = 3,
-        CrossClosureEscape = 4, // Issue #2563
+        CrossClosureEscape = 4,        // Issue #2563
+        LinearDensifyRootMismatch = 5, // Issue #2642: Phase 5 post-compact linear-root scan
     };
     // Pure classify from sticky flags + optional precomputed audit result.
     // When precomputed is non-null, linear_ok / cross_batch_linear_escape
