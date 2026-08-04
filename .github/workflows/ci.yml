@@ -448,13 +448,17 @@ jobs:
       run: pip install --break-system-packages -r requirements-dev.txt
 
     # Issue #677 C++ test folded into test_obs_metrics_smoke_batch (wave 57 / #1957).
-    # This job only smokes the HTTP health surface on main.
+    # This job only smokes the HTTP health surface on main — build aura only
+    # (not test_ir / test_concurrent / issue matrix).
     # Use build.py (per-target build + GCC ICE retry) instead of a bare
     # multi-job ninja; avoids flaky module .gcm races on error.ixx that
     # showed up as "rm: cannot remove …aura.core.error.gcm".
+    # Compile note: restamp dual-def (lifetime_pin.hh + .ixx) broke this
+    # job's Build step on main; free funcs removed from .hh (c3848ebc).
     - name: Build aura
       env:
         AURA_ISSUE_BUILD: none
+        AURA_BUILD_TARGETS: aura
         AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
                                # rebuild deadlock (mirrors asan-build +
                                # ubsan-smoke fix in the same #2636 round).
@@ -463,16 +467,30 @@ jobs:
     - name: Health endpoint smoke
       run: |
         set -euo pipefail
-        AURA_RUNTIME_DIR=$PWD ./build/aura --health-server 18087 &
+        test -x ./build/aura
+        AURA_RUNTIME_DIR=$PWD ./build/aura --health-server 18087 > /tmp/aura-health.log 2>&1 &
         pid=$!
         trap 'kill $pid 2>/dev/null || true' EXIT
-        # Wait until the server answers (cold configure/build can delay bind).
-        for i in $(seq 1 30); do
-          if curl -fsS http://127.0.0.1:18087/healthz >/dev/null 2>&1; then
+        # Wait until the server answers (cold start + bind can take a moment).
+        ok=0
+        for i in $(seq 1 50); do
+          if curl -fsS --max-time 1 http://127.0.0.1:18087/healthz >/dev/null 2>&1; then
+            ok=1
             break
+          fi
+          # Process died early — dump log and fail.
+          if ! kill -0 "$pid" 2>/dev/null; then
+            echo "aura --health-server exited early:" >&2
+            cat /tmp/aura-health.log >&2 || true
+            exit 1
           fi
           sleep 0.2
         done
-        curl -fsS http://127.0.0.1:18087/healthz
-        curl -fsS http://127.0.0.1:18087/readyz
+        if [ "$ok" != 1 ]; then
+          echo "healthz never became ready:" >&2
+          cat /tmp/aura-health.log >&2 || true
+          exit 1
+        fi
+        curl -fsS http://127.0.0.1:18087/healthz | grep -q '^ok'
+        curl -fsS http://127.0.0.1:18087/readyz | grep -q '^ready'
         curl -fsS http://127.0.0.1:18087/metrics | grep -q 'aura_up 1'
