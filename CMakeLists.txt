@@ -3748,6 +3748,12 @@ aura_add_issue_test(test_fiber_resume_state)
 aura_issue_test_link_light(test_fiber_resume_state)
 add_dependencies(all_test_issue_targets test_fiber_resume_state)
 
+# Issue #2650 / #2649 H11: fiber-local eval C-stack depth (not TLS sum).
+# Issue #2653 / #2649 H10: load_module_file refuse non-module paths.
+aura_add_issue_test(test_fiber_eval_depth_isolation)
+aura_issue_test_link_light(test_fiber_eval_depth_isolation)
+add_dependencies(all_test_issue_targets test_fiber_eval_depth_isolation)
+
 # Issue #2469: Scheduler::reap_orphans_now() two-phase extraction —
 # orphan_mutex_ released before per-fiber cleanup (wait_map_mutex_,
 # joiner_map_mutex_, owned_fibers_mutex_ acquisitions). Minimizes

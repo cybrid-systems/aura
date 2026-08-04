@@ -155,22 +155,26 @@ static constexpr std::size_t MAX_ENV_DEPTH = 1024;
 // EnvView::lookup* so a cyclic parent graph cannot stack-overflow
 // any of them (#1858/#1860/#1869). One increment per hop (Env or
 // EnvView local frame); see #1858 (not 2N).
-thread_local std::size_t g_env_lookup_depth = 0;
+// Issue #2650 / #2649: fiber-local env-lookup depth (same class as
+// eval_flat C-stack depth). Pure thread_local summed concurrent stackful
+// fibers on one worker and falsely exhausted MAX_ENV_DEPTH under fanout.
+// Slot via aura_env_lookup_depth_slot() — Fiber when current, else host TLS.
 struct EnvLookupDepthGuard {
     bool armed = false;
     explicit EnvLookupDepthGuard(bool ok) noexcept
         : armed(ok) {}
     ~EnvLookupDepthGuard() {
         if (armed)
-            --g_env_lookup_depth;
+            --aura::serve::aura_env_lookup_depth_slot();
     }
     EnvLookupDepthGuard(const EnvLookupDepthGuard&) = delete;
     EnvLookupDepthGuard& operator=(const EnvLookupDepthGuard&) = delete;
 };
 // Returns nullopt if depth budget exhausted (caller returns nullopt).
 [[nodiscard]] static bool env_lookup_enter() noexcept {
-    if (++g_env_lookup_depth > MAX_ENV_DEPTH) {
-        --g_env_lookup_depth;
+    auto& depth = aura::serve::aura_env_lookup_depth_slot();
+    if (++depth > MAX_ENV_DEPTH) {
+        --depth;
         return false;
     }
     return true;
@@ -362,7 +366,7 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
 // ── Env::lookup_binding: returns raw binding (cell sentinel as-is) ─
 // Issue #1860: pre-#1860 walked parent_ with no depth guard —
 // a cyclic parent_ chain stack-overflowed the C++ call stack.
-// Share g_env_lookup_depth / MAX_ENV_DEPTH with Env::lookup (#1858).
+// Share aura_env_lookup_depth_slot / MAX_ENV_DEPTH with Env::lookup (#1858/#2650).
 std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
     // The pre (!n.empty()) is on the declaration in evaluator.ixx.
     if (!env_lookup_enter())
@@ -2923,7 +2927,7 @@ EnvView make_env_view(const Env& env) {
     return v;
 }
 
-// Issue #1869: share g_env_lookup_depth / MAX_ENV_DEPTH with Env::lookup
+// Issue #1869 / #2650: share aura_env_lookup_depth_slot / MAX_ENV_DEPTH with Env::lookup
 // so a cyclic parent Env graph cannot stack-overflow via EnvView.
 // parent is const Env* — fallthrough uses Env::{lookup,lookup_by_*}
 // which also enter the same counter (one hop per frame, #1858).
