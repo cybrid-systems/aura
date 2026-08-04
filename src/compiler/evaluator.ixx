@@ -3410,6 +3410,20 @@ public:
     [[nodiscard]] bool
     force_linear_rollback(std::string_view op,
                           const void* precomputed_invariant_result = nullptr) noexcept;
+    // Issue #2642: Phase 5 post-compact linear-root scan (declaration
+    // landed with #2642 ship; declaration pairing for the implementation
+    // in evaluator_typecheck.cpp). Walks the dirty cone (or live pin
+    // set) and re-sims OwnershipEnv against post-compact addresses;
+    // returns true on mismatch (caller routes to
+    // LinearDensifyRootMismatch force-rollback under prod/Full, or bumps
+    // the observe counter under Soft). Empty dirty / no linear ops →
+    // zero cost early-return.
+    [[nodiscard]] bool scan_linear_roots_after_densify() noexcept;
+    // Issue #2642: clear pending flag set by scan_linear_roots_after_densify
+    // when LinearDensifyRootMismatch authority fires (force_linear_rollback
+    // clears after bumping the counter). Forward-compatible with the full
+    // O(dirty) walk landing in the follow-up commit.
+    void clear_linear_densify_root_mismatch_pending() noexcept;
     // Issue #2514: back-compat alias → force_linear_rollback(op) (synth sticky).
     // Decision table (AC5 source-cite):
     //   synth hard (prod/strict) → force rollback, skip partial recovery,

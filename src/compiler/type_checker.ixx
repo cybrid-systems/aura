@@ -97,6 +97,11 @@ public:
 // Issue #2607: max nested ∀ peels for INSTANCE goals. Cap hit leaves
 // the constraint on the worklist → TIMEOUT (not infinite instantiate).
 export inline constexpr int kInstanceDepthCap = 8;
+// Issue #2643: bounded sample of INSTANCE depth-cap hints published on
+// TIMEOUT for Agent self-repair (re-instantiate polymorphic call sites
+// before full solve). Same cap as suggested_roots (#2548) so Agents get
+// a small bounded set. Zero-cost on SOLVED / no INSTANCE goals.
+export inline constexpr std::size_t kInstanceRepairHintCap = 8;
 
 export struct Constraint {
     // Issue #2195: SUBTYPE (lhs <: rhs) participates in solve_delta.
@@ -154,6 +159,20 @@ export struct SuggestedRoot {
     std::uint32_t var_rep = 0;
     std::uint8_t reason = 0; // SuggestedRootReason
     std::uint32_t degree = 0;
+};
+
+// Issue #2643: per-goal INSTANCE depth-cap hint for Agent self-repair.
+// Populated on TIMEOUT path only — consistent_instance fills the
+// depth_used / depth_cap on cap hit, callers fill var_rep / poly /
+// site_node from the surrounding Constraint. Sample is bounded at
+// kInstanceRepairHintCap so Agents get a small bounded set (matches
+// suggested_roots discipline from #2548).
+export struct InstanceRepairHint {
+    std::uint32_t var_rep = 0;    // UF rep of the unresolved goal endpoint
+    std::uint32_t depth_used = 0; // depth at which kInstanceDepthCap fired
+    std::uint32_t depth_cap = 0;  // = kInstanceDepthCap or env override
+    aura::core::TypeId poly{};    // polymorphic side of the INSTANCE goal
+    std::uint32_t site_node = 0;  // NodeId (0 if unavailable)
 };
 
 // Issue #1877: DeltaBlameFrame.kind for MacroIntroduced hygiene frames
@@ -851,8 +870,14 @@ public:
     // Returns: true = solved; false = hard conflict (non-forall mismatch).
     // Depth-cap hits return true but set *depth_capped_out when provided;
     // callers re-queue the goal so solve_delta ends TIMEOUT (not CONFLICT).
+    // Issue #2643: when `hint_out` is non-null and depth-cap fires,
+    // consistent_instance fills hint_out->depth_used / depth_cap so the
+    // caller can complete the hint (var_rep / poly / site_node) without
+    // re-running the recursive peel. Additive parameter — existing
+    // callers default to nullptr.
     bool consistent_instance(aura::core::TypeId poly_or_lhs, aura::core::TypeId mono_or_rhs,
-                             int depth = 0, bool* depth_capped_out = nullptr);
+                             int depth = 0, bool* depth_capped_out = nullptr,
+                             InstanceRepairHint* hint_out = nullptr);
     bool occurs_check(aura::core::TypeId var, aura::core::TypeId ty);
     aura::core::TypeId normalize(aura::core::TypeId id);
 };
@@ -2994,6 +3019,11 @@ export struct SolveDeltaOccurrenceResult {
     // How many suggested roots carry LetPoly / Occurrence* reasons.
     std::size_t let_poly_suggested_count = 0;
     std::size_t occurrence_suggested_count = 0;
+    // Issue #2643: bounded sample of INSTANCE depth-cap hints for
+    // Agent self-repair (re-instantiate polymorphic call sites before
+    // full solve). Populated on TIMEOUT path only — empty on SOLVED
+    // (zero-cost happy path). Cap matches kInstanceRepairHintCap = 8.
+    std::vector<InstanceRepairHint> instance_repair_hints;
 };
 
 // Issue #2028: mark occurrence vars, restore retained blame anchors if
@@ -3027,6 +3057,10 @@ export struct SolverSnapshot {
     // full-solve path on the most recent TIMEOUT — Agent-visible signal
     // that production reject policy engaged.
     bool production_escalated = false;
+    // Issue #2643: bounded sample of INSTANCE depth-cap hints mirrored
+    // from SolveDeltaOccurrenceResult::instance_repair_hints (TIMEOUT
+    // path only; empty on SOLVED — zero-cost happy path).
+    std::vector<InstanceRepairHint> instance_repair_hints;
 };
 
 export SolverSnapshot snapshot_constraint_system(ConstraintSystem& cs,

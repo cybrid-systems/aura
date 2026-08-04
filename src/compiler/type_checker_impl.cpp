@@ -1669,8 +1669,12 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
 // Issue #2607: INSTANCE — peel ∀ from either side (bounded) then unify
 // with the monomorphic counterpart. Depth cap does NOT return conflict;
 // callers re-queue so solve/solve_delta end TIMEOUT with unresolved export.
+// Issue #2643: when `hint_out` is non-null, fill hint_out->depth_used /
+// depth_cap on cap hit so callers (solve_delta_occurrence) can complete
+// the bounded sample without re-running the recursive peel. Additive
+// parameter — existing callers default to nullptr.
 bool ConstraintSystem::consistent_instance(TypeId poly_or_lhs, TypeId mono_or_rhs, int depth,
-                                           bool* depth_capped_out) {
+                                           bool* depth_capped_out, InstanceRepairHint* hint_out) {
     if (depth_capped_out)
         *depth_capped_out = false;
     if (metrics_) {
@@ -1688,6 +1692,13 @@ bool ConstraintSystem::consistent_instance(TypeId poly_or_lhs, TypeId mono_or_rh
         if (depth >= kInstanceDepthCap) {
             if (depth_capped_out)
                 *depth_capped_out = true;
+            // Issue #2643: fill hint depth fields on cap hit so the
+            // caller can complete var_rep / poly / site_node. Caller
+            // owns the bounded-sample append.
+            if (hint_out) {
+                hint_out->depth_used = static_cast<std::uint32_t>(depth);
+                hint_out->depth_cap = static_cast<std::uint32_t>(kInstanceDepthCap);
+            }
             if (metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                 m->instance_depth_cap_total.fetch_add(1, std::memory_order_relaxed);
@@ -1700,11 +1711,11 @@ bool ConstraintSystem::consistent_instance(TypeId poly_or_lhs, TypeId mono_or_rh
         };
         if (fl && fr) {
             // Both schemes: peel both one layer, recurse.
-            return consistent_instance(peel(lhs), peel(rhs), depth + 1, depth_capped_out);
+            return consistent_instance(peel(lhs), peel(rhs), depth + 1, depth_capped_out, hint_out);
         }
         if (fl)
-            return consistent_instance(peel(lhs), rhs, depth + 1, depth_capped_out);
-        return consistent_instance(lhs, peel(rhs), depth + 1, depth_capped_out);
+            return consistent_instance(peel(lhs), rhs, depth + 1, depth_capped_out, hint_out);
+        return consistent_instance(lhs, peel(rhs), depth + 1, depth_capped_out, hint_out);
     }
 
     // No residual ∀: unify (strict) so Int INSTANCE Bool conflicts.
@@ -2371,6 +2382,10 @@ SolverSnapshot snapshot_constraint_system(ConstraintSystem& cs,
     if (last) {
         s.status = last->status;
         s.unresolved = last->unresolved;
+        // Issue #2643: mirror bounded INSTANCE depth-cap hint sample so
+        // commit gates / boundary type-proof reads see the same surface
+        // as solve_delta_occurrence (TIMEOUT path only).
+        s.instance_repair_hints = last->instance_repair_hints;
         // Unique affected_node ids across unresolved + blame frames —
         // matches SolveDeltaOccurrenceResult::unresolved_affected_nodes
         // shape (Agent repair set, no free-form parsing required).
@@ -10388,6 +10403,54 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     // Fills suggested_roots + parallel reasons/degrees (#2548).
     if (r.status == SolveResult::TIMEOUT ||
         (r.status == SolveResult::CONFLICT && !r.unresolved.empty())) {
+        // Issue #2643: bounded sample of INSTANCE depth-cap hints for
+        // Agent self-repair (re-instantiate polymorphic call sites before
+        // full solve). On TIMEOUT + non-empty worklist, every INSTANCE
+        // constraint in r.unresolved is a cap-hit goal (cap re-queues
+        // until pass limit — see ConstraintSystem::solve). Synthesize
+        // hints directly from the constraint shape (no need to re-run
+        // consistent_instance). Zero-cost on SOLVED / no INSTANCE goals.
+        if (r.status == SolveResult::TIMEOUT) {
+            for (const auto& c : r.unresolved) {
+                if (c.kind != Constraint::INSTANCE)
+                    continue;
+                if (r.instance_repair_hints.size() >= kInstanceRepairHintCap)
+                    break;
+                InstanceRepairHint h;
+                h.var_rep = cs.find(c.lhs).index;
+                h.depth_used = static_cast<std::uint32_t>(kInstanceDepthCap);
+                h.depth_cap = static_cast<std::uint32_t>(kInstanceDepthCap);
+                h.poly = c.lhs;
+                h.site_node = c.affected_node;
+                r.instance_repair_hints.push_back(h);
+            }
+            // Mirror bounded sample onto durable repair atomics so
+            // query:type-timeout-repair-stats can publish without
+            // holding a live SolveDeltaOccurrenceResult (#2284 pattern).
+            if (m) {
+                m->type_repair_instance_hint_count.store(
+                    static_cast<std::uint32_t>(r.instance_repair_hints.size()),
+                    std::memory_order_relaxed);
+                for (std::size_t i = 0;
+                     i < r.instance_repair_hints.size() && i < kInstanceRepairHintCap; ++i) {
+                    const auto& h = r.instance_repair_hints[i];
+                    m->type_repair_instance_hint_depth_used[i].store(h.depth_used,
+                                                                     std::memory_order_relaxed);
+                    m->type_repair_instance_hint_depth_cap[i].store(h.depth_cap,
+                                                                    std::memory_order_relaxed);
+                    m->type_repair_instance_hint_poly[i].store(h.poly.index,
+                                                               std::memory_order_relaxed);
+                    m->type_repair_instance_hint_var_rep[i].store(h.var_rep,
+                                                                  std::memory_order_relaxed);
+                    m->type_repair_instance_hint_site_node[i].store(h.site_node,
+                                                                    std::memory_order_relaxed);
+                }
+                if (!r.instance_repair_hints.empty()) {
+                    m->instance_depth_cap_repair_hint_total.fetch_add(
+                        r.instance_repair_hints.size(), std::memory_order_relaxed);
+                }
+            }
+        }
         cs.export_unresolved_var_constraint_graph(
             r.unresolved, r.unresolved_graph_edges, r.suggested_roots, kUnresolvedGraphEdgeCap,
             kUnresolvedGraphSuggestedRootsCap, &r.suggested_root_reasons,

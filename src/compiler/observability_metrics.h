@@ -4775,6 +4775,29 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> instance_depth_cap_total{0};     // #2607
     std::atomic<std::uint64_t> instance_goal_solve_total{0};    // #2607
     std::atomic<std::uint64_t> instance_goal_conflict_total{0}; // #2607
+    // Issue #2643: bounded sample of INSTANCE depth-cap hints for Agent
+    // self-repair (re-instantiate polymorphic call sites before full
+    // solve). Mirror of SolveDeltaOccurrenceResult::instance_repair_hints
+    // so query:type-timeout-repair-stats can publish without holding a
+    // live result. Sample cap matches kInstanceRepairHintCap = 8.
+    //   - instance_depth_cap_repair_hint_total: cumulative count of
+    //     repair hints emitted on TIMEOUT path.
+    //   - type_repair_instance_hint_depth_used[i]: depth at which the
+    //     cap fired (== kInstanceDepthCap on first hit).
+    //   - type_repair_instance_hint_depth_cap[i]: cap value
+    //     (= kInstanceDepthCap or env override).
+    //   - type_repair_instance_hint_poly[i]: TypeId.index of poly side.
+    //   - type_repair_instance_hint_var_rep[i]: UF rep of unresolved
+    //     goal endpoint (Agents touch this first).
+    //   - type_repair_instance_hint_site_node[i]: NodeId (0 if unavailable).
+    //   - type_repair_instance_hint_count: current sample length (≤8).
+    std::atomic<std::uint64_t> instance_depth_cap_repair_hint_total{0};               // #2643
+    std::array<std::atomic<std::uint32_t>, 8> type_repair_instance_hint_depth_used{}; // #2643
+    std::array<std::atomic<std::uint32_t>, 8> type_repair_instance_hint_depth_cap{};  // #2643
+    std::array<std::atomic<std::uint32_t>, 8> type_repair_instance_hint_poly{};       // #2643
+    std::array<std::atomic<std::uint32_t>, 8> type_repair_instance_hint_var_rep{};    // #2643
+    std::array<std::atomic<std::uint32_t>, 8> type_repair_instance_hint_site_node{};  // #2643
+    std::atomic<std::uint32_t> type_repair_instance_hint_count{0};                    // #2643
     // Issue #2196: unified query:mutation-memory / query:blame-of join.
     // mutation_memory_query_total: calls into the unified surface.
     // mutation_memory_join_size_last: related records joined last call.
