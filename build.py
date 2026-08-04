@@ -322,6 +322,19 @@ def cmd_lint():
             "instance depth repair hint (#2643) coverage linter failed — run python3 scripts/check_instance_depth_repair_hint_2643.py"
         )
         return r
+    # Issue #2644: batch-level TypeVar refined consistency (anti
+    # SOLVED-but-drift under composite / atomic_batch). Soft path bumps
+    # observe only; production/Full rejects with type_scheme_drift.
+    idr_script = ROOT / "scripts" / "check_occurrence_refined_consistency_2644.py"
+    if not idr_script.exists():
+        fail(f"missing {idr_script}")
+        return 1
+    r = run([sys.executable, str(idr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "occurrence refined consistency (#2644) coverage linter failed — run python3 scripts/check_occurrence_refined_consistency_2644.py"
+        )
+        return r
     ok("lint OK")
     return 0
 

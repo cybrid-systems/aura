@@ -196,6 +196,13 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_commit_revalidate_total{0};
     std::atomic<std::uint64_t> composite_commit_ok_total{0};
     std::atomic<std::uint64_t> composite_commit_reject_total{0};
+    // Issue #2644: batch-level TypeVar refined consistency drift
+    // detection (anti SOLVED-but-drift under composite / atomic_batch).
+    // Soft path bumps observe only; production/Full rejects commit with
+    // type_scheme_drift reason. Folded into the existing composite commit
+    // barrier so #2610 empty-CS / auto_partial gates are unchanged.
+    std::atomic<std::uint64_t> composite_type_scheme_drift_observe_total{0};
+    std::atomic<std::uint64_t> composite_type_scheme_drift_reject_total{0};
     std::atomic<std::uint64_t> composite_commit_solve_fail_total{0};
     std::atomic<std::uint64_t> composite_commit_linear_fail_total{0};
     // Issue #2180: commit reuses stashed partial CS vs empty greenfield.

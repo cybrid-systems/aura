@@ -761,6 +761,39 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         return false;
     }
 
+    // Issue #2644: batch-level TypeVar refined consistency (anti
+    // SOLVED-but-drift). When occurrence_goals_ has two live goals for
+    // the same var_rep whose refined types fail consistent_unify both
+    // directions, the composite is semantically drifted even if the
+    // final solve reports SOLVED. AC1 production/Full reject; AC2 Soft
+    // observe only. AC4 empty occurrence table → zero cost (helper
+    // short-circuits). Folded into composite_txn_commit so #2610
+    // empty-CS / auto_partial gates and #2221 commit-barrier are
+    // unchanged; this is an additive anti false-green check.
+    {
+        ConstraintSystem* cs_for_drift = nullptr;
+        if (commit_type_checker_opaque_) {
+            cs_for_drift =
+                &static_cast<TypeChecker*>(commit_type_checker_opaque_)->constraint_system();
+        }
+        if (cs_for_drift && !cs_for_drift->check_occurrence_refined_consistency()) {
+            const bool hard_drift = production_defaults_active() ||
+                                    get_strategy() == AuditStrategy::Full ||
+                                    aura::core::sandbox::is_strict();
+            if (hard_drift) {
+                // AC1: production/Full reject commit with type_scheme_drift.
+                c.composite_type_scheme_drift_reject_total.fetch_add(1, std::memory_order_relaxed);
+                cr.rejected = true;
+                cr.committed = false;
+                if (out_commit)
+                    *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+                return false;
+            }
+            // AC2: Soft observe only (allow commit, surface drift metric).
+            c.composite_type_scheme_drift_observe_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
     // 1) solve_delta_occurrence (stable constraint surface #2028 / #2180).
     // Prefer stashed post-infer_flat_partial CS + occurrence vars — never
     // rely on a greenfield empty TypeChecker for production composite commit.

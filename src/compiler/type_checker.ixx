@@ -757,6 +757,14 @@ public:
     [[nodiscard]] const std::vector<OccurrenceGoal>& occurrence_goals_for_test() const noexcept {
         return occurrence_goals_;
     }
+
+    // Issue #2644: batch-level TypeVar refined consistency (anti SOLVED-but-drift).
+    // Groups occurrence_goals_ by UF rep and checks pairwise consistent_unify
+    // / subtype either direction. Returns true when all live goals for the same
+    // var agree on refined; false on any pair that fails consistent_unify both
+    // ways (drift detected). Zero cost on empty occurrence_goals_ (AC4).
+    // Caller decides observe-only (Soft) vs reject (production/Full).
+    [[nodiscard]] bool check_occurrence_refined_consistency() noexcept;
     // Issue #2608: optional OccurrenceGoal persist / rehydrate.
     // Soft default OFF (zero writes). Production defaults OR
     // AURA_OCCURRENCE_PERSIST=1 enables; AURA_OCCURRENCE_PERSIST=0 forces off.
