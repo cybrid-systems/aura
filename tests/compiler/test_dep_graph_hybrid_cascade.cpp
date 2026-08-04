@@ -18,16 +18,19 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "core/transparent_string_hash.hh" // aura::core::TransparentStringHash
 
 #include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.compiler.dirty_propagation; // aura::compiler::dirty::*
 
 namespace {
 

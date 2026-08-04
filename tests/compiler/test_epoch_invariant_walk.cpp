@@ -17,10 +17,11 @@
 #include <print>
 #include <string>
 
+#include "compiler/typed_mutation_audit.h" // typed_audit::apply_*_audit_defaults (header form; module BMI not always linked into issue batches)
+
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
-import aura.compiler.typed_mutation_audit_pass; // Issue #2640: ac2640_* use typed_audit::apply_*_audit_defaults (module exports the typed_audit namespace)
 
 namespace {
 

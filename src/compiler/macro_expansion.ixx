@@ -103,6 +103,10 @@ export extern std::atomic<std::uint64_t> g_macro_expand_mutate_restamp_total;
 // stamp counter (clone_macro_body walk visibility for rest-param
 // + nested qq + schema_cache copy paths).
 export extern std::atomic<std::uint64_t> g_macro_schema_cache_dirty_stamped_total;
+// Issue #2169 nested qq rest-param hits + schema_cache rest stamp totals
+// (defs in macro_expansion.cpp; tests/query surfaces import these).
+export extern std::atomic<std::uint64_t> g_macro_rest_param_nested_qq_hits_total;
+export extern std::atomic<std::uint64_t> g_macro_schema_cache_rest_stamped_total;
 // Issue #2097: per-fiber hygiene query counters (Agent-throttlable
 // surface under concurrent self-evo / fiber-steal; #2021's depth /
 // concurrent counters are process-wide; #2097 adds per-fiber-id keyed

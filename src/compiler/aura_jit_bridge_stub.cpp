@@ -203,6 +203,16 @@ extern "C" __attribute__((weak)) std::uint64_t
 aura_get_aot_defuse_version_for_eval(void* /*eval*/) {
     return g_aot_defuse_version_stub;
 }
+// Per-eval env_frame_version mirror (tests call with nullptr → process stub).
+static std::uint64_t g_aot_env_frame_version_for_eval_stub = 0;
+extern "C" __attribute__((weak)) void aura_set_aot_env_frame_version_for_eval(void* /*eval*/,
+                                                                              std::uint64_t v) {
+    g_aot_env_frame_version_for_eval_stub = v;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_get_aot_env_frame_version_for_eval(void* /*eval*/) {
+    return g_aot_env_frame_version_for_eval_stub;
+}
 extern "C" __attribute__((weak)) void aura_cleanup_aot_state(void* /*eval*/) {}
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_state_map_size(void) {
     return 0;

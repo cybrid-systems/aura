@@ -259,13 +259,19 @@ namespace _2287_detail {
 
 } // namespace aura_dead_coercion_layered_2282
 
+namespace _2645_detail {
+void run_2645_evidence_chain();
+}
+
 int run_test_dead_coercion_layered() {
     std::println("=== Issue #2282 / #2287: dead-coercion layered + CastOp density ===");
     std::println("=== Issue #2319: opt-in hard CastOp density gate ===");
+    std::println("=== Issue #2645: layered dead-coercion evidence chain ===");
     aura_dead_coercion_layered_2282::_2282_detail::run_2282_layered_total();
     aura_dead_coercion_layered_2282::_2287_detail::run_2287_density();
     // Issue #2319 ACs are covered by dedicated test_castop_density_hard
     // (ac2319_* helpers were never defined in this TU).
+    _2645_detail::run_2645_evidence_chain();
     return RUN_ALL_TESTS();
 }
 
@@ -285,7 +291,16 @@ int run_test_dead_coercion_layered() {
 // ---------------------------------------------------------------------------
 namespace _2645_detail {
 
-static std::int64_t query_meta_field(CompilerService& cs, const char* field) {
+using aura::compiler::CompilerService;
+
+static std::string read_file(const char* path) {
+    std::ifstream in(path);
+    if (!in)
+        return {};
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+static std::int64_t query_field(CompilerService& cs, const char* field) {
     auto r = cs.eval(std::string("(hash-ref (engine:metrics \"query:dead-coercion-layered-stats\") "
                                  "\"") +
                      field + "\")");
@@ -294,7 +309,7 @@ static std::int64_t query_meta_field(CompilerService& cs, const char* field) {
     return aura::compiler::types::as_int(*r);
 }
 
-static void run_2645_evidence_chain() {
+void run_2645_evidence_chain() {
     std::println("\n=== Issue #2645: layered dead-coercion evidence chain ===");
 
     // AC1: evidence != 0 path — ast-elided++ and meta stamp call present
