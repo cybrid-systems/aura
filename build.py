@@ -4499,10 +4499,9 @@ def cmd_coercion_evidence_loss_slo_coverage():
 
 
 def cmd_fiber_eval_depth_isolation_coverage():
-    """Issue #2650 / #2649: fiber-local eval depth + #2653 module path refuse.
+    """Issue #2650 / #2649: fiber-local eval depth.
 
     Stackful fibers share an OS thread — depth must live on Fiber, not TLS.
-    load_module_file fails closed on empty / prompt / pure-digit paths.
     """
     print(f"{B}=== fiber eval depth isolation coverage (#2650/#2649) ==={N}")
     script = COVERAGE_CHECKS / "check_fiber_eval_depth_isolation_2650.py"
@@ -4514,6 +4513,25 @@ def cmd_fiber_eval_depth_isolation_coverage():
         fail("fiber eval depth isolation (#2650) coverage contract rows failed")
         return 1
     ok("fiber eval depth isolation (#2650/#2649) coverage clean")
+    return 0
+
+
+def cmd_module_path_refuse_coverage():
+    """Issue #2653 / #2649 H10: load_module_file path refuse + owned path.
+
+    is_plausible_module_path fails closed on empty / whitespace / pure-digit /
+    free-text; use/load-module/import snapshot path via copy_string_heap_at.
+    """
+    print(f"{B}=== module path refuse coverage (#2653/#2649) ==={N}")
+    script = COVERAGE_CHECKS / "check_module_path_refuse_2653.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("module path refuse (#2653) coverage contract rows failed")
+        return 1
+    ok("module path refuse (#2653/#2649) coverage clean")
     return 0
 
 
@@ -7869,6 +7887,7 @@ def cmd_gate():
         or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
         or cmd_coercion_evidence_loss_slo_coverage()
         or cmd_fiber_eval_depth_isolation_coverage()
+        or cmd_module_path_refuse_coverage()
         or cmd_pmr_alloc_fiber_safe_coverage()
         or cmd_string_heap_corruption_guard_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
@@ -8709,6 +8728,7 @@ def main():
         "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
         "coercion-evidence-loss-slo": cmd_coercion_evidence_loss_slo_coverage,
         "fiber-eval-depth-isolation": cmd_fiber_eval_depth_isolation_coverage,
+        "module-path-refuse": cmd_module_path_refuse_coverage,
         "pmr-alloc-fiber-safe": cmd_pmr_alloc_fiber_safe_coverage,
         "string-heap-corruption-guard": cmd_string_heap_corruption_guard_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,

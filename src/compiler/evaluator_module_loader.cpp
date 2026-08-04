@@ -136,26 +136,30 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
 }
 
 // Issue #2653 / #2649 H10: refuse paths that cannot be legitimate module
-// names (empty, NULs, control chars, multi-line LLM prompts, env numbers).
+// names (empty, NULs, control chars, whitespace free-text, env numbers).
 // Under heap corruption / UAF the "path" may be a dangling view into a
 // freed pad or prompt; fail closed before resolve so we never treat free
 // text as a module path. Display is truncated to keep stderr usable.
+//
+// Legitimate Aura module paths look like: "std/list", "aether-min",
+// "aether-propose", "foo/bar.aura" — never spaces, never pure digits,
+// never multi-line LLM system prompts.
 [[nodiscard]] static bool is_plausible_module_path(std::string_view path) noexcept {
     if (path.empty() || path.size() > 1024)
         return false;
-    bool has_path_sep = false;
-    bool has_space = false;
+    bool has_alnum = false;
     for (unsigned char c : path) {
         if (c == 0 || c < 0x20 || c == 0x7f)
-            return false; // NUL / control / DEL
-        if (c == '/' || c == '\\' || c == '.')
-            has_path_sep = true;
+            return false; // NUL / control / DEL (multi-line pads)
+        // Issue #2653: module paths never contain whitespace. Refusing any
+        // space/tab catches short LLM fragments ("ion; reply w") and full
+        // denseness system prompts that previously slipped the >64 rule
+        // and polluted "cannot resolve '…'" logs.
         if (c == ' ' || c == '\t')
-            has_space = true;
+            return false;
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+            has_alnum = true;
     }
-    // Leading/trailing whitespace is never a module path.
-    if (path.front() == ' ' || path.front() == '\t' || path.back() == ' ' || path.back() == '\t')
-        return false;
     // Pure decimal (e.g. "16384" from AETHER_LLM_CONTEXT_CHARS) is never a module.
     bool all_digit = true;
     for (unsigned char c : path) {
@@ -166,8 +170,8 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
     }
     if (all_digit)
         return false;
-    // Long free-text without path separators (LLM system prompts).
-    if (path.size() > 64 && has_space && !has_path_sep)
+    // "==" / pure punctuation fragments from pad corruption — not a module.
+    if (!has_alnum)
         return false;
     return true;
 }

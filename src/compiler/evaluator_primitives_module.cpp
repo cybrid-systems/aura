@@ -117,35 +117,32 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_void();
-        return ev.load_module_file(ev.string_heap_[idx]);
+        // Issue #2653: own the path under alloc_storage_lock_ so concurrent
+        // string_heap_ reallocate cannot UAF the path ref mid-load
+        // (LLM pad / prompt reuse class of H10). Empty paths reach
+        // load_module_file for structured refuse (not silent void).
+        return ev.load_module_file(ev.copy_string_heap_at(idx));
     });
 
     add("load-module", [&ev](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_void();
-        return ev.load_module_file(ev.string_heap_[idx]);
+        // Issue #2653: snapshot path (owned) before load_module_file.
+        return ev.load_module_file(ev.copy_string_heap_at(idx));
     });
 
     add("import", [&ev](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_void();
-        auto& path = ev.string_heap_[idx];
+        // Issue #2653: own path + optional prefix (no bare string_heap_ refs).
+        auto path = ev.copy_string_heap_at(idx);
 
         // Optional prefix: (import "path" "prefix:")
         std::string prefix;
-        if (a.size() > 1 && is_string(a[1])) {
-            auto pidx = as_string_idx(a[1]);
-            if (pidx < ev.string_heap_.size())
-                prefix = ev.string_heap_[pidx];
-        }
+        if (a.size() > 1 && is_string(a[1]))
+            prefix = ev.copy_string_heap_at(as_string_idx(a[1]));
 
         // Load module (cached, isolated env).
         // Issue #2570: surface load failure as first-class error (not void)
@@ -155,16 +152,16 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         if (is_error(mod_val) && !is_string(mod_val))
             return mod_val;
         if (!is_module(mod_val)) {
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::string("module-load-failed: ") + path);
+            auto sid = static_cast<std::uint64_t>(
+                ev.push_string_heap(std::string("module-load-failed: ") + path));
             auto eidx = ev.error_values_.size();
             ev.error_values_.push_back(make_string(sid));
             return make_error(eidx);
         }
         auto mod_idx = as_module_idx(mod_val);
         if (mod_idx >= ev.modules_.size()) {
-            auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::string("module-load-failed: bad index for ") + path);
+            auto sid = static_cast<std::uint64_t>(
+                ev.push_string_heap(std::string("module-load-failed: bad index for ") + path));
             auto eidx = ev.error_values_.size();
             ev.error_values_.push_back(make_string(sid));
             return make_error(eidx);

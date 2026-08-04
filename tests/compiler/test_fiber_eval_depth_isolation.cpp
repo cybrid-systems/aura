@@ -5,7 +5,7 @@
 //   AC1: Fiber A and Fiber B have independent eval_c_stack_depth slots
 //   AC2: Host (no fiber) uses separate TLS host slot
 //   AC3: Source uses aura_eval_c_stack_depth_slot / cites #2650
-//   AC4: load_module_file refuses empty / prompt-like / pure-digit paths (#2653)
+//   AC4: load_module_file path refuse smoke (full H10 suite: #2653 test)
 //   AC5: Shallow recursive eval still works under host path
 
 #include "serve/fiber.h"
