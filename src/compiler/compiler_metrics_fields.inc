@@ -1880,6 +1880,10 @@ AURA_COMPILER_METRICS_FIELD(full_relower_cost_samples)
 // typecheck entry while production_locked && mode == Soft. Mirrors
 // mutate_type_gate::soft_in_production_alarm_total.
 AURA_COMPILER_METRICS_FIELD(mutate_type_gate_soft_in_production_alarm_total)
+// Issue #2646: cone-truncate outside invalidate (anti ghost-narrow).
+AURA_COMPILER_METRICS_FIELD(occurrence_cone_outside_invalidate_total)
+AURA_COMPILER_METRICS_FIELD(occurrence_cone_outside_goals_dropped_total)
+AURA_COMPILER_METRICS_FIELD(occurrence_cone_outside_memo_dropped_total)
 // Issue #2643: bounded sample of INSTANCE depth-cap hints for Agent
 // self-repair (TIMEOUT path only — zero cost on SOLVED). Mirror of
 // SolveDeltaOccurrenceResult::instance_repair_hints so

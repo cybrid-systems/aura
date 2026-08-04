@@ -7982,6 +7982,43 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             }
         }
     }
+    // Issue #2646: cone-truncate must drop goals/memo for dirty If/cond
+    // NodeIds that fell OUTSIDE the truncated cone (anti ghost-narrow
+    // after cone-truncated self-modify). The existing #2622 invalidate
+    // above covers occurrence_targets but if cone was truncated, dirty
+    // Ifs that did NOT make the truncated cone retain a prior epoch's
+    // refined type — next delta priority-replays a ghost narrow. This
+    // path collects `occurrence_targets` not in the truncated cone
+    // (set difference) and re-runs sync_occurrence_after_dirty on them.
+    // Zero cost on !truncated or empty outside set (AC3). Counters
+    // observe call / dropped (placeholder counts — exact drop counts
+    // wire in follow-up commit per AC4 ordering note).
+    if (last_partial_cone_truncated_) {
+        std::vector<NodeId> outside_cone_conds;
+        outside_cone_conds.reserve(occurrence_targets.size());
+        std::unordered_set<NodeId> affected_set(affected.begin(), affected.end());
+        for (auto id : occurrence_targets) {
+            if (affected_set.find(id) == affected_set.end())
+                outside_cone_conds.push_back(id);
+        }
+        if (!outside_cone_conds.empty()) {
+            (void)engine.sync_occurrence_after_dirty(
+                std::span<const NodeId>(outside_cone_conds.data(), outside_cone_conds.size()),
+                &flat, &solve_delta_cs_);
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->occurrence_cone_outside_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+                // Placeholder counts — exact drop counts wire in follow-up commit
+                // (engine.sync_occurrence_after_dirty returns void today; AC4
+                // #2622 diverge metric ordering preserved by calling AFTER the
+                // existing #2622 sync so its counters advance first).
+                m->occurrence_cone_outside_goals_dropped_total.fetch_add(outside_cone_conds.size(),
+                                                                         std::memory_order_relaxed);
+                m->occurrence_cone_outside_memo_dropped_total.fetch_add(outside_cone_conds.size(),
+                                                                        std::memory_order_relaxed);
+            }
+        }
+    }
     // Issue #2285 Phase 2: selective invalidate from FULL affected set
     // (broader than the target_node subtree walk above; covers type_dep
     // additions from #2283 that extend beyond the mutated binding's

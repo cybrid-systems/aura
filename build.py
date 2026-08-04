@@ -348,6 +348,20 @@ def cmd_lint():
             "dead-coercion layered evidence chain (#2645) coverage linter failed — run python3 scripts/check_dead_coercion_layered_evidence_2645.py"
         )
         return r
+    # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
+    # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
+    # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +
+    # #2622 dirty-key authority.
+    oci_script = ROOT / "scripts" / "check_occurrence_cone_outside_invalidate_2646.py"
+    if not oci_script.exists():
+        fail(f"missing {oci_script}")
+        return 1
+    r = run([sys.executable, str(oci_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "occurrence cone outside invalidate (#2646) coverage linter failed — run python3 scripts/check_occurrence_cone_outside_invalidate_2646.py"
+        )
+        return r
     ok("lint OK")
     return 0
 
