@@ -1930,8 +1930,55 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
 // from Issue #148 Phase 2 — only the structure is different
 // (moved into a private impl method).
 SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolved_out) {
-    if (dirty_count_ == 0)
-        return SolveResult::SOLVED;
+    // Issue #2647: empty dirty worklist is NOT proof of SOLVED when live
+    // OccurrenceGoals (or residual priority roots) still need revalidation
+    // against Union-Find. Vacuous green after clear_blame_context left goals
+    // while constraint_dirty_ was zero — force goal-priority reverify first.
+    if (dirty_count_ == 0) {
+        const auto cur_epoch = current_epoch();
+        bool live_goals = false;
+        for (const auto& g : occurrence_goals_) {
+            if (!g.var.valid())
+                continue;
+            if (g.epoch > 0 && g.epoch < cur_epoch)
+                continue; // stale (same filter as solve_delta_occurrence)
+            live_goals = true;
+            break;
+        }
+        const bool have_roots = !occurrence_priority_roots_.empty() ||
+                                !let_poly_dirty_roots_.empty() ||
+                                !pending_full_solve_roots_.empty() || !touched_roots_.empty();
+        if (!live_goals && !have_roots)
+            return SolveResult::SOLVED; // AC4: zero extra reverify
+
+        if (metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(metrics_);
+            m->occurrence_goal_forced_reverify_total.fetch_add(1, std::memory_order_relaxed);
+            if (live_goals) {
+                m->occurrence_goal_vacuous_solve_prevented_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        // Clear stale truncate markers for this reverify-only pass.
+        last_reverify_truncated_ = false;
+        last_reverify_unscanned_ = 0;
+        const bool recovered = try_goal_priority_reverify_before_full();
+        if (recovered)
+            return SolveResult::SOLVED;
+        // Conflict during reverify: try_goal_priority returns false with
+        // truncate cleared when unify failed — escalate to full solve so
+        // Agents get CONFLICT + unresolved (not silent SOLVED).
+        if (!last_reverify_truncated_) {
+            // Conflict path inside reverify_clean (returned false, no truncate).
+            return solve(unresolved_out);
+        }
+        // Truncated reverify under goals pressure: TIMEOUT + anti-starve
+        // gate on the outer solve_delta wrapper (#2318 / #2508 / #2277).
+        if (unresolved_out && unresolved_out->empty()) {
+            // Export residual unscanned signal via last_reverify_* already set.
+        }
+        return SolveResult::TIMEOUT;
+    }
 
     // Issue #1873: truncation markers are only meaningful for the
     // reverify pass of this solve; clear so dirty-worklist conflicts
@@ -10361,6 +10408,7 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     // untagged goals (epoch == 0) are always live. We call
     // mark_touched_on_delta (not note_occurrence_goal) so the goal
     // isn't double-recorded; we just re-inject occurrence_priority_roots_.
+    std::size_t drifted_goals = 0;
     {
         const auto& goals = cs.occurrence_goals_for_test();
         std::size_t replayed = 0;
@@ -10394,6 +10442,13 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
         }
         if (replayed > 0 && m)
             m->occurrence_goal_replay_total.fetch_add(replayed, std::memory_order_relaxed);
+        // Issue #2647 / #2548: refined-drift goals must not vanish as silent
+        // SOLVED — export miss count even when dirty worklist is empty.
+        if (drifted > 0 && m) {
+            m->type_repair_occurrence_replay_miss_count.fetch_add(
+                static_cast<std::uint64_t>(drifted), std::memory_order_relaxed);
+        }
+        drifted_goals = drifted;
     }
     SolveDeltaOccurrenceResult r;
     // Issue #2107: always collect unresolved into the result so Agents
@@ -10402,6 +10457,15 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     r.status = cs.solve_delta(&r.unresolved);
     if (unresolved_out)
         *unresolved_out = r.unresolved;
+    // Issue #2647 AC3: drifted goals → not silent SOLVED without miss export.
+    if (drifted_goals > 0) {
+        r.occurrence_replay_miss_count += drifted_goals;
+        if (r.status == SolveResult::SOLVED && cs.occurrence_priority_roots_size() == 0) {
+            // All live goals drifted / dropped — surface CONFLICT so Agents
+            // do not treat empty-dirty + dead goals as green.
+            r.status = SolveResult::CONFLICT;
+        }
+    }
     r.occurrence_priority_roots = cs.occurrence_priority_roots_size();
     r.let_poly_roots = cs.let_poly_dirty_roots_size();
     r.touched_roots = cs.touched_roots_size();

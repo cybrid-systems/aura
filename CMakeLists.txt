@@ -2721,6 +2721,7 @@ add_executable(test_occurrence_coercion_batch
     tests/compiler/test_occurrence_dirty_key_authority.cpp
     tests/compiler/test_occurrence_goal_epoch_table.cpp
     tests/compiler/test_occurrence_goal_persist_rehydrate.cpp
+    tests/compiler/test_occurrence_goal_vacuous_solve_prevent.cpp
     tests/compiler/test_partial_cone_cap.cpp
     tests/compiler/test_partial_cone_commit_gate.cpp
     tests/compiler/test_solve_delta_unresolved_export.cpp

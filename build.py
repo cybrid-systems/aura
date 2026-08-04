@@ -5577,6 +5577,25 @@ def cmd_occurrence_goal_persist_rehydrate_coverage():
     return 0
 
 
+def cmd_occurrence_goal_vacuous_solve_prevent_coverage():
+    """Issue #2647: live OccurrenceGoal + empty dirty must not vacuous-SOLVED.
+
+    Forces try_goal_priority_reverify_before_full when dirty_count_==0 and
+    epoch-valid goals remain; metrics + schema-2647 fidelity keys.
+    """
+    print(f"{B}=== occurrence goal vacuous-solve prevent coverage (#2647) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_goal_vacuous_solve_prevent_2647.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence goal vacuous-solve prevent (#2647) coverage contract rows failed")
+        return 1
+    ok("occurrence goal vacuous-solve prevent (#2647) coverage clean")
+    return 0
+
+
 def cmd_steal_densify_linear_type_hard_and_coverage():
     """Issue #2609: steal/densify hard-AND residual + linear + type fence.
 
@@ -7770,6 +7789,7 @@ def cmd_gate():
         or cmd_pereval_reemit_region_independence_coverage()
         or cmd_instance_constraint_depth_cap_coverage()
         or cmd_occurrence_goal_persist_rehydrate_coverage()
+        or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()

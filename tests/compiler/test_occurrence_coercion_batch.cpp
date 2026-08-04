@@ -39,6 +39,7 @@ extern int run_test_occurrence_cache_key();
 extern int run_test_occurrence_dirty_key_authority();
 extern int run_test_occurrence_goal_epoch_table();
 extern int run_test_occurrence_goal_persist_rehydrate();
+extern int run_test_occurrence_goal_vacuous_solve_prevent();
 extern int run_test_partial_cone_cap();
 extern int run_test_partial_cone_commit_gate();
 extern int run_test_solve_delta_unresolved_export();
@@ -55,7 +56,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_occurrence_coercion_batch (41 members) ===");
+    std::println("=== test_occurrence_coercion_batch (42 members) ===");
 
     std::println("\n──── test_adt_exhaustiveness_audit ────");
     g_passed = 0;
@@ -401,6 +402,18 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_occurrence_goal_persist_rehydrate ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_occurrence_goal_vacuous_solve_prevent ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_occurrence_goal_vacuous_solve_prevent() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_occurrence_goal_vacuous_solve_prevent ({}/{})", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_occurrence_goal_vacuous_solve_prevent ({} checks)", g_passed);
     }
 
     std::println("\n──── test_partial_cone_cap ────");
