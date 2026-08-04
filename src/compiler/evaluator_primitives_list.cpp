@@ -149,6 +149,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     };
     add("list", [&pairs, &ev](std::span<const EvalValue> a) {
         // Build proper list (pair chain ending with void)
+        // Issue #2651: lock pairs_ growth under multi-fiber fanout.
+        std::lock_guard lock(ev.alloc_storage_lock_);
         EvalValue result = make_void();
         for (auto it = a.rbegin(); it != a.rend(); ++it) {
             auto id = pairs.size();
@@ -316,6 +318,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     add("reverse", [&pairs, &ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
+        // Issue #2651: pairs_ push under alloc_storage_lock_.
+        std::lock_guard lock(ev.alloc_storage_lock_);
         auto v = a[0];
         EvalValue result = make_void();
         while (!is_end_of_list(v)) {
@@ -343,31 +347,44 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         EvalValue current = a[1];
 
         while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= pairs.size())
-                break;
+            EvalValue car;
+            EvalValue next;
+            {
+                // Issue #2651: snapshot car/next under lock (pairs_ may reallocate).
+                std::lock_guard lock(ev.alloc_storage_lock_);
+                auto idx = as_pair_idx(current);
+                if (idx >= pairs.size())
+                    break;
+                car = pairs[idx].car;
+                next = pairs[idx].cdr;
+            }
 
             ev.bump_list_chain_traversals();
             ev.bump_list_estimated_cache_misses();
-            auto mapped = apply_unary(a[0], pairs[idx].car, true);
+            // apply_unary outside lock (may re-enter primitives; recursive_mutex OK
+            // if it also takes alloc_storage_lock_).
+            auto mapped = apply_unary(a[0], car, true);
 
-            auto new_id = pairs.size();
-            pairs.push_back({mapped, make_void()});
-            ev.bump_pair_alloc_count(); // Issue #614
-            auto new_pair = make_pair(new_id);
+            {
+                std::lock_guard lock(ev.alloc_storage_lock_);
+                auto new_id = pairs.size();
+                pairs.push_back({mapped, make_void()});
+                ev.bump_pair_alloc_count(); // Issue #614
+                auto new_pair = make_pair(new_id);
 
-            if (first) {
-                result = new_pair;
-                tail = new_pair;
-                first = false;
-            } else {
-                auto tail_idx = as_pair_idx(tail);
-                if (tail_idx < pairs.size())
-                    pairs[tail_idx].cdr = new_pair;
-                tail = new_pair;
+                if (first) {
+                    result = new_pair;
+                    tail = new_pair;
+                    first = false;
+                } else {
+                    auto tail_idx = as_pair_idx(tail);
+                    if (tail_idx < pairs.size())
+                        pairs[tail_idx].cdr = new_pair;
+                    tail = new_pair;
+                }
             }
 
-            current = pairs[idx].cdr;
+            current = next;
         }
 
         return result;
@@ -542,6 +559,8 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 m->stdlib_list_iterative_sorts_total.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #2651: build result list under alloc_storage_lock_.
+            std::lock_guard lock(ev.alloc_storage_lock_);
             EvalValue result = make_void();
             for (auto it = buf.rbegin(); it != buf.rend(); ++it) {
                 auto new_id = pairs.size();

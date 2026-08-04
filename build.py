@@ -4517,6 +4517,25 @@ def cmd_fiber_eval_depth_isolation_coverage():
     return 0
 
 
+def cmd_pmr_alloc_fiber_safe_coverage():
+    """Issue #2651 / #2649 H9: concurrent PMR / string_heap / ASTArena allocate.
+
+    string-append/cons/push_string_heap under alloc_storage_lock_;
+    ASTArena alloc_mtx_ around pmr bump (not thread-safe alone).
+    """
+    print(f"{B}=== PMR alloc fiber-safe coverage (#2651/#2649) ==={N}")
+    script = COVERAGE_CHECKS / "check_pmr_alloc_fiber_safe_2651.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("PMR alloc fiber-safe (#2651) coverage contract rows failed")
+        return 1
+    ok("PMR alloc fiber-safe (#2651/#2649) coverage clean")
+    return 0
+
+
 def cmd_partial_cone_commit_gate_coverage():
     """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
 
@@ -7830,6 +7849,7 @@ def cmd_gate():
         or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
         or cmd_coercion_evidence_loss_slo_coverage()
         or cmd_fiber_eval_depth_isolation_coverage()
+        or cmd_pmr_alloc_fiber_safe_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()
@@ -8668,6 +8688,7 @@ def main():
         "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
         "coercion-evidence-loss-slo": cmd_coercion_evidence_loss_slo_coverage,
         "fiber-eval-depth-isolation": cmd_fiber_eval_depth_isolation_coverage,
+        "pmr-alloc-fiber-safe": cmd_pmr_alloc_fiber_safe_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,

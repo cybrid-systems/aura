@@ -3754,6 +3754,11 @@ aura_add_issue_test(test_fiber_eval_depth_isolation)
 aura_issue_test_link_light(test_fiber_eval_depth_isolation)
 add_dependencies(all_test_issue_targets test_fiber_eval_depth_isolation)
 
+# Issue #2651 / #2649 H9: concurrent PMR / string_heap / ASTArena allocate.
+aura_add_issue_test(test_pmr_alloc_fiber_safe)
+aura_issue_test_link_light(test_pmr_alloc_fiber_safe)
+add_dependencies(all_test_issue_targets test_pmr_alloc_fiber_safe)
+
 # Issue #2469: Scheduler::reap_orphans_now() two-phase extraction —
 # orphan_mutex_ released before per-fiber cleanup (wait_map_mutex_,
 # joiner_map_mutex_, owned_fibers_mutex_ acquisitions). Minimizes

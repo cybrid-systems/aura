@@ -67,9 +67,11 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         // Strings are immutable-like; just return the same reference
         return a[0];
     });
-    add("string-fill!", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("string-fill!", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_void();
+        // Issue #2651: serialize content mutate vs concurrent reallocate.
+        std::lock_guard lock(ev.alloc_storage_lock_);
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap.size())
             return make_void();
@@ -77,9 +79,11 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         std::fill(string_heap[idx].begin(), string_heap[idx].end(), fill_char);
         return make_void();
     });
-    add("string->list", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("string->list", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
+        // Issue #2651: pairs_ + string_heap_ under alloc_storage_lock_.
+        std::lock_guard lock(ev.alloc_storage_lock_);
         auto idx = as_string_idx(a[0]);
         if (idx >= string_heap.size())
             return make_bool(false);
@@ -93,32 +97,38 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return result;
     });
-    add("list->string", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("list->string", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.empty())
             return make_bool(false);
-        auto v = a[0];
+        // Issue #2651: snapshot under lock then intern.
         std::string result;
-        while (is_pair(v)) {
-            auto p = as_pair_idx(v);
-            if (p >= pairs.size())
-                break;
-            auto car = pairs[p].car;
-            if (is_int(car)) {
-                result += static_cast<char>(as_int(car));
-            } else if (is_string(car)) {
-                auto sidx = as_string_idx(car);
-                if (sidx < string_heap.size())
-                    result += string_heap[sidx];
+        {
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            auto v = a[0];
+            while (is_pair(v)) {
+                auto p = as_pair_idx(v);
+                if (p >= pairs.size())
+                    break;
+                auto car = pairs[p].car;
+                if (is_int(car)) {
+                    result += static_cast<char>(as_int(car));
+                } else if (is_string(car)) {
+                    auto sidx = as_string_idx(car);
+                    if (sidx < string_heap.size())
+                        result += string_heap[sidx];
+                }
+                v = pairs[p].cdr;
             }
-            v = pairs[p].cdr;
+            auto sidx = string_heap.size();
+            string_heap.push_back(std::move(result));
+            return make_string(sidx);
         }
-        auto sidx = string_heap.size();
-        string_heap.push_back(result);
-        return make_string(sidx);
     });
-    add("string-join", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("string-join", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[1]))
             return make_bool(false);
+        // Issue #2651: multi-fiber long joins (overnight pads) must lock.
+        std::lock_guard lock(ev.alloc_storage_lock_);
         auto delim_idx = as_string_idx(a[1]);
         if (delim_idx >= string_heap.size())
             return make_bool(false);
@@ -143,12 +153,14 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             v = pairs[p].cdr;
         }
         auto sidx = string_heap.size();
-        string_heap.push_back(result);
+        string_heap.push_back(std::move(result));
         return make_string(sidx);
     });
 
     // ── Pair / List / String primitives ─────────────────────────
-    add("cons", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("cons", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        // Issue #2651 / #1397: concurrent fiber cons must not race pairs_.
+        std::lock_guard lock(ev.alloc_storage_lock_);
         auto id = pairs.size();
         pairs.push_back({a[0], a[1]});
         return make_pair(id);
@@ -400,7 +412,13 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         return make_bool(is_string(a[0]));
     });
-    add("string-append", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("string-append", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+        // Issue #2651: overnight multi-agent long-context pads call
+        // string-append heavily under fiber fanout. Unlocked push_back
+        // races pmr::vector / monotonic_buffer_resource → SIGSEGV in
+        // allocate/deallocate (H9). Hold alloc_storage_lock_ for the
+        // entire read-intern-push critical section.
+        std::lock_guard lock(ev.alloc_storage_lock_);
         std::string result;
         for (auto& v : a) {
             if (is_string(v)) {
