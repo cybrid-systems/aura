@@ -4162,6 +4162,120 @@ struct EpochInvariantEnvInit {
 [[maybe_unused]] EpochInvariantEnvInit g_epoch_invariant_env_init{};
 } // namespace
 
+// ── Issue #2640: production Restricted default periodic epoch-invariant soft walk ──
+//
+// Reuses aura_epoch_invariant_must_deopt_stale_live_closures (per #2501 / #2541) +
+// aura_aot_invalidate_all_stale_slots_for_eval (per #2271 / #2299) which already
+// physically clear generation-behind AOT slots and MustDeopt stale live closures.
+//
+// Gating (Issue #2640 sketch):
+//   - period_ms == 0         → disabled → bump skipped_disabled_total
+//   - mode != Soft (1)       → skip     → bump skipped_wrong_mode_total
+//   - !production_defaults   → skip     → bump skipped_off_total
+//                                  (covers sandbox=off + dev apply_dev_audit_defaults)
+//   - rate-limited (steady_ms_now - last_walk_at_ms < period_ms)
+//                              → skip    → bump skipped_rate_limited_total
+//   - else: bump walks_total, update last_walk_at_ms,
+//          then call the existing soft walk (which bumps existing
+//          walks_total + slot_stale_total + closure_must_deopt_total
+//          via note_walk inside the run_epoch_invariant_if_enabled path).
+//
+// Wire-up: MutationBoundaryGuard::~MutationBoundaryGuard outermost success exit
+// (called per outer mutation boundary exit; internal rate limit ensures
+// amortized cost regardless of call frequency). AC4 satisfied: bounded
+// by period_ms, not by mutation count.
+
+namespace {
+// File-local steady_ms_now (matches the one in hot_update_registry.cpp:23).
+// Defined here for self-contained bridge TU.
+std::uint64_t periodic_steady_ms_now() noexcept {
+    using namespace std::chrono;
+    return static_cast<std::uint64_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
+
+std::atomic<std::uint64_t> g_epoch_invariant_periodic_walks_total{0};
+std::atomic<std::uint64_t> g_epoch_invariant_periodic_last_walk_at_ms{0};
+std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_off_total{0};
+std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_wrong_mode_total{0};
+std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_rate_limited_total{0};
+std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_disabled_total{0};
+std::atomic<std::uint64_t> g_epoch_invariant_periodic_period_ms{5000}; // default 5s
+} // namespace
+
+extern "C" std::uint64_t aura_epoch_invariant_periodic_walks_total_v_read(void) {
+    return g_epoch_invariant_periodic_walks_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_periodic_last_walk_at_ms_v_read(void) {
+    return g_epoch_invariant_periodic_last_walk_at_ms.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_periodic_skipped_off_total_v_read(void) {
+    return g_epoch_invariant_periodic_skipped_off_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_periodic_skipped_wrong_mode_total_v_read(void) {
+    return g_epoch_invariant_periodic_skipped_wrong_mode_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read(void) {
+    return g_epoch_invariant_periodic_skipped_rate_limited_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_periodic_skipped_disabled_total_v_read(void) {
+    return g_epoch_invariant_periodic_skipped_disabled_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_periodic_period_ms_v_read(void) {
+    return g_epoch_invariant_periodic_period_ms.load(std::memory_order_relaxed);
+}
+extern "C" void aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms) {
+    g_epoch_invariant_periodic_period_ms.store(ms, std::memory_order_relaxed);
+}
+
+// Issue #2640: env init — AURA_EPOCH_INVARIANT_PERIOD_MS (default 5000, 0=disabled).
+namespace {
+struct EpochInvariantPeriodEnvInit {
+    EpochInvariantPeriodEnvInit() noexcept {
+        if (const char* e = std::getenv("AURA_EPOCH_INVARIANT_PERIOD_MS")) {
+            const long long v = std::atoll(e);
+            if (v >= 0 && v <= 3600000) { // cap at 1h for sanity
+                g_epoch_invariant_periodic_period_ms.store(static_cast<std::uint64_t>(v),
+                                                           std::memory_order_relaxed);
+            }
+        }
+    }
+};
+[[maybe_unused]] EpochInvariantPeriodEnvInit g_epoch_invariant_period_env_init{};
+} // namespace
+
+// Issue #2640: main hook — called from MutationBoundaryGuard outermost dtor.
+// Gated by mode=Soft + production_defaults_active + period_ms rate limit.
+extern "C" void aura_periodic_epoch_invariant_walk_if_due(void) {
+    const auto period_ms = g_epoch_invariant_periodic_period_ms.load(std::memory_order_relaxed);
+    if (period_ms == 0) {
+        g_epoch_invariant_periodic_skipped_disabled_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (aura_epoch_invariant_mode() != 1) { // 1 = Soft (per #2541 Restricted default)
+        g_epoch_invariant_periodic_skipped_wrong_mode_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (!aura::compiler::typed_audit::production_defaults_active()) {
+        g_epoch_invariant_periodic_skipped_off_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    const auto now_ms = periodic_steady_ms_now();
+    const auto last_ms = g_epoch_invariant_periodic_last_walk_at_ms.load(std::memory_order_relaxed);
+    if (last_ms != 0 && (now_ms - last_ms) < period_ms) {
+        g_epoch_invariant_periodic_skipped_rate_limited_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        return;
+    }
+    g_epoch_invariant_periodic_last_walk_at_ms.store(now_ms, std::memory_order_relaxed);
+    g_epoch_invariant_periodic_walks_total.fetch_add(1, std::memory_order_relaxed);
+    // Reuse #2541 soft walk: physically clear gen-behind AOT slots
+    // (aura_aot_invalidate_all_stale_slots_for_eval(nullptr) = process-default)
+    // + MustDeopt stale live closures.
+    (void)aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
+    (void)aura_epoch_invariant_must_deopt_stale_live_closures();
+}
+
 extern "C" bool aura_emit_object_file(const void* mod, const char* path) {
     (void)mod;
     if (!path)

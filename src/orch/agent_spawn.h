@@ -419,6 +419,12 @@ struct OrchModuleStats {
 
 // Issue #2636: bump body-age stats — max via CAS, sum/samples always.
 // age_ms is the elapsed milliseconds from mark_reclaimed → body exit
+// Issue #2636: g_orch_module_stats (moved up so inline functions below can
+// reference it; the inline-variable C++17 definition is deduped across TUs
+// by the linker).
+inline OrchModuleStats g_orch_module_stats{};
+
+
 // or Fiber dtor abandon. Idempotent on zero (caller checks start_ns!=0).
 inline void note_residual_body_age_ms(std::uint64_t age_ms) noexcept {
     auto& os = g_orch_module_stats;
@@ -537,7 +543,6 @@ inline void fiber_sleep_ms(std::uint32_t ms) noexcept {
     }
 }
 
-inline OrchModuleStats g_orch_module_stats{};
 
 // Issue #2228 / #2398: record one process-wide mailbox BP event for the
 // admit "recent" gauge + last-event clock. Called from push/fanout BP

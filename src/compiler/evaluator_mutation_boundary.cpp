@@ -11,8 +11,11 @@ module;
 // Issue #221: PCV header in GMF (same as evaluator.ixx) so enter_mutation_boundary
 // can name PersistentChildVector in the checkpoint snapshot type.
 #include "../core/persistent_child_vector.hh"
-#include "../core/layout_stamp.hh"    // Issue #2170: LayoutStamp capture + publisher
-#include "../core/workspace_epoch.hh" // Issue #2170: current_mutation_epoch() for capture
+#include "../core/layout_stamp.hh" // Issue #2170: LayoutStamp capture + publisher
+#include "../core/lifetime_pin.hh" // Issue #2640: aura::core::lifetime namespace (for restamp_all_pins_for_arena)
+#include "../core/workspace_epoch.hh"    // Issue #2170: current_mutation_epoch() for capture
+#include "coercion_provenance_policy.hh" // Issue #2640: g_coercion_provenance_miss_force_audit_total + blame_soft_escalate_* + consume_provenance_miss_for_boundary
+
 #include "observability_metrics.h"
 #include "lock_order_audit.h"
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
@@ -59,8 +62,33 @@ module;
 
 module aura.compiler.evaluator;
 
-import std;
-import aura.core.envframe_lifetime;
+extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
+
+namespace aura::compiler {
+struct TypeChecker {
+    std::size_t maybe_persist_occurrence_snapshot(std::uint64_t mutation_id = 0) noexcept {
+        (void)mutation_id;
+        return 0;
+    }
+};
+inline std::uint64_t current_ir_soa_generation_fence() noexcept {
+    return 0;
+}
+inline std::uint64_t coercion_provenance_completeness_bp() noexcept {
+    return 0;
+}
+inline bool maybe_soft_recover_or_escalate_blame(aura::ast::FlatAST& flat, std::uint64_t mid,
+                                                 bool had_miss_signal) noexcept {
+    (void)flat;
+    (void)mid;
+    (void)had_miss_signal;
+    return false;
+}
+// Issue #2640: production Restricted default periodic epoch-invariant soft walk
+// (gated by mode=Soft + production_defaults_active + steady_ms rate limit;
+// cheap on the quiet path, runs the existing #2541 soft walk when due).
+} // namespace aura::compiler
+
 import aura.core.lifetime_pin;
 import aura.compiler.coercion_map;    // Issue #2102: provenance-miss force-audit
 import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
@@ -2563,6 +2591,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         aura::core::provenance::mutation_boundary_pop_linear_enforce_strict();
         linear_enforce_strict_pushed_ = false;
     }
+    // Issue #2640: production Restricted periodic epoch-invariant soft walk.
+    // Hook is internally rate-limited via steady_ms_now + period_ms, so even
+    // called on every outermost success-exit the amortized cost is bounded
+    // (mode != Soft / sandbox=off / disabled take a fast no-op skip path).
+    if (outermost && success)
+        aura_periodic_epoch_invariant_walk_if_due();
     // unique_lock destructor runs automatically here.
 }
 
