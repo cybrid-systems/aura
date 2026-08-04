@@ -181,7 +181,7 @@ static void ac5_source_and_gate() {
     CHECK(build.find("check_require_effect_live_mid_2384") != std::string::npos ||
               build.find("cmd_require_effect_live_mid_coverage") != std::string::npos,
           "AC5: build.py gate entry");
-    const auto gate = read_file("scripts/check_require_effect_live_mid_2384.py");
+    const auto gate = read_file("scripts/coverage/checks/check_require_effect_live_mid_2384.py");
     CHECK(!gate.empty() && gate.find("Issue #2384") != std::string::npos,
           "AC5: coverage linter present");
 }

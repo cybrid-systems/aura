@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for scripts/audit_catch_silent_swallow.py (#1669 / #615)."""
+"""Unit tests for scripts/audit/audit_catch_silent_swallow.py (#1669 / #615)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # #1932: tests/python → repo
-SCRIPT = ROOT / "scripts" / "audit_catch_silent_swallow.py"
+SCRIPT = ROOT / "scripts" / "audit" / "audit_catch_silent_swallow.py"
 
 
 def _load():

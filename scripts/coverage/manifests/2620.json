@@ -1,0 +1,133 @@
+{
+  "issue": 2620,
+  "title": "Issue #2620: Soft must not ship incomplete CoercionNodes (unify proof surface).",
+  "ok": "OK: Issue #2620 coercion unify incomplete skip — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "#2620",
+        "skip-insert branch",
+        "g_coercion_soft_incomplete_skip_total",
+        "arm_soft_incomplete_force_full_observe"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "contains": [
+        "ac1_soft_no_incomplete_insert"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "g_coercion_prov_slo_force_armed_total",
+        "g_coercion_prov_slo_observe_only_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "contains": [
+        "ac2_soft_arms_force_full"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "g_coercion_dual_require_drop_total",
+        "coercion_dual_require_active"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "contains": [
+        "ac3_dual_require_unchanged"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "AURA_COERCION_SAMPLED_INCOMPLETE_INSERT",
+        "coercion_sampled_incomplete_insert_canary",
+        "g_coercion_sampled_insert_incomplete_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "contains": [
+        "ac4_canary_restores_insert"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2620",
+        "coercion-soft-incomplete-skip-total",
+        "schema-2317",
+        "schema-2562"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "g_coercion_sampled_insert_incomplete_total",
+        "g_coercion_dual_require_drop_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "contains": [
+        "ac5_schema_source"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_coercion_unify_incomplete_skip_2620"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_coercion_unify_incomplete_skip_2620",
+        "cmd_coercion_unify_incomplete_skip_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_coercion_unify_incomplete_skip_2620.cpp",
+      "contains": [
+        "ac6_source_cite"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "contains": [
+        "AC2: Soft Sampled incomplete skips insert"
+      ]
+    },
+    {
+      "ac": "docs",
+      "forbid": [
+        "design/2620.md",
+        "docs/coercion_unify_incomplete_skip_2620.md",
+        "docs/design/coercion_unify_incomplete_skip_2620.md"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_coercion_unify_incomplete_skip_2620.py"
+}

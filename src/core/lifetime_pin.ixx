@@ -234,7 +234,7 @@ inline std::atomic<int> g_general_object_pin_required_pref{-1};
 // Issue #2597: marker for create sites that don't need a
 // wire_general_object_create_pair call. Used for sites that are
 // stable-handle / RootRemap-registered only. Linter
-// (scripts/check_general_object_pin_auto_wire_2597.py) verifies each
+// (scripts/coverage/checks/check_general_object_pin_auto_wire_2597.py) verifies each
 // EXEMPT site has a reason string. Format:
 //   // GENERAL_OBJECT_PIN_EXEMPT: <reason>
 //   //   stable-handle | RootRemap-registered | hot-path-bypass | ...

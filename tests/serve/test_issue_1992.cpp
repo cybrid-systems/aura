@@ -27,7 +27,7 @@
 //        the SAME pointer (no double-allocate).
 //   AC6: fiber.h storage is std::atomic<void*> — the static
 //        atomicity invariant under #1992 (verified by the linter
-//        in scripts/check_mutation_stack_storage_coverage.py,
+//        in scripts/coverage/checks/check_mutation_stack_storage_coverage.py,
 //        but also asserted here via source inspection).
 
 #include "test_harness.hpp"

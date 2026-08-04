@@ -176,7 +176,7 @@ static void ac5_phase5_source() {
     const auto ixx = read_file("src/compiler/evaluator.ixx");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto script = read_file("scripts/check_densify_remap_pairing_2368.py");
+    const auto script = read_file("scripts/coverage/checks/check_densify_remap_pairing_2368.py");
     CHECK(emb.find("force_densify_remap_pairing") != std::string::npos,
           "AC5: Phase 5 calls force_densify_remap_pairing");
     CHECK(emb.find("Issue #2368") != std::string::npos, "AC5: #2368 cite in boundary");

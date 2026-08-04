@@ -299,7 +299,8 @@ static void ac2640_source_and_linter() {
     const auto brs = read_file("src/compiler/aura_jit_bridge_stub.cpp");
     const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
-    const auto lint = read_file("scripts/check_epoch_invariant_periodic_coverage.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_epoch_invariant_periodic_coverage.py");
     const auto build = read_file("build.py");
     const auto t = read_file("tests/compiler/test_epoch_invariant_walk_2366.cpp");
 

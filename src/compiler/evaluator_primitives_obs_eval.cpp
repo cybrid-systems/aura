@@ -346,7 +346,7 @@ void ObservabilityPrims::register_eval_p2(PrimRegistrar add, Evaluator& ev) {
     // Issue #1451: (primitive:validate-new name) — Agent-Proof proposal check.
     // Does NOT register. Returns a hash: ok / blocked / already-registered /
     // blocked-category / prefer-stdlib / requires-red-line / advice.
-    // Mirrors scripts/check_primitive_surface.py freeze patterns.
+    // Mirrors scripts/coverage/checks/check_primitive_surface.py freeze patterns.
     ev.primitives_.add(
         "primitive:validate-new",
         [&ev](const auto& a) -> EvalValue {

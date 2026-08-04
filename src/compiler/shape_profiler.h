@@ -187,7 +187,7 @@ public:
     //     independent; full invalidate_all would thrash deopt storms)
     //   - Does NOT feed the deopt-storm ring (compact is expected pressure)
     //   - Does NOT bump mutation_induced_invalidations_ (#2617 hard contract)
-    // Gate: scripts/check_shape_compact_storm_isolation_2617.py
+    // Gate: scripts/coverage/checks/check_shape_compact_storm_isolation_2617.py
     // Returns number of profiles touched.
     std::uint32_t on_arena_compact() noexcept;
 

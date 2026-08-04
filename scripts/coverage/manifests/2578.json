@@ -1,0 +1,77 @@
+{
+  "issue": 2578,
+  "title": "Issue #2578: Aether denseness host residual contracts (H1/H5/H6).",
+  "ok": "OK: Issue #2578 Aether denseness residuals — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_module_loader.cpp",
+      "contains": [
+        "#2578"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/type.ixx",
+      "contains": [
+        "variadic"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "#2578",
+        "ft.variadic"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "lib/std/orchestrator.aura-type",
+      "contains": [
+        "Any Any Any ..."
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "#2578",
+        "apply_closure_must_deopt_soft_2581",
+        "soft_recover_2569"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "#2578",
+        "#2581",
+        "body_live"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_aether_denseness_residual_2578"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_aether_denseness_2578",
+        "cmd_aether_denseness_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_aether_denseness_residual_2578.cpp",
+      "contains": [
+        "ac2_orch_freevar_survive_rebind"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_aether_denseness_2578.py"
+}

@@ -1,0 +1,139 @@
+{
+  "issue": 2354,
+  "title": "Issue #2354: debug lock-order audit coverage (scheduler / workspace /",
+  "ok": "OK: Issue #2354 lock-order audit — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/lock_order_audit.h",
+      "contains": [
+        "AURA_LOCK_ORDER_AUDIT",
+        "lock_order_audit_enabled",
+        "if (!lock_order_audit_enabled())",
+        "Depth always",
+        "acquire_if_needed",
+        "Issue #2354"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "contains": [
+        "ac1_audit_off_zero_cost"
+      ]
+    },
+    {
+      "ac": "AC1b",
+      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "contains": [
+        "ac1b_nested_acquire_if_needed_no_deadlock"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/lock_order_audit.h",
+      "contains": [
+        "Orphan = 7",
+        "WaitMap = 8",
+        "Joiner = 9",
+        "OwnedFibers = 10",
+        "FiberRegistry = 11",
+        "Closures = 12",
+        "Module = 13",
+        "kCount = 14"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "contains": [
+        "ac2_correct_order"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/lock_order_audit.h",
+      "contains": [
+        "dump_held_ranks",
+        "std::abort()",
+        "AuditedMutexLock"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "contains": [
+        "ac3_reverse_order_detected"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "Level::Orphan",
+        "Level::WaitMap",
+        "Level::Joiner",
+        "Level::OwnedFibers",
+        "AuditedMutexLock"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/worker.cpp",
+      "contains": [
+        "Level::FiberRegistry"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Level::Workspace"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_gc.cpp",
+      "contains": [
+        "Level::Closures"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_module_loader.cpp",
+      "contains": [
+        "Level::Module"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "contains": [
+        "ac4_rank_table_and_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_lock_order_audit_2354"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_lock_order_audit_2354",
+        "cmd_lock_order_audit_2354_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_lock_order_audit_2354.cpp",
+      "contains": [
+        "ac5_env_and_mode"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_lock_order_audit_2354.py"
+}

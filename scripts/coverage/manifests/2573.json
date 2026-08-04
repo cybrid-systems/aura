@@ -1,0 +1,54 @@
+{
+  "issue": 2573,
+  "title": "Issue #2573: IR ConstString intern — no O(N) string_heap growth.",
+  "ok": "OK: Issue #2573 IR ConstString intern — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "#2573",
+        "const_string_cache_",
+        "pool_idx"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_executor.ixx",
+      "contains": [
+        "#2573",
+        "const_string_cache_"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_ir_const_string_intern_2573.cpp",
+      "contains": [
+        "ac1_loop_heap_growth_bounded"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_ir_const_string_intern_2573"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "build.py",
+      "contains": [
+        "check_ir_const_string_intern_2573",
+        "cmd_ir_const_string_intern_coverage"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_ir_const_string_intern_2573.cpp",
+      "contains": [
+        "AURA_FORCE_IR"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_ir_const_string_intern_2573.py"
+}

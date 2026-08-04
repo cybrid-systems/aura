@@ -1,0 +1,31 @@
+{
+  "issue": 2534,
+  "title": "Issue #2534: Security posture + correlated trail\"\"\"",
+  "ok": "OK: check_2534: OK",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "query:security-posture",
+        "query:security-correlated-trail",
+        "schema-2534"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_security_posture_trail_2534"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_2534"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2534.py"
+}

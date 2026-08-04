@@ -1,0 +1,57 @@
+{
+  "issue": 2599,
+  "title": "Issue #2599: EnvFrame densify ownership scan fail enters outermost",
+  "ok": "OK: Issue #2599 envframe densify scan commit barrier — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC16",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2599",
+        "production_defaults_active()",
+        "envframe_block = prod_for_densify && scan_fail_delta",
+        "pairing.envframe_ok && linear_type_ok && !envframe_block",
+        "densify_ownership_scan_fail_total"
+      ]
+    },
+    {
+      "ac": "AC17",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "EnvFrameDensifyOwnership"
+      ]
+    },
+    {
+      "ac": "AC18",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2599",
+        "force_linear_rollback",
+        "#2545"
+      ]
+    },
+    {
+      "ac": "test",
+      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "contains": [
+        "Issue #2599",
+        "EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967)",
+        "ac16_production_only_envframe_scan_block",
+        "ac17_envframe_densify_ownership_deny_reason",
+        "ac18_source_cite_2599",
+        "ac19_build_gate_wiring_source_cite",
+        "envframe_block = prod_for_densify && scan_fail_delta",
+        "EnvFrameDensifyOwnership"
+      ]
+    },
+    {
+      "ac": "build",
+      "path": "build.py",
+      "contains": [
+        "cmd_envframe_densify_scan_commit_barrier_2599_coverage",
+        "check_envframe_densify_scan_commit_barrier_2599"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_envframe_densify_scan_commit_barrier_2599.py"
+}

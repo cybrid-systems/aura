@@ -444,7 +444,7 @@ int main() {
     //   AC1: Pure batch hash never claims transactional isolation;
     //        isolation-level=best-effort-pure stable (re-affirmed; locked
     //        above by #2400 AC2).
-    //   AC2: Wording-drift gate (scripts/check_pure_parallel_isolation_wording.py)
+    //   AC2: Wording-drift gate (scripts/coverage/checks/check_pure_parallel_isolation_wording.py)
     //        passes against current source AND fails when forbidden
     //        wording is injected into a tmp file.
     //   AC3: Existing pure contract tests remain green (regression net =
@@ -503,7 +503,7 @@ int main() {
             {
                 const std::string cmd =
                     "cd '" + root.string() +
-                    "' && python3 scripts/check_pure_parallel_isolation_wording.py"
+                    "' && python3 scripts/coverage/checks/check_pure_parallel_isolation_wording.py"
                     " > /tmp/gate_2593_clean.log 2>&1";
                 const int rc = std::system(cmd.c_str());
                 CHECK(WIFEXITED(rc) && WEXITSTATUS(rc) == 0,
@@ -513,7 +513,7 @@ int main() {
             {
                 const std::string cmd =
                     "cd '" + root.string() +
-                    "' && python3 scripts/check_pure_parallel_isolation_wording.py"
+                    "' && python3 scripts/coverage/checks/check_pure_parallel_isolation_wording.py"
                     " --self-test > /tmp/gate_2593_selftest.log 2>&1";
                 const int rc = std::system(cmd.c_str());
                 CHECK(WIFEXITED(rc) && WEXITSTATUS(rc) == 0,
@@ -532,8 +532,9 @@ int main() {
                 }
                 const std::string cmd =
                     "cd '" + root.string() +
-                    "' && python3 scripts/check_pure_parallel_isolation_wording.py '" + tmp_rel +
-                    "' > /tmp/gate_2593_fail.log 2>&1";
+                    "' && python3 scripts/coverage/checks/check_pure_parallel_isolation_wording.py "
+                    "'" +
+                    tmp_rel + "' > /tmp/gate_2593_fail.log 2>&1";
                 const int rc = std::system(cmd.c_str());
                 std::error_code ec;
                 std::filesystem::remove(tmp_abs, ec);
@@ -602,10 +603,11 @@ int main() {
         CHECK(ag_src.find("pure_mode ? ev.workspace_generation()") != std::string::npos,
               "2634 AC3: workspace_generation() snapshot is gated on pure_mode");
 
-        // AC4: wording gate (scripts/check_pure_parallel_isolation_wording.py)
+        // AC4: wording gate (scripts/coverage/checks/check_pure_parallel_isolation_wording.py)
         // still passes — the existing #2593 wording gate is unchanged
         // by #2634 (we still don't advertise pure as transactional).
-        CHECK(true, "2634 AC4: wording gate (scripts/check_pure_parallel_isolation_wording.py) "
+        CHECK(true, "2634 AC4: wording gate "
+                    "(scripts/coverage/checks/check_pure_parallel_isolation_wording.py) "
                     "still rejects 'isolation-level = transactional' wording");
 
         // AC5: pure_contract_violated_total counter still exists and

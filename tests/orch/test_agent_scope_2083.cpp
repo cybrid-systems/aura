@@ -5,7 +5,7 @@
 // AURA_ENABLE_AGENT_SCOPE in #2083 / #2161) to the default multi-agent
 // supervision root. The class body in src/orch/agent_scope.h no longer
 // lives inside #ifdef AURA_ENABLE_AGENT_SCOPE, so this TU does NOT need
-// to #define the flag. The MVP linter (scripts/check_orch_mvp_scope.py
+// to #define the flag. The MVP linter (scripts/coverage/checks/check_orch_mvp_scope.py
 // --strict) still forbids process-global registry symbols.
 //
 // Tests:

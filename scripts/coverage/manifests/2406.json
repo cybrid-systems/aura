@@ -1,0 +1,102 @@
+{
+  "issue": 2406,
+  "title": "Issue #2406: TLS freelist for exclusive PCV unique-inplace.",
+  "ok": "OK: pcv TLS scratch #2406 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "Issue #2406",
+        "AURA_PCV_TLS",
+        "pcv_tls_scratch_enabled",
+        "pcv_tls_scratch_active"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "contains": [
+        "2406 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "tls_scratch_hit_total",
+        "make_from_tls_or_new",
+        "note_pcv_alloc",
+        "kTlsMaxElems"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "contains": [
+        "2406 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "SafePCVSpan"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "contains": [
+        "2406 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "query:pcv-hotpath-stats",
+        "schema-2406",
+        "tls-scratch-wired",
+        "tls-scratch-hit-total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "kPcvTlsScratchIssue"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "contains": [
+        "2406 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_pcv_tls_scratch_2406.cpp",
+      "contains": [
+        "2406 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_pcv_tls_scratch_2406",
+        "cmd_pcv_tls_scratch_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_pcv_tls_scratch_2406"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_pcv_tls_scratch_2406.py"
+}

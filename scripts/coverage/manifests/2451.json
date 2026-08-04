@@ -1,0 +1,70 @@
+{
+  "issue": 2451,
+  "title": "Issue #2451: param_begin_ + param_count_ publish order (TOCTOU).",
+  "ok": "OK: param_begin_count publish #2451 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2451",
+        "param_begin_",
+        "param_count_",
+        "TOCTOU"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_param_begin_count_publish_2451.cpp",
+      "contains": [
+        "2451 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "publish begin then count last",
+        "add_lambda",
+        "set_lambda_params"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_param_begin_count_publish_2451.cpp",
+      "contains": [
+        "2451 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "post-parse contract"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_param_begin_count_publish_2451.cpp",
+      "contains": [
+        "2451 AC3"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_param_begin_count_publish_2451",
+        "cmd_param_begin_count_publish_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_param_begin_count_publish_2451"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_param_begin_count_publish_2451.py"
+}

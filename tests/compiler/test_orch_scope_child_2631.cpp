@@ -90,7 +90,7 @@ static void ac2631_cancel_top_down_propagates() {
 // AC3: check_orch_mvp_scope.py --strict still green (no global registry).
 static void ac2631_mvp_linter_still_green() {
     std::println("\n--- #2631 AC3: MVP linter still green ---");
-    const auto mvp = read_file("scripts/check_orch_mvp_scope.py");
+    const auto mvp = read_file("scripts/coverage/checks/check_orch_mvp_scope.py");
     CHECK(mvp.find("AgentRegistry") != std::string::npos,
           "AC3: check_orch_mvp_scope.py still rejects AgentRegistry");
     CHECK(mvp.find("global_agent_registry") != std::string::npos,

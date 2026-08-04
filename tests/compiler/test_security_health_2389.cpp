@@ -247,7 +247,7 @@ static void ac5_source_cite() {
     const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto linter = read_file("scripts/check_security_health_2389.py");
+    const auto linter = read_file("scripts/coverage/checks/check_security_health_2389.py");
 
     CHECK(hh.find("health_bp") != std::string::npos, "AC5: score definition in header");
     CHECK(hh.find("0.30") != std::string::npos || hh.find("30u") != std::string::npos,

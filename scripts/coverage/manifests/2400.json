@@ -1,0 +1,107 @@
+{
+  "issue": 2400,
+  "title": "Issue #2400: parallel-intend batch hash isolation-level enum.",
+  "ok": "OK: Issue #2400 isolation-level — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #2400",
+        "isolation-level",
+        "serialized"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "contains": [
+        "2400 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "best-effort-pure"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "contains": [
+        "2400 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "pure-unlocked-tasks",
+        "eval-serialized"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "contains": [
+        "2400 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Do NOT advertise pure as transactional"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/README.md",
+      "contains": [
+        "isolation-level",
+        "best-effort-pure"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "contains": [
+        "2400 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2400",
+        "isolation-level-wired",
+        "schema-2081",
+        "schema-2163"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_parallel_intend_pure_contract_2230.cpp",
+      "contains": [
+        "2400 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_parallel_isolation_level_2400",
+        "cmd_parallel_isolation_level_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_parallel_intend_pure_contract_2230"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_parallel_isolation_level_2400.py"
+}

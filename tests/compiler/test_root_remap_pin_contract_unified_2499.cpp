@@ -146,7 +146,8 @@ static void ac5_source_cite_unified_gate() {
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto arx = read_file("src/core/arena.ixx");
     const auto rpx = read_file("src/compiler/root_remap_pass.ixx");
-    const auto linter_path = "scripts/check_root_remap_pin_contract_unified_2499.py";
+    const auto linter_path =
+        "scripts/coverage/checks/check_root_remap_pin_contract_unified_2499.py";
     const auto linter = read_file(linter_path);
 
     // Issue #2499 cited in all touched files.

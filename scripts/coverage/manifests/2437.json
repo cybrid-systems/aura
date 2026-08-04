@@ -1,0 +1,75 @@
+{
+  "issue": 2437,
+  "title": "Issue #2437: reconcile_gc_defer_bits_after_clear TOCTOU / CAS fence.",
+  "ok": "OK: gc defer reconcile cas #2437 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "Issue #2437",
+        "reconcile_gc_defer_bits_after_clear",
+        "compare_exchange_strong"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "contains": [
+        "2437 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "arm_defer(GcDeferReason::Panic)",
+        "g_gc_defer_bit_reconcile_aborted_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "contains": [
+        "2437 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "g_gc_defer_bit_reconcile_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "contains": [
+        "2437 AC4"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_gc_defer_reconcile_cas_2437.cpp",
+      "contains": [
+        "2437 AC3"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_gc_defer_reconcile_cas_2437",
+        "cmd_gc_defer_reconcile_cas_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_gc_defer_reconcile_cas_2437"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_gc_defer_reconcile_cas_2437.py"
+}

@@ -1036,7 +1036,7 @@ static void ac11_adaptive_region_mask() {
 // success counter does not inflate. The fail-counter bump site in
 // `default_llvm_incremental_emit` is verified by AC13c (query surface
 // exposes the counter) + the issue linter
-// (scripts/check_aot_reemit_fail_coverage.py).
+// (scripts/coverage/checks/check_aot_reemit_fail_coverage.py).
 //
 // Rationale: the test binary does not link a real AuraJIT, so
 // `default_llvm_incremental_emit` early-returns on null

@@ -1,0 +1,63 @@
+{
+  "issue": 2575,
+  "title": "Issue #2575: dual string heaps — PrimCall re-interns eval→JIT.",
+  "ok": "OK: Issue #2575 dual string heap — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "#2575",
+        "convert_str_for_jit",
+        "convert_str_for_eval",
+        "aura_alloc_string"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "aura_jit_prim_dispatch",
+        "convert_str_for_jit"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "#2575",
+        "int64_t write_mode"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit.cpp",
+      "contains": [
+        "aura_display_value(int64_t, int64_t)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_jit_dual_string_heap_2575.cpp",
+      "contains": [
+        "ac1_string_append_display"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_jit_dual_string_heap_2575"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "check_jit_dual_string_heap_2575",
+        "cmd_jit_dual_string_heap_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_jit_dual_string_heap_2575.py"
+}

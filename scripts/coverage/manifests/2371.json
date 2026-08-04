@@ -1,0 +1,101 @@
+{
+  "issue": 2371,
+  "title": "Issue #2371: cross-COW dual-epoch soft restamp vs hard-reject.",
+  "ok": "OK: Issue #2371 cross-COW soft migrate — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #2371",
+        "try_cross_cow_soft_migrate_",
+        "cross_cow_soft_migrate_enabled_",
+        "AURA_CROSS_COW_SOFT_MIGRATE",
+        "stamp_closure_provenance_locked"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "contains": [
+        "ac1_soft_migrate"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "cross_cow_hard_reject_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "cross_cow_hard_reject_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "contains": [
+        "ac2_hard_reject"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "cross_cow_soft_migrate_max_drift_",
+        "AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "contains": [
+        "ac3_far_behind"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2371",
+        "cross-cow-soft-migrate-wired",
+        "cross-cow-soft-migrate-total",
+        "cross-cow-hard-reject-total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "contains": [
+        "ac4_query"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_cross_cow_soft_migrate_2371"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_cross_cow_soft_migrate_2371",
+        "cmd_cross_cow_soft_migrate_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_cross_cow_soft_migrate_2371.cpp",
+      "contains": [
+        "ac5_source_and_gate"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_cross_cow_soft_migrate_2371.py"
+}

@@ -39,7 +39,7 @@
 //   AC2: Clean short PR profile under production-like defaults passes
 //   AC3: AURA_CHAOS_SOAK / FULL path unchanged (still stricter / longer)
 //   AC4: build.py gate runs cmd_chaos_pr_hard_fail_gate; no flaky timeouts
-//   AC5: scripts/check_chaos_pr_hard_fail_gate_2554.py greps hard-fail asserts
+//   AC5: scripts/coverage/checks/check_chaos_pr_hard_fail_gate_2554.py greps hard-fail asserts
 //
 // Env knobs (AURA_CHAOS_* / production gate):
 //   AURA_CHAOS_SEED          default 1 (deterministic RNG stream)
@@ -611,7 +611,8 @@ static void ac4_ac5_docs_and_source() {
     CHECK(build.find("check_chaos_mutate_steal_gc_mailbox_2352") != std::string::npos ||
               build.find("cmd_chaos_mutate_steal_gc_mailbox") != std::string::npos,
           "build.py gate entry");
-    const auto gate = read_file("scripts/check_chaos_mutate_steal_gc_mailbox_2352.py");
+    const auto gate =
+        read_file("scripts/coverage/checks/check_chaos_mutate_steal_gc_mailbox_2352.py");
     CHECK(!gate.empty(), "coverage linter present");
     CHECK(gate.find("Issue #2352") != std::string::npos, "linter cites #2352");
 }
@@ -731,7 +732,7 @@ static void ac2554_docs_and_source() {
     CHECK(build.find("check_chaos_pr_hard_fail_gate_2554") != std::string::npos,
           "AC5: coverage script registered");
 
-    const auto gate = read_file("scripts/check_chaos_pr_hard_fail_gate_2554.py");
+    const auto gate = read_file("scripts/coverage/checks/check_chaos_pr_hard_fail_gate_2554.py");
     CHECK(!gate.empty(), "AC5: coverage linter present");
     CHECK(gate.find("Issue #2554") != std::string::npos, "AC5: linter cites #2554");
     CHECK(gate.find("steal_hard_fail") != std::string::npos ||
@@ -779,7 +780,8 @@ static void ac2513_docs_and_source() {
               build.find("AURA_CHAOS_SOAK") != std::string::npos,
           "AC5: soak gate / knobs registered");
 
-    const auto gate = read_file("scripts/check_production_concurrency_soak_2513.py");
+    const auto gate =
+        read_file("scripts/coverage/checks/check_production_concurrency_soak_2513.py");
     CHECK(!gate.empty(), "AC4: coverage linter present");
     CHECK(gate.find("Issue #2513") != std::string::npos, "AC4: linter cites #2513");
 

@@ -1,0 +1,130 @@
+{
+  "issue": 2612,
+  "title": "Issue #2612: optional depth-2 cross-closure free-capture discovery.",
+  "ok": "OK: Issue #2612 depth-2 cross-closure free-capture — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "linear_cross_closure_depth_cap",
+        "AURA_LINEAR_CROSS_CLOSURE_DEPTH"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "contains": [
+        "ac1_default_depth1",
+        "default depth_cap == 1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "depth2_entries",
+        "depth2_escape_sites"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "depth_remaining",
+        "depth2_entries"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "linear_cross_closure_depth2_entries_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "linear_cross_closure_depth2_escape_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "contains": [
+        "ac2_depth2_discover_hard"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "cone_cap * 4",
+        "cap_truncations"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "contains": [
+        "ac3_cone_trunc"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "linear_cross_closure_hard_enabled",
+        "linear_cross_closure_observe_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "contains": [
+        "ac4_soft_observe"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "schema-2612",
+        "linear-cross-closure-depth-cap",
+        "linear-cross-closure-depth2-entries-total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_linear_cross_closure_depth2_2612"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_linear_cross_closure_depth2_2612",
+        "cmd_linear_cross_closure_depth2_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_linear_cross_closure_depth2_2612.cpp",
+      "contains": [
+        "ac5_schema_source"
+      ]
+    },
+    {
+      "ac": "docs",
+      "forbid": [
+        "design/2612.md",
+        "docs/design/linear_cross_closure_depth2_2612.md",
+        "docs/linear_cross_closure_depth2_2612.md"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_linear_cross_closure_depth2_2612.py"
+}

@@ -165,7 +165,7 @@ static void ac5_gate() {
     std::println("\n--- #2471 AC5: test + gate wiring ---");
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
-    auto script = read_file("scripts/check_ir_optimize_type_info_chain_2471.py");
+    auto script = read_file("scripts/coverage/checks/check_ir_optimize_type_info_chain_2471.py");
     CHECK(build.find("check_ir_optimize_type_info_chain_2471") != std::string::npos,
           "AC5: check script in build.py");
     CHECK(build.find("cmd_ir_optimize_type_info_chain_coverage") != std::string::npos,

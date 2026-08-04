@@ -22,14 +22,15 @@
 // AC6: input with mixed control chars escapes each independently and the
 //      result is the concatenation of the per-char escapes (length matches).
 //
-// (AC4-AC6 of the issue are covered by the linter scripts/check_c_string_escape_coverage.py)
+// (AC4-AC6 of the issue are covered by the linter
+// scripts/coverage/checks/check_c_string_escape_coverage.py)
 
 import std;
 
 namespace {
 
 // Inline mirror of the B-002 escape loop. If aura_jit_bridge.cpp's loop
-// diverges from this, the linter (scripts/check_c_string_escape_coverage.py)
+// diverges from this, the linter (scripts/coverage/checks/check_c_string_escape_coverage.py)
 // will fail and CI will catch it -- this test just exercises the contract.
 std::string escape_for_c_string_literal(const std::string& value) {
     std::string escaped;

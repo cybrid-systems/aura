@@ -1,0 +1,113 @@
+{
+  "issue": 2356,
+  "title": "Issue #2356: truncated reverify one-shot expand coverage.",
+  "ok": "OK: Issue #2356 reverify expand — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #2356",
+        "delta_reverify_expand_total",
+        "expand_limit",
+        "occurrence_priority_roots_",
+        "let_poly_dirty_roots_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "contains": [
+        "ac1_expand_with_occurrence"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "empty priority roots"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "contains": [
+        "ac2_no_priority_zero_cost"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "at most one expand"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "contains": [
+        "ac3_at_most_one_expand"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "delta_reverify_expand_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Production TIMEOUT"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "contains": [
+        "ac4_timeout_escalate_source"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2356",
+        "delta-reverify-expand-total",
+        "delta-reverify-expand-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "delta_reverify_expand_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_reverify_expand_2356"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_reverify_expand_2356",
+        "cmd_reverify_expand_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_reverify_expand_2356.cpp",
+      "contains": [
+        "ac5_query_and_source"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_reverify_expand_2356.py"
+}

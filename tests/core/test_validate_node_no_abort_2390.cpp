@@ -147,7 +147,7 @@ static void ac5_source_and_gate() {
     const auto impl = read_file("src/core/ast_impl.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto linter = read_file("scripts/check_validate_node_no_abort_2390.py");
+    const auto linter = read_file("scripts/coverage/checks/check_validate_node_no_abort_2390.py");
 
     CHECK(impl.find("Issue #2390") != std::string::npos, "AC5: cites #2390");
     CHECK(impl.find("std::abort()") == std::string::npos ||

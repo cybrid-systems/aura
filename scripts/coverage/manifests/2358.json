@@ -1,0 +1,122 @@
+{
+  "issue": 2358,
+  "title": "Issue #2358: CastOp density HARD force-JIT policy coverage.",
+  "ok": "OK: Issue #2358 CastOp density HARD policy — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/castop_density_policy.hh",
+      "contains": [
+        "hard_env_enabled",
+        "AURA_CASTOP_DENSITY_HARD",
+        "Issue #2358"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "contains": [
+        "ac1_hard_off_soft_only"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/castop_density_policy.hh",
+      "contains": [
+        "on_force_jit_for_reason",
+        "castop_density_hard_action_total",
+        "AotReloadFail::Other"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "contains": [
+        "ac2_hard_on_force_jit"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "castop_density_hard_action_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/castop_density_policy.hh",
+      "contains": [
+        "Does NOT fail MutationBoundary"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "contains": [
+        "ac3_mutate_still_succeeds"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/castop_density_policy.hh",
+      "contains": [
+        "dens <= budget"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "contains": [
+        "ac4_under_budget_zero_extra"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "apply_hard_policy"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2358",
+        "castop-density-hard-action-total",
+        "castop-density-hard-enabled",
+        "schema-2319",
+        "castop-annotation-hint"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "castop_density_hard_action_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_castop_density_hard_2358"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_castop_density_hard_2358",
+        "cmd_castop_density_hard_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_castop_density_hard_2358.cpp",
+      "contains": [
+        "ac5_query_and_source"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_castop_density_hard_2358.py"
+}

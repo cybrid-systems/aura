@@ -167,7 +167,8 @@ static void ac5_source_and_gate() {
     const auto svc = read_file("src/compiler/service.ixx");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto script = read_file("scripts/check_specjit_per_eval_storm_isolation_2370.py");
+    const auto script =
+        read_file("scripts/coverage/checks/check_specjit_per_eval_storm_isolation_2370.py");
     CHECK(sj.find("Issue #2370") != std::string::npos, "AC5: #2370 in SpecJIT cpp");
     CHECK(sj.find("isolation_shape_epoch_") != std::string::npos, "AC5: isolation epoch");
     CHECK(sj.find("g_specjit_per_eval_storm_clear_total") != std::string::npos,

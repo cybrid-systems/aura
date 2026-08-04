@@ -120,7 +120,7 @@ static void ac4_wiring() {
     CHECK(build.find("check_arena_compact_hook_stats_2381") != std::string::npos ||
               build.find("cmd_arena_compact_hook_stats_coverage") != std::string::npos,
           "AC4: build.py gate entry");
-    const auto gate = read_file("scripts/check_arena_compact_hook_stats_2381.py");
+    const auto gate = read_file("scripts/coverage/checks/check_arena_compact_hook_stats_2381.py");
     CHECK(!gate.empty() && gate.find("Issue #2381") != std::string::npos,
           "AC4: coverage linter present");
 }

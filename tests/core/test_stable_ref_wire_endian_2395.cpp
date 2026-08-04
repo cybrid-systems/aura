@@ -215,7 +215,7 @@ static void ac5_source_and_gate() {
     const auto ixx = read_file("src/core/ast.ixx");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto linter = read_file("scripts/check_stable_ref_wire_endian_2395.py");
+    const auto linter = read_file("scripts/coverage/checks/check_stable_ref_wire_endian_2395.py");
 
     CHECK(stab.find("Issue #2395") != std::string::npos, "AC5: cites #2395");
     CHECK(stab.find("write_u32_le") != std::string::npos, "AC5: write_u32_le");

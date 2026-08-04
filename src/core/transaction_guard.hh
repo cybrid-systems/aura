@@ -25,7 +25,7 @@
 //
 // Legacy MutationBoundaryGuard + PanicCheckpointGuard remain for
 // one more cycle; migration tracked by
-// scripts/check_transaction_guard_migration_2555.py.
+// scripts/coverage/checks/check_transaction_guard_migration_2555.py.
 //
 // See docs/agent-safety-mechanisms-simplification.md §"Guard
 // scope" invariant for the canonical transaction-layer scope.

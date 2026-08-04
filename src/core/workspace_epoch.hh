@@ -20,7 +20,7 @@
 // scoped (single CompilerService / AOT runtime) and live only here after
 // cycle 2d: the legacy `CompilerService::mutation_epoch_` field is deleted.
 //
-// Linter: scripts/check_workspace_epoch_migration.py --strict must report 0
+// Linter: scripts/coverage/checks/check_workspace_epoch_migration.py --strict must report 0
 // remaining raw `mutation_epoch_` / dual-storage consumer violations.
 
 #ifndef AURA_CORE_WORKSPACE_EPOCH_HH

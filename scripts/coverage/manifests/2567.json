@@ -1,0 +1,89 @@
+{
+  "issue": 2567,
+  "title": "Issue #2567: try/catch binds catch parameter for handler use.",
+  "ok": "OK: Issue #2567 try/catch bind — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #2567",
+        "result.error()"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_try_catch_bind_2567.cpp",
+      "contains": [
+        "ac1_diagnostic_bind"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "as_error_idx",
+        "error_values_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_try_catch_bind_2567.cpp",
+      "contains": [
+        "ac2_error_prim_bind"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "bare var form",
+        "NodeTag::Variable"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_try_catch_bind_2567.cpp",
+      "contains": [
+        "ac4_bare_var"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "#2567"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/lowering_impl.cpp",
+      "contains": [
+        "#2567"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_try_catch_bind_2567.cpp",
+      "contains": [
+        "ac5_source_gate"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_try_catch_bind_2567"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_try_catch_bind_2567",
+        "cmd_try_catch_bind_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_try_catch_bind_2567.py"
+}

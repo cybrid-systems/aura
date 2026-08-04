@@ -71,7 +71,8 @@ int main() {
     // ── AC2: repo-wide audit clean ──
     {
         std::println("\n--- AC2: audit_dead_heap_push clean ---");
-        int rc = std::system("python3 scripts/audit_dead_heap_push.py >/tmp/audit_1692.out 2>&1");
+        int rc =
+            std::system("python3 scripts/audit/audit_dead_heap_push.py >/tmp/audit_1692.out 2>&1");
         CHECK(rc == 0, "audit_dead_heap_push exit 0");
         auto out = read_file("/tmp/audit_1692.out");
         CHECK(out.find("clean") != std::string::npos ||

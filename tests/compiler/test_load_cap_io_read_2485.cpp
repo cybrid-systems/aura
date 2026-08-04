@@ -136,7 +136,7 @@ static void ac5_gate() {
     std::println("\n--- #2485 AC5: test + gate wiring ---");
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
-    auto script = read_file("scripts/check_load_cap_io_read_2485.py");
+    auto script = read_file("scripts/coverage/checks/check_load_cap_io_read_2485.py");
     CHECK(build.find("check_load_cap_io_read_2485") != std::string::npos,
           "AC5: check script in build.py");
     CHECK(build.find("cmd_load_cap_io_read_coverage") != std::string::npos, "AC5: coverage cmd");

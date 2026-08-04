@@ -1,0 +1,163 @@
+{
+  "issue": 2636,
+  "title": "Issue #2636: residual reclaim observability — body-age + env-opt-in force-safepoint.",
+  "ok": "OK: Issue #2636 residual body-age — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "Issue #2636",
+        "body_reclaim_start_ns_",
+        "set_body_reclaim_start_ns",
+        "join_drain_residual_body_age_ms_max"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "Issue #2636: record body-age start timestamp",
+        "body_reclaim_start_ns_.store(now_ns"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "contains": [
+        "2636 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "2636: finalize body-age",
+        "join_drain_residual_body_age_ms_max_.compare_exchange_weak",
+        "join_drain_residual_body_age_samples_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "join_drain_residual_body_age_ms_max",
+        "join_drain_residual_body_age_ms_sum",
+        "join_drain_residual_body_age_samples",
+        "note_residual_body_age_ms"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "contains": [
+        "2636 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "AURA_FORCE_FIBER_SAFEPOINT_ON_ORPHAN"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "resolve_force_safepoint_on_orphan_enabled"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "force_safepoint_on_orphan_enabled"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "contains": [
+        "2636 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "aura_force_safepoint_on_orphan_enabled_default",
+        "aura_orch_bump_force_safepoint_on_orphan_total",
+        "aura_orch_note_residual_body_age_ms"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_orch_bump_force_safepoint_on_orphan_total",
+        "aura_orch_note_residual_body_age_ms"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "force_safepoint_on_orphan_total",
+        "bump_force_safepoint_on_orphan_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "contains": [
+        "2636 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "join-drain-residual-body-age-ms-max",
+        "join-drain-residual-body-age-ms-sum",
+        "join-drain-residual-body-age-samples",
+        "force-safepoint-on-orphan-total",
+        "force-safepoint-on-orphan-enabled",
+        "schema-2636",
+        "issue-2636",
+        "residual-body-age-wired",
+        "force-safepoint-on-orphan-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_orch_obs_facade_2589.cpp",
+      "contains": [
+        "2636 AC5"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/serve/test_residual_force_safepoint_2533.cpp",
+      "contains": [
+        "2636 AC6"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_residual_body_age_coverage",
+        "cmd_residual_body_age_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_residual_force_safepoint_2533"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_residual_body_age_coverage.py"
+}

@@ -25,7 +25,7 @@
 // Prefer require_effect (not bare check_and_record_effect) for new paths
 // so the audit ring + capability metrics stay consistent (#2072).
 //
-// Gate: scripts/check_side_effect_security.py (wired into ./build.py gate)
+// Gate: scripts/coverage/checks/check_side_effect_security.py (wired into ./build.py gate)
 // fails if a new effectful name is registered without coverage markers.
 //
 // Do NOT open nested namespace aura::compiler::security inside module

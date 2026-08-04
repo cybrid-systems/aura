@@ -1,0 +1,122 @@
+{
+  "issue": 2525,
+  "title": "Issue #2525: unconstrained query hygiene residual — default MacroIntroduced skip.",
+  "ok": "OK: Issue #2525 query hygiene residual default — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "#2525",
+        "hygiene_skip_macro = true",
+        ":include-macro-introduced"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "contains": [
+        "ac1_default_skip"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_query_index.cpp",
+      "contains": [
+        "#2525",
+        "tag_arity_index_user_",
+        "tag_arity_marker_dimension_rebuild_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "contains": [
+        "ac2_index_marker_dimension"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "hygiene_skip_total",
+        "hygiene_include_total",
+        "pattern_hygiene_unconstrained_walk_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "hygiene_skip_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2525",
+        "hygiene_skip_total",
+        "hygiene_include_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "contains": [
+        "ac3_stats_surface"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "contains": [
+        "ac4_concurrent"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_query_pattern_default_hygiene_2123.cpp",
+      "contains": [
+        "#2123"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_query_hygiene_default_2525.cpp",
+      "contains": [
+        "ac5_ac6_lineage_and_contract"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2123"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "Agent contract"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_query_hygiene_default_2525"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_query_hygiene_default_2525",
+        "cmd_query_hygiene_default_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_query_hygiene_default_2525.py"
+}

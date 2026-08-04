@@ -98,7 +98,7 @@ static void ac4_gate() {
     CHECK(build.find("cmd_eval_current_no_auto_fix_coverage") != std::string::npos,
           "AC4: coverage cmd");
     CHECK(cmake.find("test_eval_current_no_auto_fix_2484") != std::string::npos, "AC4: cmake test");
-    CHECK(!read_file("scripts/check_eval_current_no_auto_fix_2484.py").empty(),
+    CHECK(!read_file("scripts/coverage/checks/check_eval_current_no_auto_fix_2484.py").empty(),
           "AC4: check script exists");
 }
 

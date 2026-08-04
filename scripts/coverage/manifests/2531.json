@@ -1,0 +1,30 @@
+{
+  "issue": 2531,
+  "title": "Issue #2531: Force non-zero bound_mutation_id\"\"\"",
+  "ok": "OK: check_2531: OK",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "2531",
+        "bound_mutation_id == 0"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_grant_bound_mid_force_2531"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_2531"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2531.py"
+}

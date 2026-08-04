@@ -87,7 +87,7 @@ static void ac4_soft_densify_shape() {
 // ── AC5 ──
 static void ac5_source_inventory() {
     std::println("\n--- #2559 AC5: inventory script + IR layer ---");
-    const auto lint = read_file("scripts/check_linear_three_layer_wire_2559.py");
+    const auto lint = read_file("scripts/coverage/checks/check_linear_three_layer_wire_2559.py");
     CHECK(!lint.empty(), "AC5: linter present");
     CHECK(lint.find("TYPE_LAYER_SITES") != std::string::npos, "AC5: TYPE_LAYER_SITES");
     CHECK(lint.find("IR_LAYER_SITES") != std::string::npos, "AC5: IR_LAYER_SITES");
@@ -107,9 +107,11 @@ static void ac5_source_inventory() {
 // ── AC6 ──
 static void ac6_linter_self_test() {
     std::println("\n--- #2559 AC6: linter self-test + registrations ---");
-    const int rc = std::system("python3 scripts/check_linear_three_layer_wire_2559.py --self-test");
+    const int rc = std::system(
+        "python3 scripts/coverage/checks/check_linear_three_layer_wire_2559.py --self-test");
     CHECK(rc == 0, "AC6: --self-test exit 0");
-    const int rc2 = std::system("python3 scripts/check_linear_three_layer_wire_2559.py");
+    const int rc2 =
+        std::system("python3 scripts/coverage/checks/check_linear_three_layer_wire_2559.py");
     CHECK(rc2 == 0, "AC6: full linter exit 0");
 
     const auto cmake = read_file("CMakeLists.txt");

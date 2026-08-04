@@ -80,6 +80,11 @@ from issue_tier import issues_tier, load_fast_targets, resolve_issue_targets  # 
 from smoke_cases import load_smoke_cases  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
+SCRIPTS = ROOT / "scripts"
+COVERAGE_CHECKS = SCRIPTS / "coverage" / "checks"
+COVERAGE_RUNNER = SCRIPTS / "coverage" / "runner.py"
+TOOLS = SCRIPTS / "tools"
+AUDIT = SCRIPTS / "audit"
 BENCH = ROOT / "tests" / "benchmark.py"  # thin entry → tests/bench/benchmark.py
 
 
@@ -149,7 +154,7 @@ def _apply_sanitizer(name: str) -> None:
 # Docs (code-generated)
 # ═══════════════════════════════════════════════════════════════
 
-GEN_DOCS = ROOT / "scripts" / "gen_docs.py"
+GEN_DOCS = TOOLS / "gen_docs.py"
 
 
 def cmd_docs(*, check: bool | None = None):
@@ -248,26 +253,28 @@ def cmd_lint():
     # commit 313c530d); this linter prevents future regressions.
     # Uses the same sys.executable + ROOT.joinpath pattern as
     # cmd_fixtures below.
-    script = ROOT / "scripts" / "check_test_includes.py"
+    script = COVERAGE_CHECKS / "check_test_includes.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
     r = run([sys.executable, str(script)], cwd=ROOT)
     if r != 0:
-        fail("test includes linter failed — run python3 scripts/check_test_includes.py")
+        fail("test includes linter failed — run python3 scripts/coverage/checks/check_test_includes.py")
         return r
     # Issue #2632: cross-fiber / mailbox / handoff export_held_ref coverage
     # contract (handoff_ref helper + counter + wire-ups at fiber steal and
     # parallel-intend result packaging + multi_fiber_mailbox reference + test
     # coverage). Wired next to the test-includes linter so a regression in
     # the #2632 AC surface fails the same gate.
-    eh_script = ROOT / "scripts" / "check_export_held_handoff_coverage.py"
+    eh_script = COVERAGE_CHECKS / "check_export_held_handoff_coverage.py"
     if not eh_script.exists():
         fail(f"missing {eh_script}")
         return 1
     r = run([sys.executable, str(eh_script)], cwd=ROOT)
     if r != 0:
-        fail("export-held handoff coverage linter failed — run python3 scripts/check_export_held_handoff_coverage.py")
+        fail(
+            "export-held handoff coverage linter failed — run python3 scripts/coverage/checks/check_export_held_handoff_coverage.py"
+        )
         return r
     # Issue #2633: scope-local mailbox BP recent gauge coverage contract
     # (AgentSpec::bp_scope_id + note_mailbox_bp_recent_event(scope_id) overload
@@ -275,91 +282,97 @@ def cmd_lint():
     # :bp-scope-id kw + build.py wiring). Wired next to the export-held
     # handoff coverage linter (#2632) so a regression in the #2633 AC
     # surface fails the same gate.
-    sbp_script = ROOT / "scripts" / "check_scope_bp_gauge_coverage.py"
+    sbp_script = COVERAGE_CHECKS / "check_scope_bp_gauge_coverage.py"
     if not sbp_script.exists():
         fail(f"missing {sbp_script}")
         return 1
     r = run([sys.executable, str(sbp_script)], cwd=ROOT)
     if r != 0:
-        fail("scope BP gauge coverage linter failed — run python3 scripts/check_scope_bp_gauge_coverage.py")
+        fail(
+            "scope BP gauge coverage linter failed — run python3 scripts/coverage/checks/check_scope_bp_gauge_coverage.py"
+        )
         return r
     # Issue #2634: pure-parallel probe hardening (mutations_/workspace gen
     # snapshots in the unlocked pure apply path). Wording gate (#2593)
-    # remains in scripts/check_pure_parallel_isolation_wording.py — this
+    # remains in scripts/coverage/checks/check_pure_parallel_isolation_wording.py — this
     # linter verifies the new probe code lives in the right place and the
     # zero-cost path on :pure #f stays unchanged.
-    pp_script = ROOT / "scripts" / "check_pure_probe_hardening_2634.py"
+    pp_script = COVERAGE_CHECKS / "check_pure_probe_hardening_2634.py"
     if not pp_script.exists():
         fail(f"missing {pp_script}")
         return 1
     r = run([sys.executable, str(pp_script)], cwd=ROOT)
     if r != 0:
-        fail("pure probe hardening coverage linter failed — run python3 scripts/check_pure_probe_hardening_2634.py")
+        fail(
+            "pure probe hardening coverage linter failed — run python3 scripts/coverage/checks/check_pure_probe_hardening_2634.py"
+        )
         return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
     # regression in the #2635 AC surface fails the same gate.
-    mid_script = ROOT / "scripts" / "check_mid_fallback_hard_deny_2635.py"
+    mid_script = COVERAGE_CHECKS / "check_mid_fallback_hard_deny_2635.py"
     if not mid_script.exists():
         fail(f"missing {mid_script}")
         return 1
     r = run([sys.executable, str(mid_script)], cwd=ROOT)
     if r != 0:
-        fail("mid-fallback hard-deny coverage linter failed — run python3 scripts/check_mid_fallback_hard_deny_2635.py")
+        fail(
+            "mid-fallback hard-deny coverage linter failed — run python3 scripts/coverage/checks/check_mid_fallback_hard_deny_2635.py"
+        )
         return r
     # Issue #2643: INSTANCE depth budget + Agent-visible repair surface on
     # TIMEOUT (bounded sample, additive keys on type-timeout-repair-stats,
     # zero cost on SOLVED / no INSTANCE). Builds on #2607 minimal INSTANCE
     # so Agents can re-instantiate polymorphic call sites before full solve.
-    idrh_script = ROOT / "scripts" / "check_instance_depth_repair_hint_2643.py"
+    idrh_script = COVERAGE_CHECKS / "check_instance_depth_repair_hint_2643.py"
     if not idrh_script.exists():
         fail(f"missing {idrh_script}")
         return 1
     r = run([sys.executable, str(idrh_script)], cwd=ROOT)
     if r != 0:
         fail(
-            "instance depth repair hint (#2643) coverage linter failed — run python3 scripts/check_instance_depth_repair_hint_2643.py"
+            "instance depth repair hint (#2643) coverage linter failed — run python3 scripts/coverage/checks/check_instance_depth_repair_hint_2643.py"
         )
         return r
     # Issue #2644: batch-level TypeVar refined consistency (anti
     # SOLVED-but-drift under composite / atomic_batch). Soft path bumps
     # observe only; production/Full rejects with type_scheme_drift.
-    idr_script = ROOT / "scripts" / "check_occurrence_refined_consistency_2644.py"
+    idr_script = COVERAGE_CHECKS / "check_occurrence_refined_consistency_2644.py"
     if not idr_script.exists():
         fail(f"missing {idr_script}")
         return 1
     r = run([sys.executable, str(idr_script)], cwd=ROOT)
     if r != 0:
         fail(
-            "occurrence refined consistency (#2644) coverage linter failed — run python3 scripts/check_occurrence_refined_consistency_2644.py"
+            "occurrence refined consistency (#2644) coverage linter failed — run python3 scripts/coverage/checks/check_occurrence_refined_consistency_2644.py"
         )
         return r
     # Issue #2645: layered dead-coercion evidence chain lock (AST elision
     # × IR DCE × deopt meta) — src-aligned E2E lock that asserts the three
     # layers stay coherent under Soft vs evidence-backed paths.
-    dcle_script = ROOT / "scripts" / "check_dead_coercion_layered_evidence_2645.py"
+    dcle_script = COVERAGE_CHECKS / "check_dead_coercion_layered_evidence_2645.py"
     if not dcle_script.exists():
         fail(f"missing {dcle_script}")
         return 1
     r = run([sys.executable, str(dcle_script)], cwd=ROOT)
     if r != 0:
         fail(
-            "dead-coercion layered evidence chain (#2645) coverage linter failed — run python3 scripts/check_dead_coercion_layered_evidence_2645.py"
+            "dead-coercion layered evidence chain (#2645) coverage linter failed — run python3 scripts/coverage/checks/check_dead_coercion_layered_evidence_2645.py"
         )
         return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +
     # #2622 dirty-key authority.
-    oci_script = ROOT / "scripts" / "check_occurrence_cone_outside_invalidate_2646.py"
+    oci_script = COVERAGE_CHECKS / "check_occurrence_cone_outside_invalidate_2646.py"
     if not oci_script.exists():
         fail(f"missing {oci_script}")
         return 1
     r = run([sys.executable, str(oci_script)], cwd=ROOT)
     if r != 0:
         fail(
-            "occurrence cone outside invalidate (#2646) coverage linter failed — run python3 scripts/check_occurrence_cone_outside_invalidate_2646.py"
+            "occurrence cone outside invalidate (#2646) coverage linter failed — run python3 scripts/coverage/checks/check_occurrence_cone_outside_invalidate_2646.py"
         )
         return r
     ok("lint OK")
@@ -1670,7 +1683,7 @@ def cmd_test(suite_names: list[str]):
 def cmd_primitive_surface():
     """P0b/#1432 freeze + #1448 SlimSurface --strict (budget + facade report)."""
     print(f"{B}═══ Primitive surface freeze + SlimSurface ═══{N}")
-    script = ROOT / "scripts" / "check_primitive_surface.py"
+    script = COVERAGE_CHECKS / "check_primitive_surface.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1696,7 +1709,7 @@ def cmd_primitive_surface():
 
 
 def cmd_test_registry():
-    """Issue #1572: test-registry.json freshness (scripts/gen_test_registry.py).
+    """Issue #1572: test-registry.json freshness (scripts/tools/gen_test_registry.py).
 
     Default: --check (fail if docs/generated/test-registry.json is stale).
     With --fix: rewrite the registry from tests/test_*.cpp headers.
@@ -1704,7 +1717,7 @@ def cmd_test_registry():
     """
     fix = "--fix" in sys.argv[2:]
     print(f"{B}═══ Test registry {'(fix)' if fix else '(check)'} (#1572) ═══{N}")
-    script = ROOT / "scripts" / "gen_test_registry.py"
+    script = TOOLS / "gen_test_registry.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1736,7 +1749,7 @@ def cmd_test_binding():
     # check_test_coverage.py umbrella removed per Anqi 2026-07-19 directive
     # (scripts/ audit wave 9). check_test_binding.py covers the same surface
     # (production primitive sources must have tests/).
-    script = ROOT / "scripts" / "check_test_binding.py"
+    script = COVERAGE_CHECKS / "check_test_binding.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1751,7 +1764,7 @@ def cmd_test_binding():
 def cmd_side_effect_security():
     """Issue #2057: effectful prims must use require_effect / add_mutate / exempt."""
     print(f"{B}═══ Side-effect security coverage (#2057) ═══{N}")
-    script = ROOT / "scripts" / "check_side_effect_security.py"
+    script = COVERAGE_CHECKS / "check_side_effect_security.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1770,7 +1783,7 @@ def cmd_side_effect_security():
 def cmd_naming_convention():
     """Issue #1886: naming_convention.md sections + example template keys."""
     print(f"{B}═══ Naming convention doc (#1886) ═══{N}")
-    script = ROOT / "scripts" / "check_naming_convention.py"
+    script = COVERAGE_CHECKS / "check_naming_convention.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1785,7 +1798,7 @@ def cmd_naming_convention():
 def cmd_dead_heap_push():
     """Issue #1488 / #1668: dead string_heap_ push pollution audit (strict)."""
     print(f"{B}═══ Dead string_heap push audit (#1668) ═══{N}")
-    script = ROOT / "scripts" / "audit_dead_heap_push.py"
+    script = AUDIT / "audit_dead_heap_push.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1800,7 +1813,7 @@ def cmd_dead_heap_push():
     if r.returncode != 0:
         fail(
             "dead string_heap_ push candidates found — "
-            "run python3 scripts/audit_dead_heap_push.py and remove unused pushes"
+            "run python3 scripts/audit/audit_dead_heap_push.py and remove unused pushes"
         )
         return 1
     ok("dead heap push audit clean")
@@ -1810,7 +1823,7 @@ def cmd_dead_heap_push():
 def cmd_catch_silent_swallow():
     """Issue #1669 / #615: catch(...) must carry SILENCE-PRIM marker (strict)."""
     print(f"{B}═══ catch(...) SILENCE-PRIM audit (#1669) ═══{N}")
-    script = ROOT / "scripts" / "audit_catch_silent_swallow.py"
+    script = AUDIT / "audit_catch_silent_swallow.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1832,7 +1845,7 @@ def cmd_catch_silent_swallow():
 def cmd_mutation_guard_coverage():
     """Issue #1931 / #1950 / #1953 / #2124: mutate/compile via try_acquire only."""
     print(f"{B}═══ MutationBoundaryGuard coverage (#1931 / #1950 / #1953 / #2124) ═══{N}")
-    script = ROOT / "scripts" / "check_mutation_guard_coverage.py"
+    script = COVERAGE_CHECKS / "check_mutation_guard_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1853,7 +1866,7 @@ def cmd_mutation_guard_coverage():
 def cmd_orch_mvp_scope():
     """Issue #1965 / #1966: orch/ multi-agent public symbols must stay removed."""
     print(f"{B}═══ orch MVP scope (#1965 / #1966) ═══{N}")
-    script = ROOT / "scripts" / "check_orch_mvp_scope.py"
+    script = COVERAGE_CHECKS / "check_orch_mvp_scope.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1874,13 +1887,13 @@ def cmd_orch_mvp_scope():
 def cmd_aot_env_linear_stamp():
     """Issue #2091 / #2168: forbid literal (0,0) env/linear on production mangle/emit.
 
-    Runs scripts/check_aot_env_linear_stamp_coverage.py as a hard gate:
+    Runs scripts/coverage/checks/check_aot_env_linear_stamp_coverage.py as a hard gate:
     any production call to mangle_aot_name / aot_link_name that passes
     literal (0, 0) without `# 2091-allow-zero` (or `# 2091-legacy`) fails
     the build. Tests/stubs/header defaults remain allowed (script skip list).
     """
     print(f"{B}═══ AOT env/linear stamp coverage (#2091 / #2168) ═══{N}")
-    script = ROOT / "scripts" / "check_aot_env_linear_stamp_coverage.py"
+    script = COVERAGE_CHECKS / "check_aot_env_linear_stamp_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1914,12 +1927,12 @@ def cmd_aot_env_linear_stamp():
 def cmd_legacy_test_inventory():
     """Issue #1957: living legacy test inventory freshness check.
 
-    Without --fix: ``scripts/inventory_legacy_tests.py --check`` (exit 1 if
+    Without --fix: ``scripts/tools/inventory_legacy_tests.py --check`` (exit 1 if
     tests/legacy_test_inventory.md is stale). With --fix: regenerate the
     markdown. Re-run after domain migrations or bulk test adds.
     """
     print(f"{B}═══ Legacy test inventory (#1957) ═══{N}")
-    script = ROOT / "scripts" / "inventory_legacy_tests.py"
+    script = TOOLS / "inventory_legacy_tests.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1934,7 +1947,7 @@ def cmd_legacy_test_inventory():
         else:
             fail(
                 "legacy_test_inventory.md stale — run "
-                "`python3 scripts/inventory_legacy_tests.py` or `./build.py gate --fix`"
+                "`python3 scripts/tools/inventory_legacy_tests.py` or `./build.py gate --fix`"
             )
         return 1
     ok("legacy test inventory up to date" if not fix else "legacy test inventory regenerated")
@@ -1944,7 +1957,7 @@ def cmd_legacy_test_inventory():
 def cmd_register_render_hot_prim_coverage():
     """Issue #2217: known TUI/render hot prims must use register_render_hot_prim."""
     print(f"{B}=== register_render_hot_prim coverage (#2217) ==={N}")
-    script = ROOT / "scripts" / "check_register_render_hot_prim_coverage.py"
+    script = COVERAGE_CHECKS / "check_register_render_hot_prim_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1970,7 +1983,7 @@ def cmd_incremental_soundness_prod_coverage():
       AC5: StormLevel elevation factor (10x storm / 3x elevated)
     """
     print(f"{B}=== incremental soundness prod coverage (#2245) ==={N}")
-    script = ROOT / "scripts" / "check_incremental_soundness_prod_coverage.py"
+    script = COVERAGE_CHECKS / "check_incremental_soundness_prod_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -1997,7 +2010,7 @@ def cmd_shape_storm_isolation_coverage():
       AC5: integration with StormLevel facade
     """
     print(f"{B}=== shape profiler storm isolation coverage (#2257) ==={N}")
-    script = ROOT / "scripts" / "check_shape_storm_isolation_coverage.py"
+    script = COVERAGE_CHECKS / "check_shape_storm_isolation_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2023,7 +2036,7 @@ def cmd_arena_moving_compaction_coverage():
       AC5: dual-worker stress test surface
     """
     print(f"{B}=== arena Moving-compact coverage (#2256) ==={N}")
-    script = ROOT / "scripts" / "check_arena_moving_compaction_coverage.py"
+    script = COVERAGE_CHECKS / "check_arena_moving_compaction_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2045,7 +2058,7 @@ def cmd_arena_compact_hook_stats_coverage():
     serial compact/live_compact stats_ fields. N=4 thread stress + exact count.
     """
     print(f"{B}=== arena compact_hook stats coverage (#2381) ==={N}")
-    script = ROOT / "scripts" / "check_arena_compact_hook_stats_2381.py"
+    script = COVERAGE_CHECKS / "check_arena_compact_hook_stats_2381.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2065,7 +2078,7 @@ def cmd_arena_dtor_clears_hooks_coverage():
     dangling caller-capturing lambdas.
     """
     print(f"{B}=== arena dtor clears hooks coverage (#2382) ==={N}")
-    script = ROOT / "scripts" / "check_arena_dtor_clears_hooks_2382.py"
+    script = COVERAGE_CHECKS / "check_arena_dtor_clears_hooks_2382.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2084,7 +2097,7 @@ def cmd_has_on_compact_hook_lock_coverage():
     concurrent set+has.
     """
     print(f"{B}=== has_on_compact_hook lock coverage (#2383) ==={N}")
-    script = ROOT / "scripts" / "check_has_on_compact_hook_lock_2383.py"
+    script = COVERAGE_CHECKS / "check_has_on_compact_hook_lock_2383.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2103,7 +2116,7 @@ def cmd_require_effect_live_mid_coverage():
     SecurityEvent mid non-zero; Off sandbox still allows.
     """
     print(f"{B}=== require_effect live mid coverage (#2384) ==={N}")
-    script = ROOT / "scripts" / "check_require_effect_live_mid_2384.py"
+    script = COVERAGE_CHECKS / "check_require_effect_live_mid_2384.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2125,7 +2138,7 @@ def cmd_require_effect_auto_isolation_2490_coverage():
     isolation enforcement without per-prim edits.
     """
     print(f"{B}=== require_effect auto-isolation coverage (#2490) ==={N}")
-    script = ROOT / "scripts" / "check_require_effect_auto_isolation_2490.py"
+    script = COVERAGE_CHECKS / "check_require_effect_auto_isolation_2490.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2146,7 +2159,7 @@ def cmd_tenant_scope_fiber_mandate_2491_coverage():
     reuse; Off sandbox skips force (Soft unit path unchanged).
     """
     print(f"{B}=== tenant scope fiber mandate coverage (#2491) ==={N}")
-    script = ROOT / "scripts" / "check_tenant_scope_fiber_mandate_2491.py"
+    script = COVERAGE_CHECKS / "check_tenant_scope_fiber_mandate_2491.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2169,7 +2182,7 @@ def cmd_security_audit_wal_force_restricted_2492_coverage():
     force from multi-tenant/Strict for dashboards.
     """
     print(f"{B}=== security audit WAL force restricted coverage (#2492) ==={N}")
-    script = ROOT / "scripts" / "check_security_audit_wal_force_restricted_2492.py"
+    script = COVERAGE_CHECKS / "check_security_audit_wal_force_restricted_2492.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2192,7 +2205,7 @@ def cmd_audit_mutation_id_unify_2493_coverage():
     capture_security_correlated_audit / AOT / JIT adopt the same order.
     """
     print(f"{B}=== audit mutation_id unify coverage (#2493) ==={N}")
-    script = ROOT / "scripts" / "check_audit_mutation_id_unify_2493.py"
+    script = COVERAGE_CHECKS / "check_audit_mutation_id_unify_2493.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2212,7 +2225,7 @@ def cmd_side_effect_security_gate_hardfail_2494_coverage():
     the gate, and the allowlist reason-format enforcement is operational.
     """
     print(f"{B}=== side-effect security gate hard-fail coverage (#2494) ==={N}")
-    script = ROOT / "scripts" / "check_side_effect_security_gate_hardfail_2494.py"
+    script = COVERAGE_CHECKS / "check_side_effect_security_gate_hardfail_2494.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2234,7 +2247,7 @@ def cmd_moving_densify_fail_closed_2495_coverage():
     aborts under production security defaults.
     """
     print(f"{B}=== moving densify fail-closed coverage (#2495) ==={N}")
-    script = ROOT / "scripts" / "check_moving_densify_fail_closed_2495.py"
+    script = COVERAGE_CHECKS / "check_moving_densify_fail_closed_2495.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2258,7 +2271,7 @@ def cmd_densify_ownership_scan_fail_gate_2497_coverage():
     envframe_ok suppression) is missing from evaluator_mutation_boundary.cpp.
     """
     print(f"{B}=== Densify ownership scan fail gate coverage (#2497) ==={N}")
-    script = ROOT / "scripts" / "check_densify_ownership_scan_fail_gate_2497.py"
+    script = COVERAGE_CHECKS / "check_densify_ownership_scan_fail_gate_2497.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2283,7 +2296,7 @@ def cmd_fiber_reclaim_orphan_release_2498_coverage():
     from Fiber or when JoinStatus::Reclaimed paths skip release_orphan_roots().
     """
     print(f"{B}=== Fiber reclaim orphan release coverage (#2498) ==={N}")
-    script = ROOT / "scripts" / "check_fiber_reclaim_orphan_release_2498.py"
+    script = COVERAGE_CHECKS / "check_fiber_reclaim_orphan_release_2498.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2298,7 +2311,7 @@ def cmd_fiber_reclaim_orphan_release_2498_coverage():
 def cmd_check_2529_coverage():
     """Issue #2529: Restricted grant_epoch_retain K=16."""
     print(f"{B}=== grant epoch retain Restricted coverage (#2529) ==={N}")
-    script = ROOT / "scripts" / "check_2529.py"
+    script = COVERAGE_CHECKS / "check_2529.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2313,7 +2326,7 @@ def cmd_check_2529_coverage():
 def cmd_check_2530_coverage():
     """Issue #2530: audit ring 1024 + Isolation publish_seq."""
     print(f"{B}=== audit ring publish coverage (#2530) ==={N}")
-    script = ROOT / "scripts" / "check_2530.py"
+    script = COVERAGE_CHECKS / "check_2530.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2328,7 +2341,7 @@ def cmd_check_2530_coverage():
 def cmd_check_2531_coverage():
     """Issue #2531: force non-zero bound_mutation_id."""
     print(f"{B}=== grant bound mid force coverage (#2531) ==={N}")
-    script = ROOT / "scripts" / "check_2531.py"
+    script = COVERAGE_CHECKS / "check_2531.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2343,7 +2356,7 @@ def cmd_check_2531_coverage():
 def cmd_check_2532_coverage():
     """Issue #2532: write caps into Effect matrix."""
     print(f"{B}=== cap write effect matrix coverage (#2532) ==={N}")
-    script = ROOT / "scripts" / "check_2532.py"
+    script = COVERAGE_CHECKS / "check_2532.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2358,7 +2371,7 @@ def cmd_check_2532_coverage():
 def cmd_check_2533_coverage():
     """Issue #2533: residual force safepoint."""
     print(f"{B}=== residual force safepoint coverage (#2533) ==={N}")
-    script = ROOT / "scripts" / "check_2533.py"
+    script = COVERAGE_CHECKS / "check_2533.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2373,7 +2386,7 @@ def cmd_check_2533_coverage():
 def cmd_check_2536_coverage():
     """Issue #2536: Restricted hard-fiber optional policy."""
     print(f"{B}=== hard-fiber Restricted policy coverage (#2536) ==={N}")
-    script = ROOT / "scripts" / "check_2536.py"
+    script = COVERAGE_CHECKS / "check_2536.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2388,7 +2401,7 @@ def cmd_check_2536_coverage():
 def cmd_check_2535_coverage():
     """Issue #2535: production default mild mailbox BP admit (threshold=32)."""
     print(f"{B}=== mailbox BP admit default-on coverage (#2535) ==={N}")
-    script = ROOT / "scripts" / "check_2535.py"
+    script = COVERAGE_CHECKS / "check_2535.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2403,7 +2416,7 @@ def cmd_check_2535_coverage():
 def cmd_check_2534_coverage():
     """Issue #2534: security-posture + correlated-trail."""
     print(f"{B}=== security posture trail coverage (#2534) ==={N}")
-    script = ROOT / "scripts" / "check_2534.py"
+    script = COVERAGE_CHECKS / "check_2534.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2429,7 +2442,7 @@ def cmd_root_remap_pin_contract_unified_2499_coverage():
     missing or when LiveCompactResult / AdaptiveCompactResult fields regress.
     """
     print(f"{B}=== RootRemap pin_contract unified coverage (#2499) ==={N}")
-    script = ROOT / "scripts" / "check_root_remap_pin_contract_unified_2499.py"
+    script = COVERAGE_CHECKS / "check_root_remap_pin_contract_unified_2499.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2456,7 +2469,7 @@ def cmd_orch_soft_boundary_unified_2515_coverage():
     windows where the flag flipped without the mirror cleared.
     """
     print(f"{B}=== Orch soft boundary unified coverage (#2515) ==={N}")
-    script = ROOT / "scripts" / "check_orch_soft_boundary_unified_2515.py"
+    script = COVERAGE_CHECKS / "check_orch_soft_boundary_unified_2515.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2483,7 +2496,7 @@ def cmd_restamp_sla_observability_2528_coverage():
     missing from ast.ixx.
     """
     print(f"{B}=== Restamp SLA observability coverage (#2528) ==={N}")
-    script = ROOT / "scripts" / "check_restamp_sla_observability_2528.py"
+    script = COVERAGE_CHECKS / "check_restamp_sla_observability_2528.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2506,7 +2519,7 @@ def cmd_general_object_pin_coverage_gate_2496_coverage():
     for new densify-tracked intermediate creates.
     """
     print(f"{B}=== GeneralObjectPin coverage gate coverage (#2496) ==={N}")
-    script = ROOT / "scripts" / "check_general_object_pin_coverage_gate_2496.py"
+    script = COVERAGE_CHECKS / "check_general_object_pin_coverage_gate_2496.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2525,7 +2538,7 @@ def cmd_restricted_unset_principal_coverage():
     set_tenant_principal was never called. Pure reads (effects=0) stay ok.
     """
     print(f"{B}=== Restricted unset principal coverage (#2385) ==={N}")
-    script = ROOT / "scripts" / "check_restricted_unset_principal_2385.py"
+    script = COVERAGE_CHECKS / "check_restricted_unset_principal_2385.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2543,7 +2556,7 @@ def cmd_grant_macro_self_evo_stamp_coverage():
     Macro self-evo grants participate in epoch fence + hard fiber isolation.
     """
     print(f"{B}=== grant_macro_self_evo stamp coverage (#2386) ==={N}")
-    script = ROOT / "scripts" / "check_grant_macro_self_evo_stamp_2386.py"
+    script = COVERAGE_CHECKS / "check_grant_macro_self_evo_stamp_2386.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2562,7 +2575,7 @@ def cmd_capability_string_matrix_unify_coverage():
     revoke clears both; compile-stats remains staged string-only.
     """
     print(f"{B}=== capability string/matrix unify coverage (#2387) ==={N}")
-    script = ROOT / "scripts" / "check_capability_string_matrix_unify_2387.py"
+    script = COVERAGE_CHECKS / "check_capability_string_matrix_unify_2387.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2583,7 +2596,7 @@ def cmd_capability_high_risk_promote_2489_coverage():
     both sides; epoch fence + hard fiber isolation deny via single authority.
     """
     print(f"{B}=== capability high-risk promote coverage (#2489) ==={N}")
-    script = ROOT / "scripts" / "check_capability_high_risk_promote_2489.py"
+    script = COVERAGE_CHECKS / "check_capability_high_risk_promote_2489.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2602,7 +2615,7 @@ def cmd_security_audit_fold_coverage():
     single IsolationDeny path; Soft/WAL-off short-circuit preserved.
     """
     print(f"{B}=== security audit fold coverage (#2388) ==={N}")
-    script = ROOT / "scripts" / "check_security_audit_fold_2388.py"
+    script = COVERAGE_CHECKS / "check_security_audit_fold_2388.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2621,7 +2634,7 @@ def cmd_security_health_coverage():
     and ring-wrap pressure into health-bp + force-reason.
     """
     print(f"{B}=== security-health coverage (#2389) ==={N}")
-    script = ROOT / "scripts" / "check_security_health_2389.py"
+    script = COVERAGE_CHECKS / "check_security_health_2389.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2640,7 +2653,7 @@ def cmd_validate_node_no_abort_coverage():
     logic_error (true); validate_post_restore stays non-crashing.
     """
     print(f"{B}=== validate_node no-abort coverage (#2390) ==={N}")
-    script = ROOT / "scripts" / "check_validate_node_no_abort_2390.py"
+    script = COVERAGE_CHECKS / "check_validate_node_no_abort_2390.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2659,7 +2672,7 @@ def cmd_validate_post_restore_soa_coverage():
     so restore does not report clean on corrupt SoA layouts.
     """
     print(f"{B}=== validate_post_restore SoA coverage (#2391) ==={N}")
-    script = ROOT / "scripts" / "check_validate_post_restore_soa_2391.py"
+    script = COVERAGE_CHECKS / "check_validate_post_restore_soa_2391.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2678,7 +2691,7 @@ def cmd_fixup_deltas_coverage():
     OOB rebased ids clamp to NULL_NODE (set_child does not clamp).
     """
     print(f"{B}=== fixup_deltas coverage (#2392) ==={N}")
-    script = ROOT / "scripts" / "check_fixup_deltas_2392.py"
+    script = COVERAGE_CHECKS / "check_fixup_deltas_2392.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2697,7 +2710,7 @@ def cmd_last_validated_generation_atomic_coverage():
     without torn uint16 writes (TSAN-clean shared-ref hot path).
     """
     print(f"{B}=== last_validated_generation atomic coverage (#2394) ==={N}")
-    script = ROOT / "scripts" / "check_last_validated_generation_atomic_2394.py"
+    script = COVERAGE_CHECKS / "check_last_validated_generation_atomic_2394.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2716,7 +2729,7 @@ def cmd_stable_ref_wire_endian_coverage():
     + swap-corruption case; host-endian memcpy removed from multi-byte lanes.
     """
     print(f"{B}=== StableNodeRef wire endian coverage (#2395) ==={N}")
-    script = ROOT / "scripts" / "check_stable_ref_wire_endian_2395.py"
+    script = COVERAGE_CHECKS / "check_stable_ref_wire_endian_2395.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2735,7 +2748,7 @@ def cmd_orphan_reap_tick_coverage():
     orphan_count_cached_ == 0; AURA_ORPHAN_REAP_INTERVAL_MS (default 50).
     """
     print(f"{B}=== orphan reap tick coverage (#2396) ==={N}")
-    script = ROOT / "scripts" / "check_orphan_reap_tick_2396.py"
+    script = COVERAGE_CHECKS / "check_orphan_reap_tick_2396.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2758,7 +2771,7 @@ def cmd_storm_clear_health_pass_coverage():
     skipped_reentered (deferred not silently dropped).
     """
     print(f"{B}=== storm-clear health pass coverage (#2639) ==={N}")
-    script = ROOT / "scripts" / "check_storm_clear_health_pass_coverage.py"
+    script = COVERAGE_CHECKS / "check_storm_clear_health_pass_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2780,7 +2793,7 @@ def cmd_residual_sid0_cap_coverage():
     Named create path (sid≠0) never hits the residual cap.
     """
     print(f"{B}=== residual sid0 cap coverage (#2638) ==={N}")
-    script = ROOT / "scripts" / "check_residual_sid0_cap_coverage.py"
+    script = COVERAGE_CHECKS / "check_residual_sid0_cap_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2801,7 +2814,7 @@ def cmd_sync_remount_anon_coverage():
     Distinct anon counters + schema-2637 + soft zero-cost when knob off.
     """
     print(f"{B}=== sync remount anon coverage (#2637) ==={N}")
-    script = ROOT / "scripts" / "check_sync_remount_anon_coverage.py"
+    script = COVERAGE_CHECKS / "check_sync_remount_anon_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2820,7 +2833,7 @@ def cmd_join_drain_reclaim_still_running_coverage():
     zero cost on Ok join path.
     """
     print(f"{B}=== join-drain reclaim still-running coverage (#2397) ==={N}")
-    script = ROOT / "scripts" / "check_join_drain_reclaim_still_running_2397.py"
+    script = COVERAGE_CHECKS / "check_join_drain_reclaim_still_running_2397.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2842,7 +2855,7 @@ def cmd_residual_body_age_coverage():
     query:orch-module-stats keys + schema/issue/wired sentinels.
     """
     print(f"{B}=== residual body-age coverage (#2636) ==={N}")
-    script = ROOT / "scripts" / "check_residual_body_age_coverage.py"
+    script = COVERAGE_CHECKS / "check_residual_body_age_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2861,7 +2874,7 @@ def cmd_mailbox_bp_recent_window_coverage():
     send_backpressure_total stays cumulative; threshold=0 zero cost.
     """
     print(f"{B}=== mailbox BP recent window coverage (#2398) ==={N}")
-    script = ROOT / "scripts" / "check_mailbox_bp_recent_window_2398.py"
+    script = COVERAGE_CHECKS / "check_mailbox_bp_recent_window_2398.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2880,7 +2893,7 @@ def cmd_agent_scope_concurrent_coverage():
     AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard abort; no internal mutex.
     """
     print(f"{B}=== AgentScope concurrent detect coverage (#2399) ==={N}")
-    script = ROOT / "scripts" / "check_agent_scope_concurrent_2399.py"
+    script = COVERAGE_CHECKS / "check_agent_scope_concurrent_2399.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2899,7 +2912,7 @@ def cmd_parallel_isolation_level_coverage():
     advertised as transactional isolation.
     """
     print(f"{B}=== parallel isolation-level coverage (#2400) ==={N}")
-    script = ROOT / "scripts" / "check_parallel_isolation_level_2400.py"
+    script = COVERAGE_CHECKS / "check_parallel_isolation_level_2400.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2923,7 +2936,7 @@ def cmd_pure_parallel_isolation_wording_coverage():
     accepted.
     """
     print(f"{B}=== pure parallel isolation wording-drift coverage (#2593) ==={N}")
-    script = ROOT / "scripts" / "check_pure_parallel_isolation_wording.py"
+    script = COVERAGE_CHECKS / "check_pure_parallel_isolation_wording.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2944,7 +2957,7 @@ def cmd_audit_mid_fallback_slo_2594_coverage():
     AURA_MID_FALLBACK_SLO_BP (default 500 = 5%).
     """
     print(f"{B}=== audit mid-fallback SLO coverage (#2594) ==={N}")
-    script = ROOT / "scripts" / "check_audit_mid_fallback_slo_2594.py"
+    script = COVERAGE_CHECKS / "check_audit_mid_fallback_slo_2594.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2968,7 +2981,7 @@ def cmd_densify_unified_gate_2595_coverage():
     unified-gate fail (mirrors pin_contract_held gating at #2266).
     """
     print(f"{B}=== densify unified gate coverage (#2595) ==={N}")
-    script = ROOT / "scripts" / "check_densify_unified_gate_2595.py"
+    script = COVERAGE_CHECKS / "check_densify_unified_gate_2595.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -2991,7 +3004,7 @@ def cmd_moving_untracked_production_hard_2596_coverage():
     sandbox=off + env unset keeps observe-only.
     """
     print(f"{B}=== moving untracked production hard coverage (#2596) ==={N}")
-    script = ROOT / "scripts" / "check_moving_untracked_production_hard_2596.py"
+    script = COVERAGE_CHECKS / "check_moving_untracked_production_hard_2596.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3015,7 +3028,7 @@ def cmd_general_object_pin_auto_wire_2597_coverage():
     RootRemap-registered only).
     """
     print(f"{B}=== general object pin auto wire coverage (#2597) ==={N}")
-    script = ROOT / "scripts" / "check_general_object_pin_auto_wire_2597.py"
+    script = COVERAGE_CHECKS / "check_general_object_pin_auto_wire_2597.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3040,7 +3053,7 @@ def cmd_panic_residual_densify_hard_2598_coverage():
     Aligns with steal residual hard-AND #2546.
     """
     print(f"{B}=== panic residual densify hard coverage (#2598) ==={N}")
-    script = ROOT / "scripts" / "check_panic_residual_densify_hard_2598.py"
+    script = COVERAGE_CHECKS / "check_panic_residual_densify_hard_2598.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3063,7 +3076,7 @@ def cmd_envframe_densify_scan_commit_barrier_2599_coverage():
     authority follows #2545 / #2563 pattern.
     """
     print(f"{B}=== envframe densify scan commit barrier coverage (#2599) ==={N}")
-    script = ROOT / "scripts" / "check_envframe_densify_scan_commit_barrier_2599.py"
+    script = COVERAGE_CHECKS / "check_envframe_densify_scan_commit_barrier_2599.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3087,7 +3100,7 @@ def cmd_mutation_boundary_shared_exit_2600_coverage():
     on linear). Soft path keeps #1881 stack-light contract.
     """
     print(f"{B}=== mutation boundary shared exit coverage (#2600) ==={N}")
-    script = ROOT / "scripts" / "check_mutation_boundary_shared_exit_2600.py"
+    script = COVERAGE_CHECKS / "check_mutation_boundary_shared_exit_2600.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3106,7 +3119,7 @@ def cmd_agent_reply_coverage():
     AgentRegistry); metrics + schema-2401.
     """
     print(f"{B}=== agent-reply coverage (#2401) ==={N}")
-    script = ROOT / "scripts" / "check_agent_reply_2401.py"
+    script = COVERAGE_CHECKS / "check_agent_reply_2401.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3125,7 +3138,7 @@ def cmd_restamp_incremental_coverage():
     schema-2402 on query:generation-stats.
     """
     print(f"{B}=== restamp incremental coverage (#2402) ==={N}")
-    script = ROOT / "scripts" / "check_restamp_incremental_2402.py"
+    script = COVERAGE_CHECKS / "check_restamp_incremental_2402.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3144,7 +3157,7 @@ def cmd_query_index_composite_coverage():
     unconstrained; query-index-hit-rate + shared-lock-us keys schema-2403.
     """
     print(f"{B}=== query-index composite coverage (#2403) ==={N}")
-    script = ROOT / "scripts" / "check_query_index_composite_2403.py"
+    script = COVERAGE_CHECKS / "check_query_index_composite_2403.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3163,7 +3176,7 @@ def cmd_stable_ref_export_coverage():
     metrics; schema-2404; stamp-resolve return-path coverage.
     """
     print(f"{B}=== stable-ref export validate coverage (#2404) ==={N}")
-    script = ROOT / "scripts" / "check_stable_ref_export_2404.py"
+    script = COVERAGE_CHECKS / "check_stable_ref_export_2404.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3192,7 +3205,7 @@ def cmd_lifetime_pin_remap_coverage():
            address; negative pin (non-arena address) → invalidate after Moving
     """
     print(f"{B}=== LifetimePin Phase 3 remap coverage (#2265) ==={N}")
-    script = ROOT / "scripts" / "check_lifetime_pin_remap_coverage.py"
+    script = COVERAGE_CHECKS / "check_lifetime_pin_remap_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3230,7 +3243,7 @@ def cmd_moving_pin_contract_fail_closed_coverage():
            (pin not remapped → verify returns false + counter bumps).
     """
     print(f"{B}=== Moving pin contract fail-closed coverage (#2266) ==={N}")
-    script = ROOT / "scripts" / "check_moving_pin_contract_fail_closed_coverage.py"
+    script = COVERAGE_CHECKS / "check_moving_pin_contract_fail_closed_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3257,7 +3270,7 @@ def cmd_root_remap_pass_coverage():
       AC5: Observability + Evaluator install + tests AC1-AC5.
     """
     print(f"{B}=== RootRemapPass real rewrite coverage (#2294/#2267) ==={N}")
-    script = ROOT / "scripts" / "check_root_remap_pass_coverage.py"
+    script = COVERAGE_CHECKS / "check_root_remap_pass_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3283,7 +3296,7 @@ def cmd_envframe_ownership_transfer_coverage():
       AC5: Query keys + schema-2295 + tests extension.
     """
     print(f"{B}=== EnvFrame ownership transfer coverage (#2295) ==={N}")
-    script = ROOT / "scripts" / "check_envframe_ownership_transfer_2295.py"
+    script = COVERAGE_CHECKS / "check_envframe_ownership_transfer_2295.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3302,7 +3315,7 @@ def cmd_residual_gc_defer_multi_eval_coverage():
     happy path, Hard/Soft retained, query correlation + decision table.
     """
     print(f"{B}=== residual multi-eval Clear harden coverage (#2296) ==={N}")
-    script = ROOT / "scripts" / "check_residual_gc_defer_multi_eval_2296.py"
+    script = COVERAGE_CHECKS / "check_residual_gc_defer_multi_eval_2296.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3321,7 +3334,7 @@ def cmd_capture_cell_remap_coverage():
     PRIMARY, metrics/query schema-2297, RootRemapPass publish.
     """
     print(f"{B}=== structural capture-cell remount coverage (#2297) ==={N}")
-    script = ROOT / "scripts" / "check_capture_cell_remap_2297.py"
+    script = COVERAGE_CHECKS / "check_capture_cell_remap_2297.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3340,7 +3353,7 @@ def cmd_general_object_pin_coverage():
     PinOwner retained, Soft zero remap, inventory + query schema-2298.
     """
     print(f"{B}=== general object pin-or-remap coverage (#2298) ==={N}")
-    script = ROOT / "scripts" / "check_general_object_pin_2298.py"
+    script = COVERAGE_CHECKS / "check_general_object_pin_2298.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3359,7 +3372,7 @@ def cmd_aot_per_eval_slot_invalidate_coverage():
     last-eval / per-eval counters + schema-2299, RegisterOwnerGuard.
     """
     print(f"{B}=== per-eval AOT slot invalidate coverage (#2299) ==={N}")
-    script = ROOT / "scripts" / "check_aot_per_eval_slot_invalidate_2299.py"
+    script = COVERAGE_CHECKS / "check_aot_per_eval_slot_invalidate_2299.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3381,7 +3394,7 @@ def cmd_aot_exhausted_min_dirty_retry_2601_coverage():
     query:reload-recovery-state + test_issue_2544 #2601 ACs.
     """
     print(f"{B}=== exhausted min-dirty retry closed-loop coverage (#2601) ==={N}")
-    script = ROOT / "scripts" / "check_aot_exhausted_min_dirty_retry_2601.py"
+    script = COVERAGE_CHECKS / "check_aot_exhausted_min_dirty_retry_2601.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3400,7 +3413,7 @@ def cmd_lifetime_contract_snapshot_coverage():
     linear live counts, force_reason priority, schema-2300 additive keys.
     """
     print(f"{B}=== lifetime-contract-snapshot coverage (#2300) ==={N}")
-    script = ROOT / "scripts" / "check_lifetime_contract_snapshot_2300.py"
+    script = COVERAGE_CHECKS / "check_lifetime_contract_snapshot_2300.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3419,7 +3432,7 @@ def cmd_type_timeout_repair_graph_coverage():
     zero-cost path, additive schema-2343 query keys, #2284 lineage retained.
     """
     print(f"{B}=== type-timeout-repair graph coverage (#2343) ==={N}")
-    script = ROOT / "scripts" / "check_type_timeout_repair_graph_2343.py"
+    script = COVERAGE_CHECKS / "check_type_timeout_repair_graph_2343.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3438,7 +3451,7 @@ def cmd_escape_gate_key_contract_coverage():
     matching key retains #2286 isolation + zero-cost happy path.
     """
     print(f"{B}=== escape-gate key contract coverage (#2344) ==={N}")
-    script = ROOT / "scripts" / "check_escape_gate_key_contract_2344.py"
+    script = COVERAGE_CHECKS / "check_escape_gate_key_contract_2344.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3457,7 +3470,7 @@ def cmd_composite_empty_cs_hard_coverage():
     observe under Sampled/dev; vacuous structural batches stay OK.
     """
     print(f"{B}=== composite empty-CS hard-reject coverage (#2345) ==={N}")
-    script = ROOT / "scripts" / "check_composite_empty_cs_hard_2345.py"
+    script = COVERAGE_CHECKS / "check_composite_empty_cs_hard_2345.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3476,7 +3489,7 @@ def cmd_composite_cs_signature_matrix_coverage():
     false|true unexpected_cs_work observe + never silent skip under Full.
     """
     print(f"{B}=== composite CS signature matrix coverage (#2509) ==={N}")
-    script = ROOT / "scripts" / "check_composite_cs_signature_matrix_2509.py"
+    script = COVERAGE_CHECKS / "check_composite_cs_signature_matrix_2509.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3495,7 +3508,7 @@ def cmd_steal_snapshot_hard_invariant_coverage():
     steal-snapshot-hard-fail-total. Happy path: one existing snapshot sample.
     """
     print(f"{B}=== steal-snapshot hard-invariant coverage (#2346) ==={N}")
-    script = ROOT / "scripts" / "check_steal_snapshot_hard_invariant_2346.py"
+    script = COVERAGE_CHECKS / "check_steal_snapshot_hard_invariant_2346.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3514,7 +3527,7 @@ def cmd_steal_safety_ticket_coverage():
     Guard publish → hard-fail under production; Soft metric-only.
     """
     print(f"{B}=== steal safety ticket coverage (#2518) ==={N}")
-    script = ROOT / "scripts" / "check_steal_safety_ticket_2518.py"
+    script = COVERAGE_CHECKS / "check_steal_safety_ticket_2518.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3533,7 +3546,7 @@ def cmd_steal_snapshot_soft_production_lock_coverage():
     aborts under production; test override / sandbox=off keeps Soft for tests.
     """
     print(f"{B}=== steal-snapshot Soft production lock coverage (#2372) ==={N}")
-    script = ROOT / "scripts" / "check_steal_snapshot_soft_production_lock_2372.py"
+    script = COVERAGE_CHECKS / "check_steal_snapshot_soft_production_lock_2372.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3552,7 +3565,7 @@ def cmd_render_deopt_throttle_race_coverage():
     outside window preserved; CAS replaces load/store check-then-act.
     """
     print(f"{B}=== render deopt throttle CAS race coverage (#2373) ==={N}")
-    script = ROOT / "scripts" / "check_render_deopt_throttle_race_2373.py"
+    script = COVERAGE_CHECKS / "check_render_deopt_throttle_race_2373.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3572,7 +3585,7 @@ def cmd_legacy_pin_registry_cleanup_coverage():
     lifetime_pin.ixx (empty post-#2342).
     """
     print(f"{B}=== legacy pin_registry cleanup coverage (#2374) ==={N}")
-    script = ROOT / "scripts" / "check_legacy_pin_registry_cleanup_2374.py"
+    script = COVERAGE_CHECKS / "check_legacy_pin_registry_cleanup_2374.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3591,7 +3604,7 @@ def cmd_pin_bulk_all_shards_coverage():
     single-shard. Boundary restamp + GC invalidate production callers.
     """
     print(f"{B}=== pin bulk all-shard walk coverage (#2375) ==={N}")
-    script = ROOT / "scripts" / "check_pin_bulk_all_shards_2375.py"
+    script = COVERAGE_CHECKS / "check_pin_bulk_all_shards_2375.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3610,7 +3623,7 @@ def cmd_steal_complete_strong_entry_coverage():
     residual → LayoutStamp); weak/null fail-closed. Light sandbox metric.
     """
     print(f"{B}=== steal-complete strong entry coverage (#2377) ==={N}")
-    script = ROOT / "scripts" / "check_steal_complete_strong_entry_2377.py"
+    script = COVERAGE_CHECKS / "check_steal_complete_strong_entry_2377.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3629,7 +3642,7 @@ def cmd_mutate_mailbox_strict_coverage():
     optional Guard-window threshold force-rollback. Happy path: depth==0.
     """
     print(f"{B}=== mutate-mailbox Strict hard audit coverage (#2347) ==={N}")
-    script = ROOT / "scripts" / "check_mutate_mailbox_strict_2347.py"
+    script = COVERAGE_CHECKS / "check_mutate_mailbox_strict_2347.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3648,7 +3661,7 @@ def cmd_mailbox_defer_drain_sla_coverage():
     signal; zero cost when no open defer.
     """
     print(f"{B}=== mailbox defer drain SLA coverage (#2378) ==={N}")
-    script = ROOT / "scripts" / "check_mailbox_defer_drain_sla_2378.py"
+    script = COVERAGE_CHECKS / "check_mailbox_defer_drain_sla_2378.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3667,7 +3680,7 @@ def cmd_mailbox_hold_exit_drain_coverage():
     + starvation. Strict/production: force-resolve. Free when depth 0.
     """
     print(f"{B}=== mailbox hold-exit drain coverage (#2511) ==={N}")
-    script = ROOT / "scripts" / "check_mailbox_hold_exit_drain_2511.py"
+    script = COVERAGE_CHECKS / "check_mailbox_hold_exit_drain_2511.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3686,7 +3699,7 @@ def cmd_bidirectional_match_coverage():
     opt-out when bidirectional_mode=false; schema-2348 observability.
     """
     print(f"{B}=== bidirectional match check-mode coverage (#2348) ==={N}")
-    script = ROOT / "scripts" / "check_bidirectional_match_2348.py"
+    script = COVERAGE_CHECKS / "check_bidirectional_match_2348.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3705,7 +3718,7 @@ def cmd_mutation_hold_slo_coverage():
     false. Env AURA_MUTATION_HOLD_SLO_US=0 disables. No second timer.
     """
     print(f"{B}=== mutation hold SLO circuit-breaker coverage (#2349) ==={N}")
-    script = ROOT / "scripts" / "check_mutation_hold_slo_2349.py"
+    script = COVERAGE_CHECKS / "check_mutation_hold_slo_2349.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3724,7 +3737,7 @@ def cmd_mutation_hold_estimate_coverage():
     recommend-split heuristic; schema-2405.
     """
     print(f"{B}=== mutation hold estimate coverage (#2405) ==={N}")
-    script = ROOT / "scripts" / "check_mutation_hold_estimate_2405.py"
+    script = COVERAGE_CHECKS / "check_mutation_hold_estimate_2405.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3743,7 +3756,7 @@ def cmd_mutation_hold_live_coverage():
     coexist with #2405 estimate; best-effort CAS.
     """
     print(f"{B}=== mutation hold live coverage (#2517) ==={N}")
-    script = ROOT / "scripts" / "check_mutation_hold_live_2517.py"
+    script = COVERAGE_CHECKS / "check_mutation_hold_live_2517.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3762,7 +3775,7 @@ def cmd_pcv_tls_scratch_coverage():
     on/off. SafePCVSpan unchanged; schema-2406 on query:pcv-hotpath-stats.
     """
     print(f"{B}=== pcv TLS scratch coverage (#2406) ==={N}")
-    script = ROOT / "scripts" / "check_pcv_tls_scratch_2406.py"
+    script = COVERAGE_CHECKS / "check_pcv_tls_scratch_2406.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3780,7 +3793,7 @@ def cmd_pcv_tls_default_on_coverage():
     AURA_PCV_TLS=0 forces off; exclusive stress TLS hits; schema-2521.
     """
     print(f"{B}=== pcv TLS default-on coverage (#2521) ==={N}")
-    script = ROOT / "scripts" / "check_pcv_tls_default_on_2521.py"
+    script = COVERAGE_CHECKS / "check_pcv_tls_default_on_2521.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3798,7 +3811,7 @@ def cmd_batch_dirty_cascade_coverage():
     One generation/fence advance per batch; finish_dirty_sync retained.
     """
     print(f"{B}=== batch dirty cascade coverage (#2522) ==={N}")
-    script = ROOT / "scripts" / "check_batch_dirty_cascade_2522.py"
+    script = COVERAGE_CHECKS / "check_batch_dirty_cascade_2522.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3816,7 +3829,7 @@ def cmd_batch_dirty_discipline_coverage():
     DCE + impact_scope batch; fence metrics schema-2615; gate residual loops.
     """
     print(f"{B}=== batch dirty cascade discipline coverage (#2615) ==={N}")
-    script = ROOT / "scripts" / "check_batch_dirty_discipline_2615.py"
+    script = COVERAGE_CHECKS / "check_batch_dirty_discipline_2615.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3834,7 +3847,7 @@ def cmd_workspace_mtx_contention_coverage():
     query:workspace-mtx-contention-stats; optimistic hits; region soft path.
     """
     print(f"{B}=== workspace_mtx contention residual coverage (#2523) ==={N}")
-    script = ROOT / "scripts" / "check_workspace_mtx_contention_2523.py"
+    script = COVERAGE_CHECKS / "check_workspace_mtx_contention_2523.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3852,7 +3865,7 @@ def cmd_module_partition_map_coverage():
     Facade re-exports pass_pipeline_core + pass_impls; no API renames.
     """
     print(f"{B}=== module partition map coverage (#2524) ==={N}")
-    script = ROOT / "scripts" / "check_module_partition_map_2524.py"
+    script = COVERAGE_CHECKS / "check_module_partition_map_2524.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3870,7 +3883,7 @@ def cmd_query_hygiene_default_coverage():
     query:filter + pattern MacroIntroduced skip; schema-2525 stats.
     """
     print(f"{B}=== query hygiene residual default coverage (#2525) ==={N}")
-    script = ROOT / "scripts" / "check_query_hygiene_default_2525.py"
+    script = COVERAGE_CHECKS / "check_query_hygiene_default_2525.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3888,7 +3901,7 @@ def cmd_shape_storm_adaptive_coverage():
     Compact-dominated stable pressure raises thr / suppresses global storm.
     """
     print(f"{B}=== shape storm adaptive coverage (#2526) ==={N}")
-    script = ROOT / "scripts" / "check_shape_storm_adaptive_2526.py"
+    script = COVERAGE_CHECKS / "check_shape_storm_adaptive_2526.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3907,7 +3920,7 @@ def cmd_aot_linear_literal_noop_coverage():
     lowering elides Move/Linear of literals.
     """
     print(f"{B}=== AOT linear literal no-op coverage (#2407) ==={N}")
-    script = ROOT / "scripts" / "check_aot_linear_literal_noop_2407.py"
+    script = COVERAGE_CHECKS / "check_aot_linear_literal_noop_2407.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3925,7 +3938,7 @@ def cmd_stringpool_bytes_total_lock_coverage():
     Fixes UAF under concurrent intern and O(capacity) lock churn.
     """
     print(f"{B}=== stringpool string_bytes_total lock coverage (#2408) ==={N}")
-    script = ROOT / "scripts" / "check_stringpool_bytes_total_lock_2408.py"
+    script = COVERAGE_CHECKS / "check_stringpool_bytes_total_lock_2408.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3943,7 +3956,7 @@ def cmd_stringpool_buf_fragmentation_lock_coverage():
     Sample buf_.size() and string_bytes under one lock; frag in [0,1].
     """
     print(f"{B}=== stringpool buf_fragmentation lock coverage (#2409) ==={N}")
-    script = ROOT / "scripts" / "check_stringpool_buf_fragmentation_lock_2409.py"
+    script = COVERAGE_CHECKS / "check_stringpool_buf_fragmentation_lock_2409.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3961,7 +3974,7 @@ def cmd_node_meta_bounds_coverage():
     Invalid tags return kNodeMeta[0]; static_assert table size == Class.
     """
     print(f"{B}=== node meta bounds coverage (#2410) ==={N}")
-    script = ROOT / "scripts" / "check_node_meta_bounds_2410.py"
+    script = COVERAGE_CHECKS / "check_node_meta_bounds_2410.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3979,7 +3992,7 @@ def cmd_node_meta_gap_coverage():
     Gap entry uses tag 0x0C + is_gap; validate_node_meta checks every slot.
     """
     print(f"{B}=== node meta gap coverage (#2411) ==={N}")
-    script = ROOT / "scripts" / "check_node_meta_gap_2411.py"
+    script = COVERAGE_CHECKS / "check_node_meta_gap_2411.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -3997,7 +4010,7 @@ def cmd_reset_slot_parent_edges_coverage():
     Edge clear is not gated on !incoming_parent_index_dirty_.
     """
     print(f"{B}=== reset slot parent edges coverage (#2412) ==={N}")
-    script = ROOT / "scripts" / "check_reset_slot_parent_edges_2412.py"
+    script = COVERAGE_CHECKS / "check_reset_slot_parent_edges_2412.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4015,7 +4028,7 @@ def cmd_flatast_add_node_lock_coverage():
     Documents flatast_mutex_ vs lock-free SoA readers; audit findings.
     """
     print(f"{B}=== flatast add_node lock coverage (#2413) ==={N}")
-    script = ROOT / "scripts" / "check_flatast_add_node_lock_2413.py"
+    script = COVERAGE_CHECKS / "check_flatast_add_node_lock_2413.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4033,7 +4046,7 @@ def cmd_summary_recompute_sym_coverage():
     HasKeywordVar + HasQueryOrMutateCall after heavy recompute.
     """
     print(f"{B}=== summary_recompute sym coverage (#2414) ==={N}")
-    script = ROOT / "scripts" / "check_summary_recompute_sym_2414.py"
+    script = COVERAGE_CHECKS / "check_summary_recompute_sym_2414.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4051,7 +4064,7 @@ def cmd_summary_flags_guard_coverage():
     Atomic (not GUARDED_BY mutex); free_list_ / SoA GUARDED_BY comments.
     """
     print(f"{B}=== summary_flags guard coverage (#2415) ==={N}")
-    script = ROOT / "scripts" / "check_summary_flags_guard_2415.py"
+    script = COVERAGE_CHECKS / "check_summary_flags_guard_2415.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4069,7 +4082,7 @@ def cmd_incoming_parent_dirty_atomic_coverage():
     acquire/release loads/stores; match tag_arity_index_dirty_ pattern.
     """
     print(f"{B}=== incoming_parent dirty atomic coverage (#2416) ==={N}")
-    script = ROOT / "scripts" / "check_incoming_parent_dirty_atomic_2416.py"
+    script = COVERAGE_CHECKS / "check_incoming_parent_dirty_atomic_2416.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4087,7 +4100,7 @@ def cmd_binding_gens_atomic_coverage():
     Readers snapshot; writers COW+CAS; clone stores fresh map.
     """
     print(f"{B}=== binding_gens atomic coverage (#2417) ==={N}")
-    script = ROOT / "scripts" / "check_binding_gens_atomic_2417.py"
+    script = COVERAGE_CHECKS / "check_binding_gens_atomic_2417.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4105,7 +4118,7 @@ def cmd_structural_metadata_lock_order_coverage():
     Combined guard + audit against reverse nest.
     """
     print(f"{B}=== structural/metadata lock order coverage (#2418) ==={N}")
-    script = ROOT / "scripts" / "check_structural_metadata_lock_order_2418.py"
+    script = COVERAGE_CHECKS / "check_structural_metadata_lock_order_2418.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4123,7 +4136,7 @@ def cmd_tag_arity_index_lock_coverage():
     Dedicated shared_mutex; find shared, rebuild exclusive.
     """
     print(f"{B}=== tag_arity_index lock coverage (#2419) ==={N}")
-    script = ROOT / "scripts" / "check_tag_arity_index_lock_2419.py"
+    script = COVERAGE_CHECKS / "check_tag_arity_index_lock_2419.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4141,7 +4154,7 @@ def cmd_tag_arity_key_hash_coverage():
     Better entropy than separate FNV mixes of zero-padded fields.
     """
     print(f"{B}=== tag_arity key hash coverage (#2420) ==={N}")
-    script = ROOT / "scripts" / "check_tag_arity_key_hash_2420.py"
+    script = COVERAGE_CHECKS / "check_tag_arity_key_hash_2420.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4159,7 +4172,7 @@ def cmd_restamp_lazy_align_atomic_coverage():
     acquire/release loads/stores; match auto_restamp_pending_ pattern.
     """
     print(f"{B}=== restamp_lazy_align atomic coverage (#2421) ==={N}")
-    script = ROOT / "scripts" / "check_restamp_lazy_align_atomic_2421.py"
+    script = COVERAGE_CHECKS / "check_restamp_lazy_align_atomic_2421.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4177,7 +4190,7 @@ def cmd_subtree_gen_atomic_coverage():
     Resize under subtree_gen_mtx_; low 16 bits = gen; is_always_lock_free.
     """
     print(f"{B}=== subtree_gen atomic coverage (#2422) ==={N}")
-    script = ROOT / "scripts" / "check_subtree_gen_atomic_2422.py"
+    script = COVERAGE_CHECKS / "check_subtree_gen_atomic_2422.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4195,7 +4208,7 @@ def cmd_dirty_column_lock_coverage():
     is_subtree_dirty_node / dirty_nodes_in_range take shared; mark_dirty exclusive.
     """
     print(f"{B}=== dirty_column lock coverage (#2423) ==={N}")
-    script = ROOT / "scripts" / "check_dirty_column_lock_2423.py"
+    script = COVERAGE_CHECKS / "check_dirty_column_lock_2423.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4213,7 +4226,7 @@ def cmd_subtree_dirty_bounds_coverage():
     Concurrent add_node grows dirty_ under dirty_column_mtx_; no tag_.size() race.
     """
     print(f"{B}=== subtree dirty bounds coverage (#2424) ==={N}")
-    script = ROOT / "scripts" / "check_subtree_dirty_bounds_2424.py"
+    script = COVERAGE_CHECKS / "check_subtree_dirty_bounds_2424.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4231,7 +4244,7 @@ def cmd_capability_audit_publish_coverage():
     publish_seq release/acquire + audit_ring_mtx_; no torn EffectAuditEntry.
     """
     print(f"{B}=== capability audit publish coverage (#2425) ==={N}")
-    script = ROOT / "scripts" / "check_capability_audit_publish_2425.py"
+    script = COVERAGE_CHECKS / "check_capability_audit_publish_2425.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4249,7 +4262,7 @@ def cmd_capability_registry_snapshot_coverage():
     Atomic sandbox_mode/default_tenant + double-check acquire multi-field snap.
     """
     print(f"{B}=== capability registry snapshot coverage (#2426) ==={N}")
-    script = ROOT / "scripts" / "check_capability_registry_snapshot_2426.py"
+    script = COVERAGE_CHECKS / "check_capability_registry_snapshot_2426.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4267,7 +4280,7 @@ def cmd_sandbox_mode_atomic_coverage():
     release/acquire stores/loads; audit stamps sandbox_mode at record time.
     """
     print(f"{B}=== sandbox_mode atomic coverage (#2427) ==={N}")
-    script = ROOT / "scripts" / "check_sandbox_mode_atomic_2427.py"
+    script = COVERAGE_CHECKS / "check_sandbox_mode_atomic_2427.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4285,7 +4298,7 @@ def cmd_gc_defer_arm_fetch_or_coverage():
     Concurrent arm_*_defer same reason bumps first-arm total exactly once.
     """
     print(f"{B}=== gc defer arm fetch_or coverage (#2428) ==={N}")
-    script = ROOT / "scripts" / "check_gc_defer_arm_fetch_or_2428.py"
+    script = COVERAGE_CHECKS / "check_gc_defer_arm_fetch_or_2428.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4303,7 +4316,7 @@ def cmd_gc_defer_overflow_policy_atomic_coverage():
     Policy setters take g_gc_defer_armed_mtx with try_arm overflow path.
     """
     print(f"{B}=== gc defer overflow policy atomic coverage (#2429) ==={N}")
-    script = ROOT / "scripts" / "check_gc_defer_overflow_policy_atomic_2429.py"
+    script = COVERAGE_CHECKS / "check_gc_defer_overflow_policy_atomic_2429.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4321,7 +4334,7 @@ def cmd_capability_effect_stats_snapshot_coverage():
     16-retry acquire loads; verify enforced/denied/grants/checks stable.
     """
     print(f"{B}=== capability effect stats snapshot coverage (#2430) ==={N}")
-    script = ROOT / "scripts" / "check_capability_effect_stats_snapshot_2430.py"
+    script = COVERAGE_CHECKS / "check_capability_effect_stats_snapshot_2430.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4339,7 +4352,7 @@ def cmd_dead_coercion_columnar_coverage():
     No residual AoS BasicBlock materialize; run_columnar_block only.
     """
     print(f"{B}=== dead coercion columnar coverage (#2431) ==={N}")
-    script = ROOT / "scripts" / "check_dead_coercion_columnar_2431.py"
+    script = COVERAGE_CHECKS / "check_dead_coercion_columnar_2431.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4357,7 +4370,7 @@ def cmd_ir_soa_layout_stamp_coverage():
     8th field ir_soa_generation; ir_generation_fence_hit_total metric.
     """
     print(f"{B}=== ir soa layout stamp coverage (#2432) ==={N}")
-    script = ROOT / "scripts" / "check_ir_soa_layout_stamp_2432.py"
+    script = COVERAGE_CHECKS / "check_ir_soa_layout_stamp_2432.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4376,7 +4389,7 @@ def cmd_soa_ban_residual_aos_bridge_coverage():
     metric (target 0); production packs must not call to_aos_view.
     """
     print(f"{B}=== soa ban residual aos bridge coverage (#2520) ==={N}")
-    script = ROOT / "scripts" / "check_soa_ban_residual_aos_bridge_2520.py"
+    script = COVERAGE_CHECKS / "check_soa_ban_residual_aos_bridge_2520.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4396,7 +4409,7 @@ def cmd_soa_residual_production_smoke_coverage():
     opt-in AURA_ALLOW_AOS_BRIDGE remains for dedicated dual-emit jobs only.
     """
     print(f"{B}=== soa residual production smoke coverage (#2618) ==={N}")
-    script = ROOT / "scripts" / "check_soa_residual_production_smoke_2618.py"
+    script = COVERAGE_CHECKS / "check_soa_residual_production_smoke_2618.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4415,7 +4428,7 @@ def cmd_arena_moving_densify_health_coverage():
     and would-allow-mutate; soft throttle under production hard only.
     """
     print(f"{B}=== arena moving densify health coverage (#2619) ==={N}")
-    script = ROOT / "scripts" / "check_arena_moving_densify_health_2619.py"
+    script = COVERAGE_CHECKS / "check_arena_moving_densify_health_2619.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4433,7 +4446,7 @@ def cmd_coercion_unify_incomplete_skip_coverage():
     Default skip + force-Full arm; dual-require drop retained; #2317 canary env.
     """
     print(f"{B}=== coercion unify incomplete skip coverage (#2620) ==={N}")
-    script = ROOT / "scripts" / "check_coercion_unify_incomplete_skip_2620.py"
+    script = COVERAGE_CHECKS / "check_coercion_unify_incomplete_skip_2620.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4451,7 +4464,7 @@ def cmd_partial_cone_commit_gate_coverage():
     Soft observe; production / AURA_PARTIAL_CONE_COMMIT_HARD deny cone_truncate.
     """
     print(f"{B}=== partial cone commit gate coverage (#2621) ==={N}")
-    script = ROOT / "scripts" / "check_partial_cone_commit_gate_2621.py"
+    script = COVERAGE_CHECKS / "check_partial_cone_commit_gate_2621.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4469,7 +4482,7 @@ def cmd_occurrence_dirty_key_authority_coverage():
     sync_occurrence_after_dirty joint invalidate; steal fence memo joint clear.
     """
     print(f"{B}=== occurrence dirty-key authority coverage (#2622) ==={N}")
-    script = ROOT / "scripts" / "check_occurrence_dirty_key_authority_2622.py"
+    script = COVERAGE_CHECKS / "check_occurrence_dirty_key_authority_2622.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4488,7 +4501,7 @@ def cmd_layout_stamp_equality_8field_coverage():
     Agents see layout-stamp-equality-8-field / schema-2519.
     """
     print(f"{B}=== layout stamp equality 8-field coverage (#2519) ==={N}")
-    script = ROOT / "scripts" / "check_layout_stamp_equality_8field_2519.py"
+    script = COVERAGE_CHECKS / "check_layout_stamp_equality_8field_2519.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4506,7 +4519,7 @@ def cmd_shape_high_mutation_storm_coverage():
     apply_preset knobs, storm enter isolation, query:shape-storm-health.
     """
     print(f"{B}=== shape high mutation storm coverage (#2433) ==={N}")
-    script = ROOT / "scripts" / "check_shape_high_mutation_storm_2433.py"
+    script = COVERAGE_CHECKS / "check_shape_high_mutation_storm_2433.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4524,7 +4537,7 @@ def cmd_hot_pass_hard_dod_coverage():
     Unmarked soft-skip removed; production pack inventory; schema-2434.
     """
     print(f"{B}=== hot pass hard dod coverage (#2434) ==={N}")
-    script = ROOT / "scripts" / "check_hot_pass_hard_dod_2434.py"
+    script = COVERAGE_CHECKS / "check_hot_pass_hard_dod_2434.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4542,7 +4555,7 @@ def cmd_hot_children_columnar_coverage():
     Compile-time requires + static_assert; walk_children_hot; no design docs.
     """
     print(f"{B}=== hot children columnar coverage (#2614) ==={N}")
-    script = ROOT / "scripts" / "check_hot_children_columnar_2614.py"
+    script = COVERAGE_CHECKS / "check_hot_children_columnar_2614.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4560,7 +4573,7 @@ def cmd_value_tag_hotpath_ban_coverage():
     Pure *_hot only; cold classify for Agent query:value-dispatch-stats; gate.
     """
     print(f"{B}=== value-tag hotpath ban coverage (#2616) ==={N}")
-    script = ROOT / "scripts" / "check_value_tag_hotpath_ban_2616.py"
+    script = COVERAGE_CHECKS / "check_value_tag_hotpath_ban_2616.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4579,7 +4592,7 @@ def cmd_shape_compact_storm_isolation_coverage():
     stress keeps Threshold force-reason quiet; mutation still storms.
     """
     print(f"{B}=== shape compact storm isolation coverage (#2617) ==={N}")
-    script = ROOT / "scripts" / "check_shape_compact_storm_isolation_2617.py"
+    script = COVERAGE_CHECKS / "check_shape_compact_storm_isolation_2617.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4597,7 +4610,7 @@ def cmd_hot_contract_placement_coverage():
     Absolute-hot loops OFF under NDEBUG; cold edges keep language pre.
     """
     print(f"{B}=== hot contract placement coverage (#2435) ==={N}")
-    script = ROOT / "scripts" / "check_hot_contract_placement_2435.py"
+    script = COVERAGE_CHECKS / "check_hot_contract_placement_2435.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4615,7 +4628,7 @@ def cmd_post_compact_lifecycle_coverage():
     Ordered steps; LayoutStamp after compact; soft_skip zero-cost path.
     """
     print(f"{B}=== post compact lifecycle coverage (#2436) ==={N}")
-    script = ROOT / "scripts" / "check_post_compact_lifecycle_2436.py"
+    script = COVERAGE_CHECKS / "check_post_compact_lifecycle_2436.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4633,7 +4646,7 @@ def cmd_gc_defer_reconcile_cas_coverage():
     Concurrent arm must not lose Panic bit; orphan clear still works.
     """
     print(f"{B}=== gc defer reconcile cas coverage (#2437) ==={N}")
-    script = ROOT / "scripts" / "check_gc_defer_reconcile_cas_2437.py"
+    script = COVERAGE_CHECKS / "check_gc_defer_reconcile_cas_2437.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4651,7 +4664,7 @@ def cmd_arena_compact_notify_lifecycle_coverage():
     clear_arena_compact_notify_hooks + in_flight wait before free.
     """
     print(f"{B}=== arena compact notify lifecycle coverage (#2438) ==={N}")
-    script = ROOT / "scripts" / "check_arena_compact_notify_lifecycle_2438.py"
+    script = COVERAGE_CHECKS / "check_arena_compact_notify_lifecycle_2438.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4669,7 +4682,7 @@ def cmd_verification_dirty_bits_lock_coverage():
     Exclusive dirty_column_mtx_ around newly_set RMW.
     """
     print(f"{B}=== verification dirty bits lock coverage (#2439) ==={N}")
-    script = ROOT / "scripts" / "check_verification_dirty_bits_lock_2439.py"
+    script = COVERAGE_CHECKS / "check_verification_dirty_bits_lock_2439.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4687,7 +4700,7 @@ def cmd_soa_column_atomic_coverage():
     verify_dirty_ / verification_dirty_ / last_seen_epoch_ / occ_stale_.
     """
     print(f"{B}=== SoA column atomic coverage (#2440) ==={N}")
-    script = ROOT / "scripts" / "check_soa_column_atomic_2440.py"
+    script = COVERAGE_CHECKS / "check_soa_column_atomic_2440.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4705,7 +4718,7 @@ def cmd_macro_dirty_bits_lock_coverage():
     Exclusive dirty_column_mtx_ + atomic fetch_or for newly_set.
     """
     print(f"{B}=== macro dirty bits lock coverage (#2441) ==={N}")
-    script = ROOT / "scripts" / "check_macro_dirty_bits_lock_2441.py"
+    script = COVERAGE_CHECKS / "check_macro_dirty_bits_lock_2441.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4723,7 +4736,7 @@ def cmd_clear_macro_dirty_concurrent_coverage():
     Exclusive dirty_column_mtx_ + atomic store per cell.
     """
     print(f"{B}=== clear_macro_dirty concurrent coverage (#2442) ==={N}")
-    script = ROOT / "scripts" / "check_clear_macro_dirty_concurrent_2442.py"
+    script = COVERAGE_CHECKS / "check_clear_macro_dirty_concurrent_2442.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4741,7 +4754,7 @@ def cmd_region_dense_atomic_coverage():
     Concurrent parser write + lowering read without torn uint8.
     """
     print(f"{B}=== region dense atomic coverage (#2443) ==={N}")
-    script = ROOT / "scripts" / "check_region_dense_atomic_2443.py"
+    script = COVERAGE_CHECKS / "check_region_dense_atomic_2443.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4759,7 +4772,7 @@ def cmd_region_sym_dense_race_coverage():
     region_table_mtx_ + atomic_ref; test extended in test_ast_concurrency.
     """
     print(f"{B}=== region_by_sym_dense race coverage (#2444) ==={N}")
-    script = ROOT / "scripts" / "check_region_sym_dense_race_2444.py"
+    script = COVERAGE_CHECKS / "check_region_sym_dense_race_2444.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4777,7 +4790,7 @@ def cmd_add_node_builder_contract_coverage():
     Documents builder body serial; add_node keeps flatast_mutex_ (#2413).
     """
     print(f"{B}=== add_node builder contract coverage (#2445) ==={N}")
-    script = ROOT / "scripts" / "check_add_node_builder_contract_2445.py"
+    script = COVERAGE_CHECKS / "check_add_node_builder_contract_2445.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4795,7 +4808,7 @@ def cmd_region_lambda_dense_race_coverage():
     region_table_mtx_ + atomic_ref; test extended in test_ast_concurrency.
     """
     print(f"{B}=== region_by_lambda_dense race coverage (#2446) ==={N}")
-    script = ROOT / "scripts" / "check_region_lambda_dense_race_2446.py"
+    script = COVERAGE_CHECKS / "check_region_lambda_dense_race_2446.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4813,7 +4826,7 @@ def cmd_region_sym_map_race_coverage():
     region_table_mtx_ exclusive insert / shared find; map path via high SymId.
     """
     print(f"{B}=== region_by_sym_ map race coverage (#2447) ==={N}")
-    script = ROOT / "scripts" / "check_region_sym_map_race_2447.py"
+    script = COVERAGE_CHECKS / "check_region_sym_map_race_2447.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4831,7 +4844,7 @@ def cmd_defines_referencing_sym_coverage():
     Skip only exclude_define, not all Defines with matching name.
     """
     print(f"{B}=== defines_referencing_sym coverage (#2448) ==={N}")
-    script = ROOT / "scripts" / "check_defines_referencing_sym_2448.py"
+    script = COVERAGE_CHECKS / "check_defines_referencing_sym_2448.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4849,7 +4862,7 @@ def cmd_param_data_mutation_contract_coverage():
     Builder insert under parser-only contract; slice readers post-parse.
     """
     print(f"{B}=== param_data_ mutation contract coverage (#2449) ==={N}")
-    script = ROOT / "scripts" / "check_param_data_mutation_contract_2449.py"
+    script = COVERAGE_CHECKS / "check_param_data_mutation_contract_2449.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4867,7 +4880,7 @@ def cmd_param_annot_mutation_contract_coverage():
     Builder resize under parser-only contract; tandem with param_data_ (#2449).
     """
     print(f"{B}=== param_annot_data_ mutation contract coverage (#2450) ==={N}")
-    script = ROOT / "scripts" / "check_param_annot_mutation_contract_2450.py"
+    script = COVERAGE_CHECKS / "check_param_annot_mutation_contract_2450.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4885,7 +4898,7 @@ def cmd_param_begin_count_publish_coverage():
     Count last after arena fill; post-parse reader contract.
     """
     print(f"{B}=== param_begin_count publish coverage (#2451) ==={N}")
-    script = ROOT / "scripts" / "check_param_begin_count_publish_2451.py"
+    script = COVERAGE_CHECKS / "check_param_begin_count_publish_2451.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4903,7 +4916,7 @@ def cmd_incoming_parent_dirty_atomic_2452_coverage():
     release mark / acquire ensure; concurrent mark+load in test_ast_concurrency.
     """
     print(f"{B}=== incoming_parent_dirty atomic coverage (#2452) ==={N}")
-    script = ROOT / "scripts" / "check_incoming_parent_dirty_atomic_2452.py"
+    script = COVERAGE_CHECKS / "check_incoming_parent_dirty_atomic_2452.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4921,7 +4934,7 @@ def cmd_get_nodeview_snapshot_coverage():
     Post-parse / workspace_mtx serial; concurrent multi-reader on stable flat.
     """
     print(f"{B}=== get NodeView snapshot coverage (#2453) ==={N}")
-    script = ROOT / "scripts" / "check_get_nodeview_snapshot_2453.py"
+    script = COVERAGE_CHECKS / "check_get_nodeview_snapshot_2453.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4939,7 +4952,7 @@ def cmd_raii_guard_flatast_lifetime_coverage():
     Guards must not outlive FlatAST; drop before move/swap.
     """
     print(f"{B}=== RAII guard FlatAST lifetime coverage (#2454) ==={N}")
-    script = ROOT / "scripts" / "check_raii_guard_flatast_lifetime_2454.py"
+    script = COVERAGE_CHECKS / "check_raii_guard_flatast_lifetime_2454.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4957,7 +4970,7 @@ def cmd_restore_children_structural_lock_coverage():
     StructuralMutationGuard + restore_children_locked; concurrent-safe restore.
     """
     print(f"{B}=== restore_children structural lock coverage (#2455) ==={N}")
-    script = ROOT / "scripts" / "check_restore_children_structural_lock_2455.py"
+    script = COVERAGE_CHECKS / "check_restore_children_structural_lock_2455.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4975,7 +4988,7 @@ def cmd_subtree_uses_sym_template_bloat_coverage():
     Named functors + out-of-line subtree_uses_sym / find_define_by_name.
     """
     print(f"{B}=== subtree_uses_sym single-TU template hoist coverage (#2456) ==={N}")
-    script = ROOT / "scripts" / "check_subtree_uses_sym_template_bloat_2456.py"
+    script = COVERAGE_CHECKS / "check_subtree_uses_sym_template_bloat_2456.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -4993,7 +5006,7 @@ def cmd_mutation_log_cow_copy_coverage():
     CowPmrVector shared_ptr share-on-copy; first mutate detaches.
     """
     print(f"{B}=== mutation_log COW copy coverage (#2457) ==={N}")
-    script = ROOT / "scripts" / "check_mutation_log_cow_copy_2457.py"
+    script = COVERAGE_CHECKS / "check_mutation_log_cow_copy_2457.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5011,7 +5024,7 @@ def cmd_truncate_commit_gate_coverage():
     Anti half-green: Soft observes; production/Full/HARD full-solves or rejects.
     """
     print(f"{B}=== truncate-commit gate coverage (#2458) ==={N}")
-    script = ROOT / "scripts" / "check_truncate_commit_gate_2458.py"
+    script = COVERAGE_CHECKS / "check_truncate_commit_gate_2458.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5030,7 +5043,7 @@ def cmd_type_system_health_coverage():
     miss rate, layered DCE efficiency into health-bp + force-reason.
     """
     print(f"{B}=== type-system-health coverage (#2350) ==={N}")
-    script = ROOT / "scripts" / "check_type_system_health_2350.py"
+    script = COVERAGE_CHECKS / "check_type_system_health_2350.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5049,7 +5062,7 @@ def cmd_type_system_health_next_action_coverage():
     on query:type-system-health without breaking #2350.
     """
     print(f"{B}=== type-system-health next-action coverage (#2462) ==={N}")
-    script = ROOT / "scripts" / "check_type_system_health_next_action_2462.py"
+    script = COVERAGE_CHECKS / "check_type_system_health_next_action_2462.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5067,7 +5080,7 @@ def cmd_ir_optimize_type_info_chain_coverage():
     slot_remap chain must not treat remap==0 as end (slot 0 is valid).
     """
     print(f"{B}=== IR optimize_type_info chain-walk coverage (#2471) ==={N}")
-    script = ROOT / "scripts" / "check_ir_optimize_type_info_chain_2471.py"
+    script = COVERAGE_CHECKS / "check_ir_optimize_type_info_chain_2471.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5086,7 +5099,7 @@ def cmd_closure_call_must_deopt_toctou_coverage():
     before clearing must_deopt / invalidating cache.
     """
     print(f"{B}=== closure_call MustDeopt TOCTOU coverage (#2472) ==={N}")
-    script = ROOT / "scripts" / "check_closure_call_must_deopt_toctou_2472.py"
+    script = COVERAGE_CHECKS / "check_closure_call_must_deopt_toctou_2472.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5105,7 +5118,7 @@ def cmd_gc_closures_mtx_flush_sweep_coverage():
     shared_lock on flush + unique_lock on sweep close the map rehash race.
     """
     print(f"{B}=== GC flush/sweep closures_mtx_ coverage (#2473) ==={N}")
-    script = ROOT / "scripts" / "check_gc_closures_mtx_flush_sweep_2473.py"
+    script = COVERAGE_CHECKS / "check_gc_closures_mtx_flush_sweep_2473.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5124,7 +5137,7 @@ def cmd_ffi_hot_path_cache_toctou_coverage():
     double-check hash; clear_cache invalidates hash first.
     """
     print(f"{B}=== FFI hot-path cache TOCTOU coverage (#2474) ==={N}")
-    script = ROOT / "scripts" / "check_ffi_hot_path_cache_toctou_2474.py"
+    script = COVERAGE_CHECKS / "check_ffi_hot_path_cache_toctou_2474.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5143,7 +5156,7 @@ def cmd_aura_jit_unused_fn_lock_coverage():
     serialize + fn_compile_mtx_ cache-only role.
     """
     print(f"{B}=== AuraJIT unused fn_lock coverage (#2475) ==={N}")
-    script = ROOT / "scripts" / "check_aura_jit_unused_fn_lock_2475.py"
+    script = COVERAGE_CHECKS / "check_aura_jit_unused_fn_lock_2475.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5161,7 +5174,7 @@ def cmd_partial_recompile_single_evict_coverage():
     invalidate_prefix covers bare + name#*; drop redundant invalidate().
     """
     print(f"{B}=== partial_recompile single-pass eviction coverage (#2476) ==={N}")
-    script = ROOT / "scripts" / "check_partial_recompile_single_evict_2476.py"
+    script = COVERAGE_CHECKS / "check_partial_recompile_single_evict_2476.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5179,7 +5192,7 @@ def cmd_emit_object_deprecated_coverage():
     Returns false + stderr; no .ir side-file write; use emit_native_object.
     """
     print(f"{B}=== emit_object fail-closed deprecation coverage (#2477) ==={N}")
-    script = ROOT / "scripts" / "check_emit_object_deprecated_2477.py"
+    script = COVERAGE_CHECKS / "check_emit_object_deprecated_2477.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5197,7 +5210,7 @@ def cmd_command_line_cap_io_read_coverage():
     Closes capability bypass that leaked /proc/self/cmdline secrets.
     """
     print(f"{B}=== command-line kCapIoRead coverage (#2478) ==={N}")
-    script = ROOT / "scripts" / "check_command_line_cap_io_read_2478.py"
+    script = COVERAGE_CHECKS / "check_command_line_cap_io_read_2478.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5215,7 +5228,7 @@ def cmd_regex_redos_timeout_coverage():
     AURA_REGEX_TIMEOUT_MS (default 100) + regex_timeout_total metric.
     """
     print(f"{B}=== regex ReDoS timeout coverage (#2479) ==={N}")
-    script = ROOT / "scripts" / "check_regex_redos_timeout_2479.py"
+    script = COVERAGE_CHECKS / "check_regex_redos_timeout_2479.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5233,7 +5246,7 @@ def cmd_json_parse_number_exception_coverage():
     out_of_range / invalid_argument → PRIM_ERROR (no fiber crash).
     """
     print(f"{B}=== json-parse number exception coverage (#2480) ==={N}")
-    script = ROOT / "scripts" / "check_json_parse_number_exception_2480.py"
+    script = COVERAGE_CHECKS / "check_json_parse_number_exception_2480.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5251,7 +5264,7 @@ def cmd_json_parse_object_grow_coverage():
     Load-factor 0.7 grow — no silent key drop when N>5.
     """
     print(f"{B}=== json-parse object grow coverage (#2481) ==={N}")
-    script = ROOT / "scripts" / "check_json_parse_object_grow_2481.py"
+    script = COVERAGE_CHECKS / "check_json_parse_object_grow_2481.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5269,7 +5282,7 @@ def cmd_list_end_of_list_void_coverage():
     int 0 is a number — never list terminator.
     """
     print(f"{B}=== list end-of-list void-only coverage (#2482) ==={N}")
-    script = ROOT / "scripts" / "check_list_end_of_list_void_2482.py"
+    script = COVERAGE_CHECKS / "check_list_end_of_list_void_2482.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5287,7 +5300,7 @@ def cmd_channel_rendezvous_coverage():
     No buffer_size==0 wait short-circuit; waiting_receivers handoff.
     """
     print(f"{B}=== channel rendezvous coverage (#2483) ==={N}")
-    script = ROOT / "scripts" / "check_channel_rendezvous_2483.py"
+    script = COVERAGE_CHECKS / "check_channel_rendezvous_2483.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5305,7 +5318,7 @@ def cmd_eval_current_no_auto_fix_coverage():
     Closures returned unchanged — no side-effect auto-fix path.
     """
     print(f"{B}=== eval-current no auto-fix coverage (#2484) ==={N}")
-    script = ROOT / "scripts" / "check_eval_current_no_auto_fix_2484.py"
+    script = COVERAGE_CHECKS / "check_eval_current_no_auto_fix_2484.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5323,7 +5336,7 @@ def cmd_load_cap_io_read_coverage():
     Sandbox without io-read / io / wildcard → capability denied.
     """
     print(f"{B}=== load kCapIoRead coverage (#2485) ==={N}")
-    script = ROOT / "scripts" / "check_load_cap_io_read_2485.py"
+    script = COVERAGE_CHECKS / "check_load_cap_io_read_2485.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5341,7 +5354,7 @@ def cmd_gc_heap_cells_clear_coverage():
     Stale cell data must not survive a full heap reset.
     """
     print(f"{B}=== gc-heap cells clear coverage (#2486) ==={N}")
-    script = ROOT / "scripts" / "check_gc_heap_cells_clear_2486.py"
+    script = COVERAGE_CHECKS / "check_gc_heap_cells_clear_2486.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5360,7 +5373,7 @@ def cmd_mutation_concurrency_health_coverage():
     mailbox starvation into health-bp + force-reason priority.
     """
     print(f"{B}=== mutation-concurrency-health coverage (#2379) ==={N}")
-    script = ROOT / "scripts" / "check_mutation_concurrency_health_2379.py"
+    script = COVERAGE_CHECKS / "check_mutation_concurrency_health_2379.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5379,7 +5392,7 @@ def cmd_steal_layout_stamp_coverage():
     No stamp: zero cost. Schema-2351 additive.
     """
     print(f"{B}=== steal LayoutStamp dual-check coverage (#2351) ==={N}")
-    script = ROOT / "scripts" / "check_steal_layout_stamp_2351.py"
+    script = COVERAGE_CHECKS / "check_steal_layout_stamp_2351.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5398,7 +5411,7 @@ def cmd_steal_complete_restamp_txn_coverage():
     Soft metric-only; production Soft ignored.
     """
     print(f"{B}=== steal-complete restamp transaction coverage (#2510) ==={N}")
-    script = ROOT / "scripts" / "check_steal_complete_restamp_txn_2510.py"
+    script = COVERAGE_CHECKS / "check_steal_complete_restamp_txn_2510.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5418,7 +5431,7 @@ def cmd_residual_defer_steal_hard_and_coverage():
     Zero cost when residual already zero.
     """
     print(f"{B}=== residual defer steal hard-AND coverage (#2546) ==={N}")
-    script = ROOT / "scripts" / "check_residual_defer_steal_hard_and_2546.py"
+    script = COVERAGE_CHECKS / "check_residual_defer_steal_hard_and_2546.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5437,7 +5450,7 @@ def cmd_is_stealable_snapshot_gate_coverage():
     Production steal enqueue uses is_stealable(snap); never reason-class alone.
     """
     print(f"{B}=== is_stealable snapshot gate coverage (#2549) ==={N}")
-    script = ROOT / "scripts" / "check_is_stealable_snapshot_gate_2549.py"
+    script = COVERAGE_CHECKS / "check_is_stealable_snapshot_gate_2549.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5455,7 +5468,7 @@ def cmd_named_closure_stable_id_at_create_coverage():
     set_name uses get_or_preserve; anonymous stays 0; backfill residual only.
     """
     print(f"{B}=== named closure stable_id at create coverage (#2550) ==={N}")
-    script = ROOT / "scripts" / "check_named_closure_stable_id_at_create_2550.py"
+    script = COVERAGE_CHECKS / "check_named_closure_stable_id_at_create_2550.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5474,7 +5487,7 @@ def cmd_anonymous_residual_stable_id_policy_coverage():
     query assign/preserve/residual_backfill axes.
     """
     print(f"{B}=== anonymous residual stable_id policy coverage (#2605) ==={N}")
-    script = ROOT / "scripts" / "check_anonymous_residual_stable_id_policy_2605.py"
+    script = COVERAGE_CHECKS / "check_anonymous_residual_stable_id_policy_2605.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5493,7 +5506,7 @@ def cmd_pereval_reemit_region_independence_coverage():
     path unchanged; process-global epoch documented.
     """
     print(f"{B}=== PerEval reemit region independence coverage (#2606) ==={N}")
-    script = ROOT / "scripts" / "check_pereval_reemit_region_independence_2606.py"
+    script = COVERAGE_CHECKS / "check_pereval_reemit_region_independence_2606.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5512,7 +5525,7 @@ def cmd_instance_constraint_depth_cap_coverage():
     schema-2607 query surface.
     """
     print(f"{B}=== INSTANCE constraint depth-cap coverage (#2607) ==={N}")
-    script = ROOT / "scripts" / "check_instance_constraint_depth_cap_2607.py"
+    script = COVERAGE_CHECKS / "check_instance_constraint_depth_cap_2607.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5531,7 +5544,7 @@ def cmd_occurrence_goal_persist_rehydrate_coverage():
     cap truncations; schema-2608 fidelity keys.
     """
     print(f"{B}=== OccurrenceGoal persist/rehydrate coverage (#2608) ==={N}")
-    script = ROOT / "scripts" / "check_occurrence_goal_persist_rehydrate_2608.py"
+    script = COVERAGE_CHECKS / "check_occurrence_goal_persist_rehydrate_2608.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5550,7 +5563,7 @@ def cmd_steal_densify_linear_type_hard_and_coverage():
     coordinates #2546 residual, #2552 type fence, #2595 densify gate.
     """
     print(f"{B}=== steal/densify linear+type hard-AND coverage (#2609) ==={N}")
-    script = ROOT / "scripts" / "check_steal_densify_linear_type_hard_and_2609.py"
+    script = COVERAGE_CHECKS / "check_steal_densify_linear_type_hard_and_2609.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5569,7 +5582,7 @@ def cmd_composite_auto_partial_from_cone_coverage():
     commit_readiness auto_partial reason; schema-2610.
     """
     print(f"{B}=== composite auto-partial from cone coverage (#2610) ==={N}")
-    script = ROOT / "scripts" / "check_composite_auto_partial_from_cone_2610.py"
+    script = COVERAGE_CHECKS / "check_composite_auto_partial_from_cone_2610.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5588,7 +5601,7 @@ def cmd_dce_elided_deopt_meta_coverage():
     no stamp without evidence; soft empty cone zero cost.
     """
     print(f"{B}=== dce elided cast deopt meta coverage (#2611) ==={N}")
-    script = ROOT / "scripts" / "check_dce_elided_deopt_meta_2611.py"
+    script = COVERAGE_CHECKS / "check_dce_elided_deopt_meta_2611.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5606,7 +5619,7 @@ def cmd_castop_typed_meta_coverage():
     Non-elided lower stamps src/dst; Soft zero-cost when absent; no executor change.
     """
     print(f"{B}=== castop typed meta Phase A coverage (#2624) ==={N}")
-    script = ROOT / "scripts" / "check_castop_typed_meta_2624.py"
+    script = COVERAGE_CHECKS / "check_castop_typed_meta_2624.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5626,8 +5639,8 @@ def cmd_issue_coverage():
     Pilot issues: #2622 #2623 #2624. New issues should add a manifest JSON,
     not a full hand-written check_*.py.
     """
-    print(f"{B}=== issue coverage manifests (Phase 1+2) ==={N}")
-    runner = ROOT / "scripts" / "coverage" / "runner.py"
+    print(f"{B}=== issue coverage manifests (Phase 1+2, scripts/coverage) ==={N}")
+    runner = COVERAGE_RUNNER
     if not runner.exists():
         fail(f"missing {runner}")
         return 1
@@ -5651,7 +5664,7 @@ def cmd_type_linear_commit_health_coverage():
     pure aggregation; schema-2613.
     """
     print(f"{B}=== type-linear-commit-health coverage (#2613) ==={N}")
-    script = ROOT / "scripts" / "check_type_linear_commit_health_2613.py"
+    script = COVERAGE_CHECKS / "check_type_linear_commit_health_2613.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5670,7 +5683,7 @@ def cmd_mailbox_hold_starvation_hard_coverage():
     agent_throttle_for_mailbox_starvation; Soft metric-only; free drain clears.
     """
     print(f"{B}=== mailbox hold starvation hard coverage (#2551) ==={N}")
-    script = ROOT / "scripts" / "check_mailbox_hold_starvation_hard_2551.py"
+    script = COVERAGE_CHECKS / "check_mailbox_hold_starvation_hard_2551.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5689,7 +5702,7 @@ def cmd_type_freshness_steal_densify_coverage():
     and prune occurrence goals + type_dep edges. Hard-fail steal skips.
     """
     print(f"{B}=== type freshness steal/densify coverage (#2552) ==={N}")
-    script = ROOT / "scripts" / "check_type_freshness_steal_densify_2552.py"
+    script = COVERAGE_CHECKS / "check_type_freshness_steal_densify_2552.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5708,7 +5721,7 @@ def cmd_commit_readiness_score_coverage():
     empty_cs priority; Soft observe vs production hard bands.
     """
     print(f"{B}=== commit-readiness score coverage (#2553) ==={N}")
-    script = ROOT / "scripts" / "check_commit_readiness_score_2553.py"
+    script = COVERAGE_CHECKS / "check_commit_readiness_score_2553.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5727,7 +5740,7 @@ def cmd_transaction_guard_migration_coverage():
     type-erased host factories on Evaluator.
     """
     print(f"{B}=== TransactionGuard migration coverage (#2555) ==={N}")
-    script = ROOT / "scripts" / "check_transaction_guard_migration_2555.py"
+    script = COVERAGE_CHECKS / "check_transaction_guard_migration_2555.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5746,7 +5759,7 @@ def cmd_dead_coercion_dirty_cone_coverage():
     cone avoids dirty-mask allocation; full-scan path unchanged without cone.
     """
     print(f"{B}=== DCE dirty-cone scan limit coverage (#2556) ==={N}")
-    script = ROOT / "scripts" / "check_dead_coercion_dirty_cone_2556.py"
+    script = COVERAGE_CHECKS / "check_dead_coercion_dirty_cone_2556.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5764,7 +5777,7 @@ def cmd_lock_order_production_soft_coverage():
     Restricted/Strict → soft audit; sandbox=off → OFF; canary remains opt-in hard.
     """
     print(f"{B}=== production soft lock-order audit coverage (#2557) ==={N}")
-    script = ROOT / "scripts" / "check_lock_order_production_soft_2557.py"
+    script = COVERAGE_CHECKS / "check_lock_order_production_soft_2557.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5783,7 +5796,7 @@ def cmd_coercion_prov_slo_coverage():
     Soft observes only; vacuous 10000 bp with no samples.
     """
     print(f"{B}=== coercion provenance SLO coverage (#2558) ==={N}")
-    script = ROOT / "scripts" / "check_coercion_prov_slo_2558.py"
+    script = COVERAGE_CHECKS / "check_coercion_prov_slo_2558.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5803,7 +5816,7 @@ def cmd_blame_soft_recover_coverage():
     default remains observe-only.
     """
     print(f"{B}=== Soft blame recover/escalate coverage (#2561) ==={N}")
-    script = ROOT / "scripts" / "check_blame_soft_recover_2561.py"
+    script = COVERAGE_CHECKS / "check_blame_soft_recover_2561.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5822,7 +5835,7 @@ def cmd_coercion_dual_require_coverage():
     is active (production/Full/env); Soft keeps #2317 insert path.
     """
     print(f"{B}=== dual-field require-or-drop coverage (#2562) ==={N}")
-    script = ROOT / "scripts" / "check_coercion_dual_require_2562.py"
+    script = COVERAGE_CHECKS / "check_coercion_dual_require_2562.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5841,7 +5854,7 @@ def cmd_linear_cross_closure_escape_coverage():
     production/Full/env hard forces via force_linear_rollback CrossClosureEscape.
     """
     print(f"{B}=== cross-closure linear escape coverage (#2563) ==={N}")
-    script = ROOT / "scripts" / "check_linear_cross_closure_escape_2563.py"
+    script = COVERAGE_CHECKS / "check_linear_cross_closure_escape_2563.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5859,7 +5872,7 @@ def cmd_linear_cross_closure_depth2_coverage():
     AURA_LINEAR_CROSS_CLOSURE_DEPTH default 1; max 2; Soft observe unless hard.
     """
     print(f"{B}=== cross-closure depth-2 free-capture coverage (#2612) ==={N}")
-    script = ROOT / "scripts" / "check_linear_cross_closure_depth2_2612.py"
+    script = COVERAGE_CHECKS / "check_linear_cross_closure_depth2_2612.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5878,7 +5891,7 @@ def cmd_linear_cross_closure_depth_trunc_coverage():
     cone truncation under hard → CrossClosureEscape force.
     """
     print(f"{B}=== cross-closure depth + trunc fail-closed coverage (#2623) ==={N}")
-    script = ROOT / "scripts" / "check_linear_cross_closure_depth_trunc_2623.py"
+    script = COVERAGE_CHECKS / "check_linear_cross_closure_depth_trunc_2623.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5897,7 +5910,7 @@ def cmd_adt_match_goal_table_coverage():
     table capped; existing hard-gate remains authoritative.
     """
     print(f"{B}=== ADT match goal table coverage (#2564) ==={N}")
-    script = ROOT / "scripts" / "check_adt_match_goal_table_2564.py"
+    script = COVERAGE_CHECKS / "check_adt_match_goal_table_2564.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5916,7 +5929,7 @@ def cmd_module_require_freevar_coverage():
     capture free vars (e.g. mutate:*) with top-level parity.
     """
     print(f"{B}=== module require free-var coverage (#2566) ==={N}")
-    script = ROOT / "scripts" / "check_module_require_freevar_2566.py"
+    script = COVERAGE_CHECKS / "check_module_require_freevar_2566.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5935,7 +5948,7 @@ def cmd_try_catch_bind_coverage():
     so (catch (e) e) / string? / list work (stdlib agent/mutate pattern).
     """
     print(f"{B}=== try/catch bind coverage (#2567) ==={N}")
-    script = ROOT / "scripts" / "check_try_catch_bind_2567.py"
+    script = COVERAGE_CHECKS / "check_try_catch_bind_2567.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5954,7 +5967,7 @@ def cmd_symbol_eq_coverage():
     Quote Variable→ConstString so (define d 'commit)(eq? d 'commit) is #t.
     """
     print(f"{B}=== symbol eq? coverage (#2568) ==={N}")
-    script = ROOT / "scripts" / "check_symbol_eq_2568.py"
+    script = COVERAGE_CHECKS / "check_symbol_eq_2568.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5973,7 +5986,7 @@ def cmd_setcode_rebind_coverage():
     honors default (no MakePair packing). Aether closed-loop telemetry.
     """
     print(f"{B}=== set-code/rebind survival coverage (#2569) ==={N}")
-    script = ROOT / "scripts" / "check_setcode_rebind_2569.py"
+    script = COVERAGE_CHECKS / "check_setcode_rebind_2569.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -5992,7 +6005,7 @@ def cmd_aether_denseness_coverage():
     module free-vars survive unimpacted mutate:rebind (orch:parallel).
     """
     print(f"{B}=== Aether denseness residual coverage (#2578) ==={N}")
-    script = ROOT / "scripts" / "check_aether_denseness_2578.py"
+    script = COVERAGE_CHECKS / "check_aether_denseness_2578.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6011,7 +6024,7 @@ def cmd_module_rebind_residual_coverage():
     for non-lambda values; sync value cells after eval-current.
     """
     print(f"{B}=== module rebind residual coverage (#2579) ==={N}")
-    script = ROOT / "scripts" / "check_module_rebind_2579.py"
+    script = COVERAGE_CHECKS / "check_module_rebind_2579.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6030,7 +6043,7 @@ def cmd_hot_strategy_coverage():
     std/hot-update remains AOT .so oriented.
     """
     print(f"{B}=== pure-Aura hot strategy coverage (#2582) ==={N}")
-    script = ROOT / "scripts" / "check_hot_strategy_2582.py"
+    script = COVERAGE_CHECKS / "check_hot_strategy_2582.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6049,7 +6062,7 @@ def cmd_module_load_tail_coverage():
     require errors fail the outer load; tail defines always export.
     """
     print(f"{B}=== module load tail export coverage (#2570) ==={N}")
-    script = ROOT / "scripts" / "check_module_load_tail_2570.py"
+    script = COVERAGE_CHECKS / "check_module_load_tail_2570.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6068,7 +6081,7 @@ def cmd_while_define_oneshot_coverage():
     education warning + preferred outer-define + set! pattern documented.
     """
     print(f"{B}=== while+define oneshot coverage (#2571) ==={N}")
-    script = ROOT / "scripts" / "check_while_define_oneshot_2571.py"
+    script = COVERAGE_CHECKS / "check_while_define_oneshot_2571.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6087,7 +6100,7 @@ def cmd_module_export_display_coverage():
     body string literals; JIT PrimDisplay uses tagged aura_display_value.
     """
     print(f"{B}=== module export multi-display coverage (#2572) ==={N}")
-    script = ROOT / "scripts" / "check_module_export_display_2572.py"
+    script = COVERAGE_CHECKS / "check_module_export_display_2572.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6106,7 +6119,7 @@ def cmd_ir_const_string_intern_coverage():
     hot loops with body literals reuse one heap entry.
     """
     print(f"{B}=== IR ConstString intern coverage (#2573) ==={N}")
-    script = ROOT / "scripts" / "check_ir_const_string_intern_2573.py"
+    script = COVERAGE_CHECKS / "check_ir_const_string_intern_2573.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6125,7 +6138,7 @@ def cmd_write_string_escape_coverage():
     TW io_print_val and JIT aura_display_value agree.
     """
     print(f"{B}=== write string escape coverage (#2574) ==={N}")
-    script = ROOT / "scripts" / "check_write_string_escape_2574.py"
+    script = COVERAGE_CHECKS / "check_write_string_escape_2574.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6145,7 +6158,7 @@ def cmd_jit_dual_string_heap_coverage():
     eval→JIT (aura_alloc_string).
     """
     print(f"{B}=== dual string heap PrimCall coverage (#2575) ==={N}")
-    script = ROOT / "scripts" / "check_jit_dual_string_heap_2575.py"
+    script = COVERAGE_CHECKS / "check_jit_dual_string_heap_2575.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6164,7 +6177,7 @@ def cmd_primcall_narg_coverage():
     count) forwards all args (cap 32). Fixes string-append/substring 3+.
     """
     print(f"{B}=== PrimCall N-arg coverage (#2576) ==={N}")
-    script = ROOT / "scripts" / "check_primcall_narg_2576.py"
+    script = COVERAGE_CHECKS / "check_primcall_narg_2576.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6183,7 +6196,7 @@ def cmd_primcall_str_intern_coverage():
     by content so hot fixed-arg PrimCall loops do not grow heaps O(N).
     """
     print(f"{B}=== PrimCall str intern coverage (#2577) ==={N}")
-    script = ROOT / "scripts" / "check_primcall_str_intern_2577.py"
+    script = COVERAGE_CHECKS / "check_primcall_str_intern_2577.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6203,7 +6216,7 @@ def cmd_linear_three_layer_wire_coverage():
     scan_fail). Soft densify remains zero-cost shape.
     """
     print(f"{B}=== three-layer linear wire inventory coverage (#2559) ==={N}")
-    script = ROOT / "scripts" / "check_linear_three_layer_wire_2559.py"
+    script = COVERAGE_CHECKS / "check_linear_three_layer_wire_2559.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6222,7 +6235,7 @@ def cmd_partial_cone_cap_coverage():
     type_dep degree truncation; #2516 txn order preserved.
     """
     print(f"{B}=== partial cone soft/hard cap coverage (#2560) ==={N}")
-    script = ROOT / "scripts" / "check_partial_cone_cap_2560.py"
+    script = COVERAGE_CHECKS / "check_partial_cone_cap_2560.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6241,7 +6254,7 @@ def cmd_post_densify_linear_type_revalidate_coverage():
     Soft / no densify / no linear → zero cost; fail-closed suppresses Phase 5 success.
     """
     print(f"{B}=== post-densify Linear+Type revalidate coverage (#2353) ==={N}")
-    script = ROOT / "scripts" / "check_post_densify_linear_type_revalidate_2353.py"
+    script = COVERAGE_CHECKS / "check_post_densify_linear_type_revalidate_2353.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6260,7 +6273,7 @@ def cmd_lock_order_audit_2354_coverage():
     instrumented Scheduler wait_map/joiner/orphan/owned + Worker fiber_registry.
     """
     print(f"{B}=== lock-order audit coverage (#2354) ==={N}")
-    script = ROOT / "scripts" / "check_lock_order_audit_2354.py"
+    script = COVERAGE_CHECKS / "check_lock_order_audit_2354.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6279,7 +6292,7 @@ def cmd_type_dep_epoch_prune_coverage():
     dirty invalidate + per-bucket cap bound long AI sessions.
     """
     print(f"{B}=== type_dep epoch prune coverage (#2355) ==={N}")
-    script = ROOT / "scripts" / "check_type_dep_epoch_prune_2355.py"
+    script = COVERAGE_CHECKS / "check_type_dep_epoch_prune_2355.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6298,7 +6311,7 @@ def cmd_reverify_expand_coverage():
     exactly one expanded pass; empty priority → zero cost; TIMEOUT escalate unchanged.
     """
     print(f"{B}=== reverify expand coverage (#2356) ==={N}")
-    script = ROOT / "scripts" / "check_reverify_expand_2356.py"
+    script = COVERAGE_CHECKS / "check_reverify_expand_2356.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6318,7 +6331,7 @@ def cmd_linear_synth_violation_coverage():
     audit remains defense-in-depth.
     """
     print(f"{B}=== linear synth violation coverage (#2357) ==={N}")
-    script = ROOT / "scripts" / "check_linear_synth_violation_2357.py"
+    script = COVERAGE_CHECKS / "check_linear_synth_violation_2357.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6337,7 +6350,7 @@ def cmd_linear_synth_boundary_authority_coverage():
     recovery; Soft Warning does not; counter ownership avoids double-count.
     """
     print(f"{B}=== linear synth boundary authority coverage (#2514) ==={N}")
-    script = ROOT / "scripts" / "check_linear_synth_boundary_authority_2514.py"
+    script = COVERAGE_CHECKS / "check_linear_synth_boundary_authority_2514.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6357,7 +6370,7 @@ def cmd_linear_force_unified_coverage():
     double-counting linear_invariant_fail; Soft Warning never forces.
     """
     print(f"{B}=== linear force unified entry coverage (#2545) ==={N}")
-    script = ROOT / "scripts" / "check_linear_force_unified_2545.py"
+    script = COVERAGE_CHECKS / "check_linear_force_unified_2545.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6376,7 +6389,7 @@ def cmd_type_dirty_txn_order_coverage():
     zero cost; phase counters lock order.
     """
     print(f"{B}=== type dirty txn order coverage (#2516) ==={N}")
-    script = ROOT / "scripts" / "check_type_dirty_txn_order_2516.py"
+    script = COVERAGE_CHECKS / "check_type_dirty_txn_order_2516.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6395,7 +6408,7 @@ def cmd_linear_partial_revalidate_coverage():
     TypeError + set_node_error; Soft Warning; empty set zero cost.
     """
     print(f"{B}=== linear partial revalidate coverage (#2460) ==={N}")
-    script = ROOT / "scripts" / "check_linear_partial_revalidate_2460.py"
+    script = COVERAGE_CHECKS / "check_linear_partial_revalidate_2460.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6414,7 +6427,7 @@ def cmd_occurrence_cache_key_coverage():
     schema-2461 on fidelity-stats.
     """
     print(f"{B}=== occurrence cache key coverage (#2461) ==={N}")
-    script = ROOT / "scripts" / "check_occurrence_cache_key_2461.py"
+    script = COVERAGE_CHECKS / "check_occurrence_cache_key_2461.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6433,7 +6446,7 @@ def cmd_castop_density_hard_coverage():
     mutate still succeeds; HARD=0 soft-only; under budget zero extra action.
     """
     print(f"{B}=== castop density HARD policy coverage (#2358) ==={N}")
-    script = ROOT / "scripts" / "check_castop_density_hard_2358.py"
+    script = COVERAGE_CHECKS / "check_castop_density_hard_2358.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6452,7 +6465,7 @@ def cmd_castop_density_closed_loop_coverage():
     Soft: observe/hint only; under budget resets streak.
     """
     print(f"{B}=== castop density closed-loop coverage (#2459) ==={N}")
-    script = ROOT / "scripts" / "check_castop_density_closed_loop_2459.py"
+    script = COVERAGE_CHECKS / "check_castop_density_closed_loop_2459.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6471,7 +6484,7 @@ def cmd_memo_goal_epoch_health_coverage():
     goals-live, memo-live/stale, delta, wired). No solver behavior change.
     """
     print(f"{B}=== memo-goal epoch health coverage (#2359) ==={N}")
-    script = ROOT / "scripts" / "check_memo_goal_epoch_health_2359.py"
+    script = COVERAGE_CHECKS / "check_memo_goal_epoch_health_2359.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6490,7 +6503,7 @@ def cmd_densify_envframe_ok_coverage():
     scan + dual-path clean into Phase 5 overall_ok gate.
     """
     print(f"{B}=== densify envframe_ok coverage (#2361) ==={N}")
-    script = ROOT / "scripts" / "check_densify_envframe_ok_2361.py"
+    script = COVERAGE_CHECKS / "check_densify_envframe_ok_2361.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6509,7 +6522,7 @@ def cmd_densify_last_call_axes_coverage():
     call-seq + fail codes; schema-2376 on lifetime-contract-snapshot.
     """
     print(f"{B}=== densify last-call axes coverage (#2376) ==={N}")
-    script = ROOT / "scripts" / "check_densify_last_call_axes_2376.py"
+    script = COVERAGE_CHECKS / "check_densify_last_call_axes_2376.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6528,7 +6541,7 @@ def cmd_envframe_ownership_steal_densify_coverage():
     boundaries. Soft/empty set free. Hold-pin Guard retained.
     """
     print(f"{B}=== envframe ownership steal+densify coverage (#2362) ==={N}")
-    script = ROOT / "scripts" / "check_envframe_ownership_steal_densify_2362.py"
+    script = COVERAGE_CHECKS / "check_envframe_ownership_steal_densify_2362.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6547,7 +6560,7 @@ def cmd_general_object_pin_adopt_coverage():
     Moving densify remap/verify retained; Soft zero cost.
     """
     print(f"{B}=== general object pin adopt coverage (#2363) ==={N}")
-    script = ROOT / "scripts" / "check_general_object_pin_adopt_2363.py"
+    script = COVERAGE_CHECKS / "check_general_object_pin_adopt_2363.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6566,7 +6579,7 @@ def cmd_panic_defer_after_densify_coverage():
     Soft free; AURA_PANIC_CONTRACT=hard fail-closed.
     """
     print(f"{B}=== panic defer after densify coverage (#2364) ==={N}")
-    script = ROOT / "scripts" / "check_panic_defer_after_densify_2364.py"
+    script = COVERAGE_CHECKS / "check_panic_defer_after_densify_2364.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6585,7 +6598,7 @@ def cmd_densify_root_closure_closed_loop_coverage():
     revalidate after densify; documented densify-success order.
     """
     print(f"{B}=== densify root+closure closed-loop coverage (#2365) ==={N}")
-    script = ROOT / "scripts" / "check_densify_root_closure_closed_loop_2365.py"
+    script = COVERAGE_CHECKS / "check_densify_root_closure_closed_loop_2365.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6604,7 +6617,7 @@ def cmd_epoch_invariant_walk_coverage():
     MustDeopt walk after atomic_bump_epochs_and_stamp_bridge.
     """
     print(f"{B}=== epoch invariant walk coverage (#2366) ==={N}")
-    script = ROOT / "scripts" / "check_epoch_invariant_walk_2366.py"
+    script = COVERAGE_CHECKS / "check_epoch_invariant_walk_2366.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6624,7 +6637,7 @@ def cmd_epoch_invariant_periodic_coverage():
     by mode=Soft + production_defaults_active + period_ms rate limit.
     """
     print(f"{B}=== epoch invariant periodic coverage (#2640) ==={N}")
-    script = ROOT / "scripts" / "check_epoch_invariant_periodic_coverage.py"
+    script = COVERAGE_CHECKS / "check_epoch_invariant_periodic_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6643,7 +6656,7 @@ def cmd_reload_recovery_query_coverage():
     StormLevel, region masks, reemit policy, last force-JIT reason/epoch.
     """
     print(f"{B}=== reload recovery query coverage (#2367) ==={N}")
-    script = ROOT / "scripts" / "check_reload_recovery_query_2367.py"
+    script = COVERAGE_CHECKS / "check_reload_recovery_query_2367.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6662,7 +6675,7 @@ def cmd_densify_remap_pairing_coverage():
     Soft vacuous; inject RootRemap fail suppresses densify success metrics.
     """
     print(f"{B}=== densify remap pairing coverage (#2368) ==={N}")
-    script = ROOT / "scripts" / "check_densify_remap_pairing_2368.py"
+    script = COVERAGE_CHECKS / "check_densify_remap_pairing_2368.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6681,7 +6694,7 @@ def cmd_live_closure_stable_id_only_coverage():
     Production security defaults force fallback off.
     """
     print(f"{B}=== live-closure stable_func_id only coverage (#2369) ==={N}")
-    script = ROOT / "scripts" / "check_live_closure_stable_id_only_2369.py"
+    script = COVERAGE_CHECKS / "check_live_closure_stable_id_only_2369.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6700,7 +6713,7 @@ def cmd_specjit_per_eval_storm_isolation_coverage():
     ShapeProfiler does not bump global shape_version under PerEval.
     """
     print(f"{B}=== SpecJIT PerEval storm isolation coverage (#2370) ==={N}")
-    script = ROOT / "scripts" / "check_specjit_per_eval_storm_isolation_2370.py"
+    script = COVERAGE_CHECKS / "check_specjit_per_eval_storm_isolation_2370.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6719,7 +6732,7 @@ def cmd_specjit_pereval_storm_e2e_coverage():
     no process-global shape_version bump under PerEval + concurrent foreign skips.
     """
     print(f"{B}=== SpecJIT PerEval storm e2e isolation coverage (#2504) ==={N}")
-    script = ROOT / "scripts" / "check_specjit_pereval_storm_e2e_2504.py"
+    script = COVERAGE_CHECKS / "check_specjit_pereval_storm_e2e_2504.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6738,7 +6751,7 @@ def cmd_cross_cow_soft_migrate_coverage():
     for freed / linear-moved / far-behind. Production default soft on.
     """
     print(f"{B}=== cross-COW soft migrate coverage (#2371) ==={N}")
-    script = ROOT / "scripts" / "check_cross_cow_soft_migrate_2371.py"
+    script = COVERAGE_CHECKS / "check_cross_cow_soft_migrate_2371.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6757,7 +6770,7 @@ def cmd_cross_cow_drift_contract_coverage():
     disabled hard with Agent-facing reason counters + query keys.
     """
     print(f"{B}=== cross-COW drift contract coverage (#2505) ==={N}")
-    script = ROOT / "scripts" / "check_cross_cow_drift_contract_2505.py"
+    script = COVERAGE_CHECKS / "check_cross_cow_drift_contract_2505.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6777,7 +6790,7 @@ def cmd_chaos_mutate_steal_gc_mailbox_coverage():
     mismatch self-tests prove fail criteria.
     """
     print(f"{B}=== chaos mutate×steal×GC×mailbox coverage (#2352) ==={N}")
-    script = ROOT / "scripts" / "check_chaos_mutate_steal_gc_mailbox_2352.py"
+    script = COVERAGE_CHECKS / "check_chaos_mutate_steal_gc_mailbox_2352.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6797,7 +6810,7 @@ def cmd_production_concurrency_coverage():
     PR smoke path stays short (no FULL / no PRODUCTION_CONCURRENCY_GATE / no SOAK).
     """
     print(f"{B}=== production-concurrency coverage (#2380) ==={N}")
-    script = ROOT / "scripts" / "check_production_concurrency_gate_2380.py"
+    script = COVERAGE_CHECKS / "check_production_concurrency_gate_2380.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6813,7 +6826,7 @@ def cmd_production_concurrency_coverage():
 def cmd_production_concurrency_soak_coverage():
     """Issue #2513: multi-fiber soak extension static AC contract rows."""
     print(f"{B}=== production-concurrency soak coverage (#2513) ==={N}")
-    script = ROOT / "scripts" / "check_production_concurrency_soak_2513.py"
+    script = COVERAGE_CHECKS / "check_production_concurrency_soak_2513.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -6828,7 +6841,7 @@ def cmd_production_concurrency_soak_coverage():
 def cmd_chaos_pr_hard_fail_coverage():
     """Issue #2554: static contract for PR chaos hard-fail deployment gate."""
     print(f"{B}=== chaos PR hard-fail gate coverage (#2554) ==={N}")
-    script = ROOT / "scripts" / "check_chaos_pr_hard_fail_gate_2554.py"
+    script = COVERAGE_CHECKS / "check_chaos_pr_hard_fail_gate_2554.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7040,7 +7053,7 @@ def cmd_layout_stamp_shape_version_fence_coverage():
       AC5: dual-worker stress test surface
     """
     print(f"{B}=== LayoutStamp + shape_version fence coverage (#2255) ==={N}")
-    script = ROOT / "scripts" / "check_layout_stamp_shape_version_fence_coverage.py"
+    script = COVERAGE_CHECKS / "check_layout_stamp_shape_version_fence_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7066,7 +7079,7 @@ def cmd_soa_single_source_of_truth_coverage():
       AC5: test surface covers #2254
     """
     print(f"{B}=== SoA single source of truth coverage (#2254) ==={N}")
-    script = ROOT / "scripts" / "check_soa_single_source_of_truth_coverage.py"
+    script = COVERAGE_CHECKS / "check_soa_single_source_of_truth_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7094,7 +7107,7 @@ def cmd_hold_aware_steal_scoring_coverage():
       AC4: mixed-MB-load steal distribution test source-cite
     """
     print(f"{B}=== hold-aware work-steal scoring coverage (#2253) ==={N}")
-    script = ROOT / "scripts" / "check_hold_aware_steal_scoring_coverage.py"
+    script = COVERAGE_CHECKS / "check_hold_aware_steal_scoring_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7120,7 +7133,7 @@ def cmd_aot_stale_probe_hard_reject_coverage():
       AC5: concurrent mutate+apply -> hard-reject count > 0 + zero native hits
     """
     print(f"{B}=== AOT stale probe hard-reject coverage (#2252) ==={N}")
-    script = ROOT / "scripts" / "check_aot_stale_probe_hard_reject_coverage.py"
+    script = COVERAGE_CHECKS / "check_aot_stale_probe_hard_reject_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7146,7 +7159,7 @@ def cmd_env_gen_fence_coverage():
       AC5: dual-region concurrent apply on shared parent AC
     """
     print(f"{B}=== env_gen fence coverage (#2251) ==={N}")
-    script = ROOT / "scripts" / "check_env_gen_fence_coverage.py"
+    script = COVERAGE_CHECKS / "check_env_gen_fence_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7172,7 +7185,7 @@ def cmd_layout_stamp_fence_coverage():
       AC5: dual-worker integration AC (test_layout_stamp_2170.cpp)
     """
     print(f"{B}=== LayoutStamp fence coverage (#2250) ==={N}")
-    script = ROOT / "scripts" / "check_layout_stamp_fence_coverage.py"
+    script = COVERAGE_CHECKS / "check_layout_stamp_fence_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7202,7 +7215,7 @@ def cmd_closure_sync_remount_2602_coverage():
     preserved), and ac2602_* test sections.
     """
     print(f"{B}=== closure sync remount coverage (#2602) ==={N}")
-    script = ROOT / "scripts" / "check_closure_sync_remount_2602.py"
+    script = COVERAGE_CHECKS / "check_closure_sync_remount_2602.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7224,7 +7237,7 @@ def cmd_orch_scope_child_2631_coverage():
     Validates the 6-AC contract from issue body:
       AC1: spawn_child hierarchy + cancel_all top-down propagation.
       AC2: ~AgentScope / scope-join-all drains children then parent.
-      AC3: scripts/check_orch_mvp_scope.py --strict still green
+      AC3: scripts/coverage/checks/check_orch_mvp_scope.py --strict still green
            (no AgentRegistry / global_agent_registry).
       AC4: query:orch-module-stats metric + schema keys
            (scope-child-total, scope-child-wired, schema-2631,
@@ -7236,7 +7249,7 @@ def cmd_orch_scope_child_2631_coverage():
            check_orch_mvp_scope.py).
     """
     print(f"{B}=== orch:scope-child hierarchical AgentScope coverage (#2631) ==={N}")
-    script = ROOT / "scripts" / "check_orch_scope_child_2631.py"
+    script = COVERAGE_CHECKS / "check_orch_scope_child_2631.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7268,7 +7281,7 @@ def cmd_security_schedule_mutate_admit_2630_coverage():
            (ordering: starvation → schedule → quota).
     """
     print(f"{B}=== security-schedule mutate-admit coverage (#2630) ==={N}")
-    script = ROOT / "scripts" / "check_security_schedule_mutate_admit_2630.py"
+    script = COVERAGE_CHECKS / "check_security_schedule_mutate_admit_2630.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7297,7 +7310,7 @@ def cmd_reemit_auto_drain_boundary_2604_coverage():
            per #81967 with ac2604_* sections).
     """
     print(f"{B}=== reemit auto-drain boundary coverage (#2604) ==={N}")
-    script = ROOT / "scripts" / "check_reemit_auto_drain_boundary_2604.py"
+    script = COVERAGE_CHECKS / "check_reemit_auto_drain_boundary_2604.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7328,7 +7341,7 @@ def cmd_cross_cow_soft_migrate_obs_2603_coverage():
            (extended per #81967 with ac2603_* sections).
     """
     print(f"{B}=== cross-COW soft-migrate observability coverage (#2603) ==={N}")
-    script = ROOT / "scripts" / "check_cross_cow_soft_migrate_obs_2603.py"
+    script = COVERAGE_CHECKS / "check_cross_cow_soft_migrate_obs_2603.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7352,7 +7365,7 @@ def cmd_aot_reload_policy_coverage():
       AC6: success on 2nd Region attempt -> success counter
     """
     print(f"{B}=== AOT reload Region|Staging policy coverage (#2249) ==={N}")
-    script = ROOT / "scripts" / "check_aot_reload_policy_coverage.py"
+    script = COVERAGE_CHECKS / "check_aot_reload_policy_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7378,7 +7391,7 @@ def cmd_adaptive_thr_coverage():
       AC5: StormLevel still ORs (preserved from #2112/#2190)
     """
     print(f"{B}═══ adaptive relower threshold coverage (#2248) ═══{N}")
-    script = ROOT / "scripts" / "check_adaptive_thr_coverage.py"
+    script = COVERAGE_CHECKS / "check_adaptive_thr_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7404,7 +7417,7 @@ def cmd_dual_dep_graph_parity_coverage():
       AC5: this gate (CI contract rows)
     """
     print(f"{B}═══ dual dep_graph parity coverage (#2247) ═══{N}")
-    script = ROOT / "scripts" / "check_dual_dep_graph_parity_coverage.py"
+    script = COVERAGE_CHECKS / "check_dual_dep_graph_parity_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7429,7 +7442,7 @@ def cmd_cross_function_impact_scope_coverage():
     AC8/AC9 in test_instruction_level_impact_partial_2109.cpp.
     """
     print(f"{B}═══ cross-fn impact scope coverage (#2179 / #2246) ═══{N}")
-    script = ROOT / "scripts" / "check_cross_function_impact_scope_coverage.py"
+    script = COVERAGE_CHECKS / "check_cross_function_impact_scope_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -7455,7 +7468,7 @@ def cmd_source_to_ir_strict():
       AC5: this gate (CI contract rows)
     """
     print(f"{B}═══ source_to_ir Strict coverage (#2244) ═══{N}")
-    script = ROOT / "scripts" / "check_source_to_ir_strict_coverage.py"
+    script = COVERAGE_CHECKS / "check_source_to_ir_strict_coverage.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -8200,7 +8213,7 @@ def cmd_coverage():
 
     # Report
     print(f"{B}── llvm-cov report ──{N}")
-    report_script = ROOT / "scripts" / "llvm_cov_report.py"
+    report_script = TOOLS / "llvm_cov_report.py"
     if not report_script.is_file():
         fail(f"missing {report_script}")
         return 1
@@ -8272,7 +8285,7 @@ REPRO_SOURCE_DATE_EPOCH = "1704067200"  # 2024-01-01T00:00:00Z
 # directive (scripts/ audit wave 9). The reproducible Release build path
 # (SOURCE_DATE_EPOCH + --ffile-prefix-map + ccache_disable) remains shipped;
 # only the verify + security-scan entry points are dropped.
-SBOM_SCRIPT = ROOT / "scripts" / "gen_sbom.py"
+SBOM_SCRIPT = TOOLS / "gen_sbom.py"
 
 
 def _repro_cmake_flags() -> tuple[str, str, str]:
@@ -8394,7 +8407,7 @@ def cmd_occurrence_densify_root_scan_2642_coverage():
     the flag hard-AND — see type_checker.ixx:3867 densify gate.
     """
     print(f"{B}=== densify root scan (#2642) ==={N}")
-    script = ROOT / "scripts" / "check_occurrence_densify_root_scan_2642.py"
+    script = COVERAGE_CHECKS / "check_occurrence_densify_root_scan_2642.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1
@@ -8414,7 +8427,7 @@ def cmd_instance_depth_repair_hint_2643_coverage():
     full solve. Zero cost on SOLVED / no INSTANCE.
     """
     print(f"{B}=== instance depth repair hint (#2643) ==={N}")
-    script = ROOT / "scripts" / "check_instance_depth_repair_hint_2643.py"
+    script = COVERAGE_CHECKS / "check_instance_depth_repair_hint_2643.py"
     if not script.exists():
         fail(f"missing {script}")
         return 1

@@ -1,0 +1,147 @@
+{
+  "issue": 2523,
+  "title": "Issue #2523: residual workspace_mtx contention stats + soft path.",
+  "ok": "OK: Issue #2523 workspace_mtx residual contention — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2523",
+        "#2523",
+        "Soft path residual",
+        "workspace_mtx_optimistic_hit_total",
+        "query:workspace-mtx-contention-stats"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "contains": [
+        "ac1_source_docs"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "try_acquire_for_region"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "workspace_mtx_optimistic_hit_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "contains": [
+        "ac2_disjoint_not_dual_global"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "GlobalExclusive",
+        "workspace_global_exclusive_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "contains": [
+        "ac3_global_and_fallback"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "contains": [
+        "ac4_mixed_stress"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "query:workspace-mtx-contention-stats",
+        "workspace-mtx-hold-ns-p99",
+        "workspace-mtx-optimistic-hit-total",
+        "workspace-mtx-region-collision-total",
+        "workspace-mtx-waiters-peak",
+        "schema-2523"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_observability.cpp",
+      "contains": [
+        "query:workspace-mtx-contention-stats"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "workspace_mtx_optimistic_hit_total",
+        "workspace_mtx_region_collision_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "contains": [
+        "ac5_contention_query"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "try_acquire_for_region",
+        "#2523"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_workspace_mtx_contention_2523.cpp",
+      "contains": [
+        "ac6_throughput"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_workspace_mtx_contention_2523"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "build.py",
+      "contains": [
+        "check_workspace_mtx_contention_2523",
+        "cmd_workspace_mtx_contention_coverage"
+      ]
+    },
+    {
+      "ac": "retain",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2121"
+      ]
+    },
+    {
+      "ac": "retain",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "workspace_region_acquire_total"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_workspace_mtx_contention_2523.py"
+}

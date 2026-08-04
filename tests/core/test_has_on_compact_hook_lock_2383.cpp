@@ -177,7 +177,7 @@ static void ac3_semantics() {
     CHECK(build.find("check_has_on_compact_hook_lock_2383") != std::string::npos ||
               build.find("cmd_has_on_compact_hook_lock_coverage") != std::string::npos,
           "AC3: build.py gate entry");
-    const auto gate = read_file("scripts/check_has_on_compact_hook_lock_2383.py");
+    const auto gate = read_file("scripts/coverage/checks/check_has_on_compact_hook_lock_2383.py");
     CHECK(!gate.empty() && gate.find("Issue #2383") != std::string::npos,
           "AC3: coverage linter present");
 }

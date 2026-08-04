@@ -112,7 +112,7 @@ static void ac5_gate() {
     std::println("\n--- #2477 AC5: test + gate wiring ---");
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
-    auto script = read_file("scripts/check_emit_object_deprecated_2477.py");
+    auto script = read_file("scripts/coverage/checks/check_emit_object_deprecated_2477.py");
     CHECK(build.find("check_emit_object_deprecated_2477") != std::string::npos,
           "AC5: check script in build.py");
     CHECK(build.find("cmd_emit_object_deprecated_coverage") != std::string::npos,

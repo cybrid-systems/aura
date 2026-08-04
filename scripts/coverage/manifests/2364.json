@@ -1,0 +1,116 @@
+{
+  "issue": 2364,
+  "title": "Issue #2364: PanicCheckpoint residual × densify closed-loop coverage.",
+  "ok": "OK: Issue #2364 PanicCheckpoint residual × densify — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "audit_panic_defer_after_densify",
+        "free_path"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "contains": [
+        "ac1_soft_free"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "g_panic_defer_after_densify_cleared_total",
+        "force_clear_all_gc_defer_for_evaluator"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "contains": [
+        "ac2_clear_orphan_after_densify"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "g_panic_defer_after_densify_rearmed_total",
+        "try_arm_gc_defer_pending_panic_for"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "contains": [
+        "ac3_rearm_for_live_checkpoint"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "AURA_PANIC_CONTRACT",
+        "panic_contract_hard_enabled",
+        "g_panic_defer_after_densify_hard_fail_total",
+        "std::abort()"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2364",
+        "audit_panic_defer_after_densify"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "panic_defer_after_densify_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2364",
+        "issue-2364",
+        "panic-defer-after-densify-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_panic_defer_after_densify_2364"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_panic_defer_after_densify_2364",
+        "cmd_panic_defer_after_densify_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_panic_defer_after_densify_2364.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "force_clear_residual_defer_for_evaluator"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_panic_defer_after_densify_2364.py"
+}

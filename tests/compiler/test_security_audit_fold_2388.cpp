@@ -247,7 +247,7 @@ static void ac5_source_and_gate() {
     const auto sec = read_file("src/compiler/evaluator_security.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto linter = read_file("scripts/check_security_audit_fold_2388.py");
+    const auto linter = read_file("scripts/coverage/checks/check_security_audit_fold_2388.py");
 
     CHECK(cap.find("emit_security_event_durable") != std::string::npos,
           "AC5: capability record_audit dual-writes via emit_security_event_durable");
@@ -267,7 +267,7 @@ static void ac5_source_and_gate() {
           "AC5: build.py wires check_security_audit_fold_2388");
     CHECK(build.find("cmd_security_audit_fold_coverage") != std::string::npos,
           "AC5: build.py cmd_security_audit_fold_coverage");
-    CHECK(!linter.empty(), "AC5: scripts/check_security_audit_fold_2388.py exists");
+    CHECK(!linter.empty(), "AC5: scripts/coverage/checks/check_security_audit_fold_2388.py exists");
     (void)g_workspace_isolation(); // keep link / header live
 }
 

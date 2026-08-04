@@ -166,7 +166,7 @@ static void ac5_source_and_gate() {
     CHECK(build.find("check_grant_macro_self_evo_stamp_2386") != std::string::npos ||
               build.find("cmd_grant_macro_self_evo_stamp_coverage") != std::string::npos,
           "AC5: build.py gate entry");
-    const auto gate = read_file("scripts/check_grant_macro_self_evo_stamp_2386.py");
+    const auto gate = read_file("scripts/coverage/checks/check_grant_macro_self_evo_stamp_2386.py");
     CHECK(!gate.empty() && gate.find("Issue #2386") != std::string::npos,
           "AC5: coverage linter present");
 }

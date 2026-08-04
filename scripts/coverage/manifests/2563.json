@@ -1,0 +1,155 @@
+{
+  "issue": 2563,
+  "title": "Issue #2563: cross-closure linear escape discovery coverage.",
+  "ok": "OK: Issue #2563 cross-closure linear escape — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "discover_cross_closure_linear_escapes"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "discover_cross_closure_linear_escapes"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "discover_cross_closure_linear_escapes",
+        "linear-cross-closure-escape"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "CrossClosureEscape"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "linear_cross_closure_force_total",
+        "linear_cross_closure_observe_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "contains": [
+        "ac1_discover_hard_soft"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "CrossBatchEscape",
+        "PostMutateLinear"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "contains": [
+        "ac2_zero_and_existing"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "force_linear_rollback"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "force_linear_rollback",
+        "case LinearForceAuthority::CrossClosureEscape"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "contains": [
+        "ac3_unified_entry"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "schema-2563",
+        "linear-cross-closure-escape-total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "linear_cross_closure_hard_enabled",
+        "cross_closure_linear_escape"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "contains": [
+        "ac4_schema"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "partial_cone_soft_cap_for_linear"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "linear_cross_closure_cap_trunc_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "cap_truncations"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_linear_cross_closure_escape_2563"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_linear_cross_closure_escape_2563",
+        "cmd_linear_cross_closure_escape_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_linear_cross_closure_escape_2563.cpp",
+      "contains": [
+        "ac5_cone_cap"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_linear_cross_closure_escape_2563.py"
+}

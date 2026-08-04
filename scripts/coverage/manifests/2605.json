@@ -1,0 +1,106 @@
+{
+  "issue": 2605,
+  "title": "Issue #2605: explicit anonymous / residual sid=0 policy.",
+  "ok": "OK: Issue #2605 anonymous/residual sid=0 policy — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #2605",
+        "aura_bump_live_closure_stable_id_backfill_total",
+        "aura_bump_live_closure_named_name_fallback_reject_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/aura_jit_runtime.cpp",
+        "src/compiler/aura_jit_bridge.h"
+      ],
+      "contains": [
+        "aura_test_force_closure_stable_func_id"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "live_closure_named_name_fallback_reject_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "aura_bump_live_closure_named_name_fallback_reject_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/aura_jit_bridge.cpp",
+        "src/compiler/aura_jit_bridge_stub.cpp"
+      ],
+      "contains": [
+        "aura_bump_live_closure_named_name_fallback_reject_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "anonymous / residual sid=0",
+        "MustDeopt"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "AURA_NAMED_NAME_FALLBACK_HARD"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "paths": [
+        "src/compiler/evaluator_primitives_obs_eval.cpp",
+        "src/compiler/evaluator_primitives_query.cpp"
+      ],
+      "contains": [
+        "schema-2605",
+        "issue-2605",
+        "stable-id-residual-backfill-total",
+        "stable-id-assign-total",
+        "stable-id-preserve-total",
+        "named-name-fallback-reject-total",
+        "residual-sid0-policy-wired",
+        "anonymous-must-deopt-policy-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy_2605.cpp",
+      "contains": [
+        "ac1_named_soak_no_residual_growth",
+        "ac3_residual_one_shot_backfill"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_anonymous_residual_stable_id_policy_2605"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_anonymous_residual_stable_id_policy_2605",
+        "cmd_anonymous_residual_stable_id_policy_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_anonymous_residual_stable_id_policy_2605.py"
+}

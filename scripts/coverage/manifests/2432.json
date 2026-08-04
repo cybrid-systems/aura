@@ -1,0 +1,106 @@
+{
+  "issue": 2432,
+  "title": "Issue #2432: IR SoA generation fence on LayoutStamp (8th field).",
+  "ok": "OK: ir soa layout stamp #2432 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/layout_stamp.hh",
+      "contains": [
+        "Issue #2432",
+        "ir_soa_generation",
+        "kLayoutStampSchema = 2432"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "resume_ir_soa_generation_",
+        "resume_ir_soa_generation()"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "resume_ir_soa_generation() != cur.ir_soa_generation"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_ir_soa_layout_stamp_2432.cpp",
+      "contains": [
+        "2432 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_soa.ixx",
+      "contains": [
+        "g_ir_soa_generation_fence",
+        "current_ir_soa_generation_fence",
+        "g_ir_soa_generation_fence().fetch_add"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_ir_soa_layout_stamp_2432.cpp",
+      "contains": [
+        "2432 AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "ir_generation_fence_hit_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "ir_generation_fence_hit_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "stamp.ir_soa_generation"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "ir-generation-fence-hit-total",
+        "schema-2432"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_ir_soa_layout_stamp_2432.cpp",
+      "contains": [
+        "2432 AC4"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_ir_soa_layout_stamp_2432",
+        "cmd_ir_soa_layout_stamp_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_ir_soa_layout_stamp_2432"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_ir_soa_layout_stamp_2432.py"
+}

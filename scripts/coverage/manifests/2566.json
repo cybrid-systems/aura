@@ -1,0 +1,102 @@
+{
+  "issue": 2566,
+  "title": "Issue #2566: non-std module free-var resolve of required std bindings.",
+  "ok": "OK: Issue #2566 module free-var require inject — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_module_loader.cpp",
+      "contains": [
+        "RequireInjectGuard",
+        "require_inject_env_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "contains": [
+        "ac1_module_freevar_parity"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_module.cpp",
+      "contains": [
+        "require_inject_env_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "require_inject_env_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "contains": [
+        "ac2_toplevel_inject"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "#2566",
+        "cur == 0"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "contains": [
+        "ac4_soa_live_top"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_module_loader.cpp",
+      "contains": [
+        "#2566"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_module.cpp",
+      "contains": [
+        "#2566"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "contains": [
+        "ac3_source_cite_inject"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_module_require_freevar_2566"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_module_require_freevar_2566",
+        "cmd_module_require_freevar_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_module_require_freevar_2566.cpp",
+      "contains": [
+        "ac5_gate"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_module_require_freevar_2566.py"
+}

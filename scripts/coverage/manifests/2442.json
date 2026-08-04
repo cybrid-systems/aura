@@ -1,0 +1,70 @@
+{
+  "issue": 2442,
+  "title": "Issue #2442: clear_macro_dirty_all concurrent-safe vs macro_dirty readers.",
+  "ok": "OK: clear_macro_dirty concurrent #2442 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2442",
+        "clear_macro_dirty_all",
+        "dirty_column_mtx_.mutable_get()",
+        "std::atomic_ref<std::uint8_t>(b).store(0",
+        "unique_lock"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_clear_macro_dirty_concurrent_2442.cpp",
+      "contains": [
+        "2442 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "macro_dirty(NodeId id)",
+        "shared_lock"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_clear_macro_dirty_concurrent_2442.cpp",
+      "contains": [
+        "2442 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_clear_macro_dirty_concurrent_2442.cpp",
+      "contains": [
+        "2442 AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "macro_dirty_count"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_clear_macro_dirty_concurrent_2442",
+        "cmd_clear_macro_dirty_concurrent_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_clear_macro_dirty_concurrent_2442"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_clear_macro_dirty_concurrent_2442.py"
+}

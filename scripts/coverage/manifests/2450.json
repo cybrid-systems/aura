@@ -1,0 +1,62 @@
+{
+  "issue": 2450,
+  "title": "Issue #2450: param_annot_data_ single-threaded mutation contract.",
+  "ok": "OK: param_annot_data_ mutation contract #2450 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2450",
+        "param_annot_data_",
+        "single-threaded mutation"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_param_annot_mutation_contract_2450.cpp",
+      "contains": [
+        "2450 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "param_annot_data_.resize",
+        "add_lambda",
+        "set_lambda_params"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_param_annot_mutation_contract_2450.cpp",
+      "contains": [
+        "2450 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_param_annot_mutation_contract_2450.cpp",
+      "contains": [
+        "2450 AC3"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_param_annot_mutation_contract_2450",
+        "cmd_param_annot_mutation_contract_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_param_annot_mutation_contract_2450"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_param_annot_mutation_contract_2450.py"
+}

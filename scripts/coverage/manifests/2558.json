@@ -1,0 +1,112 @@
+{
+  "issue": 2558,
+  "title": "Issue #2558: coercion provenance completeness SLO coverage.",
+  "ok": "OK: Issue #2558 coercion provenance SLO — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "Issue #2558",
+        "evaluate_coercion_provenance_slo",
+        "g_coercion_prov_slo_force_full_pending",
+        "kCoercionProvSloBpDefault"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "contains": [
+        "ac1_production_slo_force"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "g_coercion_prov_slo_observe_only_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "contains": [
+        "ac2_soft_observe"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "vacuously"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "contains": [
+        "ac3_vacuous"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "evaluate_coercion_provenance_slo"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "consume_coercion_prov_slo_force_full"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "#2512"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "contains": [
+        "ac4_stamp_backstop"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "query:coercion-provenance-health",
+        "schema-2558",
+        "force-full-pending"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_coercion_prov_slo_2558"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_coercion_prov_slo_2558",
+        "cmd_coercion_prov_slo_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_coercion_prov_slo_2558.cpp",
+      "contains": [
+        "ac5_source_schema"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_coercion_prov_slo_2558.py"
+}

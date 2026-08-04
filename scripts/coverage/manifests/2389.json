@@ -1,0 +1,119 @@
+{
+  "issue": 2389,
+  "title": "Issue #2389: query:security-health single Agent score.",
+  "ok": "OK: Issue #2389 security-health — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/security_health.hh",
+      "contains": [
+        "health_bp",
+        "effect_deny_rate_bp",
+        "isolation_deny_rate_bp",
+        "fence_health_bp",
+        "wal_posture_bp",
+        "wrap_pressure_bp",
+        "compute_security_health",
+        "30u"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_security_health_2389.cpp",
+      "contains": [
+        "ac1_vacuous_healthy"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/security_health.hh",
+      "contains": [
+        "effect-deny",
+        "isolation-deny",
+        "epoch-fence",
+        "wal-off",
+        "ring-wrap"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_security_health_2389.cpp",
+      "contains": [
+        "ac2_effect_deny_and_priority"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "query:security-health",
+        "register_stats_impl",
+        "snapshot_capability_effect_stats",
+        "snapshot_tenant_isolation_stats"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_security_health_2389.cpp",
+      "contains": [
+        "ac3_existing_queries_unchanged"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "health-bp",
+        "health-budget-bp",
+        "force-reason",
+        "schema-2389",
+        "security-health-wired",
+        "component-effect-deny-rate-bp"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_security_health_2389.cpp",
+      "contains": [
+        "ac4_query_keys"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "Issue #2389"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_observability.cpp",
+      "contains": [
+        "query:security-health"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_security_health_2389"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_security_health_2389",
+        "cmd_security_health_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_security_health_2389.cpp",
+      "contains": [
+        "ac5_source_cite"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_security_health_2389.py"
+}

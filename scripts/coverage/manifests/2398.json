@@ -1,0 +1,116 @@
+{
+  "issue": 2398,
+  "title": "Issue #2398: mailbox_bp_recent_total quiet-period window / decay.",
+  "ok": "OK: Issue #2398 mailbox BP recent window — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #2398",
+        "note_mailbox_bp_recent_event",
+        "maybe_decay_mailbox_bp_recent",
+        "g_mailbox_bp_last_event_us",
+        "AURA_ORCH_BP_WINDOW_MS",
+        "resolve_mailbox_bp_window_ms"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/orch/test_mailbox_bp_admit_2228.cpp",
+      "contains": [
+        "2398 AC1"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/orch/test_orch_admission_decay.cpp",
+      "contains": [
+        "note_mailbox_bp_recent_event"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "send_backpressure_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_mailbox_bp_admit_2228.cpp",
+      "contains": [
+        "2398 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "threshold > 0"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_mailbox_bp_admit_2228.cpp",
+      "contains": [
+        "2398 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "mailbox-bp-window-ms",
+        "mailbox-bp-decay-wired",
+        "schema-2398",
+        "issue-2398",
+        "schema-2228"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kMailboxBpRecentWindowIssue"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_mailbox_bp_admit_2228.cpp",
+      "contains": [
+        "2398 AC4"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "note_mailbox_bp_recent_event"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_mailbox_bp_admit_2228.cpp",
+      "contains": [
+        "2398 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_mailbox_bp_recent_window_2398",
+        "cmd_mailbox_bp_recent_window_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_mailbox_bp_admit_2228"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_mailbox_bp_recent_window_2398.py"
+}

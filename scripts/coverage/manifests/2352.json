@@ -1,0 +1,75 @@
+{
+  "issue": 2352,
+  "title": "Issue #2352: chaos mutate × steal × GC × mailbox production gate.",
+  "ok": "OK: Issue #2352 chaos mutate×steal×GC×mailbox — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "AURA_CHAOS_SEED",
+        "run_chaos_pass",
+        "ac1_smoke",
+        "ac1_full_optional",
+        "AURA_CHAOS_FULL"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "ac2_inject_residual_panic",
+        "arm_gc_defer_pending_panic_for",
+        "residual_panic"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "ac3_inject_snapshot_mismatch",
+        "mutation_steal_snapshot_mismatch_total",
+        "AURA_STEAL_SNAPSHOT_HARD",
+        "bump_mutation_steal_snapshot_mismatch"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "90",
+        "resume_from_gc",
+        "watchdog",
+        "defer_reasons_snapshot"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox_2352.cpp",
+      "contains": [
+        "Issue #2352",
+        "AURA_CHAOS_WORKERS",
+        "AURA_CHAOS_DURATION_S",
+        "AURA_CHAOS_FIBERS",
+        "MultiFiberMailbox",
+        "MutationBoundaryGuard"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_chaos_mutate_steal_gc_mailbox_2352"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_chaos_mutate_steal_gc_mailbox_2352",
+        "cmd_chaos_mutate_steal_gc_mailbox_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_chaos_mutate_steal_gc_mailbox_2352.py"
+}

@@ -1,0 +1,103 @@
+{
+  "issue": 2458,
+  "title": "Issue #2458: truncate-commit Soft observe / Hard full-solve-or-reject.",
+  "ok": "OK: truncate-commit gate #2458 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "Issue #2458",
+        "commit_ok_after_delta_snapshot"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "truncate_commit_observe_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_truncate_commit_gate_2458.cpp",
+      "contains": [
+        "2458 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "truncate_commit_hard_enabled",
+        "AURA_TRUNCATE_COMMIT_HARD",
+        "truncate_commit_full_solve_recover_total",
+        "truncate_commit_reject_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_truncate_commit_gate_2458.cpp",
+      "contains": [
+        "2458 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_truncate_commit_gate_2458.cpp",
+      "contains": [
+        "2458 AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "note_full_solve_cleared_truncation"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_truncate_commit_gate_2458.cpp",
+      "contains": [
+        "2458 AC4"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "commit_ok_after_delta_snapshot"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2458",
+        "truncate-commit-observe-total",
+        "truncate-commit-reject-total",
+        "truncate-commit-full-solve-recover-total",
+        "truncate-commit-hard-wired",
+        "schema-2308",
+        "schema-2277"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_truncate_commit_gate_2458",
+        "cmd_truncate_commit_gate_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_truncate_commit_gate_2458"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_truncate_commit_gate_2458.py"
+}

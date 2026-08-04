@@ -3073,7 +3073,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     //                       [:max-restarts n] [:consecutive-stall-limit n])
     //   (orch:scope-join-all [:timeout-ms n] [:drain-ms n])
     //   (orch:scope-cancel-all)
-    // MVP linter guard: scripts/check_orch_mvp_scope.py still rejects
+    // MVP linter guard: scripts/coverage/checks/check_orch_mvp_scope.py still rejects
     // AgentRegistry / global_agent_registry. The scope map is just a
     // storage convenience; the AgentScope objects themselves are
     // per-Evaluator and do not become a global agent map.
@@ -4058,7 +4058,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // (g_evaluator_agent_scopes in src/orch/agent_scope.h) is the
             // storage container; the AgentScope objects themselves are
             // per-Evaluator and do NOT become a global agent registry
-            // (#1966 / scripts/check_orch_mvp_scope.py still guards
+            // (#1966 / scripts/coverage/checks/check_orch_mvp_scope.py still guards
             // AgentRegistry / global_agent_registry).
             insert_kv("scope-spawn-total", static_cast<std::int64_t>(os.scope_spawn_total.load(
                                                std::memory_order_relaxed)));

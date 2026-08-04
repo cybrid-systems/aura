@@ -1,0 +1,190 @@
+{
+  "issue": 2608,
+  "title": "Issue #2608: optional OccurrenceGoal persist / rehydrate.",
+  "ok": "OK: Issue #2608 + #2641 OccurrenceGoal persist/rehydrate — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "Issue #2608",
+        "OccurrencePersistEntry"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/type_checker.ixx",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "append_occurrence_snapshot",
+        "rehydrate_occurrence_from_persist"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/type_checker.ixx",
+        "src/compiler/evaluator_mutation_boundary.cpp"
+      ],
+      "contains": [
+        "maybe_persist_occurrence_snapshot"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "paths": [
+        "src/compiler/type_checker.ixx",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "occurrence_persist_enabled"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "AURA_OCCURRENCE_PERSIST",
+        "production_defaults_active"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "paths": [
+        "src/compiler/type_checker.ixx",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "occurrence_persist_cap"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "paths": [
+        "src/compiler/observability_metrics.h",
+        "src/compiler/compiler_metrics_fields.inc",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "occurrence_persist_trunc_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "AURA_OCCURRENCE_PERSIST_CAP"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "paths": [
+        "src/compiler/observability_metrics.h",
+        "src/compiler/compiler_metrics_fields.inc",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "occurrence_persist_write_total",
+        "occurrence_rehydrate_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2608",
+        "occurrence-persist-wired",
+        "occurrence-rehydrate-total"
+      ]
+    },
+    {
+      "ac": "AC1-fence",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "rehydrate_occurrence_from_persist"
+      ]
+    },
+    {
+      "ac": "AC1-sdo",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "rehydrate_occurrence_from_persist"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate_2608.cpp",
+      "contains": [
+        "ac1_persist_prune_rehydrate",
+        "ac2_soft_zero_writes"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_occurrence_goal_persist_rehydrate_2608"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_occurrence_goal_persist_rehydrate_2608",
+        "cmd_occurrence_goal_persist_rehydrate_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "#2641"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "#2641",
+        "aura_outermost_success_persist_occurrence"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "occurrence_persist_rehydrate_miss_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "occurrence_persist_rehydrate_miss_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2641",
+        "issue-2641",
+        "occurrence-persist-prod-default-wired",
+        "occurrence-persist-rehydrate-miss-total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate_2608.cpp",
+      "contains": [
+        "ac2641_1_production_default_persist",
+        "ac2641_3_env_zero_forces_off",
+        "ac2641_4_rehydrate_miss_counter",
+        "ac2641_6_source_cite"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_occurrence_goal_persist_rehydrate_2608.py"
+}

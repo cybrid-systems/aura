@@ -217,7 +217,8 @@ static void ac5_source_and_gate() {
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto epm = read_file("src/compiler/evaluator_primitives_messaging.cpp");
-    const auto lint = read_file("scripts/check_mailbox_hold_starvation_hard_2551.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mailbox_hold_starvation_hard_2551.py");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
 

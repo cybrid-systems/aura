@@ -597,7 +597,7 @@ int main() {
         // difference: bp_recent is read from scope-local gauge, and
         // the deny counter is spawn_bp_admit_reject_scope_total (vs
         // the legacy spawn_bp_admit_reject_total / _override_total).
-        // Linter (scripts/check_scope_bp_gauge_coverage.py) verifies
+        // Linter (scripts/coverage/checks/check_scope_bp_gauge_coverage.py) verifies
         // the source-cite for scope_active branch + counter bump.
         CHECK(true, "2633 AC5: structured reject parity covered by source-cite + linter");
     }

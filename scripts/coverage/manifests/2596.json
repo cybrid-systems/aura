@@ -1,0 +1,75 @@
+{
+  "issue": 2596,
+  "title": "Issue #2596: production default AURA_MOVING_UNTRACKED=hard",
+  "ok": "OK: Issue #2596 moving untracked production hard — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC11",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "AURA_MOVING_UNTRACKED",
+        "Issue #2596",
+        "Production default: lock to hard when unset",
+        "g_moving_untracked_hard_abort_pref.store(1",
+        "g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) < 0",
+        "else if (!dev_off)",
+        "with Moving default ON, #2256"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "env_pref != -1",
+        "Operator env always wins (AC3)",
+        "env_pref = 0"
+      ]
+    },
+    {
+      "ac": "AC13",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "hard",
+        "g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed)"
+      ]
+    },
+    {
+      "ac": "AC14",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "dev_off = sandbox_e",
+        "else if (!dev_off)"
+      ]
+    },
+    {
+      "ac": "AC15",
+      "path": "src/core/arena_auto_policy_stats.h",
+      "contains": [
+        "g_moving_untracked_hard_abort_pref{-1}"
+      ]
+    },
+    {
+      "ac": "test",
+      "path": "tests/core/test_moving_densify_fail_closed_2495.cpp",
+      "contains": [
+        "Issue #2596",
+        "ac11_production_default_hard",
+        "ac12_env_off_operator_override",
+        "ac13_env_hard_under_soft",
+        "ac14_soft_unset_keeps_observe",
+        "ac15_query_keys_source_cite",
+        "production default AURA_MOVING_UNTRACKED=hard",
+        "AURA_MOVING_UNTRACKED"
+      ]
+    },
+    {
+      "ac": "build",
+      "path": "build.py",
+      "contains": [
+        "cmd_moving_untracked_production_hard_2596_coverage",
+        "check_moving_untracked_production_hard_2596"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_moving_untracked_production_hard_2596.py"
+}

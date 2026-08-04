@@ -133,9 +133,10 @@ inline constexpr int kLinearEnforceProductionDefaultsIssue = 2182;
 inline constexpr int kCoercionProvenanceRejectProductionIssue = 2185;
 
 // Issue #2057: side-effect primitives inherit capability enforcement by
-// construction. See security_side_effect.hh + scripts/check_side_effect_security.py.
-// Rule: new mutate/ffi/render/exec/file-write prims MUST use add_mutate,
-// require_effect, PrimMeta.required_effects, or documented security_exempt.
+// construction. See security_side_effect.hh +
+// scripts/coverage/checks/check_side_effect_security.py. Rule: new
+// mutate/ffi/render/exec/file-write prims MUST use add_mutate, require_effect,
+// PrimMeta.required_effects, or documented security_exempt.
 inline constexpr int kSideEffectInheritIssue = 2057;
 
 // Issue #1163/#1164/#1165/#2485/#2487: refuse process-memory / device-memory

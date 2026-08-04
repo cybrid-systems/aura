@@ -1,0 +1,85 @@
+{
+  "issue": 2441,
+  "title": "Issue #2441: apply_macro_dirty_bits metric double-count fix.",
+  "ok": "OK: macro dirty bits lock #2441 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2441",
+        "apply_macro_dirty_bits",
+        "dirty_column_mtx_.mutable_get()",
+        "fetch_or(reasons",
+        "newly_set = static_cast<std::uint8_t>(reasons & ~prev)",
+        "macro_dirty_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_macro_dirty_bits_lock_2441.cpp",
+      "contains": [
+        "2441 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_macro_dirty_bits_lock_2441.cpp",
+      "contains": [
+        "2441 AC2"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "macro_dirty(NodeId id)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_macro_dirty_bits_lock_2441.cpp",
+      "contains": [
+        "2441 AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "kMacroExpansion"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "clear_macro_dirty_all",
+        "macro_dirty_count"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_macro_dirty_bits_lock_2441.cpp",
+      "contains": [
+        "2441 AC4"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_macro_dirty_bits_lock_2441",
+        "cmd_macro_dirty_bits_lock_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_macro_dirty_bits_lock_2441"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_macro_dirty_bits_lock_2441.py"
+}

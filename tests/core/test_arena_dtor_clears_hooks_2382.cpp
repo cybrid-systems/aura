@@ -178,7 +178,7 @@ static void ac4_source_and_registration() {
     CHECK(build.find("check_arena_dtor_clears_hooks_2382") != std::string::npos ||
               build.find("cmd_arena_dtor_clears_hooks_coverage") != std::string::npos,
           "AC4: build.py gate entry");
-    const auto gate = read_file("scripts/check_arena_dtor_clears_hooks_2382.py");
+    const auto gate = read_file("scripts/coverage/checks/check_arena_dtor_clears_hooks_2382.py");
     CHECK(!gate.empty() && gate.find("Issue #2382") != std::string::npos,
           "AC4: coverage linter present");
 }

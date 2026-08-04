@@ -234,7 +234,7 @@ static void ac5_docs_query_gate() {
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto script = read_file("scripts/check_cross_cow_drift_contract_2505.py");
+    const auto script = read_file("scripts/coverage/checks/check_cross_cow_drift_contract_2505.py");
 
     CHECK(hh.find("Issue #2371 / #2505") != std::string::npos ||
               hh.find("#2505") != std::string::npos,

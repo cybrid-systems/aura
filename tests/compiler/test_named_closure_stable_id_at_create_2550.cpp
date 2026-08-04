@@ -194,7 +194,8 @@ static void ac5_source_and_gate() {
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto bh = read_file("src/compiler/aura_jit_bridge.h");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
-    const auto lint = read_file("scripts/check_named_closure_stable_id_at_create_2550.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_named_closure_stable_id_at_create_2550.py");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
 

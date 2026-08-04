@@ -99,7 +99,7 @@ static void ac4_gate() {
           "AC4: check script in build.py");
     CHECK(build.find("cmd_gc_heap_cells_clear_coverage") != std::string::npos, "AC4: coverage cmd");
     CHECK(cmake.find("test_gc_heap_cells_clear_2486") != std::string::npos, "AC4: cmake test");
-    CHECK(!read_file("scripts/check_gc_heap_cells_clear_2486.py").empty(),
+    CHECK(!read_file("scripts/coverage/checks/check_gc_heap_cells_clear_2486.py").empty(),
           "AC4: check script exists");
 }
 

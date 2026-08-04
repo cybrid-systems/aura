@@ -229,7 +229,8 @@ static void run_1691_dead_heap() {
     // AC2: audit clean
     {
         std::println("\n--- AC2 (#1691): audit_dead_heap_push clean ---");
-        int rc = std::system("python3 scripts/audit_dead_heap_push.py >/tmp/audit_1691.out 2>&1");
+        int rc =
+            std::system("python3 scripts/audit/audit_dead_heap_push.py >/tmp/audit_1691.out 2>&1");
         CHECK(rc == 0, "audit_dead_heap_push exit 0");
         auto out = read_file("/tmp/audit_1691.out");
         CHECK(out.find("clean") != std::string::npos ||

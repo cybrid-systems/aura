@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for scripts/check_test_binding.py (#1453)."""
+"""Unit tests for scripts/coverage/checks/check_test_binding.py (#1453)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # #1932: tests/python → repo
-SCRIPT = ROOT / "scripts" / "check_test_binding.py"
+SCRIPT = ROOT / "scripts" / "coverage" / "checks" / "check_test_binding.py"
 
 
 def _load():
@@ -79,7 +79,7 @@ class TestBindingClassify(unittest.TestCase):
 
 class TestRegistryGen(unittest.TestCase):
     def test_scan_nonempty(self):
-        gen = ROOT / "scripts" / "gen_test_registry.py"
+        gen = ROOT / "scripts" / "tools" / "gen_test_registry.py"
         spec = importlib.util.spec_from_file_location("gen_test_registry", gen)
         assert spec and spec.loader
         mod = importlib.util.module_from_spec(spec)

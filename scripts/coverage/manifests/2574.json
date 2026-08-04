@@ -1,0 +1,52 @@
+{
+  "issue": 2574,
+  "title": "Issue #2574: Scheme write string escape (JIT + TW).",
+  "ok": "OK: Issue #2574 write string escape — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "#2574",
+        "fputs_scheme_write_string"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_runtime.cpp",
+      "contains": [
+        "#2574"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "fputs(s, stdout)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_write_string_escape_2574.cpp",
+      "contains": [
+        "ac1_write_embedded_quote"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_write_string_escape_2574"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "check_write_string_escape_2574",
+        "cmd_write_string_escape_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_write_string_escape_2574.py"
+}

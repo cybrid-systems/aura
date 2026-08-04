@@ -48,9 +48,9 @@ static std::string read_file(const char* path) {
 static int run_coverage_script(bool strict) {
     // CTest / binary runs from build/; script lives at repo-root/scripts/.
     const char* flags = strict ? " --strict --quiet" : " --quiet";
-    for (const char* script :
-         {"../scripts/check_mutation_guard_coverage.py", "scripts/check_mutation_guard_coverage.py",
-          "../../scripts/check_mutation_guard_coverage.py"}) {
+    for (const char* script : {"../scripts/check_mutation_guard_coverage.py",
+                               "scripts/coverage/checks/check_mutation_guard_coverage.py",
+                               "../../scripts/check_mutation_guard_coverage.py"}) {
         std::ifstream probe(script);
         if (!probe)
             continue;
@@ -67,7 +67,7 @@ static void ac1_zero_legacy_residual() {
     // Source-level: no production MutationBoundaryGuard guard(ev, ... without try_acquire
     auto mutate = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     auto ast = read_file("src/compiler/evaluator_primitives_ast.cpp");
-    auto script = read_file("scripts/check_mutation_guard_coverage.py");
+    auto script = read_file("scripts/coverage/checks/check_mutation_guard_coverage.py");
     CHECK(!mutate.empty() && !script.empty(), "read sources");
     CHECK(script.find("#2124") != std::string::npos, "coverage script cites #2124");
     CHECK(script.find("LEGACY_CTOR") != std::string::npos ||

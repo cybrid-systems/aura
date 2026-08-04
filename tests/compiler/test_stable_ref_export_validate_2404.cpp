@@ -228,7 +228,7 @@ int main() {
     {
         std::println("\n--- #2404 AC1/AC4: source-cite finalize_agent_export ---");
         // Runtime counters prove export path; static linter in
-        // scripts/check_stable_ref_export_2404.py + stamp-resolve.
+        // scripts/coverage/checks/check_stable_ref_export_2404.py + stamp-resolve.
         CHECK(true, "AC4 stamp-resolve covered by coverage script");
     }
 
@@ -252,7 +252,7 @@ int main() {
         // AC2: stable_ref_handoff_reject_total counter exists and bumps
         // when handoff_ref returns nullopt. We can't read the counter
         // directly here (it's an Evaluator internal atomic), but the
-        // coverage linter (scripts/check_export_held_handoff_coverage.py)
+        // coverage linter (scripts/coverage/checks/check_export_held_handoff_coverage.py)
         // verifies the field is present + the helper bumps it.
         CHECK(true, "2632 AC2: stable_ref_handoff_reject_total covered by coverage linter");
 

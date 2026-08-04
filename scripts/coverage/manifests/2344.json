@@ -1,0 +1,101 @@
+{
+  "issue": 2344,
+  "title": "Issue #2344: escape-gate publish key ↔ lower key contract (Option A).",
+  "ok": "OK: Issue #2344 escape-gate key contract — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "publish_escape_move_elision_gate_for_key"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "set_current_escape_key"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/lowering_linear_types_impl.cpp",
+      "contains": [
+        "escape_blocks_move_elision_for_current"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_escape_move_elision_gate_2263.cpp",
+      "contains": [
+        "AC12"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ownership_escape_lowering_gate.h",
+      "contains": [
+        "Issue #2344",
+        "g_linear_escape_gate_miss_conservative_block_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit_hooks.cpp",
+      "contains": [
+        "g_linear_escape_gate_miss_conservative_block_total",
+        "Issue #2344",
+        "conservative"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_escape_move_elision_gate_2263.cpp",
+      "contains": [
+        "AC13"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/typed_mutation_audit_hooks.cpp",
+      "contains": [
+        "Matching key"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_escape_move_elision_gate_2263.cpp",
+      "contains": [
+        "AC15"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "escape-miss-conservative-block-total",
+        "escape-gate-key-contract-wired",
+        "schema-2344",
+        "issue-2344",
+        "schema-2286",
+        "linear-escape-gate-cross-eval-miss-total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_escape_move_elision_gate_2263.cpp",
+      "contains": [
+        "AC16",
+        "#2344"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_escape_move_elision_gate_2263"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_escape_gate_key_contract_2344.py"
+}

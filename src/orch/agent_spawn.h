@@ -9,7 +9,7 @@
 //   - AgentRegistry / global_agent_registry → evaluator-local name table
 //     (orch:spawn-agent / orch:agent-join bookkeeping only)
 //   - conduct_parallel → use serve::parallel_orch::parallel_intend
-// Linter: scripts/check_orch_mvp_scope.py --strict (reintroduction guard).
+// Linter: scripts/coverage/checks/check_orch_mvp_scope.py --strict (reintroduction guard).
 // Header API under aura::orch; pairs with serve/parallel_orch and multi_fiber_mailbox.
 // Issue #1879: spawn body exit + join force StableNodeRef provenance refresh.
 // Issue #1880: ResourceQuota preflight (arena/mailbox/fibers) + try_acquire

@@ -1,0 +1,83 @@
+{
+  "issue": 2597,
+  "title": "Issue #2597: auto-wire GeneralObjectPin for all densify-tracked",
+  "ok": "OK: Issue #2597 general object pin auto wire — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC16",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "Issue #2597",
+        "AURA_GENERAL_OBJECT_PIN=required",
+        "apply_general_object_pin_required_env",
+        "g_general_object_pin_required_pref.store(1, std::memory_order_release)",
+        "g_general_object_pin_required_pref.load(std::memory_order_relaxed) == -1",
+        "!dev_off"
+      ]
+    },
+    {
+      "ac": "AC17",
+      "path": "src/core/lifetime_pin.ixx",
+      "contains": [
+        "apply_general_object_pin_required_env",
+        "g_general_object_pin_required_pref.store(0, std::memory_order_release)"
+      ]
+    },
+    {
+      "ac": "AC18",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "dev_off = sandbox_e",
+        "!dev_off"
+      ]
+    },
+    {
+      "ac": "AC18",
+      "path": "src/core/lifetime_pin.ixx",
+      "contains": [
+        "g_general_object_pin_required_pref{-1}"
+      ]
+    },
+    {
+      "ac": "AC19",
+      "path": "src/core/lifetime_pin.ixx",
+      "contains": [
+        "apply_general_object_pin_required_env",
+        "AURA_GENERAL_OBJECT_PIN",
+        "required"
+      ]
+    },
+    {
+      "ac": "AC20",
+      "path": "src/core/lifetime_pin.ixx",
+      "contains": [
+        "GENERAL_OBJECT_PIN_EXEMPT",
+        "stable-handle",
+        "RootRemap-registered"
+      ]
+    },
+    {
+      "ac": "test",
+      "path": "tests/core/test_general_object_pin_coverage_gate_2496.cpp",
+      "contains": [
+        "Issue #2597",
+        "ac16_production_default_required",
+        "ac17_env_off_operator_override",
+        "ac18_soft_unset_keeps_observe",
+        "ac19_env_parser_source_cite",
+        "ac20_exempt_marker_source_cite",
+        "production default AURA_GENERAL_OBJECT_PIN=required (extends #2496 test file per #81967)",
+        "AURA_GENERAL_OBJECT_PIN"
+      ]
+    },
+    {
+      "ac": "build",
+      "path": "build.py",
+      "contains": [
+        "cmd_general_object_pin_auto_wire_2597_coverage",
+        "check_general_object_pin_auto_wire_2597"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_general_object_pin_auto_wire_2597.py"
+}

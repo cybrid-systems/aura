@@ -1,0 +1,109 @@
+{
+  "issue": 2640,
+  "title": "Issue #2640: production Restricted default periodic epoch-invariant soft walk",
+  "ok": "OK: Issue #2640 production Restricted default periodic epoch-invariant soft walk — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "Issue #2640",
+        "aura_periodic_epoch_invariant_walk_if_due",
+        "aura_epoch_invariant_periodic_walks_total_v_read",
+        "aura_epoch_invariant_periodic_last_walk_at_ms_v_read",
+        "aura_epoch_invariant_periodic_skipped_off_total_v_read",
+        "aura_epoch_invariant_periodic_skipped_wrong_mode_total_v_read",
+        "aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read",
+        "aura_epoch_invariant_periodic_skipped_disabled_total_v_read",
+        "aura_set_epoch_invariant_periodic_period_ms",
+        "production_defaults_active",
+        "aura_epoch_invariant_must_deopt_stale_live_closures",
+        "aura_aot_invalidate_all_stale_slots_for_eval"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "aura_periodic_epoch_invariant_walk_if_due"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "AURA_EPOCH_INVARIANT_PERIOD_MS",
+        "g_epoch_invariant_periodic_period_ms"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "aura_periodic_epoch_invariant_walk_if_due",
+        "Issue #2640",
+        "outermost && success"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "contains": [
+        "aura_periodic_epoch_invariant_walk_if_due",
+        "aura_epoch_invariant_periodic_walks_total_v_read"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2640",
+        "issue-2640",
+        "epoch-invariant-periodic-wired",
+        "component-epoch-invariant-periodic-walks-total",
+        "component-epoch-invariant-periodic-last-walk-at-ms",
+        "component-epoch-invariant-periodic-period-ms",
+        "component-epoch-invariant-periodic-skipped-off-total",
+        "component-epoch-invariant-periodic-skipped-wrong-mode-total",
+        "component-epoch-invariant-periodic-skipped-rate-limited-total",
+        "component-epoch-invariant-periodic-skipped-disabled-total",
+        "schema-2366",
+        "schema-2506"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_epoch_invariant_walk_2366.cpp",
+      "contains": [
+        "ac2640_periodic_walk_clears_stale",
+        "ac2640_off_mode_skips_walk",
+        "ac2640_2541_semantics_preserved",
+        "ac2640_rate_limit_amortizes",
+        "ac2640_counters_and_query",
+        "ac2640_source_and_linter",
+        "apply_production_audit_defaults",
+        "aura_set_epoch_invariant_periodic_period_ms",
+        "aura_epoch_invariant_periodic_walks_total_v_read",
+        "aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_epoch_invariant_walk_2366",
+        "aura_issue_test_link_llvm_jit(test_epoch_invariant_walk_2366)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_epoch_invariant_periodic_coverage",
+        "check_epoch_invariant_periodic_coverage.py",
+        "cmd_epoch_invariant_periodic_coverage()"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_epoch_invariant_periodic_coverage.py"
+}

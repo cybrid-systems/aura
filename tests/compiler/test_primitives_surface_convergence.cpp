@@ -5,7 +5,7 @@
 // infrastructure acceptance criteria (runtime half).
 //
 // Script / freeze / --strict are covered by:
-//   scripts/check_primitive_surface.py
+//   scripts/coverage/checks/check_primitive_surface.py
 //   tests/test_primitive_surface_gate.py
 //   ./build.py gate
 //

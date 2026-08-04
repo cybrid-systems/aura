@@ -1,0 +1,108 @@
+{
+  "issue": 2562,
+  "title": "Issue #2562: dual-field (pred+mid) require-or-drop coverage.",
+  "ok": "OK: Issue #2562 dual-field require-or-drop — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_provenance_policy.hh",
+      "contains": [
+        "Issue #2562",
+        "g_coercion_dual_require_drop_total",
+        "AURA_COERCION_DUAL_REQUIRE"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "coercion_dual_require_active",
+        "g_coercion_dual_require_drop_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "contains": [
+        "ac1_production_dual_drop"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "Issue #2317",
+        "g_coercion_sampled_insert_incomplete_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "contains": [
+        "ac2_soft_insert_no_drop"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "coercion_entry_dual_complete"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "contains": [
+        "ac3_complete_and_elision"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2562",
+        "coercion-dual-require-drop-total",
+        "coercion-dual-require-enabled",
+        "query:type-incremental-fidelity-stats",
+        "query:dead-coercion-layered-stats"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "contains": [
+        "ac4_schema_source"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "g_coercion_provenance_miss_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_coercion_dual_require_2562"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_coercion_dual_require_2562",
+        "cmd_coercion_dual_require_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_coercion_dual_require_2562.cpp",
+      "contains": [
+        "ac5_authority"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_coercion_dual_require_2562.py"
+}

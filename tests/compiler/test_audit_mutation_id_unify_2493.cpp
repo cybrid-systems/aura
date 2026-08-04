@@ -185,7 +185,7 @@ static void ac6_source_and_gate() {
     CHECK(build.find("check_audit_mutation_id_unify_2493") != std::string::npos ||
               build.find("cmd_audit_mutation_id_unify_2493_coverage") != std::string::npos,
           "AC6: build.py gate entry");
-    const auto gate = read_file("scripts/check_audit_mutation_id_unify_2493.py");
+    const auto gate = read_file("scripts/coverage/checks/check_audit_mutation_id_unify_2493.py");
     CHECK(!gate.empty() && gate.find("Issue #2493") != std::string::npos,
           "AC6: coverage linter present");
 }

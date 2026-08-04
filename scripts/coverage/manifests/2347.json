@@ -1,0 +1,139 @@
+{
+  "issue": 2347,
+  "title": "Issue #2347: MultiFiberMailbox Guard-live blocking recv hard audit.",
+  "ok": "OK: Issue #2347 mutate-mailbox Strict hard audit — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "recv_rejected_in_mutation_boundary",
+        "Policy A"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "contains": [
+        "ac2347_soft_only_soft_counter",
+        "AC1 Soft"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "AURA_MUTATE_MAILBOX_STRICT",
+        "is_mutate_mailbox_strict",
+        "recv_rejected_in_mutation_boundary_hard_total",
+        "aura_production_defaults_active_probe"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "contains": [
+        "ac2347_strict_hard_counter",
+        "AC2 Strict"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "AURA_MUTATE_MAILBOX_REJECT_THRESHOLD",
+        "mutate_mailbox_reject_threshold",
+        "recv_boundary_force_rollback_total",
+        "g_recv_boundary_reject_window",
+        "aura_evaluator_mark_outermost_mutation_failed"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "mark_outermost_mutation_failed"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_evaluator_mark_outermost_mutation_failed"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/fiber_bridge.cpp",
+      "contains": [
+        "aura_evaluator_mark_outermost_mutation_failed"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "clear_recv_boundary_reject_window"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "contains": [
+        "ac2347_threshold_force_rollback",
+        "AC3:"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "contains": [
+        "ac2347_happy_path_no_hard",
+        "AC4:"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "depth/held probe"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "schema-2347",
+        "issue-2347",
+        "recv-rejected-in-mutation-boundary-hard-total",
+        "recv-boundary-force-rollback-total",
+        "mutate-mailbox-strict-wired",
+        "recv-boundary-hard-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "Issue #2347",
+        "try_recv"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary_2188.cpp",
+      "contains": [
+        "ac2347_schema_and_contract"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_mutate_mailbox_strict_2347",
+        "cmd_mutate_mailbox_strict_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_mutate_mailbox_strict_2347.py"
+}

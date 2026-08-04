@@ -1,0 +1,146 @@
+{
+  "issue": 2621,
+  "title": "Issue #2621: partial re-infer cone truncate must not silent-commit under production.",
+  "ok": "OK: Issue #2621 partial cone commit gate — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "publish_partial_cone_truncate",
+        "last_partial_cone_truncated",
+        "partial_cone_truncated"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "publish_partial_cone_truncate"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "contains": [
+        "ac1_soft_observe_allow"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "cone_truncate",
+        "partial_cone_commit_hard_enabled",
+        "AURA_PARTIAL_CONE_COMMIT_HARD"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "contains": [
+        "ac2_production_deny"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "orig_sz > hard",
+        "partial_cone_hard_fallback"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "contains": [
+        "ac3_hard_cap_never_silent"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "partial_cone_type_dep_degree_trunc",
+        "empty dirty"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "last_partial_cone_fanout_trunc"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "contains": [
+        "ac4_empty_and_fanout"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2621",
+        "last-partial-cone-truncated",
+        "partial-cone-commit-observe-total",
+        "partial-cone-commit-reject-total",
+        "schema-2560"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "last_partial_cone_truncated_"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "contains": [
+        "ac5_schema_source"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_partial_cone_commit_gate_2621"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "check_partial_cone_commit_gate_2621",
+        "cmd_partial_cone_commit_gate_coverage"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_partial_cone_commit_gate_2621.cpp",
+      "contains": [
+        "ac6_high_fanout_gate"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kPartialConeCommitGateIssue"
+      ]
+    },
+    {
+      "ac": "docs",
+      "forbid": [
+        "design/2621.md",
+        "docs/design/partial_cone_commit_gate_2621.md",
+        "docs/partial_cone_commit_gate_2621.md"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_partial_cone_commit_gate_2621.py"
+}

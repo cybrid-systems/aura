@@ -663,7 +663,8 @@ static void ac2601_schema_and_source() {
     const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
     const auto metrics = read_file("src/compiler/observability_metrics.h");
     const auto cmake = read_file("CMakeLists.txt");
-    const auto linter = read_file("scripts/check_aot_exhausted_min_dirty_retry_2601.py");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_aot_exhausted_min_dirty_retry_2601.py");
 
     CHECK(bridge.find("aura_hot_update_maybe_retry_exhausted_min_dirty") != std::string::npos,
           "AC5: retry C ABI in bridge");
@@ -768,7 +769,8 @@ static void ac2639_schema_and_source() {
     const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
     const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     const auto rt = read_file("src/compiler/runtime_shared.h");
-    const auto lint = read_file("scripts/check_storm_clear_health_pass_coverage.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_storm_clear_health_pass_coverage.py");
     const auto build = read_file("build.py");
     CHECK(h.find("Issue #2639: storm-clear edge detection") != std::string::npos,
           "AC6: header cites #2639 storm-clear edge detection");

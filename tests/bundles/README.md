@@ -12,11 +12,11 @@ together so CI does not link 200+ × ~200MB standalones.
 | `test_issues_<profile>_main.cpp` | **Generated** member table + `main()` (slim) |
 | `../fixtures/issue_link_profiles.json` | Profile → member list |
 | `../../cmake/AuraIssueBundles.cmake` | Generated CMake helper |
-| `../../scripts/gen_issue_bundles.py` | Regenerator (`--check` / default write) |
+| `../../scripts/tools/gen_issue_bundles.py` | Regenerator (`--check` / default write) |
 
 ```bash
-python3 scripts/gen_issue_bundles.py          # rewrite mains + cmake helper
-python3 scripts/gen_issue_bundles.py --check  # CI freshness
+python3 scripts/tools/gen_issue_bundles.py          # rewrite mains + cmake helper
+python3 scripts/tools/gen_issue_bundles.py --check  # CI freshness
 ```
 
 ## Profiles (link graphs differ — do not merge executables)

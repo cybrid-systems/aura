@@ -1,0 +1,92 @@
+{
+  "issue": 2568,
+  "title": "Issue #2568: symbol eq?/equal? for quoted symbols (agent decision tags).",
+  "ok": "OK: Issue #2568 symbol eq? — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "#2568",
+        "short_str_cache_",
+        "Key/insert before move"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_symbol_eq_2568.cpp",
+      "contains": [
+        "ac1_literal_eq"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "#2568",
+        "Quote body must tree-walk BEFORE IR bind"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_symbol_eq_2568.cpp",
+      "contains": [
+        "ac3_define_quote"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/lowering_impl.cpp",
+      "contains": [
+        "#2568",
+        "quoted symbols are data",
+        "ConstString"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_symbol_eq_2568.cpp",
+      "contains": [
+        "ac5_source_gate"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_builtins.cpp",
+      "contains": [
+        "#2568",
+        "is_string"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_runtime.cpp",
+      "contains": [
+        "#2568"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_symbol_eq_2568.cpp",
+      "contains": [
+        "ac4_equal_and_tags"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_symbol_eq_2568"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_symbol_eq_2568",
+        "cmd_symbol_eq_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_symbol_eq_2568.py"
+}

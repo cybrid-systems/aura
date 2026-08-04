@@ -72,7 +72,7 @@ namespace aura::compiler {
 //   aot_resolve_emit_env_frame_version / emit_linear_state or
 //   equivalent). Literal (0, 0) on both slots is a hard
 //   `./build.py gate` failure from
-//   scripts/check_aot_env_linear_stamp_coverage.py unless the
+//   scripts/coverage/checks/check_aot_env_linear_stamp_coverage.py unless the
 //   same line or the previous line carries an explicit opt-out:
 //
 //     // # 2091-allow-zero   — deliberate zero stamps (documented)

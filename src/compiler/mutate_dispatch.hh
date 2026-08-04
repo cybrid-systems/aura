@@ -22,7 +22,7 @@
 //   rejected_total / deferred_total per MutateKind) to
 //   MutateDispatchMetrics.
 // - Add a linter to track per-primitive migration progress.
-// - Update scripts/check_primitive_surface.py to count the new
+// - Update scripts/coverage/checks/check_primitive_surface.py to count the new
 //   mutate:* surface area.
 //
 // See docs/agent-safety-mechanisms-simplification.md §"Mutation

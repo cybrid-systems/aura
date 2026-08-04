@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for scripts/check_aot_env_linear_stamp_coverage.py (#2091 / #2168).
+"""Unit tests for scripts/coverage/checks/check_aot_env_linear_stamp_coverage.py (#2091 / #2168).
 
 AC coverage:
   - literal (0,0) is flagged without annotation
@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]  # tests/python → repo
-SCRIPT = ROOT / "scripts" / "check_aot_env_linear_stamp_coverage.py"
+SCRIPT = ROOT / "scripts" / "coverage" / "checks" / "check_aot_env_linear_stamp_coverage.py"
 
 
 def _load():

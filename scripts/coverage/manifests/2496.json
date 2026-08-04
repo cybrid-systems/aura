@@ -1,0 +1,105 @@
+{
+  "issue": 2496,
+  "title": "Issue #2496: GeneralObjectPin adoption coverage gate (inventory vs wire_total).",
+  "ok": "OK: Issue #2496 GeneralObjectPin adoption coverage gate — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/lifetime_pin.ixx",
+      "contains": [
+        "Issue #2496",
+        "kGeneralObjectPinIssue = 2298",
+        "kGeneralObjectPinAdoptIssue = 2363",
+        "kGeneralObjectPinAdoptSiteCount = 7",
+        "note_general_object_pin_mutate_wire",
+        "wire_general_object_create_pair",
+        "general_object_pin_mutate_wire_total",
+        "mutate:replace-pattern",
+        "batch :replace-pattern",
+        "require import parse",
+        "query:pattern",
+        "query:pattern guard",
+        "load",
+        "eval-expr"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/lifetime_pin.ixx",
+      "contains": [
+        "kGeneralObjectPinAdoptSiteCount = 7",
+        "wire_general_object_create_pair"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/lifetime_pin.ixx",
+      "contains": [
+        "note_general_object_pin_mutate_wire"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/lifetime_pin.ixx",
+      "contains": [
+        "kGeneralObjectPinAdoptSiteCount",
+        "general_object_pin_mutate_wire_total",
+        "AURA_GENERAL_OBJECT_PIN"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_general_object_pin_coverage_gate_2496.cpp",
+      "contains": [
+        "ac1_inventory_sites_wired"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_general_object_pin_coverage_gate_2496.cpp",
+      "contains": [
+        "ac2_soft_zero_cost_retained"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_general_object_pin_coverage_gate_2496.cpp",
+      "contains": [
+        "ac3_query_inventory_vs_wire"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_general_object_pin_coverage_gate_2496.cpp",
+      "contains": [
+        "ac4_required_mode_fail_closed"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_general_object_pin_coverage_gate_2496.cpp",
+      "contains": [
+        "ac5_source_cite_registrations",
+        "Issue #2496"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_general_object_pin_coverage_gate_2496",
+        "aura_add_issue_test(test_general_object_pin_coverage_gate_2496)",
+        "aura_issue_test_link_light(test_general_object_pin_coverage_gate_2496)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_general_object_pin_coverage_gate_2496",
+        "cmd_general_object_pin_coverage_gate_2496_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_general_object_pin_coverage_gate_2496.py"
+}

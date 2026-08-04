@@ -1,0 +1,116 @@
+{
+  "issue": 2436,
+  "title": "Issue #2436: post-compact Arena × IR SoA × Shape × fiber lifecycle.",
+  "ok": "OK: post compact lifecycle #2436 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/post_compact_lifecycle.hh",
+      "contains": [
+        "Issue #2436",
+        "finish_dirty_sync",
+        "on_arena_compact",
+        "LayoutStamp",
+        "kPostCompactLifecycleIssue"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "contains": [
+        "2436 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "note_lifecycle_run",
+        "note_lifecycle_soft_skip"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "force_soa_instruction_dirty_sync",
+        "note_lifecycle_ir_sync"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "contains": [
+        "2436 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "note_lifecycle_pin_fail",
+        "AURA_MOVING_PIN_CONTRACT"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "contains": [
+        "2436 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "note_lifecycle_stamp_publish",
+        "Issue #2436 AC4"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "contains": [
+        "2436 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/core/post_compact_lifecycle.hh",
+      "contains": [
+        "post_compact_lifecycle_soft_skip_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2436",
+        "post-compact-lifecycle-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_post_compact_lifecycle_2436.cpp",
+      "contains": [
+        "2436 AC5"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_post_compact_lifecycle_2436",
+        "cmd_post_compact_lifecycle_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_post_compact_lifecycle_2436"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_post_compact_lifecycle_2436.py"
+}

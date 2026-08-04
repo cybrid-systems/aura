@@ -1,0 +1,111 @@
+{
+  "issue": 2343,
+  "title": "Issue #2343: TIMEOUT/CONFLICT var↔constraint graph export coverage.",
+  "ok": "OK: Issue #2343 TIMEOUT unresolved graph — all 5 AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "UnresolvedGraphEdge",
+        "unresolved_graph_edges",
+        "suggested_roots",
+        "kUnresolvedGraphEdgeCap",
+        "export_unresolved_var_constraint_graph",
+        "Issue #2343"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "export_unresolved_var_constraint_graph",
+        "var_to_constraints_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "SolveResult::TIMEOUT",
+        "SolveResult::CONFLICT",
+        "unresolved_graph_edges"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_type_timeout_repair_2284.cpp",
+      "contains": [
+        "AC2: SOLVED"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "escalate_if_production"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "type_repair_unresolved_edge_count"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_type_timeout_repair_2284.cpp",
+      "contains": [
+        "AC3: production escalate"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "type_repair_unresolved_edge_count",
+        "type_repair_suggested_root_count",
+        "type_repair_graph_wired",
+        "type_repair_edge_var"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "type-repair-unresolved-edge-count",
+        "type-repair-suggested-root-count",
+        "type-repair-graph-wired",
+        "schema-2343",
+        "issue-2343",
+        "type-timeout-repair-wired",
+        "query:type-timeout-repair-stats"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "solve_delta_impl"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_type_timeout_repair_2284.cpp",
+      "contains": [
+        "AC5: source-cite",
+        "#2343",
+        "export_unresolved_var_constraint_graph"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_type_timeout_repair_2284"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_type_timeout_repair_graph_2343.py"
+}

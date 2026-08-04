@@ -1,0 +1,93 @@
+{
+  "issue": 2557,
+  "title": "Issue #2557: production soft lock-order audit coverage.",
+  "ok": "OK: Issue #2557 production soft lock-order audit — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/lock_order_audit.h",
+      "contains": [
+        "Issue #2557",
+        "apply_production_lock_order_default",
+        "g_lock_order_production_soft_default",
+        "lock_order_production_soft_active"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_lock_order_production_soft_2557.cpp",
+      "contains": [
+        "ac1_production_soft_inversion"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/lock_order_audit.h",
+      "contains": [
+        "sandbox_off"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_lock_order_production_soft_2557.cpp",
+      "contains": [
+        "ac2_sandbox_off"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/lock_order_audit.h",
+      "contains": [
+        "AURA_LOCK_ORDER_CANARY"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_lock_order_production_soft_2557.cpp",
+      "contains": [
+        "ac3_canary_precedence"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "apply_production_lock_order_default",
+        "#2557",
+        "lock_order_audit.h"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "query:lock-order-audit-stats",
+        "schema-2557",
+        "production-soft-active"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_lock_order_production_soft_2557"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_lock_order_production_soft_2557",
+        "cmd_lock_order_production_soft_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_lock_order_production_soft_2557.cpp",
+      "contains": [
+        "ac5_source_schema"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_lock_order_production_soft_2557.py"
+}

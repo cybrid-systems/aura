@@ -99,7 +99,7 @@ static void ac5_gate() {
     std::println("\n--- #2480 AC5: test + gate wiring ---");
     auto build = read_file("build.py");
     auto cmake = read_file("CMakeLists.txt");
-    auto script = read_file("scripts/check_json_parse_number_exception_2480.py");
+    auto script = read_file("scripts/coverage/checks/check_json_parse_number_exception_2480.py");
     CHECK(build.find("check_json_parse_number_exception_2480") != std::string::npos,
           "AC5: check script in build.py");
     CHECK(build.find("cmd_json_parse_number_exception_coverage") != std::string::npos,

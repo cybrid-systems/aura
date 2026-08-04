@@ -1,0 +1,51 @@
+{
+  "issue": 2457,
+  "title": "Issue #2457: FlatAST copy shares mutation_log_ / narrowing_log_ via COW.",
+  "ok": "OK: mutation_log COW copy #2457 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2457",
+        "class CowPmrVector",
+        "CowPmrVector<MutationRecord> mutation_log_",
+        "CowPmrVector<NarrowingRecord> narrowing_log_",
+        "std::shared_ptr<vector_type>",
+        "ensure_unique"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "share COW logs",
+        "mutation_log_ = other.mutation_log_",
+        "narrowing_log_ = other.narrowing_log_"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_mutation_log_cow_copy_2457.cpp",
+      "contains": [
+        "2457 AC3"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_mutation_log_cow_copy_2457",
+        "cmd_mutation_log_cow_copy_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_mutation_log_cow_copy_2457"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_mutation_log_cow_copy_2457.py"
+}

@@ -106,7 +106,8 @@ static void ac4_ac5_source_and_gate() {
     const auto stab = read_file("src/core/ast_stability.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
-    const auto linter = read_file("scripts/check_last_validated_generation_atomic_2394.py");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_last_validated_generation_atomic_2394.py");
 
     CHECK(ixx.find("Issue #2394") != std::string::npos ||
               ixx.find("CopyableAtomicU16") != std::string::npos,

@@ -1,0 +1,122 @@
+{
+  "issue": 2607,
+  "title": "Issue #2607: minimal INSTANCE constraint + depth-capped instantiate.",
+  "ok": "OK: Issue #2607 INSTANCE depth-cap constraint — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "Issue #2607",
+        "INSTANCE"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/type_checker.ixx",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "consistent_instance"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Constraint::INSTANCE"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "paths": [
+        "src/compiler/observability_metrics.h",
+        "src/compiler/compiler_metrics_fields.inc",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "instance_unify_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "paths": [
+        "src/compiler/type_checker.ixx",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "kInstanceDepthCap"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "paths": [
+        "src/compiler/observability_metrics.h",
+        "src/compiler/compiler_metrics_fields.inc",
+        "src/compiler/type_checker_impl.cpp"
+      ],
+      "contains": [
+        "instance_depth_cap_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "depth_capped"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "escalate_if_production",
+        "TIMEOUT"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2607",
+        "issue-2607",
+        "instance-goal-wired",
+        "instance-unify-total",
+        "instance-depth-cap-total",
+        "type-repair-root-reason-instance"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "Instance = 6"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_instance_constraint_depth_cap_2607.cpp",
+      "contains": [
+        "ac1_instance_solves_poly",
+        "ac2_depth_cap_timeout"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_instance_constraint_depth_cap_2607"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_instance_constraint_depth_cap_2607",
+        "cmd_instance_constraint_depth_cap_coverage"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_instance_constraint_depth_cap_2607.py"
+}

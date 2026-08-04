@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-08-04 by `scripts/inventory_legacy_tests.py`
+**Generated:** 2026-08-04 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -21,7 +21,7 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 
 ### Related artifacts
 
-- Coarser 5-bucket Phase-2 map: [`tests_classification.md`](domain_classification.md) (`scripts/classify_test_issues.py`)
+- Coarser 5-bucket Phase-2 map: [`tests_classification.md`](domain_classification.md) (`scripts/tools/classify_test_issues.py`)
 - Link/bundle profiles: [`tests/fixtures/issue_link_profiles.json`](fixtures/issue_link_profiles.json)
 - Domain CMake: [`cmake/AuraDomainTests.cmake`](../cmake/AuraDomainTests.cmake)
 - Test layout rules: [`tests/README.md`](README.md)
@@ -917,7 +917,7 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 - No new `test_issue_*.cpp` introduced.
 - Domain or batch binary covers former ACs (or intentional drop documented).
-- `python3 scripts/inventory_legacy_tests.py --check` stays green after refresh.
+- `python3 scripts/tools/inventory_legacy_tests.py --check` stays green after refresh.
 - Bundle profiles / CMake targets updated when sources removed.
 
 ## Per-theme file lists
@@ -1748,8 +1748,8 @@ Files listed as ``location/name`` with issue id and one-line summary.
 ## Regenerating
 
 ```bash
-python3 scripts/inventory_legacy_tests.py
-python3 scripts/inventory_legacy_tests.py --check
+python3 scripts/tools/inventory_legacy_tests.py
+python3 scripts/tools/inventory_legacy_tests.py --check
 ```
 
-The coarser Phase-2 5-domain classifier remains available as `scripts/classify_test_issues.py` for historical comparison; **this inventory (#1957) is the planning source of truth** for domain migration.
+The coarser Phase-2 5-domain classifier remains available as `scripts/tools/classify_test_issues.py` for historical comparison; **this inventory (#1957) is the planning source of truth** for domain migration.

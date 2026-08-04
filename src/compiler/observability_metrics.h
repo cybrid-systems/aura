@@ -144,7 +144,7 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> eval_ir_path_relower_total{0};
     // Issue #1657: finer-grained per-instruction dirty bitmask
     // propagation and minimal re-lower strategy in ir_cache_v2_ /
-    // relower_define_*. See scripts/check_fine_dirty_relower_coverage.py
+    // relower_define_*. See scripts/coverage/checks/check_fine_dirty_relower_coverage.py
     // for the source-level invariants enforced by the linter.
     //   - relower_instruction_level_hits: how many times the
     //     instruction-level minimal re-lower path succeeded
@@ -7090,7 +7090,7 @@ struct CompilerMetrics {
     // Issue #1905: AOT incremental hot-update / invalidation loop
     // closure (#1046). Each counter bumps at one of the 5 plan
     // steps. Surfaced by (engine:metrics "query:aot-hot-update-stats")
-    // + the scripts/check_aot_hot_update_coverage.py CI linter.
+    // + the scripts/coverage/checks/check_aot_hot_update_coverage.py CI linter.
     //   - aot_live_closure_refresh_on_mutation_total: every
     //     aura_refresh_live_closures_for_mutated_define call from
     //     flush_mutation_boundary outermost exit (Step 2 of #1905 plan).
@@ -7743,7 +7743,7 @@ struct CompilerMetrics {
     // Goal of #1904: drive this counter to 0 by migrating every legacy
     // site to Guard. Surfaced by
     // (engine:metrics "query:mutation-guard-coverage") + the
-    // scripts/check_legacy_mutate_lock.py CI linter.
+    // scripts/coverage/checks/check_legacy_mutate_lock.py CI linter.
     std::atomic<std::uint64_t> mutation_legacy_manual_lock_total{0}; // #1904
     std::atomic<std::uint64_t> mutation_hold_duration_us_total{0};   // #1253
     std::atomic<std::uint64_t> mutation_hold_samples{0};             // #1253

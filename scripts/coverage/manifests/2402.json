@@ -1,0 +1,98 @@
+{
+  "issue": 2402,
+  "title": "Issue #2402: incremental restamp default + generation wrap cost control.",
+  "ok": "OK: Issue #2402 restamp incremental default — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2402",
+        "RestampPolicy",
+        "resolve_restamp_policy",
+        "AURA_RESTAMP_POLICY"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "contains": [
+        "2402 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "restamp_nodes_last_",
+        "restamp_us_last_",
+        "lazy_only"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "contains": [
+        "2402 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "contains": [
+        "2402 AC3"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "restamp_lazy_align_enabled_"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_stdlib_review.cpp",
+      "contains": [
+        "schema-2402",
+        "issue-2402",
+        "restamp-incremental-wired",
+        "restamp-policy",
+        "restamp-incremental-default",
+        "restamp-nodes-last",
+        "restamp-us-last",
+        "schema-2122"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "contains": [
+        "2402 AC4"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_incremental_restamp_2061.cpp",
+      "contains": [
+        "2402 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_restamp_incremental_2402",
+        "cmd_restamp_incremental_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_incremental_restamp_2061"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_restamp_incremental_2402.py"
+}

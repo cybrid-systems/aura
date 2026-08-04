@@ -1,0 +1,103 @@
+{
+  "issue": 2396,
+  "title": "Issue #2396: production tick periodically reaps orphan fibers.",
+  "ok": "OK: Issue #2396 orphan reap on production tick — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/scheduler.h",
+      "contains": [
+        "Issue #2396",
+        "maybe_reap_orphans_on_tick",
+        "orphan_count_cached_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "maybe_reap_orphans_on_tick"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2396 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "orphan_count_cached_.load"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/scheduler.h",
+      "contains": [
+        "tick_orphan_mutex_acquired_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2396 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/scheduler.cpp",
+      "contains": [
+        "AURA_ORPHAN_REAP_INTERVAL_MS",
+        "maybe_reap_orphans_on_tick()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/scheduler.h",
+      "contains": [
+        "orphan_reap_interval_ms"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2396 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "AC3: residual not bumped on Ok"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_join_drain_reclaim_2227.cpp",
+      "contains": [
+        "2396 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_orphan_reap_tick_2396",
+        "cmd_orphan_reap_tick_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_join_drain_reclaim_2227"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_orphan_reap_tick_2396.py"
+}

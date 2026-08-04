@@ -45,7 +45,7 @@ class LlvmCov1933(unittest.TestCase):
         self.assertEqual(cache.get("AURA_ENABLE_COVERAGE"), "ON")
 
     def test_report_script_importable(self) -> None:
-        script = ROOT / "scripts" / "llvm_cov_report.py"
+        script = ROOT / "scripts" / "tools" / "llvm_cov_report.py"
         self.assertTrue(script.is_file())
         mod = load_module("llvm_cov_report", script)
         self.assertTrue(callable(mod.main))
@@ -53,7 +53,7 @@ class LlvmCov1933(unittest.TestCase):
         self.assertTrue(callable(mod.find_tool))
 
     def test_parse_totals_helper(self) -> None:
-        script = ROOT / "scripts" / "llvm_cov_report.py"
+        script = ROOT / "scripts" / "tools" / "llvm_cov_report.py"
         mod = load_module("llvm_cov_report2", script)
         sample = {
             "data": [

@@ -1,0 +1,70 @@
+{
+  "issue": 2419,
+  "title": "Issue #2419: tag_arity_index_ protected by dedicated shared_mutex.",
+  "ok": "OK: tag_arity_index lock #2419 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "Issue #2419",
+        "tag_arity_index_mtx_",
+        "find_by_tag_arity",
+        "shared_lock<std::shared_mutex> rlock(tag_arity_index_mtx_.mutable_get())"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "contains": [
+        "2419 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "unique_lock<std::shared_mutex> wlock(tag_arity_index_mtx_.mutable_get())",
+        "rebuild_tag_arity_index_unlocked",
+        "ensure_tag_arity_index_unlocked"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "contains": [
+        "2419 AC2"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "contains": [
+        "2419 AC3"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_tag_arity_index_lock_2419.cpp",
+      "contains": [
+        "2419 AC4"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_tag_arity_index_lock_2419",
+        "cmd_tag_arity_index_lock_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_tag_arity_index_lock_2419"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_tag_arity_index_lock_2419.py"
+}

@@ -1,0 +1,63 @@
+{
+  "issue": 2429,
+  "title": "Issue #2429: overflow policy check+arm atomic under g_gc_defer_armed_mtx.",
+  "ok": "OK: gc defer overflow policy atomic #2429 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "Issue #2429",
+        "set_gc_defer_overflow_policy_for_test",
+        "check + arm/reject is atomic"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "contains": [
+        "2429 AC1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "contains": [
+        "2429 AC2",
+        "concurrent policy flip"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "contains": [
+        "2429 AC3",
+        "false return never marks evaluator deferred"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_gc_defer_overflow_policy_atomic_2429.cpp",
+      "contains": [
+        "2429 AC4",
+        "HardFail overflow → false"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_gc_defer_overflow_policy_atomic_2429",
+        "cmd_gc_defer_overflow_policy_atomic_coverage"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_gc_defer_overflow_policy_atomic_2429"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_gc_defer_overflow_policy_atomic_2429.py"
+}

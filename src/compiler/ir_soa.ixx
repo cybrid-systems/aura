@@ -82,7 +82,7 @@ export inline std::atomic<std::uint64_t>& g_residual_aos_bridge_total_atomic() n
 // set_allow_aos_bridge_for_test / AURA_ALLOW_AOS_BRIDGE=1 (runtime test
 // seam). residual_aos_bridge_total is a test-only observability metric
 // on production smoke (target 0) — continuous CI proof:
-//   scripts/check_soa_residual_production_smoke_2618.py
+//   scripts/coverage/checks/check_soa_residual_production_smoke_2618.py
 //   test_soa_residual_production_smoke_2618 (hard residual==0).
 export inline std::atomic<std::uint8_t>& g_allow_aos_bridge_for_test() noexcept {
     static std::atomic<std::uint8_t> v{0};

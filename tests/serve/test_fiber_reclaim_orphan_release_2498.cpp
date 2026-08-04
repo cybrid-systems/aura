@@ -190,7 +190,8 @@ static void ac5_source_cite_and_linter() {
     const auto fh = read_file("src/serve/fiber.h");
     const auto fc = read_file("src/serve/fiber.cpp");
     const auto env = read_file("src/compiler/evaluator_env.cpp");
-    const auto linter = read_file("scripts/check_fiber_reclaim_orphan_release_2498.py");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_fiber_reclaim_orphan_release_2498.py");
 
     // AC5: Fiber class exposes the orphan-root table API.
     CHECK(fh.find("register_orphan_root_release") != std::string::npos,

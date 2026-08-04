@@ -214,7 +214,7 @@ static void ac7_source_and_gate() {
     CHECK(build.find("check_tenant_scope_fiber_mandate_2491") != std::string::npos ||
               build.find("cmd_tenant_scope_fiber_mandate_2491_coverage") != std::string::npos,
           "AC7: build.py gate entry");
-    const auto gate = read_file("scripts/check_tenant_scope_fiber_mandate_2491.py");
+    const auto gate = read_file("scripts/coverage/checks/check_tenant_scope_fiber_mandate_2491.py");
     CHECK(!gate.empty() && gate.find("Issue #2491") != std::string::npos,
           "AC7: coverage linter present");
 }

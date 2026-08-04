@@ -1,0 +1,110 @@
+{
+  "issue": 2462,
+  "title": "Issue #2462: type-system-health next-action + repair_nodes.",
+  "ok": "OK: type-system-health next-action #2462 coverage contract clean",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_system_health.hh",
+      "contains": [
+        "decide_type_system_next_action",
+        "TypeSystemNextAction"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "contains": [
+        "AC1: healthy empty"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_system_health.hh",
+      "contains": [
+        "full-solve",
+        "rollback",
+        "truncated_reverify"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "contains": [
+        "AC2: truncated"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_system_health.hh",
+      "contains": [
+        "expand-dirty",
+        "repair_nodes_count"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "contains": [
+        "AC3: expand-dirty"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/type_system_health.hh",
+      "contains": [
+        "annotate-dynamic",
+        "castop_over_budget"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "contains": [
+        "AC4: annotate-dynamic"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2462",
+        "next-action",
+        "repair-nodes-count",
+        "type-system-health-next-action-wired",
+        "schema-2350",
+        "Issue #2462"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/type_system_health.hh",
+      "contains": [
+        "Issue #2462"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_type_system_health_next_action_2462"
+      ]
+    },
+    {
+      "ac": "gate",
+      "path": "build.py",
+      "contains": [
+        "check_type_system_health_next_action_2462",
+        "cmd_type_system_health_next_action_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_type_system_health_next_action_2462.cpp",
+      "contains": [
+        "AC5: pure"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_type_system_health_next_action_2462.py"
+}

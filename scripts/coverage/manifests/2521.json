@@ -1,0 +1,123 @@
+{
+  "issue": 2521,
+  "title": "Issue #2521: production default-on PCV TLS freelist.",
+  "ok": "OK: Issue #2521 PCV TLS production default ON — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "Issue #2521",
+        "production default ON",
+        "AURA_PCV_TLS",
+        "kPcvTlsDefaultOnIssue",
+        "return true"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "contains": [
+        "ac1_default_on"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "tls_scratch_hit_total",
+        "make_from_tls_or_new"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "contains": [
+        "ac2_exclusive_stress"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "another thread"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "contains": [
+        "ac3_steal_policy"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_pcv_unique_hotpath_2058.cpp",
+      "contains": [
+        "set_pcv_tls_scratch_for_test(false)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_pcv_exclusive_with_set_2140.cpp",
+      "contains": [
+        "set_pcv_tls_scratch_for_test(false)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "contains": [
+        "ac4_alloc_count_override"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2521",
+        "tls-scratch-production-default-on",
+        "tls-scratch-hit-total",
+        "tls-scratch-miss-total",
+        "tls-scratch-recycle-total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_pcv_tls_default_on_2521"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "check_pcv_tls_default_on_2521",
+        "cmd_pcv_tls_default_on_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_pcv_tls_default_on_2521.cpp",
+      "contains": [
+        "ac5_query"
+      ]
+    },
+    {
+      "ac": "retain",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "kPcvTlsScratchIssue"
+      ]
+    },
+    {
+      "ac": "retain",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2406"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_pcv_tls_default_on_2521.py"
+}
