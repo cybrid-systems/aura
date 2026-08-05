@@ -1855,6 +1855,30 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-2363", 2363);
                 insert_kv("issue-2363", 2363);
             }
+            // Issue #2665: production-default required-mode fail-closed
+            // counter (Agent-visible). Bumped when
+            // g_general_object_pin_required_pref > 0 (production-default
+            // locked via #2597 step 15 — env unset under production) AND
+            // wire_general_object_create_pair fails to pin either side.
+            // Soft / dev_off / unset (pref <= 0) stays observe-only.
+            // Additive schema — no break.
+            {
+                using aura::core::lifetime::g_general_object_pin_required_enforced_total;
+                using aura::core::lifetime::g_general_object_pin_required_pref;
+                insert_kv(
+                    "general-object-pin-required-enforced-total",
+                    static_cast<std::int64_t>(g_general_object_pin_required_enforced_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv(
+                    "general_object_pin_required_enforced_total",
+                    static_cast<std::int64_t>(g_general_object_pin_required_enforced_total.load(
+                        std::memory_order_relaxed)));
+                insert_kv(
+                    "general-object-pin-required-wired",
+                    g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0 ? 1 : 0);
+                insert_kv("schema-2665", 2665);
+                insert_kv("issue-2665", 2665);
+            }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in
             // evaluator_mutation_boundary.cpp) gates success metrics + bumps

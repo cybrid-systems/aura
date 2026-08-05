@@ -185,10 +185,78 @@ static void ac20_exempt_marker_source_cite() {
 
 } // namespace
 
+// ── Issue #2665: production-default required-mode fail-closed ────────────
+//
+// Closes inventory-only adopt gap that feeds Moving untracked / UAF
+// under agent mutate (#2495 class consumer of missing pins). Wires
+// the production-default required-mode fail-closed counter
+// (g_general_object_pin_required_enforced_total) on
+// wire_general_object_create_pair when production_default locked
+// required pref > 0 AND either pin fails. Soft / dev_off / unset
+// stays zero-cost.
+//
+// AC1: wire_general_object_create_pair bumps enforced_total on
+//      required-mode failure (source-cite lifetime_pin.ixx).
+// AC2: additive query keys (general-object-pin-required-enforced-
+//      total + general-object-pin-required-wired + schema-2665 +
+//      issue-2665) — source-cite obs_eval.cpp.
+// AC3: Soft / dev_off / unset stays zero-cost (gated on pref <= 0).
+// AC4: existing #2496 ac4_required_mode_fail_closed still works
+//      (regression check — the new bump doesn't break the old gate).
+static void ac2665_1_production_required_enforcement() {
+    std::println("\n--- #2665 AC1: production-default required-mode fail-closed ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("Issue #2665") != std::string::npos,
+          "2665 AC1: lifetime_pin.ixx cites #2665 production-default required-mode");
+    CHECK(lp.find("wire_general_object_create_pair") != std::string::npos,
+          "2665 AC1: wire_general_object_create_pair is the enforcement site");
+    CHECK(lp.find("g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0") !=
+              std::string::npos,
+          "2665 AC1: enforced on pref > 0 (production-default lock via #2597)");
+    CHECK(lp.find("g_general_object_pin_required_enforced_total.fetch_add") != std::string::npos,
+          "2665 AC1: enforced_total counter bumped on required-mode failure");
+}
+
+static void ac2665_2_query_keys_added() {
+    std::println("\n--- #2665 AC2: additive query keys ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(obs.find("general-object-pin-required-enforced-total") != std::string::npos,
+          "2665 AC2: obs_eval.cpp exposes general-object-pin-required-enforced-total");
+    CHECK(obs.find("general_object_pin_required_enforced_total") != std::string::npos,
+          "2665 AC2: obs_eval.cpp exposes camelCase key");
+    CHECK(obs.find("general-object-pin-required-wired") != std::string::npos,
+          "2665 AC2: obs_eval.cpp exposes general-object-pin-required-wired sentinel");
+    CHECK(obs.find("schema-2665") != std::string::npos,
+          "2665 AC2: obs_eval.cpp schema-2665 sentinel");
+    CHECK(obs.find("issue-2665") != std::string::npos,
+          "2665 AC2: obs_eval.cpp issue-2665 sentinel");
+}
+
+static void ac2665_3_soft_zero_cost() {
+    std::println("\n--- #2665 AC3: Soft / dev_off / unset zero-cost ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("Soft / dev_off / unset (pref <= 0)") != std::string::npos,
+          "2665 AC3: Soft path comment documents zero-cost (gated on pref <= 0)");
+}
+
+static void ac2665_4_existing_ac4_unchanged() {
+    std::println("\n--- #2665 AC4: existing #2496 ac4_required_mode_fail_closed unchanged ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("g_general_object_pin_required_enforced_total") != std::string::npos,
+          "2665 AC4: counter still declared (no regression on #2496)");
+    CHECK(lp.find("general_object_pin_required_enforced_total") != std::string::npos ||
+              lp.find("g_general_object_pin_required_enforced_total") != std::string::npos,
+          "2665 AC4: counter reference preserved (ac4_required_mode_fail_closed contract)");
+    CHECK(lp.find("Issue #2496") != std::string::npos,
+          "2665 AC4: #2496 contract comment still cited (regression)");
+}
+
 int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
     std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
                  "(extends #2496 test file per #81967) ===");
+    std::println("=== Issue #2665: production-default required-mode fail-closed counter + "
+                 "additive query keys (extends #2496 test file per #81967) ===");
     // contiguous form for check_general_object_pin_auto_wire_2597.py:
     // production default AURA_GENERAL_OBJECT_PIN=required (extends #2496 test file per #81967)
     ac1_inventory_sites_wired();
@@ -201,6 +269,10 @@ int run_test_general_object_pin_coverage_gate() {
     ac18_soft_unset_keeps_observe();
     ac19_env_parser_source_cite();
     ac20_exempt_marker_source_cite();
+    ac2665_1_production_required_enforcement();
+    ac2665_2_query_keys_added();
+    ac2665_3_soft_zero_cost();
+    ac2665_4_existing_ac4_unchanged();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

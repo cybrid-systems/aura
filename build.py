@@ -358,6 +358,24 @@ def cmd_lint():
             "Issue #2664 production-default hard-fail coverage linter failed — run python3 scripts/coverage/checks/check_2664_coverage.py"
         )
         return r
+    # Issue #2665: production-default GeneralObjectPin required +
+    # close inventory-only adopt gap (lifetime_pin.ixx
+    # wire_general_object_create_pair bumps
+    # g_general_object_pin_required_enforced_total on required-mode
+    # failure; obs_eval.cpp exposes additive query keys). Builds on
+    # #2496/#2597 GeneralObjectPin coverage — wires next to the
+    # #2664 production-hardening linter so a regression in the #2665
+    # AC surface fails the same gate.
+    gop_script = COVERAGE_CHECKS / "check_2665_coverage.py"
+    if not gop_script.exists():
+        fail(f"missing {gop_script}")
+        return 1
+    r = run([sys.executable, str(gop_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2665 general-object-pin required-mode coverage linter failed — run python3 scripts/coverage/checks/check_2665_coverage.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
