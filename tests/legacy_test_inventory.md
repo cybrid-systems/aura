@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 776 | Preferred destination suites |
-| **Total scanned** | **776** | |
+| `tests/core/test_*.cpp` | 777 | Preferred destination suites |
+| **Total scanned** | **777** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 80 | 80 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 223 | 223 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 97 | 97 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 98 | 98 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 42 | 42 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
@@ -405,6 +405,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_fiber_reclaim_safety.cpp`
 - `tests/compiler/test_fiber_resume_batch.cpp`
 - `tests/serve/test_fiber_resume_state.cpp`
+- `tests/compiler/test_fiber_spawn_cli.cpp`
 - `tests/serve/test_fiber_steal_panic_checkpoint_nested_gc.cpp`
 - `tests/serve/test_fiber_strategy_evolve_batch.cpp`
 - `tests/serve/test_fiber_synthesize_batch.cpp`
@@ -1310,13 +1311,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (97)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (98)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (97)
+#### domain/ (98)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1347,6 +1348,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_fiber_reclaim_safety.cpp` (—) [domain_suite, theme_serve] — AC1: Fiber::is_done() now strictly requires state_==Done
 - `tests/compiler/test_fiber_resume_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_fiber_resume_batch.cpp — batch driver for fiber resume post-steal family.
 - `tests/serve/test_fiber_resume_state.cpp` (—) [domain_suite, theme_serve] — AC1: Fiber::resume() returns early if state_ == Done
+- `tests/compiler/test_fiber_spawn_cli.cpp` (—) [domain_suite, theme_compiler] — AC1: fiber:spawn returns positive int (never -1 / #f on success)
 - `tests/serve/test_fiber_steal_panic_checkpoint_nested_gc.cpp` (—) [small, domain_suite, theme_serve] — tests/test_fiber_steal_panic_checkpoint_nested_gc.cpp — Issue #1446
 - `tests/serve/test_fiber_strategy_evolve_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_strategy_evolve_batch.cpp — consolidated fiber-theme drivers
 - `tests/serve/test_fiber_synthesize_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — test_fiber_synthesize_batch.cpp — consolidated fiber-theme drivers

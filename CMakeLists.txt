@@ -3779,6 +3779,11 @@ aura_add_issue_test(test_subsecond_clock)
 aura_issue_test_link_light(test_subsecond_clock)
 add_dependencies(all_test_issue_targets test_subsecond_clock)
 
+# Issue #2656: CLI denseness fiber:spawn positive ids (not -1).
+aura_add_issue_test(test_fiber_spawn_cli)
+aura_issue_test_link_light(test_fiber_spawn_cli)
+add_dependencies(all_test_issue_targets test_fiber_spawn_cli)
+
 # Issue #2469: Scheduler::reap_orphans_now() two-phase extraction —
 # orphan_mutex_ released before per-fiber cleanup (wait_map_mutex_,
 # joiner_map_mutex_, owned_fibers_mutex_ acquisitions). Minimizes

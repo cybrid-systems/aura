@@ -37,9 +37,11 @@ struct MessagingBridge {
 // The global bridge instance
 extern MessagingBridge g_messaging_bridge;
 
-// Fiber spawn — set by serve_async.cpp, used by evaluator
-// Returns 0 on failure, non-zero fiber ID on success
-// Changed from raw function pointer to std::function to allow lambda captures
+// Fiber spawn — set by serve_async.cpp, used by evaluator.
+// Returns 0 on failure, positive fiber ID on success (scheduler Fiber::id).
+// When unset (CLI stdin / denseness), fiber:spawn uses a std::thread
+// fallback with positive high-bit ids (Issue #2656 — never -1 on success).
+// Changed from raw function pointer to std::function to allow lambda captures.
 using FiberSpawnFn = std::function<int64_t(std::function<void()>)>;
 extern FiberSpawnFn g_fiber_spawn;
 

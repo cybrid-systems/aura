@@ -3,12 +3,12 @@
     "compile": 23,
     "engine": 8,
     "mutate": 3,
-    "other": 375,
+    "other": 376,
     "query": 46,
     "stats-like": 0,
     "workspace": 17
   },
-  "count": 472,
+  "count": 473,
   "frozen_count": 441,
   "frozen_names": [
     "arena:adaptive-stats",
@@ -597,6 +597,7 @@
     "exp",
     "fiber:join",
     "fiber:spawn",
+    "fiber:spawn-backend",
     "fiber:yield",
     "file-copy",
     "file-delete",

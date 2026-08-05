@@ -519,10 +519,26 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_hash(hidx);
         });
 
-    // (fiber:spawn fn) — Spawn a fiber (async)
-    // fn is a closure taking no arguments.
-    // Returns non-zero fiber ID on success, #f on failure.
-    // Result is retrievable via (fiber:join fid).
+    // (fiber:spawn fn) — Spawn a fiber (async).
+    // fn is a 0-arg closure. Result retrievable via (fiber:join fid).
+    //
+    // Issue #2656 contract (CLI denseness / Hephaestus H9):
+    //   Success → positive integer fiber id
+    //   Failure → #f (or capability error object under sandbox)
+    //   Never returns 0 or -1 on success.
+    //
+    // Backends:
+    //   1. Scheduler — when g_fiber_spawn is set (serve-async /
+    //      --serve-async-bench). Positive scheduler Fiber::id().
+    //   2. Thread fallback — CLI stdin / denseness without serve-async.
+    //      Detached std::thread + positive high-bit ids (0x4000_0000 |
+    //      seq). Pre-#2656 used negative ids starting at -1; denseness
+    //      probes treated -1 as failure even though join worked.
+    //
+    // Concurrent denseness: thread fallback is a valid multi-worker
+    // backend for axis-C rebind under load. Real stackful fibers need
+    // serve-async / epoll. Sequential-yield fanout remains a supported
+    // denseness surrogate when spawn is denied by capability/sandbox.
     add("fiber:spawn", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_closure(a[0]))
             return make_bool(false);
@@ -569,11 +585,14 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             fid = aura::messaging::g_fiber_spawn(complete_fiber);
             fid_holder->store(fid, std::memory_order_release);
         }
-        // Fallback (stdin mode): use std::thread
+        // Fallback (CLI denseness / stdin): std::thread with positive ids.
         if (fid <= 0) {
-            // Thread counter for unique fiber IDs (negative = thread-based)
-            static std::atomic<int64_t> thread_fiber_id{0};
-            fid = -(++thread_fiber_id); // unique negative ID
+            // Issue #2656: positive thread-fallback ids. High bit set so
+            // they never collide with low scheduler Fiber::id() values
+            // and never equal -1 (denseness failure sentinel).
+            static std::atomic<std::int64_t> thread_fiber_seq{0};
+            const auto seq = thread_fiber_seq.fetch_add(1, std::memory_order_relaxed) + 1;
+            fid = static_cast<std::int64_t>(0x4000'0000LL) | seq;
             fid_holder->store(fid, std::memory_order_release);
             {
                 std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
@@ -591,6 +610,18 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(fid);
         }
         return make_bool(false);
+    });
+
+    // Issue #2656: which backend (fiber:spawn) will use right now.
+    // "scheduler" | "thread" — denseness hosts can assert concurrent path.
+    add("fiber:spawn-backend", [](const auto&) -> EvalValue {
+        // Interned at call time via make_string of heap push is heavier;
+        // return a small int enum for probes + keep string via display path
+        // optional. Use 1=scheduler, 2=thread (always one of these when
+        // capability allows; capability deny is only on spawn).
+        if (aura::messaging::g_fiber_spawn)
+            return make_int(1); // scheduler
+        return make_int(2);     // thread fallback (CLI denseness)
     });
 
     // (fiber:yield) — Yield current fiber to scheduler (serve mode only)
