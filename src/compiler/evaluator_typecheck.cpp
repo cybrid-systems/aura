@@ -2347,6 +2347,49 @@ void Evaluator::partial_recover_adt_exhaustiveness(std::uint64_t mutation_id) no
     }
 }
 
+// Issue #2671: drift-injection soak for OccurrenceGoal refined consistency.
+// Hermetic test-only helper — seeds two live OccurrenceGoal rows on the
+// same UF rep (same var) with incompatible refined (int vs string). The
+// existing #2644 check_occurrence_refined_consistency() groups goals by
+// UF rep and detects bidirectional consistent_unify failure → drift.
+// composite_txn_commit routes Soft observe vs Full/strict reject based on
+// typed_audit::production_defaults_active(); see evaluator_typecheck.cpp
+// composite_txn_commit for the gating logic. No production cost outside
+// test builds (helper only called from test_composite_commit_cs_reuse.cpp).
+void Evaluator::inject_commit_occurrence_drift_for_test() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto& cs = tc->constraint_system();
+        const auto t = cs.fresh_var();
+        // Same UF rep (same var `t`), incompatible refined (int vs string).
+        // Both rows land in occurrence_goals_; check_occurrence_refined_
+        // consistency() groups by UF rep, sees bidirectional consistent_
+        // unify failure, returns false → composite_txn_commit observes or
+        // rejects per production_defaults_active().
+        cs.note_occurrence_goal(t, reg->int_type(), /*pred=*/0,
+                                /*mid=*/2671, /*epoch=*/0);
+        cs.note_occurrence_goal(t, reg->string_type(), /*pred=*/0,
+                                /*mid=*/2672, /*epoch=*/0);
+        commit_cs_live_ = true;
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
 void Evaluator::inject_commit_cs_type_conflict_for_test() noexcept {
     try {
         auto* reg_raw = ensure_type_registry();

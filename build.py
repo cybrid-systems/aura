@@ -5827,6 +5827,30 @@ def cmd_stable_func_id_eval_namespace_coverage():
     return 0
 
 
+def cmd_composite_drift_inject_2671_coverage():
+    """Issue #2671: drift-injection soak for OccurrenceGoal refined consistency.
+
+    Hermetic test-only helper inject_commit_occurrence_drift_for_test()
+    seeds two live OccurrenceGoal rows on the same UF rep with incompatible
+    refined (int vs string). Refine #2644 (which shipped the check + wiring
+    but deferred AC1/AC2/AC6 drift-injection scenario to a follow-up).
+    composite_txn_commit routes Soft observe vs Full/strict reject based
+    on typed_audit::production_defaults_active(). Additive to #2644 / #2610
+    / #2180 surfaces.
+    """
+    print(f"{B}=== composite drift inject (#2671) coverage ==={N}")
+    script = COVERAGE_CHECKS / "check_composite_drift_inject_2671.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("composite drift inject (#2671) coverage contract rows failed")
+        return 1
+    ok("composite drift inject (#2671) coverage clean")
+    return 0
+
+
 def cmd_anonymous_residual_stable_id_policy_coverage():
     """Issue #2605: explicit anonymous / residual sid=0 policy.
 
@@ -8113,6 +8137,7 @@ def cmd_gate():
         or cmd_is_stealable_snapshot_gate_coverage()
         or cmd_named_closure_stable_id_at_create_coverage()
         or cmd_stable_func_id_eval_namespace_coverage()
+        or cmd_composite_drift_inject_2671_coverage()
         or cmd_anonymous_residual_stable_id_policy_coverage()
         or cmd_pereval_reemit_region_independence_coverage()
         or cmd_instance_constraint_depth_cap_coverage()

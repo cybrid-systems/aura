@@ -203,15 +203,18 @@ int run_test_composite_commit_cs_reuse() {
               "escape blocked counter");
     }
 
-    std::println("\n=== #2180 composite CS reuse: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2180 + #2644 + #2671 composite CS reuse + drift-inject soak: {} passed, "
+                 "{} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
 // ── #2644 AC3+AC4: empty / single / consistent refined → no extra reject ──
-// #2644 AC5 source-cite lives below; full AC1/AC2/AC6 drift-injection
-// scenario requires a `inject_commit_occurrence_drift_for_test()` helper
-// (a follow-up commit). For now the helper short-circuits on empty
-// occurrence table (AC4 zero cost) and the wiring is source-cited.
+// #2644 AC5 source-cite lives below; #2671 added the
+// `inject_commit_occurrence_drift_for_test()` hermetic helper that
+// seeds two live OccurrenceGoal rows on the same UF rep with
+// incompatible refined (int vs string). Soft observe / Full reject
+// routes exercised below per #2671 AC1/AC2.
 namespace ac2644_helpers {
 static std::uint64_t drift_observe() {
     return g_typed_mutation_audit_counters.composite_type_scheme_drift_observe_total.load(
@@ -281,6 +284,140 @@ static void ac2644_source_cite() {
     CHECK(linter.find("#2644") != std::string::npos, "#2644 AC5: linter cites #2644");
     CHECK(linter.find("check_occurrence_refined_consistency") != std::string::npos,
           "#2644 AC5: linter scans helper symbol");
+}
+
+// ── #2671: drift-injection soak for OccurrenceGoal refined consistency ──
+//
+// Hermetic test path: inject_commit_occurrence_drift_for_test() seeds two
+// live OccurrenceGoal rows on the same UF rep with incompatible refined
+// (int vs string). composite_txn_commit calls check_occurrence_refined_
+// consistency() and routes:
+//   - Soft (production_defaults_active() off) → observe++, allow commit
+//   - Full / strict / production → reject++, rejected=true
+//
+// AC3 (compatible refined / single goal → zero extra) and AC4 (empty
+// goals → zero counter bump) are covered by ac2644_empty_cs_no_drift_
+// bump() above (#2644 AC4 zero-cost short-circuit applies unchanged).
+
+// ── #2671 AC1: Soft + injected incompatible refined → observe++, not rejected ──
+static void ac2671_soft_drift_observe() {
+    std::println("\n--- #2671 AC1: Soft + injected incompatible refined → observe++ ---");
+    reset_for_test();
+    // Soft strategy: production_defaults_active() returns false → observe path.
+    set_strategy(AuditStrategy::Soft);
+    CompilerService cs;
+    seed(cs);
+    const auto obs0 = ac2644_helpers::drift_observe();
+    const auto rej0 = ac2644_helpers::drift_reject();
+
+    // Hermetic drift injection: two OccurrenceGoal rows on same UF rep,
+    // refined = int vs string (consistent_unify both directions fails).
+    cs.evaluator().inject_commit_occurrence_drift_for_test();
+    CHECK(cs.evaluator().commit_cs_live(), "#2671 AC1: commit_cs_live after drift inject");
+
+    CompositeTxnCommitResult cr{};
+    const bool committed = cs.evaluator().composite_txn_commit(
+        /*mid=*/2671, "soft-drift-soak", 0, 0, 1, /*nested=*/false, /*batch=*/true, &cr);
+    // Soft path allows commit; only the drift metric advances.
+    CHECK(ac2644_helpers::drift_observe() > obs0,
+          "#2671 AC1: Soft drift → observe counter advanced");
+    CHECK(ac2644_helpers::drift_reject() == rej0,
+          "#2671 AC1: Soft drift → reject counter unchanged");
+    // cr.rejected stays false under Soft (committed may be true or false
+    // depending on downstream solve state; we only assert the drift path
+    // did not force a reject).
+    CHECK(!cr.rejected || committed,
+          "#2671 AC1: Soft drift did not force rejected=true on its own");
+}
+
+// ── #2671 AC2: Full + same inject → reject++, rejected=true ──
+static void ac2671_full_drift_reject() {
+    std::println("\n--- #2671 AC2: Full + injected incompatible refined → reject++ ---");
+    reset_for_test();
+    // Full strategy + production defaults → reject path.
+    set_strategy(AuditStrategy::Full);
+    CompilerService cs;
+    seed(cs);
+    const auto obs0 = ac2644_helpers::drift_observe();
+    const auto rej0 = ac2644_helpers::drift_reject();
+
+    cs.evaluator().inject_commit_occurrence_drift_for_test();
+    CHECK(cs.evaluator().commit_cs_live(), "#2671 AC2: commit_cs_live after drift inject");
+
+    CompositeTxnCommitResult cr{};
+    const bool committed = cs.evaluator().composite_txn_commit(
+        /*mid=*/2672, "full-drift-soak", 0, 0, 1, /*nested=*/false, /*batch=*/true, &cr);
+    CHECK(ac2644_helpers::drift_reject() > rej0, "#2671 AC2: Full drift → reject counter advanced");
+    CHECK(ac2644_helpers::drift_observe() == obs0,
+          "#2671 AC2: Full drift → observe counter unchanged (production/Full route)");
+    CHECK(cr.rejected, "#2671 AC2: cr.rejected == true under Full drift (no silent SOLVED)");
+    CHECK(!committed, "#2671 AC2: composite_txn_commit returned false under Full drift");
+}
+
+// ── #2671 AC5: #2610 empty-CS / auto_partial matrix unchanged ──
+//
+// Verify inject helper does not corrupt the empty-CS path that
+// #2610 / ac2644_empty_cs_no_drift_bump already exercises: after a
+// drift inject, a fresh CompilerService (no seed) keeps the empty-CS
+// path cost-free (no spurious counter bump on empty occurrence table).
+static void ac2671_2610_empty_cs_unchanged() {
+    std::println("\n--- #2671 AC5: empty-CS / #2610 path unchanged after inject ---");
+    reset_for_test();
+    set_strategy(AuditStrategy::Full);
+    // Fresh CompilerService — empty CS (no occurrence drift, no partial recovery).
+    CompilerService cs_fresh;
+    seed(cs_fresh);
+    const auto obs0 = ac2644_helpers::drift_observe();
+    const auto rej0 = ac2644_helpers::drift_reject();
+    CompositeTxnCommitResult cr{};
+    cs_fresh.evaluator().composite_txn_commit(
+        /*mid=*/2673, "empty-cs-after-inject", 0, 0, 1, /*nested=*/false, /*batch=*/true, &cr);
+    // AC4 zero-cost on empty occurrence table applies unchanged: no counter bump
+    // even though a previous test injected drift into a different Evaluator's CS.
+    CHECK(ac2644_helpers::drift_observe() == obs0,
+          "#2671 AC5: empty-CS path after drift inject → observe unchanged");
+    CHECK(ac2644_helpers::drift_reject() == rej0,
+          "#2671 AC5: empty-CS path after drift inject → reject unchanged");
+}
+
+// ── #2671 AC6: source-cite + linter ──
+static void ac2671_schema_and_source() {
+    std::println("\n--- #2671 AC6: source-cite + linter + helper wiring ---");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto audit_h = read_file("src/compiler/typed_mutation_audit.h");
+    const auto lint = read_file("scripts/coverage/checks/check_composite_drift_inject_2671.py");
+    const auto build = read_file("build.py");
+
+    // Helper declaration + definition.
+    CHECK(ixx.find("inject_commit_occurrence_drift_for_test") != std::string::npos,
+          "#2671 AC6: evaluator.ixx declares new helper");
+    CHECK(tc.find("Issue #2671: drift-injection soak") != std::string::npos,
+          "#2671 AC6: evaluator_typecheck.cpp cites #2671");
+    CHECK(tc.find("inject_commit_occurrence_drift_for_test() noexcept") != std::string::npos,
+          "#2671 AC6: evaluator_typecheck.cpp defines new helper");
+    CHECK(tc.find("note_occurrence_goal") != std::string::npos,
+          "#2671 AC6: helper uses note_occurrence_goal (public CS API)");
+
+    // #2644 / #2610 surface preserved (additive, not replaced).
+    CHECK(tc.find("check_occurrence_refined_consistency") != std::string::npos,
+          "#2671 AC6: #2644 check helper still referenced");
+    CHECK(audit_h.find("composite_type_scheme_drift_observe_total") != std::string::npos,
+          "#2671 AC6: observe counter preserved");
+    CHECK(audit_h.find("composite_type_scheme_drift_reject_total") != std::string::npos,
+          "#2671 AC6: reject counter preserved");
+    CHECK(tc.find("production_defaults_active()") != std::string::npos,
+          "#2671 AC6: production/Soft routing preserved");
+
+    // Linter + build.py wiring.
+    CHECK(!lint.empty(), "#2671 AC6: linter file present");
+    CHECK(lint.find("#2671") != std::string::npos, "#2671 AC6: linter cites #2671");
+    CHECK(lint.find("inject_commit_occurrence_drift_for_test") != std::string::npos,
+          "#2671 AC6: linter scans new helper symbol");
+    CHECK(build.find("check_composite_drift_inject_2671") != std::string::npos,
+          "#2671 AC6: build.py references linter");
+    CHECK(build.find("cmd_composite_drift_inject_2671_coverage") != std::string::npos,
+          "#2671 AC6: build.py cmd wired");
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
