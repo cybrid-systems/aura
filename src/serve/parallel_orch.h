@@ -526,6 +526,12 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
                 // cap used by the orch layer. Best-effort: fibers
                 // without an owner Scheduler (test / host-thread)
                 // are skipped; the counter still increments.
+                // Issue #2661: the orch join path (join_agent / join_agents
+                // in src/orch/agent_spawn.h) applies the unified
+                // complete_agent_join_cleanup helper when the
+                // parallel-joined AgentHandle is collected. No divergent
+                // cleanup — both paths share the same #2467
+                // JoinStatus::Reclaimed contract.
                 const std::uint64_t hard_ms = std::min<std::uint64_t>(
                     policy.drain_ms > 0 ? policy.drain_ms * 8 : 30000, 30000);
                 for (auto* f : not_done) {

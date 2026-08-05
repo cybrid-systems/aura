@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include "core/audit_wal.hh"                 // #2076 wal_off posture under Restricted
+#include "core/audit_wal_metrics.h"          // #2076 wal_off posture gauge
 #include "core/capability_model.hh"          // #2534 capability deny storm window
 #include "core/mutation_audit_wal.hh"        // audit_wal_enabled (#2076)
 #include "compiler/audit_mid_fallback_slo.h" // #2594 mid-fallback SLO

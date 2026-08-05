@@ -580,3 +580,51 @@ direct precedent.
 Regression: `tests/orch/test_security_schedule_gate` (pure
 idempotency + production/soft mode matrix + counter bumps + query
 surface + README source-cite). No docs/design/ per #1655.
+
+## JoinStatus contract (Issue #2661)
+
+`Fiber::join` and `parallel_orch::parallel_run` return `serve::JoinResult`
+with one of four statuses. The joiner MUST consult this table before
+freeing any shared resource — Reclaimed is the one path where the body
+may still be running under a non-yielding tight loop. Single post-join
+cleanup protocol lives in `Evaluator::complete_agent_join_cleanup`
+(`src/orch/agent_spawn.h`); orch `join_agent` / `join_agents` route
+through it. The parallel Timeout residual path uses the same
+`note_orphan_fiber` + Fiber dtor pair (no divergent cleanup).
+
+| `JoinStatus` | Body Done? | What joiner may free | Counter bumps |
+|--------------|-----------|---------------------|----------------|
+| `Ok` | yes | mailbox detach, reservation, name-table (via scope dtor) | `join_ok_total` (incremented after `complete_agent_join_cleanup`) |
+| `Timeout` | no (drain in flight) | mailbox detach, reservation, name-table — after `cancel_and_drain_fiber` best-effort (`#2153` policy) | `join_fail_total` + `join_drain_residual_total` (if body still live) |
+| `Cancelled` | no (drain in flight) | same as `Timeout` — after `cancel_and_drain_fiber` best-effort | `join_fail_total` + `join_drain_residual_total` |
+| `Reclaimed` | **no** — force-reclaimed, body may still execute | **only** global-table drops: `Fiber::release_orphan_roots()` (mailbox attach pointer, EnvFrame slots). **NEVER** free body-stack owned objects. Defer reservation / mailbox / name-table until body exit / `~Fiber` pairs still-running gauge. | `join_reclaimed_deferred_cleanup_total` (new, #2661) — mirrors `#2498` orphan-roots counter so dashboards can distinguish "still draining" from "deferred". |
+
+### Why Reclaimed is special (#2467)
+
+A non-yielding tight loop body can hold the scheduler hostage. The
+hard-reclaim path (#2227 / #2533) reclaims the Fiber so other agents
+can make progress, but the body may still be running on a separate
+worker (race window between mark_reclaimed and body exit). A naive
+joiner would:
+- free the arena reservation → under-count live work
+- detach the mailbox → leave a dangling pointer on a published mailbox
+  if the body still posts
+- drop the name-table entry → leak if the body still references it
+
+The `complete_agent_join_cleanup` helper splits this: global-table
+drops are safe (mailbox attach pointer is now stale, dropping it does
+not affect a still-publishing body — the body itself clears it on
+exit). Body-stack owned objects stay held until `~Fiber` pairs the
+still-running gauge.
+
+### Counter reference (for dashboards)
+
+| Surface | Counter | Bumped by |
+|---------|---------|-----------|
+| `OrchModuleStats.join_reclaimed_deferred_cleanup_total` | `src/orch/agent_spawn.h` | `Evaluator::complete_agent_join_cleanup` (Reclaimed path) |
+| `Fiber::orphan_roots_dropped_on_reclaim_total` | `src/serve/fiber.cpp` | `Fiber::release_orphan_roots` |
+| `Fiber::orphan_roots_hwm` | `src/serve/fiber.cpp` | `Fiber::release_orphan_roots` (CAS high-water mark) |
+| `OrchModuleStats.join_drain_residual_total` / `_reclaim_total` | `src/orch/agent_spawn.h` | `cancel_and_drain_fiber(s)` |
+
+Regression: `tests/orch/test_join_drain_reclaim` (extended per #2661
+AC1-AC6). No docs/design/ per #1655.

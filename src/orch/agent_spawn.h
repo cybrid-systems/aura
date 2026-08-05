@@ -298,6 +298,15 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> join_drain_residual_still_running{0};
     std::atomic<std::uint64_t> join_drain_residual_body_retired_total{0};
     std::atomic<std::uint64_t> join_drain_us_total{0};
+    // Issue #2661: P0(orch/fiber) Reclaimed resource safety — joiner
+    // cleanup path counter. Bumped every time the post-join cleanup
+    // helper runs on a Reclaimed join (deferred global-table drop
+    // only, never body-stack free). When non-zero, the
+    // reservation / mailbox / name-table are held until the body
+    // actually exits (Fiber dtor / note_body_exit_if_reclaimed).
+    // Mirrors the #2498 orphan-roots metric so dashboards can
+    // distinguish "still draining" from "deferred".
+    std::atomic<std::uint64_t> join_reclaimed_deferred_cleanup_total{0};
     // Issue #2636: residual reclaim observability — body-age tracking
     // (steady_clock ns at mark_reclaimed → body exit / Fiber dtor).
     // gauge on max/sum (CAS on max under contention); counter on samples.
@@ -1323,6 +1332,55 @@ inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
     h.release_reservation_if_any();
 }
 
+// Issue #2661: P0(orch/fiber) Reclaimed resource safety — single
+// post-join cleanup protocol. Mirrors the JoinStatus::Reclaimed
+// contract (#2467) at the orch layer. The body may still be running
+// under a non-yielding tight loop; joiner MUST NOT free body-stack
+// owned objects on that path. Only global-table pointers (mailbox
+// attach, EnvFrame slots) are safe to drop — the Fiber dtor /
+// note_body_exit_if_reclaimed pair still-running gauge handles the
+// rest when the body actually returns. On Ok / Timeout / Cancelled
+// (body Done) the full cleanup (detach mailbox, release reservation,
+// name-table drop via scope dtor) runs as before.
+//
+// Mailbox detach: MultiFiberMailbox::detach(fiber) clears the
+// attach pointer from the global mailbox table (#2498 sibling
+// contract). On Reclaimed we SKIP this — the body may still post
+// messages; a premature detach leaves a dangling pointer on a
+// published mailbox. The body itself (or ~Fiber) performs the
+// detach once it stops running.
+//
+// Reservation release: deferred on Reclaimed — reserved_memory_bytes
+// stays non-zero until the body exits so the arena quota gauge is
+// not under-counted.
+//
+// Name-table drop: handled by ~AgentHandle / scope dtor (#2082 /
+// #2155) — idempotent with this helper, so calling release here on
+// the Reclaimed path is a no-op via ~AgentHandle (the reservation
+// stays held; the dtor will release on actual fiber exit).
+//
+// Soft / sandbox=off: gates unchanged; soft paths always use the
+// Ok / Timeout / Cancelled branch since joiners in unit tests
+// force Reclaimed only via non-yielding tight loops.
+inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept {
+    if (jr.status == serve::JoinStatus::Reclaimed) {
+        // Defer path: global tables only, never body-stack.
+        if (h.fiber)
+            h.fiber->release_orphan_roots();
+        g_orch_module_stats.join_reclaimed_deferred_cleanup_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    // Done / cooperative end (Ok / Timeout / Cancelled / Invalid):
+    // full cleanup. Idempotent with the body-exit / dtor pair —
+    // second caller is a no-op.
+    if (h.mailbox && h.fiber)
+        h.mailbox->detach(h.fiber);
+    release_agent_memory_reservation(h);
+    // Name-table drop: deferred to ~AgentHandle / scope dtor
+    // (idempotent with this helper).
+}
+
 // Stop keepalive helper (if any). Sets helper_stop so the fiber-native helper
 // exits its 1ms poll loop (#2159). Does not request_cancel by default — cancel
 // mid yield-spin races the trampoline under multi-worker steal. join_keepalive
@@ -1507,7 +1565,13 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // Issue #1880 / #2082: free arena/mailbox reservation only after
     // Ok join or after cancel+drain best-effort above. Idempotent with
     // ~AgentHandle (#2009 invariant preserved).
-    release_agent_memory_reservation(h);
+    // Issue #2661: route through the unified post-join cleanup helper —
+    // Reclaimed path drops only global tables (mailbox attach pointer
+    // via Fiber::release_orphan_roots) and bumps the deferred-cleanup
+    // metric; never frees body-stack owned objects. Ok / Timeout /
+    // Cancelled path runs the full detach + reservation release as
+    // before (idempotent with ~AgentHandle).
+    complete_agent_join_cleanup(h, jr);
     return jr;
 }
 
@@ -1574,8 +1638,16 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         }
     }
     // Issue #1880: release per-handle memory reservations.
+    // Issue #2661: route through the unified post-join cleanup helper —
+    // Reclaimed path drops only global tables (mailbox attach pointer
+    // via Fiber::release_orphan_roots) and bumps the deferred-cleanup
+    // metric; never frees body-stack owned objects. Ok / Timeout /
+    // Cancelled path runs the full detach + reservation release as
+    // before (idempotent with ~AgentHandle). Batch join shares the
+    // single jr status — if any fiber in the batch is Reclaimed,
+    // every agent takes the deferred path (matches #2009 invariant).
     for (auto& a : agents)
-        release_agent_memory_reservation(a);
+        complete_agent_join_cleanup(a, jr);
     return jr;
 }
 
