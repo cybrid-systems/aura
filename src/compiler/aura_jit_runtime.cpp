@@ -3,6 +3,7 @@
 
 #include <atomic> // std::memory_order_relaxed — lifetime_pin.hh uses std::atomic but doesn't include <atomic> itself (relies on transitive include from consumer TUs like render_primitives.cpp; we explicitly include it here since aura_jit_runtime.cpp doesn't pull it transitively).
 
+#include "compiler/typed_mutation_audit.h" // #2666 production_defaults_active for residual remount default
 #include "core/lifetime_pin.hh" // Issue #2293: aura::core::lifetime::pin_linear_root / unpin_linear_root
 #include "observability_metrics.h" // CompilerMetrics full def (aura_get_aot_metrics returns it)
 

@@ -808,6 +808,10 @@ void aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms);
 // #2541 soft walk on the active path. Called from
 // MutationBoundaryGuard::~MutationBoundaryGuard outermost success exit.
 void aura_periodic_epoch_invariant_walk_if_due(void);
+// Issue #2668: event-driven soft walk on epoch-bump / reemit edge.
+// Declared here so commit_func_table_swap / aura_aot_bump_func_table_epoch
+// call sites (earlier in aura_jit_bridge.cpp) compile under -Werror.
+void aura_event_driven_epoch_invariant_walk_if_due(void);
 
 } // extern "C"
 
