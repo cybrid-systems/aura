@@ -1,13 +1,17 @@
 ; datetime.aura — Date and time utilities
 ; Import with: (import "std/datetime")
 ;
-; Depends on: (current-time) primitive (seconds since Unix epoch)
+; Depends on host primitives:
+;   (current-time)     — seconds since Unix epoch (legacy, coarse)
+;   (current-time-ms)  — wall-clock ms since Unix epoch (#2655)
+;   (monotonic-ms)     — steady_clock ms for elapsed denseness (#2655)
 ;
-; All functions are pure (no side effects) except timestamp.
+; All functions are pure (no side effects) except timestamp / now / clocks.
 
 (export
   ; Core
-  timestamp timestamp->year timestamp->month timestamp->day
+  timestamp timestamp-ms steady-ms
+  timestamp->year timestamp->month timestamp->day
   timestamp->hour timestamp->minute timestamp->second
   timestamp->weekday timestamp->yday
   ; Formatting
@@ -17,10 +21,20 @@
   ; Calendar
   leap-year? days-in-month day-of-week
   ; Timing
-  time-diff)
+  time-diff elapsed-ms)
 
 ; ── Core: get current time ────────────────────────────────────
 (define (timestamp) (current-time))
+
+; Issue #2655: thin wrappers over host sub-second clocks.
+; Host prims remain (current-time-ms) / (monotonic-ms) without stdlib rebind.
+(define (timestamp-ms) (current-time-ms))
+(define (steady-ms) (monotonic-ms))
+
+; Elapsed ms between two monotonic/steady samples (non-negative).
+(define (elapsed-ms t0 t1)
+  (let ((d (- t1 t0)))
+    (if (< d 0) 0 d)))
 
 ; ── Decompose Unix timestamp (UTC) ────────────────────────────
 ; Based on algorithm from gmtime(3)

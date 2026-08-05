@@ -158,6 +158,8 @@ namespace detail {
             // Eval / meta commonly used in macros
             "eval",
             "current-time",
+            "current-time-ms", // Issue #2655
+            "monotonic-ms",    // Issue #2655
         };
         return builtins;
     }
