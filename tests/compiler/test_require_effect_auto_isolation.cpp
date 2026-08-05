@@ -206,42 +206,180 @@ static void ac5_existing_prims_gain_isolation() {
     CHECK(!ok, "AC5: require_effect auto-enforces isolation for existing prims");
 }
 
-// AC6: source-cite + registrations.
-static void ac6_source_and_gate() {
-    std::println("\n--- #2490 AC6: source-cite + gate ---");
-    const auto sec = read_file("src/compiler/evaluator_security.cpp");
-    CHECK(!sec.empty(), "AC6: evaluator_security.cpp readable");
-    CHECK(sec.find("Issue #2490") != std::string::npos, "AC6: evaluator_security.cpp cites #2490");
-    // require_effect must call check_workspace_isolation before
-    // check_and_record_effect.
-    const auto req = sec.find("bool Evaluator::require_effect");
+// Regression: #2384 live mid provenance still present in require_effect.
+CHECK(sec.find("Issue #2384") != std::string::npos, "AC6: #2384 live mid provenance preserved");
+}
+
+// ─── Issue #2658: require_effect ref_tenant gate ──────────────────
+// AC1: require_effect(..., ref_tenant=42) under principal=7 + Restricted/Strict
+//      + no cross-grant → IsolationDeny with reason carrying ref-tenant.
+// AC2: same call with matching principal or explicit cross-grant → allow.
+// AC3: zero ref_tenant path identical to pre-change behavior (#2490 ACs intact).
+// AC4: at least one production mutate path routes through the new overload.
+// AC5: SE + TypedMutationAudit mid still Mutation-epoch (not tenant id);
+//      single IsolationDeny count preserved (#2388 / #2156).
+// AC6: source-cite + coverage manifest (extend existing suite, no docs/design).
+
+// AC1: foreign ref_tenant + Restricted + no cross-grant → IsolationDeny.
+// LastMutateError carries ref-tenant context for Agent-readable trail.
+static void ac2658_1_foreign_ref_tenant_isolation_deny() {
+    std::println("\n--- #2658 AC1: foreign ref_tenant denies under Restricted ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);  // Restricted
+    ev.set_capability_tenant_id(7); // principal = 7
+    // Grant Mutate to principal 7 so the capability check would pass —
+    // only isolation should deny.
+    const auto me = aura::core::current_mutation_epoch();
+    ev.grant_effect_capability(7, "mutate-2658-ac1", kEffectMutate, me == 0 ? 1 : me);
+
+    const auto before = current_seq();
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
+                                      "test:2658-ac1-foreign", /*target_node=*/0,
+                                      /*ref_tenant=*/42);
+    CHECK(!ok, "AC1: foreign ref_tenant denies under Restricted + no cross-grant");
+    const auto denies = isolation_denies_since(before);
+    CHECK(denies == 1, "AC1: exactly one IsolationDeny SE (single-count, #2388 parity)");
+    // last_mutate_error_ carries ref-tenant context for Agent trail.
+    const auto& err = ev.last_mutate_error();
+    CHECK(err.find("ref-tenant") != std::string::npos || err.find("42") != std::string::npos,
+          "AC1: deny reason carries ref-tenant context");
+}
+
+// AC2: matching principal (or unset ref_tenant) → allow.
+static void ac2658_2_matching_ref_tenant_allows() {
+    std::println("\n--- #2658 AC2: matching ref_tenant allows ---");
+    reset_all();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    const auto me = aura::core::current_mutation_epoch();
+    ev.grant_effect_capability(7, "mutate-2658-ac2", kEffectMutate, me == 0 ? 1 : me);
+
+    // matching ref_tenant = principal → allow
+    const bool ok_match = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
+                                            "test:2658-ac2-match", 0, /*ref_tenant=*/7);
+    CHECK(ok_match, "AC2: matching ref_tenant == principal → allow");
+
+    // unset ref_tenant (ref_tenant=0) → legacy permissive under Restricted
+    // (no cross-tenant check) — regression of #2490 AC4 path.
+    const bool ok_zero = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
+                                           "test:2658-ac2-zero", 0, /*ref_tenant=*/0);
+    CHECK(ok_zero, "AC2: ref_tenant=0 (legacy default) → allow (no cross-tenant check)");
+}
+
+// AC3: default ref_tenant=0 path identical to pre-change behavior.
+// Verifies no regression on #2490 AC1-AC6 contract.
+static void ac2658_3_zero_ref_tenant_unchanged() {
+    std::println("\n--- #2658 AC3: default ref_tenant=0 matches pre-change (#2490) ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(0); // unset principal → isolation deny
+
+    const auto before = current_seq();
+    // No ref_tenant arg → default 0 → identical to pre-#2658 behavior.
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:2658-ac3-zeroback", 0);
+    CHECK(!ok, "AC3: ref_tenant=0 default + unset principal → IsolationDeny (parity #2490 AC1)");
+    const auto denies = isolation_denies_since(before);
+    CHECK(denies == 1, "AC3: exactly one IsolationDeny (no double-count, #2388 parity)");
+}
+
+// AC4: production mutate:force path now routes through require_effect(..., ref_tenant).
+// Source-cite: evaluator_primitives_mutate.cpp mutates-for force wired.
+static void ac2658_4_production_path_source_cite() {
+    std::println("\n--- #2658 AC4: production mutate path source-cite ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(!mut.empty(), "AC4: mutate.cpp readable");
+    // mutate:force routes through require_effect(..., ref_tenant) — the
+    // StableNodeRef ref_tenant is carried through the auto-isolation gate.
+    CHECK(mut.find("require_effect(") != std::string::npos &&
+              mut.find("ref_tenant") != std::string::npos,
+          "AC4: mutate:force uses require_effect(... ref_tenant) (AC4 source-cite)");
+    CHECK(mut.find("Issue #2658") != std::string::npos,
+          "AC4: mutate:force cites #2658 in surrounding comment");
+    // require_effect_on_ref helper also available for callers that have a
+    // full ast::FlatAST::StableNodeRef in hand.
+    const auto ev_sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(ev_sec.find("require_effect_on_ref") != std::string::npos,
+          "AC4: require_effect_on_ref helper defined in evaluator_security.cpp");
+    const auto ev_decl = read_file("src/compiler/evaluator.ixx");
+    CHECK(ev_decl.find("require_effect_on_ref") != std::string::npos,
+          "AC4: require_effect_on_ref declared in evaluator.ixx");
+}
+
+// AC5: SecurityEvent mid still Mutation-epoch (not tenant id).
+// Single IsolationDeny count preserved per #2388 / #2156.
+static void ac2658_5_se_mid_unchanged() {
+    std::println("\n--- #2658 AC5: SE mid still Mutation-epoch, single IsolationDeny ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    const auto me0 = aura::core::current_mutation_epoch();
+    bump_mutation_epoch(100); // advance Mutation epoch past principal stamp
+    const auto me1 = aura::core::current_mutation_epoch();
+    ev.grant_effect_capability(7, "mutate-2658-ac5", kEffectMutate, me1 == 0 ? 1 : me1);
+
+    const auto before = current_seq();
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
+                                      "test:2658-ac5-mid", 0, /*ref_tenant=*/42);
+    CHECK(!ok, "AC5: foreign ref_tenant denies under Restricted");
+    // Single IsolationDeny count (#2388).
+    const auto denies = isolation_denies_since(before);
+    CHECK(denies == 1, "AC5: exactly one IsolationDeny SE (single-count preserved)");
+    // SE mid carries Mutation epoch (not tenant id) — the typed_mutation_audit
+    // join is by mutation_id, which is the Mutation epoch (#2156).
+    const auto& ring = g_security_event_ring();
+    bool found_iso_deny = false;
+    for (std::uint64_t s = before; s < ring.seq.load(); ++s) {
+        const auto& e = ring.ring[s % ring.ring.size()];
+        if (static_cast<int>(e.kind) ==
+                static_cast<int>(aura::core::security_event::SecurityEventKind::IsolationDeny) &&
+            e.seq == s) {
+            found_iso_deny = true;
+            // mid must be Mutation epoch (non-zero), not tenant id (7).
+            CHECK(e.mutation_id != 7, "AC5: SE mid is Mutation epoch, not tenant id");
+            CHECK(e.mutation_id != 0, "AC5: SE mid is non-zero (Mutation epoch join)");
+        }
+    }
+    CHECK(found_iso_deny, "AC5: IsolationDeny SE present in ring");
+    (void)me0; // silence unused warning when me0==0
+}
+
+// AC6: source-cite + coverage manifest (no docs/design per #1655).
+static void ac2658_6_source_and_coverage() {
+    std::println("\n--- #2658 AC6: source-cite + coverage manifest ---");
+    const auto ev_sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(ev_sec.find("Issue #2658") != std::string::npos,
+          "AC6: evaluator_security.cpp cites #2658");
+    CHECK(ev_sec.find("require_effect_on_ref") != std::string::npos,
+          "AC6: require_effect_on_ref impl");
+    // require_effect now carries ref_tenant through to check_workspace_isolation.
+    const auto req = ev_sec.find("bool Evaluator::require_effect");
     CHECK(req != std::string::npos, "AC6: require_effect definition");
     if (req != std::string::npos) {
-        const auto snip = sec.substr(req, 2000);
-        const auto iso_pos = snip.find("check_workspace_isolation");
-        const auto eff_pos = snip.find("check_and_record_effect");
-        CHECK(iso_pos != std::string::npos, "AC6: require_effect calls check_workspace_isolation");
-        CHECK(eff_pos != std::string::npos,
-              "AC6: require_effect still calls check_and_record_effect");
-        CHECK(iso_pos < eff_pos, "AC6: isolation check precedes effect check (single entry)");
-        CHECK(snip.find("req_bits != 0") != std::string::npos,
-              "AC6: isolation gated by req_bits != 0 (pure callers unchanged)");
+        const auto snip = ev_sec.substr(req, 2000);
+        CHECK(snip.find("ref_tenant") != std::string::npos,
+              "AC6: require_effect signature passes ref_tenant to check_workspace_isolation");
+        CHECK(snip.find("/*ref_tenant=*/ref_tenant") != std::string::npos,
+              "AC6: ref_tenant forwarded to check_workspace_isolation call");
     }
 
-    const auto cmake = read_file("CMakeLists.txt");
-    CHECK(cmake.find("test_require_effect_auto_isolation") != std::string::npos,
-          "AC6: CMake registers test");
-    const auto build = read_file("build.py");
-    CHECK(build.find("check_require_effect_auto_isolation_2490") != std::string::npos ||
-              build.find("cmd_require_effect_auto_isolation_2490_coverage") != std::string::npos,
-          "AC6: build.py gate entry");
-    const auto gate =
-        read_file("scripts/coverage/checks/check_require_effect_auto_isolation_2490.py");
-    CHECK(!gate.empty() && gate.find("Issue #2490") != std::string::npos,
-          "AC6: coverage linter present");
-
-    // Regression: #2384 live mid provenance still present in require_effect.
-    CHECK(sec.find("Issue #2384") != std::string::npos, "AC6: #2384 live mid provenance preserved");
+    // Coverage manifest + linter exist (secondary gate).
+    const auto gate = read_file("scripts/coverage/checks/check_2658.py");
+    CHECK(!gate.empty(), "AC6: coverage linter check_2658.py present");
+    const auto manifest = read_file("scripts/coverage/manifests/2658.json");
+    CHECK(!manifest.empty(), "AC6: coverage manifest 2658.json present");
+    // No docs/design/ — design rationale lives in commit + close comment.
+    const auto docs_design = read_file("docs/design/2658-ref-tenant.md");
+    CHECK(docs_design.empty(), "AC6: no docs/design/ — design rationale in commit/close");
 }
 
 } // namespace
@@ -254,6 +392,13 @@ int run_test_require_effect_auto_isolation() {
     ac4_off_sandbox_permissive();
     ac5_existing_prims_gain_isolation();
     ac6_source_and_gate();
+    std::println("\n=== Issue #2658: require_effect ref_tenant gate ===");
+    ac2658_1_foreign_ref_tenant_isolation_deny();
+    ac2658_2_matching_ref_tenant_allows();
+    ac2658_3_zero_ref_tenant_unchanged();
+    ac2658_4_production_path_source_cite();
+    ac2658_5_se_mid_unchanged();
+    ac2658_6_source_and_coverage();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

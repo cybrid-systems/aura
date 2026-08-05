@@ -583,33 +583,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
 
-            if (!ev.check_and_record_effect(kEffectMutate, kEffectMutate, op, target_node,
-                                            ev.capability_tenant_id(), 0)) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
-                // Issue #2076: unified Agent-readable deny reason (merr pair).
-                return mev("capability-denied", aura::compiler::security::format_deny_reason(
-                                                    kEffectMutate, ev.capability_tenant_id(), op));
-            }
-
-            // Issue #676: legacy string capability gate (after effect record so
-            // Strict denials already audited). Still required when sandbox is on
-            // but effect mode is Off (effect check always-allows).
-            if (ev.sandbox_mode() && !ev.has_capability(kCapMutate) &&
-                !ev.has_capability(kCapWildcard)) {
-                ev.bump_capability_denial();
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
-                    m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
-                }
-                return mev("capability-denied", "mutate capability required in sandbox mode");
-            }
-
-            // Issue #1566 / #2052: multi-tenant workspace isolation.
-            // Pass ref_tenant when StableNodeRef provenance is present so
-            // cross-tenant refs deny under Strict / isolation policy.
-            // Under Strict, also refuse when last hygiene stamp belongs to
-            // a foreign tenant (parity with mutate:atomic-batch #1878).
+            // Issue #1566 / #2052 / Issue #2658: multi-tenant workspace isolation +
+            // capability check, consolidated through require_effect so the
+            // StableNodeRef ref_tenant is carried through to the auto-isolation
+            // gate (previously the manual check_workspace_isolation call with
+            // hardcoded ref_tenant=0 was the standard pattern; Issue #2658 closes
+            // the late-isolation-deny window by making ref_tenant mandatory
+            // for stamped-ref paths). Under Strict, also refuse when last
+            // hygiene stamp belongs to a foreign tenant (parity with
+            // mutate:atomic-batch #1878) — the strict heuristic must run
+            // BEFORE require_effect so ref_tenant is correct.
             const bool strict_iso =
                 (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
             if (strict_iso && ref_tenant == 0) {
@@ -620,12 +603,41 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         ref_tenant = hs.tenant_id;
                 }
             }
-            if (!ev.check_workspace_isolation(/*target=*/0, ref_tenant, kEffectMutate, op)) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->mutate_force_isolation_denied_total.fetch_add(1, std::memory_order_relaxed);
-                return mev("tenant-isolation-denied",
-                           std::string("cross-tenant ") + op +
-                               " denied by WorkspaceIsolationPolicy (#1566/#2052)");
+            if (!ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), op, target_node,
+                                   ref_tenant)) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    // Heuristic: distinguish capability vs isolation deny for metric
+                    // downstream. require_effect runs isolation first (auto-gate) then
+                    // capability check — if ref_tenant is foreign, the deny is
+                    // isolation; otherwise capability.
+                    if (ref_tenant != 0 && ref_tenant != ev.capability_tenant_id()) {
+                        m->mutate_force_isolation_denied_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        return mev("tenant-isolation-denied",
+                                   std::string("cross-tenant ") + op +
+                                       " denied by WorkspaceIsolationPolicy (#1566/#2052/#2658)");
+                    }
+                    m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #2076: unified Agent-readable deny reason (merr pair).
+                    return mev("capability-denied",
+                               aura::compiler::security::format_deny_reason(
+                                   kEffectMutate, ev.capability_tenant_id(), op));
+                }
+                return mev("capability-denied", "mutate capability denied under sandbox");
+            }
+
+            // Issue #676: legacy string capability gate (still required when
+            // sandbox is on but effect mode is Off — require_effect's effect
+            // check always-allows under Off, so the string gate is the backstop
+            // that keeps legacy sandbox-mode enforcement active).
+            if (ev.sandbox_mode() && !ev.has_capability(kCapMutate) &&
+                !ev.has_capability(kCapWildcard)) {
+                ev.bump_capability_denial();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+                    m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return mev("capability-denied", "mutate capability required in sandbox mode");
             }
 
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
