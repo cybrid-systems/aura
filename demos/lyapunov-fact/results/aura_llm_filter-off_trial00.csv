@@ -1,6 +1,0 @@
-step,V,test_fail,recursive_residual,node_count,energy,rejected,in_S,action,extra
-0,3.7,0,1,17.0,0.0,False,False,init,
-1,12.9,1,0,25.0,0.4,False,False,llm-refactor,ok;delta=9.200
-2,13.4,1,0,31.0,0.30000000000000004,False,False,llm-refactor,ok;delta=0.500
-3,13.1,1,0,31.0,0.0,False,False,llm-refactor,ok;delta=-0.300
-4,13.1,1,0,31.0,0.0,False,False,llm-refactor,ok;delta=0.000
