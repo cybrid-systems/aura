@@ -1015,12 +1015,21 @@ inline void note_general_object_pin_mutate_wire() noexcept {
 // StringPool + FlatAST). Uses two GeneralObjectPin objects because
 // LifetimePin::pin replaces the prior pointer. Bumps wire total once
 // per call site. Soft / null args still bump wire (site was adopted).
+// Issue #2665: production-default required-mode fail-closed. When
+// g_general_object_pin_required_pref > 0 (production-default locked
+// via #2597 step 15 — env unset under production) AND either pin
+// fails, bump g_general_object_pin_required_enforced_total (Agent-
+// visible hard-fail counter). Soft / dev_off / unset (pref <= 0)
+// stays zero-cost — observe-only via wire counter.
 inline bool wire_general_object_create_pair(GeneralObjectPin& pin_a, GeneralObjectPin& pin_b,
                                             void* a, void* b, std::uint64_t gen = 0,
                                             std::uint64_t arena_id = 0) noexcept {
     const bool ok_a = a ? pin_a.pin(a, gen, arena_id) : false;
     const bool ok_b = b ? pin_b.pin(b, gen, arena_id) : false;
     note_general_object_pin_mutate_wire();
+    if (g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0 && !(ok_a && ok_b)) {
+        g_general_object_pin_required_enforced_total.fetch_add(1, std::memory_order_relaxed);
+    }
     return ok_a && ok_b;
 }
 
