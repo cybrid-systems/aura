@@ -80,8 +80,11 @@ using aura::test::g_passed;
 
 static void reset_all() {
     reset_capability_effects_for_test();
+    // Issue #2657: route via the process-wide authority. The redundant
+    // direct write to g_capability_registry().sandbox_mode is removed —
+    // the authority already updates the registry when sandbox::set_mode
+    // is invoked.
     set_mode(SandboxMode::Off);
-    g_capability_registry().sandbox_mode = aura::core::capability::EffectSandboxMode::Off;
 }
 
 // ── AC1: source cites #2077 + delegate to effect matrix under Strict ──────

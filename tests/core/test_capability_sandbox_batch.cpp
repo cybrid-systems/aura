@@ -81,7 +81,7 @@ int main() {
     // ── AC1: Off mode always allows, still audits ──
     {
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         EffectProvenance prov{};
         const auto checks0 = snapshot_capability_effect_stats().checks;
         const bool ok =
@@ -95,7 +95,7 @@ int main() {
     // ── AC1: Strict mode denies without grant ──
     {
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         EffectProvenance prov{};
         const auto denied0 = snapshot_capability_effect_stats().denied;
         const bool ok =
@@ -107,7 +107,7 @@ int main() {
     // ── AC1: Strict mode allows after grant ──
     {
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         g_capability_registry().grant(0, "mutate", Effect::Mutate);
         EffectProvenance prov{};
         const bool ok =
@@ -118,7 +118,7 @@ int main() {
     // ── AC1: wildcard bypass ──
     {
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         EffectProvenance prov{};
         const bool ok = check_and_record_effect(Effect::Write, Effect::Write, prov, 0, "test-wild",
                                                 /*wildcard_ok=*/true);
@@ -128,7 +128,7 @@ int main() {
     // ── AC1: provenance binding mismatch ──
     {
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         EffectProvenance grant_prov{};
         grant_prov.mutation_id = 42;
         g_capability_registry().grant(1, "mutate", Effect::Mutate, grant_prov);
@@ -145,7 +145,7 @@ int main() {
     // ── AC: full bit coverage (Write grant does not cover Write|Ffi as required Write only ok) ──
     {
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         g_capability_registry().grant(0, "io-write", Effect::Write);
         EffectProvenance prov{};
         // required = Write|Ffi, held = Write only → deny
@@ -222,7 +222,7 @@ int main() {
     // ── AC: Restricted only enforces when sandbox active ──
     {
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         EffectProvenance prov{};
         // sandbox_active=false → allow without grant
         const bool ok1 = check_and_record_effect(Effect::Write, Effect::Write, prov, 0, "r-off",
@@ -466,7 +466,7 @@ int main() {
         CHECK(ev.check_and_record_effect(kEffectWrite, kEffectWrite, "ac4-off", 0, 0, 0),
               "Off allows without grant");
         // Restricted inactive allows:
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         EffectProvenance prov{};
         CHECK(check_and_record_effect(Effect::Write, Effect::Write, prov, 0, "off-r", false, false),
               "Restricted+inactive allows");

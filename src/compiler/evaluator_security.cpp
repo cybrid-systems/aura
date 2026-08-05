@@ -169,11 +169,14 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::provenance;
 
-    // Keep sandbox.hh mode in sync with evaluator sandbox_mode_ + Strict.
-    if (sandbox_mode_ && g_capability_registry().sandbox_mode == EffectSandboxMode::Off)
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
-    if (is_strict())
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    // Issue #2657: removed inline direct writes to
+    // g_capability_registry().sandbox_mode. The process-wide authority
+    // aura::core::sandbox::set_mode is the SOLE writer (atomic + plain
+    // enum + registry + workspace_isolation + provenance_tracker).
+    // Direct writes from per-call sites leaked drift (Strict in name
+    // but Restricted/Off in registers) — the historical hot-fix loop
+    // is now unnecessary because the authority keeps the stores in
+    // agreement at every set.
 
     EffectProvenance prov;
     prov.node_id = static_cast<std::uint32_t>(target_node);
@@ -508,29 +511,30 @@ void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_vi
 }
 
 void Evaluator::set_effect_sandbox_mode(std::uint8_t mode) noexcept {
-    using namespace ::aura::core::capability;
     using namespace ::aura::core::sandbox;
-    using namespace ::aura::core::workspace_isolation;
     using namespace ::aura::core::provenance;
     if (mode > 2)
         mode = 2;
-    g_capability_registry().sandbox_mode = static_cast<EffectSandboxMode>(mode);
+    // Issue #2657: route through the process-wide authority
+    // aura::core::sandbox::set_mode (the SOLE writer of sandbox mode —
+    // atomic + plain enum + CapabilityRegistry + workspace_isolation
+    // strict link + provenance_tracker policy). After this call all
+    // four stores agree; the per-Evaluator `sandbox_mode_` field and
+    // `set_stable_ref_auto_refresh_policy` are per-instance legacy
+    // gates that remain below.
     set_mode(static_cast<SandboxMode>(mode));
     // Strict/Restricted also set evaluator sandbox_mode_ so legacy gates engage.
     sandbox_mode_ = (mode != 0);
-    // #1566: Strict sandbox links isolation enforcement.
-    g_workspace_isolation().set_strict_sandbox_linked(mode == 2);
-    // Issue #1877: under sandbox Strict, FailOnStale provenance policy —
-    // no silent restamp of gen-stale StableNodeRef (multi-tenant AI
-    // self-modify must fail closed rather than auto-refresh).
+    // Issue #1877: under sandbox Strict, no silent restamp of
+    // gen-stale StableNodeRef (multi-tenant AI self-modify must fail
+    // closed rather than auto-refresh). The provenance_tracker policy
+    // was already set by the authority (FailOnStale / AutoRefreshOnBoundary);
+    // here we only mirror the legacy gate.
     if (mode == 2) {
-        g_provenance_tracker().set_policy(AutoRefreshPolicy::FailOnStale);
         set_stable_ref_auto_refresh_policy(false);
         record_fail_on_stale_strict_sandbox();
         record_policy_enforced();
-    } else if (g_provenance_tracker().get_policy() == AutoRefreshPolicy::FailOnStale) {
-        // Leaving Strict: restore production default AutoRefreshOnBoundary.
-        g_provenance_tracker().set_policy(AutoRefreshPolicy::AutoRefreshOnBoundary);
+    } else {
         set_stable_ref_auto_refresh_policy(true);
     }
 }

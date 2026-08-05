@@ -53,7 +53,7 @@ int run_test_grant_bound_mid_force() {
     {
         std::println("\n--- AC1: Restricted force mid ---");
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         EffectProvenance empty{}; // zero mid
         g_capability_registry().grant(1, "mutate", Effect::Mutate, empty);
         aura::core::capability::CapabilityGrant g;
@@ -63,7 +63,7 @@ int run_test_grant_bound_mid_force() {
     {
         std::println("\n--- AC2/AC3: mid mismatch / match ---");
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         auto prov = make_grant_provenance(42, true, 0, 0);
         g_capability_registry().grant(2, "mutate", Effect::Mutate, prov);
         EffectProvenance bad;
@@ -78,7 +78,7 @@ int run_test_grant_bound_mid_force() {
     {
         std::println("\n--- AC4: Off no force ---");
         reset_all();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         EffectProvenance empty{};
         g_capability_registry().grant(3, "mutate", Effect::Mutate, empty);
         aura::core::capability::CapabilityGrant g;

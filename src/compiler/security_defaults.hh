@@ -84,12 +84,13 @@ inline void apply_aura_sandbox_env() noexcept {
             mode = 1; // restricted (also default for unknown values)
     }
     using namespace ::aura::core::sandbox;
-    using namespace ::aura::core::capability;
-    using namespace ::aura::core::workspace_isolation;
+    // Issue #2657: route through the process-wide authority. set_mode
+    // atomically updates sandbox_mode atomic + plain enum +
+    // CapabilityRegistry + workspace_isolation strict link +
+    // provenance_tracker policy. The old three-write sequence
+    // (set_mode + reg.sandbox_mode = + set_strict_sandbox_linked) is
+    // a single call now; the registers can no longer drift.
     set_mode(static_cast<SandboxMode>(mode));
-    g_capability_registry().sandbox_mode = static_cast<EffectSandboxMode>(mode);
-    // Strict links workspace isolation (parity with Evaluator::set_effect_sandbox_mode).
-    g_workspace_isolation().set_strict_sandbox_linked(mode == 2);
 }
 
 // Issue #2136: permanent Render effect for the kernel principal (tenant 0).
@@ -179,9 +180,11 @@ inline void apply_production_security_defaults() noexcept {
             std::string_view mv(mt);
             if (mv == "1" || mv == "true" || mv == "yes" || mv == "on") {
                 multi_tenant = true;
+                // Issue #2657: route through the process-wide authority.
+                // set_mode is the SOLE writer across all four stores;
+                // following code reads via the acquire-load (registry
+                // atomic) and the plain enum mirror.
                 set_mode(SandboxMode::Strict);
-                g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
-                g_workspace_isolation().set_strict_sandbox_linked(true);
             }
         }
     }

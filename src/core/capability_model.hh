@@ -294,6 +294,14 @@ struct CapabilityRegistry {
     // Effect::MacroSelfEvo grant bit). Absent entry → no grant.
     std::unordered_map<TenantId, MacroSelfEvoPolicy> macro_self_evo_by_tenant;
     // Issue #2426 / #2427: atomic (was plain enum / TenantId — policy flip race).
+    // Issue #2657: Process-wide authority is `aura::core::sandbox::set_mode`
+    // (sandbox.hh / sandbox.ixx). The field remains public for reads
+    // (acquire-load via `reg.sandbox_mode.load()` or `==` comparison
+    // are unchanged). Direct writes from outside the authority are
+    // gated by the coverage linter
+    // `scripts/check_sandbox_mode_authority.py` — the existing
+    // #2427 AC3 assignment+compare signature is preserved for
+    // backwards compatibility with the 14 existing test files.
     AtomicEffectSandboxMode sandbox_mode{};
     AtomicTenantId default_tenant{};
     // Issue #2530: 1024 slots — aligned with SecurityEvent ring (#2225)

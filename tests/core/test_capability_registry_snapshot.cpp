@@ -10,6 +10,7 @@
 #include "test_harness.hpp"
 
 #include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/workspace_epoch.hh"
 
 #include <atomic>
@@ -48,7 +49,7 @@ int run_test_capability_registry_snapshot() {
         std::println("\n--- #2426 AC4: accessors / assignment unchanged ---");
         reset_reg();
         auto& reg = g_capability_registry();
-        reg.sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         CHECK(reg.sandbox_mode == EffectSandboxMode::Strict, "AC4: sandbox assign+read");
         reg.default_tenant = 42;
         CHECK(reg.default_tenant.load() == 42, "AC4: default_tenant assign");
@@ -74,7 +75,7 @@ int run_test_capability_registry_snapshot() {
         std::println("\n--- #2426 AC1 + #2426 AC3: snapshot field coherence ---");
         reset_reg();
         auto& reg = g_capability_registry();
-        reg.sandbox_mode = EffectSandboxMode::Restricted;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         reg.default_tenant = 9;
         reg.set_grant_min_valid_epoch(100);
         reg.set_grant_epoch_retain_window(0); // no auto-advance noise
@@ -99,7 +100,7 @@ int run_test_capability_registry_snapshot() {
         std::println("\n--- #2426 AC2: concurrent grant/revoke/snapshot ---");
         reset_reg();
         auto& reg = g_capability_registry();
-        reg.sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
 
         std::atomic<bool> stop{false};
         std::atomic<std::uint64_t> grants{0};
@@ -140,9 +141,11 @@ int run_test_capability_registry_snapshot() {
                 try {
                     reg.set_grant_min_valid_epoch(i % 50);
                     reg.set_hard_fiber_isolation((i & 1u) != 0);
-                    reg.sandbox_mode = (i % 3 == 0)   ? EffectSandboxMode::Off
-                                       : (i % 3 == 1) ? EffectSandboxMode::Restricted
-                                                      : EffectSandboxMode::Strict;
+                    // Issue #2657: route through the process-wide authority.
+                    aura::core::sandbox::set_mode(
+                        (i % 3 == 0)   ? aura::core::sandbox::SandboxMode::Off
+                        : (i % 3 == 1) ? aura::core::sandbox::SandboxMode::Restricted
+                                       : aura::core::sandbox::SandboxMode::Strict);
                     reg.default_tenant = i % 10;
                     if ((i % 5) == 0)
                         reg.set_grant_epoch_retain_window(i % 4);

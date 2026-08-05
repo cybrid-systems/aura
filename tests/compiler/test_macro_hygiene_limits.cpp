@@ -84,7 +84,7 @@ static void reset_all() {
     reset_capability_effects_for_test();
     reset_hygiene_runtime_caps_for_test();
     set_mode(SandboxMode::Off);
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
 static std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
@@ -194,7 +194,7 @@ static void ac3_capability_tightens_only() {
     reset_all();
     // Runtime cap=20; capability grant max_depth=8 → effective=8.
     CHECK(set_hygiene_depth_cap(20), "runtime 20");
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 2;

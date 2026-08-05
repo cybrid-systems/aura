@@ -2530,6 +2530,7 @@ add_executable(test_security_capability_batch
     tests/compiler/test_security_schedule_mutate_admit.cpp
     tests/compiler/test_side_effect_inherit.cpp
     tests/compiler/test_side_effect_security_gate_hardfail.cpp
+    tests/compiler/test_sandbox_mode_authority.cpp
     tests/compiler/test_tenant_scope_fiber_mandate.cpp
     tests/core/test_capability_audit_publish.cpp
     tests/core/test_capability_effect_stats_snapshot.cpp

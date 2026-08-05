@@ -91,7 +91,7 @@ static void ac1_restricted_forces_wal() {
     reset_all();
     // Force Restricted mode (not Strict, not multi-tenant).
     set_mode(SandboxMode::Restricted);
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     // Snapshot counter before defaults run.
     const auto before_forced = g_audit_wal_metrics().audit_wal_forced_by_multi_tenant_total.load();
     const auto before_restricted =

@@ -87,7 +87,7 @@ static void reset_all() {
     reset_security_event_wal_for_test();
     reset_security_event_ring_for_test();
     set_mode(SandboxMode::Off);
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
 static std::uint64_t count_kind(SecurityEventKind kind) {
@@ -134,7 +134,7 @@ static void ac1_wrap_and_wal_replay() {
     const auto dir = fresh_wal_dir("ac1");
     CHECK(ev.enable_security_event_wal(dir.string()), "AC1: enable SecurityEvent WAL");
 
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     // 150 denies → wraps private 128-slot capability audit ring; SE ring
     // (1024) + WAL keep the full trail.
     constexpr std::uint64_t kN = 150;

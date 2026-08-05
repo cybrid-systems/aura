@@ -72,7 +72,7 @@ static std::string read_file(const char* path) {
 static void reset_all() {
     reset_capability_effects_for_test();
     set_mode(SandboxMode::Off);
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
 static std::int64_t href_cap(CompilerService& cs, std::string_view key) {
@@ -144,7 +144,7 @@ static void ac2_off_allows() {
 static void ac3_strict_deny_without_grant() {
     std::println("\n--- AC3: Strict without grant → denied before clone ---");
     reset_all();
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
     const auto denied0 = g_macro_self_evo_denied_total.load();
     StringPool pool;
@@ -168,7 +168,7 @@ static void ac3_strict_deny_without_grant() {
 static void ac4_grant_reduced_limits() {
     std::println("\n--- AC4: Strict + reduced limits → clamp ---");
     reset_all();
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 2;
@@ -194,7 +194,7 @@ static void ac4_grant_reduced_limits() {
 static void ac5_zero_limits_deny() {
     std::println("\n--- AC5: zero limits → deny ---");
     reset_all();
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 0;
@@ -226,7 +226,7 @@ static void ac6_query_keys() {
     CHECK(href_cap(cs, "macro-self-evo-denied") >= 0, "denied key");
     CHECK(href_cap(cs, "schema") == 1565, "lineage schema 1565 still");
     // Exercise grant via security:grant-effect! (default MacroSelfEvo policy)
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
     auto r = cs.eval(std::format("(security:grant-effect! \"macro-self-evo\" {})",
                                  static_cast<int>(aura::compiler::security::kEffectMacroSelfEvo)));
     CHECK(r.has_value(), "grant-effect! macro-self-evo");
@@ -240,7 +240,7 @@ static void ac6_query_keys() {
 static void ac7_concurrent_strict_deny() {
     std::println("\n--- AC7: concurrent expand under Strict without grant ---");
     reset_all();
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
     const auto denied0 = g_macro_self_evo_denied_total.load();
     constexpr int kThreads = 4;
