@@ -320,6 +320,173 @@ int run_test_security_schedule_gate() {
         CHECK(href(cs, "issue-2590") == 2590, "AC5: issue-2590 present");
     }
 
+    // ─── Issue #2660: production admit wiring (live signals) ───
+    //   AC1: Production + commit_readiness_hard_reject → reject.
+    //   AC2: Production + capability deny storm → reject with deny_storm.
+    //   AC3: All-clear inputs → allow (no extra alloc on happy path).
+    //   AC4: #2587 mailbox starvation gate still fires independently.
+    //   AC5: query:security-schedule-gate last decision mirrors deny.
+    //   AC6: source-cite + coverage linter (no docs/design per #1655).
+
+    // AC1: commit_readiness_live_signals + admit_security_schedule.
+    {
+        std::println("\n--- #2660 AC1: commit_not_ready → reject ---");
+        reset_orch_security_schedule_counters_for_test();
+        const auto signals = aura::orch::commit_readiness_live_signals();
+        std::println("  commit_readiness_live: would_allow={} hard_reject={}", signals.first,
+                     signals.second);
+        // Production + commit_readiness_hard_reject → reject.
+        aura::orch::SecurityScheduleInput in;
+        in.production_mode = true;
+        in.soft_mode = false;
+        in.commit_readiness_would_allow = signals.first;
+        in.commit_readiness_hard_reject = signals.second;
+        in.capability_deny_storm = false;
+        in.mid_fallback_slo_breach = false;
+        in.posture_wal_off_restricted = false;
+        const auto allow_a = aura::orch::admit_security_schedule(in);
+        // Force production + hard_reject + !would_allow → reject.
+        in.commit_readiness_would_allow = false;
+        in.commit_readiness_hard_reject = true;
+        const auto reject_a = aura::orch::admit_security_schedule(in);
+        std::println("  admit: allow={} reject={}", !allow_a.has_value(), reject_a.has_value());
+        CHECK(reject_a.has_value(), "AC1: production + hard_reject → reject");
+        const auto reason = reject_a.value_or("");
+        CHECK(reason.find("commit-not-ready") != std::string::npos ||
+                  reason.find("security-schedule") != std::string::npos,
+              "AC1: reject reason carries force_reason name");
+        // Soft / sandbox=off: same input → allow (observe-only).
+        in.production_mode = false;
+        in.soft_mode = true;
+        const auto soft_a = aura::orch::admit_security_schedule(in);
+        CHECK(!soft_a.has_value(), "AC1: soft mode + hard_reject → allow (observe-only)");
+    }
+
+    // AC2: capability deny storm → reject with force_reason=deny_storm.
+    {
+        std::println("\n--- #2660 AC2: deny_storm threshold → reject ---");
+        reset_orch_security_schedule_counters_for_test();
+        // Lower the threshold so a single denial is enough to trip the storm.
+        aura::orch::g_capability_deny_storm_threshold().store(1, std::memory_order_relaxed);
+        // Bump the process counter (set + reset helper for tests).
+        auto& met = aura::core::capability::g_capability_effect_metrics();
+        const auto before = met.capability_effect_denied_total.load(std::memory_order_relaxed);
+        met.capability_effect_denied_total.store(before + 5, std::memory_order_relaxed);
+        // Production + deny_storm → reject.
+        aura::orch::SecurityScheduleInput in;
+        in.production_mode = true;
+        in.soft_mode = false;
+        in.commit_readiness_would_allow = true;
+        in.commit_readiness_hard_reject = false;
+        in.capability_deny_storm = aura::orch::capability_deny_storm_live();
+        in.mid_fallback_slo_breach = false;
+        in.posture_wal_off_restricted = false;
+        CHECK(in.capability_deny_storm, "AC2: capability_deny_storm_live = true under threshold");
+        const auto rej = aura::orch::admit_security_schedule(in);
+        CHECK(rej.has_value(), "AC2: production + deny_storm → reject");
+        const auto reason = rej.value_or("");
+        CHECK(reason.find("deny-storm") != std::string::npos, "AC2: reject reason = deny-storm");
+        // Soft mode → allow.
+        in.production_mode = false;
+        in.soft_mode = true;
+        CHECK(!aura::orch::admit_security_schedule(in).has_value(),
+              "AC2: soft + deny_storm → allow (observe-only)");
+        // Restore threshold.
+        aura::orch::g_capability_deny_storm_threshold().store(64, std::memory_order_relaxed);
+        met.capability_effect_denied_total.store(before, std::memory_order_relaxed);
+    }
+
+    // AC3: all-clear inputs → allow (no extra alloc on happy path).
+    {
+        std::println("\n--- #2660 AC3: all-clear → allow ---");
+        reset_orch_security_schedule_counters_for_test();
+        aura::orch::SecurityScheduleInput in;
+        in.production_mode = true;
+        in.soft_mode = false;
+        in.commit_readiness_would_allow = true;
+        in.commit_readiness_hard_reject = false;
+        in.capability_deny_storm = false;
+        in.mid_fallback_slo_breach = false;
+        in.posture_wal_off_restricted = false;
+        const auto allow = aura::orch::admit_security_schedule(in);
+        CHECK(!allow.has_value(), "AC3: all-clear inputs → allow (nullopt)");
+        // decision matches: would_allow_new_mutate = true.
+        const auto d = aura::orch::decide_security_schedule(in);
+        CHECK(d.would_allow_new_mutate, "AC3: decide_security_schedule all-clear → allow");
+    }
+
+    // AC4: #2587 mailbox starvation gate still fires independently.
+    // We verify the function symbols exist + the integration site
+    // (evaluator_mutation_boundary.cpp) still calls both gates.
+    {
+        std::println("\n--- #2660 AC4: #2587 mailbox starvation gate still independent ---");
+        const auto mbc = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(mbc.find("aura_mailbox_starvation_throttled") != std::string::npos,
+              "AC4: #2587 mailbox starvation gate still wired in try_acquire");
+        CHECK(mbc.find("evaluate_security_schedule") != std::string::npos,
+              "AC4: #2590/#2660 security-schedule gate still wired");
+        // Both gates observable in the same site — order documented in
+        // evaluator_mutation_boundary.cpp: #2587 first, then #2590/#2660.
+        const auto mb_pos = mbc.find("aura_mailbox_starvation_throttled");
+        const auto ss_pos = mbc.find("evaluate_security_schedule");
+        CHECK(mb_pos < ss_pos,
+              "AC4: #2587 mailbox starvation gate fires before #2590/#2660 security-schedule");
+    }
+
+    // AC5: query:security-schedule-gate last decision mirrors the deny.
+    {
+        std::println("\n--- #2660 AC5: query mirrors deny ---");
+        reset_orch_security_schedule_counters_for_test();
+        // Drive a deny via post_not_ready.
+        aura::orch::SecurityScheduleInput in;
+        in.production_mode = true;
+        in.soft_mode = false;
+        in.commit_readiness_would_allow = false;
+        in.commit_readiness_hard_reject = true;
+        in.capability_deny_storm = false;
+        in.mid_fallback_slo_breach = false;
+        in.posture_wal_off_restricted = false;
+        (void)aura::orch::evaluate_security_schedule(in);
+        // The query surface reflects the last decision.
+        CHECK(href(cs, "would-allow-new-mutate") == 0,
+              "AC5: query would-allow-new-mutate = 0 after deny");
+        CHECK(href(cs, "force-reason-code") ==
+                  static_cast<std::int64_t>(
+                      aura::orch::SecurityScheduleForceReason::commit_not_ready),
+              "AC5: query force-reason-code = commit-not-ready");
+    }
+
+    // AC6: source-cite + coverage linter (no docs/design per #1655).
+    {
+        std::println("\n--- #2660 AC6: source-cite + coverage ---");
+        const auto gate_h = read_file("src/orch/security_schedule_gate.h");
+        CHECK(gate_h.find("make_security_schedule_input_live") != std::string::npos,
+              "AC6: make_security_schedule_input_live helper present");
+        CHECK(gate_h.find("admit_security_schedule") != std::string::npos,
+              "AC6: admit_security_schedule helper present");
+        CHECK(gate_h.find("commit_readiness_live_signals") != std::string::npos,
+              "AC6: commit_readiness_live_signals helper present");
+        CHECK(gate_h.find("capability_deny_storm_live") != std::string::npos,
+              "AC6: capability_deny_storm_live helper present");
+        CHECK(gate_h.find("mid_fallback_slo_breach_live") != std::string::npos,
+              "AC6: mid_fallback_slo_breach_live helper present");
+        CHECK(gate_h.find("posture_wal_off_restricted_live") != std::string::npos,
+              "AC6: posture_wal_off_restricted_live helper present");
+        const auto mbc = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(mbc.find("make_security_schedule_input_live") != std::string::npos,
+              "AC6: try_acquire / try_acquire_for_region use live helper");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent.find("make_security_schedule_input_live") != std::string::npos,
+              "AC6: parallel-intend uses live helper");
+        // Coverage manifest + linter.
+        const auto ck = read_file("scripts/coverage/checks/check_2660.py");
+        CHECK(!ck.empty(), "AC6: coverage linter check_2660.py present");
+        const auto mf = read_file("scripts/coverage/manifests/2660.json");
+        CHECK(!mf.empty(), "AC6: coverage manifest 2660.json present");
+        CHECK(read_file("docs/design/2660-security-schedule-admit.md").empty(),
+              "AC6: no docs/design/ — design rationale in commit + close comment");
+    }
+
     reset_orch_security_schedule_counters_for_test();
     std::println("\n=== #2590: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;

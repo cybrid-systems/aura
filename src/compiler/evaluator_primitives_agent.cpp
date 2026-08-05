@@ -2416,6 +2416,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                         ev.primitive_error_counter_ptr());
         }
 
+        // Issue #2660: security-schedule-gate once per batch admit
+        // (before the unlocked/locked apply batch). Same gate pattern as
+        // MutationBoundaryGuard::try_acquire — production hard-rejects
+        // with structured AdmissionRejected: security-schedule:<reason>;
+        // soft / sandbox=off stays observe-only (metric-only, no deny).
+        // Counters always bump via evaluate_security_schedule.
+        {
+            const auto prod = aura::compiler::typed_audit::production_defaults_active();
+            const auto in = aura::orch::make_security_schedule_input_live(
+                ev.effect_sandbox_mode(), prod, /*soft_mode=*/!prod);
+            if (auto reason = aura::orch::admit_security_schedule(in); reason.has_value()) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_, *reason,
+                                            ev.primitive_error_counter_ptr());
+            }
+        }
+
         if (cids.empty()) {
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"status",

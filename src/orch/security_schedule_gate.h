@@ -23,6 +23,12 @@
 
 #pragma once
 
+#include "core/audit_wal.hh"                 // #2076 wal_off posture under Restricted
+#include "core/capability_model.hh"          // #2534 capability deny storm window
+#include "core/mutation_audit_wal.hh"        // audit_wal_enabled (#2076)
+#include "compiler/audit_mid_fallback_slo.h" // #2594 mid-fallback SLO
+#include "compiler/typed_mutation_audit.h"   // #2553 commit_readiness; production_defaults_active
+
 #include <atomic>
 #include <cstdint>
 #include <string_view>
@@ -175,6 +181,107 @@ inline void reset_orch_security_schedule_counters_for_test() noexcept {
     c.deny_posture_degraded_total.store(0, std::memory_order_relaxed);
     c.last_force_reason_code.store(0, std::memory_order_relaxed);
     c.last_would_allow.store(1, std::memory_order_relaxed);
+}
+
+// ── Issue #2660: live signal extractors (production admit wiring) ─
+//
+// `decide_security_schedule()` is pure (#2590 AC1); the gate contract
+// requires callers to feed it live signals. The helpers below build
+// each input from current process state — used by try_acquire /
+// try_acquire_for_region (evaluator_mutation_boundary.cpp) and
+// parallel-intend (evaluator_primitives_agent.cpp) so the gate matches
+// real posture instead of always reading "all clear" defaults.
+//
+// Soft / sandbox=off: callers still flow these in but the gate's
+// `enforce = production && !soft` short-circuits the deny branch
+// (counters still bump). Cost is one relaxed load per signal — no
+// alloc on the hot path.
+
+// Issue #2553: commit_readiness live extraction. `hard_reject` returns
+// true when the gate flipped to a non-ok reason (force_reason_code != 0
+// == "ok" sentinel — see commit_readiness_reason_code).
+inline std::pair<bool, bool> commit_readiness_live_signals() noexcept {
+    const auto in = aura::compiler::typed_audit::commit_readiness_live_policy();
+    const auto r = aura::compiler::typed_audit::commit_readiness(in);
+    return {r.would_allow_commit, r.force_reason_code != 0};
+}
+
+// Issue #2534: capability deny storm window. Process-wide counter
+// compared against a single threshold (counter increments monotonically;
+// under unit / soft paths the counter is reset by test reset). The
+// threshold is intentionally conservative — callers can lower it via
+// AURA_DENY_STORM_THRESHOLD env override if needed.
+inline std::atomic<std::uint64_t>& g_capability_deny_storm_threshold() noexcept {
+    static std::atomic<std::uint64_t> v{64};
+    return v;
+}
+inline bool capability_deny_storm_live() noexcept {
+    const auto& met = aura::core::capability::g_capability_effect_metrics();
+    const auto threshold = g_capability_deny_storm_threshold().load(std::memory_order_relaxed);
+    return met.capability_effect_denied_total.load(std::memory_order_relaxed) >= threshold;
+}
+
+// Issue #2594: mid-fallback SLO breach. evaluate_audit_mid_fallback_slo
+// returns a `MidFallbackSloDecision` with `breached` flag set when
+// rate > SLO. Reuse the production mode flag from typed_mutation_audit.
+inline bool mid_fallback_slo_breach_live() noexcept {
+    using namespace aura::compiler::typed_audit;
+    MidFallbackSloInput in{};
+    in.production_defaults = production_defaults_active();
+    const auto d = evaluate_audit_mid_fallback_slo(in);
+    return d.breached;
+}
+
+// Issue #2076: posture wal_off under Restricted. The audit WAL is
+// expected under production / Restricted / Strict. If WAL is disabled
+// AND we're under Restricted/Strict, posture is degraded.
+inline bool posture_wal_off_restricted_live(std::uint8_t sandbox_mode) noexcept {
+    const auto wal_on =
+        aura::core::audit_wal::g_mutation_audit_wal().is_enabled() ||
+        aura::core::audit_wal_metrics().audit_wal_enabled.load(std::memory_order_relaxed) != 0;
+    if (wal_on)
+        return false;
+    // Restricted = 1, Strict = 2
+    return sandbox_mode == 1 || sandbox_mode == 2;
+}
+
+// ── Issue #2660: build SecurityScheduleInput from live signals ───
+//
+// Caller passes the Evaluator's current sandbox_mode (read from
+// effect_sandbox_mode()). The returned input is consumed by
+// evaluate_security_schedule() which bumps counters and decides
+// admit. Production default denies; soft / sandbox=off stays
+// observe-only (counter-only, no deny).
+inline SecurityScheduleInput make_security_schedule_input_live(std::uint8_t eval_sandbox_mode,
+                                                               bool production_defaults,
+                                                               bool soft_mode) noexcept {
+    SecurityScheduleInput in;
+    in.production_mode = production_defaults;
+    in.soft_mode = soft_mode;
+    const auto cr = commit_readiness_live_signals();
+    in.commit_readiness_would_allow = cr.first;
+    in.commit_readiness_hard_reject = cr.second;
+    in.capability_deny_storm = capability_deny_storm_live();
+    in.mid_fallback_slo_breach = mid_fallback_slo_breach_live();
+    in.posture_wal_off_restricted = posture_wal_off_restricted_live(eval_sandbox_mode);
+    return in;
+}
+
+// ── Issue #2660: typed admit helper ─────────────────────────────
+//
+// Returns `std::nullopt` if the gate allows (or soft / observe-only);
+// otherwise returns a structured `AdmissionRejected: security-schedule:<reason>`
+// message mirroring mailbox-hold-starvation (#2587) style. Counters
+// always bump via evaluate_security_schedule.
+inline std::optional<std::string>
+admit_security_schedule(const SecurityScheduleInput& in) noexcept {
+    const auto d = evaluate_security_schedule(in);
+    if (d.would_allow_new_mutate)
+        return std::nullopt;
+    if (!in.production_mode || in.soft_mode)
+        return std::nullopt; // Soft path: fall through (metrics only).
+    return std::string("AdmissionRejected: security-schedule:") +
+           std::string(security_schedule_force_reason_name(d.force_reason));
 }
 
 } // namespace aura::orch
