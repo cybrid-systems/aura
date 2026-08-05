@@ -1,0 +1,118 @@
+{
+  "issue": 2660,
+  "title": "Issue #2660: wire evaluate_security_schedule into agent-body / parallel-intend / mutate admit.",
+  "ok": "OK: Issue #2660 security-schedule production admit wiring \u2014 all 6 AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/security_schedule_gate.h",
+      "contains": [
+        "commit_readiness_live_signals",
+        "make_security_schedule_input_live",
+        "admit_security_schedule",
+        "Issue #2660"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "make_security_schedule_input_live",
+        "admit_security_schedule",
+        "Issue #2660"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/security_schedule_gate.h",
+      "contains": [
+        "capability_deny_storm_live",
+        "g_capability_deny_storm_threshold",
+        "deny_storm"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_security_schedule_gate.cpp",
+      "contains": [
+        "AC2: deny_storm threshold",
+        "AC2: capability_deny_storm_live = true under threshold",
+        "AC2: production + deny_storm",
+        "AC2: reject reason = deny-storm",
+        "AC2: soft + deny_storm"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_security_schedule_gate.cpp",
+      "contains": [
+        "AC3: all-clear inputs",
+        "AC3: all-clear",
+        "AC3: decide_security_schedule all-clear"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "aura_orch_mailbox_starvation_throttled",
+        "evaluate_security_schedule",
+        "Issue #2587"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_security_schedule_gate.cpp",
+      "contains": [
+        "AC4: #2587 mailbox starvation gate",
+        "AC4: #2587 mailbox starvation gate fires before #2590/#2660"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_security_schedule_gate.cpp",
+      "contains": [
+        "AC5: query mirrors deny",
+        "AC5: query would-allow-new-mutate = 0 after deny",
+        "AC5: query force-reason-code = commit-not-ready"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/orch/security_schedule_gate.h",
+      "contains": [
+        "make_security_schedule_input_live",
+        "admit_security_schedule",
+        "commit_readiness_live_signals",
+        "capability_deny_storm_live",
+        "mid_fallback_slo_breach_live",
+        "posture_wal_off_restricted_live"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "make_security_schedule_input_live",
+        "Issue #2660: security-schedule-gate once per batch admit"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/orch/test_security_schedule_gate.cpp",
+      "contains": [
+        "AC6: source-cite + coverage",
+        "AC6: no docs/design/"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "scripts/coverage/manifests/2660.json",
+      "contains": [
+        "2660",
+        "security-schedule production admit wiring"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2660.py"
+}
