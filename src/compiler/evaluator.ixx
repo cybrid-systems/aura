@@ -3313,6 +3313,14 @@ public:
     // Issue #2180: test/Agent — inject EQUAL conflict into commit CS so
     // round-2 composite commit must solve-fail (not empty greenfield).
     void inject_commit_cs_type_conflict_for_test() noexcept;
+    // Issue #2671: test/Agent — inject two OccurrenceGoal rows on the
+    // same UF rep with incompatible refined (int vs string) so
+    // check_occurrence_refined_consistency() detects bidirectional
+    // consistent_unify failure → drift. composite_txn_commit routes to
+    // Soft observe (production_defaults_active() off) or Full/strict
+    // reject based on typed_audit::production_defaults_active().
+    // Hermetic — no production cost outside test builds.
+    void inject_commit_occurrence_drift_for_test() noexcept;
     // Issue #2260: pin low reverify limit + clean fan-out so next
     // solve_delta_occurrence reports truncated_reverify (hard-gate tests).
     void inject_commit_cs_truncated_reverify_for_test() noexcept;
