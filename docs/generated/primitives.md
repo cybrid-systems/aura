@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**473** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**474** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 84 primitives (18%)
-- **core**: 348 primitives (74%)
+- **core**: 349 primitives (74%)
 - **internal-observable**: 40 primitives (8%)
 - **convenience**: 1 primitives (0%)
 
@@ -99,10 +99,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 
-## Fiber: (3)
+## Fiber: (4)
 
 - `fiber:join` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:spawn-backend` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
 ## Agent: (2)
@@ -703,7 +704,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (348)
+### Core builtins (must remain primitive) (349)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -810,6 +811,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ffi:unpin-buffer` — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:join` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:spawn-backend` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `filter` — `src/compiler/evaluator_primitives_list.cpp`
 - `float?` — `src/compiler/evaluator_primitives_core.cpp`

@@ -4662,6 +4662,26 @@ def cmd_subsecond_clock_coverage():
     return 0
 
 
+def cmd_fiber_spawn_cli_coverage():
+    """Issue #2656: CLI denseness fiber:spawn positive ids (not -1).
+
+    Thread-fallback backend returns high-bit positive ids; denseness
+    probes no longer mis-read first spawn as failure. Contract doc
+    docs/stdlib/fiber-spawn.md.
+    """
+    print(f"{B}=== CLI denseness fiber:spawn coverage (#2656) ==={N}")
+    script = COVERAGE_CHECKS / "check_fiber_spawn_cli_2656.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("CLI denseness fiber:spawn (#2656) coverage contract rows failed")
+        return 1
+    ok("CLI denseness fiber:spawn (#2656) coverage clean")
+    return 0
+
+
 def cmd_partial_cone_commit_gate_coverage():
     """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
 
@@ -7980,6 +8000,7 @@ def cmd_gate():
         or cmd_string_heap_corruption_guard_coverage()
         or cmd_hash_table_grow_coverage()
         or cmd_subsecond_clock_coverage()
+        or cmd_fiber_spawn_cli_coverage()
         or cmd_steal_densify_linear_type_hard_and_coverage()
         or cmd_composite_auto_partial_from_cone_coverage()
         or cmd_dce_elided_deopt_meta_coverage()
@@ -8823,6 +8844,7 @@ def main():
         "string-heap-corruption-guard": cmd_string_heap_corruption_guard_coverage,
         "hash-table-grow": cmd_hash_table_grow_coverage,
         "subsecond-clock": cmd_subsecond_clock_coverage,
+        "fiber-spawn-cli": cmd_fiber_spawn_cli_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
