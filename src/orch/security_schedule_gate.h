@@ -226,9 +226,9 @@ inline bool capability_deny_storm_live() noexcept {
 // rate > SLO. Reuse the production mode flag from typed_mutation_audit.
 inline bool mid_fallback_slo_breach_live() noexcept {
     using namespace aura::compiler::typed_audit;
-    MidFallbackSloInput in{};
+    aura::compiler::MidFallbackSloInput in{};
     in.production_defaults = production_defaults_active();
-    const auto d = evaluate_audit_mid_fallback_slo(in);
+    const auto d = aura::compiler::evaluate_audit_mid_fallback_slo(in);
     return d.breached;
 }
 
@@ -236,9 +236,9 @@ inline bool mid_fallback_slo_breach_live() noexcept {
 // expected under production / Restricted / Strict. If WAL is disabled
 // AND we're under Restricted/Strict, posture is degraded.
 inline bool posture_wal_off_restricted_live(std::uint8_t sandbox_mode) noexcept {
-    const auto wal_on =
-        aura::core::audit_wal::g_mutation_audit_wal().is_enabled() ||
-        aura::core::audit_wal_metrics().audit_wal_enabled.load(std::memory_order_relaxed) != 0;
+    const auto wal_on = aura::core::audit_wal::g_mutation_audit_wal().is_enabled() ||
+                        aura::core::audit_wal::g_audit_wal_metrics().audit_wal_enabled.load(
+                            std::memory_order_relaxed) != 0;
     if (wal_on)
         return false;
     // Restricted = 1, Strict = 2
