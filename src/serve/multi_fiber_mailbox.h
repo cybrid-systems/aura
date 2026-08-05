@@ -88,6 +88,17 @@ struct MailMessage {
     // Issue #2538: typed correlation (0 = none / legacy text-prefix only).
     std::uint64_t correlation_id = 0;
     MailKind kind = MailKind::Normal;
+    // Issue #2663: held-ref export token + handoff-completed flag. When
+    // held_ref_token is set, the message carries a StableNodeRef that
+    // needs to be re-exported via Evaluator::handoff_ref. The mailbox
+    // gate rejects any push where held_ref_token is set but
+    // handoff_completed is false (Closed + handoff_reject_total bump).
+    // Ordinary string payloads leave both default-initialized (zero cost
+    // on hot path — single optional load + bool check). Populated by
+    // Agent-send-side helpers (agent_send_ref) after a successful
+    // handoff_ref call.
+    std::optional<std::uint64_t> held_ref_token{};
+    bool handoff_completed = false;
 };
 
 struct MultiFiberMailboxStats {
@@ -590,6 +601,15 @@ public:
     [[nodiscard]] PushStatus push(MailMessage msg) {
         if (reject_if_linear_viol(msg.payload))
             return PushStatus::Closed;
+        // Issue #2663: held-ref gate. If held_ref_token is set but
+        // handoff_completed is false, reject the push (Closed + bump
+        // counter). Zero cost when held_ref_token is empty (ordinary
+        // string payloads never set this — single relaxed load + bool).
+        if (msg.held_ref_token.has_value() && !msg.handoff_completed) {
+            g_mf_mailbox_stats.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
+            local_stats_.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
+            return PushStatus::Closed;
+        }
         (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
                                                        __builtin_FILE(), __builtin_LINE());
         std::lock_guard lock(mu_);
@@ -658,6 +678,16 @@ public:
     [[nodiscard]] PushStatus broadcast_fanout(const MailMessage& proto) {
         if (reject_if_linear_viol(proto.payload))
             return PushStatus::Closed;
+        // Issue #2663: held-ref gate (mirror of push() — broadcast fan-out
+        // cannot partial-deliver an unexported ref to a subset of
+        // attachers; either all-or-nothing reject). production-safe default:
+        // always Closed + counter bump; Soft / sandbox=off may interpret
+        // the bump as metric-only via a future refinement.
+        if (proto.held_ref_token.has_value() && !proto.handoff_completed) {
+            g_mf_mailbox_stats.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
+            local_stats_.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
+            return PushStatus::Closed;
+        }
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;

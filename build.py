@@ -277,6 +277,22 @@ def cmd_lint():
             "export-held handoff coverage linter failed — run python3 scripts/coverage/checks/check_export_held_handoff_coverage.py"
         )
         return r
+    # Issue #2663: enforce StableNodeRef handoff_ref on mailbox push /
+    # broadcast_fanout paths (MailMessage.held_ref_token + handoff_completed
+    # fields + push() / broadcast_fanout() gate + counter bump). Builds on
+    # #2632 handoff_ref mandate + #2633 BP gauge — wires next to the
+    # export-held handoff linter so a regression in the #2663 AC surface
+    # fails the same gate.
+    mbh_script = COVERAGE_CHECKS / "check_2663_coverage.py"
+    if not mbh_script.exists():
+        fail(f"missing {mbh_script}")
+        return 1
+    r = run([sys.executable, str(mbh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2663 mailbox handoff coverage linter failed — run python3 scripts/coverage/checks/check_2663_coverage.py"
+        )
+        return r
     # Issue #2633: scope-local mailbox BP recent gauge coverage contract
     # (AgentSpec::bp_scope_id + note_mailbox_bp_recent_event(scope_id) overload
     # + spawn admit preflight + per-bucket decay + counters + map cap +
