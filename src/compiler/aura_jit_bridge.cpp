@@ -928,13 +928,8 @@ extern "C" void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata) {
 // For multi-eval / Agent hosts that publish their eval owner via
 // aura_aot_set_reemit_owner_eval() / aura_aot_set_register_owner_eval(),
 // the per-eval for_eval variants below allow explicit namespacing.
-extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved) {
-    void* eval_owner = aura_aot_get_reemit_owner_eval();
-    if (!eval_owner)
-        eval_owner = aura_aot_get_register_owner_eval();
-    return aura_get_or_preserve_stable_func_id_for_eval(eval_owner, name, out_preserved);
-}
-
+// Define for_eval first so the legacy wrapper can call it (C++ needs
+// declaration-before-use under -Werror).
 extern "C" std::uint32_t
 aura_get_or_preserve_stable_func_id_for_eval(void* eval_ptr, const char* name, int* out_preserved) {
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
@@ -944,6 +939,13 @@ aura_get_or_preserve_stable_func_id_for_eval(void* eval_ptr, const char* name, i
     if (out_preserved)
         *out_preserved = preserved;
     return id;
+}
+
+extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved) {
+    void* eval_owner = aura_aot_get_reemit_owner_eval();
+    if (!eval_owner)
+        eval_owner = aura_aot_get_register_owner_eval();
+    return aura_get_or_preserve_stable_func_id_for_eval(eval_owner, name, out_preserved);
 }
 
 extern "C" std::uint32_t aura_lookup_stable_func_id(const char* name) {
@@ -3378,7 +3380,11 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             std::uint32_t sid = 0;
             {
                 std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-                sid = preserve_stable_func_id_locked(name, &preserved);
+                // Issue #2670: same owner key as host-emit path.
+                sid = preserve_stable_func_id_for_eval_locked(
+                    aura_aot_get_reemit_owner_eval() ? aura_aot_get_reemit_owner_eval()
+                                                     : aura_aot_get_register_owner_eval(),
+                    name, &preserved);
             }
             register_stable_id_in_func_table(name, sid);
             note_reemit(sid, preserved, /*count_emit_success=*/true, /*count_llvm=*/false);
@@ -3390,7 +3396,10 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             std::uint32_t sid = 0;
             {
                 std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-                sid = preserve_stable_func_id_locked(name, &preserved);
+                sid = preserve_stable_func_id_for_eval_locked(
+                    aura_aot_get_reemit_owner_eval() ? aura_aot_get_reemit_owner_eval()
+                                                     : aura_aot_get_register_owner_eval(),
+                    name, &preserved);
             }
             note_reemit(sid, preserved, /*count_emit_success=*/false, /*count_llvm=*/false);
         }
