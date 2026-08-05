@@ -2465,6 +2465,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::atomic<std::uint64_t> pure_unlocked_applies{0};
             std::atomic<std::uint64_t> pure_fallback_locked{0};
             std::atomic<std::uint64_t> pure_contract_violated{0};
+            // Issue #2662: batch_force_eval_mu — once a pure task violates the
+            // contract in production mode + parallel_intend_force_lock_on_violation
+            // flag, subsequent pure tasks in this batch take eval_mu (per-batch).
+            std::atomic<bool> batch_force_eval_mu{false};
         };
         auto ash = std::make_shared<AuraShared>();
         ash->values.assign(cids.size(), make_void());
@@ -2482,8 +2486,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         // Issue #2163: pure path may skip eval_mu. Force lock when
                         // a mutation boundary is already held (unsafe concurrent
                         // pure apply) — pure_fallback_locked_total.
-                        const bool force_lock = pure_mode && (ev.mutation_boundary_held() ||
-                                                              ev.mutation_boundary_depth() > 0);
+                        // Issue #2662: also force lock when batch_force_eval_mu
+                        // is set (production + opt-in flag, post a pure-contract
+                        // violation in the same batch — see wire-up below).
+                        const bool force_lock =
+                            pure_mode &&
+                            (ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0 ||
+                             ash->batch_force_eval_mu.load(std::memory_order_relaxed));
                         const bool use_lock = !pure_mode || force_lock;
                         std::unique_lock<std::mutex> lock(ash->eval_mu, std::defer_lock);
                         if (use_lock) {
@@ -2538,6 +2547,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                 ash->pure_contract_violated.fetch_add(1, std::memory_order_relaxed);
                                 aura::orch::g_orch_module_stats.pure_contract_violated_total
                                     .fetch_add(1, std::memory_order_relaxed);
+                                // Issue #2662: production hardening — under
+                                // production_defaults + opt-in flag, force
+                                // remaining pure tasks in this batch to take
+                                // eval_mu (best-effort-pure → serialized for
+                                // the rest of the batch). NOT a transactional
+                                // isolation promise — best-effort hardening.
+                                if (aura::compiler::typed_audit::production_defaults_active() &&
+                                    aura::orch::g_orch_module_stats
+                                        .parallel_intend_force_lock_on_violation.load(
+                                            std::memory_order_relaxed)) {
+                                    ash->batch_force_eval_mu.store(true, std::memory_order_relaxed);
+                                }
                             } else {
                                 ash->values[i] = *opt;
                                 if (types::is_error(*opt)) {
