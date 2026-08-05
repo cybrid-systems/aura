@@ -524,6 +524,13 @@ export inline std::atomic<std::uint64_t> g_force_compact_blocked_by_envframe_gua
 export inline std::atomic<std::uint64_t> g_live_compact_moving_count{0};
 export inline std::atomic<std::uint64_t> g_objects_moved_total{0};
 export inline std::atomic<std::uint64_t> g_moving_blocked_precondition_total{0};
+// Issue #2664: production-default hard-fail counter (Agent-visible).
+// Bumped when g_moving_untracked_hard_abort_pref > 0 (already encodes
+// production-default + explicit env=hard via #2596) AND untracked external
+// roots exist after Moving densify. Agent dashboards observe this to
+// distinguish production-hard from Soft observe-only. Mirrors the #2495
+// untracked counter.
+export inline std::atomic<std::uint64_t> g_moving_incomplete_remap_densify_hard_fail_total{0};
 // Feature flag: default OFF (env AURA_ARENA_MOVING_COMPACT=1 enables).
 export inline std::atomic<int> g_moving_compact_enabled_pref{-1}; // -1 = env/default
 // Issue #2495: process-wide counter for Moving densify windows where the
@@ -1362,9 +1369,23 @@ public:
                 // production security defaults. Off / unset keeps the Soft
                 // semantics (success metrics suppressed but no abort) so
                 // unit Soft path stays unchanged.
-                if (g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) > 0) {
+                // Issue #2664: Agent-visible hard-fail counter. The existing
+                // #2596 path (g_moving_untracked_hard_abort_pref > 0) already
+                // fires under production defaults (env unset locks pref to 1
+                // via apply_production_security_defaults — see #2596 AC11).
+                // This counter gives Agents dashboard visibility into the
+                // hard-fail branch firing, distinguishing production-hard from
+                // Soft observe-only. Soft / dev_off / tests retain observe-only
+                // (gated on hard_pref <= 0 — covers env=off under production,
+                // Soft+unset, Soft+env=hard overrides, etc.).
+                const int hard_pref =
+                    g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+                if (hard_pref > 0) {
                     result.moving_blocked_precondition = true;
                     result.soft_gated = true;
+                    // Issue #2664: Agent-visible hard-fail counter.
+                    g_moving_incomplete_remap_densify_hard_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
                 }
             }
         } else {

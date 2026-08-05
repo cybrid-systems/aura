@@ -340,6 +340,24 @@ def cmd_lint():
             "Issue #2662 production hardening coverage linter failed — run python3 scripts/coverage/checks/check_2662_coverage.py"
         )
         return r
+    # Issue #2664: production-default hard-fail on untracked external roots
+    # after Moving densify (close false-safety). arena.ixx OR-folds
+    # production_defaults_active() into the existing env=hard branch +
+    # new Agent-visible counter g_moving_incomplete_remap_densify_hard_fail_total.
+    # Tests/core/test_moving_densify_fail_closed.cpp extended with #2664
+    # AC1-AC6 source-cite (per #81967 — no new issue-suffix file). Builds
+    # on #2595/#2596/#2599 — wires next to the pure-probe + production-hardening
+    # linters so a regression in the #2664 AC surface fails the same gate.
+    dense_script = COVERAGE_CHECKS / "check_2664_coverage.py"
+    if not dense_script.exists():
+        fail(f"missing {dense_script}")
+        return 1
+    r = run([sys.executable, str(dense_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2664 production-default hard-fail coverage linter failed — run python3 scripts/coverage/checks/check_2664_coverage.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
