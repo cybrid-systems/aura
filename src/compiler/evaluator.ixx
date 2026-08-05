@@ -3321,6 +3321,16 @@ public:
     // reject based on typed_audit::production_defaults_active().
     // Hermetic — no production cost outside test builds.
     void inject_commit_occurrence_drift_for_test() noexcept;
+    // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
+    // invalidate. Test-only helper — forces the per-engine partial-cone
+    // truncate state (last_partial_cone_truncated_ +
+    // last_partial_cone_dropped_) and mirrors to the process-wide
+    // atomics via typed_audit::publish_partial_cone_truncate so #2621
+    // commit_readiness gate sees the truncated state. AC1/AC2 path drives
+    // the existing #2646 wiring at infer_flat_partial cone-truncate
+    // branch (type_checker_impl.cpp:8035-8066); AC4 ordering invariant
+    // (outside invalidate AFTER #2622 sync) is preserved unchanged.
+    void force_partial_cone_truncate_for_test(std::uint64_t dropped_count) noexcept;
     // Issue #2260: pin low reverify limit + clean fan-out so next
     // solve_delta_occurrence reports truncated_reverify (hard-gate tests).
     void inject_commit_cs_truncated_reverify_for_test() noexcept;
