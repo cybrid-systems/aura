@@ -65,35 +65,42 @@ static void ac2_monotonic_non_decrease() {
         CHECK(as_int(*b) >= as_int(*a), "AC2: second sample >= first");
 }
 
-// ── AC3: short loop elapsed > 0 ──
+// ── AC3: short pure-Aura loop elapsed > 0 ──
 static void ac3_short_loop_elapsed() {
     std::println("\n--- #2655 AC3: short pure loop elapsed_ms > 0 ---");
     CompilerService cs;
-    // Pure busy loop: enough work that 1ms resolution should observe progress
-    // on a typical Linux host. Fallback: if host is extremely fast, sleep path
-    // still proves the clock advances.
-    auto r = cs.eval(R"(
+    // Pure Aura busy loop (no host sleep). Ramp iterations until 1ms
+    // resolution observes progress — denseness metrology requirement.
+    // Sleep fallback only if the interpreter is unrealistically fast.
+    bool pure_ok = false;
+    for (const char* n_iters : {"500000", "2000000", "8000000"}) {
+        auto r = cs.eval(std::format(R"(
       (begin
         (define t0 (monotonic-ms))
         (define i 0)
         (define sum 0)
-        (while (lambda () (< i 200000))
+        (while (lambda () (< i {}))
           (lambda ()
             (set! sum (+ sum i))
             (set! i (+ i 1))))
         (define t1 (monotonic-ms))
-        (- t1 t0)))");
-    CHECK(r && is_int(*r), "AC3: elapsed is int");
-    if (r && is_int(*r) && as_int(*r) > 0) {
-        CHECK(true, "AC3: busy-loop elapsed_ms > 0");
-        return;
+        (- t1 t0)))",
+                                     n_iters));
+        CHECK(r && is_int(*r), "AC3: elapsed is int");
+        if (r && is_int(*r) && as_int(*r) > 0) {
+            CHECK(true, "AC3: pure-Aura busy-loop elapsed_ms > 0");
+            pure_ok = true;
+            break;
+        }
     }
-    // Fallback for unrealistically fast / coarse hosts: host-side sleep.
+    if (pure_ok)
+        return;
+    // Last resort: host sleep still proves the clock advances.
     auto t0 = cs.eval("(monotonic-ms)");
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
     auto t1 = cs.eval("(monotonic-ms)");
     CHECK(t0 && t1 && is_int(*t0) && is_int(*t1) && as_int(*t1) > as_int(*t0),
-          "AC3: sleep-backed elapsed_ms > 0");
+          "AC3: sleep-backed elapsed_ms > 0 (pure loop too fast)");
 }
 
 // ── AC4: source ──
