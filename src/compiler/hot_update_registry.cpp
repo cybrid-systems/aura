@@ -122,11 +122,45 @@ void HotUpdateRegistry::maybe_storm_clear_health_pass() noexcept {
         return;
     }
 
-    // Drive the health pass: reuse #2604 auto-drain / #2601 exhausted-
-    // min-dirty retry. The actual reemit body is driven by the bridge;
-    // here we just record success. The #2601 hook above already
-    // consumed one retry attempt if force_jit_regions_mask_ != 0.
-    reemit_storm_clear_health_pass_success_total_.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2669: drive recovery body on storm-clear success path.
+    // Bridge owns aura_reemit_aot_for_dirty body; registry only schedules.
+    // Branch order: deferred reemit (only branch that explicitly consumes
+    // a pending state via take_deferred_reemit_version exchange) → #2601
+    // exhausted-min-dirty retry (success via aot_exhausted_min_dirty_retry_
+    // success_total, no double-count here) → #2502 cascade trigger (success
+    // via cascade_reemit_trigger_total, no double-count here).
+    bool drove_recovery = false;
+    std::uint64_t reemit_pipeline_returned_n = 0;
+    if (has_deferred_reemit()) {
+        // Take deferred version (exchange clears pending). v=0 means
+        // pending was already cleared by a concurrent path — pass
+        // counts as driven (exchange-not-check is reentry-safe) but
+        // we skip the reemit call (no version to reemit).
+        const auto v = take_deferred_reemit_version();
+        if (v != 0)
+            reemit_pipeline_returned_n = aura_reemit_aot_for_dirty(v);
+        drove_recovery = true;
+    } else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0) {
+        // #2601 one-shot retry. Bridge owns decide_exhausted_min_dirty_retry
+        // + aura_reemit_aot_for_dirty. Success is observable via the
+        // existing aot_exhausted_min_dirty_retry_success_total counter.
+        aura_hot_update_maybe_retry_exhausted_min_dirty();
+        drove_recovery = true;
+    } else if (last_region_mask_from_dirty_.load(std::memory_order_relaxed) != 0) {
+        // #2502 cascade trigger: dirty-listener pipeline. Success via
+        // cascade_reemit_trigger_total (#2502 additive).
+        on_cascade_reemit_trigger(/*candidates_hint=*/1);
+        drove_recovery = true;
+    }
+
+    if (drove_recovery)
+        reemit_storm_clear_health_pass_reemit_driven_total_.fetch_add(1, std::memory_order_relaxed);
+
+    // Issue #2669 AC4: success_total bumps only when reemit pipeline
+    // accepted (branch 1 with n>0). Branches 2/3 do not reemit directly;
+    // their success is tracked by #2601/#2502 counters (no double-count).
+    if (reemit_pipeline_returned_n > 0)
+        reemit_storm_clear_health_pass_success_total_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::reset_storm_clear_health_pass_for_test() noexcept {
@@ -134,6 +168,8 @@ void HotUpdateRegistry::reset_storm_clear_health_pass_for_test() noexcept {
     reemit_storm_clear_health_pass_success_total_.store(0, std::memory_order_relaxed);
     reemit_storm_clear_health_pass_skipped_reentered_storm_total_.store(0,
                                                                         std::memory_order_relaxed);
+    // Issue #2669: clear body-driven counter on test reset.
+    reemit_storm_clear_health_pass_reemit_driven_total_.store(0, std::memory_order_relaxed);
     prev_storm_level_.store(StormLevel::None, std::memory_order_relaxed);
 }
 
@@ -870,6 +906,9 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
         static_cast<std::int64_t>(reg.reemit_storm_clear_health_pass_success_total());
     out->reemit_storm_clear_health_pass_skipped_reentered_storm_total = static_cast<std::int64_t>(
         reg.reemit_storm_clear_health_pass_skipped_reentered_storm_total());
+    // Issue #2669: body-driven pass counter (additive).
+    out->reemit_storm_clear_health_pass_reemit_driven_total =
+        static_cast<std::int64_t>(reg.reemit_storm_clear_health_pass_reemit_driven_total());
     out->schema_2639 = 2639;
     out->issue_2639 = 2639;
     out->schema_2601 = 2601;
@@ -1310,7 +1349,11 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     s.reemit_storm_clear_health_pass_skipped_reentered_storm_total = static_cast<std::int64_t>(
         reemit_storm_clear_health_pass_skipped_reentered_storm_total_.load(
             std::memory_order_relaxed));
-    // schema_2601 / issue_2601 / schema_2639 / issue_2639 are constexpr defaults.
+    // Issue #2669: body-driven pass counter (any recovery branch drove work).
+    s.reemit_storm_clear_health_pass_reemit_driven_total = static_cast<std::int64_t>(
+        reemit_storm_clear_health_pass_reemit_driven_total_.load(std::memory_order_relaxed));
+    // schema_2601 / issue_2601 / schema_2639 / issue_2639 / schema_2669 / issue_2669 are constexpr
+    // defaults.
     return s;
 }
 

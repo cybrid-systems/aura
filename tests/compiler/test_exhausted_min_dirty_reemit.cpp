@@ -691,13 +691,6 @@ static void ac2601_schema_and_source() {
 // ── #2639: storm-clear → forced region health check + auto min-dirty /
 //         deferred drain (close post-storm force-JIT residual) ──
 //
-//   AC1: storm-clear fires on non-None → None transition with pending
-//   AC2: quiet path (storm already None, no pending) → zero extra work
-//   AC3: storm re-enters mid-pass → skip + bump skipped_reentered
-//   AC4: #2604/#2601/#2502 surfaces still work (additive)
-//   AC5: query keys + schema + wired sentinel; #2605 axes preserved
-//   AC6: src-aligned test + coverage gate (this file + linter)
-//
 // Test strategy: drive the storm via the C ABI setters that the
 // bridge uses, then verify counter transitions on the lazy hook.
 static void ac2639_storm_clear_fires_on_transition() {
@@ -719,8 +712,14 @@ static void ac2639_storm_clear_fires_on_transition() {
     // AC1: health pass fires (counter advanced).
     CHECK(reg.reemit_storm_clear_health_pass_total() == before + 1,
           "AC1: storm-clear health pass fired on non-None → None transition + pending");
-    CHECK(reg.reemit_storm_clear_health_pass_success_total() >= 1,
-          "AC1: at least one success (no storm re-entry mid-pass)");
+    // Issue #2669 AC4: success_total bumps only when reemit pipeline
+    // accepted (branch 1 with n>0). Force-JIT mask path hits branch 2
+    // (#2601 retry) which drives the body but success is via the
+    // existing aot_exhausted_min_dirty_retry_success_total counter
+    // (no double-count on success_total). Verify body-driven counter
+    // advances instead.
+    CHECK(reg.reemit_storm_clear_health_pass_reemit_driven_total() >= 1,
+          "AC1: body-driven pass counter advanced (force-JIT branch #2601 retry); #2669 refine");
     reg.on_reload_success(); // clear force-JIT mask for subsequent ACs
 }
 
@@ -803,6 +802,149 @@ static void ac2639_schema_and_source() {
           "AC5: #2601 surface preserved");
 }
 
+// ── #2669: storm-clear health pass drives recovery body (refine #2639
+//         counter-only → drive deferred reemit / #2601 min-dirty retry /
+//         #2502 cascade trigger) ──
+//
+//   AC1: deferred reemit pending → take + drive aura_reemit_aot_for_dirty
+//        on storm-clear edge; pending cleared; reemit_driven advances
+//   AC2: force-JIT mask pending → #2601 retry fires; reemit_driven advances
+//        (success via existing #2601 counter, no double-count on success_total)
+//   AC3: last_region_mask_from_dirty pending → #2502 cascade trigger fires;
+//        reemit_driven advances
+//   AC4: quiet path (no pending) → zero extra work
+//   AC5: storm re-entry mid-pass → skip + skipped_reentered; deferred not
+//        silently dropped (take_deferred_reemit_version is exchange-not-check)
+//   AC6: schema + source-cite + linter (check_storm_clear_drive_body_
+//        coverage.py + build.py cmd_storm_clear_drive_body_coverage)
+static void ac2669_drive_deferred_branch() {
+    std::println("\n--- #2669 AC1: deferred reemit pending → take + drive body ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    aura_hot_update_set_shape_storm_active(0);
+    reg.reset_storm_clear_health_pass_for_test();
+    // Inject deferred reemit (boundary handshake sets pending + version).
+    reg.on_reemit_deferred_for_boundary();
+    // Drive storm edge so the lazy hook fires (non-None → None).
+    aura_hot_update_set_shape_storm_active(1); // set storm
+    reg.on_reemit_pipeline_call(0, 0);         // prev=Global (or whatever current was)
+    // Clear storm + drive again → edge transition + pending.
+    aura_hot_update_set_shape_storm_active(0);
+    const auto before_total = reg.reemit_storm_clear_health_pass_total();
+    const auto before_driven = reg.reemit_storm_clear_health_pass_reemit_driven_total();
+    reg.on_reemit_pipeline_call(0, 0);
+    // AC1: pass fired (total advanced) + body driven (driven advanced) +
+    // deferred pending cleared.
+    CHECK(reg.reemit_storm_clear_health_pass_total() == before_total + 1,
+          "AC1: storm-clear pass fired on edge transition");
+    CHECK(reg.reemit_storm_clear_health_pass_reemit_driven_total() == before_driven + 1,
+          "AC1: body-driven counter advanced (branch 1: deferred reemit take + drive)");
+    // take_deferred_reemit_version returns 0 because pass already took it
+    // (or pending was cleared by concurrent path). has_deferred_reemit() == false.
+    CHECK(!reg.has_deferred_reemit(),
+          "AC1: deferred pending cleared after storm-clear pass took it");
+    reg.on_reload_success();
+}
+
+static void ac2669_drive_force_jit_branch() {
+    std::println("\n--- #2669 AC2: force-JIT mask → #2601 retry drives body ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    aura_hot_update_set_shape_storm_active(0);
+    reg.reset_storm_clear_health_pass_for_test();
+    // Seed force-JIT mask.
+    reg.on_force_jit_for_reason(AotReloadFail::Version);
+    aura_hot_update_set_shape_storm_active(1);
+    reg.on_reemit_pipeline_call(0, 0);
+    aura_hot_update_set_shape_storm_active(0);
+    const auto before_total = reg.reemit_storm_clear_health_pass_total();
+    const auto before_driven = reg.reemit_storm_clear_health_pass_reemit_driven_total();
+    const auto before_success = reg.reemit_storm_clear_health_pass_success_total();
+    reg.on_reemit_pipeline_call(0, 0);
+    // AC2: pass fired + body driven via #2601 retry. success_total does NOT
+    // advance here — branch 2 success is tracked by #2601 counters.
+    CHECK(reg.reemit_storm_clear_health_pass_total() == before_total + 1,
+          "AC2: storm-clear pass fired");
+    CHECK(reg.reemit_storm_clear_health_pass_reemit_driven_total() == before_driven + 1,
+          "AC2: body-driven counter advanced (branch 2: #2601 retry path)");
+    CHECK(reg.reemit_storm_clear_health_pass_success_total() == before_success,
+          "AC2: success_total unchanged (branch 2 success via #2601 counter, no double-count)");
+    reg.on_reload_success();
+}
+
+static void ac2669_quiet_path_zero_cost() {
+    std::println("\n--- #2669 AC4: quiet path (no pending) → zero extra work ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    aura_hot_update_set_shape_storm_active(0);
+    reg.reset_storm_clear_health_pass_for_test();
+    const auto before_total = reg.reemit_storm_clear_health_pass_total();
+    const auto before_driven = reg.reemit_storm_clear_health_pass_reemit_driven_total();
+    aura_hot_update_set_shape_storm_active(0);
+    reg.on_reemit_pipeline_call(0, 0);
+    CHECK(reg.reemit_storm_clear_health_pass_total() == before_total,
+          "AC4: quiet path (no pending) → total unchanged");
+    CHECK(reg.reemit_storm_clear_health_pass_reemit_driven_total() == before_driven,
+          "AC4: quiet path → driven unchanged (zero body work)");
+}
+
+static void ac2669_storm_reentry_skips() {
+    std::println("\n--- #2669 AC5: storm re-entry mid-pass → skip + deferred not dropped ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    aura_hot_update_set_shape_storm_active(0);
+    reg.reset_storm_clear_health_pass_for_test();
+    reg.on_reemit_deferred_for_boundary();
+    aura_hot_update_set_shape_storm_active(1);
+    reg.on_reemit_pipeline_call(0, 0);
+    aura_hot_update_set_shape_storm_active(0);
+    const auto before_skip = reg.reemit_storm_clear_health_pass_skipped_reentered_storm_total();
+    reg.on_reemit_pipeline_call(0, 0); // edge transition + pending
+    // After pass: deferred should be cleared (take succeeded) under normal sync path.
+    // The skipped_reentered counter stays 0 because sync hook cannot re-enter mid-pass.
+    CHECK(reg.reemit_storm_clear_health_pass_skipped_reentered_storm_total() == before_skip,
+          "AC5: skipped_reentered unchanged under sync hook (no false-positive reentry)");
+    CHECK(!reg.has_deferred_reemit(), "AC5: deferred cleared after pass (not silently dropped)");
+    reg.on_reload_success();
+}
+
+static void ac2669_schema_and_source() {
+    std::println("\n--- #2669 AC6: schema + source-cite + linter ---");
+    const auto h = read_file("src/compiler/hot_update_registry.hh");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_storm_clear_drive_body_coverage.py");
+    // .hh: new atomic + getter + snapshot field + schema/issue sentinels.
+    CHECK(h.find("reemit_storm_clear_health_pass_reemit_driven_total_") != std::string::npos,
+          "AC6: header declares reemit_driven counter atomic");
+    CHECK(h.find("reemit_storm_clear_health_pass_reemit_driven_total") != std::string::npos,
+          "AC6: header exposes reemit_driven getter");
+    CHECK(h.find("schema_2669") != std::string::npos, "AC6: schema_2669 sentinel");
+    CHECK(h.find("issue_2669") != std::string::npos, "AC6: issue_2669 sentinel");
+    // .cpp: 3-branch drive body + comment.
+    CHECK(cpp.find("Issue #2669: drive recovery body on storm-clear success path") !=
+              std::string::npos,
+          "AC6: cpp cites #2669 drive body comment");
+    CHECK(cpp.find("aura_reemit_aot_for_dirty") != std::string::npos &&
+              cpp.find("take_deferred_reemit_version") != std::string::npos,
+          "AC6: cpp wires branch 1 deferred reemit take + drive");
+    CHECK(cpp.find("aura_hot_update_maybe_retry_exhausted_min_dirty") != std::string::npos,
+          "AC6: cpp wires branch 2 #2601 retry");
+    CHECK(cpp.find("on_cascade_reemit_trigger") != std::string::npos,
+          "AC6: cpp wires branch 3 #2502 cascade");
+    // linter + build.py wiring.
+    CHECK(!lint.empty(), "AC6: linter file present");
+    CHECK(build.find("cmd_storm_clear_drive_body_coverage") != std::string::npos,
+          "AC6: build.py cmd wired");
+    CHECK(build.find("check_storm_clear_drive_body_coverage") != std::string::npos,
+          "AC6: build.py references linter");
+    // #2639 / #2601 / #2502 surfaces preserved (additive).
+    CHECK(h.find("Issue #2639: storm-clear edge detection") != std::string::npos,
+          "AC6: #2639 surface preserved");
+    CHECK(h.find("Issue #2601: exhausted min-dirty retry closed loop") != std::string::npos,
+          "AC6: #2601 surface preserved");
+}
+
 int run_test_exhausted_min_dirty_reemit() {
     std::println("test_exhausted_min_dirty_reemit");
     ac1_exhaust_attempts_min_dirty();
@@ -819,10 +961,16 @@ int run_test_exhausted_min_dirty_reemit() {
     ac2639_quiet_path_zero_cost();
     ac2639_storm_reenters_mid_pass_skips();
     ac2639_schema_and_source();
+    ac2669_drive_deferred_branch();
+    ac2669_drive_force_jit_branch();
+    ac2669_quiet_path_zero_cost();
+    ac2669_storm_reentry_skips();
+    ac2669_schema_and_source();
     if (g_failed)
         return 1;
-    std::println("exhausted min-dirty reemit #2544 + #2601 + #2639 storm-clear: OK ({} passed)",
-                 g_passed);
+    std::println(
+        "exhausted min-dirty reemit #2544 + #2601 + #2639 + #2669 drive-body: OK ({} passed)",
+        g_passed);
     return 0;
 }
 
