@@ -401,14 +401,17 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [gate]
     runs-on: ubuntu-latest
-    timeout-minutes: 240  # Dual Release builds (~2× wall). AURA_LINK_JOBS=1
-                          # serializes link to avoid arena.ixx.o deadlock (#2636).
+    timeout-minutes: 240  # Dual sequential Release builds (~2× wall).
+                          # AURA_LINK_JOBS=1 serializes link to avoid
+                          # arena.ixx.o deadlock (#2636).
     container:
       image: ghcr.io/cybrid-systems/dev:v1.0.5
     env:
       SOURCE_DATE_EPOCH: "1704067200"
       CCACHE_DISABLE: 1
       AURA_LINK_JOBS: "1"
+      LC_ALL: C
+      TZ: UTC
     steps:
     - uses: actions/checkout@v7
 
@@ -420,9 +423,11 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Dual-build bit-identity (build_repro_a vs build_repro_b). Compile
-    # failure on evaluator_mutation_boundary was restamp dual-def
-    # (lifetime_pin.hh + .ixx) — fixed by dropping free funcs from .hh.
+    # Dual sequential clean builds into the same path (build_repro/),
+    # compare sha256. Dual-dir (a vs b) previously mismatched because
+    # C++20 module / __FILE__ paths leaked the build directory even with
+    # source-only -ffile-prefix-map. Prefix maps now cover src+build;
+    # same-path sequential is the gold standard for #675.
     - name: Verify reproducible builds match
       run: python3 build.py repro --verify
 

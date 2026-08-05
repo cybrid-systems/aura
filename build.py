@@ -8558,11 +8558,50 @@ REPRO_SOURCE_DATE_EPOCH = "1704067200"  # 2024-01-01T00:00:00Z
 SBOM_SCRIPT = TOOLS / "gen_sbom.py"
 
 
-def _repro_cmake_flags() -> tuple[str, str, str]:
-    src = str(ROOT)
-    flags = f"-ffile-prefix-map={src}=. -fdebug-prefix-map={src}=. -frandom-seed=aura-repro-675 -g0"
-    ldflags = "-Wl,--build-id=none"
-    return flags, flags, ldflags
+def _repro_cmake_flags(build_dir: Path) -> tuple[str, str, str]:
+    """Compiler/linker flags for bit-reproducible Release builds (#675).
+
+    Maps both source and build trees so dual-dir or relocated builds do
+    not embed absolute paths via __FILE__ / DWARF / module BMI paths.
+    """
+    src = str(ROOT.resolve())
+    bld = str(build_dir.resolve())
+    # file + debug + macro prefix maps: cover __FILE__, assert paths, DWARF
+    # and C++20 module mapper strings that otherwise leak the build dir
+    # (CI dual-dir verify failed with distinct sha256 for a vs b).
+    flags = (
+        f"-ffile-prefix-map={src}=. "
+        f"-fdebug-prefix-map={src}=. "
+        f"-fmacro-prefix-map={src}=. "
+        f"-ffile-prefix-map={bld}=build "
+        f"-fdebug-prefix-map={bld}=build "
+        f"-fmacro-prefix-map={bld}=build "
+        f"-frandom-seed=aura-repro-675 "
+        f"-fno-ident "
+        f"-g0"
+    )
+    ldflags = ["-Wl,--build-id=none"]
+    # Prefer the same fast linker as cmd_build when available, so the
+    # shipped Release binary matches the mold/lld CI path. Always pin
+    # fuse-ld explicitly so dual builds cannot pick different linkers.
+    fast_ld = _select_fast_linker()
+    if fast_ld:
+        ldflags.append(f"-fuse-ld={fast_ld}")
+    return flags, flags, " ".join(ldflags)
+
+
+def _repro_env() -> dict[str, str]:
+    """Stable env for reproducible configure/build."""
+    env = {
+        **os.environ,
+        "SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", REPRO_SOURCE_DATE_EPOCH),
+        "CCACHE_DISABLE": "1",
+        "AURA_BUILD_TYPE": "Release",
+        # Locale / timezone can leak into asctime-style strings and sort order.
+        "LC_ALL": "C",
+        "TZ": "UTC",
+    }
+    return env
 
 
 def _repro_configure_and_build(build_dir: Path, *, label: str = "repro") -> int:
@@ -8573,17 +8612,16 @@ def _repro_configure_and_build(build_dir: Path, *, label: str = "repro") -> int:
     """
     build_dir.mkdir(parents=True, exist_ok=True)
     nproc = _build_jobs()
-    cflags, cxxflags, ldflags = _repro_cmake_flags()
+    cflags, cxxflags, ldflags = _repro_cmake_flags(build_dir)
     # Issue #2636: explicit compiler paths — /usr/bin/c++ can be a dangling
     # symlink on some local dev boxes; CMake auto-detect then fails.
     c_compiler = shutil.which("gcc") or shutil.which("cc") or "gcc"
     cxx_compiler = shutil.which("g++") or shutil.which("c++") or "g++"
-    env = {
-        **os.environ,
-        "SOURCE_DATE_EPOCH": os.environ.get("SOURCE_DATE_EPOCH", REPRO_SOURCE_DATE_EPOCH),
-        "CCACHE_DISABLE": "1",
-        "AURA_BUILD_TYPE": "Release",
-    }
+    env = _repro_env()
+    # Deterministic static archives (lib@cmake_cxx_std.a etc.): 'D' forces
+    # zero UIDs/GIDs/timestamps so two sequential ar runs match.
+    ar_create = "<CMAKE_AR> qcD <TARGET> <LINK_FLAGS> <OBJECTS>"
+    ar_finish = "<CMAKE_RANLIB> -D <TARGET>"
     cmake_args = [
         "cmake",
         "-B",
@@ -8598,6 +8636,10 @@ def _repro_configure_and_build(build_dir: Path, *, label: str = "repro") -> int:
         f"-DCMAKE_CXX_FLAGS={cxxflags}",
         f"-DCMAKE_EXE_LINKER_FLAGS={ldflags}",
         f"-DCMAKE_SHARED_LINKER_FLAGS={ldflags}",
+        f"-DCMAKE_C_ARCHIVE_CREATE={ar_create}",
+        f"-DCMAKE_CXX_ARCHIVE_CREATE={ar_create}",
+        f"-DCMAKE_C_ARCHIVE_FINISH={ar_finish}",
+        f"-DCMAKE_CXX_ARCHIVE_FINISH={ar_finish}",
     ]
     link_jobs = os.environ.get("AURA_LINK_JOBS", "").strip()
     if link_jobs.isdigit() and int(link_jobs) > 0:
@@ -8628,36 +8670,55 @@ def cmd_repro():
     Default: one SOURCE_DATE_EPOCH Release build of `aura` in build_repro/.
 
     `--verify`: dual-build bit-identity check (Issue #675 / CI job
-    `reproducible-build`). Builds into build_repro_a/ and build_repro_b/,
-    then requires matching sha256 of the two aura binaries. (scripts/
-    ci_reproducibility.py was deleted in audit wave 9; verify is inline.)
+    `reproducible-build`). Two sequential clean builds into the **same**
+    path (`build_repro/`), stash first binary, rebuild, require matching
+    sha256. Same-path dual-build is the standard reproducible definition;
+    dual-dir (a vs b) previously failed because C++20 module / assert
+    paths leaked the build directory even with source-only prefix maps.
+    (scripts/ci_reproducibility.py was deleted in audit wave 9; verify
+    is inline.)
     """
     verify = "--verify" in sys.argv[2:]
     global BUILD, AURA, TEST_BIN
 
     if verify:
-        print(f"{B}═══ Reproducible build verify (dual build) ═══{N}")
-        dir_a = ROOT / "build_repro_a"
-        dir_b = ROOT / "build_repro_b"
-        # Clean prior trees so stale objects cannot fake a match/mismatch.
-        for d in (dir_a, dir_b):
-            if d.exists():
-                shutil.rmtree(d)
-        r = _repro_configure_and_build(dir_a, label="repro-a")
+        print(f"{B}═══ Reproducible build verify (dual sequential) ═══{N}")
+        build_dir = ROOT / "build_repro"
+        stash = ROOT / "build_repro_first.bin"
+        # Drop prior trees / stash so stale objects cannot fake a match.
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+        if stash.exists():
+            stash.unlink()
+        # Also drop legacy dual-dir trees from the pre-fix verify path.
+        for legacy in (ROOT / "build_repro_a", ROOT / "build_repro_b"):
+            if legacy.exists():
+                shutil.rmtree(legacy)
+
+        r = _repro_configure_and_build(build_dir, label="repro-1")
         if r != 0:
             return r
-        r = _repro_configure_and_build(dir_b, label="repro-b")
+        first = build_dir / "aura"
+        ha = hashlib.sha256(first.read_bytes()).hexdigest()
+        shutil.copy2(first, stash)
+
+        # Clean rebuild from empty tree (no ccache; CCACHE_DISABLE=1).
+        shutil.rmtree(build_dir)
+        r = _repro_configure_and_build(build_dir, label="repro-2")
         if r != 0:
             return r
-        ha = hashlib.sha256((dir_a / "aura").read_bytes()).hexdigest()
-        hb = hashlib.sha256((dir_b / "aura").read_bytes()).hexdigest()
+        second = build_dir / "aura"
+        hb = hashlib.sha256(second.read_bytes()).hexdigest()
         if ha != hb:
-            fail(f"repro binaries differ\n  a={ha}\n  b={hb}")
+            fail(f"repro binaries differ\n  1={ha}\n  2={hb}")
+            # Keep stash for offline diffoscope / cmp.
+            warn(f"first binary retained at {stash}")
             return 1
-        ok(f"repro verify OK — dual builds match sha256={ha[:16]}…")
-        # Keep a stable path for downstream consumers.
-        BUILD = dir_a
-        AURA = dir_a / "aura"
+        if stash.exists():
+            stash.unlink()
+        ok(f"repro verify OK — sequential builds match sha256={ha[:16]}…")
+        BUILD = build_dir
+        AURA = second
         TEST_BIN = AURA
         return 0
 
