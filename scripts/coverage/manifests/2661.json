@@ -1,0 +1,73 @@
+{
+  "issue": 2661,
+  "title": "Issue #2661: JoinStatus::Reclaimed resource safety \u2014 unify orphan roots + agent reservation + mailbox detach.",
+  "ok": "OK: Issue #2661 Reclaimed resource safety \u2014 all 6 AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "join_reclaimed_deferred_cleanup_total",
+        "complete_agent_join_cleanup",
+        "Issue #2661"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "complete_agent_join_cleanup",
+        "Fiber::release_orphan_roots"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "complete_agent_join_cleanup(h, jr)",
+        "complete_agent_join_cleanup(a, jr)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/parallel_orch.h",
+      "contains": [
+        "note_orphan_fiber",
+        "Issue #2661"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/README.md",
+      "contains": [
+        "JoinStatus contract (Issue #2661)",
+        "Reclaimed",
+        "complete_agent_join_cleanup",
+        "join_reclaimed_deferred_cleanup_total",
+        "No docs/design/ per #1655"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "#2661 AC1: Reclaimed",
+        "#2661 AC2: orphan roots HWM",
+        "#2661 AC3: Ok join",
+        "#2661 AC4: parallel Timeout",
+        "#2661 AC5: README Agent-facing",
+        "#2661 AC6: src-aligned test",
+        "Issue #2661"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "scripts/coverage/manifests/2661.json",
+      "contains": [
+        "2661",
+        "Reclaimed resource safety"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2661.py"
+}
