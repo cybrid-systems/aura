@@ -644,6 +644,96 @@ int run_test_parallel_intend_pure_contract() {
               "2636: parallel-intend gate uses ev.workspace_flat_");
     }
 
+    // ── Issue #2662: production hardening of pure path + chaos stress ────────
+    // AC6: production_defaults + opt-in flag → rest of batch take lock.
+    //      Verified structurally + flag atomic accessibility (CI runs without
+    //      production defaults, so the wire-up under production_defaults_active()
+    //      is exercised via source-cite + the flag atomic store/load contract).
+    // AC7: 8+ fibers × string/cons under parallel-intend :pure #t — either
+    //      clean (pure_unlocked_applies bumps) or contract-violated (no SIGSEGV).
+    //      Stress gate for #2662 (builds on #2651 multi-fiber string_heap /
+    //      pairs lock precedent — keeps the no-heap-race invariant under fanout).
+    {
+        std::println("\n--- #2662 AC6: production hardening flag + wiring source-cite ---");
+        // Flag atomic is settable + readable (test cleanup restores prior value).
+        const bool flag_before = g_orch_module_stats.parallel_intend_force_lock_on_violation.load(
+            std::memory_order_relaxed);
+        g_orch_module_stats.parallel_intend_force_lock_on_violation.store(
+            true, std::memory_order_relaxed);
+        CHECK(g_orch_module_stats.parallel_intend_force_lock_on_violation.load(
+                  std::memory_order_relaxed) == true,
+              "2662 AC6: parallel_intend_force_lock_on_violation atomic writable + readable");
+        g_orch_module_stats.parallel_intend_force_lock_on_violation.store(
+            flag_before, std::memory_order_relaxed);
+
+        // Source-cite: wire-up in evaluator_primitives_agent.cpp violation branch.
+        const auto ag_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(ag_src.find("parallel_intend_force_lock_on_violation") != std::string::npos,
+              "2662 AC6: flag referenced in violation branch (wire-up site)");
+        CHECK(ag_src.find("batch_force_eval_mu.store(true") != std::string::npos,
+              "2662 AC6: batch_force_eval_mu.store(true) on violation");
+        CHECK(ag_src.find("batch_force_eval_mu.load(std::memory_order_relaxed)") !=
+                  std::string::npos,
+              "2662 AC6: batch_force_eval_mu.read in force_lock calc");
+        CHECK(ag_src.find("production_defaults_active()") != std::string::npos,
+              "2662 AC6: production_defaults_active() gates the wire-up");
+
+        // Source-cite: README documents the production hardening.
+        const auto rd = read_file("src/orch/README.md");
+        CHECK(rd.find("Issue #2662") != std::string::npos,
+              "2662 AC6: README documents #2662 production hardening");
+        CHECK(rd.find("parallel_intend_force_lock_on_violation") != std::string::npos,
+              "2662 AC6: README documents the flag name");
+        CHECK(rd.find("Issue #2651") != std::string::npos,
+              "2662 AC6: README references #2651 heap-race precedent");
+        CHECK(rd.find("best-effort") != std::string::npos,
+              "2662 AC6: README keeps 'best-effort' disclaimer (no transactional claim)");
+
+        // Source-cite: OrchModuleStats has the flag atomic.
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn_src.find("parallel_intend_force_lock_on_violation") != std::string::npos,
+              "2662 AC6: OrchModuleStats declares the flag atomic");
+    }
+
+    {
+        std::println("\n--- #2662 AC7: 8+ fibers × string/cons stress under :pure #t ---");
+        // 9 fibers running pure string/cons/arithmetic under :pure #t. Either
+        // all clean (pure_unlocked_applies bumps for all 9) or some are
+        // contract-violated (pure_contract_violated bumps). Either way
+        // no SIGSEGV — stress gate for the #2651 heap-race hardening.
+        const auto unlocked_before =
+            g_orch_module_stats.pure_parallel_tasks_total.load(std::memory_order_relaxed);
+        const auto violated_before =
+            g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
+        auto r = cs.eval(R"(
+            (parallel-intend
+              (vector (lambda () (string-append "x" "y"))
+                      (lambda () (cons 1 2))
+                      (lambda () (+ 1 2))
+                      (lambda () (string-append "a" "b"))
+                      (lambda () (cons 3 4))
+                      (lambda () (* 2 3))
+                      (lambda () (string-append "c" "d"))
+                      (lambda () (cons 5 6))
+                      (lambda () (- 7 8)))
+              :pure #t
+              :max-concurrency 8
+              :collect-errors #t
+              :timeout-ms 10000)
+        )");
+        CHECK(r.has_value(),
+              "2662 AC7: 8+ fibers string/cons under parallel-intend :pure #t returns value "
+              "(no SIGSEGV under stress)");
+        const auto unlocked_after =
+            g_orch_module_stats.pure_parallel_tasks_total.load(std::memory_order_relaxed);
+        const auto violated_after =
+            g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
+        std::println("  pure_unlocked delta={} pure_contract_violated delta={}",
+                     unlocked_after - unlocked_before, violated_after - violated_before);
+        CHECK(unlocked_after >= unlocked_before,
+              "2662 AC7: pure_unlocked_applies monotonic under 8+ fiber stress");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

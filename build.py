@@ -308,6 +308,22 @@ def cmd_lint():
             "pure probe hardening coverage linter failed — run python3 scripts/coverage/checks/check_pure_probe_hardening_2634.py"
         )
         return r
+    # Issue #2662: production hardening of pure-parallel path under
+    # multi-agent fanout (parallel_intend_force_lock_on_violation opt-in
+    # flag + per-batch batch_force_eval_mu atomic + 8+ fiber chaos
+    # stress). Builds on #2634 probe + #2163 pure parallel — wires next
+    # to the pure-probe linter so a regression in the #2662 AC surface
+    # fails the same gate.
+    par_script = COVERAGE_CHECKS / "check_2662_coverage.py"
+    if not par_script.exists():
+        fail(f"missing {par_script}")
+        return 1
+    r = run([sys.executable, str(par_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2662 production hardening coverage linter failed — run python3 scripts/coverage/checks/check_2662_coverage.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a

@@ -383,6 +383,16 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> pure_contract_violated_total{0};
     // pure=#t requested but this task forced the lock (boundary held / unsafe).
     std::atomic<std::uint64_t> pure_fallback_locked_total{0};
+    // Issue #2662: opt-in flag for production hardening. When this flag is
+    // set AND production_defaults_active() returns true, a pure-contract
+    // violation in one task flips `batch_force_eval_mu` (per-batch atomic
+    // inside parallel-intend), forcing subsequent pure tasks in the same
+    // batch to take eval_mu (best-effort-pure → serialized for the rest of
+    // the batch). Default false for throughput; production defaults can set
+    // it for safety. NOT a transactional isolation promise — best-effort
+    // hardening only. Cross-check: tests/orch/test_parallel_intend_pure_contract
+    // AC6 + scripts/coverage/checks/check_2662_coverage.py.
+    std::atomic<bool> parallel_intend_force_lock_on_violation{false};
     // Issue #2399: AgentScope concurrent misuse detection (metric path).
     // Bumped when a second thread enters spawn/join_all/watch_all/cancel_all
     // while another thread already holds the scope. Default metric-only;
