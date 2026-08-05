@@ -29,6 +29,8 @@ module;
 #include "compiler/agent_name_table.h"
 #include "compiler/aot_hot_update_health.hh" // Issue #2543: hot-update health throttle
 #include "orch/orch.h"
+#include "orch/security_schedule_gate.h" // #2660 make_security_schedule_input_live + admit_security_schedule
+#include "compiler/typed_mutation_audit.h" // #2660 typed_audit::production_defaults_active
 #include <atomic>
 #include <cstdio>
 #include <algorithm>
