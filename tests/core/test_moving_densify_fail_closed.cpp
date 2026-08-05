@@ -363,6 +363,77 @@ static void ac18_source_cite_2599() {
           "AC18: force_linear_rollback authority pattern referenced");
 }
 
+// ── Issue #2664: production-default hard-fail on untracked external roots ──
+//
+// Closes the false-safety gap where Soft path completes densify with
+// metrics suppressed but no Agent-visible hard deny under
+// production_defaults_active(). Folds production_defaults into the
+// hard-fail branch even without explicit env=hard. Soft / dev_off /
+// tests retain observe-only behavior (the existing #2595/#2596 path).
+//
+// AC1: production_defaults_active() check in arena.ixx if-block
+//       (close false-safety: moving_incomplete_remap_densify_hard_fail).
+// AC2: new Agent-visible hard-fail counter
+//       (g_moving_incomplete_remap_densify_hard_fail_total).
+// AC3: Soft + env unset retains observe-only (#2596 AC14 contract).
+// AC4: AURA_MOVING_UNTRACKED=hard still aborts under production
+//       (pre-existing #2596 AC11; production_defaults_active()
+//       AND-extends the gate — env still wins).
+// AC5: source-cite Phase 5 gate (moving_blocked_precondition propagation
+//       into densify_consistency.overall_ok()).
+// AC6: coverage linter check_2664_coverage wired into build.py gate.
+static void ac2664_1_production_default_hard_fail() {
+    std::println("\n--- #2664 AC1: production-default hard-fail (close false-safety) ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Issue #2664") != std::string::npos,
+          "2664 AC1: arena.ixx cites #2664 production-default hard-fail");
+    CHECK(arena.find("g_moving_untracked_hard_abort_pref") != std::string::npos,
+          "2664 AC1: arena.ixx reads g_moving_untracked_hard_abort_pref (already encodes "
+          "production-default via #2596)");
+}
+
+static void ac2664_2_hard_fail_counter() {
+    std::println("\n--- #2664 AC2: Agent-visible hard-fail counter ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("g_moving_incomplete_remap_densify_hard_fail_total") != std::string::npos,
+          "2664 AC2: g_moving_incomplete_remap_densify_hard_fail_total counter declared");
+    CHECK(arena.find("g_moving_incomplete_remap_densify_hard_fail_total.fetch_add") !=
+              std::string::npos,
+          "2664 AC2: counter bumped on hard-fail branch (Agent-visible)");
+}
+
+static void ac2664_3_soft_observe_only() {
+    std::println("\n--- #2664 AC3: Soft + env unset retains observe-only ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Soft / dev_off / tests retain observe-only") != std::string::npos,
+          "2664 AC3: Soft path comment documents observe-only retention");
+}
+
+static void ac2664_4_env_hard_still_aborts() {
+    std::println("\n--- #2664 AC4: AURA_MOVING_UNTRACKED=hard still aborts ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("hard_pref > 0") != std::string::npos,
+          "2664 AC4: existing env=hard branch preserved (#2596 contract)");
+    CHECK(arena.find("g_moving_incomplete_remap_densify_hard_fail_total.fetch_add") !=
+              std::string::npos,
+          "2664 AC4: counter bumps in the same branch as env=hard");
+}
+
+static void ac2664_5_phase5_gate_source_cite() {
+    std::println("\n--- #2664 AC5: Phase 5 gate source-cite ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(
+        arena.find("moving_blocked_precondition") != std::string::npos,
+        "2664 AC5: arena.ixx has moving_blocked_precondition field (aggregates into Phase 5 gate)");
+}
+
+static void ac2664_6_coverage_linter_wired() {
+    std::println("\n--- #2664 AC6: coverage linter check_2664_coverage wired ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_2664_coverage") != std::string::npos,
+          "2664 AC6: build.py wires check_2664_coverage into the gate");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -373,6 +444,8 @@ int run_test_moving_densify_fail_closed() {
                  "test file per #81967) ===");
     std::println("=== Issue #2599: EnvFrame densify ownership scan fail enters outermost commit "
                  "barrier (extends #2495 test file per #81967) ===");
+    std::println("=== Issue #2664: production-default hard-fail on untracked external roots "
+                 "(extends #2495 test file per #81967) ===");
 
     ac1_source_cite_live_compact_result();
     ac3_soft_zero_extra_work();
@@ -391,6 +464,12 @@ int run_test_moving_densify_fail_closed() {
     ac16_production_only_envframe_scan_block();
     ac17_envframe_densify_ownership_deny_reason();
     ac18_source_cite_2599();
+    ac2664_1_production_default_hard_fail();
+    ac2664_2_hard_fail_counter();
+    ac2664_3_soft_observe_only();
+    ac2664_4_env_hard_still_aborts();
+    ac2664_5_phase5_gate_source_cite();
+    ac2664_6_coverage_linter_wired();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 

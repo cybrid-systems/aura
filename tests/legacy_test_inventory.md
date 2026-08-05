@@ -1057,7 +1057,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_layout_stamp.cpp` (—) [domain_suite, theme_compiler] — API for cross-subsystem epoch coherence (P1, MemorySafety-Review,
 - `tests/compiler/test_memo_goal_epoch_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Two successive queries without mutate return identical epoch
 - `tests/core/test_moving_compact.cpp` (—) [large, domain_suite, theme_core] — Issue #2342 (Refine #2166): sharded LifetimePin registry (Option 1
-- `tests/core/test_moving_densify_fail_closed.cpp` (—) [domain_suite, theme_core] — AC1: Untracked live pointer + Moving densify of its referent → contract
+- `tests/core/test_moving_densify_fail_closed.cpp` (—) [large, domain_suite, theme_core] — AC1: Untracked live pointer + Moving densify of its referent → contract
 - `tests/compiler/test_occurrence_cache_key.cpp` (—) [domain_suite, theme_compiler] — AC1: same shape + epoch → second visit is structural key hit
 - `tests/compiler/test_occurrence_goal_epoch_table.cpp` (—) [domain_suite, theme_compiler] — AC1: clear_blame_context does NOT wipe OccurrenceGoal table
 - `tests/compiler/test_outermost_exit_order.cpp` (—) [domain_suite, theme_compiler] — Documented success exit order (AC5):
