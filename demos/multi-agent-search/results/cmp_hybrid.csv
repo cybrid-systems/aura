@@ -1,0 +1,3 @@
+step,V,fail_count,node_count,energy,rejected,in_S,action,n_proposals,n_llm,n_local,picked,extra
+0,20.3,2,3.0,0.0,False,False,init,0,0,0,seed-deny-all,mode=hybrid
+1,0.7500000000000001,0,6.0,0.15000000000000002,False,True,commit,8,4,4,local:ge-4,delta=-19.550;rej_filter=0;candidates=8
