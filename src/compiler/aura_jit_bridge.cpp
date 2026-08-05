@@ -1061,6 +1061,10 @@ void commit_func_table_swap() {
     }
     // Issue #2012 / #1956: fan-out epoch listeners (reload + reemit).
     aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
+    // Issue #2668: event-driven soft walk on the epoch-bump edge.
+    // Closes the burst-mutation window that pure periodic Soft leaves
+    // open under reemit storms. Production + Soft only.
+    aura_event_driven_epoch_invariant_walk_if_due();
 }
 
 // Issue #1271: last successfully committed AOT module identity
@@ -1544,6 +1548,9 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
     // Fan-out: same path as commit_func_table_swap so invalidate and
     // successful reload share one epoch-listener contract.
     aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
+    // Issue #2668: event-driven soft walk on the epoch-bump edge
+    // (covers reemit / reload paths). Production + Soft only.
+    aura_event_driven_epoch_invariant_walk_if_due();
 }
 
 // Issue #2271 / #2299: physically invalidate generation-behind AOT slots
@@ -4201,6 +4208,15 @@ std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_wrong_mode_total{0
 std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_rate_limited_total{0};
 std::atomic<std::uint64_t> g_epoch_invariant_periodic_skipped_disabled_total{0};
 std::atomic<std::uint64_t> g_epoch_invariant_periodic_period_ms{5000}; // default 5s
+// Issue #2668: event-driven walk counter (distinct from periodic).
+// Bumped when commit_func_table_swap / aura_aot_bump_func_table_epoch
+// triggers an event-driven soft walk under production + Soft (closes
+// the burst-mutation window that pure periodic Soft leaves open).
+// Shares last_walk_at_ms atomic with periodic path so double-walk on
+// boundary+swap in the same ms is amortized (no double physical clear).
+inline std::atomic<std::uint64_t> g_epoch_invariant_event_walks_total{0};              // #2668
+inline std::atomic<std::uint64_t> g_epoch_invariant_event_skipped_off_total{0};        // #2668
+inline std::atomic<std::uint64_t> g_epoch_invariant_event_skipped_wrong_mode_total{0}; // #2668
 } // namespace
 
 extern "C" std::uint64_t aura_epoch_invariant_periodic_walks_total_v_read(void) {
@@ -4220,6 +4236,16 @@ extern "C" std::uint64_t aura_epoch_invariant_periodic_skipped_rate_limited_tota
 }
 extern "C" std::uint64_t aura_epoch_invariant_periodic_skipped_disabled_total_v_read(void) {
     return g_epoch_invariant_periodic_skipped_disabled_total.load(std::memory_order_relaxed);
+}
+// Issue #2668: event-driven walk accessors (distinct from periodic).
+extern "C" std::uint64_t aura_epoch_invariant_event_walks_total_v_read(void) {
+    return g_epoch_invariant_event_walks_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_event_skipped_off_total_v_read(void) {
+    return g_epoch_invariant_event_skipped_off_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_event_skipped_wrong_mode_total_v_read(void) {
+    return g_epoch_invariant_event_skipped_wrong_mode_total.load(std::memory_order_relaxed);
 }
 extern "C" std::uint64_t aura_epoch_invariant_periodic_period_ms_v_read(void) {
     return g_epoch_invariant_periodic_period_ms.load(std::memory_order_relaxed);
@@ -4272,6 +4298,39 @@ extern "C" void aura_periodic_epoch_invariant_walk_if_due(void) {
     // Reuse #2541 soft walk: physically clear gen-behind AOT slots
     // (aura_aot_invalidate_all_stale_slots_for_eval(nullptr) = process-default)
     // + MustDeopt stale live closures.
+    (void)aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
+    (void)aura_epoch_invariant_must_deopt_stale_live_closures();
+}
+
+// Issue #2668: event-driven soft walk on commit_func_table_swap /
+// aura_aot_bump_func_table_epoch. Closes the burst-mutation window
+// that pure periodic Soft leaves open under reemit storms. Shares
+// last_walk_at_ms atomic with periodic path so double-walk on
+// boundary+swap in the same ms is amortized. Production + Soft only;
+// Soft / Off / mode=0: zero extra work on bump path.
+extern "C" void aura_event_driven_epoch_invariant_walk_if_due(void) {
+    if (!aura::compiler::typed_audit::production_defaults_active()) {
+        g_epoch_invariant_event_skipped_off_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (aura_epoch_invariant_mode() != 1) { // 1 = Soft (per #2541 Restricted default)
+        g_epoch_invariant_event_skipped_wrong_mode_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    // Share last-walk-at with periodic path (AC3: no double physical
+    // clear in same window). Same steady-clock amortization as #2640.
+    const auto now_ms = periodic_steady_ms_now();
+    const auto last_ms = g_epoch_invariant_periodic_last_walk_at_ms.load(std::memory_order_relaxed);
+    if (last_ms != 0 &&
+        (now_ms - last_ms) < g_epoch_invariant_periodic_period_ms.load(std::memory_order_relaxed)) {
+        // Periodic path already covered this window (or the next
+        // periodic walk will). Skip — zero work.
+        return;
+    }
+    g_epoch_invariant_periodic_last_walk_at_ms.store(now_ms, std::memory_order_relaxed);
+    g_epoch_invariant_event_walks_total.fetch_add(1, std::memory_order_relaxed);
+    // Reuse #2541 soft walk: physically clear gen-behind AOT slots +
+    // MustDeopt stale live closures.
     (void)aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
     (void)aura_epoch_invariant_must_deopt_stale_live_closures();
 }

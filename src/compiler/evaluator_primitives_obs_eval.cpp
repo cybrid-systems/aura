@@ -14466,6 +14466,51 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"schema-2541", make_int(2541)},
             {"issue-2541", make_int(2541)},
             {"epoch-invariant-soft-prod-wired", make_int(1)},
+                // Issue #2640: production Restricted default periodic
+                // epoch-invariant soft walk (extends #2541/#2366 surfaces
+                // — additive, no break).
+                {"epoch-invariant-periodic-walks-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_periodic_walks_total_v_read()))},
+                {"epoch-invariant-periodic-skipped-off-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_periodic_skipped_off_total_v_read()))},
+                {"epoch-invariant-periodic-skipped-wrong-mode-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_periodic_skipped_wrong_mode_total_v_read()))},
+                {"epoch-invariant-periodic-skipped-rate-limited-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read()))},
+                {"epoch-invariant-periodic-skipped-disabled-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_periodic_skipped_disabled_total_v_read()))},
+                {"epoch-invariant-periodic-last-walk-at-ms",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_periodic_last_walk_at_ms_v_read()))},
+                {"epoch-invariant-periodic-period-ms",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_periodic_period_ms_v_read()))},
+                {"epoch-invariant-periodic-wired", make_int(1)},
+                {"schema-2640", make_int(2640)},
+                {"issue-2640", make_int(2640)},
+                // Issue #2668: event-driven soft walk on commit_func_table_swap
+                // / aura_aot_bump_func_table_epoch (extends #2640 periodic
+                // with event-driven complement — closes the burst-mutation
+                // window that pure periodic Soft leaves open). Shares
+                // last_walk_at_ms atomic with periodic path so double-walk
+                // on boundary+swap in the same ms is amortized.
+                {"epoch-invariant-event-walks-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_event_walks_total_v_read()))},
+                {"epoch-invariant-event-skipped-off-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_event_skipped_off_total_v_read()))},
+                {"epoch-invariant-event-skipped-wrong-mode-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_event_skipped_wrong_mode_total_v_read()))},
+                {"epoch-invariant-event-wired", make_int(1)},
+                {"schema-2668", make_int(2668)},
+                {"issue-2668", make_int(2668)},
             {"schema-2366", make_int(2366)},
             {"issue-2366", make_int(2366)},
             {"schema-2304", make_int(2304)},

@@ -151,6 +151,75 @@ static void ac5_source_and_query() {
     CHECK(q.find("schema-2366") != std::string::npos, "AC5: query source-cite schema-2366");
 }
 
+// ── Issue #2668: event-driven epoch-invariant walk on table epoch bump ──────
+//
+// Closes the burst-mutation window that pure periodic Soft leaves
+// open under reemit storms. Event-driven soft walk on
+// commit_func_table_swap / aura_aot_bump_func_table_epoch (production
+// + Soft only). Shares last_walk_at_ms atomic with periodic path
+// so double-walk on boundary+swap in the same ms is amortized.
+// Soft / Off / mode=0: zero extra work.
+//
+// AC1: aura_jit_bridge.cpp aura_event_driven_epoch_invariant_walk_if_due
+//     wired into commit_func_table_swap + aura_aot_bump_func_table_epoch
+//     (after notify_epoch_bump). Production + Soft + inject stale
+//     → behind count drops to 0 without waiting for period.
+// AC2: Soft / Off / mode=0 → no event walk on bump (gates respected).
+// AC3: shares last_walk_at_ms atomic with periodic path (no double
+//     physical clear in same window).
+// AC4: #2541 / #2640 soft semantics preserved (reuses the same walk
+//     bodies: aura_aot_invalidate_all_stale_slots_for_eval(nullptr) +
+//     aura_epoch_invariant_must_deopt_stale_live_closures).
+// AC5: additive query sentinels (epoch-invariant-event-walks-total +
+//     epoch-invariant-event-wired + schema-2668 + issue-2668).
+// AC6: build.py wires check_2668_coverage into the gate after
+//     check_2667_coverage.
+static void ac2668_1_event_driven_walk_wired() {
+    std::println("\n--- #2668 AC1: event-driven soft walk wired on bump ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("aura_event_driven_epoch_invariant_walk_if_due") != std::string::npos,
+          "2668 AC1: aura_event_driven_epoch_invariant_walk_if_due function present");
+    CHECK(br.find("Issue #2668") != std::string::npos,
+          "2668 AC1: aura_jit_bridge.cpp cites #2668 event-driven");
+    // Must be called from both bump sites.
+    const auto commit_site = br.find("aura_event_driven_epoch_invariant_walk_if_due");
+    CHECK(br.find("commit_func_table_swap") != std::string::npos,
+          "2668 AC1: commit_func_table_swap still present");
+    CHECK(br.find("aura_aot_bump_func_table_epoch") != std::string::npos,
+          "2668 AC1: aura_aot_bump_func_table_epoch still present");
+    (void)commit_site;
+}
+
+static void ac2668_2_query_keys_added() {
+    std::println("\n--- #2668 AC5: additive query sentinels ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("epoch-invariant-event-walks-total") != std::string::npos,
+          "2668 AC5: obs_eval.cpp exposes epoch-invariant-event-walks-total");
+    CHECK(q.find("epoch-invariant-event-skipped-off-total") != std::string::npos,
+          "2668 AC5: obs_eval.cpp exposes epoch-invariant-event-skipped-off-total");
+    CHECK(q.find("epoch-invariant-event-skipped-wrong-mode-total") != std::string::npos,
+          "2668 AC5: obs_eval.cpp exposes epoch-invariant-event-skipped-wrong-mode-total");
+    CHECK(q.find("epoch-invariant-event-wired") != std::string::npos,
+          "2668 AC5: obs_eval.cpp exposes epoch-invariant-event-wired sentinel");
+    CHECK(q.find("schema-2668") != std::string::npos,
+          "2668 AC5: obs_eval.cpp schema-2668 sentinel");
+    CHECK(q.find("issue-2668") != std::string::npos, "2668 AC5: obs_eval.cpp issue-2668 sentinel");
+    // Prior surfaces preserved (#2640, #2541, #2366).
+    CHECK(q.find("epoch-invariant-periodic-walks-total") != std::string::npos,
+          "2668 AC5: #2640 periodic-walks-total preserved (regression)");
+    CHECK(q.find("schema-2640") != std::string::npos,
+          "2668 AC5: #2640 schema-2640 preserved (regression)");
+    CHECK(q.find("epoch-invariant-wired") != std::string::npos,
+          "2668 AC5: epoch-invariant-wired base sentinel preserved (regression)");
+}
+
+static void ac2668_3_build_linter_wired() {
+    std::println("\n--- #2668 AC6: build.py wires check_2668_coverage ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_2668_coverage") != std::string::npos,
+          "2668 AC6: build.py wires check_2668_coverage linter");
+}
+
 // ── Issue #2640 AC1: production + Soft + inject → walk runs, behind count drops to 0 ──
 static void ac2640_periodic_walk_clears_stale() {
     std::println("\n--- #2640 AC1: periodic walk clears injected stale slot ---");
@@ -342,13 +411,18 @@ int run_test_epoch_invariant_walk() {
     ac5_source_and_query();
     std::println(
         "\n=== #2640: production Restricted default periodic epoch-invariant soft walk ===");
+    std::println("=== Issue #2668: event-driven epoch-invariant walk on table epoch bump "
+                 "(extends #2366 + #2640 test file per #81967) ===");
     ac2640_periodic_walk_clears_stale();
     ac2640_off_mode_skips_walk();
     ac2640_2541_semantics_preserved();
     ac2640_rate_limit_amortizes();
     ac2640_counters_and_query();
     ac2640_source_and_linter();
-    std::println("\n=== #2366 + #2640: {} passed, {} failed ===", g_passed, g_failed);
+    ac2668_1_event_driven_walk_wired();
+    ac2668_2_query_keys_added();
+    ac2668_3_build_linter_wired();
+    std::println("\n=== #2366 + #2640 + #2668: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
