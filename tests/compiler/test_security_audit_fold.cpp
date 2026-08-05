@@ -198,7 +198,7 @@ static void ac2_isolation_single_se() {
 
     // Direct free-function path also single-counts.
     const auto b2 = count_kind(SecurityEventKind::IsolationDeny);
-    CHECK(!check_boundary(0, nullptr, kEffectMutate, /*strict=*/true, "test:ac2-boundary",
+    CHECK(!check_boundary(0, 0, nullptr, false, kEffectMutate, /*strict=*/true, "test:ac2-boundary",
                           /*restricted=*/false),
           "AC2: Strict free check_boundary denies");
     const auto a2 = count_kind(SecurityEventKind::IsolationDeny);

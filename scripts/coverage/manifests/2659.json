@@ -1,0 +1,101 @@
+{
+  "issue": 2659,
+  "title": "Issue #2659: process-global WorkspaceIsolationPolicy current principal is unsafe under multi-Evaluator.",
+  "ok": "OK: Issue #2659 per-Evaluator principal \u2014 all 6 AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/workspace_isolation.hh",
+      "contains": [
+        "check_boundary_ex",
+        "caller_principal",
+        "allow_cross_tenant",
+        "Issue #2659"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "allow_cross_tenant_",
+        "Issue #2659",
+        "capability_tenant_id_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "set_tenant_principal",
+        "TenantScope",
+        "allow_cross_tenant_",
+        "Issue #2659",
+        "Evaluator-local"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "AC1: multi-Evaluator no cross-talk",
+        "AC1: Evaluator A principal still 7 post-stress",
+        "AC1: Evaluator B principal still 42 post-stress"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "AC2: TenantScope per-Evaluator snapshot",
+        "AC2: TenantScope sets principal to 42",
+        "AC2: TenantScope restored principal to 7"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "AC3: cross-tenant grant table",
+        "AC3: cross-tenant target 42 with grant from 7 allows"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "AC4: per-Evaluator unset principal deny",
+        "AC4: Restricted + unset principal on calling Evaluator denies"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "AC5: IsolationDeny tenant ids",
+        "AC5: SE tenant_id is target",
+        "AC5: SE mid is non-zero Mutation epoch"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "AC6: evaluator_security.cpp cites #2659",
+        "AC6: check_boundary_ex takes caller_principal",
+        "AC6: workspace_isolation.hh cites #2659",
+        "AC6: Evaluator has per-instance allow_cross_tenant_",
+        "AC6: TenantScope snapshots prev_allow_cross_",
+        "AC6: no docs/design/"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "scripts/coverage/manifests/2659.json",
+      "contains": [
+        "2659",
+        "per-Evaluator principal"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2659.py"
+}

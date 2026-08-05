@@ -5629,7 +5629,17 @@ private:
     // require matching capabilities (io/mutate/exec).
     bool sandbox_mode_ = false;
     // Issue #1565: multi-tenant id for capability effect checks.
+    // Issue #2659: this Evaluator-local field is the SOLE source of truth
+    // for the current principal. The legacy process-global
+    // WorkspaceIsolationPolicy::current is no longer written by
+    // set_tenant_principal / TenantScope (see #2659 audit).
     std::uint64_t capability_tenant_id_ = 0;
+    // Issue #2659: per-Evaluator `allow_cross_tenant` override. When
+    // true, the isolation check bypasses the cross-tenant grant require
+    // (matches the prior semantics of WorkspaceIsolationPolicy::current.
+    // allow_cross_tenant_). Stored locally so multiple Evaluators in one
+    // process do not race on a global. Snapshot/restore in TenantScope.
+    bool allow_cross_tenant_ = false;
 
 public:
     // Issue #2078: per-Evaluator orch agent name table. Replaces the
@@ -5899,6 +5909,9 @@ public:
     // Issue #2055: RAII principal snapshot for fiber entry / multi-tenant
     // long-running work. Restores previous capability_tenant_id_ on exit so
     // a stolen fiber cannot silently inherit another tenant's principal.
+    // Issue #2659: also snapshots/restores the per-Evaluator
+    // allow_cross_tenant_ flag (no global write) so a multi-Evaluator
+    // process does not race on a shared process-global current.
     class TenantScope {
     public:
         TenantScope(Evaluator& ev, std::uint64_t tenant_id, std::string_view name = {},
@@ -5909,6 +5922,7 @@ public:
         TenantScope(TenantScope&& o) noexcept
             : ev_(o.ev_)
             , prev_tenant_(o.prev_tenant_)
+            , prev_allow_cross_(o.prev_allow_cross_)
             , fiber_id_(o.fiber_id_)
             , active_(o.active_) {
             o.active_ = false;
@@ -5922,6 +5936,9 @@ public:
     private:
         Evaluator* ev_ = nullptr;
         std::uint64_t prev_tenant_ = 0;
+        // Issue #2659: snapshot of Evaluator::allow_cross_tenant_ before
+        // the TenantScope ctor rewrote it.
+        bool prev_allow_cross_ = false;
         std::uint32_t fiber_id_ = 0;
         bool active_ = false;
     };

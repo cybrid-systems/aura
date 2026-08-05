@@ -626,19 +626,26 @@ void Evaluator::apply_env_sandbox() noexcept {
 }
 
 // Issue #1566: multi-tenant workspace isolation bridge.
-void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view name,
+// Issue #2659: ONLY the Evaluator-local principal is set — the process-global
+// WorkspaceIsolationPolicy::current is no longer written, so multiple
+// Evaluators / concurrent fibers in one process no longer race on a
+// single "current tenant" (see #2659 audit). Cross-grant table remains
+// process-global (shared policy).
+void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /*name*/,
                                      bool allow_cross) noexcept {
-    using namespace ::aura::core::workspace_isolation;
     capability_tenant_id_ = tenant_id;
-    g_workspace_isolation().set_current_tenant(tenant_id, name, allow_cross);
+    allow_cross_tenant_ = allow_cross;
 }
 
 // Issue #2055: RAII TenantScope — snapshot principal at fiber entry so a
 // stolen / resumed fiber cannot silently keep another tenant's principal.
+// Issue #2659: snapshot/restore the Evaluator-local fields only — no
+// process-global writes (multi-Evaluator race).
 Evaluator::TenantScope::TenantScope(Evaluator& ev, std::uint64_t tenant_id, std::string_view name,
                                     bool allow_cross) noexcept
     : ev_(&ev)
     , prev_tenant_(ev.capability_tenant_id())
+    , prev_allow_cross_(ev.allow_cross_tenant_)
     , fiber_id_(static_cast<std::uint32_t>(aura_fiber_current_id()))
     , active_(true) {
     ev.set_tenant_principal(tenant_id, name, allow_cross);
@@ -652,9 +659,9 @@ void Evaluator::TenantScope::release() noexcept {
     if (!active_ || !ev_)
         return;
     // Restore prior principal (name empty → keep id only).
+    // Issue #2659: Evaluator-local only — no global write.
     ev_->set_capability_tenant_id(prev_tenant_);
-    using namespace ::aura::core::workspace_isolation;
-    g_workspace_isolation().set_current_tenant(prev_tenant_, {}, false);
+    ev_->allow_cross_tenant_ = prev_allow_cross_;
     active_ = false;
 }
 
@@ -687,7 +694,12 @@ bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint
         mode == 1 || g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted;
     IsolationRefProvenance prov{};
     prov.tenant_id = ref_tenant;
-    const bool ok = check_boundary(target, &prov, required_effects, strict, op, restricted);
+    // Issue #2659: caller_principal + allow_cross_tenant come from this
+    // Evaluator (per-instance) — the process-global `current` is no
+    // longer read by check_boundary_ex. Multi-Evaluator co-location no
+    // longer races on a single principal.
+    const bool ok = check_boundary(capability_tenant_id_, target, &prov, allow_cross_tenant_,
+                                   required_effects, strict, op, restricted);
     if (!ok) {
         bump_capability_denial();
         // Issue #2388: IsolationDeny SecurityEvent + WAL dual-written from
