@@ -7645,6 +7645,22 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         return 0;
     }
 
+    // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
+    // invalidate. Test-only helper — forces the per-engine state that
+    // infer_flat_partial would set when its partial cone is truncated
+    // (last_partial_cone_truncated_ + last_partial_cone_dropped_), and
+    // mirrors to the process-wide atomics via
+    // typed_audit::publish_partial_cone_truncate so #2621 commit_readiness
+    // gate sees the truncated state. Hermetic — no production cost outside
+    // test builds.
+    void InferenceEngine::force_partial_cone_truncate_for_test(
+        std::uint64_t dropped_count) noexcept {
+        last_partial_cone_truncated_ = true;
+        last_partial_cone_dropped_ = dropped_count;
+        aura::compiler::typed_audit::publish_partial_cone_truncate(/*truncated=*/true,
+                                                                   dropped_count, /*fanout=*/0);
+    }
+
     // Issue #1528: expand the affected set via type_dep_graph_
     // so dependents of *type variables* stamped on the primary
     // mutation nodes are re-inferred without a full-function

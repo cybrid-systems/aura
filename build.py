@@ -5851,6 +5851,31 @@ def cmd_composite_drift_inject_2671_coverage():
     return 0
 
 
+def cmd_occurrence_cone_truncate_drift_2672_coverage():
+    """Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone invalidate.
+
+    Refine #2646 AC6 (which was deferred for the drift-injection helper).
+    Hermetic test path: force_partial_cone_truncate_for_test() sets
+    per-engine last_partial_cone_truncated_ + last_partial_cone_dropped_
+    and mirrors to process-wide atomics via
+    typed_audit::publish_partial_cone_truncate so #2621 commit_readiness
+    gate sees the truncated state. Additive to #2646 / #2622 / #2621
+    surfaces. Drift-injection unit test verifies the helper actually
+    sets the state (not source-cite only).
+    """
+    print(f"{B}=== occurrence cone truncate drift (#2672) coverage ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_cone_truncate_drift_2672.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence cone truncate drift (#2672) coverage contract rows failed")
+        return 1
+    ok("occurrence cone truncate drift (#2672) coverage clean")
+    return 0
+
+
 def cmd_anonymous_residual_stable_id_policy_coverage():
     """Issue #2605: explicit anonymous / residual sid=0 policy.
 
@@ -8138,6 +8163,7 @@ def cmd_gate():
         or cmd_named_closure_stable_id_at_create_coverage()
         or cmd_stable_func_id_eval_namespace_coverage()
         or cmd_composite_drift_inject_2671_coverage()
+        or cmd_occurrence_cone_truncate_drift_2672_coverage()
         or cmd_anonymous_residual_stable_id_policy_coverage()
         or cmd_pereval_reemit_region_independence_coverage()
         or cmd_instance_constraint_depth_cap_coverage()

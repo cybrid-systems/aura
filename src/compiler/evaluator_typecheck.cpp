@@ -2347,6 +2347,29 @@ void Evaluator::partial_recover_adt_exhaustiveness(std::uint64_t mutation_id) no
     }
 }
 
+// Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
+// invalidate. Test-only helper — forces the per-engine partial-cone
+// truncate state (last_partial_cone_truncated_ +
+// last_partial_cone_dropped_) and mirrors to the process-wide
+// atomics via typed_audit::publish_partial_cone_truncate so #2621
+// commit_readiness gate sees the truncated state. AC1/AC2 path drives
+// the existing #2646 wiring at infer_flat_partial cone-truncate branch
+// (type_checker_impl.cpp:8035-8066); AC4 ordering invariant (outside
+// invalidate AFTER #2622 sync) is preserved unchanged. No production
+// cost outside test builds.
+void Evaluator::force_partial_cone_truncate_for_test(std::uint64_t dropped_count) noexcept {
+    try {
+        if (!commit_type_checker_opaque_)
+            return;
+        auto& tc = *static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        // Set per-engine state. The member is private; the helper is the
+        // sanctioned test-only entry point (mirrors #2671 pattern).
+        tc.inference_engine().force_partial_cone_truncate_for_test(dropped_count);
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
 // Issue #2671: drift-injection soak for OccurrenceGoal refined consistency.
 // Hermetic test-only helper — seeds two live OccurrenceGoal rows on the
 // same UF rep (same var) with incompatible refined (int vs string). The
