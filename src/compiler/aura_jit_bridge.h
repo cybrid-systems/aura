@@ -812,6 +812,10 @@ void aura_periodic_epoch_invariant_walk_if_due(void);
 // Declared here so commit_func_table_swap / aura_aot_bump_func_table_epoch
 // call sites (earlier in aura_jit_bridge.cpp) compile under -Werror.
 void aura_event_driven_epoch_invariant_walk_if_due(void);
+// Issue #2668 observability counters (query hash in obs_eval).
+[[nodiscard]] std::uint64_t aura_epoch_invariant_event_walks_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_event_skipped_off_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_event_skipped_wrong_mode_total_v_read(void);
 
 } // extern "C"
 
