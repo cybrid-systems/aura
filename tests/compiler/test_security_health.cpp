@@ -12,6 +12,7 @@
 
 #include "compiler/security_health.hh"
 #include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_isolation.hh"
 
@@ -68,7 +69,7 @@ static void reset_security_surfaces() {
     reset_capability_effects_for_test();
     reset_tenant_isolation_for_test();
     reset_security_event_ring_for_test();
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
 // ── AC1: vacuous pure score + fresh process query ──
@@ -169,7 +170,7 @@ static void ac2_effect_deny_and_priority() {
     // Live inject: Strict effect denies via capability path.
     {
         reset_security_surfaces();
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         for (int i = 0; i < 20; ++i) {
             EffectProvenance prov{};
             prov.mutation_id = static_cast<std::uint64_t>(1000 + i);

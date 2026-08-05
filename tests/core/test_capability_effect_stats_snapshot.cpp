@@ -10,6 +10,7 @@
 #include "test_harness.hpp"
 
 #include "core/capability_model.hh"
+#include "core/sandbox.hh"
 
 #include <atomic>
 #include <chrono>
@@ -42,7 +43,7 @@ int run_test_capability_effect_stats_snapshot() {
         std::println("\n--- #2430 AC3 + #2430 AC4: non-racing field names / values ---");
         reset_capability_effects_for_test();
         auto& reg = g_capability_registry();
-        reg.sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         EffectProvenance prov{};
         prov.epoch = 1;
         prov.mutation_id = 1;
@@ -74,7 +75,7 @@ int run_test_capability_effect_stats_snapshot() {
         std::println("\n--- #2430 AC1 + #2430 AC2: concurrent check + snapshot ---");
         reset_capability_effects_for_test();
         auto& reg = g_capability_registry();
-        reg.sandbox_mode = EffectSandboxMode::Restricted;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         EffectProvenance gprov{};
         gprov.epoch = 1;
         gprov.mutation_id = 1;

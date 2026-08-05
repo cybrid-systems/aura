@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/workspace_epoch.hh"
 
 #include <cstdint>
@@ -63,7 +64,7 @@ static void ac1_grant_epoch_stamped() {
     const auto me = current_mutation_epoch();
     CHECK(me != 0, "mutation epoch non-zero");
 
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     MacroSelfEvoPolicy pol{};
     g_capability_registry().grant_macro_self_evo(7, pol);
 
@@ -82,7 +83,7 @@ static void ac2_grant_fiber_stamped() {
     reset_all();
     bump_mutation_epoch(1);
     set_effect_fiber_id_override(42);
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     auto prov = make_grant_provenance(0, true, 0, 42);
     g_capability_registry().grant_macro_self_evo(8, MacroSelfEvoPolicy{}, prov);
 
@@ -97,7 +98,7 @@ static void ac3_epoch_fence_denies() {
     std::println("\n--- #2386 AC3: grant_min_valid past grant_epoch denies expand ---");
     reset_all();
     bump_mutation_epoch(2);
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     g_capability_registry().grant_macro_self_evo(9, MacroSelfEvoPolicy{});
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(9, "macro-self-evo", g), "granted");
@@ -118,7 +119,7 @@ static void ac4_hard_fiber_denies() {
     std::println("\n--- #2386 AC4: hard_fiber_isolation + fiber mismatch denies ---");
     reset_all();
     bump_mutation_epoch(1);
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     g_capability_registry().set_hard_fiber_isolation(true);
 
     set_effect_fiber_id_override(100);

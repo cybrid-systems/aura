@@ -10,6 +10,7 @@
 
 #include "test_harness.hpp"
 #include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
 #include <fstream>
@@ -77,7 +78,7 @@ int run_test_security_posture_trail() {
     EffectProvenance prov;
     prov.mutation_id = 4242;
     prov.epoch = 4242;
-    g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
     g_capability_registry().record_audit(Effect::Mutate, Effect::None, 1, prov, true, "deny-test");
 
     CHECK(trail(cs, 4242, "capability-hits") >= 1, "AC2: cap audit hit");

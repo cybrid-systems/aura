@@ -1,0 +1,99 @@
+{
+  "issue": 2657,
+  "title": "Issue #2657: single authority for SandboxMode \u2014 eliminate triple-state drift.",
+  "ok": "OK: Issue #2657 sandbox-mode authority \u2014 all 6 AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/sandbox.hh",
+      "contains": [
+        "g_sandbox_mode_atomic",
+        "set_mode",
+        "g_capability_registry().sandbox_mode",
+        "g_workspace_isolation().set_strict_sandbox_linked",
+        "g_sandbox_mode_authority_set_total",
+        "Issue #2657"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/sandbox.ixx",
+      "contains": [
+        "g_sandbox_mode_atomic",
+        "set_mode",
+        "g_capability_registry().sandbox_mode",
+        "g_workspace_isolation().set_strict_sandbox_linked"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "aura::core::sandbox::set_mode",
+        "set_effect_sandbox_mode"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_sandbox_mode_authority.cpp",
+      "contains": [
+        "AC2: concurrent setters + effect checks (TSan)",
+        "AC2: atomic == registry at quiescence",
+        "AC2: atomic == plain at quiescence"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "scripts/check_sandbox_mode_authority.py",
+      "contains": [
+        "DIRECT_WRITE_PATTERNS",
+        "AUTHORITY_FILES",
+        "2657"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_sandbox_mode_authority.cpp",
+      "contains": [
+        "AC3: set_mode is the SOLE writer",
+        "AC3: linter script exists (secondary gate)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "apply_aura_sandbox_env",
+        "set_mode",
+        "apply_production_security_defaults",
+        "Issue #2657"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_sandbox_mode_authority.cpp",
+      "contains": [
+        "AC5: Off mode after reset_all",
+        "AC5: Restricted mode",
+        "AC5: Off mode after Restricted"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_sandbox_mode_authority.cpp",
+      "contains": [
+        "AC6: source-cite + linter",
+        "no docs/design/",
+        "commit message + close comment"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "tests/compiler/test_sandbox_mode_authority.cpp"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2657.py"
+}

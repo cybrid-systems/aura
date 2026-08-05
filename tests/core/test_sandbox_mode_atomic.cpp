@@ -10,6 +10,7 @@
 #include "test_harness.hpp"
 
 #include "core/capability_model.hh"
+#include "core/sandbox.hh"
 
 #include <atomic>
 #include <chrono>
@@ -46,7 +47,7 @@ int run_test_sandbox_mode_atomic() {
         reset_reg();
         auto& reg = g_capability_registry();
         CHECK(reg.sandbox_mode.load() == EffectSandboxMode::Off, "AC1: default Off");
-        reg.sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         CHECK(reg.sandbox_mode == EffectSandboxMode::Strict, "AC3: assign+compare Strict");
         reg.sandbox_mode.store(EffectSandboxMode::Restricted, std::memory_order_release);
         CHECK(reg.sandbox_mode.load(std::memory_order_acquire) == EffectSandboxMode::Restricted,
@@ -62,7 +63,7 @@ int run_test_sandbox_mode_atomic() {
         std::println("\n--- #2427 AC4: audit captures sandbox_mode ---");
         reset_reg();
         auto& reg = g_capability_registry();
-        reg.sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         EffectProvenance prov{};
         prov.epoch = 1;
         prov.mutation_id = 1;
@@ -73,7 +74,7 @@ int run_test_sandbox_mode_atomic() {
         CHECK(e.sandbox_mode == EffectSandboxMode::Strict, "AC4: audit.sandbox_mode Strict");
         CHECK(e.denied, "AC4: denied flag");
 
-        reg.sandbox_mode = EffectSandboxMode::Off;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         reg.record_audit(Effect::Read, Effect::Read, 1, prov, false, "ac4-off-allow");
         CHECK(reg.try_load_latest_audit(e), "AC4: second audit");
         CHECK(e.sandbox_mode == EffectSandboxMode::Off, "AC4: audit.sandbox_mode Off");
@@ -105,8 +106,12 @@ int run_test_sandbox_mode_atomic() {
                 std::uint64_t i = static_cast<std::uint64_t>(t);
                 while (!stop.load(std::memory_order_acquire)) {
                     try {
+                        // Issue #2657: route through the process-wide authority.
+                        // Numeric values of EffectSandboxMode and SandboxMode
+                        // match (0/1/2), so cast + set_mode is the single writer.
                         const auto m = static_cast<EffectSandboxMode>(i % 3);
-                        reg.sandbox_mode = m;
+                        aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(
+                            static_cast<std::uint8_t>(m)));
                         reg.default_tenant = i % 7;
                         sets.fetch_add(1, std::memory_order_relaxed);
                         ++i;

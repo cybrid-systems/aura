@@ -96,7 +96,7 @@ int run_test_capability_single_use_consume() {
         std::println("\n--- #2586 AC1: single-use auto-revoke on 2nd check ---");
         reset_all();
         set_mode(SandboxMode::Strict);
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
 
         EffectProvenance prov{};
         prov.epoch = 1;
@@ -125,7 +125,7 @@ int run_test_capability_single_use_consume() {
         std::println("\n--- #2586 AC2: deny does not consume (retryable) ---");
         reset_all();
         set_mode(SandboxMode::Strict);
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
 
         EffectProvenance prov{};
         prov.epoch = 2;
@@ -163,7 +163,7 @@ int run_test_capability_single_use_consume() {
         std::println("\n--- #2586 AC3: non single_use grant unchanged ---");
         reset_all();
         set_mode(SandboxMode::Strict);
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
 
         EffectProvenance prov{};
         prov.epoch = 3;
@@ -194,7 +194,7 @@ int run_test_capability_single_use_consume() {
         // capability_single_use_consumed.
         reset_all();
         set_mode(SandboxMode::Off);
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         EffectProvenance prov{};
         prov.epoch = 4;
         prov.mutation_id = 4;
@@ -217,7 +217,7 @@ int run_test_capability_single_use_consume() {
         // without single_use param → no auto-revoke.
         reset_all();
         set_mode(SandboxMode::Strict);
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
 
         EffectProvenance prov2{};
         prov2.epoch = 5;
@@ -241,7 +241,7 @@ int run_test_capability_single_use_consume() {
         std::println("\n--- #2586 AC5: audit/SE reason 'single-use-consumed' ---");
         reset_all();
         set_mode(SandboxMode::Strict);
-        g_capability_registry().sandbox_mode = EffectSandboxMode::Strict;
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
 
         EffectProvenance prov{};
         prov.epoch = 6;

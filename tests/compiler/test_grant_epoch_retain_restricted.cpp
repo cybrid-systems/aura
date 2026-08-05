@@ -119,8 +119,10 @@ int run_test_grant_epoch_retain_restricted() {
         apply_production_security_defaults();
         CHECK(g_capability_registry().grant_epoch_retain_window() == 16, "K=16");
         EffectProvenance prov = make_grant_provenance(0, true, 0, 0);
-        g_capability_registry().sandbox_mode =
-            aura::core::capability::EffectSandboxMode::Restricted;
+        // Issue #2657: route through the process-wide authority. The
+        // old direct write was a test-helper shortcut that bypassed
+        // the broadcast; the authority keeps all four stores in sync.
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
         g_capability_registry().grant(1, "mutate", Effect::Mutate, prov);
         const auto fence0 = g_capability_effect_metrics().capability_epoch_fence_hit_total.load();
         // Advance past window: grant epoch ~1, bump far ahead.
