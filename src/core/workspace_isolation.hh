@@ -254,8 +254,12 @@ struct WorkspaceIsolationPolicy {
     }
 
     // AC1 legacy: simple ID boundary check.
-    [[nodiscard]] bool check_boundary(TenantId target) noexcept {
-        return check_boundary_ex(target, /*ref_tenant=*/0, /*required_effects=*/0,
+    // Issue #2659: caller_principal + allow_cross_tenant supplied by caller
+    // (defaults to 0 / false for legacy 1-arg callers).
+    [[nodiscard]] bool check_boundary(TenantId caller_principal, TenantId target,
+                                      bool allow_cross_tenant = false) noexcept {
+        return check_boundary_ex(caller_principal, target, /*ref_tenant=*/0, allow_cross_tenant,
+                                 /*required_effects=*/0,
                                  /*sandbox_strict=*/false, "boundary",
                                  /*sandbox_restricted=*/false);
     }
@@ -280,7 +284,13 @@ struct WorkspaceIsolationPolicy {
     // sandbox_restricted: EffectSandboxMode::Restricted (mode==1). Wire from
     // Evaluator::check_workspace_isolation via g_capability_registry /
     // effect_sandbox_mode — do not invent a second mode enum.
-    [[nodiscard]] bool check_boundary_ex(TenantId target, TenantId ref_tenant,
+    // Issue #2659: caller_principal + allow_cross_tenant come from the
+    // Evaluator (per-instance), NOT from the process-global `current` field.
+    // The `current` global is no longer written by set_tenant_principal /
+    // TenantScope (multi-Evaluator race — see #2659 audit). Cross-grant
+    // table remains process-global (shared policy).
+    [[nodiscard]] bool check_boundary_ex(TenantId caller_principal, TenantId target,
+                                         TenantId ref_tenant, bool allow_cross_tenant,
                                          std::uint16_t required_effects, bool sandbox_strict,
                                          std::string_view op = "workspace",
                                          bool sandbox_restricted = false) noexcept {
@@ -296,7 +306,8 @@ struct WorkspaceIsolationPolicy {
             ++boundary_checks;
 
             const bool strict = sandbox_strict || strict_sandbox_linked;
-            const TenantId cur = current.id;
+            // Issue #2659: caller_principal replaces the process-global read.
+            const TenantId cur = caller_principal;
 
             // Issue #2385: unset principal (tenant=0).
             // Strict always requires a principal. Restricted requires a
@@ -320,7 +331,7 @@ struct WorkspaceIsolationPolicy {
                 record_audit(target, ref_tenant, true, false, false, op, required_effects);
                 return false;
             }
-            if (current.allow_cross_tenant) {
+            if (allow_cross_tenant) {
                 record_audit(target, ref_tenant, false, false, false, op, required_effects);
                 return true;
             }
@@ -389,12 +400,17 @@ inline WorkspaceIsolationPolicy& g_workspace_isolation() noexcept {
 
 // Free-function convenience (matches issue pseudo-code).
 // Issue #2385: sandbox_restricted wires EffectSandboxMode::Restricted.
+// Issue #2659: caller_principal + allow_cross_tenant supplied by the caller
+// (typically Evaluator::capability_tenant_id_ + Evaluator::allow_cross_tenant_).
+// Defaults to 0 / false so legacy / off-path callers still compile.
 [[nodiscard]] inline bool
-check_boundary(TenantId target, const IsolationRefProvenance* ref = nullptr,
+check_boundary(TenantId caller_principal, TenantId target,
+               const IsolationRefProvenance* ref = nullptr, bool allow_cross_tenant = false,
                std::uint16_t required_effects = 0, bool sandbox_strict = false,
                std::string_view op = "workspace", bool sandbox_restricted = false) noexcept {
     TenantId ref_t = ref ? ref->tenant_id : 0;
-    return g_workspace_isolation().check_boundary_ex(target, ref_t, required_effects,
+    return g_workspace_isolation().check_boundary_ex(caller_principal, target, ref_t,
+                                                     allow_cross_tenant, required_effects,
                                                      sandbox_strict, op, sandbox_restricted);
 }
 

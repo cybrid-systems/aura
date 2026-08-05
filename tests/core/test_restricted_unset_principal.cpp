@@ -133,7 +133,7 @@ static void ac4_off_unset_permissive() {
     ev.set_effect_sandbox_mode(0); // Off
     CHECK(ev.check_workspace_isolation(0, 0, kEffectMutate, "test:ac4-off"),
           "AC4: Off + unset + Mutate allows");
-    CHECK(check_boundary(0, nullptr, kEffectMutate, /*strict=*/false, "free",
+    CHECK(check_boundary(0, 0, nullptr, false, kEffectMutate, /*strict=*/false, "free",
                          /*restricted=*/false),
           "AC4: free check_boundary Off-style allows");
 }
@@ -147,7 +147,7 @@ static void ac5_restricted_pure_read_allows() {
     ev.set_effect_sandbox_mode(1);
     CHECK(ev.check_workspace_isolation(0, 0, /*required_effects=*/0, "test:ac5-query"),
           "AC5: Restricted + unset + effects=0 allows (query-only)");
-    CHECK(check_boundary(0, nullptr, 0, false, "query", /*restricted=*/true),
+    CHECK(check_boundary(0, 0, nullptr, false, 0, false, "query", /*restricted=*/true),
           "AC5: free check_boundary Restricted pure read allows");
 }
 
