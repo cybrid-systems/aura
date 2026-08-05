@@ -2348,23 +2348,41 @@ void Evaluator::partial_recover_adt_exhaustiveness(std::uint64_t mutation_id) no
 }
 
 // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
-// invalidate. Test-only helper — forces the per-engine partial-cone
-// truncate state (last_partial_cone_truncated_ +
-// last_partial_cone_dropped_) and mirrors to the process-wide
-// atomics via typed_audit::publish_partial_cone_truncate so #2621
-// commit_readiness gate sees the truncated state. AC1/AC2 path drives
-// the existing #2646 wiring at infer_flat_partial cone-truncate branch
-// (type_checker_impl.cpp:8035-8066); AC4 ordering invariant (outside
-// invalidate AFTER #2622 sync) is preserved unchanged. No production
-// cost outside test builds.
+// invalidate. Test-only helper — mirrors process-wide atomics via
+// typed_audit::publish_partial_cone_truncate so #2621 commit_readiness
+// gate sees the truncated state. TypeChecker does not own a long-lived
+// InferenceEngine (engines are short-lived per infer_flat_partial), so
+// the Agent-facing surface is the process-wide stamp (same as production
+// publish at type_checker_impl.cpp cone-truncate). Per-engine state is
+// covered by InferenceEngine::force_partial_cone_truncate_for_test for
+// engine-level unit tests. AC1/AC2 path drives the existing #2646 wiring
+// at infer_flat_partial cone-truncate branch; AC4 ordering invariant
+// (outside invalidate AFTER #2622 sync) is preserved unchanged. No
+// production cost outside test builds.
 void Evaluator::force_partial_cone_truncate_for_test(std::uint64_t dropped_count) noexcept {
     try {
-        if (!commit_type_checker_opaque_)
+        // Mirror #2671: ensure type registry + commit TypeChecker exist so
+        // subsequent commit_readiness paths see a live TC if they consult it.
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
             return;
-        auto& tc = *static_cast<TypeChecker*>(commit_type_checker_opaque_);
-        // Set per-engine state. The member is private; the helper is the
-        // sanctioned test-only entry point (mirrors #2671 pattern).
-        tc.inference_engine().force_partial_cone_truncate_for_test(dropped_count);
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        (void)static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        // Process-wide atomics are what commit_readiness / #2672 AC6 observe
+        // (typed_audit::last_partial_cone_truncated / last_partial_cone_dropped).
+        // No TypeChecker::inference_engine() accessor exists — do not invent one.
+        typed_audit::publish_partial_cone_truncate(/*truncated=*/true, dropped_count,
+                                                   /*fanout=*/0);
     } catch (...) {
         // [SILENCE-PRIM] test helper
     }
