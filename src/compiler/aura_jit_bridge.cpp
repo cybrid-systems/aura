@@ -832,29 +832,75 @@ static void* g_aot_emit_userdata = nullptr;
 // name). Full workspace-migrated DefineId identity remains out-of-scope
 // for cross-workspace COW (#1943 deferred); this map is the single-workspace
 // zero-downtime contract.
+//
+// Issue #2670: namespace by eval_owner (outer key). Same-process multi-eval
+// hosts (two Evaluator instances sharing a process) get distinct sids per
+// eval for the same Define name. Single-workspace callers (no eval owner
+// registered) still see identical behavior pre/post change: legacy C funcs
+// dispatch via aura_aot_get_reemit_owner_eval() ?: aura_aot_get_register_
+// owner_eval() ?: nullptr → nullptr-keyed inner map = the original single-
+// workspace zero-downtime contract. Total map size is the sum of inner sizes.
 static std::mutex g_stable_func_id_mtx;
-static std::unordered_map<std::string, std::uint32_t, aura::core::TransparentStringHash,
-                          std::equal_to<>>
-    g_name_to_stable_func_id;
+static std::unordered_map<void*,
+                          std::unordered_map<std::string, std::uint32_t,
+                                             aura::core::TransparentStringHash, std::equal_to<>>>
+    g_eval_to_stable_func_id;
 static std::atomic<std::uint32_t> g_next_stable_func_id{1};
 
-// Returns stable func_id for name. out_preserved: 1 if map already held
-// an entry (re-emit reuse), 0 if newly assigned.
-static std::uint32_t preserve_stable_func_id_locked(const char* name, int* out_preserved) {
+// Returns stable func_id for (eval_owner, name). out_preserved: 1 if map
+// already held an entry (re-emit reuse), 0 if newly assigned.
+static std::uint32_t preserve_stable_func_id_for_eval_locked(void* eval_ptr, const char* name,
+                                                             int* out_preserved) {
     if (out_preserved)
         *out_preserved = 0;
     if (!name || !*name)
         return 0;
-    std::string key(name);
-    auto it = g_name_to_stable_func_id.find(key);
-    if (it != g_name_to_stable_func_id.end()) {
-        if (out_preserved)
-            *out_preserved = 1;
-        return it->second;
+    auto outer_it = g_eval_to_stable_func_id.find(eval_ptr);
+    if (outer_it != g_eval_to_stable_func_id.end()) {
+        auto& inner = outer_it->second;
+        auto it = inner.find(name);
+        if (it != inner.end()) {
+            if (out_preserved)
+                *out_preserved = 1;
+            return it->second;
+        }
     }
+    // New entry: create inner map for this eval (or reuse empty one).
+    auto& inner = g_eval_to_stable_func_id[eval_ptr];
     const std::uint32_t id = g_next_stable_func_id.fetch_add(1, std::memory_order_relaxed);
-    g_name_to_stable_func_id.emplace(std::move(key), id);
+    inner.emplace(name, id);
     return id;
+}
+
+// Lookup-only variant: 0 if missing or invalid. Does NOT allocate inner map.
+static std::uint32_t lookup_stable_func_id_for_eval_locked(void* eval_ptr, const char* name) {
+    if (!name || !*name)
+        return 0;
+    auto outer_it = g_eval_to_stable_func_id.find(eval_ptr);
+    if (outer_it == g_eval_to_stable_func_id.end())
+        return 0;
+    const auto& inner = outer_it->second;
+    auto it = inner.find(name);
+    return it == inner.end() ? 0 : it->second;
+}
+
+// Total entries across all eval owners (for query surface; AC5).
+static std::uint64_t stable_func_id_map_size_locked() {
+    std::uint64_t total = 0;
+    for (const auto& [eval, inner] : g_eval_to_stable_func_id)
+        total += inner.size();
+    return total;
+}
+
+// Clear entries for a single eval owner. nullptr = default single-workspace.
+static void clear_stable_func_id_map_for_eval_locked(void* eval_ptr) {
+    g_eval_to_stable_func_id.erase(eval_ptr);
+}
+
+// Full clear (process teardown / tests). Resets id counter.
+static void clear_stable_func_id_map_all_locked() {
+    g_eval_to_stable_func_id.clear();
+    g_next_stable_func_id.store(1, std::memory_order_relaxed);
 }
 
 // Last-call stats for tests + EDSL observability primitives.
@@ -876,11 +922,24 @@ extern "C" void aura_set_aot_emit_fn(aura_aot_emit_fn_t fn, void* userdata) {
     aura::compiler::hot_update_registry().on_aot_emit_provider_set(fn != nullptr);
 }
 
-// Issue #1930: stable func_id map C-linkage surface.
+// Issue #1930 / #2670: stable func_id map C-linkage surface.
+// Legacy C funcs dispatch via owner TLS (reemit ?: register ?: nullptr)
+// so single-workspace callers see identical behavior pre/post #2670.
+// For multi-eval / Agent hosts that publish their eval owner via
+// aura_aot_set_reemit_owner_eval() / aura_aot_set_register_owner_eval(),
+// the per-eval for_eval variants below allow explicit namespacing.
 extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved) {
+    void* eval_owner = aura_aot_get_reemit_owner_eval();
+    if (!eval_owner)
+        eval_owner = aura_aot_get_register_owner_eval();
+    return aura_get_or_preserve_stable_func_id_for_eval(eval_owner, name, out_preserved);
+}
+
+extern "C" std::uint32_t
+aura_get_or_preserve_stable_func_id_for_eval(void* eval_ptr, const char* name, int* out_preserved) {
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
     int preserved = 0;
-    const auto id = preserve_stable_func_id_locked(name, &preserved);
+    const auto id = preserve_stable_func_id_for_eval_locked(eval_ptr, name, &preserved);
     aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
     if (out_preserved)
         *out_preserved = preserved;
@@ -890,20 +949,31 @@ extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, i
 extern "C" std::uint32_t aura_lookup_stable_func_id(const char* name) {
     if (!name || !*name)
         return 0;
+    void* eval_owner = aura_aot_get_reemit_owner_eval();
+    if (!eval_owner)
+        eval_owner = aura_aot_get_register_owner_eval();
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-    auto it = g_name_to_stable_func_id.find(name);
-    return it == g_name_to_stable_func_id.end() ? 0 : it->second;
+    return lookup_stable_func_id_for_eval_locked(eval_owner, name);
+}
+
+extern "C" std::uint32_t aura_lookup_stable_func_id_for_eval(void* eval_ptr, const char* name) {
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    return lookup_stable_func_id_for_eval_locked(eval_ptr, name);
 }
 
 extern "C" std::uint64_t aura_stable_func_id_map_size(void) {
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-    return static_cast<std::uint64_t>(g_name_to_stable_func_id.size());
+    return stable_func_id_map_size_locked();
 }
 
 extern "C" void aura_clear_stable_func_id_map(void) {
     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-    g_name_to_stable_func_id.clear();
-    g_next_stable_func_id.store(1, std::memory_order_relaxed);
+    clear_stable_func_id_map_all_locked();
+}
+
+extern "C" void aura_clear_stable_func_id_map_for_eval(void* eval_ptr) {
+    std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+    clear_stable_func_id_map_for_eval_locked(eval_ptr);
 }
 
 extern "C" std::uint64_t aura_reemit_success_count(void) {
@@ -3291,7 +3361,13 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
                 std::uint32_t sid = 0;
                 {
                     std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
-                    sid = preserve_stable_func_id_locked(name, &preserved);
+                    // Issue #2670: reemit path uses reemit-owner eval key (or
+                    // register-owner fallback) so multi-eval reemit preserves
+                    // per-eval sids.
+                    sid = preserve_stable_func_id_for_eval_locked(
+                        aura_aot_get_reemit_owner_eval() ? aura_aot_get_reemit_owner_eval()
+                                                         : aura_aot_get_register_owner_eval(),
+                        name, &preserved);
                 }
                 register_stable_id_in_func_table(name, sid);
                 note_reemit(sid, preserved, /*count_emit_success=*/true, /*count_llvm=*/true);

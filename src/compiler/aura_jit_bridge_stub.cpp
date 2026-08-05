@@ -340,6 +340,21 @@ extern "C" __attribute__((weak)) std::uint64_t aura_stable_func_id_map_size(void
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_clear_stable_func_id_map(void) {}
+// Issue #2670: per-eval stable_func_id map weak stubs (light test binaries
+// without production bridge). Return 0 / no-op so legacy single-workspace
+// callers see no behavioral change in light tests.
+extern "C" __attribute__((weak)) std::uint32_t
+aura_get_or_preserve_stable_func_id_for_eval(void* /*eval_ptr*/, const char* /*name*/,
+                                             int* out_preserved) {
+    if (out_preserved)
+        *out_preserved = 0;
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint32_t
+aura_lookup_stable_func_id_for_eval(void* /*eval_ptr*/, const char* /*name*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_clear_stable_func_id_map_for_eval(void* /*eval_ptr*/) {}
 // Issue #2092: legacy name-fallback toggle (off by default in strict
 // tests). Production aura_jit_runtime.cpp owns the real atomic; the
 // weak stub returns 0 so light test binaries without the production
