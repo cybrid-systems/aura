@@ -412,6 +412,25 @@ def cmd_lint():
             "Issue #2667 steal-residual panic-checkpoint coverage linter failed — run python3 scripts/coverage/checks/check_2667_coverage.py"
         )
         return r
+    # Issue #2668: event-driven epoch-invariant walk on table epoch bump
+    # (extends #2640 periodic Soft with event-driven complement — closes
+    # the burst-mutation window under reemit storms). aura_jit_bridge.cpp
+    # aura_event_driven_epoch_invariant_walk_if_due wired into
+    # commit_func_table_swap + aura_aot_bump_func_table_epoch (after
+    # notify_epoch_bump); obs_eval.cpp exposes additive query sentinels.
+    # Builds on #2640 periodic + #2541 soft + #2366 epoch invariant —
+    # wires next to the #2667 steal-residual panic-checkpoint linter
+    # so a regression in the #2668 AC surface fails the same gate.
+    eiw_script = COVERAGE_CHECKS / "check_2668_coverage.py"
+    if not eiw_script.exists():
+        fail(f"missing {eiw_script}")
+        return 1
+    r = run([sys.executable, str(eiw_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2668 event-driven epoch-invariant walk coverage linter failed — run python3 scripts/coverage/checks/check_2668_coverage.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
