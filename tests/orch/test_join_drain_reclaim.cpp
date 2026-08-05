@@ -77,6 +77,14 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
     return as_int(*r);
 }
 
+// Local helper: read a text file into a string (used by source-cite ACs).
+std::string read_file(const char* path) {
+    std::ifstream in(path);
+    if (!in)
+        return {};
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
 void reset_between_acs() {
     // No global reset helper exists for OrchModuleStats (deltas only).
     // The test uses baseline capture at the top of each AC block.
