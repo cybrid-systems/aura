@@ -5857,8 +5857,26 @@ public:
     // All new FFI / network / exec / render / hotpath entry points MUST
     // go through require_effect (not call check_and_record_effect directly)
     // so the audit ring + capability metrics surface stays consistent.
+    // Issue #2658: optional `ref_tenant` carries StableNodeRef provenance so
+    // cross-tenant refs deny under Restricted/Strict BEFORE the effect runs
+    // (previously the auto-isolation check hardcoded ref_tenant=0 and the
+    // foreign-tenant gate was deferred to resolve_stamped / StableNodeRef
+    // access sites — a window where the effect could partially run before
+    // the late isolation deny). Default ref_tenant=0 preserves the legacy
+    // three-arg call shape; new code paths that hold a stamped ref should
+    // pass `ref.tenant_id` (or use require_effect_on_ref below).
     [[nodiscard]] bool require_effect(std::uint16_t req_bits, std::string_view op,
-                                      ast::NodeId target_node = 0) noexcept;
+                                      ast::NodeId target_node = 0,
+                                      std::uint64_t ref_tenant = 0) noexcept;
+    // Issue #2658: thin helper for call sites that already hold a
+    // ast::FlatAST::StableNodeRef. Extracts ref.tenant_id + ref.id and
+    // routes through require_effect. Use this when the side-effect path
+    // holds a stamped handle (mutate prims, fiber mutation, render batch
+    // with cross-tenant handles, FFI on stamped node, etc.) so the
+    // cross-tenant deny fires at the same point as the capability check
+    // — no late-isolation-deny window.
+    [[nodiscard]] bool require_effect_on_ref(std::uint16_t req_bits, std::string_view op,
+                                             const ast::FlatAST::StableNodeRef& ref) noexcept;
     void grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0,

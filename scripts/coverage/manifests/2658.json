@@ -1,0 +1,89 @@
+{
+  "issue": 2658,
+  "title": "Issue #2658: require_effect must accept optional ref_tenant for cross-tenant side-effect provenance.",
+  "ok": "OK: Issue #2658 require_effect ref_tenant gate \u2014 all 6 AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "bool Evaluator::require_effect",
+        "ref_tenant",
+        "check_workspace_isolation",
+        "/*ref_tenant=*/ref_tenant",
+        "Issue #2658"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "require_effect",
+        "std::uint64_t ref_tenant = 0",
+        "require_effect_on_ref",
+        "Issue #2658"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_require_effect_auto_isolation.cpp",
+      "contains": [
+        "AC2: matching ref_tenant == principal",
+        "AC2: ref_tenant=0 (legacy default)",
+        "Issue #2658"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_require_effect_auto_isolation.cpp",
+      "contains": [
+        "AC3: ref_tenant=0 default + unset principal",
+        "AC3: exactly one IsolationDeny"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "require_effect",
+        "ref_tenant",
+        "Issue #2658"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "require_effect_on_ref",
+        "Issue #2658"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_require_effect_auto_isolation.cpp",
+      "contains": [
+        "AC5: foreign ref_tenant denies under Restricted",
+        "AC5: SE mid is Mutation epoch, not tenant id",
+        "AC5: exactly one IsolationDeny SE"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_require_effect_auto_isolation.cpp",
+      "contains": [
+        "AC6: require_effect_on_ref impl",
+        "AC6: ref_tenant forwarded to check_workspace_isolation",
+        "AC6: no docs/design/"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "scripts/coverage/manifests/2658.json",
+      "contains": [
+        "2658",
+        "ref_tenant"
+      ]
+    }
+  ],
+  "source_script": "scripts/coverage/checks/check_2658.py"
+}

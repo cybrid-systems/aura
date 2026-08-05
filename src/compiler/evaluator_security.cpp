@@ -317,15 +317,20 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
 // skip isolation by only calling require_effect. Pure / zero-bits callers
 // are unchanged. Single SE IsolationDeny count is preserved via #2388
 // (check_workspace_isolation emits at most one IsolationDeny; callers
-// that already pair the checks short-circuit on the first deny). Cross-
-// tenant ref provenance is enforced at StableNodeRef access sites
-// (evaluator_fiber_mutation.cpp) where a ref is in hand; here we only
-// carry target_tenant + required_effects.
-bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op,
-                               ast::NodeId target_node) noexcept {
+// that already pair the checks short-circuit on the first deny).
+// Issue #2658: optional `ref_tenant` carries StableNodeRef provenance so
+// cross-tenant refs deny under Restricted/Strict BEFORE the effect runs
+// (previously the auto-isolation check hardcoded ref_tenant=0 and the
+// foreign-tenant gate was deferred to resolve_stamped / StableNodeRef
+// access sites — a window where the effect could partially run before
+// the late isolation deny). Default ref_tenant=0 keeps the legacy
+// three-arg call shape unchanged; new code paths that hold a stamped
+// ref should pass `ref.tenant_id` (or use require_effect_on_ref below).
+bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
+                               std::uint64_t ref_tenant) noexcept {
     if (req_bits != 0) {
         if (!check_workspace_isolation(/*target=*/capability_tenant_id_,
-                                       /*ref_tenant=*/0, req_bits, op))
+                                       /*ref_tenant=*/ref_tenant, req_bits, op))
             return false; // IsolationDeny emitted (single-count, #2388)
     }
     std::uint64_t mid =
@@ -335,6 +340,19 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op,
     if (mid == 0)
         mid = 1; // non-zero join stamp (process origin)
     return check_and_record_effect(req_bits, req_bits, op, target_node, capability_tenant_id_, mid);
+}
+
+// Issue #2658: thin helper for call sites that already hold a stamped
+// ast::FlatAST::StableNodeRef. Extracts ref.tenant_id + ref.id and routes
+// through require_effect so the cross-tenant isolation deny fires at the
+// same point as the capability check (no late-isolation-deny window).
+// Use this when a side-effect path holds a stamped handle (mutate prims,
+// fiber mutation, render batch with cross-tenant handles, FFI on stamped
+// node, etc.) — callers that don't have a ref in hand keep using the
+// positional require_effect(req_bits, op, target_node) form.
+bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view op,
+                                      const ast::FlatAST::StableNodeRef& ref) noexcept {
+    return require_effect(req_bits, op, ref.id, ref.tenant_id);
 }
 
 // Issue #1567: enable WAL under persist_dir; replay prior records into ring.

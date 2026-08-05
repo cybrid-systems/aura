@@ -85,10 +85,17 @@ int run_test_mutate_capability_force() {
         std::println("\n--- AC1: source force wiring ---");
         const auto src = read_src("src/compiler/evaluator_primitives_mutate.cpp");
         CHECK(!src.empty(), "mutate.cpp readable");
-        CHECK(src.find("check_and_record_effect") != std::string::npos,
-              "add_mutate calls check_and_record_effect");
-        CHECK(src.find("check_workspace_isolation") != std::string::npos,
-              "add_mutate calls check_workspace_isolation");
+        // Issue #2658: mutate:force routes through require_effect(...,
+        // ref_tenant) so the StableNodeRef cross-tenant deny fires at the
+        // same point as the capability check (no late-isolation-deny window).
+        // The legacy manual check_and_record_effect + check_workspace_isolation
+        // pair is replaced by a single require_effect call (auto-isolation +
+        // capability + audit ring in one place).
+        CHECK(src.find("require_effect") != std::string::npos,
+              "mutate:force routes through require_effect (#2658)");
+        CHECK(src.find("require_effect(") != std::string::npos &&
+                  src.find("ref_tenant") != std::string::npos,
+              "require_effect carries ref_tenant through (#2658 AC4)");
         CHECK(src.find("mutate_force_effect_check_total") != std::string::npos,
               "mutate_force metrics present");
         CHECK(src.find("add_mutate(\"mutate:query-and-replace\"") != std::string::npos ||
