@@ -5804,6 +5804,29 @@ def cmd_named_closure_stable_id_at_create_coverage():
     return 0
 
 
+def cmd_stable_func_id_eval_namespace_coverage():
+    """Issue #2670: namespace stable_func_id map by (eval_owner, name).
+
+    Refine #2550 / #1930 single-workspace to per-eval map: two Evaluator
+    instances sharing a process get distinct sids per eval for the same
+    Define name (no map collision). Legacy C funcs dispatch via
+    aura_aot_get_reemit_owner_eval() ?: aura_aot_get_register_owner_eval()
+    ?: nullptr so single-workspace callers see identical behavior pre/post
+    #2670. clear_for_eval(A) leaves B entries intact.
+    """
+    print(f"{B}=== stable_func_id eval namespace coverage (#2670) ==={N}")
+    script = COVERAGE_CHECKS / "check_stable_func_id_eval_namespace_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("stable_func_id eval namespace (#2670) coverage contract rows failed")
+        return 1
+    ok("stable_func_id eval namespace (#2670) coverage clean")
+    return 0
+
+
 def cmd_anonymous_residual_stable_id_policy_coverage():
     """Issue #2605: explicit anonymous / residual sid=0 policy.
 
@@ -8089,6 +8112,7 @@ def cmd_gate():
         or cmd_residual_defer_steal_hard_and_coverage()
         or cmd_is_stealable_snapshot_gate_coverage()
         or cmd_named_closure_stable_id_at_create_coverage()
+        or cmd_stable_func_id_eval_namespace_coverage()
         or cmd_anonymous_residual_stable_id_policy_coverage()
         or cmd_pereval_reemit_region_independence_coverage()
         or cmd_instance_constraint_depth_cap_coverage()
