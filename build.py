@@ -376,6 +376,24 @@ def cmd_lint():
             "Issue #2665 general-object-pin required-mode coverage linter failed — run python3 scripts/coverage/checks/check_2665_coverage.py"
         )
         return r
+    # Issue #2666: production default anon / residual sync remount ON
+    # (close first-call MustDeopt window for sid == 0 under sustained
+    # mutation). aura_jit_runtime.cpp aura_sync_remount_anon_enabled_default
+    # falls back to production_defaults_active() when env unset +
+    # obs_eval.cpp exposes additive query sentinel. Builds on #2637
+    # anon sync walk + #2605 stable_func_id policy — wires next to
+    # the #2665 general-object-pin linter so a regression in the #2666
+    # AC surface fails the same gate.
+    anon_script = COVERAGE_CHECKS / "check_2666_coverage.py"
+    if not anon_script.exists():
+        fail(f"missing {anon_script}")
+        return 1
+    r = run([sys.executable, str(anon_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2666 anon sync remount production-default coverage linter failed — run python3 scripts/coverage/checks/check_2666_coverage.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a

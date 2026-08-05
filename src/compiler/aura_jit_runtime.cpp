@@ -1923,14 +1923,25 @@ extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
 // extra work. Production Restricted opt-in: set AURA_SYNC_REMOUNT_ANON=1
 // or rely on the strong-def default at compile time. Cached on first
 // call so the env lookup runs at most once per process.
+// Issue #2666: production-default ON closes the residual first-call
+// MustDeopt window for sid == 0 under sustained mutation. When env
+// is unset AND production_defaults_active() is true, return 1
+// (enabled). Explicit env=0 / off / false still forces off under
+// production (operator override). Soft / sandbox / tests remains OFF
+// (preserve #2637 AC1).
 extern "C" int aura_sync_remount_anon_enabled_default() {
     static const int cached = []() {
         const char* e = std::getenv("AURA_SYNC_REMOUNT_ANON");
-        if (!e || *e == '\0')
-            return 0; // default = off (per AC1)
-        const std::string s(e);
-        const bool enabled = !(s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF");
-        return enabled ? 1 : 0;
+        if (e && *e) {
+            // Issue #2637: explicit env always wins (operator override).
+            const std::string s(e);
+            const bool enabled =
+                !(s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF");
+            return enabled ? 1 : 0;
+        }
+        // Issue #2666: env unset → fall back to production_defaults_active().
+        // Soft / sandbox / tests stays 0; production Restricted → 1.
+        return aura::compiler::typed_audit::production_defaults_active() ? 1 : 0;
     }();
     return cached;
 }

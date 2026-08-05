@@ -14706,6 +14706,16 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-sync-remount-anon-wired", make_int(1)},
                 {"schema-2637", make_int(2637)},
                 {"issue-2637", make_int(2637)},
+                // Issue #2666: production-default ON for anon sync remount.
+                // Sentinel indicates production_defaults_active() falls
+                // back as enabled when env unset. Soft / sandbox / tests
+                // stays 0 (preserve #2637 AC1). Explicit env=0 still
+                // forces off under production (operator override).
+                {"live-closure-sync-remount-anon-prod-default-wired",
+                 aura::compiler::typed_audit::production_defaults_active() ? make_int(1)
+                                                                           : make_int(0)},
+                {"schema-2666", make_int(2666)},
+                {"issue-2666", make_int(2666)},
                 // Issue #2638: residual sid=0 growth hard cap + fail-closed
                 // drop/MustDeopt under sustained reemit. env
                 // AURA_RESIDUAL_SID0_CAP (default 256 under production;

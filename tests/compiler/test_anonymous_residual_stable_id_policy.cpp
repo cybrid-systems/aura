@@ -518,9 +518,76 @@ static void ac2638_source_and_schema_cite() {
           "AC6: build.py references linter");
 }
 
+// ── Issue #2666: production-default anon sync remount ON ────────────────────
+//
+// Closes the residual first-call MustDeopt window for sid == 0 closures
+// under sustained mutation. Production-default ON: when env unset AND
+// production_defaults_active(), anon sync walk runs (closes window).
+// Soft / sandbox / tests remains OFF (preserve #2637 AC1). Explicit
+// env=0 / off / false still forces off under production (operator
+// override).
+//
+// AC1: aura_sync_remount_anon_enabled_default falls back to
+//      production_defaults_active() when env unset (production-default ON).
+// AC2: explicit env=0 / off / false still forces off under production
+//      (operator override branch preserved).
+// AC3: Soft path returns 0 (preserve #2637 AC1 — no extra work in tests).
+// AC4: additive query sentinel live-closure-sync-remount-anon-prod-
+//      default-wired exposed via obs_eval.cpp + schema-2666 + issue-2666.
+static void ac2666_1_production_default_enabled() {
+    std::println("\n--- #2666 AC1: production-default ON (env unset) ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("aura_sync_remount_anon_enabled_default") != std::string::npos,
+          "2666 AC1: aura_sync_remount_anon_enabled_default exists");
+    CHECK(rt.find("Issue #2666") != std::string::npos,
+          "2666 AC1: aura_jit_runtime.cpp cites #2666 production-default");
+    CHECK(rt.find("production_defaults_active()") != std::string::npos,
+          "2666 AC1: fallback reads production_defaults_active()");
+    // Body shape: env unset → falls through to production_defaults_active().
+    CHECK(rt.find("e && *e") != std::string::npos,
+          "2666 AC1: explicit-env branch precedes production_defaults_active() fallback");
+}
+
+static void ac2666_2_explicit_off_wins() {
+    std::println("\n--- #2666 AC2: explicit env=0 forces off under production ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("explicit env always wins") != std::string::npos ||
+              rt.find("operator override") != std::string::npos,
+          "2666 AC2: explicit-env comment preserved (operator override path)");
+    CHECK(rt.find("return enabled ? 1 : 0") != std::string::npos,
+          "2666 AC2: explicit env returns 0 on off / false (forces off under production)");
+}
+
+static void ac2666_3_soft_path_unchanged() {
+    std::println("\n--- #2666 AC3: Soft / sandbox / tests stays 0 ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    // production_defaults_active() returns false under Soft / sandbox=off
+    // / tests → fallback returns 0 → anon sync walk does NOT run.
+    CHECK(rt.find("env unset \u2192 fall back to production_defaults_active()") !=
+              std::string::npos,
+          "2666 AC3: Soft / sandbox path comment documents fallback behavior");
+    CHECK(rt.find("Soft / sandbox / tests stays 0") != std::string::npos ||
+              rt.find("preserve #2637 AC1") != std::string::npos,
+          "2666 AC3: Soft / sandbox / tests stays 0 (preserve #2637 AC1)");
+}
+
+static void ac2666_4_query_keys_added() {
+    std::println("\n--- #2666 AC4: additive query keys ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(obs.find("live-closure-sync-remount-anon-prod-default-wired") != std::string::npos,
+          "2666 AC4: obs_eval.cpp exposes live-closure-sync-remount-anon-prod-default-wired "
+          "sentinel");
+    CHECK(obs.find("schema-2666") != std::string::npos,
+          "2666 AC4: obs_eval.cpp schema-2666 sentinel");
+    CHECK(obs.find("issue-2666") != std::string::npos,
+          "2666 AC4: obs_eval.cpp issue-2666 sentinel");
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
+    std::println("=== Issue #2666: production-default anon sync remount ON (extends #2605+#2637 "
+                 "test file per #81967) ===");
     // Set AURA_RESIDUAL_SID0_CAP=2 BEFORE any aura_* call so the
     // resolver caches cap=2 (allow testing both below-cap and
     // above-cap paths in this binary).
@@ -536,6 +603,10 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2638_cap_above_threshold_force_must_deopt();
     ac2638_named_sid_nonzero_skips_cap();
     ac2638_source_and_schema_cite();
+    ac2666_1_production_default_enabled();
+    ac2666_2_explicit_off_wins();
+    ac2666_3_soft_path_unchanged();
+    ac2666_4_query_keys_added();
     std::println("\n=== #2605+#2637+#2638: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
