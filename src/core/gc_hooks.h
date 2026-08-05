@@ -432,6 +432,13 @@ inline std::atomic<std::uint64_t> g_residual_defer_cleared_on_steal_total{0}; //
 // mutation_boundary residual hard-fail (#2269 Guard Phase 5).
 inline std::atomic<std::uint64_t> g_residual_defer_steal_hard_fail_total{0};     // #2546
 inline std::atomic<std::uint64_t> g_residual_defer_steal_soft_leftover_total{0}; // #2546
+// Issue #2667: PanicCheckpoint cleared on steal-complete (production
+// path). Bumped when aura_evaluator_on_steal_complete clears a live
+// PanicCheckpoint under production / Hard to prevent permanently
+// armed panic defer across steal boundaries. Soft / dev_off: no
+// action (preserve Soft semantics). Mirrors g_residual_defer_steal_*
+// axis (production vs Soft + additive query counter).
+inline std::atomic<std::uint64_t> g_panic_checkpoint_cleared_on_steal_total{0}; // #2667
 // Issue #2377: steal-complete strong entry missing (weak no-op or null
 // under light/sandbox). Bumped when production would abort but Soft/
 // sandbox path takes weak stub or legacy N-call fallback. Production
@@ -451,6 +458,10 @@ inline std::atomic<std::uint64_t> g_steal_complete_entry_missing_total{0}; // #2
 }
 [[nodiscard]] inline std::uint64_t residual_defer_steal_soft_leftover_total() noexcept {
     return g_residual_defer_steal_soft_leftover_total.load(std::memory_order_relaxed);
+}
+// Issue #2667: getter for panic-checkpoint cleared-on-steal counter.
+[[nodiscard]] inline std::uint64_t panic_checkpoint_cleared_on_steal_total() noexcept {
+    return g_panic_checkpoint_cleared_on_steal_total.load(std::memory_order_relaxed);
 }
 [[nodiscard]] inline std::uint64_t steal_complete_entry_missing_total() noexcept {
     return g_steal_complete_entry_missing_total.load(std::memory_order_relaxed);

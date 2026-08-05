@@ -394,6 +394,24 @@ def cmd_lint():
             "Issue #2666 anon sync remount production-default coverage linter failed — run python3 scripts/coverage/checks/check_2666_coverage.py"
         )
         return r
+    # Issue #2667: production-only hard residual GcDefer on steal-complete
+    # + PanicCheckpoint rebind (closes Soft leftover + deferred-steal
+    # × checkpoint class under multi-fiber AI agent loops). eval_evaluator_
+    # on_steal_complete under is_steal_snapshot_hard_mode() clears live
+    # PanicCheckpoint + bumps g_panic_checkpoint_cleared_on_steal_total;
+    # obs_jit.cpp exposes additive query sentinels. Builds on #2546
+    # steal residual hard-AND — wires next to the #2666 anon sync
+    # linter so a regression in the #2667 AC surface fails the same gate.
+    pcs_script = COVERAGE_CHECKS / "check_2667_coverage.py"
+    if not pcs_script.exists():
+        fail(f"missing {pcs_script}")
+        return 1
+    r = run([sys.executable, str(pcs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2667 steal-residual panic-checkpoint coverage linter failed — run python3 scripts/coverage/checks/check_2667_coverage.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a

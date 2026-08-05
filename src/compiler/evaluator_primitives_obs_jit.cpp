@@ -10992,6 +10992,24 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("residual-defer-steal-hard-and-wired", 1);
             insert_kv("schema-2546", 2546);
             insert_kv("issue-2546", 2546);
+            // Issue #2667: production-only hard residual GcDefer on
+            // steal-complete + PanicCheckpoint rebind. Bumped when
+            // aura_evaluator_on_steal_complete clears a live
+            // PanicCheckpoint under production / Hard (extends #2546
+            // hard-AND with PanicCheckpoint clear + release panic
+            // defer so GC is not permanently armed across steal
+            // boundaries). Soft / dev_off: no action (preserve Soft
+            // semantics). Additive schema — no break. #2546 / #2314
+            // / #2203 surfaces preserved.
+            insert_kv("panic-checkpoint-cleared-on-steal-total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::panic_checkpoint_cleared_on_steal_total()));
+            insert_kv("panic_checkpoint_cleared_on_steal_total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::panic_checkpoint_cleared_on_steal_total()));
+            insert_kv("panic-checkpoint-cleared-on-steal-wired", 1);
+            insert_kv("schema-2667", 2667);
+            insert_kv("issue-2667", 2667);
             // Issue #2609: hard-AND residual + linear force + type fence.
             {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
