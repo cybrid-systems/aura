@@ -6,6 +6,9 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "primitives_meta.h"
 
+#include <chrono>
+#include <ctime>
+
 module aura.compiler.evaluator;
 
 import std;
@@ -190,6 +193,23 @@ Primitives::Primitives() {
     table_["current-time"] = [](std::span<const EvalValue> a) {
         (void)a;
         return make_int(static_cast<std::int64_t>(std::time(nullptr)));
+    };
+    // Issue #2655: sub-second clocks (parity with register_misc_primitives).
+    table_["current-time-ms"] = [](std::span<const EvalValue> a) {
+        (void)a;
+        using clock = std::chrono::system_clock;
+        const auto ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(clock::now().time_since_epoch())
+                .count();
+        return make_int(static_cast<std::int64_t>(ms));
+    };
+    table_["monotonic-ms"] = [](std::span<const EvalValue> a) {
+        (void)a;
+        using clock = std::chrono::steady_clock;
+        const auto ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(clock::now().time_since_epoch())
+                .count();
+        return make_int(static_cast<std::int64_t>(ms));
     };
     // Populate ordered_names_ + fn_slots_ + name_to_slot_ + default meta_
     // for ctor builtins (registered via table_[] not add()).

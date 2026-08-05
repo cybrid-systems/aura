@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 775 | Preferred destination suites |
-| **Total scanned** | **775** | |
+| `tests/core/test_*.cpp` | 776 | Preferred destination suites |
+| **Total scanned** | **776** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 79 | 79 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 80 | 80 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 223 | 223 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 97 | 97 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
@@ -892,6 +892,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_stringpool_bytes_total_lock.cpp`
 - `tests/core/test_stringpool_concurrent_intern.cpp`
 - `tests/core/test_structural_metadata_lock_order.cpp`
+- `tests/compiler/test_subsecond_clock.cpp`
 - `tests/core/test_subtree_dirty_bounds.cpp`
 - `tests/core/test_subtree_gen_atomic.cpp`
 - `tests/core/test_subtree_uses_sym_template_bloat.cpp`
@@ -988,13 +989,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (79)
+### `arena_compaction` — Arena / compaction / GC (80)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (79)
+#### domain/ (80)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1074,6 +1075,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_solve_delta_epoch_filter.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2065 — solve_delta epoch filter test.
 - `tests/serve/test_spawn_quota_no_leak.cpp` (—) [domain_suite, theme_serve] — AC1: Quota reject never calls agent_names_->put (C++ + Aura)
 - `tests/core/test_stringpool_buf_fragmentation_lock.cpp` (—) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
+- `tests/compiler/test_subsecond_clock.cpp` (—) [domain_suite, theme_compiler] — AC1: current-time-ms / monotonic-ms return ints
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 
 ### `mutation_dirty` — Mutation / dirty propagation / provenance (223)
@@ -1396,7 +1398,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_scheduler_gc_defer_pending_panic_steal.cpp` (—) [large, domain_suite, theme_serve] — AC1: pending checkpoint → GCCollector::request deferred; collect skips
 - `tests/serve/test_scheduler_gc_safepoint_mutation_coordination.cpp` (—) [domain_suite, theme_serve] — test_scheduler_gc_safepoint_mutation_coordination.cpp —
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp` (—) [domain_suite, theme_serve] — test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp — Issue #754:
-- `tests/orch/test_security_schedule_gate.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_security_schedule_gate.cpp
+- `tests/orch/test_security_schedule_gate.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_security_schedule_gate.cpp
 - `tests/serve/test_steal_complete_gc_defer.cpp` (—) [domain_suite, theme_serve] — AC1: try_steal_from success always invokes aura_evaluator_on_steal_complete
 - `tests/serve/test_steal_complete_restamp_txn.cpp` (—) [domain_suite, theme_serve] — AC1: on_steal_complete is the sole restamp entry (source-cite + gate)
 - `tests/serve/test_steal_complete_strong_entry.cpp` (—) [domain_suite, theme_serve] — legacy residual-less path under production).

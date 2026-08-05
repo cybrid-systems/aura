@@ -602,9 +602,13 @@ void Evaluator::ensure_stable_ref_workspace_consistency() const noexcept {
     {
         using namespace aura::core::workspace_isolation;
         // Const path: soft check only (does not deny), keeps metrics warm.
+        // Issue #2659: check_boundary_ex takes caller_principal + target +
+        // ref_tenant + allow_cross_tenant + effects + strict + op + restricted.
         (void)g_workspace_isolation().check_boundary_ex(
-            capability_tenant_id_, /*ref_tenant=*/0, /*required_effects=*/0,
-            /*sandbox_strict=*/false, "workspace:consistency");
+            capability_tenant_id_, /*target=*/capability_tenant_id_,
+            /*ref_tenant=*/0, /*allow_cross_tenant=*/false, /*required_effects=*/0,
+            /*sandbox_strict=*/false, "workspace:consistency",
+            /*sandbox_restricted=*/false);
     }
     if (!workspace_tree_)
         return;

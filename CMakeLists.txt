@@ -3774,6 +3774,11 @@ aura_add_issue_test(test_hash_table_grow)
 aura_issue_test_link_light(test_hash_table_grow)
 add_dependencies(all_test_issue_targets test_hash_table_grow)
 
+# Issue #2655: sub-second denseness clocks (current-time-ms / monotonic-ms).
+aura_add_issue_test(test_subsecond_clock)
+aura_issue_test_link_light(test_subsecond_clock)
+add_dependencies(all_test_issue_targets test_subsecond_clock)
+
 # Issue #2469: Scheduler::reap_orphans_now() two-phase extraction —
 # orphan_mutex_ released before per-fiber cleanup (wait_map_mutex_,
 # joiner_map_mutex_, owned_fibers_mutex_ acquisitions). Minimizes

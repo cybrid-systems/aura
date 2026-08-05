@@ -21,7 +21,7 @@
 | `std/core` | `core:any` `core:all` `core:zip-with` `core:group-by` `core:chunk` `core:running-sum` `core:safe-div` `core:format-currency` … (+2) | lib/std/core.aura — Core builtin high-level helpers (Issue #564) |
 | `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` | csv.aura — CSV parsing and generation |
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
-| `std/datetime` | `;` `Core` `timestamp` `timestamp->year` `timestamp->month` `timestamp->day` `timestamp->hour` `timestamp->minute` … (+17) | datetime.aura — Date and time utilities |
+| `std/datetime` | `;` `Core` `timestamp` `timestamp-ms` `steady-ms` `timestamp->year` `timestamp->month` `timestamp->day` … (+20) | datetime.aura — Date and time utilities |
 | `std/eda` | `;` `Issue` `#1012` `helper` `eda:strcat` `IR` `constructors` `make-eda:module` … (+260) | — |
 | `std/edsl-test-harness` | `section` `it` `describe` `report` `summary` `total-pass` `total-fail` `reset-totals` … (+2) | Declarative-ish helpers for pure-Aura self-tests without quoting |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
@@ -82,7 +82,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (471 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (473 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 
 Central registry orchestrates **28** `register_*_primitives` groups (see primitives-registry.md for the ordered list).
