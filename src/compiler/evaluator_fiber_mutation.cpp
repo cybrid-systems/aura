@@ -2771,6 +2771,21 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                 }
             }
         }
+        // Issue #2667: production / Hard path — clear live PanicCheckpoint
+        // on the residual Eval + release panic defer so GC is not
+        // permanently armed across the steal boundary. Mirrors the
+        // PanicCheckpointGuard dtor #1727 cross-evaluator clear path.
+        // Soft / dev_off: no action (preserve Soft semantics; panic defer
+        // stays armed — observed via PanicDeferDensifyAudit #2598).
+        if (hard_failed && prev_eval_id != nullptr) {
+            if (auto* ev = evaluator_for_scheduler_hooks()) {
+                if (ev->has_panic_checkpoint()) {
+                    ev->clear_panic_checkpoint();
+                    aura::gc_hooks::g_panic_checkpoint_cleared_on_steal_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+        }
     }
 
     // (9) Issue #2609: hard-AND residual (already 0 here) + linear force

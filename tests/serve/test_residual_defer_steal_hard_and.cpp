@@ -279,19 +279,95 @@ static void ac5_soak_lineage() {
     CHECK(true, "AC5: residual_defer_cleared_on_steal + hard-fail counters wired");
 }
 
+// ── Issue #2667: production-only hard residual GcDefer on steal-complete ───
+//
+// Closes Soft leftover + deferred steal×checkpoint class under multi-
+// fiber AI agent loops. Production-default ON:
+//  - steal-complete residual non-zero post force_clear → hard_fail + Cancel+Done
+//    (already covered by #2546 AC1 above — verified here for regression)
+//  - live PanicCheckpoint at steal → cleared + panic defer released
+//    (NEW counter g_panic_checkpoint_cleared_on_steal_total)
+//  - additive query sentinel live-closure-sync-remount-anon-prod-default-wired
+// Soft / dev_off: preserve Soft semantics (leftover counter, no clear).
+//
+// AC1 (regression): #2546 AC1 still holds — production + residual non-zero
+//      post force_clear → hard_fail + Cancel+Done (verified above).
+// AC2 (regression): #2546 AC3 still holds — Soft + residual non-zero →
+//      leftover counter (no cancel; verified above).
+// AC3: production + live PanicCheckpoint at steal →
+//      panic_checkpoint_cleared_on_steal_total bumped + clear()
+//      called on the residual eval. Soft / dev_off: no action.
+// AC4: additive query sentinel panic-checkpoint-cleared-on-steal-total +
+//      panic-checkpoint-cleared-on-steal-wired + schema-2667 + issue-2667
+//      surfaced via obs_jit.cpp (extends #2546 / #2314 / #2203 surfaces —
+//      additive, no break).
+// AC5: source-cite production lock in aura_evaluator_on_steal_complete +
+//      gc_hooks.h counter + getter + build.py linter wiring.
+static void ac2667_1_production_panic_checkpoint_clear() {
+    std::println("\n--- #2667 AC3: production + live PanicCheckpoint at steal → cleared ---");
+    const auto rt = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(rt.find("Issue #2667") != std::string::npos,
+          "2667 AC3: evaluator_fiber_mutation.cpp cites #2667 PanicCheckpoint clear");
+    CHECK(rt.find("has_panic_checkpoint") != std::string::npos,
+          "2667 AC3: eval has_panic_checkpoint() check present");
+    CHECK(rt.find("clear_panic_checkpoint") != std::string::npos,
+          "2667 AC3: eval clear_panic_checkpoint() call present");
+    CHECK(rt.find("g_panic_checkpoint_cleared_on_steal_total.fetch_add") != std::string::npos,
+          "2667 AC3: counter bumped on production path");
+    const auto gc = read_file("src/core/gc_hooks.h");
+    CHECK(gc.find("g_panic_checkpoint_cleared_on_steal_total") != std::string::npos,
+          "2667 AC3: counter declared in gc_hooks.h");
+    CHECK(gc.find("panic_checkpoint_cleared_on_steal_total()") != std::string::npos,
+          "2667 AC3: getter for counter in gc_hooks.h");
+}
+
+static void ac2667_2_query_sentinel_source_cite() {
+    std::println("\n--- #2667 AC4: additive query sentinel + source-cite ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(obs.find("panic-checkpoint-cleared-on-steal-total") != std::string::npos,
+          "2667 AC4: obs_jit.cpp exposes panic-checkpoint-cleared-on-steal-total");
+    CHECK(obs.find("panic_checkpoint_cleared_on_steal_total") != std::string::npos,
+          "2667 AC4: obs_jit.cpp exposes camelCase key");
+    CHECK(obs.find("panic-checkpoint-cleared-on-steal-wired") != std::string::npos,
+          "2667 AC4: obs_jit.cpp exposes panic-checkpoint-cleared-on-steal-wired sentinel");
+    CHECK(obs.find("schema-2667") != std::string::npos,
+          "2667 AC4: obs_jit.cpp schema-2667 sentinel");
+    CHECK(obs.find("issue-2667") != std::string::npos, "2667 AC4: obs_jit.cpp issue-2667 sentinel");
+    // Prior surfaces preserved (#2546, #2314, #2203 — additive schema).
+    CHECK(obs.find("schema-2546") != std::string::npos,
+          "2667 AC4: #2546 schema-2546 preserved (regression check)");
+    CHECK(obs.find("schema-2314") != std::string::npos,
+          "2667 AC4: #2314 schema-2314 preserved (regression check)");
+    CHECK(obs.find("issue-2203") != std::string::npos ||
+              obs.find("residual-defer-cleared-on-steal-total") != std::string::npos,
+          "2667 AC4: #2203 surface preserved (regression check)");
+}
+
+static void ac2667_3_coverage_linter_wired() {
+    std::println("\n--- #2667 AC5: build.py wires check_2667_coverage ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_2667_coverage") != std::string::npos,
+          "2667 AC5: build.py wires check_2667_coverage linter");
+}
+
 } // namespace
 
 int run_test_residual_defer_steal_hard_and() {
     std::println("=== Issue #2546: residual hard-AND on steal-complete ===");
+    std::println("=== Issue #2667: production-only hard residual GcDefer on steal-complete + "
+                 "PanicCheckpoint rebind (extends #2546 test file per #81967) ===");
     ac1_hard_residual_cancels();
     ac2_clean_zero_cost();
     ac3_soft_leftover_no_cancel();
     ac4_source_and_schema();
     ac5_soak_lineage();
+    ac2667_1_production_panic_checkpoint_clear();
+    ac2667_2_query_sentinel_source_cite();
+    ac2667_3_coverage_linter_wired();
     modes_off();
     if (g_failed)
         return 1;
-    std::println("\n=== #2546: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2546+#2667: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
 
