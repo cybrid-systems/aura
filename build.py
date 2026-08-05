@@ -2927,6 +2927,33 @@ def cmd_storm_clear_health_pass_coverage():
     return 0
 
 
+def cmd_storm_clear_drive_body_coverage():
+    """Issue #2669: storm-clear health pass drives recovery body (refine #2639).
+
+    On non-None → None storm level transition with pending state,
+    drive one of 3 recovery branches: branch 1 deferred reemit
+    (take_deferred_reemit_version + aura_reemit_aot_for_dirty), branch
+    2 #2601 exhausted-min-dirty retry, branch 3 #2502 cascade trigger.
+    Bridge owns aura_reemit_aot_for_dirty body; registry only schedules.
+    Additive to #2604/#2601/#2502/#2639 surfaces (success for branches
+    2/3 tracked by their existing counters, no double-count on
+    success_total). reemit_driven_total tracks body-driven passes for
+    Agent visibility (distinguishes body-driven vs the old counter-only
+    baseline).
+    """
+    print(f"{B}=== storm-clear drive body coverage (#2669) ==={N}")
+    script = COVERAGE_CHECKS / "check_storm_clear_drive_body_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("storm-clear drive body (#2669) coverage contract rows failed")
+        return 1
+    ok("storm-clear drive body (#2669) coverage clean")
+    return 0
+
+
 def cmd_residual_sid0_cap_coverage():
     """Issue #2638: residual sid=0 growth hard cap + fail-closed drop/MustDeopt.
 
@@ -7890,6 +7917,7 @@ def cmd_gate():
         or cmd_sync_remount_anon_coverage()
         or cmd_residual_sid0_cap_coverage()
         or cmd_storm_clear_health_pass_coverage()
+        or cmd_storm_clear_drive_body_coverage()
         or cmd_mailbox_bp_recent_window_coverage()
         or cmd_agent_scope_concurrent_coverage()
         or cmd_parallel_isolation_level_coverage()

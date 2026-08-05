@@ -452,6 +452,12 @@ public:
         std::int64_t reemit_storm_clear_health_pass_skipped_reentered_storm_total = 0;
         std::int64_t schema_2639 = 2639;
         std::int64_t issue_2639 = 2639;
+        // Issue #2669: storm-clear health pass drives recovery body (refine #2639
+        // counter-only → drive deferred reemit / #2601 min-dirty retry / #2502
+        // cascade trigger). Additive counters; #2604/#2601/#2502/#2639 unchanged.
+        std::int64_t reemit_storm_clear_health_pass_reemit_driven_total = 0;
+        std::int64_t schema_2669 = 2669;
+        std::int64_t issue_2669 = 2669;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -595,6 +601,10 @@ private:
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_total_{0};
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_success_total_{0};
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_skipped_reentered_storm_total_{0};
+    // Issue #2669: counter bumped when storm-clear health pass actually drives
+    // recovery body (any of: deferred reemit / #2601 retry / cascade trigger).
+    // Distinguishes body-driven passes from the #2639 counter-only baseline.
+    std::atomic<std::uint64_t> reemit_storm_clear_health_pass_reemit_driven_total_{0};
 
     // Issue #2014: sliding window deopt rate.
     std::atomic<std::uint64_t> deopt_window_start_ms_{0};
@@ -759,6 +769,11 @@ public:
     reemit_storm_clear_health_pass_skipped_reentered_storm_total() const noexcept {
         return reemit_storm_clear_health_pass_skipped_reentered_storm_total_.load(
             std::memory_order_relaxed);
+    }
+    // Issue #2669: body-driven pass counter (any recovery branch drove work).
+    [[nodiscard]] std::uint64_t
+    reemit_storm_clear_health_pass_reemit_driven_total() const noexcept {
+        return reemit_storm_clear_health_pass_reemit_driven_total_.load(std::memory_order_relaxed);
     }
     // Test isolation: reset storm-clear health pass state.
     void reset_storm_clear_health_pass_for_test() noexcept;
@@ -994,6 +1009,10 @@ struct aura_reload_recovery_snapshot {
     std::int64_t reemit_storm_clear_health_pass_skipped_reentered_storm_total;
     std::int64_t schema_2639; // 2639 when wired
     std::int64_t issue_2639;  // 2639
+    // Issue #2669: storm-clear drives recovery body (additive counter).
+    std::int64_t reemit_storm_clear_health_pass_reemit_driven_total;
+    std::int64_t schema_2669; // 2669 when wired
+    std::int64_t issue_2669;  // 2669
     // recovery-active: 1 when any non-idle recovery signal is set
     // (force-jit mask, attempts_left, pending dirty, deferred reemit,
     // storm_level != None). Soft empty path → 0.
