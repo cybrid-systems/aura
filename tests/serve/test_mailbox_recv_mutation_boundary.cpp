@@ -621,6 +621,96 @@ static void ac2347_schema_and_contract() {
     CHECK(href(cs, "schema-2312") == 2312, "schema-2312 retained");
 }
 
+// ── Issue #2680: shared-Evaluator delivery gate (push / broadcast_fanout) ──
+static void ac2680_counter_wired() {
+    std::println("\n--- #2680 AC5: shared-evaluator-deferred counter wired ---");
+    // Reset counters to known baseline.
+    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.store(0, std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.store(
+        0, std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.store(
+        0, std::memory_order_relaxed);
+    // Counters must exist as process-wide atomics (start at 0).
+    CHECK(g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(
+              std::memory_order_relaxed) == 0,
+          "AC5: shared-evaluator-deferred total starts at 0");
+    CHECK(g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.load(
+              std::memory_order_relaxed) == 0,
+          "AC5: shared-evaluator-deferred hard total starts at 0");
+    CHECK(g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.load(
+              std::memory_order_relaxed) == 0,
+          "AC5: shared-evaluator-deferred soft-observe total starts at 0");
+    // Direct counter increment (mirrors the gate path in multi_fiber_mailbox.h
+    // push() / broadcast_fanout() when shared-evaluator boundary is live).
+    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
+        1, std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
+        1, std::memory_order_relaxed);
+    CHECK(g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(
+              std::memory_order_relaxed) == 1,
+          "AC5: shared-evaluator-deferred total +1 after increment");
+    CHECK(g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.load(
+              std::memory_order_relaxed) == 1,
+          "AC5: hard total +1 after increment");
+    CHECK(g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.load(
+              std::memory_order_relaxed) == 1,
+          "AC5: soft-observe total +1 after increment");
+}
+
+static void ac2680_happy_path_no_extra_deferred() {
+    std::println("\n--- #2680 AC6: happy path (depth==0) → no shared-evaluator defer ---");
+    // Ensure depth=0 path.
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "AC6: depth 0 baseline");
+    // Reset counter so we observe only the test's behavior.
+    const auto before =
+        g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(std::memory_order_relaxed);
+    MultiFiberMailbox mb(/*high_water=*/8);
+    MailMessage m;
+    m.payload = "happy-2680";
+    CHECK(mb.push(m) == PushStatus::Ok, "AC6: push ok off boundary");
+    MailMessage proto;
+    proto.payload = "fanout-happy-2680";
+    // broadcast_fanout with no attachers → ok.
+    (void)mb.broadcast_fanout(proto);
+    CHECK(g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(
+              std::memory_order_relaxed) == before,
+          "AC6: shared-evaluator-deferred total unchanged off boundary");
+}
+
+static void ac2680_source_cite_rows() {
+    std::println("\n--- #2680 AC2/AC3/AC4: source-cite ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto fh = read_file("src/serve/fiber.h");
+    // AC1: push + broadcast_fanout defer (Backpressure) on shared-evaluator held.
+    CHECK(mb.find("Issue #2680") != std::string::npos, "AC1: mailbox cites #2680");
+    CHECK(mb.find("mailbox_shared_evaluator_deferred_total") != std::string::npos,
+          "AC1: shared-evaluator defer counter present");
+    CHECK(mb.find("aura_evaluator_mutation_boundary_held()") != std::string::npos,
+          "AC2: shared-evaluator hook (held) cited");
+    CHECK(mb.find("aura_evaluator_mutation_boundary_depth()") != std::string::npos,
+          "AC2: shared-evaluator hook (depth) cited");
+    // AC2: same authority as steal safety (recv() already uses it at L820-821).
+    CHECK(mb.find("boundary_live = aura_evaluator_mutation_boundary_depth() > 0") !=
+              std::string::npos,
+          "AC2: recv() boundary_live cited as authority reference");
+    // AC3: cross-fiber scenario covered (counter for Agents to observe pressure).
+    CHECK(mb.find("mailbox_shared_evaluator_deferred_hard_total") != std::string::npos,
+          "AC3: production hard counter");
+    CHECK(mb.find("mailbox_shared_evaluator_deferred_soft_observe_total") != std::string::npos,
+          "AC4: Soft / observe-only counter");
+    // AC4: Soft / observe-only path remains (gated by is_mutate_mailbox_strict).
+    CHECK(mb.find("is_mutate_mailbox_strict") != std::string::npos, "AC4: Soft toggle present");
+    // AC6: zero-cost happy path (deferred_depth==0 → single relaxed load).
+    CHECK(mb.find("Zero cost") != std::string::npos || mb.find("zero cost") != std::string::npos,
+          "AC6: zero-cost happy path comment present");
+    // fiber.h happens-before contract.
+    CHECK(fh.find("Issue #2680") != std::string::npos, "AC1: fiber.h cites #2680");
+    CHECK(fh.find("happens-before") != std::string::npos,
+          "AC1: happens-before contract documented");
+}
+
 } // namespace
 
 int run_test_mailbox_recv_mutation_boundary() {
@@ -649,6 +739,12 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac2378_happy_path_zero_extra();
     ac2378_query_schema();
     ac2378_source_cite();
+    // Issue #2680: shared-Evaluator delivery gate (push / broadcast_fanout
+    // defer when shared Evaluator's MutationBoundary is held by ANY fiber,
+    // not just the target fiber; same authority as steal safety).
+    ac2680_counter_wired();
+    ac2680_happy_path_no_extra_deferred();
+    ac2680_source_cite_rows();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

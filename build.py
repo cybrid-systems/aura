@@ -578,6 +578,26 @@ def cmd_lint():
     if r != 0:
         fail("chaos soak (#2679) coverage linter failed — run python3 scripts/coverage/checks/check_chaos_soak_2679.py")
         return r
+    # Issue #2680: P1 — runtime(mailbox) enforce MutationBoundary held / depth>0
+    # interleaving safety for cross-fiber delivery. Validates that the existing
+    # mailbox header (src/serve/multi_fiber_mailbox.h) + Fiber contract
+    # (src/serve/fiber.h) extend the per-target-fiber MutationSafetySnapshot
+    # gate (#2312) to a shared-Evaluator gate that consults the same C ABI
+    # hooks as recv() and steal safety (aura_evaluator_mutation_boundary_held
+    # / depth). Counter family (mailbox_shared_evaluator_deferred_total +
+    # _hard_total + _soft_observe_total) bumped in defer path so Agents can
+    # observe pressure. Regression gate on the shared-evaluator delivery
+    # authority.
+    mbi_script = COVERAGE_CHECKS / "check_mailbox_boundary_interleave_2680.py"
+    if not mbi_script.exists():
+        fail(f"missing {mbi_script}")
+        return 1
+    r = run([sys.executable, str(mbi_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "mailbox boundary interleave (#2680) coverage linter failed — run python3 scripts/coverage/checks/check_mailbox_boundary_interleave_2680.py"
+        )
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +

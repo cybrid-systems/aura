@@ -103,8 +103,35 @@ struct MutationSafetySnapshot {
     std::uint64_t ticket = 0;
 };
 
-// ── Fiber state ────────────────────────────────────────
-enum class FiberState : uint8_t {
+// Issue #2680: cross-fiber mailbox delivery happens-before contract.
+// Mirrors the steal-safety contract (see MutationSafetySnapshot above) for
+// the mailbox delivery path. Two fibers sharing one Evaluator MUST NOT
+// observe each other's mid-mutation state through mailbox messages:
+//
+//   - The sender (or any fiber on the shared Evaluator) holds an outermost
+//     MutationBoundaryGuard  ⇒  mailbox push / broadcast_fanout defers
+//     (Backpressure, not dropped). Receiver becomes deliverable after the
+//     outermost Guard exits (depth==0 && !held).
+//
+//   - The recv path (multi_fiber_mailbox.h L820-821) refuses to park while
+//     a boundary is live — Policy A non-blocking empty return + counter.
+//
+//   - Both push and broadcast_fanout consult `aura_evaluator_mutation_
+//     boundary_held()` + `aura_evaluator_mutation_boundary_depth()` (C ABI
+//     shims wired by evaluator_fiber_mutation.cpp) so the delivery gate
+//     uses the SAME authority as steal safety (per AC2).
+//
+//   - Soft / observe-only mode keeps the same gate (no behavior change for
+//     tests) but bumps the `_soft_observe_total` counter instead of the
+//     `_hard_total` counter, so production dashboards distinguish.
+//
+// Reuses #2184 snapshot for the per-target-fiber check (push / fanout
+// guard the receiver's own state in addition to the shared-Evaluator
+// check). Zero-cost happy path: a single relaxed load on the deferred
+// counter proxy when deferred_depth==0.
+
+─────────────────────────────────────────
+───── Fiber state ──────────────────────────────────────── enum class FiberState : uint8_t {
     Ready,   // can be scheduled
     Running, // currently executing on a worker
     Waiting, // waiting for eventfd
