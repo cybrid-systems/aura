@@ -487,6 +487,21 @@ def cmd_lint():
             "Issue #2700 handoff_ref mailbox gate linter failed — run python3 scripts/coverage/checks/check_handoff_ref_mailbox_gate_2700.py"
         )
         return r
+    # Issue #2701: mutation hold-budget timeout → force degrade / reject
+    # new mutate admit. Wires check_mutation_hold_budget_reject_2701.py
+    # so the order-with-#2660 + Soft-metric-only + reject-counter additive
+    # contract stays enforced. Builds on #2587 mailbox-hold-starvation
+    # + #2630/#2660 security-schedule gates.
+    mhb_script = COVERAGE_CHECKS / "check_mutation_hold_budget_reject_2701.py"
+    if not mhb_script.exists():
+        fail(f"missing {mhb_script}")
+        return 1
+    r = run([sys.executable, str(mhb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2701 mutation hold-budget reject linter failed — run python3 scripts/coverage/checks/check_mutation_hold_budget_reject_2701.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a

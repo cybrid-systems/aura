@@ -167,6 +167,76 @@ inline void mutation_hold_live_reset_for_test() noexcept {
     g_mutation_hold_live_depth.store(0, std::memory_order_relaxed);
 }
 
+// Issue #2701: Mutation hold-budget timeout → force degrade / reject new
+// mutate admit. Closes the loop: under sustained AI agent load a single
+// long-running mutate can starve work-stealing and GC, yet new
+// MutationBoundaryGuard::try_acquire still succeeds. When live longest
+// outermost hold exceeds configured budget (AURA_MUTATION_HOLD_BUDGET_US
+// / default 100_000 µs), production path rejects new mutate admit with
+// structured AdmissionRejected (reason "mutation-hold-budget"). Soft /
+// sandbox / test override: metric-only (counter bump, no reject) unless
+// explicit hard env. Interacts with #2660 security-schedule gate (both
+// observable; order is budget AFTER schedule — locked in source).
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_reject_total{0};
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_soft_observe_total{0};
+inline std::atomic<std::uint32_t> g_mutation_hold_budget_wired{1};
+inline constexpr int kMutationHoldBudgetRejectIssue = 2701;
+
+[[nodiscard]] inline std::uint64_t mutation_hold_budget_reject_total_v_read() noexcept {
+    return g_mutation_hold_budget_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t mutation_hold_budget_soft_observe_total_v_read() noexcept {
+    return g_mutation_hold_budget_soft_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_hold_budget_wired_v_read() noexcept {
+    return g_mutation_hold_budget_wired.load(std::memory_order_relaxed);
+}
+
+// Soft / hard env override (default 0 = metric-only under Soft).
+[[nodiscard]] inline int mutation_hold_budget_hard_env() noexcept {
+    static const bool cached = []() noexcept -> bool {
+        const char* e = std::getenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        if (e == nullptr || e[0] == '\0')
+            return false;
+        return e[0] == '1';
+    }();
+    return cached ? 1 : 0;
+}
+
+// AC1 — true when try_acquire should reject (production strict OR
+// hard env). AC2 — false under Soft / sandbox / test override (metric
+// only unless explicit hard env).
+[[nodiscard]] inline bool mutation_hold_budget_reject_enabled() noexcept {
+    return mutation_hold_budget_hard_env() || production_defaults_active();
+}
+
+// AC1 — consult live longest hold vs budget; bumps the appropriate
+// counter and returns the duration_us. Caller decides reject policy.
+struct MutationHoldBudgetCheck {
+    bool over_budget = false;
+    std::uint64_t duration_us = 0;
+};
+
+[[nodiscard]] inline MutationHoldBudgetCheck mutation_hold_budget_check() noexcept {
+    MutationHoldBudgetCheck r;
+    const auto snap = mutation_hold_live_snapshot();
+    r.duration_us = snap.duration_us;
+    r.over_budget = (snap.held && snap.duration_us > mutation_hold_budget_us());
+    if (r.over_budget) {
+        if (mutation_hold_budget_reject_enabled())
+            g_mutation_hold_budget_reject_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            g_mutation_hold_budget_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return r;
+}
+
+// Test reset.
+inline void clear_mutation_hold_budget_reject_for_test() noexcept {
+    g_mutation_hold_budget_reject_total.store(0, std::memory_order_relaxed);
+    g_mutation_hold_budget_soft_observe_total.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::compiler
 
 #endif // AURA_COMPILER_MUTATION_HOLD_BUDGET_H
