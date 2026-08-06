@@ -1440,8 +1440,10 @@ public:
         for (auto& func : mod.functions) {
             // Issue #2143: single dirty-aware entry uses for_each_block
             // (clean_skips / dirty_runs metrics via record_dirty_block_*).
-            // Issue #2615: collect changed block ids → one mark_blocks_dirty
-            // (single generation fence), not N× mark_block_dirty.
+            // Issue #2615 / #2681: collect changed block ids → one mark_blocks_dirty
+            // (single generation fence), not N× mark_block_dirty. #2681 linter
+            // (check_batch_dirty_discipline_2615.py) verifies no residual loop
+            // of mark_block_dirty in any production TU under src/compiler/.
             std::vector<std::uint32_t> changed_blocks;
             auto [runs, skips] = func.for_each_block(
                 [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
