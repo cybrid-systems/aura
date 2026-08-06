@@ -1091,6 +1091,28 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         }
         // Soft path (Off / Soft sandbox): fall through (metric-only).
     }
+    // Issue #2701: Mutation hold-budget timeout → force degrade / reject
+    // new mutate admit. Order: #2587 mailbox-hold-starvation → #2701
+    // budget → #2630/#2660 security-schedule. Budget is a fast atomic
+    // read + compare; security-schedule is the last line of defense
+    // (multiple live signals). Putting budget BEFORE schedule means
+    // over-budget requests never reach the schedule evaluation.
+    {
+        const auto check = mutation_hold_budget_check();
+        if (check.over_budget) {
+            if (mutation_hold_budget_reject_enabled()) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+                    m->mutation_guard_try_acquire_reject_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
+                return std::unexpected(
+                    aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                          std::string("AdmissionRejected: mutation-hold-budget")));
+            }
+            // Soft path (Off / Soft sandbox): fall through
+            // (metric-only, already bumped by mutation_hold_budget_check()).
+        }
+    }
     // Issue #2630: security-schedule-gate (additive over #2587). Closes
     // the half-green / deny-storm window where Agents keep mutating
     // after security posture degraded. Soft / sandbox=off stays
@@ -1175,6 +1197,24 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                       std::string("AdmissionRejected: mailbox-hold-starvation")));
         }
         // Soft path: fall through.
+    }
+    // Issue #2701: Mutation hold-budget timeout → force degrade / reject
+    // new mutate admit. Same order as try_acquire: #2587 mailbox-hold
+    // -starvation → #2701 budget → #2630/#2660 security-schedule.
+    {
+        const auto check = mutation_hold_budget_check();
+        if (check.over_budget) {
+            if (mutation_hold_budget_reject_enabled()) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
+                    m->mutation_guard_try_acquire_reject_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
+                return std::unexpected(
+                    aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                          std::string("AdmissionRejected: mutation-hold-budget")));
+            }
+            // Soft path: fall through (metric-only, already bumped).
+        }
     }
     // Issue #2630: security-schedule-gate (additive over #2587). Same
     // pattern as try_acquire: production hard-rejects with structured

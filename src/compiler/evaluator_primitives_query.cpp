@@ -6478,6 +6478,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         insert_kv("mailbox-handoff-ref-gate-wired", 1);
                         insert_kv("schema-2700", 2700);
                         insert_kv("issue-2700", 2700);
+                        // Issue #2701: query:mutation-hold-budget-gate — Agent-visible
+                        // reject surface. Soft / sandbox observes; production
+                        // hard-rejects new mutate admit when live longest hold exceeds
+                        // budget (AURA_MUTATION_HOLD_BUDGET_US / default 100_000 µs).
+                        // Additive — no replacement of #2587 / #2630 / #2660 / #2188
+                        // surfaces.
+                        {
+                            const auto rej = static_cast<std::int64_t>(
+                                mutation_hold_budget_reject_total_v_read());
+                            const auto soft = static_cast<std::int64_t>(
+                                mutation_hold_budget_soft_observe_total_v_read());
+                            const auto wired =
+                                static_cast<std::int64_t>(mutation_hold_budget_wired_v_read());
+                            insert_kv("mutation-hold-budget-reject-total", rej);
+                            insert_kv("mutation-hold-budget-soft-observe-total", soft);
+                            insert_kv("mutation-hold-budget-wired", wired);
+                            insert_kv("schema-2701", 2701);
+                            insert_kv("issue-2701", 2701);
+                        }
                     }
                 }
             }
