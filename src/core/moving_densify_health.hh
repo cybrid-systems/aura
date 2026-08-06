@@ -95,6 +95,36 @@ struct MovingDensifyHealthSnapshot {
     return pin_held && !incomplete && untracked_kept == 0 && root_fail == 0;
 }
 
+// Issue #2682: single unified Moving success predicate (AC1-AC4).
+//   success_moving ⇔
+//     !moving_blocked_precondition
+//     ∧ pin_contract_held
+//     ∧ root_remap_stable_ref_fail_total == 0
+//     ∧ root_remap_closure_capture_fail_total == 0
+//     ∧ untracked_kept_count == 0   // when objects_moved > 0
+// Used by Phase-5 outermost exit, AdaptiveCompactResult consumers, and
+// Agent health surface. Replaces the scattered local-variable checks
+// that previously lived inline in evaluator_mutation_boundary.cpp.
+[[nodiscard]] inline bool compute_moving_unified_success(
+    bool moving_blocked_precondition,
+    bool pin_contract_held,
+    std::uint64_t root_remap_stable_ref_fail_total,
+    std::uint64_t root_remap_closure_capture_fail_total,
+    std::uint64_t objects_moved,
+    std::uint64_t untracked_kept_count) noexcept {
+    if (moving_blocked_precondition)
+        return false;
+    if (!pin_contract_held)
+        return false;
+    if (root_remap_stable_ref_fail_total > 0)
+        return false;
+    if (root_remap_closure_capture_fail_total > 0)
+        return false;
+    if (objects_moved > 0 && untracked_kept_count > 0)
+        return false;
+    return true;
+}
+
 [[nodiscard]] inline std::int64_t compute_force_reason(bool pin_held, bool incomplete,
                                                        std::uint64_t untracked_kept,
                                                        std::uint64_t root_fail) noexcept {

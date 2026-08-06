@@ -539,6 +539,19 @@ export inline std::atomic<int> g_moving_compact_enabled_pref{-1}; // -1 = env/de
 // when objects_moved > 0 && untracked_kept_count > 0. Agent dashboards
 // surface untracked-buffer accumulation.
 export inline std::atomic<std::uint64_t> g_moving_untracked_external_roots_total{0};
+
+// Issue #2682: unified Moving success / fail totals. Bumped by Phase-5
+// outermost exit after computing the single unified predicate
+// (compute_moving_unified_success in moving_densify_health.hh). Success
+// total counts densify windows where all 5 conditions hold; fail total
+// counts windows where any condition fails (any single failure source:
+// moving_blocked_precondition / pin_contract_held / root_remap fails /
+// untracked_kept_count > 0 with objects_moved > 0). Additive only — no
+// schema break for the existing g_moving_untracked_external_roots_total.
+export inline std::atomic<std::uint64_t> g_moving_unified_success_total{0};
+export inline std::atomic<std::uint64_t> g_moving_unified_fail_total{0};
+inline constexpr int kMovingUnifiedSuccessGateIssue = 2682;
+
 // Issue #2495/#2596: g_moving_untracked_hard_abort_pref defined in
 // arena_auto_policy_stats.h (header form for security_defaults.hh).
 // Visible here via #include in global fragment (namespace aura::ast).
