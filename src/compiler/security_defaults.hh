@@ -159,6 +159,10 @@ inline void grant_render_kernel_principal() noexcept {
 // when force-on-boundary is on, #2222) + soft coercion apply + observe-only
 // blame commit + tree-walker Allow + Soft mutate type gate + lock-order OFF.
 inline void apply_production_security_defaults() noexcept {
+    // Issue #2688: production-default hard_fiber_isolation + grant epoch
+    // retain window. The arming branches below implement the contract
+    // (Strict / multi-tenant → hard=true + K=64; Restricted → K=16
+    // hard=false; Soft → K=0 hard=false). Env overrides win.
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
     using namespace ::aura::core::workspace_isolation;

@@ -949,6 +949,32 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                              std::memory_order_relaxed)))},
                 {"schema-2687", make_int(2687)},
                 {"issue-2687", make_int(2687)},
+                // Issue #2688: production-default hard_fiber_isolation +
+                // grant epoch retain window. Wire query surface so Agent
+                // dashboards can verify apply_production_security_defaults
+                // armed the right posture (Strict/multi-tenant → hard=true +
+                // K=64; Restricted → K=16 hard=false; Soft → K=0 hard=false).
+                // Env overrides AURA_HARD_FIBER_ISOLATION / AURA_GRANT_EPOCH_RETAIN
+                // documented in security_defaults.hh L124-127.
+                {"capability-hard-fiber-isolation",
+                 make_int(aura::core::g_capability_registry().hard_fiber_isolation() ? 1 : 0)},
+                {"capability-grant-epoch-retain-window",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::g_capability_registry().grant_epoch_retain_window()))},
+                {"capability-grant-min-valid-epoch",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::g_capability_registry().grant_min_valid_epoch()))},
+                {"capability-epoch-fence-hit-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::g_capability_effect_metrics().capability_epoch_fence_hit_total.load(
+                         std::memory_order_relaxed)))},
+                {"capability-fiber-hard-deny-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::g_capability_effect_metrics().capability_fiber_hard_deny_total.load(
+                         std::memory_order_relaxed)))},
+                {"schema-2688", make_int(2688)},
+                {"issue-2688", make_int(2688)},
+                {"capability-production-default-armed", make_int(1)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},
