@@ -9724,6 +9724,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("linear-densify-wired", make_int(1));
             insert_kv("schema-2642", make_int(2642));
             insert_kv("issue-2642", make_int(2642));
+            // Issue #2673: hard-path lock for densify linear-root consistency
+            // scan (refine #2642 residual). Production/Full mismatch forces
+            // force_linear_rollback(LinearDensifyRootMismatch) under
+            // linear_ops_present. Schema sentinel + hard-path wired flag.
+            insert_kv("linear-densify-hard-path-wired", make_int(1));
+            insert_kv("schema-2673", make_int(2673));
+            insert_kv("issue-2673", make_int(2673));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

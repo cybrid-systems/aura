@@ -1430,7 +1430,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_commit_readiness_score.cpp` (—) [domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_densify_last_call_axes.cpp` (—) [domain_suite, theme_compiler] — for envframe + closure remount axes (seal #2361/#2365 last-call contract).
-- `tests/compiler/test_densify_ownership_scan_fail_gate.cpp` (—) [domain_suite, theme_compiler] — metrics the same way pin_contract_held does — no path where scan fail is
+- `tests/compiler/test_densify_ownership_scan_fail_gate.cpp` (—) [large, domain_suite, theme_compiler] — metrics the same way pin_contract_held does — no path where scan fail is
 - `tests/compiler/test_hardware_resource_linear_ownership.cpp` (—) [domain_suite, theme_compiler] — test_hardware_resource_linear_ownership.cpp — Issue #306:
 - `tests/compiler/test_lifetime_contract_snapshot.cpp` (—) [domain_suite, theme_compiler] — for pin / linear / EnvFrame / GC-defer / residual contract.
 - `tests/compiler/test_linear_cross_closure.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_linear_cross_closure.cpp

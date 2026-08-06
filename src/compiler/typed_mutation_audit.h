@@ -149,6 +149,14 @@ struct TypedMutationAuditCounters {
     //     mismatch (force_linear_rollback(LinearDensifyRootMismatch)).
     std::atomic<std::uint64_t> linear_densify_scan_mismatch_observe_total{0};
     std::atomic<std::uint64_t> linear_densify_scan_mismatch_total{0};
+    // Issue #2673: hard-path lock for densify linear-root consistency scan.
+    // Test seam — scan_linear_roots_after_densify consumes one pending
+    // mismatch per call (CAS loop), so the test can inject N mismatches
+    // and observe N scan firings under production/Full (force_rollback)
+    // or N observe-counter bumps under Soft. Forward-compatible with the
+    // full O(dirty) walk landing in the follow-up commit (same shape as
+    // inject_densify_ownership_scan_fail_for_test in envframe_lifetime.ixx).
+    std::atomic<std::uint64_t> linear_densify_scan_mismatch_inject_pending{0};
     // Issue #1882: AOT hot-update + JIT hotpath audit coverage.
     std::atomic<std::uint64_t> aot_hotupdate_attempts{0};
     std::atomic<std::uint64_t> aot_hotupdate_audits{0};
@@ -315,6 +323,31 @@ struct TypedMutationAuditCounters {
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
+
+// Issue #2673: hard-path lock for densify linear-root consistency scan.
+// Test seam — injects a pending linear-root mismatch that the next
+// scan_linear_roots_after_densify call will consume. Mirrors the
+// inject_densify_ownership_scan_fail_for_test pattern in envframe_lifetime.ixx
+// (inline atomic bump → caller reads + clears via scan).
+// Under production/Full: scan returns true → caller routes to
+// force_linear_rollback(LinearDensifyRootMismatch) → bumps
+// linear_densify_scan_mismatch_total.
+// Under Soft: scan consumes the inject AND bumps
+// linear_densify_scan_mismatch_observe_total (no force-rollback).
+inline void inject_linear_densify_scan_mismatch_for_test() noexcept {
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.fetch_add(
+        1, std::memory_order_relaxed);
+}
+// Drain helper for tests that want a clean baseline before injecting.
+inline void clear_linear_densify_scan_mismatch_inject_for_test() noexcept {
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+}
+// Read-only peek for tests / chaos harness accounting.
+[[nodiscard]] inline std::uint64_t linear_densify_scan_mismatch_inject_pending() noexcept {
+    return g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
+        std::memory_order_relaxed);
+}
 
 // Ring buffer protected by mutex (writers on mutation path; readers via query).
 struct TypedMutationAuditTrail {

@@ -390,12 +390,13 @@ static void ac2672_source_and_linter() {
     const auto lint =
         read_file("scripts/coverage/checks/check_occurrence_cone_truncate_drift_2672.py");
 
-    // Helper declaration + impl on InferenceEngine + Evaluator wrapper.
+    // Helper declaration + impl on TypeChecker (members live on TypeChecker —
+    // short-lived InferenceEngine accumulates no per-call state) + Evaluator wrapper.
     CHECK(ixx.find("force_partial_cone_truncate_for_test") != std::string::npos,
           "#2672 AC5: type_checker.ixx declares "
-          "InferenceEngine::force_partial_cone_truncate_for_test");
-    CHECK(impl.find("InferenceEngine::force_partial_cone_truncate_for_test") != std::string::npos,
-          "#2672 AC5: type_checker_impl.cpp defines InferenceEngine helper");
+          "TypeChecker::force_partial_cone_truncate_for_test");
+    CHECK(impl.find("TypeChecker::force_partial_cone_truncate_for_test") != std::string::npos,
+          "#2672 AC5: type_checker_impl.cpp defines TypeChecker helper");
     CHECK(impl.find("last_partial_cone_truncated_ = true") != std::string::npos &&
               impl.find("last_partial_cone_dropped_ = dropped_count") != std::string::npos,
           "#2672 AC5: helper sets per-engine state");

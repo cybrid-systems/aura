@@ -1629,18 +1629,6 @@ public:
     std::size_t sync_occurrence_after_dirty(std::span<const aura::ast::NodeId> affected,
                                             const aura::ast::FlatAST* flat = nullptr,
                                             ConstraintSystem* long_lived_cs = nullptr) noexcept;
-    // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
-    // invalidate. Test-only helper — forces the per-engine state that
-    // infer_flat_partial would set when its partial cone is truncated
-    // (last_partial_cone_truncated_ + last_partial_cone_dropped_), and
-    // mirrors to the process-wide atomics via
-    // typed_audit::publish_partial_cone_truncate so #2621
-    // commit_readiness gate sees the truncated state. Hermetic —
-    // no production cost outside test builds. AC1/AC2 path drives the
-    // existing #2646 wiring at infer_flat_partial cone-truncate branch
-    // (type_checker_impl.cpp:8035-8066); AC4 ordering invariant
-    // (outside invalidate AFTER #2622 sync) is preserved unchanged.
-    void force_partial_cone_truncate_for_test(std::uint64_t dropped_count) noexcept;
     [[nodiscard]] std::uint64_t occurrence_memo_goal_diverge_total() const noexcept {
         return occurrence_memo_goal_diverge_total_;
     }
@@ -2579,6 +2567,23 @@ public:
     // Issue #2621: last partial cone truncate (soft/hard overflow #2560).
     bool last_partial_cone_truncated_ = false;
     std::uint64_t last_partial_cone_dropped_ = 0;
+    // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
+    // invalidate. Test-only helper — forces the per-call state that
+    // infer_flat_partial would set when its partial cone is truncated
+    // (last_partial_cone_truncated_ + last_partial_cone_dropped_), and
+    // mirrors to the process-wide atomics via
+    // typed_audit::publish_partial_cone_truncate so #2621
+    // commit_readiness gate sees the truncated state. Hermetic —
+    // no production cost outside test builds. AC1/AC2 path drives the
+    // existing #2646 wiring at infer_flat_partial cone-truncate branch
+    // (type_checker_impl.cpp:8035-8066); AC4 ordering invariant
+    // (outside invalidate AFTER #2622 sync) is preserved unchanged.
+    //
+    // Note: declared on TypeChecker (NOT InferenceEngine) because the
+    // last_partial_cone_* members live on TypeChecker — the engine is
+    // short-lived per infer_flat call, so per-call state is accumulated
+    // on the long-lived TypeChecker for visibility.
+    void force_partial_cone_truncate_for_test(std::uint64_t dropped_count) noexcept;
     // Issue #2460: last infer_flat_partial dirty ownership re-sim failed.
     bool last_partial_linear_revalidate_fail_ = false;
     // Issue #2514: sticky linear-synth hard-fail from last engine life.

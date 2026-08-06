@@ -3414,6 +3414,12 @@ public:
         CrossBatchEscape = 3,
         CrossClosureEscape = 4,        // Issue #2563
         LinearDensifyRootMismatch = 5, // Issue #2642: Phase 5 post-compact linear-root scan
+        // Authority table (AC5 #2673): LinearDensifyRootMismatch is its
+        // own authority, distinct from #2664 CrossBatchEscape (external-
+        // root hard-fail). The two paths fire on different conditions
+        // and bump different counters — #2664 is untracked external
+        // roots (arena.ixx), LinearDensifyRootMismatch is post-compact
+        // linear-root staleness.
     };
     // Pure classify from sticky flags + optional precomputed audit result.
     // When precomputed is non-null, linear_ok / cross_batch_linear_escape
@@ -3437,7 +3443,14 @@ public:
     // LinearDensifyRootMismatch force-rollback under prod/Full, or bumps
     // the observe counter under Soft). Empty dirty / no linear ops →
     // zero cost early-return.
-    [[nodiscard]] bool scan_linear_roots_after_densify() noexcept;
+    //
+    // Issue #2673: linear_ops_present short-circuit (zero-cost under both
+    // Soft and prod/Full when no linear-typed binding / held linear root
+    // exists in the workspace). Under prod/Full, mismatch detected via
+    // inject_linear_densify_scan_mismatch_for_test test seam returns true
+    // → caller forces rollback. Under Soft, scan consumes the inject AND
+    // bumps the observe counter (no force-rollback). AC1/AC2/AC3.
+    [[nodiscard]] bool scan_linear_roots_after_densify(bool linear_ops_present) noexcept;
     // Issue #2642: clear pending flag set by scan_linear_roots_after_densify
     // when LinearDensifyRootMismatch authority fires (force_linear_rollback
     // clears after bumping the counter). Forward-compatible with the full
