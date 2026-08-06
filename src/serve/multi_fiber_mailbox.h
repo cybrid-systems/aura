@@ -148,6 +148,19 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_deferred_flush_latency_us_max{0};    // #2378
     std::atomic<std::uint64_t> mailbox_defer_starvation_total{0};           // #2378
     std::atomic<std::uint64_t> mailbox_deferred_drain_opportunity_total{0}; // #2378
+    // Issue #2680: shared-Evaluator delivery gate — push / broadcast_fanout
+    // defers when the **shared** Evaluator's MutationBoundary is held
+    // (depth>0 || held) by *any* fiber, not just the target fiber. Mirrors
+    // the recv() shared-Evaluator check (multi_fiber_mailbox.h L820-821).
+    // The per-target-fiber check (MutationSafetySnapshot) still fires first
+    // for receiver-state safety; the shared-Evaluator check fires BEFORE
+    // the per-target-fiber check so the receiver never observes a payload
+    // delivered while another fiber on the same Evaluator is mid-mutation.
+    // Sender retries / queues; deferred (not dropped) per AC2.
+    // Happy path (deferred_depth==0): zero cost — one relaxed load + branch.
+    std::atomic<std::uint64_t> mailbox_shared_evaluator_deferred_total{0};              // #2680
+    std::atomic<std::uint64_t> mailbox_shared_evaluator_deferred_hard_total{0};         // #2680
+    std::atomic<std::uint64_t> mailbox_shared_evaluator_deferred_soft_observe_total{0}; // #2680
     // Issue #2511: outermost Guard exit forced deferred drain under budget.
     // hold_exit_drain_total: drain path entered with open depth
     // hold_exit_drain_us_total / max: elapsed under budget
@@ -640,6 +653,37 @@ public:
                 }
             }
         }
+        // Issue #2680: shared-Evaluator delivery gate. If the shared
+        // Evaluator's MutationBoundary is held (depth>0 || held) by ANY
+        // fiber, defer (BP) rather than letting this payload become visible
+        // to a receiver that shares the same Evaluator mid-mutation.
+        // Mirrors the recv() shared-Evaluator check (L820-821). Per AC2,
+        // uses the same authority as steal safety (aura_evaluator_mutation_
+        // boundary_held / depth C ABI hooks wired from #2184/#2188/#2200).
+        // Per AC1: deferred (not dropped) — sender retries / queues.
+        // Per AC4: Soft / sandbox=off still observes via _soft_observe_total.
+        // Per AC6 happy path: zero cost when deferred_depth==0 (one
+        // relaxed load on `mailbox_shared_evaluator_deferred_total` proxy).
+        if (aura_evaluator_mutation_boundary_depth() > 0 ||
+            aura_evaluator_mutation_boundary_held() != 0) {
+            g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.fetch_add(
+                1, std::memory_order_relaxed);
+            local_stats_.mailbox_shared_evaluator_deferred_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (is_mutate_mailbox_strict()) {
+                g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                local_stats_.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                local_stats_.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            note_mailbox_mutation_hold_defer();
+            return PushStatus::Backpressure;
+        }
         if (queue_.size() >= high_water_) {
             note_backpressure(&local_stats_, /*from_fanout=*/false);
             return PushStatus::Backpressure;
@@ -691,6 +735,34 @@ public:
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
+        // Issue #2680: shared-Evaluator delivery gate (fanout variant).
+        // If the shared Evaluator's MutationBoundary is held (depth>0 ||
+        // held) by ANY fiber, defer the ENTIRE fanout — don't partial-
+        // deliver to a subset of attachers while another target on the
+        // shared Evaluator is mid-mutation. Mirrors the recv() L820-821
+        // shared-Evaluator check. Per AC2: same authority as steal safety.
+        // Per AC1: deferred (not dropped) — sender retries / queues.
+        if (aura_evaluator_mutation_boundary_depth() > 0 ||
+            aura_evaluator_mutation_boundary_held() != 0) {
+            g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.fetch_add(
+                1, std::memory_order_relaxed);
+            local_stats_.mailbox_shared_evaluator_deferred_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (is_mutate_mailbox_strict()) {
+                g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                local_stats_.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                local_stats_.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            note_mailbox_mutation_hold_defer();
+            note_backpressure(&local_stats_, /*from_fanout=*/true);
+            return PushStatus::Backpressure;
+        }
         // Issue #2312: per-attached-fiber delivery gate. If ANY attached
         // fiber is unsafe (MutationBoundary held / depth>0), defer the
         // entire fan-out — don't partially deliver mutate-triggering
