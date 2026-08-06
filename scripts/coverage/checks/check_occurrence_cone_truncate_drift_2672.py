@@ -65,26 +65,28 @@ def main() -> int:
     # audit_text + obs_text loaded via must_present which reads files directly
     obs_text = _read("src/compiler/observability_metrics.h")
 
-    # Helper declaration + impl on InferenceEngine (in type_checker.ixx + .cpp).
+    # Helper declaration + impl on TypeChecker (long-lived last_partial_cone_*).
+    # #2672 originally said InferenceEngine; engine is short-lived per infer —
+    # product path is TypeChecker::force_partial_cone_truncate_for_test.
     must_present(
         TC_IXX,
         "force_partial_cone_truncate_for_test",
-        "AC6: type_checker.ixx declares InferenceEngine helper",
+        "AC6: type_checker.ixx declares TypeChecker helper",
     )
     must_present(
         TC_IMPL,
-        "InferenceEngine::force_partial_cone_truncate_for_test",
-        "AC6: type_checker_impl.cpp defines InferenceEngine helper",
+        "TypeChecker::force_partial_cone_truncate_for_test",
+        "AC6: type_checker_impl.cpp defines TypeChecker helper",
     )
     must_present(
         TC_IMPL,
         "last_partial_cone_truncated_ = true",
-        "AC6: helper sets per-engine last_partial_cone_truncated_",
+        "AC6: helper sets last_partial_cone_truncated_",
     )
     must_present(
         TC_IMPL,
         "last_partial_cone_dropped_ = dropped_count",
-        "AC6: helper sets per-engine last_partial_cone_dropped_",
+        "AC6: helper sets last_partial_cone_dropped_",
     )
     must_present(
         TC_IMPL,
