@@ -1083,6 +1083,16 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
             aura::core::resource_quota::Dimension::Mutations, pending_count);
     }
+    // Issue #2686: nested mutate under (eval-current) shared pin — fail closed
+    // before Guard ctor so Agents get a structured error (not partial apply).
+    if (Evaluator::eval_current_holds_shared_pin() &&
+        !(ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0)) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(aura::core::AuraError(
+            aura::core::AuraErrorKind::ResourceQuotaExceeded,
+            std::string("AdmissionRejected: nested-mutate-under-eval-current")));
+    }
     // Construct via private AcquireTag path (quota already checked).
     // GlobalExclusive — no region_key.
     return std::unique_ptr<MutationBoundaryGuard>(
@@ -1096,6 +1106,15 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                                          std::uint64_t pending_count,
                                                          bool* success_flag,
                                                          bool fine_rollback) noexcept {
+    // Issue #2686: same nested-under-eval-current gate as try_acquire.
+    if (Evaluator::eval_current_holds_shared_pin() &&
+        !(ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0)) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(aura::core::AuraError(
+            aura::core::AuraErrorKind::ResourceQuotaExceeded,
+            std::string("AdmissionRejected: nested-mutate-under-eval-current")));
+    }
     // Issue #2587: same throttle gate as try_acquire above (single
     // relaxed load, soft / hard split on production_defaults_active).
     if (aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled()) {
@@ -1241,6 +1260,21 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     if (outermost && region_key.has_value() && ev_->workspace_region_concurrency_enabled()) {
         region_mode_ = true;
         region_shard_ = Evaluator::workspace_region_shard(*region_key);
+    }
+    // Issue #2686: same-thread nested mutate under (eval-current) shared pin
+    // would unique_lock under shared_lock → EDEADLK. Fail-closed so concurrent
+    // fiber rebind remains safe while eval holds the pin for FlatAST walks.
+    if (outermost && Evaluator::eval_current_holds_shared_pin()) {
+        inert_ = true;
+        if (flag_)
+            *flag_ = false;
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Roll back depth bump so yield probes see no held boundary.
+        --(*slot);
+        is_outermost_ = false;
+        return;
     }
     if (outermost) {
         // Issue #1253: start hold-time clock for long-mutation policy.

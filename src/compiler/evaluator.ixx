@@ -12697,6 +12697,13 @@ public:
     // happens at the unique_lock layer.
     static int* mutation_boundary_depth_slot(Evaluator* ev);
 
+    // Issue #2686: TLS depth while (eval-current) holds a shared
+    // WorkspaceFlatPin. Same-thread nested MutationBoundary unique
+    // acquire would EDEADLK under shared — fail-closed instead.
+    static void note_eval_current_shared_enter() noexcept;
+    static void note_eval_current_shared_exit() noexcept;
+    [[nodiscard]] static bool eval_current_holds_shared_pin() noexcept;
+
     // Issue #264: yield-boundary checkpoint handshake (per-fiber
     // stack, stored on Fiber like mutation_stack_storage_).
     void checkpoint_yield_boundary(bool at_mutation_boundary_yield);
