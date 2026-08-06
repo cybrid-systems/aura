@@ -130,8 +130,8 @@ struct MutationSafetySnapshot {
 // check). Zero-cost happy path: a single relaxed load on the deferred
 // counter proxy when deferred_depth==0.
 
-─────────────────────────────────────────
-───── Fiber state ──────────────────────────────────────── enum class FiberState : uint8_t {
+// Fiber state
+enum class FiberState : uint8_t {
     Ready,   // can be scheduled
     Running, // currently executing on a worker
     Waiting, // waiting for eventfd
