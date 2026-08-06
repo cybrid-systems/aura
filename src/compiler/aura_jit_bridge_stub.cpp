@@ -398,6 +398,16 @@ aura_sync_remount_anon_live_closures(std::uint64_t* ok_count, std::uint64_t* fai
     if (fail_count)
         *fail_count = 0;
 }
+// Issue #2691: captured-only anon sync remount weak stub (full impl in
+// aura_jit_runtime.cpp). Light/test bundles link without the production
+// walk.
+extern "C" __attribute__((weak)) void
+aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_count, std::uint64_t* fail_count) {
+    if (ok_count)
+        *ok_count = 0;
+    if (fail_count)
+        *fail_count = 0;
+}
 // Issue #2637: env opt-in flag weak stub (default 0 = off per AC1).
 extern "C" __attribute__((weak)) int aura_sync_remount_anon_enabled_default() {
     return 0;

@@ -60,9 +60,9 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
     if (inconsistent) {
         // Delegate to the existing strong ABI for the force-deopt path.
         // Production strict: must succeed or the existing caller aborts.
-        if (aura_evaluator_on_steal_complete) {
-            aura_evaluator_on_steal_complete(stolen);
-        }
+        // (Strong C-linkage — not a weak function pointer; do not null-check
+        // the address under -Werror=address.)
+        aura_evaluator_on_steal_complete(stolen);
         // After force-deopt, the fiber is no longer enqueue-safe —
         // RejectHard regardless of soft-mode (soft path can't override
         // production force-deopt under the new single-transaction contract).
@@ -70,24 +70,18 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
         return StealSafetyDecision::RejectHard;
     }
 
-    // AC1 step 3 — Residual GcDefer hard-AND == 0 after clear; non-zero
-    // → Cancel+Done. The existing helper force-clears + returns 0 on
-    // success / non-zero on hard-fail.
-    const std::int32_t defer_after = aura::gc_hooks::force_clear_residual_defer_for_evaluator(
-        static_cast<std::uint64_t>(stolen->fiber_id()));
-    if (defer_after != 0) {
-        g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
-        return StealSafetyDecision::RejectHard;
-    }
-
-    // AC1 steps 4-6 — PanicCheckpoint clear + LayoutStamp dual-check +
-    // linear / StableNodeRef provenance probe. The existing
-    // aura_evaluator_on_steal_complete runs these in order. We call it
-    // once here (single-transaction contract — AC5 coverage linter
-    // asserts the call graph).
-    if (aura_evaluator_on_steal_complete) {
-        aura_evaluator_on_steal_complete(stolen);
-    }
+    // AC1 steps 3-6 — Residual GcDefer force-clear (#2314 interlock) +
+    // PanicCheckpoint clear + LayoutStamp dual-check + linear /
+    // StableNodeRef provenance. The strong ABI
+    // aura_evaluator_on_steal_complete (evaluator_fiber_mutation.cpp)
+    // owns the Evaluator* resolution via evaluator_for_scheduler_hooks()
+    // and runs residual clear with the correct evaluator id. serve/
+    // cannot name Evaluator without a module import, so the residual
+    // clear is not re-issued here (would take void* evaluator, not
+    // fiber id — the earlier fiber_id() form was a type error).
+    // Single-transaction contract: one call covers AC1 steps 3-6
+    // (AC5 coverage linter asserts the call graph).
+    aura_evaluator_on_steal_complete(stolen);
 
     // AC1 step 7 — stamp resume_safety_ticket only on Ok path.
     stolen->set_resume_safety_ticket(snap.ticket);

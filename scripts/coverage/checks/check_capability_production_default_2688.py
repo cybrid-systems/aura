@@ -143,11 +143,14 @@ def main() -> int:
     must("issue-2688", "AC6", q)
     must("capability-production-default-armed", "AC6", q)
     # Query surface must use the correct API (not a wrong internal path).
+    # Allow clang-format to break after `g_capability_effect_metrics()` so
+    # the substring check is whitespace-tolerant.
+    q_ws = re.sub(r"\s+", "", q)
     must("g_capability_registry().hard_fiber_isolation", "AC6", q)
     must("g_capability_registry().grant_epoch_retain_window", "AC6", q)
     must("g_capability_registry().grant_min_valid_epoch", "AC6", q)
-    must("g_capability_effect_metrics().capability_epoch_fence_hit_total", "AC6", q)
-    must("g_capability_effect_metrics().capability_fiber_hard_deny_total", "AC6", q)
+    must("g_capability_effect_metrics().capability_epoch_fence_hit_total", "AC6", q_ws)
+    must("g_capability_effect_metrics().capability_fiber_hard_deny_total", "AC6", q_ws)
 
     # AC6 — no docs/design/* per #1655.
     for rel in (

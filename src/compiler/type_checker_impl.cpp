@@ -8078,7 +8078,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             const auto dropped_n = last_partial_cone_dropped();
             if (dropped_n > outside_cone_conds.size()) {
                 const auto silent_n = dropped_n - outside_cone_conds.size();
-                publish_soft_truncated_silent_dep_escalate(silent_n);
+                aura::compiler::typed_audit::publish_soft_truncated_silent_dep_escalate(silent_n);
             }
         }
     }

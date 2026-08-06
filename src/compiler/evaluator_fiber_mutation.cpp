@@ -1087,6 +1087,25 @@ int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
     }
     return &it->second;
 }
+
+// Issue #2686: TLS depth while (eval-current) holds exclusive/shared
+// workspace pin. Nested MutationBoundary unique acquire under this pin
+// fails closed (EDEADLK prevention) — see mutation_boundary try_acquire.
+namespace {
+    thread_local int g_eval_current_shared_pin_depth = 0;
+} // namespace
+
+void Evaluator::note_eval_current_shared_enter() noexcept {
+    ++g_eval_current_shared_pin_depth;
+}
+void Evaluator::note_eval_current_shared_exit() noexcept {
+    if (g_eval_current_shared_pin_depth > 0)
+        --g_eval_current_shared_pin_depth;
+}
+bool Evaluator::eval_current_holds_shared_pin() noexcept {
+    return g_eval_current_shared_pin_depth > 0;
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // Issue #157 Phase 1: yield_mutation_boundary implementation.
 //
