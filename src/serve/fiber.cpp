@@ -345,6 +345,11 @@ bool is_steal_snapshot_hard_abort() noexcept {
 // Issue #2518: if steal stamped resume_safety_ticket_, current even seq must
 // match — Guard enter/exit between sample and resume advances safety_seq_ and
 // is treated as inconsistent (closes the sample→resume window).
+// Issue #2702 AC4: set_resume_safety_ticket is the ONE-AND-ONLY stamping
+// entry-point and is invoked from steal_safety.cpp in the Ok branch of
+// steal_safety_transaction (never on RejectHard). Resume never sees a
+// ticket from a RejectHard path; the read-side clear_resume_safety_ticket
+// calls below keep the ticket one-shot across steals.
 bool Fiber::check_and_enforce_resume_snapshot_invariant() noexcept {
     // Single snapshot sample (happy path: one seqlock read; ticket compare
     // is a plain load of the one-shot flag + field — AC4).
