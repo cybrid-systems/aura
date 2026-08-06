@@ -359,6 +359,28 @@ public:
     // Happy path: one snapshot load (+ ticket compare if set).
     // Tests may call this directly with injected ticket / mirrors.
     [[nodiscard]] bool check_and_enforce_resume_snapshot_invariant() noexcept;
+    // Issue #2677: consolidated resume invariant — single call site from
+    // Fiber::resume. Checks BOTH resume-safety-ticket (via
+    // check_and_enforce_resume_snapshot_invariant) AND LayoutStamp fence
+    // (via aura_evaluator_check_resume_layout_stamp C ABI). Mismatch on
+    // either fails-closed under Hard / bumps mismatch counter under Soft.
+    // Replaces the previous two-fence split (ticket in fiber.cpp,
+    // LayoutStamp in evaluator_fiber_mutation.cpp) and is now the
+    // single resume-time invariant. CLI test override still
+    // `set_steal_snapshot_soft_for_test(true)` keeps Soft ergonomics.
+    [[nodiscard]] bool check_and_enforce_resume_invariants() noexcept;
+    // Issue #2677: per-Fiber static counter for LayoutStamp mismatch on
+    // resume (process-wide aggregate mirrors the per-CompilerMetrics
+    // counter, exposed so primitive query keys can read the global
+    // total without walking fibers). Bumped by
+    // aura_evaluator_check_resume_layout_stamp (strong def in
+    // evaluator_fiber_mutation.cpp) on every fresh-check fail.
+    static void bump_layout_stamp_resume_mismatch() noexcept {
+        layout_stamp_resume_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t layout_stamp_resume_mismatch_total() noexcept {
+        return layout_stamp_resume_mismatch_total_.load(std::memory_order_relaxed);
+    }
 
     // Issue #2118: set when orch agent body soft-registers mutation depth
     // (lightweight; not a full MutationBoundaryGuard — fiber stack limit).
@@ -1006,6 +1028,14 @@ private:
     static std::atomic<std::uint64_t> steal_snapshot_hard_fail_total_;
     // Issue #2518: ticket mismatch total (sample seq ≠ current seq at resume).
     static std::atomic<std::uint64_t> steal_safety_ticket_mismatch_total_;
+    // Issue #2677: LayoutStamp mismatch total (fiber-stored stamp ≠
+    // worker current). Bucketed into the consolidated resume-invariants
+    // check at Fiber::resume (single call site) — bumped by
+    // aura_evaluator_check_resume_layout_stamp (strong def in
+    // evaluator_fiber_mutation.cpp) on every fresh-check fail. Mirror
+    // the per-CompilerMetrics counter so the primitive query surface
+    // can read a process-wide total without walking fibers.
+    static std::atomic<std::uint64_t> layout_stamp_resume_mismatch_total_;
     // Issue #2119: steady-clock ns at last MutationBoundary yield enter.
     std::atomic<std::uint64_t> mb_yield_enter_ns_{0};
     // Issue #2227: back-pointer to owner Scheduler so the orch join

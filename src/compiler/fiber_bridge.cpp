@@ -110,6 +110,15 @@ aura_force_deopt_on_steal_snapshot_mismatch(void* /*fiber_ptr*/) noexcept {
 __attribute__((weak)) void aura_evaluator_bump_steal_deferred_violation() {}
 __attribute__((weak)) void aura_evaluator_bump_mutation_steal_attempt() {}
 __attribute__((weak)) void aura_evaluator_resume_fiber_migration() {}
+// Issue #2677: LayoutStamp resume check (weak no-op for light link units).
+// Strong def in evaluator_fiber_mutation.cpp compares fiber-stored
+// LayoutStamp against worker-side Evaluator::current_layout_stamp() and
+// bumps per-CompilerMetrics + Fiber::bump_layout_stamp_resume_mismatch
+// on mismatch. Returns 0 = fresh / 1 = mismatch (already counted).
+__attribute__((weak, used)) int
+aura_evaluator_check_resume_layout_stamp(void* /*fiber_ptr*/) noexcept {
+    return 0; // no evaluator → always fresh
+}
 // Issue #1490: post-yield EnvFrame/bridge_epoch refresh (strong def in
 // evaluator_fiber_mutation.cpp).
 __attribute__((weak, used)) void aura_evaluator_post_resume_refresh() {}
