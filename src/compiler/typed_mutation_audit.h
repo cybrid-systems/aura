@@ -858,6 +858,8 @@ inline void clear_type_linear_commit_proof_for_test() noexcept {
         return 9; // #2621
     if (r == "cone_outside_goal_drop")
         return 10; // #2703
+    if (r == "occurrence_empty_after_fence")
+        return 11; // #2704
     if (r == "auto_partial")
         return 6; // #2610
     if (r == "empty_cs")
@@ -1758,6 +1760,39 @@ inline constexpr int kConeOutsideGoalDropIssue = 2703;
 inline void clear_cone_outside_goal_drop_for_test() noexcept {
     g_cone_outside_goal_drop_total.store(0, std::memory_order_relaxed);
     g_cone_outside_goal_drop_soft_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2704: production hard-face on OccurrenceGoal rehydrate miss after
+// steal / densify fence. TypeChecker::note_steal_or_densify_epoch_fence
+// advances cache epoch + prunes stale OccurrenceGoals + attempts
+// rehydrate_occurrence_from_persist. When rehydrate returns 0 under
+// production (persist enabled but buffer empty / wrong mid / no prior
+// snapshot), the code only bumps occurrence_persist_rehydrate_miss_total
+// and continues. After steal / Moving densify, live occurrence priority
+// roots can be empty while Agents still see a green commit path.
+// This issue surfaces the distinct force_reason
+// "occurrence_empty_after_fence" (code 11) and bumps
+// g_occurrence_empty_after_fence_total. Soft path bumps counter only;
+// production path hard-rejects commit (no silent allow).
+inline std::atomic<std::uint64_t> g_occurrence_empty_after_fence_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_empty_after_fence_soft_total{0};
+inline std::atomic<std::uint32_t> g_occurrence_empty_after_fence_wired{1};
+inline constexpr int kOccurrenceEmptyAfterFenceIssue = 2704;
+
+[[nodiscard]] inline std::uint64_t occurrence_empty_after_fence_total_v_read() noexcept {
+    return g_occurrence_empty_after_fence_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_empty_after_fence_soft_total_v_read() noexcept {
+    return g_occurrence_empty_after_fence_soft_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t occurrence_empty_after_fence_wired_v_read() noexcept {
+    return g_occurrence_empty_after_fence_wired.load(std::memory_order_relaxed);
+}
+
+// Test reset.
+inline void clear_occurrence_empty_after_fence_for_test() noexcept {
+    g_occurrence_empty_after_fence_total.store(0, std::memory_order_relaxed);
+    g_occurrence_empty_after_fence_soft_total.store(0, std::memory_order_relaxed);
 }
 
 } // namespace aura::compiler::typed_audit
