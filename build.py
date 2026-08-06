@@ -4147,6 +4147,31 @@ def cmd_moving_unified_success_2682_coverage():
     return 0
 
 
+def cmd_shape_storm_isolation_2683_coverage():
+    """Issue #2683: production default PerEval deopt-storm isolation.
+
+    Storm enter isolates only the evaluating context's SpecJIT / profile
+    versioning; process-global shape_version advances only for explicit
+    hard fences that must be process-wide. Concurrent evals under
+    HighMutation no longer cross-invalidate solely due to peer storm enter.
+    Env override AURA_SHAPE_STORM_ISOLATION=global restores legacy
+    process-global bump for experiments; default production = per-eval.
+    Additive observability: shape-storm-per-eval-isolations-total +
+    shape-storm-global-bump-total + schema-2683.
+    """
+    print(f"{B}=== shape storm PerEval isolation coverage (#2683) ==={N}")
+    script = COVERAGE_CHECKS / "check_shape_storm_isolation_2683.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("shape storm PerEval isolation (#2683) coverage contract rows failed")
+        return 1
+    ok("shape storm PerEval isolation (#2683) coverage clean")
+    return 0
+
+
 def cmd_workspace_mtx_contention_coverage():
     """Issue #2523: residual workspace_mtx contention stats + soft path.
 
@@ -8207,6 +8232,7 @@ def cmd_gate():
         or cmd_batch_dirty_cascade_coverage()
         or cmd_batch_dirty_discipline_coverage()
         or cmd_moving_unified_success_2682_coverage()
+        or cmd_shape_storm_isolation_2683_coverage()
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
         or cmd_query_hygiene_default_coverage()
@@ -9206,6 +9232,7 @@ def main():
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
         "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
+        "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

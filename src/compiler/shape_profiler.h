@@ -151,6 +151,27 @@ inline std::atomic<std::uint64_t>& g_deopt_storm_adaptive_enter_total_atomic() n
     return v;
 }
 
+// Issue #2683: per-eval isolations counter. Bumped on storm enter under
+// production default StormIsolation::PerEval (no process-global shape_version
+// bump; concurrent evals keep their own LayoutStamp.shape_version + SpecJIT
+// isolation epoch).
+inline std::atomic<std::uint64_t>& g_shape_storm_per_eval_isolations_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+// Issue #2683: process-global shape_version bump counter. Stays 0 under
+// production default (PerEval). Only bumps when AURA_SHAPE_STORM_ISOLATION=global
+// restores the legacy process-global bump path for experiments / soak tests.
+// Documented allow-list call sites must keep this 0 in production.
+inline std::atomic<std::uint64_t>& g_shape_storm_global_bump_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+// Issue #2683: production default PerEval sentinel + env override path.
+inline constexpr int kShapeStormPerEvalDefaultIssue = 2683;
+
 class ShapeProfiler {
 public:
     ShapeProfiler();

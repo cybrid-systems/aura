@@ -24,7 +24,15 @@
 // the full serve; strong defs in hot_update_registry.cpp win in
 // production binaries (no circular module include from this TU).
 extern "C" __attribute__((weak)) int aura_get_storm_isolation_mode(void) noexcept {
-    return 0; // StormIsolation::Global
+    // Issue #2683: production default = PerEval (2) so concurrent evals under
+    // HighMutation preset no longer cross-invalidate via process-global
+    // shape_version bump. Env override AURA_SHAPE_STORM_ISOLATION=global
+    // restores the legacy process-global bump for experiments / soak tests.
+    if (const char* e = std::getenv("AURA_SHAPE_STORM_ISOLATION")) {
+        if (e[0] == 'g' || e[0] == 'G')
+            return 0; // StormIsolation::Global (legacy)
+    }
+    return 2; // StormIsolation::PerEval (production default per #2683)
 }
 // Issue #2433: publish ShapeProfiler storm into HotUpdateRegistry so
 // StormLevel Shape bit + SpecJIT conservative gate observe isolation
@@ -843,9 +851,21 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
         g_deopt_storm_isolations_total_atomic().fetch_add(1, std::memory_order_relaxed);
         g_shape_storm_force_reason_atomic().store(kShapeStormForceReasonThreshold,
                                                   std::memory_order_release);
-        // StormIsolation::PerEval = 2 (hot_update_registry.hh).
-        if (aura_get_storm_isolation_mode() != 2)
+        // Issue #2683: production default = PerEval (2). Under PerEval, do
+        // NOT bump process-global shape_version — concurrent evals keep
+        // their own LayoutStamp.shape_version / SpecJIT isolation epoch.
+        // Env override AURA_SHAPE_STORM_ISOLATION=global restores the legacy
+        // process-global bump path for experiments. Bump per-eval + global
+        // counters here regardless of mode so Agent dashboards distinguish.
+        const int iso_mode = aura_get_storm_isolation_mode();
+        if (iso_mode == 2) {
+            // PerEval: bump per-eval counter, do NOT touch process-global.
+            g_shape_storm_per_eval_isolations_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        } else {
+            // Global (or any non-PerEval mode): bump process-global shape_version.
             bump_shape_version_on_storm_enter();
+            g_shape_storm_global_bump_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        }
         g_shape_version_at_storm_atomic().store(current_global_shape_version(),
                                                 std::memory_order_release);
         aura_hot_update_set_shape_storm_active(1);
