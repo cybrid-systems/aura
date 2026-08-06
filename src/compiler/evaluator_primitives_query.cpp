@@ -6532,6 +6532,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                     insert_kv("cone-outside-goal-drop-wired", wired);
                                     insert_kv("schema-2703", 2703);
                                     insert_kv("issue-2703", 2703);
+                                    // Issue #2704: query:occurrence-empty-after-fence —
+                                    // Agent-visible production hard-face surface. Soft / sandbox
+                                    // observes only; production hard-rejects commit when
+                                    // steal/densify fence drops OccurrenceGoals + rehydrate returns
+                                    // 0 (empty priority roots). Additive — no replacement of #2608
+                                    // / #2641 / #2552 / #2622 / #2672 surfaces.
+                                    {
+                                        const auto hard = static_cast<std::int64_t>(
+                                            occurrence_empty_after_fence_total_v_read());
+                                        const auto soft = static_cast<std::int64_t>(
+                                            occurrence_empty_after_fence_soft_total_v_read());
+                                        const auto wired = static_cast<std::int64_t>(
+                                            occurrence_empty_after_fence_wired_v_read());
+                                        insert_kv("occurrence-empty-after-fence-total", hard);
+                                        insert_kv("occurrence-empty-after-fence-soft-total", soft);
+                                        insert_kv("occurrence-empty-after-fence-wired", wired);
+                                        insert_kv("schema-2704", 2704);
+                                        insert_kv("issue-2704", 2704);
+                                    }
                                 }
                             }
                         }

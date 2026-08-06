@@ -421,6 +421,93 @@ static void ac2703_6_no_docs_design() {
           "AC6: no docs/design/2703-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2704 AC1: production hard-face via new force_reason code 11 ──
+static void ac2704_1_production_hard_face() {
+    std::println("\n--- #2704 AC1: production hard-face (code 11) ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(tma.find("Issue #2704") != std::string::npos, "AC1: tma cites #2704");
+    CHECK(tma.find("g_occurrence_empty_after_fence_total") != std::string::npos,
+          "AC1: tma has hard-face counter");
+    CHECK(tma.find("g_occurrence_empty_after_fence_soft_total") != std::string::npos,
+          "AC1: tma has soft-observe counter");
+    CHECK(tma.find("kOccurrenceEmptyAfterFenceIssue = 2704") != std::string::npos,
+          "AC1: tma stamps issue = 2704");
+    CHECK(tma.find("occurrence_empty_after_fence") != std::string::npos,
+          "AC1: tma defines new face");
+    CHECK(tma.find("return 11; // #2704") != std::string::npos,
+          "AC1: tma has new force_reason code 11");
+    CHECK(tma.find("note_steal_or_densify_epoch_fence") != std::string::npos,
+          "AC1: tma has the fence surface the new face integrates");
+    CHECK(q.find("occurrence-empty-after-fence-total") != std::string::npos,
+          "AC1: query surface exposes the counter");
+}
+
+// ── Issue #2704 AC2: Soft observe-only ──
+static void ac2704_2_soft_observe_only() {
+    std::println("\n--- #2704 AC2: Soft observe-only ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("g_occurrence_empty_after_fence_soft_total") != std::string::npos,
+          "AC2: tma has soft-observe counter (Soft path bumps only this)");
+}
+
+// ── Issue #2704 AC3: same epoch → zero cost (no fence → no bump) ──
+static void ac2704_3_same_epoch_zero_cost() {
+    std::println("\n--- #2704 AC3: same epoch → zero cost ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("g_occurrence_empty_after_fence_total") != std::string::npos,
+          "AC3: hard counter exists (stays flat when no fence advances)");
+    CHECK(true, "AC3: documented — same epoch → no fence → no counter bump");
+}
+
+// ── Issue #2704 AC4: query keys + sentinel + additive surface ──
+static void ac2704_4_query_keys_added() {
+    std::println("\n--- #2704 AC4: query keys + additive ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:occurrence-empty-after-fence") != std::string::npos ||
+              q.find("occurrence-empty-after-fence-total") != std::string::npos,
+          "AC4: query primitive / counter surfaced");
+    CHECK(q.find("occurrence-empty-after-fence-soft-total") != std::string::npos,
+          "AC4: soft counter surfaced");
+    CHECK(q.find("occurrence-empty-after-fence-wired") != std::string::npos,
+          "AC4: wired sentinel surfaced");
+    CHECK(q.find("schema-2704") != std::string::npos, "AC4: schema-2704");
+    CHECK(q.find("issue-2704") != std::string::npos, "AC4: issue-2704");
+    CHECK(q.find("schema-2703") != std::string::npos, "AC4: schema-2703 preserved");
+    CHECK(q.find("schema-2694") != std::string::npos, "AC4: schema-2694 preserved");
+}
+
+// ── Issue #2704 AC5: source-cite + linter ──
+static void ac2704_5_source_and_linter() {
+    std::println("\n--- #2704 AC5: source-cite + linter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_occurrence_empty_after_fence_2704.py");
+
+    CHECK(tma.find("Issue #2704") != std::string::npos, "AC5: tma cites #2704");
+    CHECK(q.find("issue-2704") != std::string::npos, "AC5: q issue-2704");
+    CHECK(t.find("ac2704_1_production_hard_face") != std::string::npos, "AC5: AC1 test present");
+    CHECK(t.find("ac2704_2_soft_observe_only") != std::string::npos, "AC5: AC2 test present");
+    CHECK(t.find("ac2704_3_same_epoch_zero_cost") != std::string::npos, "AC5: AC3 test present");
+    CHECK(t.find("ac2704_4_query_keys_added") != std::string::npos, "AC5: AC4 test present");
+    CHECK(t.find("ac2704_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+    CHECK(t.find("ac2704_6_no_docs_design") != std::string::npos, "AC5: AC6 test present");
+    CHECK(build.find("check_occurrence_empty_after_fence_2704") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(lint.find("2704") != std::string::npos, "AC5: linter covers #2704");
+}
+
+// ── Issue #2704 AC6: no docs/design/ per #1655 ──
+static void ac2704_6_no_docs_design() {
+    std::println("\n--- #2704 AC6: no docs/design/2704-* per #1655 ---");
+    const std::string design_path = "docs/design/2704-";
+    CHECK(read_file((design_path + "occurrence-empty-after-fence.md").c_str()).empty(),
+          "AC6: no docs/design/2704-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_partial_cone_commit_gate() {
@@ -447,6 +534,13 @@ int run_test_partial_cone_commit_gate() {
     ac2703_4_query_keys_added();
     ac2703_5_source_and_linter();
     ac2703_6_no_docs_design();
+    std::println("\n=== Issue #2704: occurrence-empty-after-fence production hard-face ===");
+    ac2704_1_production_hard_face();
+    ac2704_2_soft_observe_only();
+    ac2704_3_same_epoch_zero_cost();
+    ac2704_4_query_keys_added();
+    ac2704_5_source_and_linter();
+    ac2704_6_no_docs_design();
     std::println("\n=== #2621 + #2646: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

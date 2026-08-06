@@ -533,6 +533,22 @@ def cmd_lint():
             "Issue #2703 cone-outside-goal-drop linter failed — run python3 scripts/coverage/checks/check_cone_outside_goal_drop_2703.py"
         )
         return r
+    # Issue #2704: production hard-face on OccurrenceGoal rehydrate miss
+    # after steal/densify fence. Wires
+    # check_occurrence_empty_after_fence_2704.py so the new force_reason
+    # code 11 + Soft/Production routing + additive query surface stays
+    # enforced. Builds on #2608 persist + #2641 rehydrate + #2552 epoch
+    # fence + #2622 outside invalidate.
+    oeaf_script = COVERAGE_CHECKS / "check_occurrence_empty_after_fence_2704.py"
+    if not oeaf_script.exists():
+        fail(f"missing {oeaf_script}")
+        return 1
+    r = run([sys.executable, str(oeaf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2704 occurrence-empty-after-fence linter failed — run python3 scripts/coverage/checks/check_occurrence_empty_after_fence_2704.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
