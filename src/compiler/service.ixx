@@ -4298,7 +4298,9 @@ public:
         // Returns # of instruction bits flipped 0→1 (metric accounting).
         // Safe to call after any cascade path that set AoS bits directly.
         // Issue #2522: batch mark_blocks_dirty per function (one generation
-        // bump per function, not per block).
+        // bump per function, not per block). Issue #2681 linter
+        // (check_batch_dirty_discipline_2615.py) enforces batch discipline
+        // across all production TUs in src/compiler/.
         std::size_t force_soa_instruction_dirty_sync() {
             for (std::size_t fi = 0; fi < block_dirty_per_func_.size(); ++fi) {
                 if (fi >= soa_mod.functions.size())

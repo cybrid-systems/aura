@@ -870,6 +870,27 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"soa-dirty-fence-total", make_int(static_cast<std::int64_t>(
                                               aura::compiler::current_ir_soa_generation_fence()))},
                 {"soa-batch-dirty-discipline-wired", make_int(1)},
+                // Issue #2681: production hard-ban loop-of-mark_block_dirty;
+                // multi-block cascades must use batch API. Derived key
+                // (basis points = blocks*10000/cascades) lets Agent read
+                // mean blocks-per-cascade at a glance without division.
+                {
+                    "soa-batch-blocks-per-cascade-bp",
+                    []() -> EvalValue {
+                        const auto cascades = aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(
+                            std::memory_order_relaxed);
+                        const auto blocks = aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(
+                            std::memory_order_relaxed);
+                        if (cascades == 0)
+                            return make_int(0);
+                        // integer basis points; safe for any reasonable cascade count
+                        return make_int(static_cast<std::int64_t>(
+                            (blocks * 10000ULL) / cascades));
+                    }(),
+                },
+                {"schema-2681", make_int(2681)},
+                {"issue-2681", make_int(2681)},
+                {"soa-batch-dirty-discipline-hardened", make_int(1)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},

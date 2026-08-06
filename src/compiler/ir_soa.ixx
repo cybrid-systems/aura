@@ -313,7 +313,11 @@ export struct IRFunctionSoA {
     // a full invalidate). Cheaper than a loop of individual
     // mark_block_dirty() calls. Also marks all instructions
     // dirty (cascade). Issue #2522: bulk fill + single bump
-    // (no double-bump / no per-block fence).
+    // (no double-bump / no per-block fence). Issue #2681:
+    // bulk-fill + single bump is the canonical full-function
+    // dirty (vs. multi-block mark_blocks_dirty batches). No
+    // regression — AC4 of #2681 lints this body has exactly
+    // one bump_generation() call.
     void mark_all_blocks_dirty() {
         std::fill(block_dirty_.begin(), block_dirty_.end(), std::uint8_t{1});
         // Issue #380: cascade the all-blocks invalidate to all

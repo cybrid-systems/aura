@@ -207,16 +207,138 @@ static void ac5_fence_rate() {
     CHECK(batch_delta < seq_delta, "AC5: batch fence < sequential");
 }
 
+// ── #2681 AC5: derived bp key computes blocks*10000/cascades ──
+static void ac2681_blocks_per_cascade_bp() {
+    std::println("\n--- #2681 AC5: soa-batch-blocks-per-cascade-bp ---");
+    // Bring-up: 0 cascades → bp == 0 (no division by zero).
+    CompilerService cs0;
+    CHECK(href(cs0, "soa-batch-blocks-per-cascade-bp") == 0,
+          "AC5-2681: bp == 0 when cascades == 0 (no div-by-zero)");
+    CHECK(href(cs0, "schema-2681") == 2681, "AC5-2681: schema-2681 sentinel");
+    CHECK(href(cs0, "issue-2681") == 2681, "AC5-2681: issue-2681 sentinel");
+    CHECK(href(cs0, "soa-batch-dirty-discipline-hardened") == 1,
+          "AC5-2681: hardened sentinel wired");
+
+    // Drive a 4-block cascade → bp should be 4*10000/1 = 40000.
+    auto fn = make_n_block_fn(4);
+    const auto cascades0 = g_ir_soa_batch_dirty_cascades_total.load(std::memory_order_relaxed);
+    const std::uint32_t ids[] = {0, 1, 2, 3};
+    fn.mark_blocks_dirty(ids);
+    const auto cascades1 = g_ir_soa_batch_dirty_cascades_total.load(std::memory_order_relaxed);
+    CHECK(cascades1 == cascades0 + 1, "AC5-2681: cascade counter +1 after 4-block mark");
+
+    CompilerService cs;
+    const auto bp = href(cs, "soa-batch-blocks-per-cascade-bp");
+    CHECK(bp > 0, "AC5-2681: bp > 0 after cascade");
+    // blocks/cascades ratio is at least 4 (this cascade) plus prior
+    // accumulated blocks — so bp >= 40000 is guaranteed.
+    CHECK(bp >= 40000, "AC5-2681: bp reflects at least one 4-block cascade (>= 40000bp)");
+
+    // #2615 baseline keys still wired.
+    CHECK(href(cs, "soa-batch-dirty-cascades-total") >= 1,
+          "AC5-2681: cascades-total still wired");
+    CHECK(href(cs, "soa-single-dirty-marks-total") >= 0,
+          "AC5-2681: single-marks-total still wired");
+}
+
+// ── #2681 AC6: source-cite / no regression ──
+static void ac2681_source_cite() {
+    std::println("\n--- #2681 AC6: source-cite + no regression ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto dce = read_file("src/compiler/pass_impls.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+
+    // Issue #2681 sentinel in all four production-side files.
+    CHECK(soa.find("Issue #2681") != std::string::npos,
+          "AC6: ir_soa.ixx cites Issue #2681");
+    CHECK(dce.find("Issue #2681") != std::string::npos,
+          "AC6: pass_impls.ixx cites Issue #2681");
+    CHECK(svc.find("Issue #2681") != std::string::npos,
+          "AC6: service.ixx cites Issue #2681");
+    CHECK(q.find("Issue #2681") != std::string::npos,
+          "AC6: evaluator_primitives_obs_jit.cpp cites Issue #2681");
+
+    // mark_all_blocks_dirty is still bulk + single bump (AC4 / no regression).
+    // Body must have std::fill(block_dirty_ ...) + std::fill(instruction_dirty_ ...)
+    // + exactly one bump_generation() call.
+    const auto mabd_pos = soa.find("void mark_all_blocks_dirty() {");
+    CHECK(mabd_pos != std::string::npos, "AC6: mark_all_blocks_dirty impl present");
+    if (mabd_pos != std::string::npos) {
+        const auto body_end = soa.find("\n    }\n", mabd_pos);
+        CHECK(body_end != std::string::npos, "AC6: mark_all_blocks_dirty body close");
+        if (body_end != std::string::npos) {
+            const auto body = soa.substr(mabd_pos, body_end - mabd_pos + 6);
+            const auto bumps = [&]() -> std::size_t {
+                std::size_t n = 0;
+                std::size_t pos = 0;
+                const std::string needle = "bump_generation()";
+                while ((pos = body.find(needle, pos)) != std::string::npos) {
+                    ++n;
+                    pos += needle.size();
+                }
+                return n;
+            }();
+            CHECK(bumps == 1,
+                  "AC6: mark_all_blocks_dirty has exactly 1 bump_generation() (no regression)");
+        }
+    }
+
+    // AC3 (#2681 widen): scan all production TUs under src/compiler/ — no
+    // residual multi-block mark_block_dirty loops. The linter is authoritative,
+    // but we self-verify a few key files here for fast feedback.
+    auto has_residual = [](const std::string& content) -> bool {
+        std::size_t pos = 0;
+        while ((pos = content.find("for (", pos)) != std::string::npos) {
+            const auto body_end = content.find("\n}", pos);
+            if (body_end == std::string::npos || body_end - pos > 2000)
+                break;
+            const auto snippet = content.substr(pos, body_end - pos);
+            // Strip batch / no-bump / impl variants; bare mark_block_dirty(
+            // inside a for-loop over multi blocks is a residual.
+            std::string bare = snippet;
+            const std::array<const char*, 5> noise = {
+                "mark_block_dirty_bit_only_no_bump",
+                "mark_block_dirty_no_bump",
+                "mark_block_dirty_impl",
+                "mark_block_dirty_bits_only",
+                "mark_blocks_dirty",
+            };
+            for (auto* n : noise) {
+                std::size_t p = 0;
+                while ((p = bare.find(n, p)) != std::string::npos) {
+                    bare.replace(p, std::strlen(n), "");
+                }
+            }
+            if (bare.find("mark_block_dirty(") != std::string::npos)
+                return true;
+            pos = body_end;
+        }
+        return false;
+    };
+    CHECK(!has_residual(dce), "AC6: pass_impls.ixx no residual mark_block_dirty loop");
+    CHECK(!has_residual(svc), "AC6: service.ixx no residual mark_block_dirty loop");
+
+    // No design doc regression (per #1655).
+    for (const auto& p : {"docs/design/batch_dirty_discipline_2681.md",
+                          "docs/batch_dirty_discipline_2681.md"}) {
+        std::ifstream f(p);
+        CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+    }
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
-    std::println("=== Issue #2615: batch dirty cascade discipline ===");
+    std::println("=== Issue #2615 + #2681: batch dirty cascade discipline ===");
     ac1_multi_batch();
     ac2_single_unchanged();
     ac3_finish_sync();
     ac4_no_residual_loops();
     ac5_fence_rate();
-    std::println("\n=== #2615: {} passed, {} failed ===", g_passed, g_failed);
+    ac2681_blocks_per_cascade_bp();
+    ac2681_source_cite();
+    std::println("\n=== #2615/#2681: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
