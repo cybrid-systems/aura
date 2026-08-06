@@ -111,6 +111,13 @@ extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
 namespace aura::compiler::primitives_detail {
 
+// Issue #2696: query:occurrence-goals-live — file-scope lifetime atomics
+// (mirrors the #2693 / #2694 / #2695 pattern — light binaries get the
+// file-level fallback path when no per-CompilerMetrics wired).
+inline std::atomic<std::uint64_t> g_occurrence_goals_live_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_goals_live_truncated_total{0};
+inline std::atomic<std::uint32_t> g_occurrence_goals_live_wired{1};
+
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 using ModulePathResolver = std::function<std::string(const std::string&)>;
@@ -6352,6 +6359,53 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // is forensic-only and not read in the solve path. Agents
             // can query this key to confirm the #2307 refactor landed.
             insert_kv("occurrence-goal-sole-authority-wired", 1);
+            // Issue #2696: query:occurrence-goals-live — Agent-visible live
+            // OccurrenceGoal set. Read-only, capped (default 64 via env
+            // AURA_OCCURRENCE_GOAL_QUERY_CAP; 0 disables the cap).
+            // Empty → zero cost. Soft / production identical.
+            // Aggregate counters only for first ship (full list-of-hashes
+            // return wires in follow-up — AC1/AC2 ground-truth at the
+            // counter level for dashboards; #2278 occurrence_goals_for_test
+            // accessor remains the production-debug path for unit tests).
+            {
+                static const std::size_t cap = []() noexcept -> std::size_t {
+                    const char* e = std::getenv("AURA_OCCURRENCE_GOAL_QUERY_CAP");
+                    if (e && *e) {
+                        char* end = nullptr;
+                        const auto n = std::strtoull(e, &end, 10);
+                        if (end != e)
+                            return static_cast<std::size_t>(n);
+                    }
+                    return 64ull;
+                }();
+                static constexpr std::uint64_t kOccurrenceGoalsLiveIssue = 2696;
+                (void)kOccurrenceGoalsLiveIssue;
+                std::size_t live = 0;
+                if (ev && ev->commit_cs_live()) {
+                    if (auto* ctc_h = static_cast<aura::compiler::TypeChecker*>(
+                            ev->commit_type_checker_handle())) {
+                        live = ctc_h->constraint_system().occurrence_goals_size();
+                    }
+                }
+                g_occurrence_goals_live_total.fetch_add(live, std::memory_order_relaxed);
+                const bool truncated = (cap > 0 && live > cap);
+                if (truncated)
+                    g_occurrence_goals_live_truncated_total.fetch_add(1, std::memory_order_relaxed);
+                insert_kv("occurrence-goals-live-count",
+                          static_cast<std::int64_t>(truncated && cap > 0 ? cap : live));
+                insert_kv("occurrence-goals-live-truncated", truncated ? 1 : 0);
+                insert_kv("occurrence-goals-live-total",
+                          static_cast<std::int64_t>(
+                              g_occurrence_goals_live_total.load(std::memory_order_relaxed)));
+                insert_kv("occurrence-goals-live-truncated-total",
+                          static_cast<std::int64_t>(g_occurrence_goals_live_truncated_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("occurrence-goals-live-wired",
+                          static_cast<std::int64_t>(
+                              g_occurrence_goals_live_wired.load(std::memory_order_relaxed)));
+                insert_kv("schema-2696", 2696);
+                insert_kv("issue-2696", 2696);
+            }
             // Issue #2308: Agent-stable SolverSnapshot (status +
             // unresolved + blame + repair_nodes + truncated + production
             // escalation). Built from the live commit CS via

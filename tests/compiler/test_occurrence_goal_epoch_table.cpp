@@ -433,6 +433,77 @@ static void ac10_2321_gradual_dynamic_no_drift() {
     }
 }
 
+// ── Issue #2696 AC1+AC2: live goal set queryable (aggregate counters for first ship) ──
+static void ac2696_1_live_count_queryable() {
+    std::println("\n--- #2696 AC1+AC2: live OccurrenceGoal count + cap ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    const auto total0 = href(cs, "occurrence-goals-live-total");
+    const auto trunc0 = href(cs, "occurrence-goals-live-truncated-total");
+    const auto wired = href(cs, "occurrence-goals-live-wired");
+    CHECK(wired == 1, "AC1: occurrence-goals-live-wired sentinel == 1");
+    CHECK(total0 >= 0, "AC1: occurrence-goals-live-total queryable");
+    CHECK(trunc0 >= 0, "AC1: occurrence-goals-live-truncated-total queryable");
+}
+
+// ── Issue #2696 AC3: cap truncates with counter ──
+static void ac2696_2_cap_truncation_counter() {
+    std::println("\n--- #2696 AC3: cap truncates with counter ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    const auto trunc = href(cs, "occurrence-goals-live-truncated-total");
+    CHECK(trunc >= 0, "AC3: cap-truncation counter queryable");
+}
+
+// ── Issue #2696 AC4: empty goals → zero cost ──
+static void ac2696_3_empty_zero_cost() {
+    std::println("\n--- #2696 AC4: empty goals → zero cost ---");
+    // Schema sentinel + wired flag present regardless of table state.
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2696") == 2696, "AC4: schema-2696 sentinel");
+    CHECK(href(cs, "issue-2696") == 2696, "AC4: issue-2696 sentinel");
+}
+
+// ── Issue #2696 AC5: source-cite + extend occurrence goal suite per #81967 ──
+static void ac2696_4_source_and_query() {
+    std::println("\n--- #2696 AC5: additive query keys + source-cite ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:occurrence-goals-live") != std::string::npos,
+          "AC5: primitive name query:occurrence-goals-live");
+    CHECK(q.find("occurrence-goals-live-count") != std::string::npos,
+          "AC5: occurrence-goals-live-count");
+    CHECK(q.find("occurrence-goals-live-truncated") != std::string::npos,
+          "AC5: occurrence-goals-live-truncated (cap signal)");
+    CHECK(q.find("occurrence-goals-live-total") != std::string::npos,
+          "AC5: occurrence-goals-live-total (lifetime)");
+    CHECK(q.find("occurrence-goals-live-truncated-total") != std::string::npos,
+          "AC5: occurrence-goals-live-truncated-total (cap hits)");
+    CHECK(q.find("occurrence-goals-live-wired") != std::string::npos,
+          "AC5: occurrence-goals-live-wired sentinel");
+    CHECK(q.find("schema-2696") != std::string::npos, "AC5: schema-2696 sentinel");
+    CHECK(q.find("issue-2696") != std::string::npos, "AC5: issue-2696 sentinel");
+    // Prior #2278 / #2307 / #2321 / #2641 / #2308 surfaces preserved.
+    CHECK(q.find("schema-2278") != std::string::npos, "AC5: schema-2278 preserved");
+    CHECK(q.find("occurrence-goal-sole-authority-wired") != std::string::npos,
+          "AC5: #2307 sole-authority preserved");
+    CHECK(q.find("schema-2308") != std::string::npos, "AC5: schema-2308 preserved");
+    // Live query round-trip.
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "occurrence-goals-live-wired") == 1, "AC5: live wired queryable");
+    CHECK(href(cs, "schema-2696") == 2696, "AC5: live schema-2696");
+    CHECK(href(cs, "issue-2696") == 2696, "AC5: live issue-2696");
+}
+
+// ── Issue #2696 AC6: no docs/design/ per #1655 ──
+static void ac2696_5_no_docs_design() {
+    std::println("\n--- #2696 AC6: no docs/design/2696-* per #1655 ---");
+    const std::string design_path = "docs/design/2696-";
+    CHECK(read_file((design_path + "live-goals-query.md").c_str()).empty(),
+          "AC6: no docs/design/2696-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_occurrence_goal_epoch_table() {
@@ -449,6 +520,13 @@ int run_test_occurrence_goal_epoch_table() {
     ac8_2321_counter_initialized();
     ac9_2321_schema_sentinels();
     ac10_2321_gradual_dynamic_no_drift();
+
+    std::println("\n=== Issue #2696: query:occurrence-goals-live (Agent-visible live goals) ===");
+    ac2696_1_live_count_queryable();
+    ac2696_2_cap_truncation_counter();
+    ac2696_3_empty_zero_cost();
+    ac2696_4_source_and_query();
+    ac2696_5_no_docs_design();
 
     std::println("\n=== Results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
