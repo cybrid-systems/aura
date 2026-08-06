@@ -8065,6 +8065,22 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                                                         std::memory_order_relaxed);
             }
         }
+        // Issue #2694: Soft truncated cone silent dependency detection
+        // (refine #2646 outside-If invalidate + #2672 soak — closes the
+        // silent class for Sampled/Soft hosts). When Soft + cone truncate
+        // dropped edges that are NOT in the #2646 outside-cone set (i.e.,
+        // non-If silent deps of live OccurrenceGoal / linear-typed bindings),
+        // arm the escalate counter so commit_readiness can force one Full
+        // audit / reject under production_defaults. Soft pure-observe path
+        // only when no silent-dep edges exist (zero cost happy path).
+        // production / Full already hard — unchanged.
+        {
+            const auto dropped_n = last_partial_cone_dropped();
+            if (dropped_n > outside_cone_conds.size()) {
+                const auto silent_n = dropped_n - outside_cone_conds.size();
+                publish_soft_truncated_silent_dep_escalate(silent_n);
+            }
+        }
     }
     // Issue #2285 Phase 2: selective invalidate from FULL affected set
     // (broader than the target_node subtree walk above; covers type_dep

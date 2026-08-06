@@ -421,6 +421,18 @@ inline std::atomic<std::uint64_t> g_partial_cone_commit_observe_total{0};
 inline std::atomic<std::uint64_t> g_partial_cone_commit_reject_total{0};
 inline std::atomic<std::uint32_t> g_partial_cone_commit_gate_wired{1};
 inline constexpr int kPartialConeCommitGateIssue = 2621;
+// Issue #2694: Soft truncated cone silent dependency escalate. When Soft +
+// cone truncate drops a type_dep / cascade edge that is a silent dependency
+// of a live OccurrenceGoal / linear-typed binding (NOT itself a dirty If node
+// — those are handled by #2646 outside-cone invalidate), arm this counter
+// so commit_readiness can force one Full audit / reject under production_defaults.
+// Pairs #2646 (outside-If invalidate) + #2672 (drift-injection soak) — closes
+// the silent class. Soft pure-observe path only when no silent-dep edges
+// (zero cost happy path). production / Full already hard — unchanged.
+inline std::atomic<std::uint64_t> g_soft_truncated_silent_dep_escalate_total{0};
+inline std::atomic<std::uint64_t> g_last_soft_truncated_silent_dep_count{0};
+inline std::atomic<std::uint32_t> g_soft_truncated_silent_dep_wired{1};
+inline constexpr int kSoftTruncatedSilentDepIssue = 2694;
 
 [[nodiscard]] inline bool last_partial_cone_truncated() noexcept {
     return g_last_partial_cone_truncated.load(std::memory_order_relaxed) != 0;
@@ -468,12 +480,21 @@ inline constexpr int kPartialConeCommitGateIssue = 2621;
 }
 
 // Publish last cone truncate window (called from type_checker_impl #2560 block).
+// silent_dep_count (#2694): number of dropped edges that are silent deps of
+// live OccurrenceGoal / linear-typed bindings (NOT dirty If nodes — those are
+// handled by #2646 outside-cone invalidate). When > 0, the escalate counter
+// bumps so commit_readiness can arm Full audit on the next boundary.
 inline void publish_partial_cone_truncate(bool truncated, std::uint64_t dropped,
-                                          std::uint64_t fanout_trunc = 0) noexcept {
+                                          std::uint64_t fanout_trunc = 0,
+                                          std::uint64_t silent_dep_count = 0) noexcept {
     g_last_partial_cone_truncated.store(truncated ? 1 : 0, std::memory_order_relaxed);
     g_last_partial_cone_dropped.store(dropped, std::memory_order_relaxed);
     if (fanout_trunc > 0)
         g_last_partial_cone_fanout_trunc.fetch_add(fanout_trunc, std::memory_order_relaxed);
+    g_last_soft_truncated_silent_dep_count.store(silent_dep_count, std::memory_order_relaxed);
+    if (silent_dep_count > 0)
+        g_soft_truncated_silent_dep_escalate_total.fetch_add(silent_dep_count,
+                                                             std::memory_order_relaxed);
     if (!truncated)
         return;
     if (partial_cone_commit_hard_enabled())
@@ -486,6 +507,33 @@ inline void clear_partial_cone_truncate_for_test() noexcept {
     g_last_partial_cone_truncated.store(0, std::memory_order_relaxed);
     g_last_partial_cone_dropped.store(0, std::memory_order_relaxed);
     g_last_partial_cone_fanout_trunc.store(0, std::memory_order_relaxed);
+    g_last_soft_truncated_silent_dep_count.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2694: read-side accessors for the soft-truncated-silent-dep surface.
+// Counter bumps via publish_partial_cone_truncate(silent_dep_count>0) or
+// directly via publish_soft_truncated_silent_dep_escalate(n) at the cone
+// truncate site when the detection heuristic flags a silent dep.
+[[nodiscard]] inline std::uint64_t soft_truncated_silent_dep_escalate_total_v_read() noexcept {
+    return g_soft_truncated_silent_dep_escalate_total.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t last_soft_truncated_silent_dep_count() noexcept {
+    return g_last_soft_truncated_silent_dep_count.load(std::memory_order_relaxed);
+}
+
+// Direct publish (used by post-truncate hook in type_checker_impl.cpp when
+// the outside-cone diff reveals non-If silent deps that weren't covered
+// by the #2646 invalidate). Test-only call site for AC1 wiring.
+inline void publish_soft_truncated_silent_dep_escalate(std::uint64_t n = 1) noexcept {
+    if (n == 0)
+        return;
+    g_soft_truncated_silent_dep_escalate_total.fetch_add(n, std::memory_order_relaxed);
+}
+
+inline void clear_soft_truncated_silent_dep_escalate_for_test() noexcept {
+    g_soft_truncated_silent_dep_escalate_total.store(0, std::memory_order_relaxed);
+    g_last_soft_truncated_silent_dep_count.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2053: production multi-tenant AI — capture every self-modify event.

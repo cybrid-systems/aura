@@ -258,6 +258,14 @@ int run_test_partial_cone_commit_gate() {
     ac5_schema_source();
     ac6_high_fanout_gate();
     // ac2646_outside_cone_invalidate_source_cite(); // not defined (pre-existing)
+    std::println(
+        "\n=== Issue #2694: Soft truncated cone silent dep escalate (post-#2646/#2672) ===");
+    ac2694_1_silent_dep_escalate_fires();
+    ac2694_2_no_silent_dep_no_escalate();
+    ac2694_3_production_full_unchanged();
+    ac2694_4_empty_no_extra_work();
+    ac2694_5_query_keys_added();
+    ac2694_6_source_and_linter();
     std::println("\n=== #2621 + #2646: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
@@ -446,6 +454,162 @@ static void ac2672_source_and_linter() {
           "#2672 AC6: build.py references linter");
     CHECK(build.find("cmd_occurrence_cone_truncate_drift_2672_coverage") != std::string::npos,
           "#2672 AC6: build.py cmd wired");
+}
+
+// ── Issue #2694 AC1: Soft + cone truncate + silent type_dep edge to live
+//   OccurrenceGoal → escalate counter bumps; last count stored. ──
+static void ac2694_1_silent_dep_escalate_fires() {
+    std::println("\n--- #2694 AC1: Soft + silent dep → escalate counter ---");
+    CHECK(kSoftTruncatedSilentDepIssue == 2694, "AC1: issue stamp");
+    reset_2621();
+    apply_dev_audit_defaults(); // Sampled soft
+    const auto esc0 = soft_truncated_silent_dep_escalate_total_v_read();
+    // Direct publish (production detection at post-truncate hook fires
+    // publish_partial_cone_truncate(silent_dep_count>0); the counter is the
+    // canonical signal regardless of the call path).
+    publish_soft_truncated_silent_dep_escalate(3);
+    publish_soft_truncated_silent_dep_escalate(2);
+    const auto esc1 = soft_truncated_silent_dep_escalate_total_v_read();
+    CHECK(esc1 == esc0 + 5, "AC1: escalate counter bumps on silent-dep publish (3 + 2 = +5)");
+    // publish_partial_cone_truncate(truncated, dropped, fanout, silent_dep_count>0)
+    // also bumps the counter — verifies the cone-truncate site wiring.
+    clear_soft_truncated_silent_dep_escalate_for_test();
+    publish_partial_cone_truncate(/*truncated=*/true, /*dropped=*/7,
+                                  /*fanout=*/0, /*silent_dep_count=*/4);
+    CHECK(soft_truncated_silent_dep_escalate_total_v_read() == 4,
+          "AC1: publish_partial_cone_truncate(silent_dep_count=4) bumps +4");
+    CHECK(last_soft_truncated_silent_dep_count() == 4, "AC1: last count stamped");
+    clear_soft_truncated_silent_dep_escalate_for_test();
+}
+
+// ── Issue #2694 AC2: Soft + truncate but no silent dep → no escalate ──
+static void ac2694_2_no_silent_dep_no_escalate() {
+    std::println("\n--- #2694 AC2: Soft + truncate, no silent dep → no escalate ---");
+    reset_2621();
+    apply_dev_audit_defaults();
+    const auto esc0 = soft_truncated_silent_dep_escalate_total_v_read();
+    // publish_partial_cone_truncate with silent_dep_count=0 (If-only drops
+    // are #2646's territory; no silent-class signal).
+    publish_partial_cone_truncate(/*truncated=*/true, /*dropped=*/5,
+                                  /*fanout=*/0, /*silent_dep_count=*/0);
+    CHECK(soft_truncated_silent_dep_escalate_total_v_read() == esc0,
+          "AC2: silent_dep_count=0 → escalate counter flat (commit still allowed)");
+    CHECK(last_soft_truncated_silent_dep_count() == 0, "AC2: last count = 0");
+    // Direct publish with n=0 must also be a no-op.
+    publish_soft_truncated_silent_dep_escalate(0);
+    CHECK(soft_truncated_silent_dep_escalate_total_v_read() == esc0,
+          "AC2: direct publish(n=0) is no-op");
+}
+
+// ── Issue #2694 AC3: production / Full path unchanged (already hard) ──
+static void ac2694_3_production_full_unchanged() {
+    std::println("\n--- #2694 AC3: production / Full unchanged ---");
+    reset_2621();
+    apply_production_audit_defaults(); // production defaults
+    const auto rej0 = g_partial_cone_commit_reject_total.load();
+    // production + truncated → existing path bumps reject counter (#2621
+    // #2458 contract); escalate counter is independent observability.
+    publish_partial_cone_truncate(/*truncated=*/true, /*dropped=*/10,
+                                  /*fanout=*/0, /*silent_dep_count=*/0);
+    CHECK(g_partial_cone_commit_reject_total.load() == rej0 + 1,
+          "AC3: production + truncated bumps reject (existing path unchanged)");
+    // Silent-dep escalation is independent — both can fire.
+    clear_soft_truncated_silent_dep_escalate_for_test();
+    publish_partial_cone_truncate(/*truncated=*/true, /*dropped=*/10,
+                                  /*fanout=*/0, /*silent_dep_count=*/2);
+    CHECK(g_partial_cone_commit_reject_total.load() == rej0 + 2,
+          "AC3: production + truncated + silent dep → reject still bumps");
+    CHECK(soft_truncated_silent_dep_escalate_total_v_read() == 2,
+          "AC3: silent-dep escalate counter independent of reject path");
+    apply_dev_audit_defaults();
+    clear_soft_truncated_silent_dep_escalate_for_test();
+}
+
+// ── Issue #2694 AC4: empty dirty / no truncate → zero extra work ──
+static void ac2694_4_empty_no_extra_work() {
+    std::println("\n--- #2694 AC4: empty / no truncate → zero extra work ---");
+    reset_2621();
+    const auto esc0 = soft_truncated_silent_dep_escalate_total_v_read();
+    const auto rej0 = g_partial_cone_commit_reject_total.load();
+    const auto obs0 = g_partial_cone_commit_observe_total.load();
+    // No publish_partial_cone_truncate call (empty / no truncate).
+    publish_partial_cone_truncate(/*truncated=*/false, /*dropped=*/0,
+                                  /*fanout=*/0, /*silent_dep_count=*/0);
+    CHECK(soft_truncated_silent_dep_escalate_total_v_read() == esc0,
+          "AC4: !truncated → escalate counter flat");
+    CHECK(g_partial_cone_commit_reject_total.load() == rej0,
+          "AC4: !truncated → reject counter flat");
+    CHECK(g_partial_cone_commit_observe_total.load() == obs0,
+          "AC4: !truncated → observe counter flat");
+}
+
+// ── Issue #2694 AC5: additive schema + source-cite + extend test per #81967 ──
+static void ac2694_5_query_keys_added() {
+    std::println("\n--- #2694 AC5: additive query keys + schema sentinel ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("soft-truncated-silent-dep-escalate-total") != std::string::npos,
+          "AC5: query exposes soft-truncated-silent-dep-escalate-total");
+    CHECK(q.find("last-soft-truncated-silent-dep-count") != std::string::npos,
+          "AC5: query exposes last-soft-truncated-silent-dep-count");
+    CHECK(q.find("soft-truncated-silent-dep-wired") != std::string::npos,
+          "AC5: query exposes soft-truncated-silent-dep-wired sentinel");
+    CHECK(q.find("schema-2694") != std::string::npos, "AC5: schema-2694 sentinel");
+    CHECK(q.find("issue-2694") != std::string::npos, "AC5: issue-2694 sentinel");
+    // Prior surfaces preserved (regression #2621 / #2646 / #2672).
+    CHECK(q.find("schema-2621") != std::string::npos, "AC5: schema-2621 preserved");
+    CHECK(q.find("partial-cone-commit-observe-total") != std::string::npos,
+          "AC5: #2621 observe preserved");
+    CHECK(q.find("partial-cone-commit-reject-total") != std::string::npos,
+          "AC5: #2621 reject preserved");
+    // Live query round-trip.
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "soft-truncated-silent-dep-wired") == 1,
+          "AC5: soft-truncated-silent-dep-wired queryable");
+    CHECK(href(cs, "schema-2694") == 2694, "AC5: schema-2694 queryable");
+    CHECK(href(cs, "issue-2694") == 2694, "AC5: issue-2694 queryable");
+    CHECK(href(cs, "soft-truncated-silent-dep-escalate-total") >= 0,
+          "AC5: escalate counter queryable");
+    CHECK(href(cs, "last-soft-truncated-silent-dep-count") >= 0, "AC5: last count queryable");
+    CHECK(href(cs, "schema-2621") == 2621, "AC5: schema-2621 retained");
+}
+
+// ── Issue #2694 AC6: source-cite + no docs/design/ per #1655 ──
+static void ac2694_6_source_and_linter() {
+    std::println("\n--- #2694 AC6: source-cite + no docs/design/ ---");
+    const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+    const auto svc = read_file("src/compiler/type_checker_impl.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
+
+    CHECK(hdr.find("Issue #2694") != std::string::npos, "AC6: hdr cites #2694");
+    CHECK(hdr.find("g_soft_truncated_silent_dep_escalate_total") != std::string::npos,
+          "AC6: hdr has escalate counter");
+    CHECK(hdr.find("g_last_soft_truncated_silent_dep_count") != std::string::npos,
+          "AC6: hdr has last count");
+    CHECK(hdr.find("publish_soft_truncated_silent_dep_escalate") != std::string::npos,
+          "AC6: hdr has publish helper");
+    CHECK(hdr.find("silent_dep_count") != std::string::npos,
+          "AC6: publish_partial_cone_truncate accepts silent_dep_count");
+    CHECK(hdr.find("kSoftTruncatedSilentDepIssue = 2694") != std::string::npos,
+          "AC6: hdr stamps issue = 2694");
+    CHECK(svc.find("Issue #2694") != std::string::npos, "AC6: type_checker_impl.cpp cites #2694");
+    CHECK(svc.find("publish_soft_truncated_silent_dep_escalate") != std::string::npos,
+          "AC6: post-truncate hook wires escalate");
+    CHECK(q.find("Issue #2694") != std::string::npos, "AC6: query cites #2694");
+    CHECK(t.find("ac2694_1_silent_dep_escalate_fires") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2694_2_no_silent_dep_no_escalate") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2694_3_production_full_unchanged") != std::string::npos,
+          "AC6: AC3 test present");
+    CHECK(t.find("ac2694_4_empty_no_extra_work") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2694_5_query_keys_added") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2694_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    // No docs/design/ per #1655 — confirm absence on disk.
+    const std::string design_path = "docs/design/2694-";
+    CHECK(read_file((design_path + "silent-dep-escalate.md").c_str()).empty(),
+          "AC6: no docs/design/2694-* per #1655");
 }
 
 // ── #2672: drift-injection soak for #2646 cone-truncate outside-cone

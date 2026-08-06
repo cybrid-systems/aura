@@ -1028,7 +1028,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_epoch_bump_invariant.cpp` (—) [domain_suite, theme_compiler] — Issue #2304 — post-bump hard invariant walk infrastructure.
 - `tests/compiler/test_epoch_invariant_misc_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_epoch_invariant_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_epoch_invariant_soft_prod.cpp` (—) [domain_suite, theme_compiler] — AC1: production Restricted, AURA_EPOCH_INVARIANT unset → mode == 1
-- `tests/compiler/test_epoch_invariant_walk.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft off → zero walks (single mode load)
+- `tests/compiler/test_epoch_invariant_walk.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Soft off → zero walks (single mode load)
 - `tests/compiler/test_escape_move_elision_gate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: escape-after-move binding → MoveOp emitted; blocked counter bumps
 - `tests/core/test_force_compact_hard_mutex.cpp` (—) [domain_suite, theme_core] — LifetimePin + EnvFrameLifetimeGuard (no gen bump / pin invalidate while held).
 - `tests/serve/test_gc_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — tests/serve/test_gc_batch.cpp — GC batch driver (arena theme; default-build).
@@ -1293,7 +1293,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stringpool_bytes_total_lock.cpp` (—) [domain_suite, theme_core] — AC1: 4 threads concurrent intern + string_bytes_total (no crash; TSan clean)
 - `tests/core/test_subtree_dirty_bounds.cpp` (—) [domain_suite, theme_core] — AC1: no OOB on dirty_ (bounds use dirty_.size() only)
 - `tests/core/test_summary_recompute_sym.cpp` (—) [domain_suite, theme_core] — AC1: recompute(pool) sets keyword + query:/mutate: bits
-- `tests/core/test_tenant_isolation_enforcement.cpp` (—) [domain_suite, theme_core] — capability cross-tenant grant, provenance deny, Strict sandbox link,
+- `tests/core/test_tenant_isolation_enforcement.cpp` (—) [large, domain_suite, theme_core] — capability cross-tenant grant, provenance deny, Strict sandbox link,
 - `tests/compiler/test_type_dirty_cone_dep_graph.cpp` (—) [domain_suite, theme_compiler] — AC1: Mutate callee B → type cone of callers + IR cascade share
 - `tests/compiler/test_type_dirty_txn_order.cpp` (—) [domain_suite, theme_compiler] — AC1: Source-cite single ordered sequence on all production partial paths
 - `tests/compiler/test_type_system_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Score definition (header + pure compute)
@@ -1340,7 +1340,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_fiber_eval_depth_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: Fiber A and Fiber B have independent eval_c_stack_depth slots
 - `tests/serve/test_fiber_integration_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — tests/serve/test_fiber_integration_batch.cpp — closure-bridge Cycle-4 integration (Issue #226).
 - `tests/serve/test_fiber_migration_refresh.cpp` (—) [domain_suite, theme_serve] — AC1: Every resume after cross-worker steal runs
-- `tests/serve/test_fiber_mutation_steal_safety.cpp` (—) [domain_suite, theme_serve] — test_fiber_mutation_steal_safety.cpp — Issue #542:
+- `tests/serve/test_fiber_mutation_steal_safety.cpp` (—) [large, domain_suite, theme_serve] — test_fiber_mutation_steal_safety.cpp — Issue #542:
 - `tests/orch/test_fiber_native_keepalive.cpp` (—) [domain_suite, theme_orch] — AC1: Default keepalive_interval_ms=0 remains zero-cost (no helper fiber).
 - `tests/serve/test_fiber_orch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_orch_core_batch.cpp — consolidated fiber-theme drivers
 - `tests/serve/test_fiber_orch_parallel_quota_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_orch_parallel_quota_batch.cpp — consolidated fiber-theme drivers
@@ -1715,7 +1715,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_aot_unit_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutation_contention.cpp` (—) [domain_suite, theme_compiler] — Issue #2040 — high-concurrency observability for Guard hold +
 - `tests/serve/test_mutation_hold_time.cpp` (—) [domain_suite, theme_serve] — test_mutation_hold_time.cpp — Issue #1375:
-- `tests/compiler/test_named_closure_stable_id_at_create.cpp` (—) [domain_suite, theme_compiler] — AC1: Every named closure after create/set_name has stable_func_id != 0
+- `tests/compiler/test_named_closure_stable_id_at_create.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Every named closure after create/set_name has stable_func_id != 0
 - `tests/reflect/test_obs_json_to_json_a1.cpp` (—) [small, domain_suite, theme_reflect] — Wave A1: snapshot_to_json / fn_metrics_to_json via reflect to_json.
 - `tests/compiler/test_obs_metrics_smoke_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_obs_metrics_smoke_batch.cpp — consolidated observability schema smokes
 - `tests/compiler/test_obs_schema_matrix.cpp` (—) [domain_suite, theme_compiler] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
