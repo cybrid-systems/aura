@@ -769,6 +769,46 @@ struct CommitReadiness {
     std::int64_t force_reason_code = 0;
 };
 
+// Issue #2697: single Agent-holdable proof for composite type×linear
+// safety. Lightweight serialisable/hashable struct that
+// composite_txn_commit stamps on success or reject. Additive to the
+// #2613 type-linear-commit-health query — Agents retrieve the latest
+// stamp via `query:last-type-linear-commit-proof`. Pre-remap semantics
+// (AC3): Agents re-check after the remap event by comparing
+// defuse_or_epoch_stamp against the current live stamp.
+struct TypeLinearCommitProof {
+    std::uint64_t readiness_bp = 10000;
+    std::uint32_t force_reason_code = 0;
+    bool would_allow_commit = true;
+    bool linear_ok = true;
+    bool occurrence_consistent = true;
+    std::uint64_t defuse_or_epoch_stamp = 0;
+    std::uint64_t live_goal_count = 0;
+    std::uint64_t linear_root_count = 0;
+    std::uint64_t schema = 2697;
+};
+
+inline constexpr int kTypeLinearCommitProofIssue = 2697;
+
+// File-scope atomics (mirror #2693/#2694/#2695/#2696 pattern).
+inline std::atomic<std::uint64_t> g_last_type_linear_commit_proof_stamp{0};
+inline std::atomic<std::uint32_t> g_type_linear_commit_proof_wired{1};
+
+[[nodiscard]] inline std::uint64_t last_type_linear_commit_proof_stamp_v_read() noexcept {
+    return g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t type_linear_commit_proof_wired_v_read() noexcept {
+    return g_type_linear_commit_proof_wired.load(std::memory_order_relaxed);
+}
+
+inline void stamp_type_linear_commit_proof(std::uint64_t current_epoch_or_defuse) noexcept {
+    g_last_type_linear_commit_proof_stamp.store(current_epoch_or_defuse, std::memory_order_relaxed);
+}
+
+inline void clear_type_linear_commit_proof_for_test() noexcept {
+    g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+}
+
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
     if (r == "cone_truncate")
         return 9; // #2621
