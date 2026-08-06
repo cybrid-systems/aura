@@ -528,6 +528,23 @@ def cmd_lint():
             "shared heap serialization (#2676) coverage linter failed — run python3 scripts/coverage/checks/check_shared_heap_serial_2676.py"
         )
         return r
+    # Issue #2677: P0 — runtime(steal) harden MutationSafetySnapshot resume
+    # ticket + LayoutStamp fail-closed under production defaults. Consolidates
+    # the two fences into a single check_and_enforce_resume_invariants() call
+    # site from Fiber::resume (replaces ticket-only + LayoutStamp-split). Adds
+    # Fiber static layout_stamp_resume_mismatch_total_ counter + C ABI +
+    # query keys under schema-2677 + soft-override ergonomics via
+    # set_steal_snapshot_soft_for_test.
+    ri_script = COVERAGE_CHECKS / "check_resume_invariants_2677.py"
+    if not ri_script.exists():
+        fail(f"missing {ri_script}")
+        return 1
+    r = run([sys.executable, str(ri_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "resume invariants (#2677) coverage linter failed — run python3 scripts/coverage/checks/check_resume_invariants_2677.py"
+        )
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +

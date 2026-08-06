@@ -1086,22 +1086,6 @@ int* aura::compiler::Evaluator::mutation_boundary_depth_slot(Evaluator* ev) {
     }
     return &it->second;
 }
-
-// Issue #2686: TLS while (eval-current) holds shared WorkspaceFlatPin.
-namespace {
-    thread_local int g_eval_current_shared_pin_depth = 0;
-} // namespace
-
-void aura::compiler::Evaluator::note_eval_current_shared_enter() noexcept {
-    ++g_eval_current_shared_pin_depth;
-}
-void aura::compiler::Evaluator::note_eval_current_shared_exit() noexcept {
-    if (g_eval_current_shared_pin_depth > 0)
-        --g_eval_current_shared_pin_depth;
-}
-bool aura::compiler::Evaluator::eval_current_holds_shared_pin() noexcept {
-    return g_eval_current_shared_pin_depth > 0;
-}
 // ═════════════════════════════════════════════════════════════════════════
 // Issue #157 Phase 1: yield_mutation_boundary implementation.
 //
@@ -1644,6 +1628,46 @@ extern "C" void aura_evaluator_resume_fiber_migration() {
     ev->bump_stable_ref_steal_auto_refresh();
 }
 
+// Issue #2677: LayoutStamp resume check (C ABI strong def). Compares
+// fiber-stored LayoutStamp against worker-side Evaluator::current_layout_stamp()
+// and bumps both per-CompilerMetrics + Fiber::bump_layout_stamp_resume_mismatch
+// on mismatch. Returns 0 = fresh (no mismatch), 1 = mismatch (already counted).
+// The Hard/Soft cancel-or-continue decision lives in
+// Fiber::check_and_enforce_resume_invariants (single call site) which
+// reuses the existing #2346/#2372 path. Mirrors the per-CompilerMetrics
+// layout_stamp_resume_mismatch_total counter.
+//
+// Shape: full 8-field layout_stamp_from_fiber_resume vs current_layout_stamp
+// is_fully_fresh (already used by the steal_complete / post_join sites
+// at L1739-1763 and L1871-1889). Strength: bumps per-CompilerMetrics +
+// process-wide static; counters are observed-only here — the canonical
+// Strong ABI path keeps a single run site (Fiber::resume) for the
+// production Hard-fail decision.
+extern "C" int aura_evaluator_check_resume_layout_stamp(void* fiber_ptr) noexcept {
+    if (!fiber_ptr)
+        return 0;
+    auto* fiber = static_cast<aura::serve::Fiber*>(fiber_ptr);
+    if (!fiber->has_resume_layout_stamp())
+        return 0;
+    auto* ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return 0;
+    const auto cur = ev->current_layout_stamp();
+    const auto stored = layout_stamp_from_fiber_resume(*fiber);
+    if (stored.is_fully_fresh(cur))
+        return 0;
+    // Mismatch — bump both per-CompilerMetrics + Fiber process-wide static.
+    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+        m->layout_stamp_resume_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        if (fiber->resume_shape_version() != cur.shape_version)
+            m->shape_version_fence_reject_total.fetch_add(1, std::memory_order_relaxed);
+        if (fiber->resume_ir_soa_generation() != cur.ir_soa_generation)
+            m->ir_generation_fence_hit_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    aura::serve::Fiber::bump_layout_stamp_resume_mismatch();
+    return 1;
+}
+
 // Issue #1490 / #1580: post-yield / post-resume refresh (called from
 // Fiber::resume after g_fiber_resume_validate_). Full closed loop:
 // EnvFrame refresh (with fiber hints) + linear/StableNodeRef re-pin +
@@ -1771,6 +1795,11 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
                     if (fiber->resume_ir_soa_generation() != cur.ir_soa_generation)
                         mm->ir_generation_fence_hit_total.fetch_add(1, std::memory_order_relaxed);
                 }
+                // Issue #2677: also bump the process-wide Fiber static
+                // counter so the primitive query surface can read the
+                // global total without walking fibers. Mirrors the
+                // per-CompilerMetrics bump above.
+                aura::serve::Fiber::bump_layout_stamp_resume_mismatch();
                 // Force dual-check (mark_invalid=true, only_if_moved=false).
                 scan_live_closures_for_linear_captures(true, std::false_type{});
             }
@@ -1899,6 +1928,11 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
                     if (fiber->resume_ir_soa_generation() != cur.ir_soa_generation)
                         mm->ir_generation_fence_hit_total.fetch_add(1, std::memory_order_relaxed);
                 }
+                // Issue #2677: also bump the process-wide Fiber static
+                // counter so the primitive query surface can read the
+                // global total without walking fibers. Mirrors the
+                // per-CompilerMetrics bump above.
+                aura::serve::Fiber::bump_layout_stamp_resume_mismatch();
                 scan_live_closures_for_linear_captures(true, false);
             }
         }

@@ -10739,6 +10739,26 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                     insert_kv("schema-2675", 2675);
                     insert_kv("issue-2675", 2675);
                 }
+                // Issue #2677: resume-invariants consolidated query surface.
+                // Single-agent schema key for the consolidated
+                // MutationSafetySnapshot (ticket) + LayoutStamp (fence) check
+                // now wired at Fiber::resume (single call site). Surfaces
+                // the per-CompilerMetrics layout-stamp-resume-mismatch-total
+                // (already exposed via query:linear-enforce-effective-mode in
+                // evaluator_primitives_query.cpp) + the new process-wide
+                // Fiber static counter as a parallel key, so dashboards can
+                // distinguish per-Evaluator mismatch vs aggregate drift.
+                // schema-2677 wraps the AC5 metrics (ticket-mismatch +
+                // force-deopt + hard-fail + layout-stamp-mismatch) under
+                // one Issue-anchor for Agent navigation.
+                {
+                    insert_kv("resume-invariants-consolidated", 1);
+                    insert_kv("layout-stamp-resume-mismatch-fiber-total",
+                              static_cast<std::int64_t>(
+                                  aura::serve::Fiber::layout_stamp_resume_mismatch_total()));
+                    insert_kv("schema-2677", 2677);
+                    insert_kv("issue-2677", 2677);
+                }
                 insert_kv("issue-2222", 2222);
             }
             insert_kv("issue", 1631);

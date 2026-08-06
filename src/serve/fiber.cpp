@@ -40,6 +40,16 @@ extern "C" void aura_evaluator_resume_fiber_migration();
 extern "C" void aura_evaluator_post_resume_refresh(); // Issue #1490
 // Issue #1595: host-side post-join linear + StableNodeRef enforcement.
 extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
+// Issue #2677: LayoutStamp resume check (C ABI shim). Strong def in
+// evaluator_fiber_mutation.cpp compares fiber-stored LayoutStamp
+// against worker-side Evaluator::current_layout_stamp() and bumps both
+// per-CompilerMetrics + Fiber::bump_layout_stamp_resume_mismatch on
+// mismatch. Weak no-op in fiber_bridge.cpp keeps light link units
+// resolving without the full module. Returns 0 = fresh / 1 = mismatch
+// (mismatch already counted; the Hard/Soft cancel-or-continue decision
+// lives in Fiber::check_and_enforce_resume_invariants — single call site
+// from Fiber::resume that reuses the existing #2346/#2372 path).
+extern "C" int aura_evaluator_check_resume_layout_stamp(void* fiber_ptr) noexcept;
 
 std::atomic<uint64_t> Fiber::next_id_{1};
 std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};
@@ -242,6 +252,12 @@ std::atomic<std::uint64_t> Fiber::steal_snapshot_mismatch_force_deopt_total_{0};
 std::atomic<std::uint64_t> Fiber::steal_snapshot_hard_fail_total_{0};
 // Issue #2518: resume safety ticket mismatch total.
 std::atomic<std::uint64_t> Fiber::steal_safety_ticket_mismatch_total_{0};
+// Issue #2677: LayoutStamp mismatch total (fiber-stored stamp ≠ worker
+// current). Bumped by aura_evaluator_check_resume_layout_stamp on every
+// fresh-check fail. Mirrors the per-CompilerMetrics
+// layout_stamp_resume_mismatch_total so query keys can read a global
+// total without walking fibers.
+std::atomic<std::uint64_t> Fiber::layout_stamp_resume_mismatch_total_{0};
 
 // Issue #2346: C ABI for hard-fail total (query / tests without Fiber type).
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total() {
@@ -250,6 +266,13 @@ extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total() {
 // Issue #2518: C ABI for safety ticket mismatch total.
 extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total() {
     return Fiber::steal_safety_ticket_mismatch_total();
+}
+// Issue #2677: C ABI for LayoutStamp mismatch total (process-wide
+// aggregate so the primitive query surface can read a global total
+// without walking fibers). Mirrors the per-CompilerMetrics
+// layout_stamp_resume_mismatch_total counter.
+extern "C" std::uint64_t aura_fiber_static_layout_stamp_resume_mismatch_total() {
+    return Fiber::layout_stamp_resume_mismatch_total();
 }
 
 // Issue #2346 production canary: strong def in typed_mutation_audit_hooks.cpp
@@ -354,6 +377,56 @@ bool Fiber::check_and_enforce_resume_snapshot_invariant() noexcept {
                      "ticket_miss=%d)\n",
                      static_cast<unsigned long long>(id_), snap.depth,
                      static_cast<unsigned>(snap.last_yield), ticket_miss ? 1 : 0);
+        std::abort();
+    }
+    return false; // caller must not swapcontext
+}
+// Issue #2677: consolidated resume invariant — single call site from
+// Fiber::resume. Checks BOTH resume-safety-ticket (via
+// check_and_enforce_resume_snapshot_invariant) AND LayoutStamp fence
+// (via aura_evaluator_check_resume_layout_stamp C ABI). Mismatch on
+// either fails-closed under Hard / bumps mismatch counter under Soft.
+// Replaces the previous two-fence split (ticket at L791, LayoutStamp
+// mirrored at evaluator_fiber_mutation.cpp:1739-1763 + 1871-1889). CLI
+// test override (set_steal_snapshot_soft_for_test) keeps Soft ergonomics.
+// Happy path: 1 snapshot sample + 1 ticket compare + 1 LayoutStamp probe
+// (zero extra atomics beyond the existing sample).
+[[nodiscard]] bool Fiber::check_and_enforce_resume_invariants() noexcept {
+    // Snapshot / ticket path (existing #2346 / #2518).
+    const auto snap = mutation_safety_snapshot();
+    bool ticket_miss = false;
+    if (has_resume_safety_ticket_) {
+        if (snap.ticket != resume_safety_ticket_)
+            ticket_miss = true;
+        clear_resume_safety_ticket();
+    }
+    const bool snap_inconsistent = mutation_safety_snapshot_inconsistent(snap);
+    // LayoutStamp path (new #2677). C ABI shim reads worker-side
+    // current_layout_stamp + bumps per-CompilerMetrics + Fiber static
+    // counter on mismatch (returns 1). Returns 0 on fresh / no-stamp.
+    const bool layout_mismatch = aura_evaluator_check_resume_layout_stamp(this) != 0;
+    if (!snap_inconsistent && !ticket_miss && !layout_mismatch)
+        return true; // consistent — continue
+    // Soft always bumps the observed mismatch counter first.
+    bump_mutation_steal_snapshot_mismatch();
+    if (ticket_miss)
+        bump_steal_safety_ticket_mismatch();
+    // layout_mismatch already counted in the C ABI shim (per-CompilerMetrics
+    // + Fiber::bump_layout_stamp_resume_mismatch); no extra bump here.
+    if (!is_steal_snapshot_hard_mode())
+        return true; // Soft: continue resume
+    // Hard: mark-failed so orch can drain (prefer over silent continue).
+    bump_steal_snapshot_hard_fail();
+    request_cancel();
+    set_state(FiberState::Done);
+    if (is_steal_snapshot_hard_abort()) {
+        std::fprintf(stderr,
+                     "FATAL: Fiber::resume invariant inconsistent "
+                     "(AURA_STEAL_SNAPSHOT_HARD_ABORT=1, fiber=%llu depth=%zu yield=%u "
+                     "ticket_miss=%d layout_mismatch=%d)\n",
+                     static_cast<unsigned long long>(id_), snap.depth,
+                     static_cast<unsigned>(snap.last_yield), ticket_miss ? 1 : 0,
+                     layout_mismatch ? 1 : 0);
         std::abort();
     }
     return false; // caller must not swapcontext
@@ -785,10 +858,15 @@ void Fiber::resume() {
     // + production sandbox active). Bridge is a C-linkage shim that the
     // Evaluator module overrides; weak no-op when not linked.
     aura_fiber_install_tenant_scope_for_resume(this);
-    // Issue #2184 / #2346: post-sync snapshot invariant.
-    // Soft: bump mismatch metric, continue. Hard: mark-failed (Done+cancel),
-    // skip swapcontext so inconsistent code never runs (orch can drain).
-    if (!check_and_enforce_resume_snapshot_invariant()) {
+    // Issue #2184 / #2346 / #2518 / #2677: post-sync resume invariant.
+    // #2677 consolidation: single call site checks BOTH resume-safety-ticket
+    // AND LayoutStamp fence (when set). Soft → bump mismatch counter, continue.
+    // Hard → mark-failed (Done+cancel), skip swapcontext so inconsistent
+    // code never runs (orch can drain). The legacy
+    // check_and_enforce_resume_snapshot_invariant (ticket-only) is kept for
+    // callers that don't need LayoutStamp; Fiber::resume uses the
+    // consolidated check_and_enforce_resume_invariants.
+    if (!check_and_enforce_resume_invariants()) {
         // Hard-fail: restore TLS and return without parking the body.
         if (g_fiber_setter_)
             g_fiber_setter_(prev_fiber_void);
