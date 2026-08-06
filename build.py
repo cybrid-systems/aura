@@ -4247,6 +4247,30 @@ def cmd_closure_anon_captured_remount_2691_coverage():
     return 0
 
 
+def cmd_aot_slot_owner_consistency_2692_coverage():
+    """Issue #2692: cross-eval sid ↔ AOT slot owner consistency assert.
+
+    Post-#2670 production assert that the slot stamped for a given sid
+    is owned by the same eval that owns the sid map entry. Soft
+    single-eval / process-default (filter eval = nullptr) keeps
+    cross_eval_sid_owner_mismatch_total at 0. Production hard path
+    clears the slot to prevent the next call from hitting a wrong
+    table. Additive on top of #2606 owner filter + #2550 stable_ref
+    stamp + #2670 nested map.
+    """
+    print(f"{B}=== aot slot owner consistency coverage (#2692) ==={N}")
+    script = COVERAGE_CHECKS / "check_aot_slot_owner_consistency_2692.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("aot slot owner consistency (#2692) coverage contract rows failed")
+        return 1
+    ok("aot slot owner consistency (#2692) coverage clean")
+    return 0
+
+
 def cmd_require_effect_on_ref_2689_coverage():
     """Issue #2689: mandate require_effect_on_ref on all StableNodeRef side-effect paths.
 
@@ -8360,6 +8384,7 @@ def cmd_gate():
         or cmd_evaluator_capture_tenant_2687_coverage()
         or cmd_capability_production_default_2688_coverage()
         or cmd_closure_anon_captured_remount_2691_coverage()
+        or cmd_aot_slot_owner_consistency_2692_coverage()
         or cmd_require_effect_on_ref_2689_coverage()
         or cmd_pending_recovery_drain_2690_coverage()
         or cmd_workspace_mtx_contention_coverage()
@@ -9365,6 +9390,7 @@ def main():
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
         "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
+        "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,

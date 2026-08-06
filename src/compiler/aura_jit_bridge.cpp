@@ -197,11 +197,13 @@ extern "C" void aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t ok
 // counters so Agents can distinguish "must remount" (captured anon)
 // from "touch-time policy" (pure anon, no captures). Routes to
 // live_closure_sync_remount_anon_captured_ok_total / _fail_total.
-extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(
-    std::uint64_t ok, std::uint64_t fail) {
+extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(std::uint64_t ok,
+                                                                         std::uint64_t fail) {
     if (auto* m = aot_metrics()) {
-        m->live_closure_sync_remount_anon_captured_ok_total.fetch_add(ok, std::memory_order_relaxed);
-        m->live_closure_sync_remount_anon_captured_fail_total.fetch_add(fail, std::memory_order_relaxed);
+        m->live_closure_sync_remount_anon_captured_ok_total.fetch_add(ok,
+                                                                      std::memory_order_relaxed);
+        m->live_closure_sync_remount_anon_captured_fail_total.fetch_add(fail,
+                                                                        std::memory_order_relaxed);
     }
 }
 
@@ -1433,6 +1435,29 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
     // Issue #2299: stamp owning eval (0 when process-default / unset).
     slot.owner_eval.store(reinterpret_cast<std::uintptr_t>(g_aot_register_owner_eval),
                           std::memory_order_relaxed);
+    // Issue #2692: cross-eval sid ↔ AOT slot owner consistency assert.
+    // Soft single-eval / process-default (filter eval = nullptr) keeps
+    // this at 0. Production hard path clears the slot to prevent the
+    // next call from hitting a wrong table.
+    if (aot_metrics()) {
+        const auto current_owner = reinterpret_cast<std::uintptr_t>(
+            g_aot_register_owner_eval ? g_aot_register_owner_eval : g_aot_reemit_owner_eval);
+        const auto stamped_owner = slot.owner_eval.load(std::memory_order_relaxed);
+        if (current_owner != 0 && stamped_owner != 0 && current_owner != stamped_owner) {
+            aura_bump_cross_eval_sid_owner_mismatch_total();
+            if (aura::compiler::typed_audit::production_defaults_active() && aot_hard_pref()) {
+                slot.fn_ptr.store(0, std::memory_order_relaxed);
+                slot.owner_eval.store(0, std::memory_order_relaxed);
+            }
+        }
+    }
+}
+
+// Issue #2692: cross-eval sid ↔ AOT slot owner mismatch counter bumper
+// (C ABI for tests + future Agent/query hook).
+extern "C" void aura_bump_cross_eval_sid_owner_mismatch_total() {
+    if (aot_metrics())
+        aot_metrics()->cross_eval_sid_owner_mismatch_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" void aura_aot_set_register_owner_eval(void* eval_ptr) {
@@ -3504,8 +3529,7 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             // anon). Soft zero-cost when no captures match (counter stable).
             std::uint64_t anon_cap_ok = 0;
             std::uint64_t anon_cap_fail = 0;
-            aura_sync_remount_anon_captured_live_closures(&anon_cap_ok,
-                                                       &anon_cap_fail);
+            aura_sync_remount_anon_captured_live_closures(&anon_cap_ok, &anon_cap_fail);
         }
     }
 

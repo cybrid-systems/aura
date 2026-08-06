@@ -8975,6 +8975,14 @@ struct CompilerMetrics {
     // this at 0 — no behavioral change on the MVP path. Pairs with
     // schema-2606 on query:aot-incremental-reemit-stats.
     std::atomic<std::uint64_t> reemit_cross_eval_candidate_skipped_total{0}; // #2606
+    // Issue #2692: cross-eval sid ↔ AOT slot owner mismatch counter.
+    // Bumped when the slot stamped for a given sid is owned by a
+    // different eval than the one that owns the sid map entry (silent
+    // cross-eval wrong-table hit under concurrent dual-eval reemit).
+    // Soft single-eval / process-default (filter eval = nullptr) keeps
+    // this at 0 — no behavioral change on the MVP path. Pairs with
+    // schema-2692 on query:aot-incremental-reemit-stats.
+    std::atomic<std::uint64_t> cross_eval_sid_owner_mismatch_total{0}; // #2692
     // Issue #2177: AOT-side MacroIntroduced marker observability (refine
     // #2100 which was JIT-only). Process-wide AOT stats for Agent dashboards:
     // propagated = AOT lowering successfully stamped IRFunction.marker from
