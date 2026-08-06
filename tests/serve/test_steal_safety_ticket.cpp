@@ -214,10 +214,18 @@ int run_test_steal_safety_ticket() {
     ac3_coexist_2510();
     ac4_cost_and_query();
     ac5_source_wiring();
+    std::println(
+        "\n=== Issue #2702: Resume hard-fail unified path (post-#2518) ===");
+    ac2702_1_resume_invariant_exists();
+    ac2702_2_soft_path_metric_only();
+    ac2702_3_ticket_one_shot();
+    ac2702_4_steal_safety_ticket_interaction();
+    ac2702_5_query_keys_and_source_cite();
+    ac2702_6_no_docs_design();
     // Leave process Soft-clean for subsequent tests in same binary (none).
     ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
-    std::println("\n=== #2518: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2518 + #2702: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
