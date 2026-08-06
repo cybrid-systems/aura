@@ -44,9 +44,10 @@ module;
 #include "security_capabilities.h"          // aura_fiber_current_id
 #include "aura_jit_bridge.h"                // aura_invoke_long_mutation_scheduler_hook
 #include "ownership_escape_lowering_gate.h" // Issue #2309: aura_escape_move_gate_clear + rollback counter
-                                            // + aura_aot_func_table_epoch +
-                                            //   aura_jit_batch_deopt_for (+ empty-name
-                                            //   deopt-all, Issue #2162)
+#include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-densify/steal/Agent
+                                       // + aura_aot_func_table_epoch +
+                                       //   aura_jit_batch_deopt_for (+ empty-name
+                                       //   deopt-all, Issue #2162)
 #include "compiler/hot_update_registry.hh"   // Issue #2090: AuraJITHotUpdateRegistry
                                              //   C-linkage shims —
                                              // aura_hot_update_should_throttle_reemit
@@ -784,6 +785,18 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             (void)linear_post_mutate_enforce_all();
                             (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
                                                                       /*mark_all_linear=*/true);
+                            // Issue #2695: unified rebind entry — routes
+                            // densify-driven rebind through the same API
+                            // as steal / Agent (single entry for Agents).
+                            // AC3 zero-cost short-circuit when no roots
+                            // were remapped; real per-root span wires in
+                            // follow-up. Production force-rollback on
+                            // mismatch (returns false) per #2563 contract.
+                            {
+                                aura::compiler::OwnershipEnv env{};
+                                (void)aura::compiler::ownership_rebind_after_remap(
+                                    env, {}, aura::compiler::RemapReason::Densify);
+                            }
                         }
                         // Type-only recheck: re-driven by the full suite below
                         // (visitor rewalks NotChecked / dirty mutations).

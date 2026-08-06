@@ -281,6 +281,135 @@ static void ac5_source_and_schema() {
     CHECK(href(cs, "steal-densify-linear-type-hard-fail-total") >= 0, "AC5: hard-fail key");
 }
 
+// ── Issue #2695 AC1+AC2: densify + steal route through unified rebind API ──
+static void ac2695_1_densify_steal_rebind_route() {
+    std::println("\n--- #2695 AC1+AC2: densify/steal route through unified rebind ---");
+    clear_ownership_rebind_for_test();
+    // Stack-local default-constructed OwnershipEnv (real env access in
+    // first ship is unused — per-root walk wires in follow-up).
+    aura::compiler::OwnershipEnv env{};
+    // Densify route: empty span → AC3 zero-cost short-circuit (returns true
+    // without bumping counters). Verifies the densify wire-in call site
+    // invokes the same API as steal / Agent.
+    const bool dres =
+        aura::compiler::ownership_rebind_after_remap(env, {}, aura::compiler::RemapReason::Densify);
+    CHECK(dres, "AC1: densify route → returns true (zero-cost when empty)");
+    // Steal route: same surface, same short-circuit behavior.
+    const bool sres =
+        aura::compiler::ownership_rebind_after_remap(env, {}, aura::compiler::RemapReason::Steal);
+    CHECK(sres, "AC2: steal route → returns true (zero-cost when empty)");
+    // Empty-span → counter flat (AC3 zero-cost short-circuit).
+    CHECK(aura::compiler::ownership_rebind_total_v_read() == 0,
+          "AC1+AC2: empty span → counter flat (AC3 zero-cost)");
+    // Non-empty span → counter bumps (per-root count).
+    std::vector<aura::ast::NodeId> roots(3);
+    const bool nres = aura::compiler::ownership_rebind_after_remap(
+        env, std::span<const aura::ast::NodeId>(roots.data(), roots.size()),
+        aura::compiler::RemapReason::Densify);
+    CHECK(nres, "AC1: densify + non-empty → returns true");
+    CHECK(aura::compiler::ownership_rebind_total_v_read() >= 3,
+          "AC1: non-empty span → counter bumps by span size");
+    CHECK(aura::compiler::ownership_rebind_densify_total_v_read() >= 3,
+          "AC1: per-reason densify counter bumps");
+    clear_ownership_rebind_for_test();
+}
+
+// ── Issue #2695 AC3: no remap → zero cost short-circuit ──
+static void ac2695_2_zero_cost_short_circuit() {
+    std::println("\n--- #2693 AC3: empty span → zero cost ---");
+    clear_ownership_rebind_for_test();
+    aura::compiler::OwnershipEnv env{};
+    const auto total0 = aura::compiler::ownership_rebind_total_v_read();
+    (void)aura::compiler::ownership_rebind_after_remap(env, {},
+                                                       aura::compiler::RemapReason::Densify);
+    (void)aura::compiler::ownership_rebind_after_remap(env, {}, aura::compiler::RemapReason::Steal);
+    (void)aura::compiler::ownership_rebind_after_remap(env, {},
+                                                       aura::compiler::RemapReason::ExplicitAgent);
+    CHECK(aura::compiler::ownership_rebind_total_v_read() == total0,
+          "AC3: 3 empty-span calls → counter flat (zero-cost)");
+}
+
+// ── Issue #2695 AC4: concurrent mutate:rebind can call the same API ──
+static void ac2695_3_agent_route_callable() {
+    std::println("\n--- #2695 AC4: explicit Agent rebind route callable ---");
+    clear_ownership_rebind_for_test();
+    aura::compiler::OwnershipEnv env{};
+    std::vector<aura::ast::NodeId> roots(2);
+    const bool ares = aura::compiler::ownership_rebind_after_remap(
+        env, std::span<const aura::ast::NodeId>(roots.data(), roots.size()),
+        aura::compiler::RemapReason::ExplicitAgent);
+    CHECK(ares, "AC4: explicit Agent route → returns true");
+    CHECK(aura::compiler::ownership_rebind_explicit_agent_total_v_read() >= 2,
+          "AC4: explicit-agent per-reason counter bumps");
+    clear_ownership_rebind_for_test();
+}
+
+// ── Issue #2695 AC5: additive query keys + schema sentinel ──
+static void ac2695_4_query_keys_added() {
+    std::println("\n--- #2695 AC5: additive query keys + schema sentinel ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("ownership-rebind-total") != std::string::npos,
+          "AC5: query exposes ownership-rebind-total");
+    CHECK(q.find("ownership-rebind-fail-total") != std::string::npos,
+          "AC5: query exposes ownership-rebind-fail-total");
+    CHECK(q.find("ownership-rebind-wired") != std::string::npos,
+          "AC5: query exposes ownership-rebind-wired sentinel");
+    CHECK(q.find("ownership-rebind-densify-total") != std::string::npos,
+          "AC5: query exposes per-reason densify counter");
+    CHECK(q.find("ownership-rebind-steal-total") != std::string::npos,
+          "AC5: query exposes per-reason steal counter");
+    CHECK(q.find("ownership-rebind-explicit-agent-total") != std::string::npos,
+          "AC5: query exposes per-reason explicit-agent counter");
+    CHECK(q.find("schema-2695") != std::string::npos, "AC5: schema-2695 sentinel");
+    CHECK(q.find("issue-2695") != std::string::npos, "AC5: issue-2695 sentinel");
+    // Prior #2609 surface preserved (regression).
+    CHECK(q.find("schema-2609") != std::string::npos, "AC5: schema-2609 preserved");
+    CHECK(q.find("steal-densify-linear-type-hard-and-wired") != std::string::npos,
+          "AC5: #2609 wired preserved");
+}
+
+// ── Issue #2695 AC6: source-cite + no docs/design/ per #1655 ──
+static void ac2695_5_source_and_linter() {
+    std::println("\n--- #2695 AC6: source-cite + no docs/design/ ---");
+    const auto hdr = read_file("src/compiler/ownership_rebind.h");
+    const auto cpp = read_file("src/compiler/ownership_rebind.cpp");
+    const auto cmake = read_file("CMakeLists.txt");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto m = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto t = read_file("tests/serve/test_steal_densify_linear_type_hard_and.cpp");
+
+    CHECK(hdr.find("Issue #2695") != std::string::npos, "AC6: hdr cites #2695");
+    CHECK(hdr.find("RemapReason") != std::string::npos, "AC6: hdr has RemapReason enum");
+    CHECK(hdr.find("ownership_rebind_after_remap") != std::string::npos,
+          "AC6: hdr declares unified API");
+    CHECK(hdr.find("kOwnershipRebindIssue = 2695") != std::string::npos,
+          "AC6: hdr stamps issue = 2695");
+    CHECK(cpp.find("Issue #2695") != std::string::npos, "AC6: impl cites #2695");
+    CHECK(cmake.find("ownership_rebind.cpp") != std::string::npos, "AC6: CMakeLists adds new TU");
+    CHECK(mb.find("ownership_rebind_after_remap") != std::string::npos,
+          "AC6: Phase-5 densify wires through unified API");
+    CHECK(mb.find("RemapReason::Densify") != std::string::npos,
+          "AC6: densify site uses Densify reason");
+    CHECK(fm.find("ownership_rebind_after_remap") != std::string::npos,
+          "AC6: steal resume wires through unified API");
+    CHECK(fm.find("RemapReason::Steal") != std::string::npos, "AC6: steal site uses Steal reason");
+    CHECK(m.find("ownership_rebind_after_remap") != std::string::npos,
+          "AC6: Agent rebind wires through unified API");
+    CHECK(m.find("RemapReason::ExplicitAgent") != std::string::npos,
+          "AC6: Agent site uses ExplicitAgent reason");
+    CHECK(t.find("ac2695_1_densify_steal_rebind_route") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2695_2_zero_cost_short_circuit") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2695_3_agent_route_callable") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2695_4_query_keys_added") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2695_5_source_and_linter") != std::string::npos, "AC6: AC5 self-test");
+    // No docs/design/ per #1655.
+    const std::string design_path = "docs/design/2695-";
+    CHECK(read_file((design_path + "unified-rebind.md").c_str()).empty(),
+          "AC6: no docs/design/2695-* per #1655");
+}
+
 } // namespace
 
 int run_test_steal_densify_linear_type_hard_and() {
@@ -290,6 +419,12 @@ int run_test_steal_densify_linear_type_hard_and() {
     ac2_clean_zero_cost();
     ac3_soft_observe();
     ac5_source_and_schema();
+    std::println("\n=== Issue #2695: Unified OwnershipEnv rebind API post-densify/steal ===");
+    ac2695_1_densify_steal_rebind_route();
+    ac2695_2_zero_cost_short_circuit();
+    ac2695_3_agent_route_callable();
+    ac2695_4_query_keys_added();
+    ac2695_5_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
