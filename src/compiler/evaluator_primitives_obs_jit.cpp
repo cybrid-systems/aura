@@ -998,6 +998,23 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2690", make_int(2690)},
                 {"issue-2690", make_int(2690)},
                 {"pending-recovery-drain-wired", make_int(1)},
+                // Issue #2691: captured-only anon sync remount counters.
+                // Distinct from the full-walk anon ok/fail counters so
+                // Agents can distinguish "must remount" (captured) from
+                // "touch-time policy" (pure anon, no captures).
+                {"live-closure-sync-remount-anon-captured-ok-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::CompilerMetrics::
+                         live_closure_sync_remount_anon_captured_ok_total
+                             .load(std::memory_order_relaxed)))},
+                {"live-closure-sync-remount-anon-captured-fail-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::CompilerMetrics::
+                         live_closure_sync_remount_anon_captured_fail_total
+                             .load(std::memory_order_relaxed)))},
+                {"schema-2691", make_int(2691)},
+                {"issue-2691", make_int(2691)},
+                {"closure-pending-recovery-drain-wired", make_int(1)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},

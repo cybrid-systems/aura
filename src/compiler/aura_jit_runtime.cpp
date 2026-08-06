@@ -11,6 +11,11 @@
 // Issue #2637 anon / residual sync remount counters.
 extern "C" void aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t ok,
                                                                 std::uint64_t fail);
+// Issue #2691: captured-only anon sync remount counters (sid==0 && has env/linear).
+// Distinct counters so Agents can distinguish "must remount" (captured) from
+// "touch-time policy" (pure anon, no captures).
+extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(
+    std::uint64_t ok, std::uint64_t fail);
 // Issue #2638 residual sid=0 cap-hit counter.
 extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
 // Process-global aot_metrics getter (defined in aura_jit_bridge.cpp; the
@@ -2034,6 +2039,78 @@ extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
     }
 
     aura_bump_live_closure_sync_remount_anon_totals(ok, fail);
+
+    if (ok_count)
+        *ok_count = ok;
+    if (fail_count)
+        *fail_count = fail;
+}
+
+// Issue #2691: captured-only anon sync remount walk (sid==0 && has env/linear).
+// Filters the anon walk further: only process closures that *have*
+// env/linear captures. AC1 (anon with capture → reemit ok advances
+// MustDeopt) / AC2 (pure anon, no captures → counter stable, not
+// double-counted with the full anon walk). Distinct counters so Agents
+// can distinguish "must remount" (captured) from "touch-time policy"
+// (pure anon). Bumps live_closure_sync_remount_anon_captured_ok_total
+// / _fail_total. Soft zero-cost when env off (call site gates before
+// this) OR no live captured anon closures (nslots==0 short-circuit
+// same as anon path). Preserves #2602 named path + #2637/#2666 full
+// anon walk.
+extern "C" void aura_sync_remount_anon_captured_live_closures(
+    std::uint64_t* ok_count, std::uint64_t* fail_count) {
+    std::uint64_t ok = 0;
+    std::uint64_t fail = 0;
+
+    {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        aura_lock_workspace_write();
+
+        const std::size_t nslots = g_closure_func_ids.size();
+        if (nslots == 0) {
+            aura_unlock_workspace_write();
+            if (ok_count)
+                *ok_count = 0;
+            if (fail_count)
+                *fail_count = 0;
+            return;
+        }
+
+        if (g_closure_stable_func_ids.size() < nslots)
+            g_closure_stable_func_ids.resize(nslots, 0);
+        if (g_closure_must_deopt.size() < nslots)
+            g_closure_must_deopt.resize(nslots, 0);
+
+        const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+
+        for (std::size_t cid = 0; cid < nslots; ++cid) {
+            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                continue;
+            // Only anonymous / residual closures with sid == 0 — named
+            // closures stay on the #2602 named sync walk (above).
+            const std::uint32_t sid = g_closure_stable_func_ids[cid];
+            if (sid != 0)
+                continue;
+            // Issue #2691: captured-only filter. Skip anon closures that
+            // have no env/linear captures (pure anon / touch-time policy
+            // path #2550/#2605). The captured walk is the only path
+            // where reemit must race the first call to avoid MustDeopt.
+            if (!aura_closure_has_env_or_linear_captures_unlocked(
+                    static_cast<std::int64_t>(cid)))
+                continue;
+            if (remount_or_force_deopt_unlocked_no_call_time_counter(
+                    static_cast<std::int64_t>(cid), live_env,
+                    /*linear_fp=*/0, table_epoch) != 0)
+                ++ok;
+            else
+                ++fail;
+        }
+
+        aura_unlock_workspace_write();
+    }
+
+    aura_bump_live_closure_sync_remount_anon_captured_totals(ok, fail);
 
     if (ok_count)
         *ok_count = ok;

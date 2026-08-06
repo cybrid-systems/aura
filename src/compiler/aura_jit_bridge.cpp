@@ -193,6 +193,18 @@ extern "C" void aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t ok
     }
 }
 
+// Issue #2691: captured-only anon sync remount counters. Distinct
+// counters so Agents can distinguish "must remount" (captured anon)
+// from "touch-time policy" (pure anon, no captures). Routes to
+// live_closure_sync_remount_anon_captured_ok_total / _fail_total.
+extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(
+    std::uint64_t ok, std::uint64_t fail) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_sync_remount_anon_captured_ok_total.fetch_add(ok, std::memory_order_relaxed);
+        m->live_closure_sync_remount_anon_captured_fail_total.fetch_add(fail, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2638: residual sid=0 cap-hit counter bumper. Bumped when
 // the residual backfill branch in aura_remap_live_closures_after_reemit
 // sees cur_backfill >= cap (or 0 cap = unlimited → never). Distinct
@@ -3485,6 +3497,15 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             std::uint64_t anon_ok = 0;
             std::uint64_t anon_fail = 0;
             aura_sync_remount_anon_live_closures(&anon_ok, &anon_fail);
+            // Issue #2691: captured-only anon sync remount (filter by
+            // aura_closure_has_env_or_linear_captures). Distinct counters
+            // (anon_captured_ok / _fail) so Agents can distinguish
+            // "must remount" (captured) from "touch-time policy" (pure
+            // anon). Soft zero-cost when no captures match (counter stable).
+            std::uint64_t anon_cap_ok = 0;
+            std::uint64_t anon_cap_fail = 0;
+            aura_sync_remount_anon_captured_live_closures(&anon_cap_ok,
+                                                       &anon_cap_fail);
         }
     }
 

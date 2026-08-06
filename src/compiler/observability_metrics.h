@@ -8931,6 +8931,11 @@ struct CompilerMetrics {
     // anonymous closures (nslots==0 short-circuit).
     std::atomic<std::uint64_t> live_closure_sync_remount_anon_ok_total{0};   // #2637
     std::atomic<std::uint64_t> live_closure_sync_remount_anon_fail_total{0}; // #2637
+    // Issue #2691: captured-only anon sync remount counters (sid==0 && has env/linear).
+    // Distinct from full-walk anon counters above so Agents can distinguish
+    // "must remount" (captured) from "touch-time policy" (pure anon).
+    std::atomic<std::uint64_t> live_closure_sync_remount_anon_captured_ok_total{0};   // #2691
+    std::atomic<std::uint64_t> live_closure_sync_remount_anon_captured_fail_total{0}; // #2691
     // Issue #2092: live closures retargeted via the (off-by-default)
     // name fallback path because their stable_func_id stamp was 0
     // (legacy closure / define processed after set_name). Non-zero
