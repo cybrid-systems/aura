@@ -6432,6 +6432,33 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               g_type_linear_commit_proof_wired.load(std::memory_order_relaxed)));
                 insert_kv("schema-2697", 2697);
                 insert_kv("issue-2697", 2697);
+                // Issue #2698: query:occurrence-stability-epoch — independent
+                // monotonic epoch (decoupled from cache_epoch). Advances only on
+                // outermost success + persist (#2608), densify/steal that
+                // pruned goals (#2552/#2608/#2641), or explicit Agent fence
+                // (occurrence_stability_fence()). Soft zero-cost on empty
+                // goals path; production default records.
+                {
+                    const auto cur = static_cast<std::int64_t>(
+                        g_occurrence_stability_epoch.load(std::memory_order_relaxed));
+                    const auto fence_calls = static_cast<std::int64_t>(
+                        g_occurrence_stability_fence_calls_total.load(std::memory_order_relaxed));
+                    const auto adv_persist = static_cast<std::int64_t>(
+                        g_occurrence_stability_advance_on_persist_total.load(
+                            std::memory_order_relaxed));
+                    const auto adv_prune = static_cast<std::int64_t>(
+                        g_occurrence_stability_advance_on_prune_total.load(
+                            std::memory_order_relaxed));
+                    const auto wired = static_cast<std::int64_t>(
+                        g_occurrence_stability_wired.load(std::memory_order_relaxed));
+                    insert_kv("occurrence-stability-epoch", cur);
+                    insert_kv("occurrence-stability-fence-calls-total", fence_calls);
+                    insert_kv("occurrence-stability-advance-on-persist-total", adv_persist);
+                    insert_kv("occurrence-stability-advance-on-prune-total", adv_prune);
+                    insert_kv("occurrence-stability-wired", wired);
+                    insert_kv("schema-2698", 2698);
+                    insert_kv("issue-2698", 2698);
+                }
             }
             // Issue #2308: Agent-stable SolverSnapshot (status +
             // unresolved + blame + repair_nodes + truncated + production
