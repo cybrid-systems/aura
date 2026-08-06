@@ -252,7 +252,12 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
     // intrinsics. Returns "" if no hook is installed (e.g.
     // unit-test Evaluator without a JIT). Cheap to call —
     // just reads a thread-local buffer populated by the hook.
-    ObservabilityPrims::register_stats_impl("query:jit-stats", [&ev](const auto&) -> EvalValue {
+    //
+    // Issue #2684: also register compile:jit-stats as a stable
+    // alias — denseness / stats.aura catalog still list the
+    // pre-#1672 name; (stats:get "compile:jit-stats") must not
+    // return empty when the JIT hook is live.
+    auto jit_stats_line = [&ev](const auto&) -> EvalValue {
         auto sidx = ev.string_heap_.size();
         if (!ev.get_jit_stats_fn_) {
             ev.string_heap_.push_back("");
@@ -261,7 +266,9 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
             ev.string_heap_.push_back(s ? std::string(s) : std::string());
         }
         return make_string(sidx);
-    });
+    };
+    ObservabilityPrims::register_stats_impl("query:jit-stats", jit_stats_line);
+    ObservabilityPrims::register_stats_impl("compile:jit-stats", jit_stats_line);
 
     // Issue #491: query:jit-stats-hash — structured JIT production-readiness
     // view for AI self-monitoring (opcode coverage, fallback, hot-swap safety).

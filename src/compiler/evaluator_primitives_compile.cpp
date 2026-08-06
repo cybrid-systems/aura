@@ -2287,22 +2287,27 @@ void CompilePrims::register_compile_p25(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(packed & 0xFFFF));
     });
 
-    // (compile:block-dirty-count name) — Issue #196: total
-    // number of dirty blocks across all functions in the
-    // named define's IR cache entry. Returns 0 if no hook
-    // is installed or the entry doesn't exist. Use case:
-    // an EDSL agent can measure "did the previous mutation
-    // actually re-lower anything?" by reading this primitive
-    // before and after a mutation cycle.
+    // (compile:block-dirty-count [name]) — Issue #196 / #2684:
+    //   - with name: dirty block count for that define's IR cache entry
+    //   - zero-arg / empty name: total dirty blocks across ir_cache_v2_
+    // Returns 0 if no hook is installed or the entry doesn't exist.
+    // Use case: EDSL / denseness agents measure "did the previous
+    // mutate:rebind mark incremental work?" *before* (eval-current)
+    // re-lowers and clears bits. After re-lower, prefer lifetime
+    // counters on query:jit-stats-hash (hotswap-invalidate-total).
     // Multi-arg query API (not a zero-arg stats hash) — must
     // stay on public add(); stats:get cannot pass func/name args.
     add("compile:block-dirty-count", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
+        if (!ev.get_dirty_block_count_fn_)
+            return make_int(0);
+        // Issue #2684: zero-arg → process-wide total (empty-name hook).
+        if (a.empty()) {
+            return make_int(static_cast<std::int64_t>(ev.get_dirty_block_count_fn_("")));
+        }
+        if (!is_string(a[0]))
             return make_int(0);
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
-            return make_int(0);
-        if (!ev.get_dirty_block_count_fn_)
             return make_int(0);
         return make_int(
             static_cast<std::int64_t>(ev.get_dirty_block_count_fn_(ev.string_heap_[idx].c_str())));
