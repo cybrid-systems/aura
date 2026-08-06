@@ -20,6 +20,7 @@ module;
 #include "compiler/hot_update_registry.hh"   // Issue #2162: aura_hot_update_has_deferred_reemit
 #include "compiler/aot_hot_update_health.hh" // Issue #2543: orch hot-update health throttle tick
 #include "compiler/ownership_escape_lowering_gate.h" // Issue #2507: clear escape gate on steal
+#include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-steal
 #include "compiler/mutation_boundary_shared_exit.h" // Issue #2600: shared exit helper (soft + full Guard)
 #include "core/layout_stamp.hh" // Issue #2519: full 8-field LayoutStamp equality
 #include <algorithm>            // Issue #2189: remove_if for pin table invalidate
@@ -1950,6 +1951,15 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
     } else {
         // Liveness bump without full EnvFrame sweep (join is hot under parallel_intend).
         bump_linear_post_mutate_enforcement();
+    }
+    // Issue #2695: unified rebind entry — routes steal-driven rebind through
+    // the same API as densify / Agent (single entry for Agents). AC3
+    // zero-cost short-circuit when no roots were remapped; real per-root
+    // span wires in follow-up.
+    {
+        aura::compiler::OwnershipEnv env{};
+        (void)aura::compiler::ownership_rebind_after_remap(env, {},
+                                                           aura::compiler::RemapReason::Steal);
     }
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {

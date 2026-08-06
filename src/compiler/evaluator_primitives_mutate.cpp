@@ -9,8 +9,9 @@ module;
 #include "security_capabilities.h"
 #include "security_side_effect.hh" // #2057: PrimMeta effect contract + gate pattern
 #include "observability_metrics.h"
-#include "hash_meta.h"                    // FNV constants for stats hash
-#include "typed_mutation_audit.h"         // Issue #1589
+#include "hash_meta.h"            // FNV constants for stats hash
+#include "typed_mutation_audit.h" // Issue #1589
+#include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-densify/steal/Agent
 #include "test/test_strategy.h"           // Issue #1887: hot-path / self-mod strategy metrics
 #include "render_prim_template.hh"        // Issue #1677: aura_is_render_evolution_name
 #include "core/sandbox.hh"                // Issue #1878: is_strict() for multi-tenant batch
@@ -2796,6 +2797,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     err += " [" + n.kind + " at node " + std::to_string(n.node) +
                                            "] " + n.message + ";";
                                 ev.last_mutate_error_ = err;
+                            }
+                            // Issue #2695: unified rebind entry — routes
+                            // explicit-Agent mutate:rebind through the same
+                            // API as densify / steal. AC3 zero-cost when
+                            // no remapped roots (linear_bindings empty or
+                            // already validated above); real per-root span
+                            // wires in follow-up.
+                            {
+                                aura::compiler::OwnershipEnv local_env{};
+                                (void)aura::compiler::ownership_rebind_after_remap(
+                                    local_env,
+                                    std::span<const aura::ast::NodeId>(linear_bindings.data(),
+                                                                       linear_bindings.size()),
+                                    aura::compiler::RemapReason::ExplicitAgent);
                             }
                         }
                     },

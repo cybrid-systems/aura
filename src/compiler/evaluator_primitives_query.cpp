@@ -7652,6 +7652,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                   std::memory_order_relaxed)));
                 insert_kv("schema-2694", 2694);
                 insert_kv("issue-2694", 2694);
+                // Issue #2695: unified OwnershipEnv rebind API post-densify /
+                // steal / explicit-Agent mutate:rebind (additive — pairs
+                // #2673 linear-root consistency scan + #2563 force rollback).
+                insert_kv(
+                    "ownership-rebind-total",
+                    static_cast<std::int64_t>(aura::compiler::ownership_rebind_total_v_read()));
+                insert_kv("ownership-rebind-fail-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::ownership_rebind_fail_total_v_read()));
+                insert_kv(
+                    "ownership-rebind-wired",
+                    static_cast<std::int64_t>(aura::compiler::ownership_rebind_wired_v_read()));
+                insert_kv("ownership-rebind-densify-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::ownership_rebind_densify_total_v_read()));
+                insert_kv("ownership-rebind-steal-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::ownership_rebind_steal_total_v_read()));
+                insert_kv("ownership-rebind-explicit-agent-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::ownership_rebind_explicit_agent_total_v_read()));
+                insert_kv("schema-2695", 2695);
+                insert_kv("issue-2695", 2695);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

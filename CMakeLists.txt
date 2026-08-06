@@ -41,6 +41,7 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_query_workspace.cpp
     src/compiler/evaluator_primitives_query_defuse.cpp
     src/compiler/evaluator_primitives_mutate.cpp
+    src/compiler/ownership_rebind.cpp
     src/compiler/query_matcher.cpp
     src/compiler/evaluator_primitives_workspace.cpp
     src/compiler/evaluator_primitives_persist.cpp
