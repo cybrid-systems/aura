@@ -728,6 +728,13 @@ void Evaluator::stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcep
 // handed to Agent / user code. Central create/rebind helper.
 void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcept {
     const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+    // Issue #2687: bump local capture counter — this is the production
+    // multi-tenant path (per-Evaluator authority via capability_tenant_id_).
+    // Distinct from maybe_stamp_stable_ref_isolation_tenant which bumps
+    // g_isolation_capture_stamp_global_fallback_total_atomic when it uses
+    // the process-global g_isolation_capture_tenant atomic.
+    ::aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().fetch_add(
+        1, std::memory_order_relaxed);
     ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
 }
 

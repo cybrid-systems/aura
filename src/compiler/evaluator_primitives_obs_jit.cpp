@@ -924,6 +924,31 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2683", make_int(2683)},
                 {"issue-2683", make_int(2683)},
                 {"shape-storm-isolation-default-per-eval", make_int(1)},
+                // Issue #2687: per-Evaluator isolation capture tenant accounting.
+                // Three counters distinguish the production multi-tenant path
+                // (Evaluator::stamp_stable_ref uses capability_tenant_id_)
+                // from the legacy global-fallback path
+                (maybe_stamp_stable_ref_isolation_tenant reads
+                // g_isolation_capture_tenant atomic). Production default =
+                // local path; global-fallback should stay 0 under
+                // multi-eval (legacy single-tenant / test harness only).
+                {"isolation-capture-stamp-local-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::provenance::
+                         g_isolation_capture_stamp_local_total_atomic().load(
+                             std::memory_order_relaxed)))},
+                {"isolation-capture-stamp-global-fallback-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::provenance::
+                         g_isolation_capture_stamp_global_fallback_total_atomic().load(
+                             std::memory_order_relaxed)))},
+                {"isolation-capture-stamp-evaluator-miss-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::provenance::
+                         g_isolation_capture_stamp_evaluator_miss_total_atomic().load(
+                             std::memory_order_relaxed)))},
+                {"schema-2687", make_int(2687)},
+                {"issue-2687", make_int(2687)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},

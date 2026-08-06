@@ -419,6 +419,132 @@ int main() {
               "AC6: no docs/design/ — design rationale in commit/close");
     }
 
+    // ── #2687 AC1/AC2: per-Evaluator capture tenant accounting ──
+    {
+        std::println("\n--- #2687 AC1/AC2: per-Evaluator isolation_capture_tenant ---");
+        reset_all();
+        // Production multi-tenant path goes through Evaluator::stamp_stable_ref
+        // which uses Evaluator::capability_tenant_id_ (per-Evaluator authority
+        // from #2659 + #2056). The new #2687 counters distinguish:
+        //   local: Evaluator::stamp_stable_ref (per-Evaluator, authority)
+        //   global_fallback: maybe_stamp_stable_ref_isolation_tenant (FlatAST
+        //                    fallback path, reads g_isolation_capture_tenant)
+        //   evaluator_miss: diagnostic for FlatAST factories called under
+        //                   an active Evaluator (should have used
+        //                   Evaluator::stamp_stable_ref).
+        const auto local_before =
+            aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto global_before =
+            aura::core::provenance::g_isolation_capture_stamp_global_fallback_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto miss_before =
+            aura::core::provenance::g_isolation_capture_stamp_evaluator_miss_total_atomic().load(
+                std::memory_order_relaxed);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        // Issue #2056: full stamp (tenant + fiber) — Evaluator::make_stamped_ref
+        // calls stamp_stable_ref which bumps g_isolation_capture_stamp_local_total_atomic.
+        for (int i = 0; i < 4; ++i) {
+            (void)ev.make_stamped_ref(static_cast<aura::FlatAST::NodeId>(i));
+        }
+        const auto local_after =
+            aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
+                std::memory_order_relaxed);
+        CHECK(local_after >= local_before + 4,
+              "AC1: Evaluator::make_stamped_ref bumps local capture counter by >= 4");
+        CHECK(global_after == global_before,
+              "AC1: Evaluator path does NOT bump global_fallback counter");
+        CHECK(miss_after == miss_before,
+              "AC1: Evaluator path does NOT bump evaluator_miss counter");
+        // Global-fallback path: set process-global capture tenant + call
+        // maybe_stamp_stable_ref_isolation_tenant on a StableRefT.
+        aura::core::provenance::set_isolation_capture_tenant(42);
+        aura::FlatAST::StableNodeRef ref{};
+        const bool stamped = aura::core::provenance::
+            maybe_stamp_stable_ref_isolation_tenant(ref);
+        CHECK(stamped, "AC2: global-fallback path stamps when tenant != 0");
+        CHECK(ref.tenant_id == 42,
+              "AC2: global-fallback stamps tenant_id from process-global");
+        const auto global_after2 =
+            aura::core::provenance::g_isolation_capture_stamp_global_fallback_total_atomic().load(
+                std::memory_order_relaxed);
+        CHECK(global_after2 >= global_after + 1,
+              "AC2: global-fallback path bumps fallback counter");
+        // Reset for AC4.
+        aura::core::provenance::set_isolation_capture_tenant(0);
+    }
+
+    // ── #2687 AC4: Soft / tenant=0 capture remains permissive ──
+    {
+        std::println("\n--- #2687 AC4: Soft / tenant=0 capture permissive ---");
+        reset_all();
+        aura::core::provenance::set_isolation_capture_tenant(0);
+        aura::FlatAST::StableNodeRef ref{};
+        const bool stamped = aura::core::provenance::
+            maybe_stamp_stable_ref_isolation_tenant(ref);
+        CHECK(!stamped,
+              "AC4: tenant=0 → maybe_stamp_stable_ref_isolation_tenant returns false (no stamp)");
+        CHECK(ref.tenant_id == 0, "AC4: tenant_id stays 0 (legacy single-tenant)");
+    }
+
+    // ── #2687 AC5: query surface wired ──
+    {
+        std::println("\n--- #2687 AC5: query surface ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        CHECK(href(cs, "schema-2687") == 2687, "AC5: schema-2687 sentinel");
+        CHECK(href(cs, "issue-2687") == 2687, "AC5: issue-2687 sentinel");
+        const auto local_q = href(cs, "isolation-capture-stamp-local-total");
+        const auto fallback_q = href(cs, "isolation-capture-stamp-global-fallback-total");
+        const auto miss_q = href(cs, "isolation-capture-stamp-evaluator-miss-total");
+        CHECK(local_q >= 0, "AC5: local-total queryable (>= 0)");
+        CHECK(fallback_q >= 0, "AC5: global-fallback-total queryable (>= 0)");
+        CHECK(miss_q >= 0, "AC5: evaluator-miss-total queryable (>= 0)");
+        // Legacy #2659 schema-2659 still works (additive — no schema break).
+        CHECK(href(cs, "schema-2659") == 2659, "AC5: legacy schema-2659 still wired");
+    }
+
+    // ── #2687 AC6: source-cite + no regression ──
+    {
+        std::println("\n--- #2687 AC6: source-cite + no regression ---");
+        const auto prov = read_file("src/core/provenance_tracker.hh");
+        const auto eval_sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto workspace = read_file("src/core/workspace_isolation.hh");
+        const auto q_src = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        // Issue #2687 sentinel in all 4 prod-side files.
+        CHECK(prov.find("#2687") != std::string::npos,
+              "AC6: provenance_tracker.hh cites #2687");
+        CHECK(eval_sec.find("#2687") != std::string::npos,
+              "AC6: evaluator_security.cpp cites #2687");
+        CHECK(workspace.find("#2687") != std::string::npos,
+              "AC6: workspace_isolation.hh cites #2687");
+        CHECK(q_src.find("#2687") != std::string::npos,
+              "AC6: evaluator_primitives_obs_jit.cpp cites #2687");
+        // Counters declared + wired.
+        CHECK(prov.find("g_isolation_capture_stamp_local_total_atomic") != std::string::npos,
+              "AC5: local counter declared in provenance_tracker.hh");
+        CHECK(prov.find("g_isolation_capture_stamp_global_fallback_total_atomic") !=
+                  std::string::npos,
+              "AC5: global-fallback counter declared in provenance_tracker.hh");
+        CHECK(eval_sec.find("g_isolation_capture_stamp_local_total_atomic") !=
+                  std::string::npos,
+              "AC1: local counter bumped from Evaluator::stamp_stable_ref");
+        CHECK(prov.find("g_isolation_capture_stamp_global_fallback_total_atomic") !=
+                  std::string::npos,
+              "AC2: global-fallback counter bumped from maybe_stamp_stable_ref_isolation_tenant");
+        // #2659 regression: Evaluator::set_tenant_principal must NOT write the global.
+        CHECK(eval_sec.find("set_isolation_capture_tenant") == std::string::npos,
+              "AC2 (#2659 regression): Evaluator::set_tenant_principal must not write global");
+        // No design doc regression (per #1655).
+        for (const auto& p : {"docs/design/evaluator_capture_tenant_2687.md",
+                              "docs/evaluator_capture_tenant_2687.md"}) {
+            std::ifstream f(p);
+            CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+        }
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);
