@@ -259,37 +259,34 @@ static void ac2701_1_budget_reject_production() {
     CHECK(emb.find("Soft path") != std::string::npos, "AC2: emb soft path note");
 }
 
-// ── Issue #2701 AC3: query keys + Agent-visible counters ──
-static void ac2701_2_query_keys_added() {
-    std::println("\n--- #2701 AC3: query keys + counters ---");
+// ── Issue #2701 AC2: Soft path metric-only ──
+static void ac2701_2_soft_path_metric_only() {
+    std::println("\n--- #2701 AC2: Soft path metric-only ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(mhb.find("g_mutation_hold_budget_soft_total") != std::string::npos,
+          "AC2: mhb has soft-observe counter (Soft path bumps only this)");
+    CHECK(mhb.find("publish_partial_cone_truncate") != std::string::npos,
+          "AC2: Soft path preserves existing #2621 observe ergonomics");
+}
+
+// ── Issue #2701 AC4: query keys + Agent-visible counters ──
+static void ac2701_4_query_keys_added() {
+    std::println("\n--- #2701 AC4: query keys + counters ---");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
     CHECK(q.find("query:mutation-hold-budget-gate") != std::string::npos ||
               q.find("mutation-hold-budget-reject-total") != std::string::npos,
-          "AC3: query primitive / reject-total surfaced");
+          "AC4: query primitive / reject-total surfaced");
     CHECK(q.find("mutation-hold-budget-soft-observe-total") != std::string::npos,
-          "AC3: soft-observe-total surfaced");
+          "AC4: soft-observe-total surfaced");
     CHECK(q.find("mutation-hold-budget-wired") != std::string::npos,
-          "AC3: wired sentinel surfaced");
-    CHECK(q.find("schema-2701") != std::string::npos, "AC3: schema-2701");
-    CHECK(q.find("issue-2701") != std::string::npos, "AC3: issue-2701");
-    // Prior #2551 / #2587 / #2630 / #2660 surfaces preserved.
-    CHECK(q.find("schema-2551") != std::string::npos, "AC3: schema-2551 preserved");
-}
-
-// ── Issue #2701 AC4: order with #2660 security-schedule (budget BEFORE schedule) ──
-static void ac2701_3_order_with_security_schedule() {
-    std::println("\n--- #2701 AC4: order with #2660 security-schedule ---");
-    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    CHECK(emb.find("#2587 mailbox-hold-starvation") != std::string::npos,
-          "AC4: #2587 gate present in emb");
-    CHECK(emb.find("#2701 budget") != std::string::npos,
-          "AC4: #2701 budget gate present in emb (BEFORE #2630/#2660)");
-    CHECK(emb.find("#2630/#2660 security-schedule") != std::string::npos,
-          "AC4: #2630/#2660 security-schedule gate present (AFTER #2701)");
+          "AC4: wired sentinel surfaced");
+    CHECK(q.find("schema-2701") != std::string::npos, "AC4: schema-2701");
+    CHECK(q.find("issue-2701") != std::string::npos, "AC4: issue-2701");
+    CHECK(q.find("schema-2551") != std::string::npos, "AC4: schema-2551 preserved");
 }
 
 // ── Issue #2701 AC5: source-cite + linter ──
-static void ac2701_4_source_and_linter() {
+static void ac2701_5_source_and_linter() {
     std::println("\n--- #2701 AC5: source-cite + linter ---");
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -309,14 +306,14 @@ static void ac2701_4_source_and_linter() {
     CHECK(t.find("ac2701_3_order_with_security_schedule") != std::string::npos,
           "AC5: AC4 test present");
     CHECK(t.find("ac2701_4_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
-    CHECK(t.find("ac2701_5_no_docs_design") != std::string::npos, "AC5: AC6 test present");
+    CHECK(t.find("ac2701_6_no_docs_design") != std::string::npos, "AC5: AC6 test present");
     CHECK(build.find("check_mutation_hold_budget_reject_2701") != std::string::npos,
           "AC5: build.py wires linter");
     CHECK(lint.find("2701") != std::string::npos, "AC5: linter covers #2701");
 }
 
 // ── Issue #2701 AC6: no docs/design/ per #1655 ──
-static void ac2701_5_no_docs_design() {
+static void ac2701_6_no_docs_design() {
     std::println("\n--- #2701 AC6: no docs/design/2701-* per #1655 ---");
     const std::string design_path = "docs/design/2701-";
     CHECK(read_file((design_path + "hold-budget-reject.md").c_str()).empty(),
@@ -334,10 +331,11 @@ int run_test_mailbox_hold_starvation_hard() {
     ac5_source_and_gate();
     std::println("\n=== Issue #2701: mutation hold-budget reject (post-#2551) ===");
     ac2701_1_budget_reject_production();
-    ac2701_2_query_keys_added();
+    ac2701_2_soft_path_metric_only();
     ac2701_3_order_with_security_schedule();
-    ac2701_4_source_and_linter();
-    ac2701_5_no_docs_design();
+    ac2701_4_query_keys_added();
+    ac2701_5_source_and_linter();
+    ac2701_6_no_docs_design();
     std::println("\n=== #2551 + #2701: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
