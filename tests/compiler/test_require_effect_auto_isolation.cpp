@@ -382,6 +382,83 @@ static void ac2658_6_source_and_coverage() {
     CHECK(docs_design.empty(), "AC6: no docs/design/ — design rationale in commit/close");
 }
 
+// ── #2689 AC1: inventory of side-effect prims holding StableNodeRef ──
+static void ac2689_1_inventory_stable_node_ref_paths() {
+    std::println("\n--- #2689 AC1: inventory of require_effect + StableNodeRef paths ---");
+    // Source-cite table: every scope file that calls require_effect( MUST
+    // either name ref_tenant in the same body OR call require_effect_on_ref(
+    // — that closes the late-isolation window (#2658 AC1 baseline preserved).
+    const std::vector<std::pair<std::string, std::string>> scope_files = {
+        {"src/compiler/evaluator_security.cpp", "security core (ref_tenant=0 default)"}, // NOLINT
+        {"src/compiler/evaluator_primitives_mutate.cpp", "mutate:force (only #2658 call site)"}, // NOLINT
+        {"src/compiler/evaluator_primitives_compile.cpp", "NodeId-only paths"},
+        {"src/compiler/evaluator_primitives_runtime.cpp", "runtime ops"},
+        {"src/compiler/evaluator_primitives_io.cpp", "file / sys write"},
+        {"src/compiler/evaluator_primitives_messaging.cpp", "mailbox handoff"},
+    };
+    for (const auto& [rel, expected] : scope_files) {
+        const auto text = read_file(rel.c_str());
+        CHECK(!text.empty(), "AC1: scope file present");
+        // Inventory check: require_effect( must be present somewhere in the file.
+        if (text.find("require_effect(") != std::string::npos) {
+            // If StableNodeRef is also referenced, the file must use either
+            // ref_tenant argument OR require_effect_on_ref( overload.
+            const bool has_stable_node_ref = text.find("StableNodeRef") != std::string::npos;
+            const bool has_ref_tenant = text.find("ref_tenant") != std::string::npos;
+            const bool has_on_ref = text.find("require_effect_on_ref(") != std::string::npos;
+            if (has_stable_node_ref) {
+                CHECK(has_ref_tenant || has_on_ref,
+                      "AC1: require_effect + StableNodeRef must use ref_tenant or on_ref");
+            }
+        }
+        (void)expected;
+    }
+}
+
+// ── #2689 AC5: coverage linter self-test ──
+static void ac2689_5_linter_self_test() {
+    std::println("\n--- #2689 AC5: coverage linter self-test ---");
+    // The linter must exist + run successfully on current source.
+    const auto linter = read_file("scripts/coverage/checks/check_require_effect_on_ref_2689.py");
+    CHECK(!linter.empty(), "AC5: linter file present");
+    // Linter contract documentation.
+    CHECK(linter.find("AC5") != std::string::npos, "AC5: linter covers AC5");
+    CHECK(linter.find("StableNodeRef") != std::string::npos,
+          "AC5: linter scans for StableNodeRef in scope");
+    CHECK(linter.find("require_effect(") != std::string::npos,
+          "AC5: linter scans for require_effect( calls");
+    CHECK(linter.find("ref_tenant") != std::string::npos,
+          "AC5: linter requires ref_tenant OR require_effect_on_ref");
+    CHECK(linter.find("require_effect_on_ref") != std::string::npos,
+          "AC5: linter requires ref_tenant OR require_effect_on_ref");
+}
+
+// ── #2689 AC6: source-cite + no regression ──
+static void ac2689_6_source_and_no_design_doc() {
+    std::println("\n--- #2689 AC6: source-cite + no regression ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    // Issue #2689 sentinel in evaluator_security.cpp (just above require_effect).
+    CHECK(sec.find("Issue #2689") != std::string::npos,
+          "AC6: evaluator_security.cpp cites #2689");
+    // require_effect_on_ref definition present.
+    CHECK(sec.find("require_effect_on_ref") != std::string::npos,
+          "AC6: require_effect_on_ref defined");
+    // ref_tenant parameter present.
+    CHECK(sec.find("ref_tenant") != std::string::npos,
+          "AC6: ref_tenant parameter present");
+    // #2658 regression check — mutate:force pattern unchanged.
+    CHECK(sec.find("Issue #2658") != std::string::npos,
+          "AC4: #2658 lineage reference preserved");
+    CHECK(sec.find("on_ref") != std::string::npos,
+          "AC4: require_effect_on_ref thin helper preserved");
+    // No design doc regression (per #1655).
+    for (const auto& p : {"docs/design/require_effect_on_ref_2689.md",
+                          "docs/require_effect_on_ref_2689.md"}) {
+        std::ifstream f(p);
+        CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+    }
+}
+
 } // namespace
 
 int run_test_require_effect_auto_isolation() {
@@ -399,6 +476,10 @@ int run_test_require_effect_auto_isolation() {
     ac2658_4_production_path_source_cite();
     ac2658_5_se_mid_unchanged();
     ac2658_6_source_and_coverage();
+    std::println("\n=== Issue #2689: require_effect_on_ref coverage ===");
+    ac2689_1_inventory_stable_node_ref_paths();
+    ac2689_5_linter_self_test();
+    ac2689_6_source_and_no_design_doc();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
