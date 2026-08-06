@@ -469,6 +469,24 @@ def cmd_lint():
             "Issue #2699 unified steal safety transaction coverage linter failed — run python3 scripts/coverage/checks/check_steal_safety_transaction_2699.py"
         )
         return r
+    # Issue #2700: mailbox + long-hold MutationBoundary interleaving —
+    # happens-before contract: outermost MutationBoundaryGuard held ⇒
+    # mailbox StableNodeRef payloads require handoff_completed; otherwise
+    # Closed + bump handoff_reject_total. Wires
+    # check_handoff_ref_mailbox_gate_2700.py so the gate-site lock +
+    # query surface + test extension stay enforced. Builds on #2632
+    # handoff reject + #2680 shared-Evaluator delivery gate + #2312
+    # push-side delivery gate.
+    handoff_script = COVERAGE_CHECKS / "check_handoff_ref_mailbox_gate_2700.py"
+    if not handoff_script.exists():
+        fail(f"missing {handoff_script}")
+        return 1
+    r = run([sys.executable, str(handoff_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2700 handoff_ref mailbox gate linter failed — run python3 scripts/coverage/checks/check_handoff_ref_mailbox_gate_2700.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a

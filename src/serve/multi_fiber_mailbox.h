@@ -118,6 +118,22 @@ struct MultiFiberMailboxStats {
     // Agent hands a StableNodeRef across the mailbox / fanout boundary
     // without first calling Evaluator::handoff_ref — agents reading the
     // mailbox payload should observe this and force-resolve their held refs.
+    // Issue #2632: handoff reject counter (single internal helper gate, mirror
+    // of CompilerMetrics::stable_ref_handoff_reject_total). Bumped when an
+    // Agent hands a StableNodeRef across the mailbox / fanout boundary
+    // without first calling Evaluator::handoff_ref — agents reading the
+    // mailbox payload should observe this and force-resolve their held refs.
+    //
+    // Issue #2700: explicit happens-before contract. While outermost
+    // MutationBoundaryGuard is held (workspace_mtx_ exclusive + MutationHold
+    // GC defer), any MailMessage that carries a StableNodeRef payload
+    // MUST have completed Evaluator::handoff_ref before push/broadcast
+    // succeeds. Messages that arrive without handoff_completed are rejected
+    // (Closed + bump handoff_reject_total + bump local_stats_.handoff_reject_total).
+    // Query / mutate observers on other fibers either block on workspace_mtx_
+    // or see only committed post-exit state. The contract is verified by:
+    //   - scripts/coverage/checks/check_handoff_ref_mailbox_gate_2700.py (linter)
+    //   - tests/serve/test_mailbox_recv_mutation_boundary.cpp ac2700_* (chaos)
     std::atomic<std::uint64_t> handoff_reject_total{0};
     // Issue #2010: fanout-specific backpressure (also counted in backpressure_rejects).
     std::atomic<std::uint64_t> fanout_backpressure_rejects{0};
