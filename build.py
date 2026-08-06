@@ -562,6 +562,22 @@ def cmd_lint():
             "module import contiguity (#2678) coverage linter failed — run python3 scripts/coverage/checks/check_module_import_contiguity_2678.py"
         )
         return r
+    # Issue #2679: P0 — runtime(chaos) production multi-fiber × MutationBoundary ×
+    # GC × steal × mailbox soak + silent-corruption detection. Validates
+    # the existing chaos binary (tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp)
+    # covers all 6 production ACs (≥30 min SOAK / 8+ workers / 64+ fibers /
+    # silent-corruption detection / hard-fail counters / Soft mode / build.py
+    # nightly wiring / reproducible seed). Regression gate on the existing
+    # AURA_CHAOS_DURATION_S / AURA_CHAOS_FIBERS / AURA_CHAOS_WORKERS / etc.
+    # env knobs and the hard_fail_invariants check.
+    cs_script = COVERAGE_CHECKS / "check_chaos_soak_2679.py"
+    if not cs_script.exists():
+        fail(f"missing {cs_script}")
+        return 1
+    r = run([sys.executable, str(cs_script)], cwd=ROOT)
+    if r != 0:
+        fail("chaos soak (#2679) coverage linter failed — run python3 scripts/coverage/checks/check_chaos_soak_2679.py")
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +

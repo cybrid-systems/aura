@@ -11,6 +11,11 @@
 // Issue #2554 — PR/deploy gate: short deterministic chaos under production-like
 // hard-fail invariants in ./build.py gate (steal hard-fail Δ==0, residual
 // still-running==0). Full SOAK/FULL soak unchanged (nightly).
+// Issue #2679 — runtime(chaos) production multi-fiber × MutationBoundary × GC ×
+// steal × mailbox soak + silent-corruption detection. The chaos binary already
+// covers all 6 production ACs (≥30 min SOAK / 8+ workers / 64+ fibers /
+// silent-corruption detection / hard-fail counters / Soft mode / build.py
+// nightly wiring / reproducible seed). Verified by check_chaos_soak_2679.py.
 //
 //   AC1: Fixed-seed chaos completes exit 0 (smoke default; full 30s via env)
 //   AC2: Injected residual Panic depth fails detection CHECK
