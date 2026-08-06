@@ -163,10 +163,23 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
     if (state == 0)
         return true;
     using aura::core::provenance::linear_enforce_require_complete;
+    using aura::core::provenance::linear_enforce_require_complete_effective;
     using aura::core::provenance::validate_linear_provenance;
     // Hot IR Move/Borrow/MutBorrow/Drop: Strict require_complete (#2207 / #2103).
     // force_deopt on Moved live / would-be-stale is always hard-fail.
-    const bool require = linear_enforce_require_complete();
+    // Issue #2675: explicit wire to the single pure API
+    // `effective_linear_enforce()` (production_defaults = process-Strict
+    // signal in this scope; fiber_boundary_hold = boundary hold active;
+    // env_force_strict = false — IR never reads the env directly, that
+    // signal is already folded into process Strict). The state-reader
+    // overload remains as a fallback for call sites without explicit
+    // booleans in scope.
+    const bool require_strict_signal = aura::core::provenance::linear_enforce_mode() ==
+                                       aura::core::provenance::LinearEnforceMode::Strict;
+    const bool require = linear_enforce_require_complete_effective(
+        /*production_defaults=*/require_strict_signal,
+        /*fiber_boundary_hold=*/aura::core::provenance::linear_enforce_boundary_strict_active(),
+        /*env_force_strict=*/false);
     const auto r =
         validate_linear_provenance(state, /*node_id=*/0, provenance_id, mutation_id,
                                    /*frame_version=*/0, /*current_version=*/0,
