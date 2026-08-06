@@ -86,7 +86,8 @@ bool ownership_rebind_after_remap(class OwnershipEnv& env,
 [[nodiscard]] inline bool ownership_rebind_after_remap_c(class OwnershipEnv& env,
                                                          const aura::ast::NodeId* roots,
                                                          std::size_t n, RemapReason why) noexcept {
-    return ownership_rebind_after_remap(env, std::span<const aura::ast::NodeId>(roots, n), why);
+    return ownership_rebind_after_remap(
+        env, std::span<const aura::ast::NodeId>(roots, static_cast<std::size_t>(n)), why);
 }
 
 } // namespace aura::compiler

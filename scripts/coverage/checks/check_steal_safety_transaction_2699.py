@@ -59,6 +59,8 @@ def main() -> int:
     hdr = _read("src/serve/steal_safety.h")
     cpp = _read("src/serve/steal_safety.cpp")
     worker = _read("src/serve/worker.cpp")
+    fiber = _read("src/serve/fiber.cpp")
+    gc_hooks = _read("src/core/gc_hooks.h")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
@@ -81,7 +83,9 @@ def main() -> int:
 
     # AC2 — worker.cpp try_steal_from routes through the unified entry
     must("steal_safety_transaction", "AC2", worker)
-    must("RejectHard", "AC2", worker)
+    # RejectHard enum value lives in steal_safety.h/.cpp
+    must("RejectHard", "AC2", hdr)
+    must("RejectHard", "AC2", cpp)
     # Wire-in marker comment ensures the call graph is single-entry
     must("call_steal_complete_now_uses_unified_transaction", "AC2 marker", worker)
     # CMakeLists registers the new TU
@@ -89,15 +93,18 @@ def main() -> int:
     # build.py wires the linter
     must("check_steal_safety_transaction_2699", "AC2", build)
 
-    # AC3 — soft / sandbox metric-only
-    must("steal_snapshot_soft_production_locked", "AC3", cpp)
-    must("aura_fiber_is_steal_snapshot_soft_mode", "AC3", cpp)
+    # AC3 — soft / sandbox metric-only (flags live in fiber.cpp)
+    must("steal_snapshot_soft_production_locked", "AC3", fiber)
+    must("aura_fiber_is_steal_snapshot_soft_mode", "AC3", fiber)
 
     # AC4 — existing counters remain additive / non-regressing
-    must("steal_snapshot_mismatch_force_deopt_total", "AC4", worker)
-    must("residual_defer_steal_hard_fail_total", "AC4", worker)
-    must("panic_checkpoint_cleared_on_steal_total", "AC4", worker)
-    must("steal_safety_ticket_mismatch_total", "AC4", worker)
+    # steal_snapshot_mismatch_force_deopt_total + steal_safety_ticket_mismatch_total
+    # live in fiber.cpp. residual_defer_steal_hard_fail_total +
+    # panic_checkpoint_cleared_on_steal_total live in core/gc_hooks.h.
+    must("steal_snapshot_mismatch_force_deopt_total", "AC4", fiber)
+    must("steal_safety_ticket_mismatch_total", "AC4", fiber)
+    must("residual_defer_steal_hard_fail_total", "AC4", gc_hooks)
+    must("panic_checkpoint_cleared_on_steal_total", "AC4", gc_hooks)
     must("Issue #2699", "AC4", hdr)
     must("Issue #2699", "AC4", cpp)
 

@@ -66,6 +66,9 @@ static inline void call_probe_linear_on_steal() noexcept {
 // path that skips residual + stamp). Light/sandbox (production Soft lock
 // off) may use weak no-op or legacy N-call fallback with metric bump.
 static inline void call_steal_complete(Fiber* stolen) noexcept {
+    // Issue #2699: call_steal_complete_now_uses_unified_transaction
+    // (wire-in marker — ensures the call graph is the single #2699
+    // transaction entry point).
     if (aura_evaluator_on_steal_complete) {
         // Strong wins over weak when linked. Weak no-op under production
         // aborts inside fiber_bridge (#2377); under sandbox it bumps
