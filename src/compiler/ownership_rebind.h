@@ -87,15 +87,13 @@ bool ownership_rebind_after_remap(class OwnershipEnv& env,
                                                          const aura::ast::NodeId* roots,
                                                          std::size_t n, RemapReason why) noexcept {
     // Issue: C++20 std::span template deduction kept matching the
-    // `span(T (&arr)[N])` C-array constructor (compiler saw
-    // `const NodeId* const&` and `const long int&` as a reference-to-array).
-    // Use a `const_cast` to force the pointer to `const NodeId*` (not
-    // `const NodeId* const`) so the iterator+count constructor is picked.
+    // `span(T (&arr)[N])` C-array constructor regardless of const_cast.
+    // Use `std::dynamic_extent` explicit + pass pointer to a local var
+    // (forces the iterator+count overload instead of the array overload).
+    const auto* const rp = roots;
+    const auto sz = static_cast<std::ptrdiff_t>(n);
     return ownership_rebind_after_remap(
-        env,
-        std::span<const aura::ast::NodeId>(const_cast<const aura::ast::NodeId*>(roots),
-                                           static_cast<std::ptrdiff_t>(n)),
-        why);
+        env, std::span<const aura::ast::NodeId, std::dynamic_extent>(rp, sz), why);
 }
 
 } // namespace aura::compiler
