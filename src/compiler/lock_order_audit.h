@@ -40,6 +40,21 @@
 //   FiberRegistry — WorkerThread::fiber_registry_mutex_
 //   Closures      — Evaluator::closures_mtx_
 //   Module        — Evaluator::module_mtx_
+//
+// Issue #2676 (P0 — shared Evaluator heap serialization, extend #2651):
+// Per-heap `alloc_storage_lock_` (Evaluator member) wraps the closures_mtx_
+// critical section for the full push / resize / compact of string_heap_,
+// pairs_, closures_, live-closure remount tables, and IR-cache bridge
+// roots. Acquire order vs. closures_mtx_ is documented at the call site
+// (typically alloc_storage_lock_ is held by the calling Evaluator method
+// first, then closures_mtx_ is acquired as the per-heap mutex; the
+// shared Evaluator heap mutation must observe the rank). Held only for
+// the critical section of a single push / resize / compact — uncontended
+// in single-fiber / Soft / sandbox=off mode (AC6). For the closures_
+// critical section, acquire closures_mtx_ (write) then optionally
+// shared_lock(closures_mtx_) (read of make_closure). 8+ fibers × concurrent
+// closure materialization + live-closure refresh + IR-cache bridge root
+// must observe the rank (AC3 + AC4 chaos).
 // Documented Scheduler reap_orphans_now order:
 //   orphan_mutex_ → wait_map_mutex_ → joiner_map_mutex_ → owned_fibers_mutex_
 //

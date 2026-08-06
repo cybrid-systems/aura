@@ -305,6 +305,38 @@ linear_provenance_hard_fail_total_atomic() noexcept {
     return static_cast<LinearEnforceMode>(g_linear_enforce_mode.load(std::memory_order_relaxed));
 }
 
+// Issue #2675: single pure API for effective linear enforce. Full
+// definition lives here (after `linear_enforce_mode()` getter, before
+// the state-mode setters) so the enumerators (`Strict` / `Soft`) are
+// visible at the use sites in `linear_enforce_effective_mode()` (line
+// ~350) + `linear_enforce_require_complete_effective()` (line ~390).
+// The original #2675 ship put the definition at the bottom of the file,
+// causing a chicken-and-egg ordering bug. This #2676 fix moves the
+// definition to the top (single source of truth, eliminates the
+// per-call-site split checks that lived in the legacy #2222 state
+// reader).
+enum class LinearEnforceEffective : uint8_t {
+    Soft = 0,
+    Strict = 1,
+};
+[[nodiscard]] inline LinearEnforceEffective
+effective_linear_enforce(bool production_defaults, bool fiber_boundary_hold,
+                         bool env_force_strict) noexcept {
+    // Decision table (single source of truth — replaces #2222 split):
+    //   env_force_strict                          → Strict
+    //   production_defaults || fiber_boundary_hold → Strict
+    //   else                                      → Soft
+    // #2108 cross-batch escape hard-block remains an independent authority
+    // (returns its own deny_kind, not through this table).
+    if (env_force_strict)
+        return LinearEnforceEffective::Strict;
+    if (production_defaults)
+        return LinearEnforceEffective::Strict;
+    if (fiber_boundary_hold)
+        return LinearEnforceEffective::Strict;
+    return LinearEnforceEffective::Soft;
+}
+
 inline void set_linear_enforce_mode(LinearEnforceMode m) noexcept {
     g_linear_enforce_mode.store(static_cast<std::uint32_t>(m), std::memory_order_relaxed);
 }
@@ -382,37 +414,6 @@ linear_enforce_require_complete_effective(bool production_defaults, bool fiber_b
                                           bool env_force_strict) noexcept {
     return effective_linear_enforce(production_defaults, fiber_boundary_hold, env_force_strict) ==
            LinearEnforceEffective::Strict;
-}
-
-// Issue #2675: single pure API for effective linear enforce. Replaces the
-// split logic that lived in `linear_enforce_effective_mode()` (state reader)
-// + per-call-site checks (IR executor / post-mutate / cross-closure) so
-// AST audit, IR execute, and MutationBoundary force classification all
-// share one decision table. Pure function — no globals, no module cycle,
-// callable from any TU (header-only).
-//
-// Decision table (single source of truth — replaces #2222 split):
-//   env_force_strict                          → Strict
-//   production_defaults || fiber_boundary_hold → Strict
-//   else                                      → Soft
-// #2108 cross-batch escape hard-block remains an independent authority
-// (returns its own deny_kind, not through this table).
-enum class LinearEnforceEffective : std::uint8_t {
-    Soft = 0,
-    Strict = 1,
-};
-[[nodiscard]] inline LinearEnforceEffective
-effective_linear_enforce(bool production_defaults, bool fiber_boundary_hold,
-                         bool env_force_strict) noexcept {
-    // Issue #2675: env_force_strict wins (AURA_LINEAR_ENFORCE=strict forces
-    // Strict even under Soft audit strategy / no production / no hold).
-    if (env_force_strict)
-        return LinearEnforceEffective::Strict;
-    if (production_defaults)
-        return LinearEnforceEffective::Strict;
-    if (fiber_boundary_hold)
-        return LinearEnforceEffective::Strict;
-    return LinearEnforceEffective::Soft;
 }
 
 // Test harness Soft opt-in: Soft-mode unit tests force Soft explicitly
