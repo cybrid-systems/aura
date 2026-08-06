@@ -214,8 +214,7 @@ int run_test_steal_safety_ticket() {
     ac3_coexist_2510();
     ac4_cost_and_query();
     ac5_source_wiring();
-    std::println(
-        "\n=== Issue #2702: Resume hard-fail unified path (post-#2518) ===");
+    std::println("\n=== Issue #2702: Resume hard-fail unified path (post-#2518) ===");
     ac2702_1_resume_invariant_exists();
     ac2702_2_soft_path_metric_only();
     ac2702_3_ticket_one_shot();

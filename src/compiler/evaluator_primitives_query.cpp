@@ -6514,6 +6514,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                 insert_kv("resume-hard-fail-wired", wired);
                                 insert_kv("schema-2702", 2702);
                                 insert_kv("issue-2702", 2702);
+                                // Issue #2703: query:cone-outside-goal-drop — Agent-visible
+                                // production hard-face surface. Soft / sandbox observes only;
+                                // production hard-rejects commit when partial cone truncate
+                                // drops outside-If OccurrenceGoals ("half-green" typed
+                                // mutate). Additive — no replacement of #2621 / #2560
+                                // / #2672 surfaces.
+                                {
+                                    const auto hard = static_cast<std::int64_t>(
+                                        cone_outside_goal_drop_total_v_read());
+                                    const auto soft = static_cast<std::int64_t>(
+                                        cone_outside_goal_drop_soft_total_v_read());
+                                    const auto wired = static_cast<std::int64_t>(
+                                        cone_outside_goal_drop_wired_v_read());
+                                    insert_kv("cone-outside-goal-drop-total", hard);
+                                    insert_kv("cone-outside-goal-drop-soft-total", soft);
+                                    insert_kv("cone-outside-goal-drop-wired", wired);
+                                    insert_kv("schema-2703", 2703);
+                                    insert_kv("issue-2703", 2703);
+                                }
                             }
                         }
                     }
