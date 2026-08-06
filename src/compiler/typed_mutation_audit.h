@@ -856,6 +856,8 @@ inline void clear_type_linear_commit_proof_for_test() noexcept {
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
     if (r == "cone_truncate")
         return 9; // #2621
+    if (r == "cone_outside_goal_drop")
+        return 10; // #2703
     if (r == "auto_partial")
         return 6; // #2610
     if (r == "empty_cs")
@@ -1723,6 +1725,39 @@ inline void reset_for_test() noexcept {
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)
         e = TypedMutationAuditEvent{};
+}
+
+// Issue #2703: production hard-face when partial cone truncates
+// outside-If OccurrenceGoals. Under infer_flat_partial soft/hard cone
+// overflow (#2560), goals whose predicate If sits outside the truncated
+// cone are dropped. publish_partial_cone_truncate + commit_readiness
+// only observe / optionally reject; they do NOT guarantee that dropped
+// OccurrenceGoals are either (a) persisted for replay or (b) recovered
+// via a forced full solve before commit. Production Agents can therefore
+// commit a workspace that has silently lost occurrence narrowing
+// ("half-green" typed mutate). This issue surfaces the distinct
+// force_reason "cone_outside_goal_drop" (code 10) and bumps
+// g_cone_outside_goal_drop_total. Soft path bumps the counter only;
+// production path hard-rejects commit (no silent allow).
+inline std::atomic<std::uint64_t> g_cone_outside_goal_drop_total{0};
+inline std::atomic<std::uint64_t> g_cone_outside_goal_drop_soft_total{0};
+inline std::atomic<std::uint32_t> g_cone_outside_goal_drop_wired{1};
+inline constexpr int kConeOutsideGoalDropIssue = 2703;
+
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_total_v_read() noexcept {
+    return g_cone_outside_goal_drop_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_soft_total_v_read() noexcept {
+    return g_cone_outside_goal_drop_soft_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t cone_outside_goal_drop_wired_v_read() noexcept {
+    return g_cone_outside_goal_drop_wired.load(std::memory_order_relaxed);
+}
+
+// Test reset.
+inline void clear_cone_outside_goal_drop_for_test() noexcept {
+    g_cone_outside_goal_drop_total.store(0, std::memory_order_relaxed);
+    g_cone_outside_goal_drop_soft_total.store(0, std::memory_order_relaxed);
 }
 
 } // namespace aura::compiler::typed_audit

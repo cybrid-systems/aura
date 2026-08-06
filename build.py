@@ -517,6 +517,22 @@ def cmd_lint():
             "Issue #2702 resume hard-fail linter failed — run python3 scripts/coverage/checks/check_resume_hard_fail_2702.py"
         )
         return r
+    # Issue #2703: production hard-face when partial cone truncates
+    # outside-If OccurrenceGoals. Wires
+    # check_cone_outside_goal_drop_2703.py so the distinct force_reason
+    # code (10) + Soft/Production routing + additive query surface stays
+    # enforced. Builds on #2621 partial cone + #2560 soft/hard SLA +
+    # #2672 outside-cone invalidate.
+    cogd_script = COVERAGE_CHECKS / "check_cone_outside_goal_drop_2703.py"
+    if not cogd_script.exists():
+        fail(f"missing {cogd_script}")
+        return 1
+    r = run([sys.executable, str(cogd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2703 cone-outside-goal-drop linter failed — run python3 scripts/coverage/checks/check_cone_outside_goal_drop_2703.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
