@@ -4197,6 +4197,31 @@ def cmd_evaluator_capture_tenant_2687_coverage():
     return 0
 
 
+def cmd_capability_production_default_2688_coverage():
+    """Issue #2688: production-default hard_fiber_isolation + grant epoch retain window.
+
+    Wired inside apply_production_security_defaults: Strict/multi-tenant
+    → hard_fiber_isolation=true + K=64; Restricted → K=16 hard=false
+    (#2536 soft share); Soft → K=0 hard=false. Env overrides
+    AURA_HARD_FIBER_ISOLATION / AURA_GRANT_EPOCH_RETAIN documented in
+    security_defaults.hh L124-127. Additive observability:
+    capability-hard-fiber-isolation + capability-grant-epoch-retain-window
+    + capability-epoch-fence-hit-total + capability-fiber-hard-deny-total
+    + schema-2688.
+    """
+    print(f"{B}=== capability production default armed coverage (#2688) ==={N}")
+    script = COVERAGE_CHECKS / "check_capability_production_default_2688.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("capability production default armed (#2688) coverage contract rows failed")
+        return 1
+    ok("capability production default armed (#2688) coverage clean")
+    return 0
+
+
 def cmd_workspace_mtx_contention_coverage():
     """Issue #2523: residual workspace_mtx contention stats + soft path.
 
@@ -8259,6 +8284,7 @@ def cmd_gate():
         or cmd_moving_unified_success_2682_coverage()
         or cmd_shape_storm_isolation_2683_coverage()
         or cmd_evaluator_capture_tenant_2687_coverage()
+        or cmd_capability_production_default_2688_coverage()
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
         or cmd_query_hygiene_default_coverage()
@@ -9260,6 +9286,7 @@ def main():
         "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
+        "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

@@ -190,6 +190,12 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_fiber_hard_deny_total{0};
     // Issue #2154: sliding grant_min_valid window advanced on epoch bump.
     std::atomic<std::uint64_t> capability_grant_epoch_window_advance_total{0};
+    // Issue #2688: production-default hard_fiber_isolation + grant epoch
+    // retain window. Wired in apply_production_security_defaults (Strict /
+    // multi-tenant → hard=true + K=64; Restricted → K=16 hard=false; Soft →
+    // K=0 hard=false). Env overrides AURA_HARD_FIBER_ISOLATION /
+    // AURA_GRANT_EPOCH_RETAIN documented in security_defaults.hh L124-127.
+    inline constexpr int kCapabilityProductionDefaultIssue = 2688;
     // Issue #2586: single-use grant consumption counter (parity
     // capability_revoke_total for histogram breakdown of revoke reasons —
     // auto-revoke vs operator-revoke).
