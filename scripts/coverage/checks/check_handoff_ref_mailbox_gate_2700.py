@@ -49,6 +49,7 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     mb = _read("src/serve/multi_fiber_mailbox.h")
+    sandbox = _read("src/core/sandbox.hh")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     t = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
     build = _read("build.py")
@@ -69,7 +70,7 @@ def main() -> int:
     must("handoff_reject_total.fetch_add", "AC2", mb)
 
     # AC4 — Soft / sandbox observe-only + production hard-rejects
-    must("is_strict", "AC4", mb)
+    must("is_strict", "AC4", sandbox)
     must("Soft", "AC4", mb)
     must("Closed", "AC4", mb)
 
