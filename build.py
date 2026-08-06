@@ -4222,6 +4222,29 @@ def cmd_capability_production_default_2688_coverage():
     return 0
 
 
+def cmd_require_effect_on_ref_2689_coverage():
+    """Issue #2689: mandate require_effect_on_ref on all StableNodeRef side-effect paths.
+
+    Closes #2658 residual late-isolation window. Coverage linter scans
+    evaluator_primitives*.cpp + evaluator_security.cpp for functions/lambdas
+    that have StableNodeRef in scope + call require_effect( but do NOT
+    name ref_tenant / require_effect_on_ref. Current audit: 0 violations
+    (mutate:force already correctly uses ref_tenant from unpacked
+    StableNodeRef). The linter catches future regressions.
+    """
+    print(f"{B}=== require_effect_on_ref coverage (#2689) ==={N}")
+    script = COVERAGE_CHECKS / "check_require_effect_on_ref_2689.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("require_effect_on_ref coverage (#2689) contract rows failed")
+        return 1
+    ok("require_effect_on_ref coverage (#2689) clean")
+    return 0
+
+
 def cmd_workspace_mtx_contention_coverage():
     """Issue #2523: residual workspace_mtx contention stats + soft path.
 
@@ -8285,6 +8308,7 @@ def cmd_gate():
         or cmd_shape_storm_isolation_2683_coverage()
         or cmd_evaluator_capture_tenant_2687_coverage()
         or cmd_capability_production_default_2688_coverage()
+        or cmd_require_effect_on_ref_2689_coverage()
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
         or cmd_query_hygiene_default_coverage()
@@ -9287,6 +9311,7 @@ def main():
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
+        "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

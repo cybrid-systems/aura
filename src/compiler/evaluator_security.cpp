@@ -326,6 +326,15 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
 // the late isolation deny). Default ref_tenant=0 keeps the legacy
 // three-arg call shape unchanged; new code paths that hold a stamped
 // ref should pass `ref.tenant_id` (or use require_effect_on_ref below).
+//
+// Issue #2689: mandate the on_ref overload on every StableNodeRef side-effect
+// path. Coverage linter `check_side_effect_security.py` flags `require_effect(`
+// inside a function/lambda that also names a `StableNodeRef` parameter/local
+// without `ref_tenant` / `require_effect_on_ref` (allowlist only documented
+// NodeId-only paths). Test extension per #81967 in
+// `test_require_effect_auto_isolation.cpp` covers the foreign-tenant
+// matrix under Restricted + Strict. Closes the residual late-isolation
+// window after #2658 for paths outside `mutate:force`.
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
                                std::uint64_t ref_tenant) noexcept {
     if (req_bits != 0) {
