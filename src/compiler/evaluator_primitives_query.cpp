@@ -31,6 +31,7 @@ module;
 #include "compiler/hot_update_registry.hh"         // Issue #2506: reload recovery C snapshot
 #include "compiler/compact_policy.hh"              // Issue #2500: query:compact-policy
 #include "compiler/mutation_hold_budget.h"         // Issue #2500: hold estimate for split
+#include "compiler/ownership_rebind.h"             // Issue #2695: query:ownership-rebind-stats
 #include "compiler/lock_order_audit.h"             // Issue #2557: lock-order soft audit query
 #include "core/densify_consistency_report.h"       // Issue #2379: densify fail / last-call axes
 
@@ -6411,6 +6412,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 // first ship (Agents query and compare defuse_or_epoch_stamp
                 // against current workspace epoch to detect drift). AC3
                 // documents "proof is pre-remap".
+                using namespace aura::compiler::typed_audit;
                 insert_kv("type-linear-commit-proof-readiness-bp",
                           static_cast<std::int64_t>(10000));
                 insert_kv("type-linear-commit-proof-force-reason-code",
@@ -6467,7 +6469,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     // Additive surface — no replacement of #2632 / #2312 / #2680
                     // / #2188 / #2347 counters.
                     {
-                        const auto& mfst = g_mf_mailbox_stats;
+                        const auto& mfst = aura::serve::mf_mailbox::g_mf_mailbox_stats;
                         insert_kv("handoff-reject-total",
                                   static_cast<std::int64_t>(
                                       mfst.handoff_reject_total.load(std::memory_order_relaxed)));
@@ -7842,6 +7844,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                   std::memory_order_relaxed)));
                 insert_kv("schema-2621", 2621);
                 insert_kv("issue-2621", 2621);
+                // Issue #2672: drift-injection soak for #2646 cone-truncate
+                // outside-If invalidate (schema sentinel so #2703/#2704
+                // "prior surface preserved" AC rows stay green; helper lives
+                // on TypeChecker + Evaluator, counters reuse #2621 atomics).
+                insert_kv("schema-2672", 2672);
+                insert_kv("issue-2672", 2672);
                 // Issue #2694: soft truncated cone silent dependency escalate
                 // (additive — pairs #2646 outside-If invalidate + #2672 soak).
                 insert_kv("soft-truncated-silent-dep-escalate-total",

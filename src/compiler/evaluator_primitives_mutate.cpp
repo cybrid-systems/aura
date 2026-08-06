@@ -2804,14 +2804,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             // no remapped roots (linear_bindings empty or
                             // already validated above); real per-root span
                             // wires in follow-up.
-                            {
-                                aura::compiler::OwnershipEnv local_env{};
-                                (void)aura::compiler::ownership_rebind_after_remap(
-                                    local_env,
-                                    std::span<const aura::ast::NodeId>(linear_bindings.data(),
-                                                                       linear_bindings.size()),
-                                    aura::compiler::RemapReason::ExplicitAgent);
-                            }
+                            // First-ship: empty remapped-root span (linear_bindings
+                            // is name set, not NodeId list). Per-root NodeId span
+                            // wires in follow-up; AC3 zero-cost short-circuit here.
+                            (void)aura::compiler::ownership_rebind_after_remap(
+                                {}, aura::compiler::RemapReason::ExplicitAgent);
                         }
                     },
                     &threw)) {

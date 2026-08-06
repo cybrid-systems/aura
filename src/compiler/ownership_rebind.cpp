@@ -24,38 +24,7 @@
 
 namespace aura::compiler {
 
-// File-level reason counters — per-reason breakdown for dashboards.
-namespace {
-    inline std::atomic<std::uint64_t>& ownership_rebind_total_for(RemapReason) noexcept;
-    inline std::atomic<std::uint64_t> g_ownership_rebind_densify_total{0};
-    inline std::atomic<std::uint64_t> g_ownership_rebind_steal_total{0};
-    inline std::atomic<std::uint64_t> g_ownership_rebind_explicit_agent_total{0};
-    inline std::atomic<std::uint64_t> g_ownership_rebind_densify_fail_total{0};
-    inline std::atomic<std::uint64_t> g_ownership_rebind_steal_fail_total{0};
-    inline std::atomic<std::uint64_t> g_ownership_rebind_explicit_agent_fail_total{0};
-} // namespace
-
-[[nodiscard]] inline std::uint64_t ownership_rebind_densify_total_v_read() noexcept {
-    return g_ownership_rebind_densify_total.load(std::memory_order_relaxed);
-}
-[[nodiscard]] inline std::uint64_t ownership_rebind_steal_total_v_read() noexcept {
-    return g_ownership_rebind_steal_total.load(std::memory_order_relaxed);
-}
-[[nodiscard]] inline std::uint64_t ownership_rebind_explicit_agent_total_v_read() noexcept {
-    return g_ownership_rebind_explicit_agent_total.load(std::memory_order_relaxed);
-}
-[[nodiscard]] inline std::uint64_t ownership_rebind_densify_fail_total_v_read() noexcept {
-    return g_ownership_rebind_densify_fail_total.load(std::memory_order_relaxed);
-}
-[[nodiscard]] inline std::uint64_t ownership_rebind_steal_fail_total_v_read() noexcept {
-    return g_ownership_rebind_steal_fail_total.load(std::memory_order_relaxed);
-}
-[[nodiscard]] inline std::uint64_t ownership_rebind_explicit_agent_fail_total_v_read() noexcept {
-    return g_ownership_rebind_explicit_agent_fail_total.load(std::memory_order_relaxed);
-}
-
-bool ownership_rebind_after_remap(OwnershipEnv& env,
-                                  std::span<const aura::ast::NodeId> remapped_roots,
+bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remapped_roots,
                                   RemapReason why) noexcept {
     // AC3: zero-cost short-circuit when no roots were remapped. Likely
     // path on the steady-state (quiet self-evo) — no densify / steal /
@@ -89,10 +58,8 @@ bool ownership_rebind_after_remap(OwnershipEnv& env,
 
     // First-ship rebind: accept the per-site linear_post_mutate_enforce_all
     // that each call site already invokes. The real per-root walk through
-    // env.validate_ownership is a follow-up. We treat env as "internally
-    // consistent" after the per-site enforcement; if it isn't, the caller's
-    // downstream validate (production force_validate path) catches it.
-    (void)env;
+    // OwnershipEnv::validate_ownership is a follow-up (module-side wrapper
+    // — pure header cannot name the module type without GCC 16 ambiguity).
 
     // Soft path: observe only. Always return true so the caller continues
     // and downstream validate can catch residual drift. Mismatch count

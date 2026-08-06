@@ -13,6 +13,8 @@
 #include <cstdlib>
 #include <string_view>
 
+#include "typed_mutation_audit.h" // production_defaults_active (#2701 AC1)
+
 namespace aura::compiler {
 
 // Default 100_000 µs (100 ms). Lazy-init from AURA_MUTATION_HOLD_BUDGET_US.
@@ -207,7 +209,8 @@ inline constexpr int kMutationHoldBudgetRejectIssue = 2701;
 // hard env). AC2 — false under Soft / sandbox / test override (metric
 // only unless explicit hard env).
 [[nodiscard]] inline bool mutation_hold_budget_reject_enabled() noexcept {
-    return mutation_hold_budget_hard_env() || production_defaults_active();
+    return mutation_hold_budget_hard_env() ||
+           aura::compiler::typed_audit::production_defaults_active();
 }
 
 // AC1 — consult live longest hold vs budget; bumps the appropriate

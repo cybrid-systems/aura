@@ -19,22 +19,24 @@
 // force_linear_rollback per #2563 contract.
 //
 // Usage:
-//   std::vector<aura::ast::NodeId> roots{...};
+//   std::vector<std::uint32_t> roots{...};  // NodeId == uint32_t
 //   if (!aura::compiler::ownership_rebind_after_remap(
-//           env, std::span<const NodeId>(roots.data(), roots.size()),
+//           std::span<const OwnershipRebindNodeId>(roots.data(), roots.size()),
 //           RemapReason::Densify)) {
 //       // production force rollback
 //   }
+//
+// OwnershipEnv is intentionally NOT a parameter on the first-ship surface:
+// the env class lives in the type_checker module; a header-level
+// `class OwnershipEnv` forward-decl collides with the module export under
+// GCC 16 partitions (ambiguous OwnershipEnv). Per-root env walk is a
+// follow-up that will take a module-side wrapper, not this pure header.
 
 #pragma once
 
 #include <atomic>
 #include <cstdint>
 #include <span>
-
-namespace aura::ast {
-struct NodeId;
-}
 
 namespace aura::compiler {
 
@@ -49,12 +51,29 @@ enum class RemapReason : std::uint8_t {
 
 inline constexpr int kOwnershipRebindIssue = 2695;
 
+// NodeId is `using NodeId = std::uint32_t` in aura.core (mutation.ixx).
+// This pure header must NOT forward-declare `struct NodeId` — an incomplete
+// class type makes `const NodeId*` non-contiguous under GCC 16 concepts
+// (`++` on incomplete pointer is ill-formed), so every std::span ctor is
+// SFINAE'd out (asan-build / CI). Use the POD alias instead; same width
+// as the canonical NodeId, no module import, no redefinition vs import
+// aura.core.ast.
+using OwnershipRebindNodeId = std::uint32_t;
+
 // Lifetime counters. File-scope atomics so light binaries (without
 // per-CompilerMetrics wiring) still surface observability in queries
 // (#2695 mirrors the #2693 / #2694 file-scope counter pattern).
 inline std::atomic<std::uint64_t> g_ownership_rebind_total{0};
 inline std::atomic<std::uint64_t> g_ownership_rebind_fail_total{0};
 inline std::atomic<std::uint32_t> g_ownership_rebind_wired{1};
+// Per-reason counters (header-visible so query surfaces can read them
+// without a separate .cpp-only export).
+inline std::atomic<std::uint64_t> g_ownership_rebind_densify_total{0};
+inline std::atomic<std::uint64_t> g_ownership_rebind_steal_total{0};
+inline std::atomic<std::uint64_t> g_ownership_rebind_explicit_agent_total{0};
+inline std::atomic<std::uint64_t> g_ownership_rebind_densify_fail_total{0};
+inline std::atomic<std::uint64_t> g_ownership_rebind_steal_fail_total{0};
+inline std::atomic<std::uint64_t> g_ownership_rebind_explicit_agent_fail_total{0};
 
 // Read-side accessors (C ABI stable — surfaces in `query:ownership-rebind-stats`).
 [[nodiscard]] inline std::uint64_t ownership_rebind_total_v_read() noexcept {
@@ -65,6 +84,24 @@ inline std::atomic<std::uint32_t> g_ownership_rebind_wired{1};
 }
 [[nodiscard]] inline std::uint32_t ownership_rebind_wired_v_read() noexcept {
     return g_ownership_rebind_wired.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t ownership_rebind_densify_total_v_read() noexcept {
+    return g_ownership_rebind_densify_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t ownership_rebind_steal_total_v_read() noexcept {
+    return g_ownership_rebind_steal_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t ownership_rebind_explicit_agent_total_v_read() noexcept {
+    return g_ownership_rebind_explicit_agent_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t ownership_rebind_densify_fail_total_v_read() noexcept {
+    return g_ownership_rebind_densify_fail_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t ownership_rebind_steal_fail_total_v_read() noexcept {
+    return g_ownership_rebind_steal_fail_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t ownership_rebind_explicit_agent_fail_total_v_read() noexcept {
+    return g_ownership_rebind_explicit_agent_fail_total.load(std::memory_order_relaxed);
 }
 
 // Test reset. Hermetic for tests/serve/test_steal_densify_linear_type_hard_and.cpp
@@ -78,22 +115,16 @@ inline void clear_ownership_rebind_for_test() noexcept {
 // (empty remapped_roots). Returns false on production mismatch (caller
 // triggers force_linear_rollback per #2563). Soft mismatch is observed
 // only — the counter bumps but the function still returns true.
-bool ownership_rebind_after_remap(class OwnershipEnv& env,
-                                  std::span<const aura::ast::NodeId> remapped_roots,
+// remapped_roots element type is OwnershipRebindNodeId (== NodeId / uint32_t).
+bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remapped_roots,
                                   RemapReason why) noexcept;
 
 // C ABI overload for tests / FFI bridges that pass raw ptr + size.
-[[nodiscard]] inline bool ownership_rebind_after_remap_c(class OwnershipEnv& env,
-                                                         const aura::ast::NodeId* roots,
+// std::span(ptr, count) is well-formed once the element type is complete
+// POD (uint32_t) — see OwnershipRebindNodeId note above.
+[[nodiscard]] inline bool ownership_rebind_after_remap_c(const OwnershipRebindNodeId* roots,
                                                          std::size_t n, RemapReason why) noexcept {
-    // Issue: C++20 std::span iterator+count constructor was being SFINAE'd
-    // out by `__is_compatible_ref<iter_reference_t<It>>` on GCC 16 with
-    // const-on-pointer locals; use the iterator+sentinel overload instead
-    // (both args are pointers, sized_sentinel_for<pointer, pointer> holds,
-    // and `!is_convertible_v<pointer, size_type>` is true so the sentinel
-    // overload is selected over the count overload).
-    return ownership_rebind_after_remap(env, std::span<const aura::ast::NodeId>(roots, roots + n),
-                                        why);
+    return ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId>(roots, n), why);
 }
 
 } // namespace aura::compiler

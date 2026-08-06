@@ -45,7 +45,8 @@
       "ac": "AC4",
       "path": "src/compiler/shape_profiler.cpp",
       "contains": [
-        "aura_get_storm_isolation_mode() != 2"
+        "aura_get_storm_isolation_mode()",
+                "iso_mode == 2"
       ]
     },
     {

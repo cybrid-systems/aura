@@ -792,11 +792,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // were remapped; real per-root span wires in
                             // follow-up. Production force-rollback on
                             // mismatch (returns false) per #2563 contract.
-                            {
-                                aura::compiler::OwnershipEnv env{};
-                                (void)aura::compiler::ownership_rebind_after_remap(
-                                    env, {}, aura::compiler::RemapReason::Densify);
-                            }
+                            (void)aura::compiler::ownership_rebind_after_remap(
+                                {}, aura::compiler::RemapReason::Densify);
                         }
                         // Type-only recheck: re-driven by the full suite below
                         // (visitor rewalks NotChecked / dirty mutations).
@@ -975,7 +972,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // unhealed window from novel interleavings (#2690).
     if (!nested_boundary && success) {
         aura_hot_update_drain_pending_recovery(
-            static_cast<std::uint8_t>(DrainReason::BoundaryExit));
+            static_cast<std::uint8_t>(HotUpdateRegistry::DrainReason::BoundaryExit));
     }
     // Issue #2604: outermost MutationBoundary exit auto-drain deferred
     // reemit + one region-filtered pass. Closes the "visible but
@@ -2217,6 +2214,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         std::size_t densify_untracked_kept = 0;
         bool densify_incomplete_remap = false;
         std::size_t densify_root_remap_fails = 0;
+        // Stash RootRemap axes for #2682 unified success predicate (lives
+        // outside the moving_compact_enabled() block — compact_r is scoped
+        // to that if-body).
+        std::uint64_t densify_root_remap_stable_ref_fail = 0;
+        std::uint64_t densify_root_remap_closure_capture_fail = 0;
         // Issue #2499 / #2559: densify-call RootRemap axis (last-call fail totals
         // == 0). Three-layer memory inventory: pin ∧ root_remap ∧ scan_fail.
         // Soft / no Moving → vacuous true. Used for DensifyConsistencyReport so
@@ -2275,6 +2277,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             densify_objects_moved = compact_r.objects_moved_total;
             densify_untracked_kept = compact_r.untracked_kept_total;
             densify_incomplete_remap = compact_r.moving_incomplete_remap_any;
+            densify_root_remap_stable_ref_fail =
+                static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total);
+            densify_root_remap_closure_capture_fail =
+                static_cast<std::uint64_t>(compact_r.root_remap_closure_capture_fail_total);
             densify_root_remap_fails = compact_r.root_remap_stable_ref_fail_total +
                                        compact_r.root_remap_closure_capture_fail_total;
             // Issue #2499: densify-call RootRemap fail axis (last-call totals
@@ -2284,6 +2290,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // share one Moving success gate (#2266 pin shape + #2497 scan).
             // Closes "pin ok + root_remap fail cumulative" mixed-signal gap
             // from 2026-07-31 production review 建议 5.
+            // Keep compact_r.* == 0 form for #2559 AC3 source-cite linter.
             const bool root_remap_call_ok = compact_r.root_remap_stable_ref_fail_total == 0 &&
                                             compact_r.root_remap_closure_capture_fail_total == 0;
             pin_contract_held = pin_contract_held && root_remap_call_ok;
@@ -2521,15 +2528,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // modes (no behavior change for Soft — counters bump either way).
         const bool moving_unified_success =
             aura::core::moving_densify_health::compute_moving_unified_success(
-                /*moving_blocked_precondition=*/false, // not folded into compact_r
+                /*moving_blocked_precondition=*/false, // not folded into AdaptiveCompactResult
                                                        // yet; pin_contract_held
                                                        // already covers the
                                                        // user-visible gate
                 pin_contract_held,
-                /*root_remap_stable_ref_fail_total=*/
-                static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total),
-                /*root_remap_closure_capture_fail_total=*/
-                static_cast<std::uint64_t>(compact_r.root_remap_closure_capture_fail_total),
+                /*root_remap_stable_ref_fail_total=*/densify_root_remap_stable_ref_fail,
+                /*root_remap_closure_capture_fail_total=*/densify_root_remap_closure_capture_fail,
                 /*objects_moved=*/static_cast<std::uint64_t>(densify_objects_moved),
                 /*untracked_kept_count=*/static_cast<std::uint64_t>(densify_untracked_kept));
         if (moving_unified_success) {
