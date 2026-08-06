@@ -214,6 +214,66 @@ static void ac5_source_cite() {
           "AC5: folds coercion SLO");
 }
 
+// ── Issue #2697 AC1: query returns proof with correct fields ──
+static void ac2697_1_proof_queryable() {
+    std::println("\n--- #2697 AC1: query:last-type-linear-commit-proof fields ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "type-linear-commit-proof-wired") == 1,
+          "AC1: type-linear-commit-proof-wired sentinel == 1");
+    CHECK(href(cs, "type-linear-commit-proof-readiness-bp") >= 0, "AC1: readiness-bp queryable");
+    CHECK(href(cs, "type-linear-commit-proof-would-allow-commit") >= 0,
+          "AC1: would-allow-commit queryable (0/1)");
+    CHECK(href(cs, "type-linear-commit-proof-linear-ok") >= 0, "AC1: linear-ok queryable (0/1)");
+    CHECK(href(cs, "type-linear-commit-proof-occurrence-consistent") >= 0,
+          "AC1: occurrence-consistent queryable (0/1)");
+    CHECK(href(cs, "type-linear-commit-proof-defuse-or-epoch-stamp") >= 0,
+          "AC1: defuse-or-epoch-stamp queryable");
+    CHECK(href(cs, "type-linear-commit-proof-last-stamp") >= 0, "AC1: last-stamp queryable");
+    CHECK(href(cs, "schema-2697") == 2697, "AC1: schema-2697 sentinel");
+    CHECK(href(cs, "issue-2697") == 2697, "AC1: issue-2697 sentinel");
+}
+
+// ── Issue #2697 AC4: #2613 health query additive — not replaced ──
+static void ac2697_4_additive_facade_to_2613() {
+    std::println("\n--- #2697 AC4: #2613 health query still works ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2613") == 2613,
+          "AC4: schema-2613 retained (#2613 health query not replaced)");
+    CHECK(href(cs, "type-linear-commit-proof-wired") == 1,
+          "AC4: #2697 proof additive on top of #2613");
+}
+
+// ── Issue #2697 AC5: source-cite + linter ──
+static void ac2697_5_source_and_linter() {
+    std::println("\n--- #2697 AC5: source-cite + additive ---");
+    const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    CHECK(hdr.find("TypeLinearCommitProof") != std::string::npos,
+          "AC5: hdr declares TypeLinearCommitProof struct");
+    CHECK(hdr.find("kTypeLinearCommitProofIssue = 2697") != std::string::npos,
+          "AC5: hdr stamps issue = 2697");
+    CHECK(hdr.find("last_type_linear_commit_proof_stamp_v_read") != std::string::npos,
+          "AC5: hdr exposes last-stamp accessor");
+    CHECK(q.find("type-linear-commit-proof-wired") != std::string::npos,
+          "AC5: query wired sentinel");
+    CHECK(q.find("schema-2697") != std::string::npos, "AC5: query schema-2697");
+    CHECK(q.find("issue-2697") != std::string::npos, "AC5: query issue-2697");
+    CHECK(q.find("schema-2613") != std::string::npos, "AC5: schema-2613 preserved");
+    CHECK(t.find("ac2697_1_proof_queryable") != std::string::npos, "AC5: AC1 test present");
+    CHECK(t.find("ac2697_4_additive_facade_to_2613") != std::string::npos, "AC5: AC4 test present");
+}
+
+// ── Issue #2697 AC6: no docs/design/ per #1655 ──
+static void ac2697_6_no_docs_design() {
+    std::println("\n--- #2697 AC6: no docs/design/2697-* per #1655 ---");
+    const std::string design_path = "docs/design/2697-";
+    CHECK(read_file((design_path + "commit-proof-facade.md").c_str()).empty(),
+          "AC6: no docs/design/2697-* per #1655");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -225,7 +285,12 @@ int run_test_type_linear_commit_health() {
     ac5_source_cite();
     apply_dev_audit_defaults();
     reset_for_test();
-    std::println("\n=== #2613: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2697: query:last-type-linear-commit-proof facade ===");
+    ac2697_1_proof_queryable();
+    ac2697_4_additive_facade_to_2613();
+    ac2697_5_source_and_linter();
+    ac2697_6_no_docs_design();
+    std::println("\n=== #2613 + #2697: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

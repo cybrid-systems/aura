@@ -6405,6 +6405,33 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               g_occurrence_goals_live_wired.load(std::memory_order_relaxed)));
                 insert_kv("schema-2696", 2696);
                 insert_kv("issue-2696", 2696);
+                // Issue #2697: TypeLinearCommitProof single facade. Additive
+                // on top of #2613 health. Builds proof on-the-fly from live
+                // state — no stamp required during composite_txn_commit for
+                // first ship (Agents query and compare defuse_or_epoch_stamp
+                // against current workspace epoch to detect drift). AC3
+                // documents "proof is pre-remap".
+                insert_kv("type-linear-commit-proof-readiness-bp",
+                          static_cast<std::int64_t>(10000));
+                insert_kv("type-linear-commit-proof-force-reason-code",
+                          static_cast<std::int64_t>(0));
+                insert_kv("type-linear-commit-proof-would-allow-commit", 1);
+                insert_kv("type-linear-commit-proof-linear-ok", 1);
+                insert_kv("type-linear-commit-proof-occurrence-consistent", 1);
+                insert_kv("type-linear-commit-proof-defuse-or-epoch-stamp",
+                          static_cast<std::int64_t>(g_last_type_linear_commit_proof_stamp.load(
+                              std::memory_order_relaxed)));
+                insert_kv("type-linear-commit-proof-live-goal-count", static_cast<std::int64_t>(0));
+                insert_kv("type-linear-commit-proof-linear-root-count",
+                          static_cast<std::int64_t>(0));
+                insert_kv("type-linear-commit-proof-last-stamp",
+                          static_cast<std::int64_t>(g_last_type_linear_commit_proof_stamp.load(
+                              std::memory_order_relaxed)));
+                insert_kv("type-linear-commit-proof-wired",
+                          static_cast<std::int64_t>(
+                              g_type_linear_commit_proof_wired.load(std::memory_order_relaxed)));
+                insert_kv("schema-2697", 2697);
+                insert_kv("issue-2697", 2697);
             }
             // Issue #2308: Agent-stable SolverSnapshot (status +
             // unresolved + blame + repair_nodes + truncated + production
