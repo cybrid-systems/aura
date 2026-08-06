@@ -877,15 +877,14 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {
                     "soa-batch-blocks-per-cascade-bp",
                     []() -> EvalValue {
-                        const auto cascades = aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(
-                            std::memory_order_relaxed);
-                        const auto blocks = aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(
-                            std::memory_order_relaxed);
-                        if (cascades == 0)
-                            return make_int(0);
-                        // integer basis points; safe for any reasonable cascade count
-                        return make_int(static_cast<std::int64_t>(
-                            (blocks * 10000ULL) / cascades));
+            const auto cascades =
+                aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(std::memory_order_relaxed);
+            const auto blocks =
+                aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(std::memory_order_relaxed);
+            if (cascades == 0)
+                return make_int(0);
+            // integer basis points; safe for any reasonable cascade count
+            return make_int(static_cast<std::int64_t>((blocks * 10000ULL) / cascades));
                     }(),
                 },
                 {"schema-2681", make_int(2681)},
@@ -1015,6 +1014,22 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2691", make_int(2691)},
                 {"issue-2691", make_int(2691)},
                 {"closure-pending-recovery-drain-wired", make_int(1)},
+                // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
+                // assert. Soft single-eval / process-default (filter
+                // eval = nullptr) keeps this at 0. Production hard
+                // path clears the slot to prevent the next call from
+                // hitting a wrong table. Routes through
+                // query:aot-incremental-reemit-stats schema.
+                {"cross-eval-sid-owner-mismatch-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::aot_metrics() == nullptr
+                         ? 0
+                         : aura::compiler::aot_metrics()
+                               ->cross_eval_sid_owner_mismatch_total
+                               .load(std::memory_order_relaxed)))},
+                {"cross-eval-sid-owner-mismatch-wired", make_int(1)},
+                {"schema-2692", make_int(2692)},
+                {"issue-2692", make_int(2692)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},

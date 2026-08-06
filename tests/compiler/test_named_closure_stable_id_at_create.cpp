@@ -28,6 +28,7 @@
 #include "compiler/runtime_shared.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
@@ -465,6 +466,122 @@ static void ac2670_schema_and_source() {
           "AC6: #2550 surface preserved (additive)");
 }
 
+// ── #2692 AC1/AC2: force-inject mismatch → counter bumps ──
+static void ac2692_mismatch_counter_bumps_on_force_inject() {
+    std::println("\n--- #2692 AC1/AC2: force-inject mismatch → counter bumps ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    const auto m0 = metrics.cross_eval_sid_owner_mismatch_total.load(std::memory_order_relaxed);
+    // Direct C ABI bumper from tests (production path is the assert in
+    // aura_register_fn_tracked; here we exercise the bumper in isolation).
+    aura_bump_cross_eval_sid_owner_mismatch_total();
+    aura_bump_cross_eval_sid_owner_mismatch_total();
+    const auto m1 = metrics.cross_eval_sid_owner_mismatch_total.load(std::memory_order_relaxed);
+    CHECK(m1 == m0 + 2, "AC2: cross_eval_sid_owner_mismatch_total advances by 2 via C ABI bumper");
+    aura_set_aot_metrics(nullptr);
+}
+
+// ── #2692 AC3: single-eval / nullptr owner TLS → legacy behavior (zero cost) ──
+static void ac2692_single_eval_nullptr_zero_cost() {
+    std::println("\n--- #2692 AC3: single-eval nullptr → zero cost ---");
+    aura_clear_stable_func_id_map();
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    const auto cid = aura_alloc_closure(11);
+    aura_closure_set_name(cid, "ac2692_nullptr_owner");
+    const auto sid = aura_get_closure_stable_func_id(cid);
+    CHECK(sid != 0, "AC3: single-workspace named still gets non-zero sid");
+    // Without any owner TLS set, the assert sees current_owner=0 and
+    // short-circuits without touching the counter.
+    const auto m = metrics.cross_eval_sid_owner_mismatch_total.load(std::memory_order_relaxed);
+    CHECK(m == 0, "AC3: nullptr owner TLS keeps cross_eval_sid_owner_mismatch_total at 0");
+    aura_free_closure(cid);
+    aura_set_aot_metrics(nullptr);
+    aura_clear_stable_func_id_map();
+}
+
+// ── #2692 AC4: #2606 cross-eval candidate skip still works; additive only ──
+static void ac2692_skip_additive_to_2606() {
+    std::println("\n--- #2692 AC4: #2606 skip counter still wired (additive) ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    // The #2606 counter is a separate bucket from #2692's mismatch counter;
+    // #2692 never touches it (read-only check).
+    const auto skip0 =
+        metrics.reemit_cross_eval_candidate_skipped_total.load(std::memory_order_relaxed);
+    const auto m0 = metrics.cross_eval_sid_owner_mismatch_total.load(std::memory_order_relaxed);
+    aura_bump_cross_eval_sid_owner_mismatch_total();
+    const auto skip1 =
+        metrics.reemit_cross_eval_candidate_skipped_total.load(std::memory_order_relaxed);
+    const auto m1 = metrics.cross_eval_sid_owner_mismatch_total.load(std::memory_order_relaxed);
+    CHECK(skip1 == skip0, "AC4: #2606 skip counter untouched by #2692 bumper (additive)");
+    CHECK(m1 == m0 + 1, "AC4: #2692 mismatch counter advanced by 1");
+    aura_set_aot_metrics(nullptr);
+}
+
+// ── #2692 AC5: query surface + schema-2692 + issue-2692 + lineage preserved ──
+static void ac2692_query_surface_wired() {
+    std::println("\n--- #2692 AC5: query surface + schema sentinels ---");
+    CompilerService cs;
+    const auto r = cs.eval("(engine:metrics \"query:aot-incremental-reemit-stats\")");
+    if (!r || !r->is_hash()) {
+        // skip if metrics query not available in this build; checked at runtime
+        return;
+    }
+    CHECK(href(cs, "cross-eval-sid-owner-mismatch-total") >= 0,
+          "AC5: cross-eval-sid-owner-mismatch-total queryable");
+    CHECK(href(cs, "cross-eval-sid-owner-mismatch-wired") == 1,
+          "AC5: cross-eval-sid-owner-mismatch-wired sentinel present");
+    CHECK(href(cs, "schema-2692") == 2692, "AC5: schema-2692 sentinel present");
+    CHECK(href(cs, "issue-2692") == 2692, "AC5: issue-2692 sentinel present");
+    // #2550 / #2670 lineage preserved (schema + source).
+    CHECK(href(cs, "schema-2550") == 2550, "AC5: schema-2550 lineage preserved");
+    CHECK(href(cs, "schema-2670") == 2670, "AC5: schema-2670 lineage preserved");
+}
+
+// ── #2692 AC6: source-cite + no docs/design + linter present + build.py wired ──
+static void ac2692_source_and_no_design() {
+    std::println("\n--- #2692 AC6: source-cite + linter + build wiring ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto bh = read_file("src/compiler/aura_jit_bridge.h");
+    const auto lint = read_file("scripts/coverage/checks/check_aot_slot_owner_consistency_2692.py");
+    const auto build = read_file("build.py");
+
+    CHECK(cpp.find("Issue #2692: cross-eval sid ↔ AOT slot owner consistency assert") !=
+              std::string::npos,
+          "AC6: cpp cites #2692 assert comment");
+    CHECK(cpp.find("aura_bump_cross_eval_sid_owner_mismatch_total") != std::string::npos,
+          "AC6: cpp defines C ABI bumper");
+    CHECK(cpp.find("production_defaults_active") != std::string::npos,
+          "AC6: cpp gates hard-clear behind production_defaults_active");
+
+    CHECK(obs.find("cross_eval_sid_owner_mismatch_total") != std::string::npos,
+          "AC6: obs.h declares counter");
+
+    CHECK(q.find("cross-eval-sid-owner-mismatch-total") != std::string::npos,
+          "AC6: q exposes counter key");
+    CHECK(q.find("schema-2692") != std::string::npos, "AC6: q exposes schema-2692 sentinel");
+    CHECK(q.find("issue-2692") != std::string::npos, "AC6: q exposes issue-2692 sentinel");
+
+    CHECK(!lint.empty(), "AC6: linter file present");
+
+    CHECK(build.find("cmd_aot_slot_owner_consistency_2692") != std::string::npos,
+          "AC6: build.py cmd wired");
+    CHECK(build.find("check_aot_slot_owner_consistency_2692") != std::string::npos,
+          "AC6: build.py references linter");
+
+    // #2550 + #2670 lineage preserved (additive, not replaced).
+    CHECK(cpp.find("preserve_stable_func_id_for_eval_locked") != std::string::npos,
+          "AC6: #2670 nested map lineage preserved");
+    CHECK(bh.find("Issue #1930 / #2550") != std::string::npos, "AC6: #2550 surface preserved");
+
+    // No docs/design per #1655.
+    CHECK(!std::filesystem::exists("docs/design/aot_slot_owner_consistency_2692.md"),
+          "AC6: no docs/design/2692 plan doc per #1655");
+}
+
 int run_test_named_closure_stable_id_at_create() {
     std::println("=== Issue #2550 + #2670: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
@@ -478,7 +595,12 @@ int run_test_named_closure_stable_id_at_create() {
     ac2670_clear_for_eval_isolates();
     ac2670_query_counters_advance();
     ac2670_schema_and_source();
-    std::println("\n=== #2550 + #2670: {} passed, {} failed ===", g_passed, g_failed);
+    ac2692_mismatch_counter_bumps_on_force_inject();
+    ac2692_single_eval_nullptr_zero_cost();
+    ac2692_skip_additive_to_2606();
+    ac2692_query_surface_wired();
+    ac2692_source_and_no_design();
+    std::println("\n=== #2550 + #2670 + #2692: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
