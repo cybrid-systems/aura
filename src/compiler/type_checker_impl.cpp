@@ -5255,6 +5255,18 @@ void InferenceEngine::invalidate_predicate_memo_for_nodes(std::span<const aura::
     }
 }
 
+// Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
+// invalidate. Test-only helper — forces sticky per-engine state and
+// mirrors to process-wide atomics via publish_partial_cone_truncate so
+// #2621 commit_readiness / Evaluator AC6 see the truncated stamp.
+// (Must live at namespace scope — not nested inside TypeChecker::infer_flat_partial.)
+void InferenceEngine::force_partial_cone_truncate_for_test(std::uint64_t dropped_count) noexcept {
+    last_partial_cone_truncated_ = true;
+    last_partial_cone_dropped_ = dropped_count;
+    aura::compiler::typed_audit::publish_partial_cone_truncate(/*truncated=*/true, dropped_count,
+                                                               /*fanout=*/0);
+}
+
 // Issue #2622: single dirty-key authority — memo invalidate + goal drop.
 std::size_t
 InferenceEngine::sync_occurrence_after_dirty(std::span<const aura::ast::NodeId> affected,

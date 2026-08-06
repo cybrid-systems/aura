@@ -951,8 +951,13 @@ public:
         // hook layer — the underlying reads are O(1) or
         // O(num_functions_in_entry) which is also small
         // (typically <10 functions per define).
+        // Issue #2684: empty / null name → total dirty blocks across
+        // ir_cache_v2_ so (compile:block-dirty-count) zero-arg works for
+        // denseness hosts that don't know the rebound define name yet.
         evaluator_.set_get_dirty_block_count_fn([this](const char* name) -> std::uint64_t {
-            std::string n = name ? std::string(name) : std::string();
+            if (!name || !*name)
+                return static_cast<std::uint64_t>(total_dirty_block_count());
+            std::string n(name);
             auto it = ir_cache_v2_.find(n);
             if (it == ir_cache_v2_.end())
                 return 0;
