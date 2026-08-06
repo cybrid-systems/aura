@@ -274,6 +274,8 @@ static void ac2683_pereval_default_isolation() {
 }
 
 // ── #2683 AC5: per-eval + global bump counters + query surface ──
+// Counter reads use aura::compiler::shape::* atomics (shape_profiler.h)
+// from evaluator_primitives_obs_jit (not aura::compiler:: top-level).
 static void ac2683_counters_and_query_wired() {
     std::println("\n--- #2683 AC5: counters + query surface ---");
     // Both new query keys wired alongside existing #2236 / #2274 schema.

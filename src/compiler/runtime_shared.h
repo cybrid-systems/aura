@@ -148,6 +148,11 @@ extern "C" void aura_sync_remount_named_live_closures(std::uint64_t* ok_count,
 // paths filter on the opposite sid).
 extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
                                                      std::uint64_t* fail_count);
+// Issue #2691: captured-only anon (sid==0 && has env/linear) sync remount
+// on reemit. Distinct counters from full anon walk (#2637). Soft zero-cost
+// when no captures match. Out params may be null.
+extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_count,
+                                                              std::uint64_t* fail_count);
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);

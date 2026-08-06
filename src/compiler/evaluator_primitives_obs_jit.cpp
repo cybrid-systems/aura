@@ -19,6 +19,9 @@ module;
 #include "security_capabilities.h"
 #include "observability_metrics.h"
 #include "compiler/shape.h"
+#include "compiler/shape_profiler.h"       // Issue #2683: shape storm isolation counters
+#include "compiler/hot_update_registry.hh" // Issue #2690: pending recovery drain counters
+#include "core/capability_model.hh"        // Issue #2688: capability hard-fiber / grant epoch
 #include "compiler/value_tags.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
@@ -877,14 +880,15 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {
                     "soa-batch-blocks-per-cascade-bp",
                     []() -> EvalValue {
-            const auto cascades =
-                aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(std::memory_order_relaxed);
-            const auto blocks =
-                aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(std::memory_order_relaxed);
-            if (cascades == 0)
-                return make_int(0);
-            // integer basis points; safe for any reasonable cascade count
-            return make_int(static_cast<std::int64_t>((blocks * 10000ULL) / cascades));
+                        const auto cascades =
+                            aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(
+                                std::memory_order_relaxed);
+                        const auto blocks = aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(
+                            std::memory_order_relaxed);
+                        if (cascades == 0)
+                            return make_int(0);
+                        // integer basis points; safe for any reasonable cascade count
+                        return make_int(static_cast<std::int64_t>((blocks * 10000ULL) / cascades));
                     }(),
                 },
                 {"schema-2681", make_int(2681)},
@@ -897,12 +901,10 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 // totals in lockstep with publish_last_moving_densify_window.
                 {"moving-unified-success-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::ast::g_moving_unified_success_total.load(
-                         std::memory_order_relaxed)))},
+                     aura::ast::g_moving_unified_success_total.load(std::memory_order_relaxed)))},
                 {"moving-unified-fail-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::ast::g_moving_unified_fail_total.load(
-                         std::memory_order_relaxed)))},
+                     aura::ast::g_moving_unified_fail_total.load(std::memory_order_relaxed)))},
                 {"schema-2682", make_int(2682)},
                 {"issue-2682", make_int(2682)},
                 {"moving-unified-success-gate-wired", make_int(1)},
@@ -914,11 +916,11 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 // process-global bump path for experiments.
                 {"shape-storm-per-eval-isolations-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_shape_storm_per_eval_isolations_total_atomic().load(
+                     aura::compiler::shape::g_shape_storm_per_eval_isolations_total_atomic().load(
                          std::memory_order_relaxed)))},
                 {"shape-storm-global-bump-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_shape_storm_global_bump_total_atomic().load(
+                     aura::compiler::shape::g_shape_storm_global_bump_total_atomic().load(
                          std::memory_order_relaxed)))},
                 {"schema-2683", make_int(2683)},
                 {"issue-2683", make_int(2683)},
@@ -927,25 +929,23 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 // Three counters distinguish the production multi-tenant path
                 // (Evaluator::stamp_stable_ref uses capability_tenant_id_)
                 // from the legacy global-fallback path
-                (maybe_stamp_stable_ref_isolation_tenant reads
+                // (maybe_stamp_stable_ref_isolation_tenant reads
                 // g_isolation_capture_tenant atomic). Production default =
                 // local path; global-fallback should stay 0 under
                 // multi-eval (legacy single-tenant / test harness only).
                 {"isolation-capture-stamp-local-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::provenance::
-                         g_isolation_capture_stamp_local_total_atomic().load(
-                             std::memory_order_relaxed)))},
+                     aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
+                         std::memory_order_relaxed)))},
                 {"isolation-capture-stamp-global-fallback-total",
                  make_int(static_cast<std::int64_t>(
                      aura::core::provenance::
-                         g_isolation_capture_stamp_global_fallback_total_atomic().load(
-                             std::memory_order_relaxed)))},
+                         g_isolation_capture_stamp_global_fallback_total_atomic()
+                             .load(std::memory_order_relaxed)))},
                 {"isolation-capture-stamp-evaluator-miss-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::provenance::
-                         g_isolation_capture_stamp_evaluator_miss_total_atomic().load(
-                             std::memory_order_relaxed)))},
+                     aura::core::provenance::g_isolation_capture_stamp_evaluator_miss_total_atomic()
+                         .load(std::memory_order_relaxed)))},
                 {"schema-2687", make_int(2687)},
                 {"issue-2687", make_int(2687)},
                 // Issue #2688: production-default hard_fiber_isolation +
@@ -956,21 +956,25 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 // Env overrides AURA_HARD_FIBER_ISOLATION / AURA_GRANT_EPOCH_RETAIN
                 // documented in security_defaults.hh L124-127.
                 {"capability-hard-fiber-isolation",
-                 make_int(aura::core::g_capability_registry().hard_fiber_isolation() ? 1 : 0)},
+                 make_int(aura::core::capability::g_capability_registry().hard_fiber_isolation()
+                              ? 1
+                              : 0)},
                 {"capability-grant-epoch-retain-window",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::g_capability_registry().grant_epoch_retain_window()))},
+                     aura::core::capability::g_capability_registry().grant_epoch_retain_window()))},
                 {"capability-grant-min-valid-epoch",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::g_capability_registry().grant_min_valid_epoch()))},
+                     aura::core::capability::g_capability_registry().grant_min_valid_epoch()))},
+                // Keep `g_capability_effect_metrics().capability_*` on one
+                // line for #2688 AC6 source-cite substring match.
                 {"capability-epoch-fence-hit-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::g_capability_effect_metrics().capability_epoch_fence_hit_total.load(
-                         std::memory_order_relaxed)))},
+                     aura::core::capability::g_capability_effect_metrics()
+                         .capability_epoch_fence_hit_total.load(std::memory_order_relaxed)))},
                 {"capability-fiber-hard-deny-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::g_capability_effect_metrics().capability_fiber_hard_deny_total.load(
-                         std::memory_order_relaxed)))},
+                     aura::core::capability::g_capability_effect_metrics()
+                         .capability_fiber_hard_deny_total.load(std::memory_order_relaxed)))},
                 {"schema-2688", make_int(2688)},
                 {"issue-2688", make_int(2688)},
                 {"capability-production-default-armed", make_int(1)},
@@ -978,22 +982,22 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 // maybe_storm_clear_health_pass (StormClear) and
                 // outermost MutationBoundary success exit (BoundaryExit)
                 // route through the same single-owner drain.
+                // Counters live at global scope in hot_update_registry.hh
+                // (after namespace aura::compiler closes — C ABI adjacency).
                 {"pending-recovery-driven-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
-                         std::memory_order_relaxed)))},
+                     ::g_pending_recovery_driven_total_atomic().load(std::memory_order_relaxed)))},
                 {"pending-recovery-success-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::hot_update::g_pending_recovery_success_total_atomic().load(
-                         std::memory_order_relaxed)))},
+                     ::g_pending_recovery_success_total_atomic().load(std::memory_order_relaxed)))},
                 {"pending-recovery-skipped-reentered-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::hot_update::g_pending_recovery_skipped_reentered_total_atomic().load(
-                             std::memory_order_relaxed)))},
+                     ::g_pending_recovery_skipped_reentered_total_atomic().load(
+                         std::memory_order_relaxed)))},
                 {"pending-recovery-double-drain-prevented-total",
                  make_int(static_cast<std::int64_t>(
-                     aura::core::hot_update::g_pending_recovery_double_drain_prevented_total_atomic().load(
-                             std::memory_order_relaxed)))},
+                     ::g_pending_recovery_double_drain_prevented_total_atomic().load(
+                         std::memory_order_relaxed)))},
                 {"schema-2690", make_int(2690)},
                 {"issue-2690", make_int(2690)},
                 {"pending-recovery-drain-wired", make_int(1)},
@@ -1002,15 +1006,9 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 // Agents can distinguish "must remount" (captured) from
                 // "touch-time policy" (pure anon, no captures).
                 {"live-closure-sync-remount-anon-captured-ok-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::CompilerMetrics::
-                         live_closure_sync_remount_anon_captured_ok_total
-                             .load(std::memory_order_relaxed)))},
+                 make_int(L(&CompilerMetrics::live_closure_sync_remount_anon_captured_ok_total))},
                 {"live-closure-sync-remount-anon-captured-fail-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::CompilerMetrics::
-                         live_closure_sync_remount_anon_captured_fail_total
-                             .load(std::memory_order_relaxed)))},
+                 make_int(L(&CompilerMetrics::live_closure_sync_remount_anon_captured_fail_total))},
                 {"schema-2691", make_int(2691)},
                 {"issue-2691", make_int(2691)},
                 {"closure-pending-recovery-drain-wired", make_int(1)},
@@ -1021,12 +1019,7 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 // hitting a wrong table. Routes through
                 // query:aot-incremental-reemit-stats schema.
                 {"cross-eval-sid-owner-mismatch-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::aot_metrics() == nullptr
-                         ? 0
-                         : aura::compiler::aot_metrics()
-                               ->cross_eval_sid_owner_mismatch_total
-                               .load(std::memory_order_relaxed)))},
+                 make_int(L(&CompilerMetrics::cross_eval_sid_owner_mismatch_total))},
                 {"cross-eval-sid-owner-mismatch-wired", make_int(1)},
                 {"schema-2692", make_int(2692)},
                 {"issue-2692", make_int(2692)},

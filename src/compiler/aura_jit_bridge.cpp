@@ -1400,6 +1400,27 @@ extern "C" int aura_aot_slot_is_stale(std::int64_t func_id) {
     return gen != cur ? 1 : 0;
 }
 
+// Issue #2692: cross-eval sid ↔ AOT slot owner mismatch counter bumper
+// (C ABI for tests + future Agent/query hook). Defined before
+// aura_register_fn_tracked so the call site can resolve it.
+extern "C" void aura_bump_cross_eval_sid_owner_mismatch_total() {
+    if (aot_metrics())
+        aot_metrics()->cross_eval_sid_owner_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2692 AC2: hard-clear path under production defaults.
+// Default ON (hard clear when production_defaults_active). Set
+// AURA_AOT_CROSS_EVAL_SID_HARD=0 to force observe-only even under
+// production (mirrors other AOT hard prefs).
+[[nodiscard]] static bool aot_hard_pref() noexcept {
+    static const bool hard = []() noexcept -> bool {
+        if (const char* e = std::getenv("AURA_AOT_CROSS_EVAL_SID_HARD"))
+            return e[0] != '0';
+        return true;
+    }();
+    return hard;
+}
+
 extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
     if (func_id < 0)
         return;
@@ -1445,19 +1466,15 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
         const auto stamped_owner = slot.owner_eval.load(std::memory_order_relaxed);
         if (current_owner != 0 && stamped_owner != 0 && current_owner != stamped_owner) {
             aura_bump_cross_eval_sid_owner_mismatch_total();
+            // AC2: production hard clears the slot; Soft observes only.
+            // Optional env AURA_AOT_CROSS_EVAL_SID_HARD=0 forces observe-only
+            // even under production_defaults (mirrors other AOT hard prefs).
             if (aura::compiler::typed_audit::production_defaults_active() && aot_hard_pref()) {
                 slot.fn_ptr.store(0, std::memory_order_relaxed);
                 slot.owner_eval.store(0, std::memory_order_relaxed);
             }
         }
     }
-}
-
-// Issue #2692: cross-eval sid ↔ AOT slot owner mismatch counter bumper
-// (C ABI for tests + future Agent/query hook).
-extern "C" void aura_bump_cross_eval_sid_owner_mismatch_total() {
-    if (aot_metrics())
-        aot_metrics()->cross_eval_sid_owner_mismatch_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C" void aura_aot_set_register_owner_eval(void* eval_ptr) {
