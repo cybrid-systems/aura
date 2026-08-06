@@ -214,6 +214,31 @@ inline void set_isolation_capture_tenant(std::uint64_t tid) noexcept {
     return g_isolation_capture_tenant().load(std::memory_order_relaxed);
 }
 
+// Issue #2687: per-Evaluator capture tenant accounting. The process-global
+// g_isolation_capture_tenant stays as best-effort mirror for non-Evaluator
+// call sites (legacy / single-tenant / test harness), but production
+// multi-tenant path goes through Evaluator::stamp_stable_ref / make_stamped_ref
+// / export_ref which use Evaluator::capability_tenant_id_ directly. The three
+// counters below let Agent dashboards distinguish the paths:
+//   - local:        Evaluator::stamp_stable_ref (per-Evaluator, authority)
+//   - global_fallback: maybe_stamp_stable_ref_isolation_tenant used global
+//   - evaluator_miss:   maybe_stamp_stable_ref_isolation_tenant called but
+//                      caller was under an active Evaluator (should have used
+//                      Evaluator::stamp_stable_ref) — diagnostic, not fail
+inline std::atomic<std::uint64_t>& g_isolation_capture_stamp_local_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_isolation_capture_stamp_global_fallback_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_isolation_capture_stamp_evaluator_miss_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline constexpr int kEvaluatorCaptureTenantIssue = 2687;
+
 // Issue #2037: process-wide mutate hotpath hygiene restamp / fail counters
 // (mirrored into CompilerMetrics when available).
 inline std::atomic<std::uint64_t>& g_hygiene_mutate_restamp_total() noexcept {
@@ -569,9 +594,14 @@ inline void stamp_stable_ref_fields(StableRefT& ref, std::uint64_t tenant_id,
 template <typename StableRefT>
 inline bool maybe_stamp_stable_ref_isolation_tenant(StableRefT& ref,
                                                     std::uint32_t fiber_id = 0) noexcept {
+    // Issue #2687: track the global-fallback path so production multi-eval
+    // dashboards can detect FlatAST factories that should be calling
+    // Evaluator::stamp_stable_ref instead. The global stays as best-effort
+    // mirror for non-Evaluator call sites (single-tenant / test harness).
     const auto tid = isolation_capture_tenant();
     if (tid == 0)
         return false;
+    g_isolation_capture_stamp_global_fallback_total_atomic().fetch_add(1, std::memory_order_relaxed);
     stamp_stable_ref_fields(ref, tid, fiber_id);
     record_stable_ref_tenant_stamp_capture();
     return true;
