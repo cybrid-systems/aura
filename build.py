@@ -452,6 +452,23 @@ def cmd_lint():
             "joint epoch bump coverage linter (#2693) failed — run python3 scripts/coverage/checks/check_joint_epoch_bump_coverage.py"
         )
         return r
+    # Issue #2699: unified steal safety single transaction (MutationSafetySnapshot
+    # + residual GcDefer + PanicCheckpoint + LayoutStamp + ticket). Wires
+    # check_steal_safety_transaction_2699.py so the call-graph assertion
+    # (worker.cpp try_steal_from → steal_safety_transaction only) stays
+    # enforced. Builds on #2310 force-deopt + #2667 PanicCheckpoint +
+    # #2372 production strict — AC2 (RejectHard → never local_queue_.push)
+    # requires the worker.cpp wire-in marker.
+    sst_script = COVERAGE_CHECKS / "check_steal_safety_transaction_2699.py"
+    if not sst_script.exists():
+        fail(f"missing {sst_script}")
+        return 1
+    r = run([sys.executable, str(sst_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2699 unified steal safety transaction coverage linter failed — run python3 scripts/coverage/checks/check_steal_safety_transaction_2699.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
