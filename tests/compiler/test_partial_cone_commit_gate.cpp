@@ -42,6 +42,11 @@ using aura::compiler::typed_audit::last_partial_cone_dropped;
 using aura::compiler::typed_audit::last_partial_cone_truncated;
 using aura::compiler::typed_audit::partial_cone_commit_hard_enabled;
 using aura::compiler::typed_audit::publish_partial_cone_truncate;
+// Issue #2672/#2673: allow qualified `typed_audit::name` references inside the
+// existing AC1–AC6 source-cite bodies without re-prefixing every call.
+// `using namespace X` only exposes X's members; for `typed_audit::foo` qualified
+// lookups we need a namespace alias.
+namespace typed_audit = ::aura::compiler::typed_audit;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;

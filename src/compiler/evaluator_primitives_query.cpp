@@ -8041,8 +8041,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         "query:dead-coercion-layered-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            // Capacity 128: base + #2556/#2562/#2611/#2624 keys (was 64).
-            auto* ht = FlatHashTable::create(128);
+            // Capacity 256: base + #2556/#2562/#2611/#2624 + #2674 keys (was 128).
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8189,6 +8189,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("castop-typed-meta-phase-a",
                           static_cast<std::int64_t>(
                               castop_typed_meta_phase_a.load(std::memory_order_relaxed)));
+            }
+            // Issue #2674: layered evidence-coherence invariant — observe-only
+            // divergence counter under Soft/Sampled (no hard-reject of mutate
+            // by default per AC5). Agent-visible ast-elided-with-evidence counter
+            // pairs with ir-narrow-evidence-hits + deopt-meta-stamped-total so
+            // dashboards can detect layered-stats divergence under typed_mutate
+            // → lower → JIT paths. Zero cost when no evidence path (pure atomic
+            // loads on the read side; coherence check runs on MutationBoundary
+            // outermost exit in evaluator_mutation_boundary.cpp).
+            {
+                insert_kv("schema-2674", 2674);
+                insert_kv("issue-2674", 2674);
+                insert_kv("ast-elided-with-evidence",
+                          static_cast<std::int64_t>(
+                              ::aura::compiler::g_dead_coercion_ast_elided_with_evidence_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("layered-evidence-diverge-total",
+                          static_cast<std::int64_t>(
+                              ::aura::compiler::g_layered_evidence_diverge_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("layered-evidence-coherence-wired", 1);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

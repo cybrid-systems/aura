@@ -169,6 +169,19 @@ export inline std::atomic<std::uint32_t> g_coercion_stamp_at_add_wired{1};
 // Issue #2282: combined on query:dead-coercion-layered-stats as the
 // `ast-elided` component (see optimization_passes.ixx for ir-elided + dirty-cone-skips).
 export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_total{0};
+// Issue #2674: AST elision WITH narrow_evidence (subset of total). Layered
+// coherence invariant compares this counter against IR narrow evidence hits +
+// deopt-meta stamps (the union must cover every evidence-backed AST elide —
+// any surplus = layered stats diverged under typed_mutate → lower → JIT).
+// Zero cost on every AST elision with narrow_evidence == 0.
+export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_with_evidence_total{0};
+// Issue #2674: layered-evidence-coherence diverge counter. Bumped when
+// g_dead_coercion_ast_elided_with_evidence_total >
+//   dead_coercion_ir_narrow_evidence_hits + dce_deopt_meta_stamped_total
+// (i.e. evidence-backed AST elide without matching IR narrow hit or deopt-meta
+// stamp). Soft/Sampled: observe-only (no hard-reject of mutate by default).
+// Full/Production: optional escalate via fidelity-health note. No abort path.
+export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_total{0};
 
 // Issue #2102 / #2185: provenance-miss policy atomics + helpers live in
 // coercion_provenance_policy.hh (re-exported above). Process start keeps
@@ -214,6 +227,48 @@ export [[nodiscard]] inline std::uint64_t coercion_evidence_loss_bp() noexcept {
     const auto elided = g_dead_coercion_ast_elided_total.load(std::memory_order_relaxed);
     const auto denom = skip + complete + elided;
     return denom > 0 ? (skip * 10000u) / denom : 0u;
+}
+
+// Issue #2674: layered evidence-coherence invariant (refine #2645 — was
+// test/linter-only; #2674 adds production-path consistency check + Agent-
+// visible query surface). For evidence-backed AST elisions in a
+// MutationBoundary window:
+//   ast_elided_with_evidence <= ir_narrow_evidence_hits + deopt_meta_stamps
+// When the AST-elision-with-evidence counter exceeds the union of IR narrow
+// evidence hits + deopt-meta stamps, the layered stats have silently diverged
+// under typed_mutate → lower → JIT. Soft/Sampled: observe the diverge counter
+// only. Full/Production: optional fidelity-health note (no hard-reject of
+// mutate by default — observability first per Issue #2674 AC5).
+//
+// Issue #2674 AC4: zero cost when no evidence path — pure atomic loads, no
+// counter mutation when invariant holds. Sampled check runs on a coarse
+// boundary (MutationBoundaryGuard Phase 5 outermost exit, aka
+// MutationBoundary outermost exit) to amortize cost.
+//
+// IR narrow evidence hits live in opt_registry::dead_coercion_ir_narrow_evidence_hits
+// (optimization_passes module). coercion_map.ixx cannot import that module
+// (cyclic import graph: optimization_passes ↔ pass_impls ↔ coercion_map
+// chain), so the IR counter is passed in by the caller —
+// evaluator_mutation_boundary.cpp loads it from opt_registry (already
+// reachable from .cpp impl units) and passes the snapshot here. Caller-side
+// snapshot is fine because the invariant only cares about monotonic divergence
+// (ir_narrow + meta_stamps are monotonically non-decreasing per process
+// lifetime; a snapshot at boundary exit is consistent with the per-window
+// coherence check).
+export inline void
+check_layered_evidence_coherence(std::uint64_t ir_narrow_evidence_hits_external) noexcept {
+    using namespace ::aura::compiler::dce_deopt;
+    const auto ast_with_ev =
+        g_dead_coercion_ast_elided_with_evidence_total.load(std::memory_order_relaxed);
+    const auto meta_stamps = dce_deopt_meta_stamped_total.load(std::memory_order_relaxed);
+    // Invariant: ast_elision_with_evidence <= ir_narrow + meta_stamps.
+    // ir_narrow + meta_stamps are monotonically non-decreasing per process
+    // lifetime; ast_with_ev can drift higher only if evidence-backed AST
+    // elisions happen without matching IR narrow / meta coverage.
+    if (ast_with_ev > ir_narrow_evidence_hits_external + meta_stamps) {
+        const auto diverge_delta = ast_with_ev - (ir_narrow_evidence_hits_external + meta_stamps);
+        g_layered_evidence_diverge_total.fetch_add(diverge_delta, std::memory_order_relaxed);
+    }
 }
 
 // ── CoercionEntry — one deferred coercion ────────────────
@@ -750,7 +805,12 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
             g_dead_coercion_ast_elided_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #2611: evidence-backed AST identity elision → deopt meta
             // (mid from coercion provenance; no stamp when evidence==0).
+            // Issue #2674: also bump ast-elided-with-evidence counter so the
+            // layered coherence invariant (ast_with_evidence <= ir_narrow +
+            // meta_stamps) can detect layered-stats divergence.
             if (e.narrow_evidence != 0) {
+                g_dead_coercion_ast_elided_with_evidence_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
                 const auto site =
                     dce_deopt::make_site_key(0, static_cast<std::uint32_t>(e.original_child),
                                              static_cast<std::uint32_t>(e.parent_id));
@@ -768,7 +828,10 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                 map_mut->mark_eliminated();
             g_dead_coercion_ast_elided_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #2611: Dynamic-tag elision with evidence also stamps meta.
+            // Issue #2674: same evidence-backed counter bump as identity path.
             if (e.narrow_evidence != 0) {
+                g_dead_coercion_ast_elided_with_evidence_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
                 const auto site =
                     dce_deopt::make_site_key(0, static_cast<std::uint32_t>(e.original_child),
                                              static_cast<std::uint32_t>(e.parent_id));

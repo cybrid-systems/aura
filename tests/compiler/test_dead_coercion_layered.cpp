@@ -263,15 +263,21 @@ namespace _2645_detail {
 void run_2645_evidence_chain();
 }
 
+namespace _2674_detail {
+void run_2674_layered_coherence();
+}
+
 int run_test_dead_coercion_layered() {
     std::println("=== Issue #2282 / #2287: dead-coercion layered + CastOp density ===");
     std::println("=== Issue #2319: opt-in hard CastOp density gate ===");
     std::println("=== Issue #2645: layered dead-coercion evidence chain ===");
+    std::println("=== Issue #2674: layered evidence-coherence production gate ===");
     aura_dead_coercion_layered_2282::_2282_detail::run_2282_layered_total();
     aura_dead_coercion_layered_2282::_2287_detail::run_2287_density();
     // Issue #2319 ACs are covered by dedicated test_castop_density_hard
     // (ac2319_* helpers were never defined in this TU).
     _2645_detail::run_2645_evidence_chain();
+    _2674_detail::run_2674_layered_coherence();
     return RUN_ALL_TESTS();
 }
 
@@ -397,6 +403,155 @@ void run_2645_evidence_chain() {
 }
 
 } // namespace _2645_detail
+
+// ---------------------------------------------------------------------------
+// Issue #2674: layered dead-coercion evidence-coherence production gate.
+// Refines #2645 (which was test/linter-only) with a production-path
+// consistency check: for evidence-backed AST elisions in a MutationBoundary
+// window, ast_elided_with_evidence <= ir_narrow_evidence_hits +
+// deopt_meta_stamps. Soft/Sampled: observe-only diverge counter (no hard-
+// reject of mutate by default per AC5). Full/Production: optional fidelity-
+// health note. Coarse boundary placement (MutationBoundaryGuard Phase 5
+// outermost exit) amortizes across multiple AST/IR elisions per mutate.
+//   AC1: g_dead_coercion_ast_elided_with_evidence_total counter present +
+//        bumped at both elision sites when narrow_evidence != 0
+//   AC2: g_layered_evidence_diverge_total counter present in coercion_map.ixx
+//   AC3: check_layered_evidence_coherence() function exported
+//   AC4: check_layered_evidence_coherence() called at MutationBoundaryGuard
+//        Phase 5 exit (source-cite in evaluator_mutation_boundary.cpp)
+//   AC5: query surface has #2674 keys (schema-2674, issue-2674,
+//        ast-elided-with-evidence, layered-evidence-diverge-total,
+//        layered-evidence-coherence-wired)
+//   AC6: linter check_layered_evidence_coherence_2674.py + build.py wires it
+// ---------------------------------------------------------------------------
+namespace _2674_detail {
+
+using aura::compiler::CompilerService;
+
+static std::string read_file(const char* path) {
+    std::ifstream in(path);
+    if (!in)
+        return {};
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+static void ac2674_ast_elided_with_evidence_counter_present() {
+    std::println("\n--- AC1 #2674: ast-elided-with-evidence counter + elision bump ---");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("g_dead_coercion_ast_elided_with_evidence_total") != std::string::npos,
+          "AC1 #2674: counter declaration in coercion_map.ixx");
+    // Bumped in identity elision site (line ~750).
+    auto apply = cixx;
+    const auto apply_bump_count = [](const std::string& s) {
+        std::size_t n = 0;
+        std::size_t pos = 0;
+        const std::string needle = "g_dead_coercion_ast_elided_with_evidence_total.fetch_add";
+        while ((pos = s.find(needle, pos)) != std::string::npos) {
+            ++n;
+            pos += needle.size();
+        }
+        return n;
+    }(apply);
+    CHECK(apply_bump_count >= 2,
+          "AC1 #2674: counter bumped at both identity + Dynamic-tag elision sites");
+    // Counter also exposed in query surface (validated in AC5 by grep).
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("g_dead_coercion_ast_elided_with_evidence_total") != std::string::npos,
+          "AC1 #2674: counter read in query surface (see AC5 for the key string)");
+}
+
+static void ac2674_diverge_counter_present() {
+    std::println("\n--- AC2 #2674: layered-evidence-diverge-total counter ---");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("g_layered_evidence_diverge_total") != std::string::npos,
+          "AC2 #2674: diverge counter declaration in coercion_map.ixx");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("layered-evidence-diverge-total") != std::string::npos,
+          "AC2 #2674: layered-evidence-diverge-total exposed in query surface");
+    // No hard-reject path on diverge bump (observability first per body AC5).
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("g_layered_evidence_diverge_total") == std::string::npos,
+          "AC2 #2674: diverge counter NOT bumped in mb.cpp (observability-only, no hard-reject)");
+}
+
+static void ac2674_check_function_exported() {
+    std::println("\n--- AC3 #2674: check_layered_evidence_coherence() exported ---");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("check_layered_evidence_coherence") != std::string::npos,
+          "AC3 #2674: check function declared in coercion_map.ixx");
+    CHECK(cixx.find("export inline void check_layered_evidence_coherence") != std::string::npos,
+          "AC3 #2674: check function exported (export inline)");
+    // Function body uses the three counters.
+    CHECK(cixx.find("g_dead_coercion_ast_elided_with_evidence_total") != std::string::npos &&
+              cixx.find("dead_coercion_ir_narrow_evidence_hits") != std::string::npos &&
+              cixx.find("dce_deopt_meta_stamped_total") != std::string::npos,
+          "AC3 #2674: invariant reads all 3 counters (ast / ir_narrow / meta_stamps)");
+    // Bumps diverge counter on violation.
+    const auto has_diverge_bump =
+        cixx.find("g_layered_evidence_diverge_total.fetch_add") != std::string::npos;
+    CHECK(has_diverge_bump, "AC3 #2674: function bumps diverge counter when invariant violated");
+}
+
+static void ac2674_boundary_call_site() {
+    std::println("\n--- AC4 #2674: coherence check called at MutationBoundaryGuard exit ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("check_layered_evidence_coherence(") != std::string::npos,
+          "AC4 #2674: function called at boundary exit (with ir_narrow snapshot arg)");
+    // Coarse placement — not per-AST-elision (zero cost on hot path).
+    // Should be in ~MutationBoundaryGuard::~MutationBoundaryGuard scope.
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("Coarse boundary placement") != std::string::npos ||
+              cixx.find("MutationBoundary outermost exit") != std::string::npos,
+          "AC4 #2674: coarse boundary placement noted in coercion_map.ixx comment");
+}
+
+static void ac2674_query_surface_keys() {
+    std::println("\n--- AC5 #2674: query surface has #2674 keys ---");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("\"schema-2674\"") != std::string::npos,
+          "AC5 #2674: schema-2674 sentinel in query surface");
+    CHECK(q.find("\"issue-2674\"") != std::string::npos,
+          "AC5 #2674: issue-2674 sentinel in query surface");
+    CHECK(q.find("\"ast-elided-with-evidence\"") != std::string::npos,
+          "AC5 #2674: ast-elided-with-evidence counter key");
+    CHECK(q.find("\"layered-evidence-diverge-total\"") != std::string::npos,
+          "AC5 #2674: layered-evidence-diverge-total counter key");
+    CHECK(q.find("\"layered-evidence-coherence-wired\"") != std::string::npos,
+          "AC5 #2674: layered-evidence-coherence-wired sentinel");
+    // Capacity bumped from 128 → 256.
+    CHECK(q.find("FlatHashTable::create(256)") != std::string::npos,
+          "AC5 #2674: capacity bumped to 256 for #2674 keys");
+}
+
+static void ac2674_linter_and_build_py() {
+    std::println("\n--- AC6 #2674: linter + build.py wired ---");
+    auto lint = read_file("scripts/coverage/checks/check_layered_evidence_coherence_2674.py");
+    CHECK(!lint.empty(), "AC6 #2674: linter script present");
+    CHECK(lint.find("#2674") != std::string::npos, "AC6 #2674: linter cites #2674");
+    CHECK(lint.find("g_dead_coercion_ast_elided_with_evidence_total") != std::string::npos,
+          "AC6 #2674: linter covers ast-elided-with-evidence counter");
+    CHECK(lint.find("g_layered_evidence_diverge_total") != std::string::npos,
+          "AC6 #2674: linter covers diverge counter");
+    CHECK(lint.find("check_layered_evidence_coherence") != std::string::npos,
+          "AC6 #2674: linter covers check function");
+    CHECK(lint.find("schema-2674") != std::string::npos,
+          "AC6 #2674: linter covers schema-2674 sentinel");
+    auto build = read_file("build.py");
+    CHECK(build.find("check_layered_evidence_coherence_2674") != std::string::npos,
+          "AC6 #2674: build.py wires linter");
+}
+
+void run_2674_layered_coherence() {
+    std::println("\n=== Issue #2674: layered dead-coercion evidence-coherence ===");
+    ac2674_ast_elided_with_evidence_counter_present();
+    ac2674_diverge_counter_present();
+    ac2674_check_function_exported();
+    ac2674_boundary_call_site();
+    ac2674_query_surface_keys();
+    ac2674_linter_and_build_py();
+}
+
+} // namespace _2674_detail
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {

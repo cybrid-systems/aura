@@ -304,7 +304,12 @@ static void ac2671_soft_drift_observe() {
     std::println("\n--- #2671 AC1: Soft + injected incompatible refined → observe++ ---");
     reset_for_test();
     // Soft strategy: production_defaults_active() returns false → observe path.
-    set_strategy(AuditStrategy::Soft);
+    // Issue #2671 follow-up: AuditStrategy::Soft was renamed to Sampled;
+    // the enum currently exposes {Off, Sampled, Full}. Use Sampled for
+    // observe-only behavior (pre-existing #2671 AC1 test code referenced
+    // the legacy Soft name; build was broken in this TU — minimal fix
+    // for #2674 ship testability).
+    set_strategy(AuditStrategy::Sampled);
     CompilerService cs;
     seed(cs);
     const auto obs0 = ac2644_helpers::drift_observe();

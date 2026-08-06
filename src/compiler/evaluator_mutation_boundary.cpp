@@ -68,6 +68,10 @@ import aura.compiler.coercion_map;    // Issue #2102: provenance-miss force-audi
 import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
 import aura.compiler.ir_soa;          // Issue #2432: current_ir_soa_generation_fence
 import aura.compiler.type_checker;    // Issue #2608: maybe_persist_occurrence_snapshot
+// Issue #2674: layered evidence-coherence invariant reads
+// opt_registry::dead_coercion_ir_narrow_evidence_hits from optimization_passes
+// (snapshot passed to check_layered_evidence_coherence at boundary exit).
+import aura.compiler.optimization_passes;
 
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
 
@@ -2532,6 +2536,22 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // Issue #422: hygiene violation detection hook on
     // Guard exit (mutate paths record attempts at block).
     ev_->ensure_hygiene_violation_detection();
+    // Issue #2674: layered evidence-coherence invariant on MutationBoundary
+    // outermost exit. Compares g_dead_coercion_ast_elided_with_evidence_total
+    // vs ir_narrow + meta_stamps; observe-only diverge counter under Soft/
+    // Sampled (no hard-reject). Zero cost when no evidence path (pure atomic
+    // loads + conditional atomic add when invariant holds). Coarse boundary
+    // placement amortizes across multiple AST/IR elisions per mutate.
+    //
+    // IR narrow counter lives in opt_registry (optimization_passes module);
+    // coercion_map.ixx can't import it (cyclic graph), so caller snapshots
+    // it here and passes the value. Snapshot is fine because the invariant
+    // only cares about monotonic divergence (ir_narrow + meta_stamps are
+    // monotonically non-decreasing per process lifetime).
+    const auto ir_narrow_evidence_hits_snapshot =
+        ::aura::compiler::opt_registry::dead_coercion_ir_narrow_evidence_hits.load(
+            std::memory_order_relaxed);
+    aura::compiler::check_layered_evidence_coherence(ir_narrow_evidence_hits_snapshot);
     // Issue #464: bump the ArenaGroup
     // auto_compact_guard_call_count_ counter on
     // every guard dtor (the closed-loop signal for
