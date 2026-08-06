@@ -462,11 +462,9 @@ int main() {
         // maybe_stamp_stable_ref_isolation_tenant on a StableRefT.
         aura::core::provenance::set_isolation_capture_tenant(42);
         aura::FlatAST::StableNodeRef ref{};
-        const bool stamped = aura::core::provenance::
-            maybe_stamp_stable_ref_isolation_tenant(ref);
+        const bool stamped = aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref);
         CHECK(stamped, "AC2: global-fallback path stamps when tenant != 0");
-        CHECK(ref.tenant_id == 42,
-              "AC2: global-fallback stamps tenant_id from process-global");
+        CHECK(ref.tenant_id == 42, "AC2: global-fallback stamps tenant_id from process-global");
         const auto global_after2 =
             aura::core::provenance::g_isolation_capture_stamp_global_fallback_total_atomic().load(
                 std::memory_order_relaxed);
@@ -482,8 +480,7 @@ int main() {
         reset_all();
         aura::core::provenance::set_isolation_capture_tenant(0);
         aura::FlatAST::StableNodeRef ref{};
-        const bool stamped = aura::core::provenance::
-            maybe_stamp_stable_ref_isolation_tenant(ref);
+        const bool stamped = aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref);
         CHECK(!stamped,
               "AC4: tenant=0 → maybe_stamp_stable_ref_isolation_tenant returns false (no stamp)");
         CHECK(ref.tenant_id == 0, "AC4: tenant_id stays 0 (legacy single-tenant)");
@@ -514,8 +511,7 @@ int main() {
         const auto workspace = read_file("src/core/workspace_isolation.hh");
         const auto q_src = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
         // Issue #2687 sentinel in all 4 prod-side files.
-        CHECK(prov.find("#2687") != std::string::npos,
-              "AC6: provenance_tracker.hh cites #2687");
+        CHECK(prov.find("#2687") != std::string::npos, "AC6: provenance_tracker.hh cites #2687");
         CHECK(eval_sec.find("#2687") != std::string::npos,
               "AC6: evaluator_security.cpp cites #2687");
         CHECK(workspace.find("#2687") != std::string::npos,
@@ -528,8 +524,7 @@ int main() {
         CHECK(prov.find("g_isolation_capture_stamp_global_fallback_total_atomic") !=
                   std::string::npos,
               "AC5: global-fallback counter declared in provenance_tracker.hh");
-        CHECK(eval_sec.find("g_isolation_capture_stamp_local_total_atomic") !=
-                  std::string::npos,
+        CHECK(eval_sec.find("g_isolation_capture_stamp_local_total_atomic") != std::string::npos,
               "AC1: local counter bumped from Evaluator::stamp_stable_ref");
         CHECK(prov.find("g_isolation_capture_stamp_global_fallback_total_atomic") !=
                   std::string::npos,

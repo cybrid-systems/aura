@@ -229,11 +229,13 @@ inline std::atomic<std::uint64_t>& g_isolation_capture_stamp_local_total_atomic(
     static std::atomic<std::uint64_t> v{0};
     return v;
 }
-inline std::atomic<std::uint64_t>& g_isolation_capture_stamp_global_fallback_total_atomic() noexcept {
+inline std::atomic<std::uint64_t>&
+g_isolation_capture_stamp_global_fallback_total_atomic() noexcept {
     static std::atomic<std::uint64_t> v{0};
     return v;
 }
-inline std::atomic<std::uint64_t>& g_isolation_capture_stamp_evaluator_miss_total_atomic() noexcept {
+inline std::atomic<std::uint64_t>&
+g_isolation_capture_stamp_evaluator_miss_total_atomic() noexcept {
     static std::atomic<std::uint64_t> v{0};
     return v;
 }
@@ -601,7 +603,8 @@ inline bool maybe_stamp_stable_ref_isolation_tenant(StableRefT& ref,
     const auto tid = isolation_capture_tenant();
     if (tid == 0)
         return false;
-    g_isolation_capture_stamp_global_fallback_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    g_isolation_capture_stamp_global_fallback_total_atomic().fetch_add(1,
+                                                                       std::memory_order_relaxed);
     stamp_stable_ref_fields(ref, tid, fiber_id);
     record_stable_ref_tenant_stamp_capture();
     return true;

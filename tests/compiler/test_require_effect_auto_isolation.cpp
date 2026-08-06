@@ -390,7 +390,8 @@ static void ac2689_1_inventory_stable_node_ref_paths() {
     // — that closes the late-isolation window (#2658 AC1 baseline preserved).
     const std::vector<std::pair<std::string, std::string>> scope_files = {
         {"src/compiler/evaluator_security.cpp", "security core (ref_tenant=0 default)"}, // NOLINT
-        {"src/compiler/evaluator_primitives_mutate.cpp", "mutate:force (only #2658 call site)"}, // NOLINT
+        {"src/compiler/evaluator_primitives_mutate.cpp",
+         "mutate:force (only #2658 call site)"}, // NOLINT
         {"src/compiler/evaluator_primitives_compile.cpp", "NodeId-only paths"},
         {"src/compiler/evaluator_primitives_runtime.cpp", "runtime ops"},
         {"src/compiler/evaluator_primitives_io.cpp", "file / sys write"},
@@ -438,22 +439,19 @@ static void ac2689_6_source_and_no_design_doc() {
     std::println("\n--- #2689 AC6: source-cite + no regression ---");
     const auto sec = read_file("src/compiler/evaluator_security.cpp");
     // Issue #2689 sentinel in evaluator_security.cpp (just above require_effect).
-    CHECK(sec.find("Issue #2689") != std::string::npos,
-          "AC6: evaluator_security.cpp cites #2689");
+    CHECK(sec.find("Issue #2689") != std::string::npos, "AC6: evaluator_security.cpp cites #2689");
     // require_effect_on_ref definition present.
     CHECK(sec.find("require_effect_on_ref") != std::string::npos,
           "AC6: require_effect_on_ref defined");
     // ref_tenant parameter present.
-    CHECK(sec.find("ref_tenant") != std::string::npos,
-          "AC6: ref_tenant parameter present");
+    CHECK(sec.find("ref_tenant") != std::string::npos, "AC6: ref_tenant parameter present");
     // #2658 regression check — mutate:force pattern unchanged.
-    CHECK(sec.find("Issue #2658") != std::string::npos,
-          "AC4: #2658 lineage reference preserved");
+    CHECK(sec.find("Issue #2658") != std::string::npos, "AC4: #2658 lineage reference preserved");
     CHECK(sec.find("on_ref") != std::string::npos,
           "AC4: require_effect_on_ref thin helper preserved");
     // No design doc regression (per #1655).
-    for (const auto& p : {"docs/design/require_effect_on_ref_2689.md",
-                          "docs/require_effect_on_ref_2689.md"}) {
+    for (const auto& p :
+         {"docs/design/require_effect_on_ref_2689.md", "docs/require_effect_on_ref_2689.md"}) {
         std::ifstream f(p);
         CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
     }

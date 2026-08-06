@@ -189,10 +189,8 @@ int run_test_grant_epoch_retain_restricted() {
         const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
         // Issue #2688 sentinel in all 3 prod-side files (use "#2688" for
         // combined citations like "Issue #2688 / #2151 / #2154").
-        CHECK(def.find("#2688") != std::string::npos,
-              "AC6: security_defaults.hh cites #2688");
-        CHECK(cap.find("#2688") != std::string::npos,
-              "AC6: capability_model.hh cites #2688");
+        CHECK(def.find("#2688") != std::string::npos, "AC6: security_defaults.hh cites #2688");
+        CHECK(cap.find("#2688") != std::string::npos, "AC6: capability_model.hh cites #2688");
         CHECK(q.find("#2688") != std::string::npos,
               "AC6: evaluator_primitives_obs_jit.cpp cites #2688");
         // Constants wired (already true from #2154 + #2529 baseline).
@@ -211,10 +209,8 @@ int run_test_grant_epoch_retain_restricted() {
               "AC6: epoch-fence-hit-total query key");
         CHECK(q.find("capability-fiber-hard-deny-total") != std::string::npos,
               "AC6: fiber-hard-deny-total query key");
-        CHECK(q.find("schema-2688") != std::string::npos,
-              "AC6: schema-2688 sentinel");
-        CHECK(q.find("issue-2688") != std::string::npos,
-              "AC6: issue-2688 sentinel");
+        CHECK(q.find("schema-2688") != std::string::npos, "AC6: schema-2688 sentinel");
+        CHECK(q.find("issue-2688") != std::string::npos, "AC6: issue-2688 sentinel");
         CHECK(q.find("capability-production-default-armed") != std::string::npos,
               "AC6: production-default-armed sentinel");
         // No design doc regression (per #1655).

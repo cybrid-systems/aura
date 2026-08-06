@@ -52,7 +52,7 @@ def main() -> int:
     cap = _read("src/core/capability_model.hh")
     sec = _read("src/compiler/security_defaults.hh")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
+    _read("build.py")
 
     # AC1 — multi-tenant / Strict arming: hard_fiber_isolation=true + K=64.
     must("set_hard_fiber_isolation", "AC1", sec)
@@ -109,8 +109,7 @@ def main() -> int:
     # in capability_model.hh when epoch advances past K.
     if "capability_epoch_fence_hit_total.fetch_add" not in cap:
         fails.append(
-            "AC4: capability_epoch_fence_hit_total.fetch_add not found "
-            "(should be called from on_mutation_epoch_bump)"
+            "AC4: capability_epoch_fence_hit_total.fetch_add not found (should be called from on_mutation_epoch_bump)"
         )
 
     # AC5 — hard_fiber on → deny + capability_fiber_hard_deny_total.
@@ -125,16 +124,14 @@ def main() -> int:
         fails.append("AC5: provenance_ok signature not found")
     else:
         window_end = min(sig.end() + 5000, len(cap))
-        window = cap[sig.start():window_end]
+        window = cap[sig.start() : window_end]
         if "hard_fiber_isolation_" not in window:
             fails.append(
                 "AC5: provenance_ok body must reference hard_fiber_isolation_ "
                 "(false → metric-only, true → deny + bump capability_fiber_hard_deny_total)"
             )
         if "capability_fiber_hard_deny_total" not in window:
-            fails.append(
-                "AC5: provenance_ok body must bump capability_fiber_hard_deny_total"
-            )
+            fails.append("AC5: provenance_ok body must bump capability_fiber_hard_deny_total")
 
     # AC6 — query surface wired.
     must("capability-hard-fiber-isolation", "AC6", q)

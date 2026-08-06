@@ -14552,6 +14552,23 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"epoch-invariant-event-wired", make_int(1)},
                 {"schema-2668", make_int(2668)},
                 {"issue-2668", make_int(2668)},
+                // Issue #2693: Soft epoch-invariant consecutive-dirty fuse
+                // (refine #2640 / #2668 — bumps
+                // epoch_invariant_soft_fuse_total after K consecutive Soft
+                // walks that left behind slots uncleared). K defaults to 3
+                // (env AURA_EPOCH_INVARIANT_SOFT_FUSE_K; 0 disables).
+                {"epoch-invariant-soft-fuse-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_soft_fuse_total_v_read()))},
+                {"epoch-invariant-consecutive-dirty-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_consecutive_dirty_total_v_read()))},
+                {"epoch-invariant-soft-fuse-k-default",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_soft_fuse_k_default()))},
+                {"epoch-invariant-soft-fuse-wired", make_int(1)},
+                {"schema-2693", make_int(2693)},
+                {"issue-2693", make_int(2693)},
             {"schema-2366", make_int(2366)},
             {"issue-2366", make_int(2366)},
             {"schema-2304", make_int(2304)},

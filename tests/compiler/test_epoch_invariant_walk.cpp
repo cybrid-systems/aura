@@ -400,6 +400,221 @@ static void ac2640_source_and_linter() {
           "AC6: linter wired into build.py");
 }
 
+// ── Issue #2693 AC1: K consecutive Soft walks → epoch_invariant_soft_fuse_total bumps ──
+//
+// Refine #2640 / #2668 — after each walk that left behind_after_clear > 0,
+// g_consecutive_dirty_count increments; when it reaches K (default 3), the
+// fuse counter bumps via aura_2693_soft_fuse_record. Use K=1 so a single
+// stuck walk fires (otherwise we'd need K separate injects to test the
+// threshold in a unit test).
+static void ac2693_1_consecutive_dirty_fuse_fires() {
+    std::println("\n--- #2693 AC1: K consecutive Soft walks → fuse fires ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_set_epoch_invariant_soft_fuse_k(1); // K=1 fires on first stuck walk
+    aura_set_epoch_invariant_mode(1);        // Soft
+    aura_set_epoch_invariant_periodic_period_ms(50);
+    // Reset the consecutive_dirty state (left from prior tests).
+    const auto consec0 = aura_epoch_invariant_consecutive_dirty_total_v_read();
+    const auto fuse0 = aura_epoch_invariant_soft_fuse_total_v_read();
+    // Inject stale slot so behind_after_clear > 0 after the walk.
+    for (int i = 0; i < 16; ++i)
+        aura_aot_clear_slot_for_test(i);
+    aura_aot_inject_live_stale_slot_for_test(13);
+    aura_periodic_epoch_invariant_walk_if_due(); // fires fuse (K=1, behind > 0)
+    const auto fuse1 = aura_epoch_invariant_soft_fuse_total_v_read();
+    const auto consec1 = aura_epoch_invariant_consecutive_dirty_total_v_read();
+    CHECK(fuse1 > fuse0, "AC1: epoch_invariant_soft_fuse_total bumped on K-th stuck walk");
+    CHECK(consec1 >= 1, "AC1: consecutive_dirty >= 1 after stuck walk");
+    aura_aot_clear_slot_for_test(13);
+    aura_set_epoch_invariant_mode(0);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_set_epoch_invariant_soft_fuse_k(3); // reset to default
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    (void)consec0;
+}
+
+// ── Issue #2693 AC2: clean walk resets consecutive; K=0 disables ──
+static void ac2693_2_clean_resets_consecutive_and_K0() {
+    std::println("\n--- #2693 AC2: clean walk resets consecutive + K=0 disables ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_set_epoch_invariant_mode(1);
+    aura_set_epoch_invariant_periodic_period_ms(50);
+    // First: inject a stale slot and bump the consecutive_dirty counter.
+    for (int i = 0; i < 16; ++i)
+        aura_aot_clear_slot_for_test(i);
+    aura_aot_inject_live_stale_slot_for_test(14);
+    aura_periodic_epoch_invariant_walk_if_due(); // consec >= 1
+    aura_aot_clear_slot_for_test(14);            // next walk: clean
+    aura_periodic_epoch_invariant_walk_if_due(); // clean → consec == 0
+    const auto consec_after_clean = aura_epoch_invariant_consecutive_dirty_total_v_read();
+    CHECK(consec_after_clean == 0,
+          "AC2: consecutive_dirty resets to 0 on clean walk (no behind slots)");
+    // K=0 disables fuse: even if we force-stuck walks, fuse stays at 0.
+    aura_set_epoch_invariant_soft_fuse_k(0); // K=0 disables
+    const auto fuse_pre = aura_epoch_invariant_soft_fuse_total_v_read();
+    aura_aot_inject_live_stale_slot_for_test(15);
+    aura_periodic_epoch_invariant_walk_if_due(); // K=0 → no fire
+    const auto fuse_post = aura_epoch_invariant_soft_fuse_total_v_read();
+    CHECK(fuse_post == fuse_pre,
+          "AC2: K=0 → epoch_invariant_soft_fuse_total never bumps on stuck walk");
+    aura_aot_clear_slot_for_test(15);
+    aura_set_epoch_invariant_mode(0);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_set_epoch_invariant_soft_fuse_k(3); // reset to default
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// ── Issue #2693 AC3: Soft / Off / mode=0 zero-cost when no behind ──
+static void ac2693_3_quiet_zero_cost() {
+    std::println("\n--- #2693 AC3: Soft/Off/mode=0 → zero-cost on quiet path ---");
+    // Off / mode=0: walk doesn't run → consecutive_dirty + fuse stay flat.
+    aura_set_epoch_invariant_soft_fuse_k(3);
+    aura_set_epoch_invariant_mode(0); // Off
+    const auto consec0 = aura_epoch_invariant_consecutive_dirty_total_v_read();
+    const auto fuse0 = aura_epoch_invariant_soft_fuse_total_v_read();
+    aura_periodic_epoch_invariant_walk_if_due(); // skipped (mode != 1)
+    CHECK(aura_epoch_invariant_consecutive_dirty_total_v_read() == consec0,
+          "AC3: Off mode → consecutive_dirty flat (walk skipped)");
+    CHECK(aura_epoch_invariant_soft_fuse_total_v_read() == fuse0,
+          "AC3: Off mode → fuse flat (walk skipped)");
+    // mode != Soft → skipped_wrong_mode
+    aura_set_epoch_invariant_mode(2);            // Hard
+    aura_periodic_epoch_invariant_walk_if_due(); // skipped (mode != 1)
+    CHECK(aura_epoch_invariant_consecutive_dirty_total_v_read() == consec0,
+          "AC3: Hard mode → consecutive_dirty flat");
+    // period_ms = 0 → skipped_disabled
+    aura_set_epoch_invariant_mode(1);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_periodic_epoch_invariant_walk_if_due(); // skipped (disabled)
+    CHECK(aura_epoch_invariant_consecutive_dirty_total_v_read() == consec0,
+          "AC3: period=0 → consecutive_dirty flat");
+    // Cleanup
+    aura_set_epoch_invariant_mode(0);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+}
+
+// ── Issue #2693 AC4: linter catches split-domain bump patch ──
+//
+// Demonstrates the #2693 joint-epoch-bump linter catches a deliberate
+// bare-bump patch on a non-allow-listed file and that the allow-list
+// passes the same patch (lives in scripts/coverage/checks/).
+static void ac2693_4_linter_self_test() {
+    std::println("\n--- #2693 AC4: linter catches split-domain bump ---");
+    // Run the linter's --self-test mode (canned bad/good inputs).
+    // Spawn the script directly so we don't depend on a python on PATH
+    // beyond the runtime interpreter OpenClaw already loaded.
+    auto run_linter = []() -> bool {
+        const std::string cmd =
+            std::format("python3 scripts/coverage/checks/check_joint_epoch_bump_coverage.py "
+                        "--self-test");
+        std::FILE* p = std::popen(cmd.c_str(), "r");
+        if (!p)
+            return false;
+        char buf[4096];
+        std::string out;
+        while (std::fgets(buf, sizeof(buf), p))
+            out += buf;
+        const int rc = std::pclose(p);
+        (void)out;
+        return rc == 0;
+    };
+    CHECK(run_linter(), "AC4: linter --self-test passes (catches bad patch, allow-list passes)");
+    // Source-cite: linter contains the forbidden-pattern check + allow-list.
+    const auto lint = read_file("scripts/coverage/checks/check_joint_epoch_bump_coverage.py");
+    CHECK(lint.find("g_current_bridge_epoch.fetch_add") != std::string::npos,
+          "AC4: linter scans for split-domain g_current_bridge_epoch.fetch_add");
+    CHECK(lint.find("g_aot_table_epoch.fetch_add") != std::string::npos,
+          "AC4: linter scans for split-domain g_aot_table_epoch.fetch_add");
+    CHECK(lint.find("ALLOW_LIST") != std::string::npos, "AC4: linter has ALLOW_LIST");
+    CHECK(lint.find("aura_jit_bridge.cpp") != std::string::npos,
+          "AC4: allow-list includes bridge TU");
+    CHECK(lint.find("aura_jit_bridge_stub.cpp") != std::string::npos,
+          "AC4: allow-list includes bridge stub");
+    CHECK(lint.find("aot_mangle.h") != std::string::npos, "AC4: allow-list includes aot_mangle.h");
+}
+
+// ── Issue #2693 AC5: additive query sentinels (regression #2640 / #2668 / #2366) ──
+static void ac2693_5_query_keys_added() {
+    std::println("\n--- #2693 AC5: additive query keys + schema sentinel ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("epoch-invariant-soft-fuse-total") != std::string::npos,
+          "AC5: obs_eval.cpp exposes epoch-invariant-soft-fuse-total");
+    CHECK(q.find("epoch-invariant-consecutive-dirty-total") != std::string::npos,
+          "AC5: obs_eval.cpp exposes epoch-invariant-consecutive-dirty-total");
+    CHECK(q.find("epoch-invariant-soft-fuse-k-default") != std::string::npos,
+          "AC5: obs_eval.cpp exposes epoch-invariant-soft-fuse-k-default");
+    CHECK(q.find("epoch-invariant-soft-fuse-wired") != std::string::npos,
+          "AC5: obs_eval.cpp exposes epoch-invariant-soft-fuse-wired sentinel");
+    CHECK(q.find("schema-2693") != std::string::npos, "AC5: obs_eval.cpp schema-2693 sentinel");
+    CHECK(q.find("issue-2693") != std::string::npos, "AC5: obs_eval.cpp issue-2693 sentinel");
+    // Prior surfaces preserved (regression #2640 / #2668 / #2366 / #2541 / #2304).
+    CHECK(q.find("epoch-invariant-event-walks-total") != std::string::npos,
+          "AC5: #2668 event-walks-total preserved");
+    CHECK(q.find("schema-2668") != std::string::npos, "AC5: schema-2668 preserved");
+    CHECK(q.find("epoch-invariant-periodic-walks-total") != std::string::npos,
+          "AC5: #2640 periodic-walks-total preserved");
+    CHECK(q.find("schema-2640") != std::string::npos, "AC5: schema-2640 preserved");
+    CHECK(q.find("epoch-invariant-wired") != std::string::npos,
+          "AC5: epoch-invariant-wired base sentinel preserved");
+    CHECK(q.find("schema-2366") != std::string::npos, "AC5: schema-2366 preserved");
+    CHECK(q.find("schema-2304") != std::string::npos, "AC5: schema-2304 preserved");
+    // Live query round-trip (the wired flag must be queryable).
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "epoch-invariant-soft-fuse-wired") == 1,
+          "AC5: epoch-invariant-soft-fuse-wired queryable");
+    CHECK(href(cs, "schema-2693") == 2693, "AC5: schema-2693 queryable");
+    CHECK(href(cs, "issue-2693") == 2693, "AC5: issue-2693 queryable");
+    CHECK(href(cs, "epoch-invariant-consecutive-dirty-total") >= 0,
+          "AC5: consecutive-dirty-total queryable");
+    CHECK(href(cs, "epoch-invariant-soft-fuse-k-default") >= 0,
+          "AC5: soft-fuse-k-default queryable");
+}
+
+// ── Issue #2693 AC6: source-cite + linter wired into build.py + no docs/design/ ──
+static void ac2693_6_source_and_linter() {
+    std::println("\n--- #2693 AC6: source-cite + build.py linter gate + no docs/design/ ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto brh = read_file("src/compiler/aura_jit_bridge.h");
+    const auto brs = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_joint_epoch_bump_coverage.py");
+    const auto build = read_file("build.py");
+    const auto t = read_file("tests/compiler/test_epoch_invariant_walk.cpp");
+
+    CHECK(br.find("Issue #2693") != std::string::npos, "AC6: bridge cites #2693");
+    CHECK(br.find("g_consecutive_dirty_count{0}") != std::string::npos,
+          "AC6: bridge has consecutive_dirty counter");
+    CHECK(br.find("g_2693_soft_fuse_k{3}") != std::string::npos, "AC6: K default = 3");
+    CHECK(br.find("AURA_EPOCH_INVARIANT_SOFT_FUSE_K") != std::string::npos,
+          "AC6: env knob present");
+    CHECK(br.find("aura_2693_soft_fuse_record") != std::string::npos, "AC6: walk helper present");
+    CHECK(brh.find("Issue #2693") != std::string::npos, "AC6: header cites #2693");
+    CHECK(brs.find("Issue #2693") != std::string::npos, "AC6: stub cites #2693");
+    CHECK(brs.find("g_2693_soft_fuse_k_stub") != std::string::npos, "AC6: stub has K fallback");
+    CHECK(q.find("schema-2693") != std::string::npos, "AC6: query schema-2693");
+    CHECK(q.find("epoch-invariant-soft-fuse-wired") != std::string::npos, "AC6: query wired flag");
+    CHECK(lint.find("2693") != std::string::npos, "AC6: linter covers #2693");
+    CHECK(lint.find("--self-test") != std::string::npos, "AC6: linter has --self-test mode");
+    CHECK(lint.find("check_split_bumps") != std::string::npos,
+          "AC6: linter exposes check_split_bumps helper");
+    CHECK(build.find("check_joint_epoch_bump_coverage") != std::string::npos,
+          "AC6: linter wired into build.py");
+    CHECK(t.find("ac2693_1_consecutive_dirty_fuse_fires") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2693_2_clean_resets_consecutive_and_K0") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2693_3_quiet_zero_cost") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2693_4_linter_self_test") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2693_5_query_keys_added") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2693_6_source_and_linter") != std::string::npos, "AC6: AC6 test present");
+    // No docs/design/ per #1655 (aura philosophy: agent-developed repo,
+    // not for human docs). docs/README etc are agent onboarding — kept.
+    const std::string design_path = "docs/design/2693-";
+    CHECK(read_file((design_path + "soft-fuse.md").c_str()).empty(),
+          "AC6: no docs/design/2693-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_epoch_invariant_walk() {
@@ -422,8 +637,17 @@ int run_test_epoch_invariant_walk() {
     ac2668_1_event_driven_walk_wired();
     ac2668_2_query_keys_added();
     ac2668_3_build_linter_wired();
-    std::println("\n=== #2366 + #2640 + #2668: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2693: Soft consecutive-dirty fuse + joint epoch bump gate ===");
+    ac2693_1_consecutive_dirty_fuse_fires();
+    ac2693_2_clean_resets_consecutive_and_K0();
+    ac2693_3_quiet_zero_cost();
+    ac2693_4_linter_self_test();
+    ac2693_5_query_keys_added();
+    ac2693_6_source_and_linter();
+    std::println("\n=== #2366 + #2640 + #2668 + #2693: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
+}
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

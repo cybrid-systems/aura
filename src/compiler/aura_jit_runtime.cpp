@@ -14,8 +14,8 @@ extern "C" void aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t ok
 // Issue #2691: captured-only anon sync remount counters (sid==0 && has env/linear).
 // Distinct counters so Agents can distinguish "must remount" (captured) from
 // "touch-time policy" (pure anon, no captures).
-extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(
-    std::uint64_t ok, std::uint64_t fail);
+extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(std::uint64_t ok,
+                                                                         std::uint64_t fail);
 // Issue #2638 residual sid=0 cap-hit counter.
 extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
 // Process-global aot_metrics getter (defined in aura_jit_bridge.cpp; the
@@ -2057,8 +2057,8 @@ extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
 // this) OR no live captured anon closures (nslots==0 short-circuit
 // same as anon path). Preserves #2602 named path + #2637/#2666 full
 // anon walk.
-extern "C" void aura_sync_remount_anon_captured_live_closures(
-    std::uint64_t* ok_count, std::uint64_t* fail_count) {
+extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_count,
+                                                              std::uint64_t* fail_count) {
     std::uint64_t ok = 0;
     std::uint64_t fail = 0;
 
@@ -2096,8 +2096,7 @@ extern "C" void aura_sync_remount_anon_captured_live_closures(
             // have no env/linear captures (pure anon / touch-time policy
             // path #2550/#2605). The captured walk is the only path
             // where reemit must race the first call to avoid MustDeopt.
-            if (!aura_closure_has_env_or_linear_captures_unlocked(
-                    static_cast<std::int64_t>(cid)))
+            if (!aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid)))
                 continue;
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
                     static_cast<std::int64_t>(cid), live_env,

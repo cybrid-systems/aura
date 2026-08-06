@@ -961,8 +961,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // `double_drain_prevented` to surface the race. Closes the residual
     // unhealed window from novel interleavings (#2690).
     if (!nested_boundary && success) {
-        aura_hot_update_drain_pending_recovery(static_cast<std::uint8_t>(
-            DrainReason::BoundaryExit));
+        aura_hot_update_drain_pending_recovery(
+            static_cast<std::uint8_t>(DrainReason::BoundaryExit));
     }
     // Issue #2604: outermost MutationBoundary exit auto-drain deferred
     // reemit + one region-filtered pass. Closes the "visible but
@@ -2473,10 +2473,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                                        // already covers the
                                                        // user-visible gate
                 pin_contract_held,
-                /*root_remap_stable_ref_fail_total=*/static_cast<std::uint64_t>(
-                    compact_r.root_remap_stable_ref_fail_total),
-                /*root_remap_closure_capture_fail_total=*/static_cast<std::uint64_t>(
-                    compact_r.root_remap_closure_capture_fail_total),
+                /*root_remap_stable_ref_fail_total=*/
+                static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total),
+                /*root_remap_closure_capture_fail_total=*/
+                static_cast<std::uint64_t>(compact_r.root_remap_closure_capture_fail_total),
                 /*objects_moved=*/static_cast<std::uint64_t>(densify_objects_moved),
                 /*untracked_kept_count=*/static_cast<std::uint64_t>(densify_untracked_kept));
         if (moving_unified_success) {

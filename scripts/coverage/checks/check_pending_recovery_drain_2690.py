@@ -65,7 +65,7 @@ def main() -> int:
     cpp = _read("src/compiler/hot_update_registry.cpp")
     eval_mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
+    _read("build.py")
 
     # AC1/AC4/AC5 — PendingRecovery struct + bit constants + DrainReason
     # enum + kPendingRecoveryDrainIssue stamp.
@@ -110,22 +110,19 @@ def main() -> int:
         re.MULTILINE | re.DOTALL,
     )
     if m and "drain_pending_recovery" not in m.group(1):
-        fails.append(
-            "AC1: maybe_storm_clear_health_pass body must call drain_pending_recovery"
-        )
+        fails.append("AC1: maybe_storm_clear_health_pass body must call drain_pending_recovery")
     # Specifically verify outermost MutationBoundary success exit calls it.
     m = re.search(
         r"if\s*\(\s*!nested_boundary\s*&&\s*success\s*\)\s*\{(.+?)\n\s*\}",
         eval_mb,
         re.MULTILINE | re.DOTALL,
     )
-    if m and "aura_hot_update_drain_pending_recovery" not in m.group(1):
-        # Loose check: also accept drain_pending_recovery in cpp.
-        if "drain_pending_recovery" not in eval_mb:
-            fails.append(
-                "AC4: outermost MutationBoundary success exit must call "
-                "drain_pending_recovery(BoundaryExit)"
-            )
+    if (
+        m
+        and "aura_hot_update_drain_pending_recovery" not in m.group(1)
+        and "drain_pending_recovery" not in eval_mb  # loose check: accept drain_pending_recovery in cpp
+    ):
+        fails.append("AC4: outermost MutationBoundary success exit must call drain_pending_recovery(BoundaryExit)")
 
     # AC5 — query surface wired.
     must("pending-recovery-driven-total", "AC5", q)

@@ -105,13 +105,12 @@ struct MovingDensifyHealthSnapshot {
 // Used by Phase-5 outermost exit, AdaptiveCompactResult consumers, and
 // Agent health surface. Replaces the scattered local-variable checks
 // that previously lived inline in evaluator_mutation_boundary.cpp.
-[[nodiscard]] inline bool compute_moving_unified_success(
-    bool moving_blocked_precondition,
-    bool pin_contract_held,
-    std::uint64_t root_remap_stable_ref_fail_total,
-    std::uint64_t root_remap_closure_capture_fail_total,
-    std::uint64_t objects_moved,
-    std::uint64_t untracked_kept_count) noexcept {
+[[nodiscard]] inline bool
+compute_moving_unified_success(bool moving_blocked_precondition, bool pin_contract_held,
+                               std::uint64_t root_remap_stable_ref_fail_total,
+                               std::uint64_t root_remap_closure_capture_fail_total,
+                               std::uint64_t objects_moved,
+                               std::uint64_t untracked_kept_count) noexcept {
     if (moving_blocked_precondition)
         return false;
     if (!pin_contract_held)

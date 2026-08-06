@@ -431,6 +431,27 @@ def cmd_lint():
             "Issue #2668 event-driven epoch-invariant walk coverage linter failed — run python3 scripts/coverage/checks/check_2668_coverage.py"
         )
         return r
+    # Issue #2693: Soft epoch-invariant consecutive-dirty fuse +
+    # joint epoch bump static gate. Forbids bare
+    # `g_current_bridge_epoch.fetch_add` / `.store(` /
+    # `g_aot_table_epoch.fetch_add` / `.store(` outside the
+    # documented lockstep helpers (atomic_bump_epochs_and_stamp_bridge,
+    # aura_aot_bump_func_table_epoch, commit_func_table_swap,
+    # aura_set_current_bridge_epoch) and the bridge TU / stub / header
+    # allow-list. Closes the gap that split-domain bumps could
+    # reintroduce. Builds on #2640 / #2668 / #2366 / #2541 — wired
+    # next to the event-driven walk linter so a regression in the
+    # #2693 AC surface fails the same gate.
+    jeb_script = COVERAGE_CHECKS / "check_joint_epoch_bump_coverage.py"
+    if not jeb_script.exists():
+        fail(f"missing {jeb_script}")
+        return 1
+    r = run([sys.executable, str(jeb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "joint epoch bump coverage linter (#2693) failed — run python3 scripts/coverage/checks/check_joint_epoch_bump_coverage.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a

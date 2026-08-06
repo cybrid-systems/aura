@@ -4429,6 +4429,81 @@ struct EpochInvariantPeriodEnvInit {
 [[maybe_unused]] EpochInvariantPeriodEnvInit g_epoch_invariant_period_env_init{};
 } // namespace
 
+// Issue #2693: Soft epoch-invariant consecutive-dirty fuse
+// (refine #2640 / #2668). After K consecutive Soft walks that all
+// left behind slots uncleared, fire epoch_invariant_soft_fuse_total
+// so Agents can distinguish "transient spike" from "stuck walk
+// pattern" without log scraping. K defaults to 3 (env
+// AURA_EPOCH_INVARIANT_SOFT_FUSE_K; 0 disables). Soft zero-cost
+// when consecutive_dirty stays 0 (single atomic op per walk).
+//
+// The fuse is *observability-only* under Soft (issue body §A — no
+// abort path; existing Hard-mode abort is unchanged). The optional
+// "one-shot force-JIT region seed" is deferred to a follow-up issue;
+// this first ship ships the metric + K knob + linter surface.
+static std::atomic<std::uint64_t> g_consecutive_dirty_count{0};
+// File-level atomic fallback for light binaries without the production
+// CompilerMetrics TU. Production TU prefers the per-CompilerMetrics
+// counter (see evaluator_fiber_mutation.cpp wiring); this fallback
+// mirrors the #2640/#2668 file-scope counter style and keeps query
+// surfaces queryable in light-link test bundles.
+static std::atomic<std::uint64_t> g_2693_soft_fuse_fallback_total{0};
+static std::atomic<int> g_2693_soft_fuse_k{3};
+
+extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_total_v_read(void) {
+    return g_2693_soft_fuse_fallback_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_epoch_invariant_consecutive_dirty_total_v_read(void) {
+    return g_consecutive_dirty_count.load(std::memory_order_relaxed);
+}
+extern "C" int aura_epoch_invariant_soft_fuse_k_default(void) {
+    return g_2693_soft_fuse_k.load(std::memory_order_relaxed);
+}
+extern "C" void aura_set_epoch_invariant_soft_fuse_k(int k) {
+    if (k < 0)
+        k = 0;
+    g_2693_soft_fuse_k.store(k, std::memory_order_relaxed);
+}
+extern "C" int aura_get_epoch_invariant_soft_fuse_k(void) {
+    return aura_epoch_invariant_soft_fuse_k_default();
+}
+
+// Issue #2693: env init — AURA_EPOCH_INVARIANT_SOFT_FUSE_K (default 3, 0=disabled).
+namespace {
+struct EpochInvariantSoftFuseKEnvInit {
+    EpochInvariantSoftFuseKEnvInit() noexcept {
+        if (const char* e = std::getenv("AURA_EPOCH_INVARIANT_SOFT_FUSE_K")) {
+            const long long v = std::atoll(e);
+            if (v >= 0 && v <= 1000) { // cap at 1000 for sanity
+                g_2693_soft_fuse_k.store(static_cast<int>(v), std::memory_order_relaxed);
+            }
+        }
+    }
+};
+[[maybe_unused]] EpochInvariantSoftFuseKEnvInit g_epoch_invariant_soft_fuse_k_env_init{};
+} // namespace
+
+// Issue #2693: walk-time helper. After the soft walk clears the
+// slot table, record whether any behind-after-clear slots remained;
+// bump the consecutive_dirty counter on stuck walks, reset on
+// clean walks, and fire the fuse counter when consecutive_dirty
+// reaches K (K=0 disables). Shared by periodic + event-driven
+// walks so both paths contribute to the same fuse signal.
+static void aura_2693_soft_fuse_record(std::size_t behind_after_clear) {
+    if (behind_after_clear > 0) {
+        g_consecutive_dirty_count.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_consecutive_dirty_count.store(0, std::memory_order_relaxed);
+    }
+    const int k = g_2693_soft_fuse_k.load(std::memory_order_relaxed);
+    if (k > 0) {
+        const std::uint64_t consec = g_consecutive_dirty_count.load(std::memory_order_relaxed);
+        if (consec >= static_cast<std::uint64_t>(k)) {
+            g_2693_soft_fuse_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+}
+
 // Issue #2640: main hook — called from MutationBoundaryGuard outermost dtor.
 // Gated by mode=Soft + production_defaults_active + period_ms rate limit.
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void) {
@@ -4456,9 +4531,12 @@ extern "C" void aura_periodic_epoch_invariant_walk_if_due(void) {
     g_epoch_invariant_periodic_walks_total.fetch_add(1, std::memory_order_relaxed);
     // Reuse #2541 soft walk: physically clear gen-behind AOT slots
     // (aura_aot_invalidate_all_stale_slots_for_eval(nullptr) = process-default)
-    // + MustDeopt stale live closures.
-    (void)aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
+    // + MustDeopt stale live closures. The #2693 consecutive-dirty
+    // fuse records behind_after_clear so a stuck walk pattern (>=K
+    // walks in a row all leaving behind) bumps the fuse counter.
+    const std::size_t behind_after_clear = aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
     (void)aura_epoch_invariant_must_deopt_stale_live_closures();
+    aura_2693_soft_fuse_record(behind_after_clear);
 }
 
 // Issue #2668: event-driven soft walk on commit_func_table_swap /
@@ -4489,9 +4567,13 @@ extern "C" void aura_event_driven_epoch_invariant_walk_if_due(void) {
     g_epoch_invariant_periodic_last_walk_at_ms.store(now_ms, std::memory_order_relaxed);
     g_epoch_invariant_event_walks_total.fetch_add(1, std::memory_order_relaxed);
     // Reuse #2541 soft walk: physically clear gen-behind AOT slots +
-    // MustDeopt stale live closures.
-    (void)aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
+    // MustDeopt stale live closures. The #2693 consecutive-dirty
+    // fuse records behind_after_clear; periodic + event walks share
+    // the same fuse signal so a reemit-storm burst + steady drift
+    // both contribute.
+    const std::size_t behind_after_clear = aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
     (void)aura_epoch_invariant_must_deopt_stale_live_closures();
+    aura_2693_soft_fuse_record(behind_after_clear);
 }
 
 extern "C" bool aura_emit_object_file(const void* mod, const char* path) {

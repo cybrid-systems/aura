@@ -46,7 +46,7 @@ def main() -> int:
     arena = _read("src/core/arena.ixx")
     phase5 = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
+    _read("build.py")
 
     # AC1 + AC2 + AC4 — single unified predicate function (5-condition AND).
     # Check all 5 condition names appear as parameters and the function
@@ -79,9 +79,7 @@ def main() -> int:
                 "untracked_kept_count",
             ):
                 if cond not in body:
-                    fails.append(
-                        f"AC1/AC2/AC4: predicate body missing check for {cond!r}"
-                    )
+                    fails.append(f"AC1/AC2/AC4: predicate body missing check for {cond!r}")
 
     # AC5 — process-wide counters in arena.ixx.
     must("g_moving_unified_success_total", "AC5", arena)

@@ -631,8 +631,7 @@ int run_test_anonymous_residual_stable_id_policy() {
         // closures (no env, no linear) skip the remount call entirely,
         // so the counter is stable. Pure-anon policy #2550/#2605 unchanged.
         const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
-        CHECK(rt.find("aura_closure_has_env_or_linear_captures_unlocked") !=
-                  std::string::npos,
+        CHECK(rt.find("aura_closure_has_env_or_linear_captures_unlocked") != std::string::npos,
               "2691 AC2: captured walk filters via has_env_or_linear_captures_unlocked");
     }
 
@@ -659,8 +658,8 @@ int run_test_anonymous_residual_stable_id_policy() {
         CHECK(href(cs, "closure-pending-recovery-drain-wired") == 1,
               "2691 AC5: closure-pending-recovery-drain-wired sentinel");
         // Linter must exist + run cleanly.
-        const auto linter = read_file(
-            "scripts/coverage/checks/check_closure_anon_captured_remount_2691.py");
+        const auto linter =
+            read_file("scripts/coverage/checks/check_closure_anon_captured_remount_2691.py");
         CHECK(!linter.empty(),
               "2691 AC5: linter check_closure_anon_captured_remount_2691.py present");
     }
@@ -672,15 +671,11 @@ int run_test_anonymous_residual_stable_id_policy() {
         const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
         const auto obs = read_file("src/compiler/observability_metrics.h");
         // Issue #2691 sentinel in all 3 prod files.
-        CHECK(rt.find("#2691") != std::string::npos,
-              "2691 AC6: aura_jit_runtime.cpp cites #2691");
-        CHECK(br.find("#2691") != std::string::npos,
-              "2691 AC6: aura_jit_bridge.cpp cites #2691");
-        CHECK(obs.find("live_closure_sync_remount_anon_captured_ok_total") !=
-                  std::string::npos,
+        CHECK(rt.find("#2691") != std::string::npos, "2691 AC6: aura_jit_runtime.cpp cites #2691");
+        CHECK(br.find("#2691") != std::string::npos, "2691 AC6: aura_jit_bridge.cpp cites #2691");
+        CHECK(obs.find("live_closure_sync_remount_anon_captured_ok_total") != std::string::npos,
               "2691 AC6: captured-ok counter declared");
-        CHECK(obs.find("live_closure_sync_remount_anon_captured_fail_total") !=
-                  std::string::npos,
+        CHECK(obs.find("live_closure_sync_remount_anon_captured_fail_total") != std::string::npos,
               "2691 AC6: captured-fail counter declared");
         // #2602/#2503/#2550/#2666 surfaces preserved.
         CHECK(br.find("Issue #2602") != std::string::npos,
@@ -699,7 +694,8 @@ int run_test_anonymous_residual_stable_id_policy() {
         }
     }
 
-    std::println("\n=== #2605+#2637+#2638+#2666+#2691: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2605+#2637+#2638+#2666+#2691: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
