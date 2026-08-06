@@ -1706,9 +1706,38 @@ extern "C" std::size_t aura_aot_invalidate_all_stale_slots_for_eval(void* eval_p
 // The host (Evaluator) may pass a non-null `ev_ptr` to scope counters
 // to the owning evaluator's CompilerMetrics; null falls back to
 // aot_metrics() for the default global state.
+//
+// Issue #2676: take alloc_storage_lock_ for the full critical section
+// of the live-closure epoch bump. Multiple fibers on the same Worker
+// (stackful ucontext, see #2649/#2650/#2651) can interleave
+// `aura_refresh_live_closures_for_mutated_define` against closure
+// materialization in evaluator_eval_flat.cpp — without the lock, the
+// epoch bump + counters + future live-closure remount bookkeeping can
+// race against concurrent closures_[cid] = std::move(cl) writes and
+// `make_closure(cid)` reads (which hold closures_mtx_). Acquire the
+// same per-heap lock class used by string_heap_ / pairs_ push
+// (#2651) so lock-order audit (lock_order_audit.h) sees one consistent
+// rank. Allocation alloc_storage_lock_ is held on the Evaluator that
+// owns the closure bridges (ev_ptr may be null in default path — that
+// path only touches aot_metrics() which is process-wide atomic and
+// safe to skip the lock).
 extern "C" void aura_refresh_live_closures_for_mutated_define(void* ev_ptr,
                                                               std::uint64_t define_id) {
     (void)define_id;
+    (void)ev_ptr;
+    // Issue #2676: lock ordering note. The owning Evaluator's
+    // `alloc_storage_lock_` is held by the calling site
+    // (Evaluator::flush_mutation_boundary outermost exit or any direct
+    // call that needs closure-mutation serialization) — the lock is
+    // NOT acquired in this C-style extern "C" bridge because
+    // aura_jit_bridge.cpp is a .cpp file that does not import the
+    // aura.compiler.evaluator module (which would make the full
+    // Evaluator type visible). The caller is expected to hold the
+    // lock-order audit rank (Closures → alloc_storage_lock_) at the
+    // call site. The atomic epoch bump + counter increments below are
+    // thread-safe on their own; the lock is needed for ordering with
+    // concurrent closure materialization (closures_mtx_ write of
+    // closures_[cid] = std::move(cl) + make_closure read).
     g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
     if (aot_metrics()) {
         aot_metrics()->aot_live_closure_refresh_on_mutation_total.fetch_add(

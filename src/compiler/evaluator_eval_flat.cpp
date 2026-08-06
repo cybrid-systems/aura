@@ -1547,7 +1547,16 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         cl.params.push_back(ps);
                     closures_[cid] = std::move(cl);
                 }
-                return make_closure(cid);
+                // Issue #2676: extend closures_mtx_ critical section to cover
+                // the make_closure read (P0 multi-fiber race: another fiber
+                // could mutate closures_ between the write block end and the
+                // make_closure read). Re-acquire as shared_lock to allow
+                // concurrent readers (closure materialization is read-only
+                // here, no need for unique exclusion post-write).
+                {
+                    std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+                    return make_closure(cid);
+                }
             }
             return make_void();
         }
@@ -1659,8 +1668,13 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                         // Bind in env
                         auto ci = alloc_cell(make_void());
                         const_cast<Env&>(env).bind(fn_str, make_cell(ci));
-                        cells_[ci] = make_closure(cid);
-                        return make_closure(cid);
+                        // Issue #2676: shared_lock to serialize with closures_ write
+                        // (P0 multi-fiber race — see block above).
+                        {
+                            std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+                            cells_[ci] = make_closure(cid);
+                            return make_closure(cid);
+                        }
                     }
                 }
             }
@@ -4503,10 +4517,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         stamp_closure_bridge_epoch(cl);
                         closures_[cid] = std::move(cl);
                     }
-                    // Do NOT cache closure values — the closure captures the current env and a
-                    // cached closure would reuse the same env on subsequent evaluations (wrong
-                    // when the same Lambda node is evaluated with different captured variables).
-                    return make_closure(cid);
+                    // Issue #2676: shared_lock to serialize with closures_ write
+                    // (P0 multi-fiber race — see block above).
+                    {
+                        std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
+                        // Do NOT cache closure values — the closure captures the current env and a
+                        // cached closure would reuse the same env on subsequent evaluations (wrong
+                        // when the same Lambda node is evaluated with different captured
+                        // variables).
+                        return make_closure(cid);
+                    }
                 }
                 case aura::ast::NodeTag::Let:
                 case aura::ast::NodeTag::LetRec: {

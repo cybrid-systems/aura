@@ -513,6 +513,21 @@ def cmd_lint():
             "linear enforce effective (#2675) coverage linter failed — run python3 scripts/coverage/checks/check_linear_enforce_effective_2675.py"
         )
         return r
+    # Issue #2676: P0 — complete shared Evaluator heap serialization under
+    # concurrent fibers (extends #2651's string_heap_/pairs_ lock with
+    # closure materialization + live-closure tables + IR-cache bridge
+    # root coverage). Per-heap alloc_storage_lock_ wraps the closures_mtx_
+    # critical section; new shared_lock(closures_mtx_) on make_closure reads.
+    shs_script = COVERAGE_CHECKS / "check_shared_heap_serial_2676.py"
+    if not shs_script.exists():
+        fail(f"missing {shs_script}")
+        return 1
+    r = run([sys.executable, str(shs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "shared heap serialization (#2676) coverage linter failed — run python3 scripts/coverage/checks/check_shared_heap_serial_2676.py"
+        )
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +
