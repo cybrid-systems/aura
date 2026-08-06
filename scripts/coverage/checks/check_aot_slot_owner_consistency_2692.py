@@ -31,7 +31,6 @@ Exit 0 = OK, 1 = violation found.
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -55,7 +54,7 @@ def main() -> int:
     br = _read("src/compiler/aura_jit_bridge.cpp")
     obs = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
+    _read("build.py")
 
     # AC1 — counter + bumper.
     must("cross_eval_sid_owner_mismatch_total", "AC1-counter", obs)

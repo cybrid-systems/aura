@@ -61,14 +61,10 @@ def _scan_residual_loops(content: str, rel: str) -> list[str]:
         snippet = m.group(0)
         # Strip the batch / no-bump / impl variants so a "bare" mark_block_dirty
         # call stands out.
-        bare = re.sub(r"\bmark_block_dirty_(?:bit_only_no_bump|no_bump|impl|bits_only|bit_only)\b", "",
-                       snippet)
+        bare = re.sub(r"\bmark_block_dirty_(?:bit_only_no_bump|no_bump|impl|bits_only|bit_only)\b", "", snippet)
         bare = re.sub(r"\bmark_blocks_dirty\b", "", bare)
         if re.search(r"\bmark_block_dirty\s*\(", bare):
-            fails.append(
-                f"AC3/AC4 (#2681): residual multi-block mark_block_dirty loop in {rel}: "
-                f"{snippet[:200]!r}..."
-            )
+            fails.append(f"AC3/AC4 (#2681): residual multi-block mark_block_dirty loop in {rel}: {snippet[:200]!r}...")
     return fails
 
 
@@ -187,9 +183,7 @@ def main() -> int:
         body = soa[start : i - 1]
         bumps = len(re.findall(r"\bbump_generation\s*\(\s*\)", body))
         if bumps != 1:
-            fails.append(
-                f"AC4 (#2681): mark_all_blocks_dirty has {bumps} bump_generation() calls, expected 1"
-            )
+            fails.append(f"AC4 (#2681): mark_all_blocks_dirty has {bumps} bump_generation() calls, expected 1")
 
     # AC5 (#2681 harden): derived bp key + schema/issue/hardened sentinels.
     must("soa-batch-blocks-per-cascade-bp", "AC5-2681", q)

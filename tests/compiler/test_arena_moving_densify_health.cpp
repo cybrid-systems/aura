@@ -219,8 +219,7 @@ static void ac2682_counters_and_query_wired() {
     // Both new query keys wired alongside existing #2619 schema.
     CHECK(href(cs, "schema-2682") == 2682, "AC5: schema-2682 sentinel");
     CHECK(href(cs, "issue-2682") == 2682, "AC5: issue-2682 sentinel");
-    CHECK(href(cs, "moving-unified-success-gate-wired") == 1,
-          "AC5: gate-wired sentinel");
+    CHECK(href(cs, "moving-unified-success-gate-wired") == 1, "AC5: gate-wired sentinel");
     // Counters queryable (must be >= 0; monotonic, no schema break).
     const auto success_total = href(cs, "moving-unified-success-total");
     const auto fail_total = href(cs, "moving-unified-fail-total");
@@ -241,10 +240,8 @@ static void ac2682_source_cite() {
 
     // Issue #2682 sentinel in all 4 prod-side files (use "#2682" for combined
     // citations like "Issue #2682 / #2341 / #2619").
-    CHECK(hh.find("#2682") != std::string::npos,
-          "AC6: moving_densify_health.hh cites #2682");
-    CHECK(arena.find("#2682") != std::string::npos,
-          "AC6: arena.ixx cites #2682");
+    CHECK(hh.find("#2682") != std::string::npos, "AC6: moving_densify_health.hh cites #2682");
+    CHECK(arena.find("#2682") != std::string::npos, "AC6: arena.ixx cites #2682");
     CHECK(phase5.find("#2682") != std::string::npos,
           "AC6: evaluator_mutation_boundary.cpp cites #2682");
     CHECK(q.find("#2682") != std::string::npos,
@@ -263,8 +260,8 @@ static void ac2682_source_cite() {
           "AC6: Phase 5 calls unified predicate");
 
     // No design doc regression (per #1655).
-    for (const auto& p : {"docs/design/moving_unified_success_2682.md",
-                          "docs/moving_unified_success_2682.md"}) {
+    for (const auto& p :
+         {"docs/design/moving_unified_success_2682.md", "docs/moving_unified_success_2682.md"}) {
         std::ifstream f(p);
         CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
     }

@@ -112,9 +112,7 @@ def _check_body(body: str) -> tuple[bool, str]:
     if not (has_stable_node_ref and has_require_effect):
         return False, ""
     has_ref_tenant = "ref_tenant" in body
-    has_require_effect_on_ref = bool(
-        re.search(r"\brequire_effect_on_ref\s*\(", body)
-    )
+    has_require_effect_on_ref = bool(re.search(r"\brequire_effect_on_ref\s*\(", body))
     if has_ref_tenant or has_require_effect_on_ref:
         return False, ""
     return True, (
@@ -170,8 +168,7 @@ def main() -> int:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
         print(
-            f"\n{len(fails)} contract row(s) failed "
-            f"({violations} AC5 violation(s) found in scope files)",
+            f"\n{len(fails)} contract row(s) failed ({violations} AC5 violation(s) found in scope files)",
             file=sys.stderr,
         )
         return 1

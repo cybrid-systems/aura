@@ -843,6 +843,32 @@ aura_epoch_invariant_event_skipped_wrong_mode_total_v_read(void) {
 }
 extern "C" __attribute__((weak)) void aura_event_driven_epoch_invariant_walk_if_due(void) {}
 
+// Issue #2693: Soft epoch-invariant consecutive-dirty fuse stubs
+// (light bundles without the production bridge TU). Mirror the
+// production counter atomics + accessor contract so tests that
+// don't link aura_jit_bridge.cpp still compile and link.
+static std::atomic<std::uint64_t> g_2693_soft_fuse_fallback_total_stub{0};
+static std::atomic<std::uint64_t> g_2693_consecutive_dirty_total_stub{0};
+static std::atomic<int> g_2693_soft_fuse_k_stub{3};
+extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_soft_fuse_total_v_read(void) {
+    return g_2693_soft_fuse_fallback_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_consecutive_dirty_total_v_read(void) {
+    return g_2693_consecutive_dirty_total_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) int aura_epoch_invariant_soft_fuse_k_default(void) {
+    return g_2693_soft_fuse_k_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void aura_set_epoch_invariant_soft_fuse_k(int k) {
+    if (k < 0)
+        k = 0;
+    g_2693_soft_fuse_k_stub.store(k, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) int aura_get_epoch_invariant_soft_fuse_k(void) {
+    return aura_epoch_invariant_soft_fuse_k_default();
+}
+
 // No AOT slot table in light stubs — always 0 generation-behind.
 extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behind_slots(void) {
     return 0;

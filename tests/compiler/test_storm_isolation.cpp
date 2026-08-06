@@ -300,10 +300,8 @@ static void ac2683_source_cite() {
 
     // Issue #2683 sentinel in all 3 prod-side files (use "#2683" for combined
     // citations like "Issue #2683 / #2370 / #2617").
-    CHECK(hh.find("#2683") != std::string::npos,
-          "AC6: shape_profiler.h cites #2683");
-    CHECK(cpp.find("#2683") != std::string::npos,
-          "AC6: shape_profiler.cpp cites #2683");
+    CHECK(hh.find("#2683") != std::string::npos, "AC6: shape_profiler.h cites #2683");
+    CHECK(cpp.find("#2683") != std::string::npos, "AC6: shape_profiler.cpp cites #2683");
     CHECK(q.find("#2683") != std::string::npos,
           "AC6: evaluator_primitives_obs_jit.cpp cites #2683");
 
@@ -325,12 +323,11 @@ static void ac2683_source_cite() {
     // does NOT bump mutation_induced_invalidations_).
     CHECK(hh.find("kShapeCompactStormIsolationIssue") != std::string::npos,
           "AC3: #2617 hard contract sentinel preserved");
-    CHECK(hh.find("2617") != std::string::npos,
-          "AC3: #2617 lineage reference preserved");
+    CHECK(hh.find("2617") != std::string::npos, "AC3: #2617 lineage reference preserved");
 
     // No design doc regression (per #1655).
-    for (const auto& p : {"docs/design/shape_storm_isolation_2683.md",
-                          "docs/shape_storm_isolation_2683.md"}) {
+    for (const auto& p :
+         {"docs/design/shape_storm_isolation_2683.md", "docs/shape_storm_isolation_2683.md"}) {
         std::ifstream f(p);
         CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
     }

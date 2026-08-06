@@ -816,6 +816,18 @@ void aura_event_driven_epoch_invariant_walk_if_due(void);
 [[nodiscard]] std::uint64_t aura_epoch_invariant_event_walks_total_v_read(void);
 [[nodiscard]] std::uint64_t aura_epoch_invariant_event_skipped_off_total_v_read(void);
 [[nodiscard]] std::uint64_t aura_epoch_invariant_event_skipped_wrong_mode_total_v_read(void);
+// Issue #2693: Soft epoch-invariant consecutive-dirty fuse
+// (refine #2640 / #2668 — bumps epoch_invariant_soft_fuse_total
+// after K consecutive Soft walks that all left behind slots uncleared).
+// K defaults to 3 (env AURA_EPOCH_INVARIANT_SOFT_FUSE_K; 0 disables).
+// Soft zero-cost when consecutive_dirty stays 0. File-level
+// fallback counters live in aura_jit_bridge.cpp; light binaries
+// without the production TU get the weak no-op stubs.
+[[nodiscard]] std::uint64_t aura_epoch_invariant_soft_fuse_total_v_read(void);
+[[nodiscard]] std::uint64_t aura_epoch_invariant_consecutive_dirty_total_v_read(void);
+[[nodiscard]] int aura_epoch_invariant_soft_fuse_k_default(void);
+extern "C" void aura_set_epoch_invariant_soft_fuse_k(int k);
+extern "C" int aura_get_epoch_invariant_soft_fuse_k(void);
 
 } // extern "C"
 

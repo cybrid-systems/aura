@@ -61,7 +61,7 @@ def main() -> int:
     eval_sec = _read("src/compiler/evaluator_security.cpp")
     workspace = _read("src/core/workspace_isolation.hh")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
+    _read("build.py")
 
     # AC1 — Evaluator::stamp_stable_ref uses capability_tenant_id_ (per-Evaluator,
     # already true from #2659). The new #2687 addition: bump

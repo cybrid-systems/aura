@@ -235,8 +235,7 @@ static void ac2681_blocks_per_cascade_bp() {
     CHECK(bp >= 40000, "AC5-2681: bp reflects at least one 4-block cascade (>= 40000bp)");
 
     // #2615 baseline keys still wired.
-    CHECK(href(cs, "soa-batch-dirty-cascades-total") >= 1,
-          "AC5-2681: cascades-total still wired");
+    CHECK(href(cs, "soa-batch-dirty-cascades-total") >= 1, "AC5-2681: cascades-total still wired");
     CHECK(href(cs, "soa-single-dirty-marks-total") >= 0,
           "AC5-2681: single-marks-total still wired");
 }
@@ -250,12 +249,9 @@ static void ac2681_source_cite() {
     const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
 
     // Issue #2681 sentinel in all four production-side files.
-    CHECK(soa.find("Issue #2681") != std::string::npos,
-          "AC6: ir_soa.ixx cites Issue #2681");
-    CHECK(dce.find("Issue #2681") != std::string::npos,
-          "AC6: pass_impls.ixx cites Issue #2681");
-    CHECK(svc.find("Issue #2681") != std::string::npos,
-          "AC6: service.ixx cites Issue #2681");
+    CHECK(soa.find("Issue #2681") != std::string::npos, "AC6: ir_soa.ixx cites Issue #2681");
+    CHECK(dce.find("Issue #2681") != std::string::npos, "AC6: pass_impls.ixx cites Issue #2681");
+    CHECK(svc.find("Issue #2681") != std::string::npos, "AC6: service.ixx cites Issue #2681");
     CHECK(q.find("Issue #2681") != std::string::npos,
           "AC6: evaluator_primitives_obs_jit.cpp cites Issue #2681");
 
@@ -320,8 +316,8 @@ static void ac2681_source_cite() {
     CHECK(!has_residual(svc), "AC6: service.ixx no residual mark_block_dirty loop");
 
     // No design doc regression (per #1655).
-    for (const auto& p : {"docs/design/batch_dirty_discipline_2681.md",
-                          "docs/batch_dirty_discipline_2681.md"}) {
+    for (const auto& p :
+         {"docs/design/batch_dirty_discipline_2681.md", "docs/batch_dirty_discipline_2681.md"}) {
         std::ifstream f(p);
         CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
     }

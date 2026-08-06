@@ -828,17 +828,17 @@ public:
     // module scope and the `module;` directive made `::DrainReason`
     // unresolvable from inside the class).
     struct PendingRecovery {
-        std::uint8_t kinds = 0;             // bit0 deferred | bit1 force_jit | bit2 region_mask
-        std::uint64_t defuse_version = 0;   // valid when kinds & Deferred
-        std::uint64_t region_mask = 0;      // valid when kinds & RegionMask
+        std::uint8_t kinds = 0;           // bit0 deferred | bit1 force_jit | bit2 region_mask
+        std::uint64_t defuse_version = 0; // valid when kinds & Deferred
+        std::uint64_t region_mask = 0;    // valid when kinds & RegionMask
     };
     inline static constexpr std::uint8_t kPendingDeferred = 1u << 0;
     inline static constexpr std::uint8_t kPendingForceJit = 1u << 1;
     inline static constexpr std::uint8_t kPendingRegionMask = 1u << 2;
     enum class DrainReason : std::uint8_t {
-        StormClear = 0,     // from maybe_storm_clear_health_pass (#2669)
-        BoundaryExit = 1,   // from outermost MutationBoundary success exit (#2604)
-        Explicit = 2,       // optional Agent/query hook (no third silent path)
+        StormClear = 0,   // from maybe_storm_clear_health_pass (#2669)
+        BoundaryExit = 1, // from outermost MutationBoundary success exit (#2604)
+        Explicit = 2,     // optional Agent/query hook (no third silent path)
     };
     inline static constexpr int kPendingRecoveryDrainIssue = 2690;
 
@@ -1124,7 +1124,8 @@ inline std::atomic<std::uint64_t>& g_pending_recovery_skipped_reentered_total_at
     static std::atomic<std::uint64_t> v{0};
     return v;
 }
-inline std::atomic<std::uint64_t>& g_pending_recovery_double_drain_prevented_total_atomic() noexcept {
+inline std::atomic<std::uint64_t>&
+g_pending_recovery_double_drain_prevented_total_atomic() noexcept {
     static std::atomic<std::uint64_t> v{0};
     return v;
 }

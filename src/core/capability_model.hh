@@ -195,7 +195,7 @@ struct CapabilityEffectMetrics {
     // multi-tenant → hard=true + K=64; Restricted → K=16 hard=false; Soft →
     // K=0 hard=false). Env overrides AURA_HARD_FIBER_ISOLATION /
     // AURA_GRANT_EPOCH_RETAIN documented in security_defaults.hh L124-127.
-    inline constexpr int kCapabilityProductionDefaultIssue = 2688;
+    inline static constexpr int kCapabilityProductionDefaultIssue = 2688;
     // Issue #2586: single-use grant consumption counter (parity
     // capability_revoke_total for histogram breakdown of revoke reasons —
     // auto-revoke vs operator-revoke).

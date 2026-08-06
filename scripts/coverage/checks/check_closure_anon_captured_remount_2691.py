@@ -35,7 +35,6 @@ Exit 0 = OK, 1 = violation found.
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
@@ -60,25 +59,20 @@ def main() -> int:
     br = _read("src/compiler/aura_jit_bridge.cpp")
     obs = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
+    _read("build.py")
 
     # AC1/AC2 — C ABI hook for captured-only anon sync remount.
     must("aura_sync_remount_anon_captured_live_closures", "AC1/AC2", rt)
     # AC1/AC2 — counter bumper helper.
-    must("aura_bump_live_closure_sync_remount_anon_captured_totals",
-         "AC1/AC2-counter", rt)
-    must("aura_bump_live_closure_sync_remount_anon_captured_totals",
-         "AC1/AC2-counter-impl", br)
+    must("aura_bump_live_closure_sync_remount_anon_captured_totals", "AC1/AC2-counter", rt)
+    must("aura_bump_live_closure_sync_remount_anon_captured_totals", "AC1/AC2-counter-impl", br)
 
     # AC1/AC2 — capture filter: must use aura_closure_has_env_or_linear_captures.
-    must("aura_closure_has_env_or_linear_captures_unlocked",
-         "AC1/AC2-capture-filter", rt)
+    must("aura_closure_has_env_or_linear_captures_unlocked", "AC1/AC2-capture-filter", rt)
 
     # AC5 — counters in observability_metrics.h CompilerMetrics.
-    must("live_closure_sync_remount_anon_captured_ok_total",
-         "AC5-counter-ok", obs)
-    must("live_closure_sync_remount_anon_captured_fail_total",
-         "AC5-counter-fail", obs)
+    must("live_closure_sync_remount_anon_captured_ok_total", "AC5-counter-ok", obs)
+    must("live_closure_sync_remount_anon_captured_fail_total", "AC5-counter-fail", obs)
 
     # AC3/AC4 — Wire: named path (#2602) + anon path (#2637) preserved.
     must("aura_sync_remount_named_live_closures", "AC3-named", rt)
@@ -87,9 +81,11 @@ def main() -> int:
     # AC4/AC5 — Wire: aura_remap_live_closures_after_reemit in bridge calls
     # the captured-only hook.
     if "aura_sync_remount_anon_captured_live_closures" not in br:
-        fails.append("AC4/AC5: bridge must call aura_sync_remount_anon_captured_live_closures "
-                     "inside aura_remap_live_closures_after_reemit after the existing "
-                     "anon sync")
+        fails.append(
+            "AC4/AC5: bridge must call aura_sync_remount_anon_captured_live_closures "
+            "inside aura_remap_live_closures_after_reemit after the existing "
+            "anon sync"
+        )
 
     # AC5 — query surface: 2 keys + schema-2691 + issue-2691 + drain-wired.
     must("live-closure-sync-remount-anon-captured-ok-total", "AC5-q-ok", q)

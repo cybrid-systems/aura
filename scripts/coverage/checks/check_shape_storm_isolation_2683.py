@@ -50,7 +50,7 @@ def main() -> int:
     cpp = _read("src/compiler/shape_profiler.cpp")
     registry_hh = _read("src/compiler/hot_update_registry.hh")
     q = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
-    build = _read("build.py")
+    _read("build.py")
 
     # AC1 / AC4 — weak default in shape_profiler.cpp must return PerEval (2)
     # under production default, and Global (0) under AURA_SHAPE_STORM_ISOLATION=global.

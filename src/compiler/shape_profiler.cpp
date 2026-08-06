@@ -860,7 +860,8 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
         const int iso_mode = aura_get_storm_isolation_mode();
         if (iso_mode == 2) {
             // PerEval: bump per-eval counter, do NOT touch process-global.
-            g_shape_storm_per_eval_isolations_total_atomic().fetch_add(1, std::memory_order_relaxed);
+            g_shape_storm_per_eval_isolations_total_atomic().fetch_add(1,
+                                                                       std::memory_order_relaxed);
         } else {
             // Global (or any non-PerEval mode): bump process-global shape_version.
             bump_shape_version_on_storm_enter();
