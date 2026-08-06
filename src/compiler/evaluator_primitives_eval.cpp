@@ -615,12 +615,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
     // (eval-current) — Evaluate the current workspace AST
     //
-    // Wave1 B-03: NEVER hold shared_lock(workspace_mtx_) across eval_flat /
-    // nested mutate:*. std::shared_mutex is non-recursive — unique under
-    // shared on the same thread throws EDEADLK ("Resource deadlock avoided").
-    // Snapshot flat/pool under a short pin (WorkspaceFlatPin), release, then
-    // evaluate. set-code keeps old FlatAST alive in the arena; concurrent
-    // unique writers only swap the pointer (readers keep a stable pin).
+    // Issue #2686: hold WorkspaceFlatPin for the FULL eval_flat walk so
+    // concurrent fiber mutate:rebind cannot race FlatAST::get (SIGABRT).
+    // Wave1 B-03 still applies for *same-thread* nested mutate:* under this
+    // shared pin — MutationBoundary fails closed via TLS (see
+    // note_eval_current_shared_* / Guard ctor). Prefer outer Guard when
+    // evaluating code that itself mutates.
     add(aura::compiler::prim::kEvalCurrent, [&ev, mev](const auto& a) -> EvalValue {
         // Phase 4: (eval-current :jit) — no workspace lock needed for the
         // service JIT path (it re-parses source via get_workspace_source_fn_).
@@ -645,20 +645,29 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return mev(kind, msg);
         }
 
-        // Short pin: snapshot pointers + gen, then drop the lock.
-        aura::ast::FlatAST* flat = nullptr;
-        aura::ast::StringPool* pool = nullptr;
-        std::uint64_t pin_gen = 0;
-        aura::ast::NodeId root = aura::ast::NULL_NODE;
-        {
-            auto pin = ev.pin_workspace_flat();
-            if (!pin || !pin.pool())
-                return make_void();
-            flat = pin.get();
-            pool = pin.pool();
-            pin_gen = pin.generation();
-            root = flat->root;
-        } // workspace shared lock released (or never taken under Guard)
+        // Issue #2686: exclusive workspace lock for full eval (serializes
+        // concurrent fiber rebind+eval on CLI). Adopts outer Guard unique.
+        // Nested mutate under this lock fails closed via TLS.
+        Evaluator::WorkspaceUniqueIfNeeded eval_ulock(ev);
+        struct EvalCurrentExclusiveTls {
+            bool owns = false;
+            explicit EvalCurrentExclusiveTls(bool o)
+                : owns(o) {
+                if (owns)
+                    Evaluator::note_eval_current_shared_enter();
+            }
+            ~EvalCurrentExclusiveTls() {
+                if (owns)
+                    Evaluator::note_eval_current_shared_exit();
+            }
+        } tls_hold(eval_ulock.owns_unique_lock());
+
+        if (!ev.workspace_flat_ || !ev.workspace_pool_)
+            return make_void();
+        aura::ast::FlatAST* flat = ev.workspace_flat_;
+        aura::ast::StringPool* pool = ev.workspace_pool_;
+        const std::uint64_t pin_gen = ev.workspace_flat_generation();
+        const aura::ast::NodeId root = flat->root;
 
         // Issue #1495: partial re-lower dirty ir_cache_v2_ defines.
         if (ev.relower_dirty_defines_fn_)
@@ -689,22 +698,18 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         if (result && ev.sync_workspace_value_cells_fn_)
             ev.sync_workspace_value_cells_fn_();
 
-        // Cache + clear dirty only if workspace pin still points at the
-        // same generation (no intervening set_workspace_flat).
-        {
-            auto pin = ev.pin_workspace_flat();
-            if (pin && pin.get() == flat && pin.generation() == pin_gen) {
-                if (result) {
-                    ev.last_eval_current_result_ = *result;
-                    ev.last_eval_current_generation_ = flat->generation();
-                }
-                ev.ensure_macro_hygiene_contract();
-                flat->clear_all_dirty();
-            } else if (result) {
-                // Workspace swapped mid-eval: still return the value, skip
-                // dirty clear / cache stamp against a foreign flat.
+        // Cache + clear dirty only if workspace still same generation.
+        if (ev.workspace_flat_ == flat && ev.workspace_flat_generation() == pin_gen) {
+            if (result) {
                 ev.last_eval_current_result_ = *result;
+                ev.last_eval_current_generation_ = flat->generation();
             }
+            ev.ensure_macro_hygiene_contract();
+            flat->clear_all_dirty();
+        } else if (result) {
+            // Workspace swapped mid-eval: still return the value, skip
+            // dirty clear / cache stamp against a foreign flat.
+            ev.last_eval_current_result_ = *result;
         }
 
         if (!result) {

@@ -91,6 +91,41 @@ spawns → two ids under sequential / multi-define evaluation.
 | Parallel `let` with two spawns **without** checking `eq?` | Harder to audit; prefer `let*` |
 | Reusing one `define` name for a second spawn without join | Overwrites binding; first fiber may leak until join |
 
+## Concurrent multi-name rebind (Issue #2686 / denseness H10)
+
+Two CLI fibers calling `mutate:rebind` (+ `eval-current`) on **distinct**
+names must not crash or leave names unbound.
+
+### Product contract (#2686)
+
+1. **`eval-current` takes exclusive workspace lock** (`WorkspaceUniqueIfNeeded`)
+   for the full tree walk so concurrent fiber `mutate:rebind` cannot race
+   `FlatAST::get` / env binds mid-eval (pre-#2686 short pin unlocked too early).
+2. **`mutate:rebind` uses GlobalExclusive** `MutationBoundaryGuard`
+   (unique workspace lock) for the rebind body — concurrent rebinds
+   serialize; the second waits rather than interleaving FlatAST writes.
+3. **Same-thread nested mutate under `eval-current`** fails closed
+   (`AdmissionRejected: nested-mutate-under-eval-current`) — avoids
+   unique-under-unique EDEADLK.
+4. Preferred denseness multi-name pattern remains **sequential**
+   spawn→join per name when agents want simple success/failure; concurrent
+   dual rebind is supported under the locks above (100× dual-name stress
+   leaves both bindings present; no SIGABRT).
+
+```scheme
+;; Concurrent dual rebind (distinct names) — both should apply or one waits
+(let* ((fa (fiber:spawn (lambda ()
+              (and (mutate:rebind "ka" "(lambda (x) (* x 3))" "a")
+                   (begin (eval-current) #t)))))
+       (fb (fiber:spawn (lambda ()
+              (and (mutate:rebind "kb" "(lambda (x) (* x 5))" "b")
+                   (begin (eval-current) #t)))))
+       (ra (fiber:join fa))
+       (rb (fiber:join fb)))
+  ;; After both joins: ka and kb bound; values 21 and 35 for arg 7
+  …)
+```
+
 ## Sequential-yield surrogate
 
 When spawn is capability-denied or a host deliberately avoids OS threads,

@@ -61,14 +61,34 @@ def main() -> int:
     must("#2685" in doc, "AC5: fiber-spawn.md cites #2685")
     must("let*" in doc or "Binding discipline" in doc, "AC5: sequential bind guidance")
     must("#2685" in test and "AC6" in test, "AC5: unit AC6 dual-define distinct ids")
-    must("not (eq?" in test or "eq? a b" in test or "eq? f1 f2" in test, "AC5: unit asserts distinct fiber ids")
+    must(
+        "not (eq?" in test or "eq? a b" in test or "eq? f1 f2" in test,
+        "AC5: unit asserts distinct fiber ids",
+    )
+
+    # Issue #2686: concurrent dual-name rebind safety
+    must("#2686" in doc, "AC6: fiber-spawn.md cites #2686")
+    must(
+        "WorkspaceFlatPin" in doc or "eval-current" in doc.lower(),
+        "AC6: doc mentions eval-current pin / concurrent rebind",
+    )
+    must("#2686" in test and "AC7" in test, "AC6: unit AC7 concurrent dual rebind")
+    ixx = _read("src/compiler/evaluator.ixx")
+    must(
+        "note_eval_current_shared" in ixx or "eval_current_holds_shared" in ixx,
+        "AC6: Evaluator TLS for eval-current shared pin",
+    )
+    must(
+        "2686" in _read("src/compiler/evaluator_primitives_eval.cpp"),
+        "AC6: eval-current cites #2686 full pin",
+    )
 
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #2656/#2685 CLI denseness fiber:spawn — all AC rows satisfied")
+    print("OK: Issue #2656/#2685/#2686 CLI denseness fiber:spawn — all AC rows satisfied")
     return 0
 
 
