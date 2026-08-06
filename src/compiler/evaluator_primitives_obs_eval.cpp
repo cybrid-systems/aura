@@ -10718,6 +10718,27 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                         std::memory_order_relaxed)));
                 insert_kv("linear-enforce-boundary-align-wired", 1);
                 insert_kv("schema-2222", 2222);
+                // Issue #2675: linear-enforce-effective single-pure-API surface.
+                // Exposes the result of `effective_linear_enforce(production_defaults,
+                // fiber_boundary_hold, env_force_strict)` (now the single source
+                // of truth for AST audit / IR execute / MutationBoundary force
+                // classification). Replaces per-call-site split checks; matches
+                // decision table comment in linear_occurrence_mutate_stats.h.
+                // soft=0 / strict=1 — same wire format as linear-enforce-mode so
+                // existing dashboards parse without schema break.
+                {
+                    using aura::core::provenance::effective_linear_enforce;
+                    using aura::core::provenance::LinearEnforceEffective;
+                    const bool eff_strict =
+                        effective_linear_enforce(
+                            /*production_defaults=*/mode == LinearEnforceMode::Strict,
+                            /*fiber_boundary_hold=*/linear_enforce_boundary_strict_active(),
+                            /*env_force_strict=*/false) == LinearEnforceEffective::Strict;
+                    insert_kv("linear-enforce-effective", eff_strict ? 1 : 0);
+                    insert_kv("linear-enforce-effective-pure-api-wired", 1);
+                    insert_kv("schema-2675", 2675);
+                    insert_kv("issue-2675", 2675);
+                }
                 insert_kv("issue-2222", 2222);
             }
             insert_kv("issue", 1631);

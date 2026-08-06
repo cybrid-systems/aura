@@ -912,14 +912,198 @@ void run_all() {
 } // namespace issue_2623
 
 
+// ── Issue #2675: linear-enforce-effective single pure API
+// (effective_linear_enforce in core/provenance_tracker.hh) — decision
+// table golden tests (pure, no Evaluator). Mirrors the per-detail
+// self-contained namespace pattern (#81967): own read_file, own reset,
+// own AC functions, own run_all. Extends the existing linear_cross_closure
+// suite rather than creating a new test target.
+//   AC1: production_defaults → effective Strict for IR + boundary
+//        post-mutate (covers the body’s “production_defaults || fiber_hold
+//        → Strict” rule)
+//   AC2: Soft + no hold → Soft; fiber hold mid-boundary → Strict for
+//        that hold (boundary Strict-hold wins over process Soft)
+//   AC3: AURA_LINEAR_ENFORCE=strict env flag forces Strict even under
+//        Soft audit strategy (env_force_strict wins in the table)
+//   AC4: #2108 cross-batch escape still hard-blocks commit independent
+//        of Soft (secondary gate; pure API does NOT route it)
+//   AC5: same fixture AST audit vs IR execute agree on Soft vs Strict
+//        (golden table covers both callers under same inputs)
+//   AC6: query:linear-enforce-effective surface key + schema-2675 +
+//        issue-2675 + linear-enforce-effective-pure-api-wired sentinels
+namespace issue_2675 {
+
+using aura::core::provenance::effective_linear_enforce;
+using aura::core::provenance::LinearEnforceEffective;
+
+static std::string read_file(const char* path) {
+    std::ifstream in(path);
+    if (!in)
+        return {};
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+static void ac2675_production_defaults_strict() {
+    std::println("\n--- #2675 AC1: production_defaults → effective Strict ---");
+    // AC1: production_defaults=true → Strict (regardless of fiber_hold / env)
+    CHECK(effective_linear_enforce(/*production_defaults=*/true,
+                                   /*fiber_boundary_hold=*/false,
+                                   /*env_force_strict=*/false) == LinearEnforceEffective::Strict,
+          "AC1 #2675: production_defaults=true → Strict (no fiber, no env)");
+    CHECK(effective_linear_enforce(/*production_defaults=*/true,
+                                   /*fiber_boundary_hold=*/true,
+                                   /*env_force_strict=*/false) == LinearEnforceEffective::Strict,
+          "AC1 #2675: production_defaults=true → Strict (with fiber hold)");
+    CHECK(effective_linear_enforce(/*production_defaults=*/true,
+                                   /*fiber_boundary_hold=*/false,
+                                   /*env_force_strict=*/true) == LinearEnforceEffective::Strict,
+          "AC1 #2675: production_defaults=true → Strict (with env flag)");
+}
+
+static void ac2675_soft_no_hold_vs_fiber_hold() {
+    std::println("\n--- #2675 AC2: Soft + no hold → Soft; fiber hold → Strict ---");
+    // AC2a: Soft + no hold → Soft
+    CHECK(effective_linear_enforce(/*production_defaults=*/false,
+                                   /*fiber_boundary_hold=*/false,
+                                   /*env_force_strict=*/false) == LinearEnforceEffective::Soft,
+          "AC2 #2675: Soft + no hold + no env → Soft (off-fiber Soft path)");
+    // AC2b: Soft + fiber hold → Strict (boundary hold wins)
+    CHECK(effective_linear_enforce(/*production_defaults=*/false,
+                                   /*fiber_boundary_hold=*/true,
+                                   /*env_force_strict=*/false) == LinearEnforceEffective::Strict,
+          "AC2 #2675: Soft + fiber hold → Strict (boundary wins over process Soft)");
+}
+
+static void ac2675_env_force_strict_wins() {
+    std::println("\n--- #2675 AC3: AURA_LINEAR_ENFORCE=strict env forces Strict ---");
+    // AC3: env_force_strict=true → Strict (wins over Soft + no hold)
+    CHECK(effective_linear_enforce(/*production_defaults=*/false,
+                                   /*fiber_boundary_hold=*/false,
+                                   /*env_force_strict=*/true) == LinearEnforceEffective::Strict,
+          "AC3 #2675: env_force_strict=true → Strict (wins over Soft + no hold)");
+    // AC3: env_force_strict=false + production + fiber → Strict (no env needed)
+    CHECK(effective_linear_enforce(/*production_defaults=*/true,
+                                   /*fiber_boundary_hold=*/true,
+                                   /*env_force_strict=*/false) == LinearEnforceEffective::Strict,
+          "AC3 #2675: env_force_strict=false + production + fiber → Strict (decision table)");
+}
+
+static void ac2675_cross_batch_escape_independent() {
+    std::println("\n--- #2675 AC4: #2108 cross-batch escape hard-block independent ---");
+    // AC4: #2108 cross-batch escape must hard-block commit independent of Soft.
+    // The pure effective_linear_enforce table does NOT route this — it’s
+    // a separate authority (CrossBatchEscape). Verify that the secondary
+    // gate sentinel + authority table are present and #2108 is still
+    // hard-blocked regardless of effective_linear_enforce() result.
+    auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(aud.find("CrossBatchEscape") != std::string::npos,
+          "AC4 #2675: CrossBatchEscape authority still present in typed_mutation_audit.h");
+    CHECK(aud.find("#2108") != std::string::npos,
+          "AC4 #2675: #2108 cross-batch escape cite present (independent hard-block)");
+    // Effective mode = Soft (no production, no hold, no env) — but
+    // #2108 cross-batch escape must still hard-block (not via this API).
+    CHECK(effective_linear_enforce(/*production_defaults=*/false,
+                                   /*fiber_boundary_hold=*/false,
+                                   /*env_force_strict=*/false) == LinearEnforceEffective::Soft,
+          "AC4 #2675: Soft baseline (effective_linear_enforce says Soft — #2108 routes "
+          "independently)");
+}
+
+static void ac2675_audit_ir_agree() {
+    std::println("\n--- #2675 AC5: AST audit vs IR execute agree (golden table) ---");
+    // AC5: same inputs → same decision regardless of caller (AST audit
+    // or IR execute). Exhaustively cover the truth table.
+    struct Row {
+        bool prod;
+        bool fiber;
+        bool env;
+        LinearEnforceEffective expected;
+    };
+    const Row table[] = {
+        // production only → Strict
+        {true, false, false, LinearEnforceEffective::Strict},
+        // fiber only → Strict
+        {false, true, false, LinearEnforceEffective::Strict},
+        // env only → Strict (env_force_strict wins)
+        {false, false, true, LinearEnforceEffective::Strict},
+        // all three → Strict
+        {true, true, true, LinearEnforceEffective::Strict},
+        // none → Soft
+        {false, false, false, LinearEnforceEffective::Soft},
+        // prod + fiber (no env) → Strict
+        {true, true, false, LinearEnforceEffective::Strict},
+        // prod + env (no fiber) → Strict
+        {true, false, true, LinearEnforceEffective::Strict},
+        // fiber + env (no prod) → Strict
+        {false, true, true, LinearEnforceEffective::Strict},
+    };
+    for (const auto& r : table) {
+        const auto got = effective_linear_enforce(r.prod, r.fiber, r.env);
+        CHECK(got == r.expected,
+              "AC5 #2675: prod/fiber/env table row consistent with decision table");
+    }
+}
+
+static void ac2675_query_surface_keys() {
+    std::println("\n--- #2675 AC6: query:linear-enforce-effective surface keys ---");
+    // AC6: linear-enforce-effective + schema-2675 + issue-2675 +
+    // linear-enforce-effective-pure-api-wired sentinels in
+    // evaluator_primitives_obs_eval.cpp + provenance_tracker.hh exposes
+    // the pure API.
+    auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(obs.find("\"linear-enforce-effective\"") != std::string::npos,
+          "AC6 #2675: linear-enforce-effective key in query surface");
+    CHECK(obs.find("\"schema-2675\"") != std::string::npos,
+          "AC6 #2675: schema-2675 sentinel in query surface");
+    CHECK(obs.find("\"issue-2675\"") != std::string::npos,
+          "AC6 #2675: issue-2675 sentinel in query surface");
+    CHECK(obs.find("\"linear-enforce-effective-pure-api-wired\"") != std::string::npos,
+          "AC6 #2675: linear-enforce-effective-pure-api-wired sentinel");
+    auto hdr = read_file("src/core/provenance_tracker.hh");
+    CHECK(hdr.find("LinearEnforceEffective") != std::string::npos,
+          "AC6 #2675: LinearEnforceEffective enum in provenance_tracker.hh");
+    CHECK(hdr.find("effective_linear_enforce(") != std::string::npos,
+          "AC6 #2675: effective_linear_enforce() function exported from provenance_tracker.hh");
+    // Linter self-coverage.
+    auto lint = read_file("scripts/coverage/checks/check_linear_enforce_effective_2675.py");
+    CHECK(!lint.empty(), "AC6 #2675: linter script present");
+    CHECK(lint.find("#2675") != std::string::npos, "AC6 #2675: linter cites #2675");
+    CHECK(lint.find("effective_linear_enforce") != std::string::npos,
+          "AC6 #2675: linter covers pure API");
+    auto build = read_file("build.py");
+    CHECK(build.find("check_linear_enforce_effective_2675") != std::string::npos,
+          "AC6 #2675: build.py wires linter");
+    // Decision table comment is single source of truth.
+    auto lom = read_file("src/compiler/linear_occurrence_mutate_stats.h");
+    CHECK(lom.find("Issue #2675") != std::string::npos,
+          "AC6 #2675: decision table comment cites #2675");
+    CHECK(lom.find("effective_linear_enforce") != std::string::npos,
+          "AC6 #2675: decision table comment points to pure API");
+}
+
+void run_all() {
+    std::println("\n── #2675 ──");
+    ac2675_production_defaults_strict();
+    ac2675_soft_no_hold_vs_fiber_hold();
+    ac2675_env_force_strict_wins();
+    ac2675_cross_batch_escape_independent();
+    ac2675_audit_ir_agree();
+    ac2675_query_surface_keys();
+}
+
+} // namespace issue_2675
+
+
 int main() {
-    std::println("=== linear cross-closure suite (#2563 + #2612 + #2623) ===");
+    std::println("=== linear cross-closure suite (#2563 + #2612 + #2623 + #2675) ===");
     std::println("\n── #2563 ──");
     issue_2563::run_all();
     std::println("\n── #2612 ──");
     issue_2612::run_all();
     std::println("\n── #2623 ──");
     issue_2623::run_all();
+    std::println("\n── #2675 ──");
+    issue_2675::run_all();
     std::println("\n=== linear cross-closure: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

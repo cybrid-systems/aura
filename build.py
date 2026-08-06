@@ -498,6 +498,21 @@ def cmd_lint():
             "layered evidence coherence (#2674) coverage linter failed — run python3 scripts/coverage/checks/check_layered_evidence_coherence_2674.py"
         )
         return r
+    # Issue #2675: linear-enforce-effective single pure API (replaces #2222
+    # split logic). Single source of truth shared by AST audit, IR executor,
+    # MutationBoundary force classification. Soft Warning synth never maps to
+    # SynthHardFail (#2514 retained). Zero behavior change when env unset
+    # and production off (Soft).
+    lee_script = COVERAGE_CHECKS / "check_linear_enforce_effective_2675.py"
+    if not lee_script.exists():
+        fail(f"missing {lee_script}")
+        return 1
+    r = run([sys.executable, str(lee_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "linear enforce effective (#2675) coverage linter failed — run python3 scripts/coverage/checks/check_linear_enforce_effective_2675.py"
+        )
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +

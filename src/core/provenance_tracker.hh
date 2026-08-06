@@ -344,19 +344,75 @@ inline void mutation_boundary_pop_linear_enforce_strict() noexcept {
 }
 
 // Effective mode: boundary hold wins over process Soft (#2222).
+// Issue #2675: refactored to route through the single pure API
+// `effective_linear_enforce()` so AST audit, IR executor, post-mutate, and
+// cross-closure all share one decision table (no per-callsite duplication).
 [[nodiscard]] inline LinearEnforceMode linear_enforce_effective_mode() noexcept {
-    if (s_linear_enforce_boundary_strict_depth > 0)
+    const bool fiber_hold = linear_enforce_boundary_strict_active();
+    const bool prod_defaults = (linear_enforce_mode() == LinearEnforceMode::Strict) &&
+                               !fiber_hold; // caller already chose Strict via process mode
+    // Note: prod_defaults here is the process-mode-Strict signal, not the
+    // sandbox production flag (matches the body’s “production_defaults”
+    // semantics for effective-mode resolution). The sandbox flag is
+    // threaded separately at the IR executor / boundary call sites.
+    if (effective_linear_enforce(/*production_defaults=*/prod_defaults,
+                                 /*fiber_boundary_hold=*/fiber_hold,
+                                 /*env_force_strict=*/false) == LinearEnforceEffective::Strict) {
         return LinearEnforceMode::Strict;
-    return linear_enforce_mode();
+    }
+    return LinearEnforceMode::Soft;
 }
 
 // IR hot path / dual-path apply: true when Strict mode is active OR
 // fiber is under MutationBoundary Strict hold (#2222).
 // Steal/GC enforce paths that always require complete pass true explicitly.
+// Issue #2675: routes through `effective_linear_enforce()` as single
+// source of truth; existing callers continue to get the bool return.
 [[nodiscard]] inline bool linear_enforce_require_complete() noexcept {
-    if (s_linear_enforce_boundary_strict_depth > 0)
-        return true;
-    return linear_enforce_mode() == LinearEnforceMode::Strict;
+    return linear_enforce_effective_mode() == LinearEnforceMode::Strict;
+}
+
+// Issue #2675: pure overload for caller-supplied state (cross-closure
+// secondary gate + IR executor / post-mutate wire-up). Returns true when
+// the caller’s snapshot of state maps to Strict under the single decision
+// table. Use this at call sites where production_defaults /
+// fiber_boundary_hold / env_force_strict are already in scope.
+[[nodiscard]] inline bool
+linear_enforce_require_complete_effective(bool production_defaults, bool fiber_boundary_hold,
+                                          bool env_force_strict) noexcept {
+    return effective_linear_enforce(production_defaults, fiber_boundary_hold, env_force_strict) ==
+           LinearEnforceEffective::Strict;
+}
+
+// Issue #2675: single pure API for effective linear enforce. Replaces the
+// split logic that lived in `linear_enforce_effective_mode()` (state reader)
+// + per-call-site checks (IR executor / post-mutate / cross-closure) so
+// AST audit, IR execute, and MutationBoundary force classification all
+// share one decision table. Pure function — no globals, no module cycle,
+// callable from any TU (header-only).
+//
+// Decision table (single source of truth — replaces #2222 split):
+//   env_force_strict                          → Strict
+//   production_defaults || fiber_boundary_hold → Strict
+//   else                                      → Soft
+// #2108 cross-batch escape hard-block remains an independent authority
+// (returns its own deny_kind, not through this table).
+enum class LinearEnforceEffective : std::uint8_t {
+    Soft = 0,
+    Strict = 1,
+};
+[[nodiscard]] inline LinearEnforceEffective
+effective_linear_enforce(bool production_defaults, bool fiber_boundary_hold,
+                         bool env_force_strict) noexcept {
+    // Issue #2675: env_force_strict wins (AURA_LINEAR_ENFORCE=strict forces
+    // Strict even under Soft audit strategy / no production / no hold).
+    if (env_force_strict)
+        return LinearEnforceEffective::Strict;
+    if (production_defaults)
+        return LinearEnforceEffective::Strict;
+    if (fiber_boundary_hold)
+        return LinearEnforceEffective::Strict;
+    return LinearEnforceEffective::Soft;
 }
 
 // Test harness Soft opt-in: Soft-mode unit tests force Soft explicitly
