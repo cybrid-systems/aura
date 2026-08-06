@@ -1348,7 +1348,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_fiber_reclaim_safety.cpp` (—) [domain_suite, theme_serve] — AC1: Fiber::is_done() now strictly requires state_==Done
 - `tests/compiler/test_fiber_resume_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_fiber_resume_batch.cpp — batch driver for fiber resume post-steal family.
 - `tests/serve/test_fiber_resume_state.cpp` (—) [domain_suite, theme_serve] — AC1: Fiber::resume() returns early if state_ == Done
-- `tests/compiler/test_fiber_spawn_cli.cpp` (—) [domain_suite, theme_compiler] — AC1: fiber:spawn returns positive int (never -1 / #f on success)
+- `tests/compiler/test_fiber_spawn_cli.cpp` (—) [domain_suite, theme_compiler] — Issue #2685 — sequential / multi-define dual spawn → distinct ids.
 - `tests/serve/test_fiber_steal_panic_checkpoint_nested_gc.cpp` (—) [small, domain_suite, theme_serve] — tests/test_fiber_steal_panic_checkpoint_nested_gc.cpp — Issue #1446
 - `tests/serve/test_fiber_strategy_evolve_batch.cpp` (—) [large, batch_driver, domain_suite, theme_serve] — test_fiber_strategy_evolve_batch.cpp — consolidated fiber-theme drivers
 - `tests/serve/test_fiber_synthesize_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — test_fiber_synthesize_batch.cpp — consolidated fiber-theme drivers

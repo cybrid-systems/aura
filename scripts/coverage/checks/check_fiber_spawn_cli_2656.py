@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Issue #2656: CLI denseness fiber:spawn positive ids + contract.
+"""Issue #2656 / #2685: CLI denseness fiber:spawn positive ids + binding.
 
 Contract:
   AC1 positive thread-fallback fiber ids (not -1)
   AC2 fiber:spawn-backend registered
   AC3 denseness contract doc docs/stdlib/fiber-spawn.md
   AC4 unit test + cmake + build.py gate
+  AC5 #2685 binding discipline doc + dual-define distinct-id unit AC
 
 Exit 0 = all rows satisfied.
 """
@@ -56,12 +57,18 @@ def main() -> int:
     must("cmd_fiber_spawn_cli_coverage" in build, "AC4: coverage cmd")
     must("AC1" in test and "AC2" in test and "#2656" in test, "AC4: unit ACs")
 
+    # Issue #2685: binding discipline + dual-define distinct ids
+    must("#2685" in doc, "AC5: fiber-spawn.md cites #2685")
+    must("let*" in doc or "Binding discipline" in doc, "AC5: sequential bind guidance")
+    must("#2685" in test and "AC6" in test, "AC5: unit AC6 dual-define distinct ids")
+    must("not (eq?" in test or "eq? a b" in test or "eq? f1 f2" in test, "AC5: unit asserts distinct fiber ids")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #2656 CLI denseness fiber:spawn — all AC rows satisfied")
+    print("OK: Issue #2656/#2685 CLI denseness fiber:spawn — all AC rows satisfied")
     return 0
 
 

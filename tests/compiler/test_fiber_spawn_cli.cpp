@@ -1,12 +1,14 @@
 // @category: unit
 // @reason: Issue #2656 — CLI denseness fiber:spawn returns positive id
 //          (not -1); spawn+join payload works under thread fallback.
+//          Issue #2685 — sequential / multi-define dual spawn → distinct ids.
 //
 //   AC1: fiber:spawn returns positive int (never -1 / #f on success)
 //   AC2: fiber:join returns payload 1
 //   AC3: fiber:spawn-backend is thread (2) under CompilerService (CLI)
 //   AC4: two concurrent spawns both join correctly
 //   AC5: source cites #2656 + docs/stdlib/fiber-spawn.md
+//   AC6: sequential top-level / multi-define begin dual spawn distinct ids (#2685)
 
 #include "test_harness.hpp"
 
@@ -21,6 +23,7 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
@@ -97,16 +100,67 @@ static void ac5_source() {
     CHECK(build.find("check_fiber_spawn_cli_2656") != std::string::npos, "AC5: coverage");
 }
 
+// ── AC6: #2685 binding contract — two spawns → two positive ids ──
+// Product requires sequential top-level defines and multi-define begin
+// (letrec-like cells, sequential RHS) to store independent fiber ids.
+// Denseness hosts should prefer let* (documented); this locks the
+// dual-define product path agents still hit.
+static void ac6_dual_define_distinct_ids() {
+    std::println("\n--- #2685 AC6: dual define / multi-define begin distinct ids ---");
+    CompilerService cs;
+
+    // Sequential top-level-style defines via begin (eval one form).
+    auto r = cs.eval(R"(
+(begin
+  (define f1 (fiber:spawn (lambda () (+ 1 2))))
+  (define f2 (fiber:spawn (lambda () (+ 10 20))))
+  (list f1 f2 (eq? f1 f2)
+        (fiber:join f1) (fiber:join f2)))
+)");
+    CHECK(r.has_value(), "AC6: multi-define begin evaluates");
+    // Prefer engine-side checks that do not require walking the list in C++.
+    auto distinct = cs.eval(R"(
+(begin
+  (define a (fiber:spawn (lambda () 11)))
+  (define b (fiber:spawn (lambda () 22)))
+  (and (> a 0) (> b 0) (not (eq? a b))
+       (= (fiber:join a) 11) (= (fiber:join b) 22)))
+)");
+    CHECK(distinct && is_bool(*distinct) && as_bool(*distinct),
+          "AC6: multi-define begin → two positive distinct ids + correct joins");
+
+    // Preferred denseness pattern: let* sequential bind+join.
+    auto letstar = cs.eval(R"(
+(let* ((f1 (fiber:spawn (lambda () (+ 1 2))))
+       (j1 (fiber:join f1))
+       (f2 (fiber:spawn (lambda () (+ 10 20))))
+       (j2 (fiber:join f2)))
+  (and (> f1 0) (> f2 0) (not (eq? f1 f2))
+       (= j1 3) (= j2 30)))
+)");
+    CHECK(letstar && is_bool(*letstar) && as_bool(*letstar),
+          "AC6: let* sequential spawn+join denseness pattern");
+
+    const auto doc = read_file("docs/stdlib/fiber-spawn.md");
+    CHECK(doc.find("#2685") != std::string::npos, "AC6: fiber-spawn.md cites #2685");
+    CHECK(doc.find("let*") != std::string::npos || doc.find("let\\*") != std::string::npos,
+          "AC6: doc recommends sequential let*");
+    CHECK(doc.find("Binding discipline") != std::string::npos ||
+              doc.find("binding") != std::string::npos,
+          "AC6: doc has binding discipline section");
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
-    std::println("=== Issue #2656: CLI denseness fiber:spawn ===");
+    std::println("=== Issue #2656 / #2685: CLI denseness fiber:spawn ===");
     ac1_positive_id();
     ac2_join_payload();
     ac3_backend_thread();
     ac4_two_workers();
     ac5_source();
-    std::println("\n=== #2656: {} passed, {} failed ===", g_passed, g_failed);
+    ac6_dual_define_distinct_ids();
+    std::println("\n=== #2656/#2685: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
