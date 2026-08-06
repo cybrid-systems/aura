@@ -26,7 +26,6 @@ module;
 
 module aura.compiler.lowering_linear_types;
 import std;
-
 import aura.core.ast;
 import aura.compiler.ir;
 import aura.compiler.lowering;
