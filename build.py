@@ -502,6 +502,21 @@ def cmd_lint():
             "Issue #2701 mutation hold-budget reject linter failed — run python3 scripts/coverage/checks/check_mutation_hold_budget_reject_2701.py"
         )
         return r
+    # Issue #2702: Resume MutationSafetySnapshot + safety ticket — unify
+    # hard-fail path. Wires check_resume_hard_fail_2702.py so the
+    # production hard-fail + Soft observe + ticket-one-shot + #2699
+    # interaction contract stays enforced. Builds on #2518 ticket +
+    # #2346 post-sync resume invariant + #2310 force-deopt.
+    rhf_script = COVERAGE_CHECKS / "check_resume_hard_fail_2702.py"
+    if not rhf_script.exists():
+        fail(f"missing {rhf_script}")
+        return 1
+    r = run([sys.executable, str(rhf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2702 resume hard-fail linter failed — run python3 scripts/coverage/checks/check_resume_hard_fail_2702.py"
+        )
+        return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a

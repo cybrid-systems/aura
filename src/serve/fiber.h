@@ -385,6 +385,15 @@ public:
     // even seq ≠ ticket → treat as inconsistent (Guard enter/exit mid-window).
     // Happy path: one snapshot load (+ ticket compare if set).
     // Tests may call this directly with injected ticket / mirrors.
+    // Issue #2702: production hard-fail on resume-time snapshot
+    // inconsistency or ticket mismatch. AC1 — production lock ⇒
+    // request_cancel + set_state(Done), no swapcontext body. AC2 — Soft
+    // / test override: metric-only continue (existing Soft ergonomics).
+    // AC3 — ticket is one-shot (cleared after check). AC4 — ticket
+    // stamped only on Ok steal safety transaction (#2699); resume
+    // never sees a ticket from a RejectHard path. Implementation lives
+    // in fiber.cpp::check_and_enforce_resume_snapshot_invariant; the
+    // counters + linter verify the contract.
     [[nodiscard]] bool check_and_enforce_resume_snapshot_invariant() noexcept;
     // Issue #2677: consolidated resume invariant — single call site from
     // Fiber::resume. Checks BOTH resume-safety-ticket (via
@@ -1299,6 +1308,31 @@ void reset_steal_snapshot_soft_for_test() noexcept;
 // Issue #2346: resume MutationSafetySnapshot hard-invariant (see table above).
 // Implementation in fiber.cpp (production canary via typed_mutation_audit).
 [[nodiscard]] bool is_steal_snapshot_hard_mode() noexcept;
+
+// Issue #2702: file-scope atomics for the resume hard-fail surface.
+// Mirror the #2693/#2694/#2695/#2696/#2697/#2698/#2700/#2701 pattern
+// (file-scope atomics in the relevant header; light binaries get the
+// file-level fallback when no per-CompilerMetrics wired).
+inline std::atomic<std::uint64_t> g_resume_hard_fail_total{0};
+inline std::atomic<std::uint64_t> g_resume_soft_observe_total{0};
+inline std::atomic<std::uint32_t> g_resume_hard_fail_wired{1};
+inline constexpr int kResumeHardFailIssue = 2702;
+
+[[nodiscard]] inline std::uint64_t resume_hard_fail_total_v_read() noexcept {
+    return g_resume_hard_fail_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t resume_soft_observe_total_v_read() noexcept {
+    return g_resume_soft_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t resume_hard_fail_wired_v_read() noexcept {
+    return g_resume_hard_fail_wired.load(std::memory_order_relaxed);
+}
+
+// Test reset.
+inline void clear_resume_hard_fail_for_test() noexcept {
+    g_resume_hard_fail_total.store(0, std::memory_order_relaxed);
+    g_resume_soft_observe_total.store(0, std::memory_order_relaxed);
+}
 [[nodiscard]] bool is_steal_snapshot_hard_abort() noexcept;
 
 } // namespace aura::serve

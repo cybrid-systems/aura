@@ -6496,6 +6496,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                             insert_kv("mutation-hold-budget-wired", wired);
                             insert_kv("schema-2701", 2701);
                             insert_kv("issue-2701", 2701);
+                            // Issue #2702: query:resume-hard-fail — Agent-visible resume
+                            // hard-fail surface. Production path: ticket mismatch or
+                            // mutation_safety_snapshot_inconsistent → request_cancel +
+                            // set_state(Done), no swapcontext body. Soft / test override:
+                            // metric-only continue. Additive — no replacement of #2346 /
+                            // #2518 / #2667 / #2184 / #2310 surfaces.
+                            {
+                                const auto hard = static_cast<std::int64_t>(
+                                    aura::serve::resume_hard_fail_total_v_read());
+                                const auto soft = static_cast<std::int64_t>(
+                                    aura::serve::resume_soft_observe_total_v_read());
+                                const auto wired = static_cast<std::int64_t>(
+                                    aura::serve::resume_hard_fail_wired_v_read());
+                                insert_kv("resume-hard-fail-total", hard);
+                                insert_kv("resume-soft-observe-total", soft);
+                                insert_kv("resume-hard-fail-wired", wired);
+                                insert_kv("schema-2702", 2702);
+                                insert_kv("issue-2702", 2702);
+                            }
                         }
                     }
                 }
