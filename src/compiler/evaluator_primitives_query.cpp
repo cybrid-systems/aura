@@ -7637,6 +7637,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                   std::memory_order_relaxed)));
                 insert_kv("schema-2621", 2621);
                 insert_kv("issue-2621", 2621);
+                // Issue #2694: soft truncated cone silent dependency escalate
+                // (additive — pairs #2646 outside-If invalidate + #2672 soak).
+                insert_kv("soft-truncated-silent-dep-escalate-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::
+                                  soft_truncated_silent_dep_escalate_total_v_read()));
+                insert_kv("last-soft-truncated-silent-dep-count",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::last_soft_truncated_silent_dep_count()));
+                insert_kv("soft-truncated-silent-dep-wired",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::g_soft_truncated_silent_dep_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-2694", 2694);
+                insert_kv("issue-2694", 2694);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
