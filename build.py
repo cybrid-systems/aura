@@ -4245,6 +4245,32 @@ def cmd_require_effect_on_ref_2689_coverage():
     return 0
 
 
+def cmd_pending_recovery_drain_2690_coverage():
+    """Issue #2690: unified PendingRecovery drain (close residual unhealed windows).
+
+    Single owner of pending recovery bits (deferred reemit / force_jit /
+    region_mask). Both maybe_storm_clear_health_pass (StormClear) and
+    outermost MutationBoundary success exit (BoundaryExit) route through
+    drain_pending_recovery(why). Exchange-not-check semantics: a
+    concurrent drain in the same ms observes kinds == 0 (cheap) and
+    bumps double_drain_prevented to surface the race. Closes residual
+    unhealed window from novel interleavings (storm exit without
+    pipeline call, boundary exit mid-storm-clear, steal with
+    deferred pending).
+    """
+    print(f"{B}=== pending recovery drain coverage (#2690) ==={N}")
+    script = COVERAGE_CHECKS / "check_pending_recovery_drain_2690.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pending recovery drain coverage (#2690) contract rows failed")
+        return 1
+    ok("pending recovery drain coverage (#2690) clean")
+    return 0
+
+
 def cmd_workspace_mtx_contention_coverage():
     """Issue #2523: residual workspace_mtx contention stats + soft path.
 
@@ -8309,6 +8335,7 @@ def cmd_gate():
         or cmd_evaluator_capture_tenant_2687_coverage()
         or cmd_capability_production_default_2688_coverage()
         or cmd_require_effect_on_ref_2689_coverage()
+        or cmd_pending_recovery_drain_2690_coverage()
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
         or cmd_query_hygiene_default_coverage()
@@ -9312,6 +9339,7 @@ def main():
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
+        "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

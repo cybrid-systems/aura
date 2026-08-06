@@ -954,10 +954,24 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         typed_audit::record_boundary_outcome(mid, "rollback", cp.version, epoch_after,
                                              /*success=*/false, 0, 0, fid);
     }
+    // Issue #2690: unified PendingRecovery drain. Boundary exit routes
+    // through the same single-owner drain as `maybe_storm_clear_health_pass`
+    // (StormClear). Exchange-not-check semantics: a concurrent storm-clear
+    // drain in the same ms observes `kinds == 0` (cheap) and bumps
+    // `double_drain_prevented` to surface the race. Closes the residual
+    // unhealed window from novel interleavings (#2690).
+    if (!nested_boundary && success) {
+        aura_hot_update_drain_pending_recovery(static_cast<std::uint8_t>(
+            DrainReason::BoundaryExit));
+    }
     // Issue #2604: outermost MutationBoundary exit auto-drain deferred
     // reemit + one region-filtered pass. Closes the "visible but
     // unhealed" stale window without making reemit unbounded.
     // Soft path (no deferred + mask=0) → zero extra work (AC4).
+    // Issue #2690: kept for backward compat — the unified drain above
+    // also drives the deferred branch atomically (exchange-not-check);
+    // this block preserves the legacy aura_reemit_aot_for_dirty counter
+    // surface for existing test expectations.
     if (!nested_boundary && success) {
         auto& reg = hot_update_registry();
         if (reg.has_deferred_reemit() || reg.last_region_mask_from_dirty() != 0) {
