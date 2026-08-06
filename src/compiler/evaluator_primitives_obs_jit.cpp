@@ -907,6 +907,23 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2682", make_int(2682)},
                 {"issue-2682", make_int(2682)},
                 {"moving-unified-success-gate-wired", make_int(1)},
+                // Issue #2683: production default PerEval deopt-storm isolation.
+                // shape-storm-per-eval-isolations-total bumps on every storm
+                // enter under PerEval (no process-global shape_version bump).
+                // shape-storm-global-bump-total stays 0 under production default
+                // except when AURA_SHAPE_STORM_ISOLATION=global restores legacy
+                // process-global bump path for experiments.
+                {"shape-storm-per-eval-isolations-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_shape_storm_per_eval_isolations_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"shape-storm-global-bump-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_shape_storm_global_bump_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"schema-2683", make_int(2683)},
+                {"issue-2683", make_int(2683)},
+                {"shape-storm-isolation-default-per-eval", make_int(1)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},

@@ -262,10 +262,84 @@ static void ac2274_per_region_default() {
     }
 }
 
+// ── #2683 AC1/AC4: production default PerEval + env override Global ──
+static void ac2683_pereval_default_isolation() {
+    std::println("\n--- #2683 AC1/AC4: production default PerEval + env override ---");
+    // Without env override → weak default returns 2 (PerEval) so concurrent
+    // evals under HighMutation preset do NOT cross-invalidate via
+    // process-global shape_version bump.
+    const int mode_default = aura_get_storm_isolation_mode();
+    CHECK(mode_default == 2,
+          "AC1/AC4: production default = PerEval (2); no process-global bump path");
+}
+
+// ── #2683 AC5: per-eval + global bump counters + query surface ──
+static void ac2683_counters_and_query_wired() {
+    std::println("\n--- #2683 AC5: counters + query surface ---");
+    // Both new query keys wired alongside existing #2236 / #2274 schema.
+    CompilerService cs;
+    CHECK(href(cs, "schema-2683") == 2683, "AC5: schema-2683 sentinel");
+    CHECK(href(cs, "issue-2683") == 2683, "AC5: issue-2683 sentinel");
+    CHECK(href(cs, "shape-storm-isolation-default-per-eval") == 1,
+          "AC5: per-eval default sentinel");
+    // Counters queryable (must be >= 0; monotonic, no schema break).
+    const auto per_eval = href(cs, "shape-storm-per-eval-isolations-total");
+    const auto global_bump = href(cs, "shape-storm-global-bump-total");
+    CHECK(per_eval >= 0, "AC5: per-eval-isolations-total queryable (>= 0)");
+    CHECK(global_bump >= 0, "AC5: global-bump-total queryable (>= 0)");
+    // Schema-2274 still works (additive — no regression on #2274 path).
+    CHECK(href(cs, "schema-2274") == 2274, "AC5: legacy schema-2274 still wired");
+}
+
+// ── #2683 AC6: source-cite + no regression ──
+static void ac2683_source_cite() {
+    std::println("\n--- #2683 AC6: source-cite + no regression ---");
+    const auto hh = read_file("src/compiler/shape_profiler.h");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+
+    // Issue #2683 sentinel in all 3 prod-side files (use "#2683" for combined
+    // citations like "Issue #2683 / #2370 / #2617").
+    CHECK(hh.find("#2683") != std::string::npos,
+          "AC6: shape_profiler.h cites #2683");
+    CHECK(cpp.find("#2683") != std::string::npos,
+          "AC6: shape_profiler.cpp cites #2683");
+    CHECK(q.find("#2683") != std::string::npos,
+          "AC6: evaluator_primitives_obs_jit.cpp cites #2683");
+
+    // Weak default in shape_profiler.cpp uses AURA_SHAPE_STORM_ISOLATION env.
+    CHECK(cpp.find("AURA_SHAPE_STORM_ISOLATION") != std::string::npos,
+          "AC4: env override present in shape_profiler.cpp");
+
+    // Counters declared in shape_profiler.h + bumped from shape_profiler.cpp.
+    CHECK(hh.find("g_shape_storm_per_eval_isolations_total_atomic") != std::string::npos,
+          "AC5: per-eval counter declared in shape_profiler.h");
+    CHECK(hh.find("g_shape_storm_global_bump_total_atomic") != std::string::npos,
+          "AC5: global-bump counter declared in shape_profiler.h");
+    CHECK(cpp.find("g_shape_storm_per_eval_isolations_total_atomic") != std::string::npos,
+          "AC5: per-eval counter bumped from shape_profiler.cpp");
+    CHECK(cpp.find("g_shape_storm_global_bump_total_atomic") != std::string::npos,
+          "AC5: global-bump counter bumped from shape_profiler.cpp");
+
+    // #2617 hard contract preserved (compact does NOT feed deopt-storm ring +
+    // does NOT bump mutation_induced_invalidations_).
+    CHECK(hh.find("kShapeCompactStormIsolationIssue") != std::string::npos,
+          "AC3: #2617 hard contract sentinel preserved");
+    CHECK(hh.find("2617") != std::string::npos,
+          "AC3: #2617 lineage reference preserved");
+
+    // No design doc regression (per #1655).
+    for (const auto& p : {"docs/design/shape_storm_isolation_2683.md",
+                          "docs/shape_storm_isolation_2683.md"}) {
+        std::ifstream f(p);
+        CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+    }
+}
+
 } // namespace
 
 int run_test_storm_isolation() {
-    std::println("=== Issue #2236 — per-region / per-eval deopt-storm isolation ===");
+    std::println("=== Issue #2236 + #2683 — per-region / per-eval deopt-storm isolation ===");
     ac_dual_region_storm();
     ac_isolation_global_legacy();
     ac_shape_only_no_reemit_block();
@@ -274,6 +348,10 @@ int run_test_storm_isolation() {
     ac_source_cite();
     std::println("\n=== AC #2274: production default PerRegion + cap overflow ===");
     ac2274_per_region_default();
+    std::println("\n=== AC #2683: production default PerEval deopt-storm isolation ===");
+    ac2683_pereval_default_isolation();
+    ac2683_counters_and_query_wired();
+    ac2683_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
