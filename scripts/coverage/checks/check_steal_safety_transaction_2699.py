@@ -82,8 +82,9 @@ def main() -> int:
     must("set_resume_safety_ticket", "AC1 step 7", cpp)
 
     # AC2 — worker.cpp try_steal_from routes through the unified entry
-    must("steal_safety_transaction", "AC2", worker)
-    # RejectHard enum value lives in steal_safety.h/.cpp
+    # steal_safety_transaction + RejectHard live in steal_safety.cpp (the
+    # single transaction TU). worker.cpp has the wire-in marker.
+    must("steal_safety_transaction", "AC2", cpp)
     must("RejectHard", "AC2", hdr)
     must("RejectHard", "AC2", cpp)
     # Wire-in marker comment ensures the call graph is single-entry
@@ -95,7 +96,7 @@ def main() -> int:
 
     # AC3 — soft / sandbox metric-only (flags live in fiber.cpp)
     must("steal_snapshot_soft_production_locked", "AC3", fiber)
-    must("aura_fiber_is_steal_snapshot_soft_mode", "AC3", fiber)
+    must("is_steal_snapshot_soft_mode", "AC3", fiber)
 
     # AC4 — existing counters remain additive / non-regressing
     # steal_snapshot_mismatch_force_deopt_total + steal_safety_ticket_mismatch_total
