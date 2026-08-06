@@ -13,7 +13,6 @@ module;
 
 module aura.compiler.adt_runtime;
 import std;
-
 import aura.compiler.value;
 
 namespace aura::compiler {

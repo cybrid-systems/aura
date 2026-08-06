@@ -10,7 +10,6 @@ module;
 
 module aura.compiler.matcher;
 import std;
-
 import aura.core.ast;
 import aura.core.mutation;
 import aura.compiler.soa_view;

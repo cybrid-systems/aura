@@ -15,7 +15,6 @@ module;
 
 module aura.compiler.evaluator;
 import std;
-
 import aura.compiler.hardware_backend;
 import aura.compiler.value;
 import aura.compiler.service;

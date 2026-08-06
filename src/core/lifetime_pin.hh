@@ -204,6 +204,8 @@ private:
 // the call ambiguous (GCC modules — asan/CI failure on evaluator_mutation_boundary).
 // Module consumers: import aura.core.lifetime_pin.
 // Non-module TUs that need bulk restamp/invalidate must become module consumers.
+// Issue #2678: linter check_module_import_contiguity_2678.py enforces this rule
+// (rejects any inline std::size_t restamp_all_pins_for_arena in this header).
 
 // Issue #2280: epoch-scoped linear pin contract (header form for
 // non-module TUs). Live linear objects (linear_rt::Owned|Borrowed|

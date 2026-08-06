@@ -545,6 +545,23 @@ def cmd_lint():
             "resume invariants (#2677) coverage linter failed — run python3 scripts/coverage/checks/check_resume_invariants_2677.py"
         )
         return r
+    # Issue #2678: P0 — runtime(guard) harden MutationBoundaryGuard against
+    # C++20 module fragility (truncation / dual-def / import contiguity).
+    # Adds ownership boundary marker to evaluator_mutation_boundary.cpp +
+    # fixes import contiguity (L71-73 blank lines between imports) +
+    # linter gate that scans all .cpp module purview files for non-
+    # contiguous import blocks. Bulk restamp/invalidate live only in
+    # lifetime_pin.ixx (already correct per AC2).
+    mic_script = COVERAGE_CHECKS / "check_module_import_contiguity_2678.py"
+    if not mic_script.exists():
+        fail(f"missing {mic_script}")
+        return 1
+    r = run([sys.executable, str(mic_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "module import contiguity (#2678) coverage linter failed — run python3 scripts/coverage/checks/check_module_import_contiguity_2678.py"
+        )
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +

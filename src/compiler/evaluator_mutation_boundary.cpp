@@ -5,6 +5,25 @@
 // access). Heavy RAII paths (try_acquire, AcquireTag ctor, dtor, move,
 // enable_fine_rollback) and enter/exit_mutation_boundary live here so
 // evaluator.ixx stays a thinner interface.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+// OWNERSHIP BOUNDARY (Issue #2678)
+// ═══════════════════════════════════════════════════════════════════════════
+// This file is fragile to accidental truncation under C++20 module merge.
+// Module import block MUST be contiguous after `module aura.compiler.evaluator;`
+// (see check_module_import_contiguity_2678.py). Critical-path sections:
+//
+//   1. try_acquire / try_acquire_for_region    (~L1024-1272)
+//   2. enter/exit_mutation_boundary             (~L155-987)
+//   3. MutationBoundaryGuard methods            (~L1024-1848)
+//   4. Phase-5 densify + layout-stamp fence    (~L2083-3278)
+//   5. restamp_all_pins_for_arena (call site)  (~L1848)
+//
+// DO NOT split this file unless adding an explicit ownership boundary marker
+// at the top of each new TU. DO NOT add bulk restamp/invalidate free functions
+// to lifetime_pin.hh — they live only in lifetime_pin.ixx (sharded registry,
+// #2342/#2375). See check_module_import_contiguity_2678.py for lint gate.
+// ═══════════════════════════════════════════════════════════════════════════
 
 module;
 
@@ -63,15 +82,16 @@ module;
 
 module aura.compiler.evaluator;
 
+// Issue #2678: module import block MUST be contiguous after
+// `module aura.compiler.evaluator;` — see check_module_import_contiguity_2678.py.
+// Do NOT add blank lines between import statements (triggers module contiguity
+// rule violation + linter reject). Inline comments on the same line are OK.
 import aura.core.lifetime_pin;
-import aura.compiler.coercion_map;    // Issue #2102: provenance-miss force-audit
-import aura.compiler.root_remap_pass; // Issue #2341: last_root_remap_any_fail
-import aura.compiler.ir_soa;          // Issue #2432: current_ir_soa_generation_fence
-import aura.compiler.type_checker;    // Issue #2608: maybe_persist_occurrence_snapshot
-// Issue #2674: layered evidence-coherence invariant reads
-// opt_registry::dead_coercion_ir_narrow_evidence_hits from optimization_passes
-// (snapshot passed to check_layered_evidence_coherence at boundary exit).
-import aura.compiler.optimization_passes;
+import aura.compiler.coercion_map;        // Issue #2102: provenance-miss force-audit
+import aura.compiler.root_remap_pass;     // Issue #2341: last_root_remap_any_fail
+import aura.compiler.ir_soa;              // Issue #2432: current_ir_soa_generation_fence
+import aura.compiler.type_checker;        // Issue #2608: maybe_persist_occurrence_snapshot
+import aura.compiler.optimization_passes; // Issue #2674: layered evidence-coherence
 
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
 
