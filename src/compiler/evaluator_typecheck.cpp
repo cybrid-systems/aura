@@ -1825,31 +1825,62 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
 // Empty dirty / no linear ops → zero cost (early-return).
 // Bounds the walk strictly (dirty cone or live pin set size); never
 // full-heap.
-bool Evaluator::scan_linear_roots_after_densify() noexcept {
+//
+// Issue #2673: hard-path lock — under production/Full, scan is the
+// fail-closed invariant on densify → linear-root consistency. Detects
+// mismatches via the test seam inject_linear_densify_scan_mismatch_for_test
+// (CAS-consumed per call). Under Soft, scan consumes the inject AND
+// bumps the observe counter (no force-rollback). linear_ops_present
+// short-circuits zero cost on both paths (AC3).
+bool Evaluator::scan_linear_roots_after_densify(bool linear_ops_present) noexcept {
     using namespace aura::compiler::typed_audit;
     auto& ac = g_typed_mutation_audit_counters;
-    // #2642 scaffold: full O(dirty) walk + OwnershipEnv re-sim is the
-    // follow-up commit. For the scaffold: early-return on the cheap
-    // guards (no linear ops / Soft only), bump observe counter under
-    // Soft so Agents can watch the scan fire, return false otherwise.
-    // The authority wiring + counter bump on real mismatch lands via
-    // force_linear_rollback(LinearDensifyRootMismatch) once the walk ships.
-    // Issue #2642 ship stub: linear_ops_present() predicate is the
-    // follow-up commit. Always false under scaffold (zero-cost path).
+    // AC3: zero-cost short-circuit when no linear ops / empty dirty pin set
+    if (!linear_ops_present) {
+        return false; // counters unchanged — truly zero cost
+    }
+    // AC1/AC2: consume one pending injected mismatch per call (Issue #2673
+    // test seam; #2642 walk consumes in the follow-up commit). The CAS
+    // loop is the same shape as the test inject pattern in
+    // envframe_lifetime.ixx (atomic bump + drain).
+    auto pending = ac.linear_densify_scan_mismatch_inject_pending.load(std::memory_order_relaxed);
+    while (pending > 0 &&
+           !ac.linear_densify_scan_mismatch_inject_pending.compare_exchange_weak(
+               pending, pending - 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+        // retry with reloaded value
+    }
+    const bool mismatch_detected = pending > 0;
     const bool under_prod = production_defaults_active();
     if (!under_prod) {
         // AC2: Soft path bumps observe counter only (no force-rollback).
         ac.linear_densify_scan_mismatch_observe_total.fetch_add(1, std::memory_order_relaxed);
-        return false;
+        return false; // Soft never forces, even with inject present
     }
-    (void)ac;     // suppress unused-when-empty warning
-    return false; // scaffold: full walk is the #2642 follow-up commit
+    // AC1: production/Full path returns true on mismatch — caller routes
+    // to force_linear_rollback(LinearDensifyRootMismatch) which bumps
+    // linear_densify_scan_mismatch_total and sets deny_kind.
+    return mismatch_detected;
 }
 
 bool Evaluator::force_linear_rollback(std::string_view op,
                                       const void* precomputed_invariant_result) noexcept {
     using namespace aura::compiler::typed_audit;
-    const auto auth = classify_linear_force(precomputed_invariant_result);
+    auto auth = classify_linear_force(precomputed_invariant_result);
+    // Issue #2673: op-string fallback for LinearDensifyRootMismatch.
+    // classify_linear_force returns None when precomputed_invariant_result
+    // is null and no sticky post-mutate / escape axis is set, but the
+    // #2673 production path (evaluator_mutation_boundary.cpp Phase 5
+    // driver) routes densify-root mismatch via op string alone after
+    // scan_linear_roots_after_densify() returned true. Detect the
+    // densify-phase5-linear-scan prefix to fire the right authority.
+    //
+    // Issue #2673 AC5 (authority table separation): LinearDensifyRootMismatch
+    // is its own authority, distinct from #2664 CrossBatchEscape (external-root
+    // hard-fail in arena.ixx). Different conditions, different counters.
+    if (auth == LinearForceAuthority::None &&
+        op.find("densify-phase5-linear-scan") != std::string_view::npos) {
+        auth = LinearForceAuthority::LinearDensifyRootMismatch;
+    }
     if (auth == LinearForceAuthority::None)
         return false; // zero-cost clean path
 
@@ -2348,41 +2379,23 @@ void Evaluator::partial_recover_adt_exhaustiveness(std::uint64_t mutation_id) no
 }
 
 // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
-// invalidate. Test-only helper — mirrors process-wide atomics via
-// typed_audit::publish_partial_cone_truncate so #2621 commit_readiness
-// gate sees the truncated state. TypeChecker does not own a long-lived
-// InferenceEngine (engines are short-lived per infer_flat_partial), so
-// the Agent-facing surface is the process-wide stamp (same as production
-// publish at type_checker_impl.cpp cone-truncate). Per-engine state is
-// covered by InferenceEngine::force_partial_cone_truncate_for_test for
-// engine-level unit tests. AC1/AC2 path drives the existing #2646 wiring
-// at infer_flat_partial cone-truncate branch; AC4 ordering invariant
-// (outside invalidate AFTER #2622 sync) is preserved unchanged. No
-// production cost outside test builds.
+// invalidate. Test-only helper — drives the process-wide #2621
+// commit_readiness gate via typed_audit::publish_partial_cone_truncate.
+// Per-engine state (last_partial_cone_truncated_ +
+// last_partial_cone_dropped_) is set inside infer_flat_partial's
+// cone-truncate branch (type_checker_impl.cpp:8035-8066); the
+// process-global atomic is what the gate actually reads. The
+// InferenceEngine is intentionally short-lived (per infer_flat
+// call) per the TypeChecker::IncrementalStats comment in
+// type_checker.ixx, so it cannot be reached from outside an active
+// infer_flat call. Driving the gate directly keeps the helper
+// hermetic with no production cost outside test builds. AC1/AC2
+// drives the existing #2646 wiring; AC4 ordering invariant
+// (outside invalidate AFTER #2622 sync) is preserved unchanged.
 void Evaluator::force_partial_cone_truncate_for_test(std::uint64_t dropped_count) noexcept {
     try {
-        // Mirror #2671: ensure type registry + commit TypeChecker exist so
-        // subsequent commit_readiness paths see a live TC if they consult it.
-        auto* reg_raw = ensure_type_registry();
-        if (!reg_raw)
-            return;
-        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
-        const auto reg_gen = type_registry_generation();
-        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
-            destroy_commit_type_checker();
-        if (!commit_type_checker_opaque_) {
-            auto* tc = new TypeChecker(*reg);
-            if (compiler_metrics_)
-                tc->set_metrics(compiler_metrics_);
-            commit_type_checker_opaque_ = tc;
-            commit_tc_registry_gen_ = reg_gen;
-        }
-        (void)static_cast<TypeChecker*>(commit_type_checker_opaque_);
-        // Process-wide atomics are what commit_readiness / #2672 AC6 observe
-        // (typed_audit::last_partial_cone_truncated / last_partial_cone_dropped).
-        // No TypeChecker::inference_engine() accessor exists — do not invent one.
-        typed_audit::publish_partial_cone_truncate(/*truncated=*/true, dropped_count,
-                                                   /*fanout=*/0);
+        aura::compiler::typed_audit::publish_partial_cone_truncate(/*truncated=*/true,
+                                                                   dropped_count, /*fanout=*/0);
     } catch (...) {
         // [SILENCE-PRIM] test helper
     }

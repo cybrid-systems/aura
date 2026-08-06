@@ -96,6 +96,10 @@ AURA_COMPILER_METRICS_FIELD(expire_stale_live_closures_total)
 AURA_COMPILER_METRICS_FIELD(expire_stale_ir_closures_total)
 AURA_COMPILER_METRICS_FIELD(expire_stale_tree_walker_closures_total)
 AURA_COMPILER_METRICS_FIELD(expire_primcall_cache_clear_total)
+// Issue #2673: densify Phase-5 linear-root consistency scan (refine #2642).
+// hard-path force / soft observe counters — mirrors typed_audit globals.
+AURA_COMPILER_METRICS_FIELD(linear_densify_scan_mismatch_total)
+AURA_COMPILER_METRICS_FIELD(linear_densify_scan_mismatch_observe_total)
 // Issue #2043: linear+GC invalidation window.
 AURA_COMPILER_METRICS_FIELD(linear_gc_window_finalize_total)
 AURA_COMPILER_METRICS_FIELD(linear_ownership_epoch_bumps_total)

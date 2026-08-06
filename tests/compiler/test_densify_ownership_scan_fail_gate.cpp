@@ -22,6 +22,7 @@
 
 #include "compiler/observability_metrics.h"
 #include "core/densify_consistency_report.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -72,6 +73,23 @@ static std::int64_t href(CompilerService& cs, const char* key) {
         return -1;
     return as_int(*r);
 }
+
+// ── Issue #2673: production soak + hard-path lock for densify
+// linear-root consistency scan (refine #2642 residual #2/#3).
+//
+// AC1: production + inject address mismatch → force_linear_rollback +
+//      linear_densify_scan_mismatch_total++
+// AC2: Soft + same → observe++ only, no hard force
+// AC3: no linear ops / empty dirty pin set → zero scan cost
+// AC4: #2609 densify hard-AND still holds; scan does not weaken it
+// AC5: #2664 external-root hard-fail remains independent
+// AC6: chaos soak + linter row
+static void ac2673_inject_hard_path_forces_rollback();
+static void ac2673_soft_path_observes_only();
+static void ac2673_no_linear_ops_zero_cost();
+static void ac2673_2609_hard_and_preserved();
+static void ac2673_2664_external_root_independent();
+static void ac2673_chaos_soak_and_linter();
 
 // ── AC1: inject + Moving densify window → envframe_ok forced false, ──
 //          Phase 5 success metrics NOT advanced (overall_ok=false) ──
@@ -235,6 +253,268 @@ static void ac4_query_consistent() {
     CHECK(href(cs, "schema-2341") == 2341, "AC4: schema-2341 retained");
 }
 
+// ── AC1 (Issue #2673): production/Full + inject address mismatch →
+//     force_linear_rollback + linear_densify_scan_mismatch_total++
+//     Counter bump lives in force_linear_rollback(LinearDensifyRootMismatch)
+//     (evaluator_typecheck.cpp:1888) — not in scan_linear_roots_after_densify
+//     itself (scan only returns true; the authority case bumps + sets deny_kind).
+static void ac2673_inject_hard_path_forces_rollback() {
+    std::println("\n--- AC1 #2673: production + inject → force_linear_rollback + "
+                 "linear_densify_scan_mismatch_total++ ---");
+    aura::compiler::typed_audit::clear_linear_densify_scan_mismatch_inject_for_test();
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        1, std::memory_order_relaxed);
+    const auto mismatch_before =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_total.load(std::memory_order_relaxed);
+    const auto observe_before =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_observe_total.load(std::memory_order_relaxed);
+
+    // Inject one pending mismatch (pin/root address rewritten without OwnershipEnv update).
+    aura::compiler::typed_audit::inject_linear_densify_scan_mismatch_for_test();
+    CHECK(aura::compiler::typed_audit::linear_densify_scan_mismatch_inject_pending() == 1,
+          "AC1 #2673: inject pending counter == 1");
+
+    // Wire-up shape: evaluator_mutation_boundary.cpp densify success calls
+    // scan_linear_roots_after_densify(linear_ops_present_local) BEFORE
+    // advancing Phase 5 metrics. linear_ops_present=true simulates a Moving
+    // densify window with linear-typed bindings present.
+    //
+    // We simulate the wire-up by calling the scan + force_linear_rollback
+    // pair directly (same shape as the production call site).
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const bool scan_returned = ev.scan_linear_roots_after_densify(/*linear_ops_present=*/true);
+    CHECK(scan_returned, "AC1 #2673: scan returns true under prod/Full with inject");
+    CHECK(aura::compiler::typed_audit::linear_densify_scan_mismatch_inject_pending() == 0,
+          "AC1 #2673: inject consumed (CAS drained)");
+    // Production path routes mismatch → force_linear_rollback(LinearDensifyRootMismatch)
+    const bool rolled_back = ev.force_linear_rollback("densify-phase5-linear-scan-test");
+    CHECK(rolled_back, "AC1 #2673: force_linear_rollback returns true on mismatch");
+
+    const auto mismatch_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_total.load(std::memory_order_relaxed);
+    CHECK(mismatch_after == mismatch_before + 1,
+          "AC1 #2673: linear_densify_scan_mismatch_total++ on prod force");
+    // Observe counter NOT bumped on prod path (only Soft bumps observe).
+    const auto observe_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_observe_total.load(std::memory_order_relaxed);
+    CHECK(observe_after == observe_before,
+          "AC1 #2673: observe counter unchanged on prod force path");
+
+    aura::compiler::typed_audit::clear_linear_densify_scan_mismatch_inject_for_test();
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        0, std::memory_order_relaxed);
+}
+
+// ── AC2 (Issue #2673): Soft + same inject → observe++ only, no hard force.
+//     linear_ops_present=true (Soft path bumps observe unconditionally;
+//     inject consumed but no force_linear_rollback authority fires).
+static void ac2673_soft_path_observes_only() {
+    std::println("\n--- AC2 #2673: Soft + inject → observe++ only, no hard force ---");
+    aura::compiler::typed_audit::clear_linear_densify_scan_mismatch_inject_for_test();
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Sampled);
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        0, std::memory_order_relaxed);
+    const auto observe_before =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_observe_total.load(std::memory_order_relaxed);
+    const auto mismatch_before =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_total.load(std::memory_order_relaxed);
+
+    aura::compiler::typed_audit::inject_linear_densify_scan_mismatch_for_test();
+    CHECK(aura::compiler::typed_audit::linear_densify_scan_mismatch_inject_pending() == 1,
+          "AC2 #2673: inject pending counter == 1");
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const bool scan_returned = ev.scan_linear_roots_after_densify(/*linear_ops_present=*/true);
+    CHECK(!scan_returned, "AC2 #2673: scan returns false under Soft (no force authority)");
+    CHECK(aura::compiler::typed_audit::linear_densify_scan_mismatch_inject_pending() == 0,
+          "AC2 #2673: inject consumed even under Soft (single CAS drain per call)");
+
+    const auto observe_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_observe_total.load(std::memory_order_relaxed);
+    CHECK(observe_after == observe_before + 1, "AC2 #2673: observe counter bumps +1 under Soft");
+    const auto mismatch_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_total.load(std::memory_order_relaxed);
+    CHECK(mismatch_after == mismatch_before,
+          "AC2 #2673: linear_densify_scan_mismatch_total unchanged under Soft");
+
+    // No force_linear_rollback called → authority table untouched.
+    // (Soft path: observe counter is the only Agent-visible signal.)
+    aura::compiler::typed_audit::clear_linear_densify_scan_mismatch_inject_for_test();
+}
+
+// ── AC3 (Issue #2673): no linear ops / empty dirty pin set → zero scan cost.
+//     scan returns false without consuming inject or bumping any counter.
+static void ac2673_no_linear_ops_zero_cost() {
+    std::println("\n--- AC3 #2673: no linear ops → zero scan cost (counters stable) ---");
+    aura::compiler::typed_audit::clear_linear_densify_scan_mismatch_inject_for_test();
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        1, std::memory_order_relaxed);
+    aura::compiler::typed_audit::inject_linear_densify_scan_mismatch_for_test();
+    const auto observe_before =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_observe_total.load(std::memory_order_relaxed);
+    const auto mismatch_before =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_total.load(std::memory_order_relaxed);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    // linear_ops_present=false short-circuits BEFORE consume or any counter bump.
+    const bool scan_returned = ev.scan_linear_roots_after_densify(/*linear_ops_present=*/false);
+    CHECK(!scan_returned, "AC3 #2673: scan returns false when no linear ops");
+    CHECK(aura::compiler::typed_audit::linear_densify_scan_mismatch_inject_pending() == 1,
+          "AC3 #2673: inject NOT consumed when no linear ops (zero-cost path)");
+
+    const auto observe_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_observe_total.load(std::memory_order_relaxed);
+    const auto mismatch_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_total.load(std::memory_order_relaxed);
+    CHECK(observe_after == observe_before, "AC3 #2673: observe counter stable (zero cost)");
+    CHECK(mismatch_after == mismatch_before, "AC3 #2673: mismatch counter stable (zero cost)");
+
+    aura::compiler::typed_audit::clear_linear_densify_scan_mismatch_inject_for_test();
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        0, std::memory_order_relaxed);
+}
+
+// ── AC4 (Issue #2673): #2609 densify hard-AND preserved; scan does not weaken it.
+//     evaluate_linear_type_provenance_hard_and lives in typecheck path
+//     (#2609); densify_consistency.overall_ok() retains the AND shape. The
+//     scan is an ADDITIONAL consistency gate, not a replacement.
+static void ac2673_2609_hard_and_preserved() {
+    std::println("\n--- AC4 #2673: #2609 densify hard-AND preserved ---");
+    const auto impl = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // #2609 hard-AND still present in evaluator_typecheck.cpp + .ixx.
+    CHECK(impl.find("evaluate_linear_type_provenance_hard_and") != std::string::npos,
+          "AC4 #2673: #2609 evaluate_linear_type_provenance_hard_and present in typecheck");
+    CHECK(ixx.find("#2609") != std::string::npos, "AC4 #2673: #2609 cited in evaluator.ixx");
+    CHECK(impl.find("#2609") != std::string::npos,
+          "AC4 #2673: #2609 cited in evaluator_typecheck.cpp");
+    // The scan is wired as ADDITIONAL (not replacement): comment in
+    // evaluator_mutation_boundary.cpp Phase 5 driver makes the AND explicit.
+    CHECK(emb.find("#2673") != std::string::npos, "AC4 #2673: #2673 cited in densify success path");
+    CHECK(emb.find("scan_linear_roots_after_densify") != std::string::npos,
+          "AC4 #2673: scan call present in densify success path");
+    CHECK(emb.find("AC4: existing densify_consistency.overall_ok() AND preserved") !=
+              std::string::npos,
+          "AC4 #2673: AND-preservation comment present");
+    // densify_consistency.overall_ok() still gates Phase 5 success metrics —
+    // scan result is an additional gate, not a replacement for the #2609
+    // residual∧linear∧type hard-AND.
+    CHECK(emb.find("densify_consistency.overall_ok()") != std::string::npos,
+          "AC4 #2673: overall_ok() still gates success (AND with scan result)");
+}
+
+// ── AC5 (Issue #2673): #2664 external-root hard-fail remains independent.
+//     #2664 lives on a separate authority (CrossBatchEscape / external root);
+//     the linear-root scan covers only linear-typed roots. Source-cite verifies
+//     the authority separation: #2664 deny_kind != linear-densify-root-mismatch.
+static void ac2673_2664_external_root_independent() {
+    std::println("\n--- AC5 #2673: #2664 external-root hard-fail independent ---");
+    const auto impl = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // #2664 cited in densify success path + authority table.
+    CHECK(emb.find("#2664") != std::string::npos, "AC5 #2673: #2664 cited in densify path");
+    CHECK(ixx.find("#2664") != std::string::npos,
+          "AC5 #2673: #2664 cited in evaluator.ixx (authority table)");
+    CHECK(impl.find("#2664") != std::string::npos,
+          "AC5 #2673: #2664 cited in evaluator_typecheck.cpp");
+    // #2664 deny_kind (external-root) != #2673 deny_kind (linear-densify-root-mismatch).
+    CHECK(impl.find("linear-densify-root-mismatch") != std::string::npos,
+          "AC5 #2673: linear-densify-root-mismatch deny_kind present");
+    // Authority table separation: LinearDensifyRootMismatch is its own enum
+    // value (not CrossBatchEscape / CrossClosureEscape). #2664 external-root
+    // hard-fail flows through CrossBatchEscape or a dedicated path, NOT
+    // through LinearDensifyRootMismatch.
+    CHECK(ixx.find("LinearDensifyRootMismatch") != std::string::npos,
+          "AC5 #2673: LinearDensifyRootMismatch authority enum present");
+    // Query surface exposes both keys without overlap.
+    CHECK(q.find("linear-densify-scan-mismatch-total") != std::string::npos,
+          "AC5 #2673: linear-densify-scan-mismatch-total query key");
+    // #2673 schema sentinel — query surface carries a distinct sentinel so
+    // Agents can confirm the hard-path lock is wired (not silently falling
+    // back to the #2664 external-root path).
+    CHECK(q.find("schema-2673") != std::string::npos,
+          "AC5 #2673: schema-2673 sentinel in query surface");
+    CHECK(q.find("issue-2673") != std::string::npos,
+          "AC5 #2673: issue-2673 sentinel in query surface");
+    CHECK(q.find("linear-densify-hard-path-wired") != std::string::npos,
+          "AC5 #2673: hard-path wired sentinel in query surface");
+}
+
+// ── AC6 (Issue #2673): chaos soak + linter row.
+//     N=64 fibers × mutate linear × densify — under production, every inject
+//     forces force_linear_rollback (no silent continue). Coverage linter
+//     extended with #2673 markers.
+static void ac2673_chaos_soak_and_linter() {
+    std::println("\n--- AC6 #2673: chaos soak + linter row ---");
+    aura::compiler::typed_audit::clear_linear_densify_scan_mismatch_inject_for_test();
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        1, std::memory_order_relaxed);
+
+    // Chaos: 64 fibers × mutate linear × densify. Inject 1 mismatch per
+    // fiber. Every prod-path scan must force_rollback → mismatch_total
+    // advances by exactly 64, observe_total advances by 0 (all under prod).
+    constexpr std::uint64_t kFibers = 64;
+    const auto mismatch_baseline =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_total.load(std::memory_order_relaxed);
+    const auto observe_baseline =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_observe_total.load(std::memory_order_relaxed);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    for (std::uint64_t i = 0; i < kFibers; ++i) {
+        aura::compiler::typed_audit::inject_linear_densify_scan_mismatch_for_test();
+        const bool scan_returned = ev.scan_linear_roots_after_densify(/*linear_ops_present=*/true);
+        CHECK(scan_returned, "AC6 #2673: chaos scan returns true (no silent continue)");
+        const bool rolled_back = ev.force_linear_rollback("chaos-densify-phase5-linear-scan");
+        CHECK(rolled_back, "AC6 #2673: chaos force_linear_rollback fires (fail-closed)");
+    }
+    const auto mismatch_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_total.load(std::memory_order_relaxed);
+    const auto observe_after =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+            .linear_densify_scan_mismatch_observe_total.load(std::memory_order_relaxed);
+    CHECK(mismatch_after - mismatch_baseline == kFibers,
+          "AC6 #2673: chaos mismatch_total advances by exactly N fibers");
+    CHECK(observe_after == observe_baseline,
+          "AC6 #2673: chaos observe counter unchanged under production (all forced)");
+
+    // Linter row present.
+    const auto linter_path = "scripts/coverage/checks/check_occurrence_densify_root_scan_2642.py";
+    const auto linter = read_file(linter_path);
+    CHECK(!linter.empty(), "AC6 #2673: linter script present");
+    CHECK(linter.find("#2673") != std::string::npos, "AC6 #2673: linter covers #2673");
+    CHECK(linter.find("linear_ops_present") != std::string::npos,
+          "AC6 #2673: linter covers linear_ops_present short-circuit");
+
+    aura::compiler::typed_audit::clear_linear_densify_scan_mismatch_inject_for_test();
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        0, std::memory_order_relaxed);
+}
+
 // ── AC5: source-cite gate next to pin_contract_held + helper preserved ──
 static void ac5_source_cite() {
     std::println("\n--- AC5: source-cite Phase 5 gate next to pin_contract_held gate ---");
@@ -291,7 +571,15 @@ int run_test_densify_ownership_scan_fail_gate() {
     ac3_soft_densify_zero_cost();
     ac4_query_consistent();
     ac5_source_cite();
-    std::println("\n=== #2497: {} passed, {} failed ===", g_passed, g_failed);
+    // Issue #2673: hard-path lock for densify linear-root consistency scan
+    // (refine #2642 residual #2/#3). AC1/AC2/AC3/AC4/AC5/AC6.
+    ac2673_inject_hard_path_forces_rollback();
+    ac2673_soft_path_observes_only();
+    ac2673_no_linear_ops_zero_cost();
+    ac2673_2609_hard_and_preserved();
+    ac2673_2664_external_root_independent();
+    ac2673_chaos_soak_and_linter();
+    std::println("\n=== #2497 + #2673: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

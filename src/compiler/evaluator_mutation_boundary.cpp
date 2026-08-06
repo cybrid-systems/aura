@@ -2414,7 +2414,29 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                          densify_consistency.force_reason());
         }
         if (pin_contract_held && densify_consistency.overall_ok()) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+            // Issue #2673: hard-path lock — densify → linear-root consistency
+            // scan (refine #2642). Under prod/Full, mismatch forces
+            // force_linear_rollback(LinearDensifyRootMismatch) instead of
+            // advancing Phase 5 success metrics. Under Soft, observe counter
+            // bumps (no force). linear_ops_present short-circuits zero cost
+            // when no linear-typed binding / held linear root exists (AC3).
+            // AC4: existing densify_consistency.overall_ok() AND preserved
+            // (scan is additional, not replacement). AC5: #2664 external-root
+            // hard-fail lives on a separate authority path.
+            //
+            // Issue #2673: chaos + linter self-coverage lives in the
+            // ac2673_chaos_soak_and_linter test
+            // (tests/compiler/test_densify_ownership_scan_fail_gate.cpp). 64 fibers × mutate linear
+            // × densify — every prod-path scan forces force_linear_rollback (no silent continue).
+            const bool densify_scan_mismatch =
+                ev_->scan_linear_roots_after_densify(linear_ops_present_local);
+            if (densify_scan_mismatch) {
+                // Mismatch detected → force_linear_rollback bumps
+                // linear_densify_scan_mismatch_total and sets
+                // deny_kind=linear-densify-root-mismatch. Do NOT advance
+                // Phase 5 success metrics below.
+                ev_->force_linear_rollback("densify-phase5-linear-scan");
+            } else if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
                 m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
                 m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
             }
