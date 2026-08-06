@@ -4222,6 +4222,31 @@ def cmd_capability_production_default_2688_coverage():
     return 0
 
 
+def cmd_closure_anon_captured_remount_2691_coverage():
+    """Issue #2691: sync remount captured anon (sid==0 && has env/linear).
+
+    Closes the residual first-call MustDeopt window for high-capture-rate
+    anonymous closures. The full anon walk (#2637/#2666) covers all
+    sid==0 closures; the captured walk further filters on
+    aura_closure_has_env_or_linear_captures(cid) so pure anon (no
+    captures) stays on touch-time policy #2550/#2605. Distinct
+    counters (anon_captured_ok / _fail) so Agents can distinguish
+    "must remount" (captured) from "touch-time policy" (pure anon).
+    Soft zero-cost when no captures match.
+    """
+    print(f"{B}=== closure anon captured remount coverage (#2691) ==={N}")
+    script = COVERAGE_CHECKS / "check_closure_anon_captured_remount_2691.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("closure anon captured remount (#2691) coverage contract rows failed")
+        return 1
+    ok("closure anon captured remount (#2691) coverage clean")
+    return 0
+
+
 def cmd_require_effect_on_ref_2689_coverage():
     """Issue #2689: mandate require_effect_on_ref on all StableNodeRef side-effect paths.
 
@@ -8334,6 +8359,7 @@ def cmd_gate():
         or cmd_shape_storm_isolation_2683_coverage()
         or cmd_evaluator_capture_tenant_2687_coverage()
         or cmd_capability_production_default_2688_coverage()
+        or cmd_closure_anon_captured_remount_2691_coverage()
         or cmd_require_effect_on_ref_2689_coverage()
         or cmd_pending_recovery_drain_2690_coverage()
         or cmd_workspace_mtx_contention_coverage()
@@ -9338,6 +9364,7 @@ def main():
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
+        "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
