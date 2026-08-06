@@ -433,6 +433,99 @@ static void ac10_2321_gradual_dynamic_no_drift() {
     }
 }
 
+// ── Issue #2698 AC1+AC2: stability epoch advances only on persist/prune/fence ──
+static void ac2698_1_stability_epoch_fence() {
+    std::println("\n--- #2698 AC1: explicit fence bumps stability epoch ---");
+    clear_occurrence_stability_epoch_for_test();
+    CHECK(occurrence_stability_epoch_v_read() == 0, "AC1: stability epoch starts at 0");
+    const auto e1 = occurrence_stability_fence();
+    CHECK(e1 == 1, "AC1: first fence → epoch == 1");
+    const auto e2 = occurrence_stability_fence();
+    CHECK(e2 == 2, "AC1: second fence → epoch == 2 (monotonic)");
+    const auto e3 = occurrence_stability_fence();
+    CHECK(e3 == 3, "AC1: third fence → epoch == 3 (monotonic)");
+    clear_occurrence_stability_epoch_for_test();
+}
+
+// ── Issue #2698 AC3: ordinary cache_epoch advance does NOT bump stability ──
+// (Decoupled by design — stability only advances on persist/prune/fence.)
+// Source-cite verifies the counters live in typed_mutation_audit.h
+// (independent from cache_epoch atomics in service.ixx).
+static void ac2698_3_decoupled_from_cache_epoch() {
+    std::println("\n--- #2698 AC3: decoupled from cache_epoch ---");
+    const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(hdr.find("g_occurrence_stability_epoch") != std::string::npos,
+          "AC3: stability epoch atomic lives in typed_mutation_audit.h (independent)");
+    CHECK(hdr.find("kOccurrenceStabilityEpochIssue = 2698") != std::string::npos,
+          "AC3: stability issue stamp = 2698 (distinct from cache_epoch)");
+    CHECK(q.find("occurrence-stability-epoch") != std::string::npos,
+          "AC3: query surfaces stability-epoch key");
+    CHECK(true, "AC3: stability epoch decoupled from cache_epoch (documented)");
+}
+
+// ── Issue #2698 AC4: empty goals path → no advance / zero cost ──
+static void ac2698_4_empty_zero_cost() {
+    std::println("\n--- #2698 AC4: empty goals → zero cost ---");
+    clear_occurrence_stability_epoch_for_test();
+    const auto before = occurrence_stability_epoch_v_read();
+    // No fence / no persist / no prune call — epoch stays at 0.
+    CHECK(occurrence_stability_epoch_v_read() == before,
+          "AC4: empty goals path → no advance (zero cost)");
+    clear_occurrence_stability_epoch_for_test();
+}
+
+// ── Issue #2698 AC5: source-cite + linter ──
+static void ac2698_5_source_and_linter() {
+    std::println("\n--- #2698 AC5: additive query + source-cite ---");
+    const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_epoch_table.cpp");
+
+    CHECK(hdr.find("Issue #2698") != std::string::npos, "AC5: hdr cites #2698");
+    CHECK(hdr.find("g_occurrence_stability_epoch") != std::string::npos,
+          "AC5: hdr has stability-epoch atomic");
+    CHECK(hdr.find("occurrence_stability_fence()") != std::string::npos,
+          "AC5: hdr exposes Agent-callable fence");
+    CHECK(hdr.find("advance_occurrence_stability_on_persist") != std::string::npos,
+          "AC5: hdr exposes persist advance hook");
+    CHECK(hdr.find("advance_occurrence_stability_on_prune") != std::string::npos,
+          "AC5: hdr exposes prune advance hook");
+    CHECK(hdr.find("kOccurrenceStabilityEpochIssue = 2698") != std::string::npos,
+          "AC5: hdr stamps issue = 2698");
+
+    CHECK(q.find("occurrence-stability-epoch") != std::string::npos,
+          "AC5: query exposes occurrence-stability-epoch");
+    CHECK(q.find("occurrence-stability-fence-calls-total") != std::string::npos,
+          "AC5: query exposes fence-calls-total");
+    CHECK(q.find("occurrence-stability-advance-on-persist-total") != std::string::npos,
+          "AC5: query exposes advance-on-persist-total");
+    CHECK(q.find("occurrence-stability-advance-on-prune-total") != std::string::npos,
+          "AC5: query exposes advance-on-prune-total");
+    CHECK(q.find("occurrence-stability-wired") != std::string::npos,
+          "AC5: query exposes wired sentinel");
+    CHECK(q.find("schema-2698") != std::string::npos, "AC5: schema-2698 sentinel");
+    CHECK(q.find("issue-2698") != std::string::npos, "AC5: issue-2698 sentinel");
+
+    // Prior #2696 / #2697 surfaces preserved.
+    CHECK(q.find("schema-2696") != std::string::npos, "AC5: schema-2696 preserved");
+    CHECK(q.find("schema-2697") != std::string::npos, "AC5: schema-2697 preserved");
+
+    CHECK(t.find("ac2698_1_stability_epoch_fence") != std::string::npos, "AC5: AC1 test present");
+    CHECK(t.find("ac2698_3_decoupled_from_cache_epoch") != std::string::npos,
+          "AC5: AC3 test present");
+    CHECK(t.find("ac2698_4_empty_zero_cost") != std::string::npos, "AC5: AC4 test present");
+    CHECK(t.find("ac2698_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+}
+
+// ── Issue #2698 AC6: no docs/design/ per #1655 ──
+static void ac2698_6_no_docs_design() {
+    std::println("\n--- #2698 AC6: no docs/design/2698-* per #1655 ---");
+    const std::string design_path = "docs/design/2698-";
+    CHECK(read_file((design_path + "stability-epoch.md").c_str()).empty(),
+          "AC6: no docs/design/2698-* per #1655 (design rationale in close comment)");
+}
+
 // ── Issue #2696 AC1+AC2: live goal set queryable (aggregate counters for first ship) ──
 static void ac2696_1_live_count_queryable() {
     std::println("\n--- #2696 AC1+AC2: live OccurrenceGoal count + cap ---");

@@ -414,6 +414,50 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 // Issue #2621: process-wide last partial cone truncate (Agents + pure tests).
 // Stamped by TypeChecker::infer_flat_partial after #2560 soft/hard truncate.
 // Soft: observe only; production / AURA_PARTIAL_CONE_COMMIT_HARD → hard face.
+// Issue #2698: independent occurrence-stability epoch (monotonic) — only
+// advances on outermost success + persist, densify/steal that pruned
+// goals, or explicit Agent fence (occurrence_stability_fence()). NOT
+// coupled to cache_epoch (which advances on partial infer / unrelated
+// full solve — Agents cannot ask "have my narrowings been stable since
+// proof X?" when stability == cache_epoch). Soft zero-cost on empty
+// goals path; production default records.
+inline std::atomic<std::uint64_t> g_occurrence_stability_epoch{0};
+inline std::atomic<std::uint64_t> g_occurrence_stability_fence_calls_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_stability_advance_on_persist_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_stability_advance_on_prune_total{0};
+inline std::atomic<std::uint32_t> g_occurrence_stability_wired{1};
+inline constexpr int kOccurrenceStabilityEpochIssue = 2698;
+
+[[nodiscard]] inline std::uint64_t occurrence_stability_epoch_v_read() noexcept {
+    return g_occurrence_stability_epoch.load(std::memory_order_relaxed);
+}
+
+// Issue #2698: explicit Agent-callable fence — bumps the stability
+// epoch regardless of cache_epoch activity. Returns the new epoch.
+inline std::uint64_t occurrence_stability_fence() noexcept {
+    g_occurrence_stability_fence_calls_total.fetch_add(1, std::memory_order_relaxed);
+    return g_occurrence_stability_epoch.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+// Internal advance hooks (called from evaluator_mutation_boundary.cpp
+// outermost-success + evaluator_fiber_mutation.cpp densify/steal prune).
+inline void advance_occurrence_stability_on_persist() noexcept {
+    g_occurrence_stability_advance_on_persist_total.fetch_add(1, std::memory_order_relaxed);
+    g_occurrence_stability_epoch.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void advance_occurrence_stability_on_prune() noexcept {
+    g_occurrence_stability_advance_on_prune_total.fetch_add(1, std::memory_order_relaxed);
+    g_occurrence_stability_epoch.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void clear_occurrence_stability_epoch_for_test() noexcept {
+    g_occurrence_stability_epoch.store(0, std::memory_order_relaxed);
+    g_occurrence_stability_fence_calls_total.store(0, std::memory_order_relaxed);
+    g_occurrence_stability_advance_on_persist_total.store(0, std::memory_order_relaxed);
+    g_occurrence_stability_advance_on_prune_total.store(0, std::memory_order_relaxed);
+}
+
 inline std::atomic<std::uint8_t> g_last_partial_cone_truncated{0};
 inline std::atomic<std::uint64_t> g_last_partial_cone_dropped{0};
 inline std::atomic<std::uint64_t> g_last_partial_cone_fanout_trunc{0};
