@@ -178,6 +178,7 @@ target_sources(aura PRIVATE
     src/compiler/fiber_bridge.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
+    src/serve/steal_safety.cpp
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp

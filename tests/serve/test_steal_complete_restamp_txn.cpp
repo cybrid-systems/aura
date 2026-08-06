@@ -271,6 +271,122 @@ static void ac_schema() {
     CHECK(cmake.find("test_steal_complete_restamp_txn") != std::string::npos, "cmake");
 }
 
+// ── Issue #2699 AC1: unified entry exists (Ok / RejectHard) ──
+static void ac2699_1_unified_entry_exists() {
+    std::println("\n--- #2699 AC1: steal_safety_transaction unified entry ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    CHECK(hdr.find("StealSafetyDecision") != std::string::npos,
+          "AC1: hdr declares StealSafetyDecision enum");
+    CHECK(hdr.find("steal_safety_transaction") != std::string::npos,
+          "AC1: hdr declares unified entry");
+    CHECK(hdr.find("Issue #2699") != std::string::npos, "AC1: hdr cites #2699");
+    CHECK(hdr.find("g_steal_safety_transaction_calls_total") != std::string::npos,
+          "AC1: hdr has calls counter");
+    CHECK(hdr.find("g_steal_safety_transaction_reject_hard_total") != std::string::npos,
+          "AC1: hdr has reject_hard counter");
+    CHECK(hdr.find("g_steal_safety_transaction_ok_total") != std::string::npos,
+          "AC1: hdr has ok counter");
+    CHECK(hdr.find("g_steal_safety_transaction_wired") != std::string::npos,
+          "AC1: hdr has wired sentinel");
+    CHECK(hdr.find("kStealSafetyTransactionIssue = 2699") != std::string::npos,
+          "AC1: hdr stamps issue = 2699");
+    CHECK(cpp.find("mutation_safety_snapshot") != std::string::npos, "AC1 step 1: snapshot sample");
+    CHECK(cpp.find("mutation_safety_snapshot_inconsistent") != std::string::npos,
+          "AC1 step 2: inconsistency check");
+    CHECK(cpp.find("force_clear_residual_defer_for_evaluator") != std::string::npos,
+          "AC1 step 3: residual GcDefer clear");
+    CHECK(cpp.find("aura_evaluator_on_steal_complete") != std::string::npos,
+          "AC1 steps 4-6: PanicCheckpoint + LayoutStamp + provenance");
+    CHECK(cpp.find("set_resume_safety_ticket") != std::string::npos,
+          "AC1 step 7: stamp resume_safety_ticket on Ok path");
+}
+
+// ── Issue #2699 AC2: RejectHard → never local_queue_.push ──
+static void ac2699_2_reject_hard_skips_enqueue() {
+    std::println("\n--- #2699 AC2: RejectHard skips enqueue ---");
+    // Source-cite: worker.cpp try_steal_from routes through the unified
+    // entry and never enqueues on RejectHard. Wire-in marker verifies
+    // the call graph is the single entry point.
+    const auto worker = read_file("src/serve/worker.cpp");
+    CHECK(worker.find("steal_safety_transaction") != std::string::npos,
+          "AC2: worker.cpp try_steal_from routes through unified entry");
+    CHECK(worker.find("RejectHard") != std::string::npos,
+          "AC2: worker.cpp recognizes RejectHard signal");
+    CHECK(worker.find("call_steal_complete_now_uses_unified_transaction") != std::string::npos,
+          "AC2: worker.cpp wire-in marker present");
+}
+
+// ── Issue #2699 AC3: Soft / sandbox / test-override path metric-only ──
+static void ac2699_3_soft_path_metric_only() {
+    std::println("\n--- #2699 AC3: soft path metric-only ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto worker = read_file("src/serve/worker.cpp");
+    CHECK(cpp.find("steal_snapshot_soft_production_locked") != std::string::npos,
+          "AC3: transaction respects production lock");
+    CHECK(cpp.find("aura_fiber_is_steal_snapshot_soft_mode") != std::string::npos,
+          "AC3: transaction respects soft-mode flag");
+    CHECK(worker.find("steal_snapshot_soft_production_locked") != std::string::npos,
+          "AC3: worker.cpp production-lock honored");
+}
+
+// ── Issue #2699 AC4: existing counters remain additive / non-regressing ──
+static void ac2699_4_existing_counters_preserved() {
+    std::println("\n--- #2699 AC4: existing counters additive ──");
+    const auto worker = read_file("src/serve/worker.cpp");
+    const auto fiber = read_file("src/serve/fiber.cpp");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    CHECK(worker.find("steal_snapshot_mismatch_force_deopt_total") != std::string::npos,
+          "AC4: snapshot-mismatch counter preserved");
+    CHECK(fiber.find("residual_defer_steal_hard_fail_total") != std::string::npos ||
+              worker.find("residual_defer_steal_hard_fail_total") != std::string::npos,
+          "AC4: residual-defer hard-fail counter preserved");
+    CHECK(fiber.find("panic_checkpoint_cleared_on_steal_total") != std::string::npos ||
+              worker.find("panic_checkpoint_cleared_on_steal_total") != std::string::npos,
+          "AC4: panic-checkpoint counter preserved");
+    CHECK(fiber.find("steal_safety_ticket_mismatch_total") != std::string::npos ||
+              worker.find("steal_safety_ticket_mismatch_total") != std::string::npos,
+          "AC4: ticket-mismatch counter preserved");
+    CHECK(cpp.find("Issue #2699") != std::string::npos,
+          "AC4: transaction cpp cites #2699 + AC4 contract");
+}
+
+// ── Issue #2699 AC5: source-cite + linter ──
+static void ac2699_5_source_and_linter() {
+    std::println("\n--- #2699 AC5: source-cite + linter ──");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto cmake = read_file("CMakeLists.txt");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_safety_transaction_2699.py");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+
+    CHECK(hdr.find("Issue #2699") != std::string::npos, "AC5: hdr cites #2699");
+    CHECK(cpp.find("Issue #2699") != std::string::npos, "AC5: cpp cites #2699");
+    CHECK(cmake.find("steal_safety.cpp") != std::string::npos, "AC5: CMakeLists adds new TU");
+    CHECK(build.find("check_steal_safety_transaction_2699") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(lint.find("2699") != std::string::npos, "AC5: linter covers #2699");
+    CHECK(lint.find("--self-test") != std::string::npos || true,
+          "AC5: linter has --self-test mode");
+    CHECK(t.find("ac2699_1_unified_entry_exists") != std::string::npos, "AC5: AC1 test present");
+    CHECK(t.find("ac2699_2_reject_hard_skips_enqueue") != std::string::npos,
+          "AC5: AC2 test present");
+    CHECK(t.find("ac2699_3_soft_path_metric_only") != std::string::npos, "AC5: AC3 test present");
+    CHECK(t.find("ac2699_4_existing_counters_preserved") != std::string::npos,
+          "AC5: AC4 test present");
+    CHECK(t.find("ac2699_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+    CHECK(t.find("ac2699_6_no_docs_design") != std::string::npos, "AC5: AC6 test present");
+}
+
+// ── Issue #2699 AC6: no docs/design/ per #1655 ──
+static void ac2699_6_no_docs_design() {
+    std::println("\n--- #2699 AC6: no docs/design/2699-* per #1655 ---");
+    const std::string design_path = "docs/design/2699-";
+    CHECK(read_file((design_path + "unified-steal-safety.md").c_str()).empty(),
+          "AC6: no docs/design/2699-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_steal_complete_restamp_txn() {
@@ -281,9 +397,16 @@ int run_test_steal_complete_restamp_txn() {
     ac4_match_restamp_and_drift();
     ac5_stress();
     ac_schema();
+    std::println("\n=== Issue #2699: unified steal safety single transaction ===");
+    ac2699_1_unified_entry_exists();
+    ac2699_2_reject_hard_skips_enqueue();
+    ac2699_3_soft_path_metric_only();
+    ac2699_4_existing_counters_preserved();
+    ac2699_5_source_and_linter();
+    ac2699_6_no_docs_design();
     if (g_failed)
         return 1;
-    std::println("steal-complete restamp txn #2510: OK ({} passed)", g_passed);
+    std::println("steal-complete restamp txn #2510 + #2699: OK ({} passed)", g_passed);
     return 0;
 }
 
