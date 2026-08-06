@@ -169,16 +169,120 @@ static void ac5_source_cite() {
     CHECK(mdh::moving_densify_health_wired() == 1, "AC5: wired live");
 }
 
+// ── #2682 AC1/AC2/AC4: single unified predicate (5-condition AND) ──
+static void ac2682_unified_predicate_all_conditions() {
+    std::println("\n--- #2682 AC1/AC2/AC4: unified predicate covers all 5 conditions ---");
+    // True path: all conditions hold → success.
+    CHECK(mdh::compute_moving_unified_success(
+              /*moving_blocked_precondition=*/false,
+              /*pin_contract_held=*/true,
+              /*root_remap_stable_ref_fail_total=*/0,
+              /*root_remap_closure_capture_fail_total=*/0,
+              /*objects_moved=*/5,
+              /*untracked_kept_count=*/0) == true,
+          "AC2: clean registered roots + objects_moved=5 → unified success");
+
+    // AC4: root_remap_stable_ref_fail_total > 0 alone → fail.
+    CHECK(mdh::compute_moving_unified_success(false, true, 1, 0, 0, 0) == false,
+          "AC4: root_remap_stable_ref_fail_total > 0 → unified fail");
+
+    // AC4: root_remap_closure_capture_fail_total > 0 alone → fail.
+    CHECK(mdh::compute_moving_unified_success(false, true, 0, 1, 0, 0) == false,
+          "AC4: root_remap_closure_capture_fail_total > 0 → unified fail");
+
+    // AC1: objects_moved > 0 && untracked_kept_count > 0 → fail.
+    CHECK(mdh::compute_moving_unified_success(false, true, 0, 0, 1, 1) == false,
+          "AC1: objects_moved > 0 && untracked_kept_count > 0 → unified fail");
+
+    // AC2: objects_moved > 0 && untracked_kept_count == 0 → success.
+    CHECK(mdh::compute_moving_unified_success(false, true, 0, 0, 5, 0) == true,
+          "AC2: objects_moved > 0 && untracked_kept_count == 0 → success");
+
+    // moving_blocked_precondition alone → fail.
+    CHECK(mdh::compute_moving_unified_success(true, true, 0, 0, 0, 0) == false,
+          "AC1: moving_blocked_precondition → unified fail");
+
+    // pin_contract_held=false alone → fail.
+    CHECK(mdh::compute_moving_unified_success(false, false, 0, 0, 0, 0) == false,
+          "AC2: pin_contract_held=false → unified fail");
+
+    // Vacuous healthy: no objects_moved AND untracked_kept_count > 0 → success
+    // (AC4 condition only applies when objects_moved > 0).
+    CHECK(mdh::compute_moving_unified_success(false, true, 0, 0, 0, 3) == true,
+          "AC1: objects_moved=0 ignores untracked_kept_count → success");
+}
+
+// ── #2682 AC5: process-wide counters + query surface ──
+static void ac2682_counters_and_query_wired() {
+    std::println("\n--- #2682 AC5: counters + query surface ---");
+    CompilerService cs;
+    // Both new query keys wired alongside existing #2619 schema.
+    CHECK(href(cs, "schema-2682") == 2682, "AC5: schema-2682 sentinel");
+    CHECK(href(cs, "issue-2682") == 2682, "AC5: issue-2682 sentinel");
+    CHECK(href(cs, "moving-unified-success-gate-wired") == 1,
+          "AC5: gate-wired sentinel");
+    // Counters queryable (must be >= 0; monotonic, no schema break).
+    const auto success_total = href(cs, "moving-unified-success-total");
+    const auto fail_total = href(cs, "moving-unified-fail-total");
+    CHECK(success_total >= 0, "AC5: success-total queryable (>= 0)");
+    CHECK(fail_total >= 0, "AC5: fail-total queryable (>= 0)");
+
+    // Schema-2619 still works (additive — no regression).
+    CHECK(href(cs, "schema-2619") == 2619, "AC5: legacy schema-2619 still wired");
+}
+
+// ── #2682 AC6: source-cite + no regression ──
+static void ac2682_source_cite() {
+    std::println("\n--- #2682 AC6: source-cite + no regression ---");
+    const auto hh = read_file("src/core/moving_densify_health.hh");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto phase5 = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+
+    // Issue #2682 sentinel in all 4 prod-side files (use "#2682" for combined
+    // citations like "Issue #2682 / #2341 / #2619").
+    CHECK(hh.find("#2682") != std::string::npos,
+          "AC6: moving_densify_health.hh cites #2682");
+    CHECK(arena.find("#2682") != std::string::npos,
+          "AC6: arena.ixx cites #2682");
+    CHECK(phase5.find("#2682") != std::string::npos,
+          "AC6: evaluator_mutation_boundary.cpp cites #2682");
+    CHECK(q.find("#2682") != std::string::npos,
+          "AC6: evaluator_primitives_obs_jit.cpp cites #2682");
+
+    // Predicate function declared in header.
+    CHECK(hh.find("compute_moving_unified_success") != std::string::npos,
+          "AC6: unified predicate declared in header");
+
+    // Counters declared + called from Phase 5.
+    CHECK(arena.find("g_moving_unified_success_total") != std::string::npos,
+          "AC6: success counter declared");
+    CHECK(arena.find("g_moving_unified_fail_total") != std::string::npos,
+          "AC6: fail counter declared");
+    CHECK(phase5.find("compute_moving_unified_success") != std::string::npos,
+          "AC6: Phase 5 calls unified predicate");
+
+    // No design doc regression (per #1655).
+    for (const auto& p : {"docs/design/moving_unified_success_2682.md",
+                          "docs/moving_unified_success_2682.md"}) {
+        std::ifstream f(p);
+        CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+    }
+}
+
 } // namespace
 
 int run_test_arena_moving_densify_health() {
-    std::println("=== Issue #2619: Agent Moving densify health ===");
+    std::println("=== Issue #2619 + #2682: Agent Moving densify health ===");
     ac1_query_exposes_window();
     ac2_incomplete_denies_mutate();
     ac3_soft_observe_only();
     ac4_no_densify_healthy();
     ac5_source_cite();
-    std::println("\n=== #2619: {} passed, {} failed ===", g_passed, g_failed);
+    ac2682_unified_predicate_all_conditions();
+    ac2682_counters_and_query_wired();
+    ac2682_source_cite();
+    std::println("\n=== #2619/#2682: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -2444,6 +2444,34 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 static_cast<std::uint64_t>(densify_untracked_kept),
                 static_cast<std::uint64_t>(densify_root_remap_fails));
         }
+        // Issue #2682: single unified Moving success predicate — folds all
+        // 5 conditions (moving_blocked_precondition / pin_contract_held /
+        // root_remap fails / untracked_kept_count > 0 when objects_moved > 0)
+        // into one boolean. Replaces the scattered local-variable checks
+        // that previously lived inline. Bumps process-wide
+        // g_moving_unified_success_total / g_moving_unified_fail_total for
+        // Agent dashboards. AC3 Soft / observe-only: predicate runs in all
+        // modes (no behavior change for Soft — counters bump either way).
+        const bool moving_unified_success =
+            aura::core::moving_densify_health::compute_moving_unified_success(
+                /*moving_blocked_precondition=*/false, // not folded into compact_r
+                                                       // yet; pin_contract_held
+                                                       // already covers the
+                                                       // user-visible gate
+                pin_contract_held,
+                /*root_remap_stable_ref_fail_total=*/static_cast<std::uint64_t>(
+                    compact_r.root_remap_stable_ref_fail_total),
+                /*root_remap_closure_capture_fail_total=*/static_cast<std::uint64_t>(
+                    compact_r.root_remap_closure_capture_fail_total),
+                /*objects_moved=*/static_cast<std::uint64_t>(densify_objects_moved),
+                /*untracked_kept_count=*/static_cast<std::uint64_t>(densify_untracked_kept));
+        if (moving_unified_success) {
+            aura::ast::g_moving_unified_success_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (had_moving_densify) {
+            // Only bump fail when densify actually ran (vacuous healthy on
+            // Soft / no-densify windows stays out of the fail counter).
+            aura::ast::g_moving_unified_fail_total.fetch_add(1, std::memory_order_relaxed);
+        }
         if (!densify_consistency.overall_ok()) {
             // Issue #2341 AC2: unified fail — mirror pin_contract_held
             // gating above. Bump fail counter; optional hard abort

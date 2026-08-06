@@ -4125,6 +4125,28 @@ def cmd_batch_dirty_discipline_coverage():
     return 0
 
 
+def cmd_moving_unified_success_2682_coverage():
+    """Issue #2682: Moving densify unified success gate (5-condition AND).
+
+    Single unified predicate used by Phase-5 outermost exit,
+    AdaptiveCompactResult consumers, and Agent health surface. Folds
+    moving_blocked_precondition + pin_contract_held + root_remap fails +
+    untracked_kept_count > 0 (when objects_moved > 0). Additive
+    observability: moving-unified-success-total / -fail-total + schema-2682.
+    """
+    print(f"{B}=== moving densify unified success gate coverage (#2682) ==={N}")
+    script = COVERAGE_CHECKS / "check_moving_unified_success_2682.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving densify unified success gate (#2682) coverage contract rows failed")
+        return 1
+    ok("moving densify unified success gate (#2682) coverage clean")
+    return 0
+
+
 def cmd_workspace_mtx_contention_coverage():
     """Issue #2523: residual workspace_mtx contention stats + soft path.
 
@@ -8184,6 +8206,7 @@ def cmd_gate():
         or cmd_pcv_tls_default_on_coverage()
         or cmd_batch_dirty_cascade_coverage()
         or cmd_batch_dirty_discipline_coverage()
+        or cmd_moving_unified_success_2682_coverage()
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
         or cmd_query_hygiene_default_coverage()
@@ -9182,6 +9205,7 @@ def main():
         "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
+        "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

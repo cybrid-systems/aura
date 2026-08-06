@@ -891,6 +891,22 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2681", make_int(2681)},
                 {"issue-2681", make_int(2681)},
                 {"soa-batch-dirty-discipline-hardened", make_int(1)},
+                // Issue #2682: Moving densify unified success gate.
+                // Single predicate (pin_contract ∧ root_remap ∧ untracked==0)
+                // used by Phase-5 outermost exit, AdaptiveCompactResult
+                // consumers, and Agent health surface. Bumps process-wide
+                // totals in lockstep with publish_last_moving_densify_window.
+                {"moving-unified-success-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::ast::g_moving_unified_success_total.load(
+                         std::memory_order_relaxed)))},
+                {"moving-unified-fail-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::ast::g_moving_unified_fail_total.load(
+                         std::memory_order_relaxed)))},
+                {"schema-2682", make_int(2682)},
+                {"issue-2682", make_int(2682)},
+                {"moving-unified-success-gate-wired", make_int(1)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},
