@@ -6458,6 +6458,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     insert_kv("occurrence-stability-wired", wired);
                     insert_kv("schema-2698", 2698);
                     insert_kv("issue-2698", 2698);
+                    // Issue #2700: query:handoff-ref-mailbox-gate — explicit
+                    // happens-before contract surface. While outermost
+                    // MutationBoundaryGuard is held, MailMessage payloads carrying
+                    // a StableNodeRef MUST have completed Evaluator::handoff_ref
+                    // before push / broadcast_fanout succeeds. Rejects bump
+                    // MultiFiberMailboxStats::handoff_reject_total (file-scope).
+                    // Additive surface — no replacement of #2632 / #2312 / #2680
+                    // / #2188 / #2347 counters.
+                    {
+                        const auto& mfst = g_mf_mailbox_stats;
+                        insert_kv("handoff-reject-total",
+                                  static_cast<std::int64_t>(
+                                      mfst.handoff_reject_total.load(std::memory_order_relaxed)));
+                        insert_kv("mailbox-deferred-mutation-hold-total",
+                                  static_cast<std::int64_t>(
+                                      mfst.mailbox_deferred_mutation_hold_total.load(
+                                          std::memory_order_relaxed)));
+                        insert_kv("mailbox-handoff-ref-gate-wired", 1);
+                        insert_kv("schema-2700", 2700);
+                        insert_kv("issue-2700", 2700);
+                    }
                 }
             }
             // Issue #2308: Agent-stable SolverSnapshot (status +

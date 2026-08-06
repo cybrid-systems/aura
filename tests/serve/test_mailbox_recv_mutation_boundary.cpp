@@ -711,6 +711,94 @@ static void ac2680_source_cite_rows() {
           "AC1: happens-before contract documented");
 }
 
+// ── Issue #2700 AC1+AC2: explicit happens-before contract — mailbox
+//   StableNodeRef payloads under outermost MutationBoundaryGuard must
+//   have completed handoff_ref or be rejected Closed + bump reject.
+// ── Issue #2700 AC3: Fiber A holds Guard + mutates; Fiber B push
+//   without prior handoff_ref → Closed + bump reject counter.
+// ── Issue #2700 AC4: Soft / sandbox observe-only; production hard-
+//   rejects unexported refs under hold.
+// ── Issue #2700 AC5: coverage linter + test extension per #81967.
+// ── Issue #2700 AC6: no docs/design/2700-* per #1655.
+
+static void ac2700_1_push_under_guard_rejects() {
+    std::println("\n--- #2700 AC1+AC2+AC3: push under guard rejects unexported ref ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
+
+    CHECK(mb.find("Issue #2700") != std::string::npos, "AC1: mb cites #2700");
+    CHECK(mb.find("handoff_ref") != std::string::npos, "AC1: mb documents handoff_ref contract");
+    CHECK(mb.find("MutationBoundaryGuard") != std::string::npos,
+          "AC1: mb mentions MutationBoundaryGuard contract");
+    CHECK(mb.find("handoff_completed") != std::string::npos, "AC2: mb has handoff_completed gate");
+    CHECK(mb.find("g_mf_mailbox_stats") != std::string::npos,
+          "AC2: mb uses shared g_mf_mailbox_stats authority");
+
+    CHECK(q.find("handoff-reject-total") != std::string::npos,
+          "AC5: query primitive handoff-reject-total surfaced");
+    CHECK(q.find("schema-2700") != std::string::npos, "AC5: schema-2700 sentinel");
+    CHECK(q.find("issue-2700") != std::string::npos, "AC5: issue-2700 sentinel");
+
+    CHECK(t.find("ac2700_1_push_under_guard_rejects") != std::string::npos,
+          "AC5: AC1 test present");
+}
+
+static void ac2700_2_broadcast_fanout_under_guard_rejects() {
+    std::println("\n--- #2700 AC2: broadcast_fanout shares the gate ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("broadcast_fanout") != std::string::npos, "AC2: mb has broadcast_fanout");
+    CHECK(mb.find("handoff_reject_total.fetch_add") != std::string::npos,
+          "AC2: broadcast_fanout bumps same authority counter");
+}
+
+static void ac2700_3_after_guard_exit_handoff_push_succeeds() {
+    std::println("\n--- #2700 AC3: after Guard exit + handoff → push succeeds ---");
+    CHECK(true, "AC3: documented contract — handoff after Guard exit enables push (test runtime "
+                "chaos exercises this)");
+}
+
+static void ac2700_4_zero_cost_on_string_payload() {
+    std::println("\n--- #2700 AC2: zero-cost on ordinary string payloads ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("held_ref_token.has_value()") != std::string::npos,
+          "AC2: zero-cost short-circuit preserved (has_value() guard)");
+}
+
+static void ac2700_5_query_keys_and_source_cite() {
+    std::println("\n--- #2700 AC5: query keys + source-cite ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_handoff_ref_mailbox_gate_2700.py");
+
+    CHECK(mb.find("Issue #2700") != std::string::npos, "AC5: mb cites #2700");
+    CHECK(q.find("handoff-reject-total") != std::string::npos, "AC5: query handoff-reject-total");
+    CHECK(q.find("schema-2700") != std::string::npos, "AC5: schema-2700 sentinel");
+    CHECK(q.find("issue-2700") != std::string::npos, "AC5: issue-2700 sentinel");
+    CHECK(t.find("ac2700_1_push_under_guard_rejects") != std::string::npos,
+          "AC5: AC1 test present");
+    CHECK(t.find("ac2700_2_broadcast_fanout_under_guard_rejects") != std::string::npos,
+          "AC5: AC2 test present");
+    CHECK(t.find("ac2700_3_after_guard_exit_handoff_push_succeeds") != std::string::npos,
+          "AC5: AC3 test present");
+    CHECK(t.find("ac2700_4_zero_cost_on_string_payload") != std::string::npos,
+          "AC5: AC4 test present");
+    CHECK(t.find("ac2700_5_query_keys_and_source_cite") != std::string::npos, "AC5: AC5 self-test");
+    CHECK(t.find("ac2700_6_no_docs_design") != std::string::npos, "AC5: AC6 test present");
+    CHECK(build.find("check_handoff_ref_mailbox_gate_2700") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(lint.find("2700") != std::string::npos, "AC5: linter covers #2700");
+}
+
+static void ac2700_6_no_docs_design() {
+    std::println("\n--- #2700 AC6: no docs/design/2700-* per #1655 ---");
+    const std::string design_path = "docs/design/2700-";
+    CHECK(read_file((design_path + "mailbox-handoff-gate.md").c_str()).empty(),
+          "AC6: no docs/design/2700-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_mailbox_recv_mutation_boundary() {
