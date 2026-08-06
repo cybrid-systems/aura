@@ -1060,7 +1060,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_moving_compact.cpp` (—) [large, domain_suite, theme_core] — Issue #2342 (Refine #2166): sharded LifetimePin registry (Option 1
 - `tests/core/test_moving_densify_fail_closed.cpp` (—) [large, domain_suite, theme_core] — AC1: Untracked live pointer + Moving densify of its referent → contract
 - `tests/compiler/test_occurrence_cache_key.cpp` (—) [domain_suite, theme_compiler] — AC1: same shape + epoch → second visit is structural key hit
-- `tests/compiler/test_occurrence_goal_epoch_table.cpp` (—) [domain_suite, theme_compiler] — AC1: clear_blame_context does NOT wipe OccurrenceGoal table
+- `tests/compiler/test_occurrence_goal_epoch_table.cpp` (—) [large, domain_suite, theme_compiler] — AC1: clear_blame_context does NOT wipe OccurrenceGoal table
 - `tests/compiler/test_outermost_exit_order.cpp` (—) [domain_suite, theme_compiler] — Documented success exit order (AC5):
 - `tests/compiler/test_post_compact_lifecycle.cpp` (—) [domain_suite, theme_compiler] — AC1: Documented ordered lifecycle in post_compact_lifecycle.hh
 - `tests/compiler/test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp — Issue #740:
@@ -1241,7 +1241,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_param_annot_mutation_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-thread add_lambda with annotations coherent
 - `tests/core/test_param_data_mutation_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_lambda / set_lambda_params unchanged
 - `tests/compiler/test_partial_cone_cap.cpp` (—) [domain_suite, theme_compiler] — AC1: soft overflow metric + cap path source-cite (≤ soft or overflow)
-- `tests/compiler/test_partial_cone_commit_gate.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + truncated → allow commit; last_partial_cone_truncated true
+- `tests/compiler/test_partial_cone_commit_gate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Soft + truncated → allow commit; last_partial_cone_truncated true
 - `tests/compiler/test_partial_cs_single_source.cpp` (—) [domain_suite, theme_compiler] — AC1: N consecutive infer_flat_partial → import_total += N; solve sees roots
 - `tests/compiler/test_partial_recompile_single_evict.cpp` (—) [domain_suite, theme_compiler] — AC1: partial_recompile does not call invalidate(name)
 - `tests/core/test_pcv_exclusive_with_set.cpp` (—) [domain_suite, theme_core] — AC1: with_set exclusive → no alloc (same storage, with_set_exclusive metric)

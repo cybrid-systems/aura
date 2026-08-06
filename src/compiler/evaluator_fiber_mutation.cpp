@@ -1956,11 +1956,7 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
     // the same API as densify / Agent (single entry for Agents). AC3
     // zero-cost short-circuit when no roots were remapped; real per-root
     // span wires in follow-up.
-    {
-        aura::compiler::OwnershipEnv env{};
-        (void)aura::compiler::ownership_rebind_after_remap(env, {},
-                                                           aura::compiler::RemapReason::Steal);
-    }
+    (void)aura::compiler::ownership_rebind_after_remap({}, aura::compiler::RemapReason::Steal);
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
         m->linear_join_enforcement_total.fetch_add(1, std::memory_order_relaxed);

@@ -285,18 +285,17 @@ static void ac5_source_and_schema() {
 static void ac2695_1_densify_steal_rebind_route() {
     std::println("\n--- #2695 AC1+AC2: densify/steal route through unified rebind ---");
     clear_ownership_rebind_for_test();
-    // Stack-local default-constructed OwnershipEnv (real env access in
-    // first ship is unused — per-root walk wires in follow-up).
-    aura::compiler::OwnershipEnv env{};
     // Densify route: empty span → AC3 zero-cost short-circuit (returns true
     // without bumping counters). Verifies the densify wire-in call site
     // invokes the same API as steal / Agent.
+    // (OwnershipEnv not a parameter on first-ship surface — pure header
+    // cannot name the module type without GCC 16 ambiguity.)
     const bool dres =
-        aura::compiler::ownership_rebind_after_remap(env, {}, aura::compiler::RemapReason::Densify);
+        aura::compiler::ownership_rebind_after_remap({}, aura::compiler::RemapReason::Densify);
     CHECK(dres, "AC1: densify route → returns true (zero-cost when empty)");
     // Steal route: same surface, same short-circuit behavior.
     const bool sres =
-        aura::compiler::ownership_rebind_after_remap(env, {}, aura::compiler::RemapReason::Steal);
+        aura::compiler::ownership_rebind_after_remap({}, aura::compiler::RemapReason::Steal);
     CHECK(sres, "AC2: steal route → returns true (zero-cost when empty)");
     // Empty-span → counter flat (AC3 zero-cost short-circuit).
     CHECK(aura::compiler::ownership_rebind_total_v_read() == 0,
@@ -304,7 +303,7 @@ static void ac2695_1_densify_steal_rebind_route() {
     // Non-empty span → counter bumps (per-root count).
     std::vector<aura::ast::NodeId> roots(3);
     const bool nres = aura::compiler::ownership_rebind_after_remap(
-        env, std::span<const aura::ast::NodeId>(roots.data(), roots.size()),
+        std::span<const aura::compiler::OwnershipRebindNodeId>(roots.data(), roots.size()),
         aura::compiler::RemapReason::Densify);
     CHECK(nres, "AC1: densify + non-empty → returns true");
     CHECK(aura::compiler::ownership_rebind_total_v_read() >= 3,
@@ -318,12 +317,10 @@ static void ac2695_1_densify_steal_rebind_route() {
 static void ac2695_2_zero_cost_short_circuit() {
     std::println("\n--- #2693 AC3: empty span → zero cost ---");
     clear_ownership_rebind_for_test();
-    aura::compiler::OwnershipEnv env{};
     const auto total0 = aura::compiler::ownership_rebind_total_v_read();
-    (void)aura::compiler::ownership_rebind_after_remap(env, {},
-                                                       aura::compiler::RemapReason::Densify);
-    (void)aura::compiler::ownership_rebind_after_remap(env, {}, aura::compiler::RemapReason::Steal);
-    (void)aura::compiler::ownership_rebind_after_remap(env, {},
+    (void)aura::compiler::ownership_rebind_after_remap({}, aura::compiler::RemapReason::Densify);
+    (void)aura::compiler::ownership_rebind_after_remap({}, aura::compiler::RemapReason::Steal);
+    (void)aura::compiler::ownership_rebind_after_remap({},
                                                        aura::compiler::RemapReason::ExplicitAgent);
     CHECK(aura::compiler::ownership_rebind_total_v_read() == total0,
           "AC3: 3 empty-span calls → counter flat (zero-cost)");
@@ -333,10 +330,9 @@ static void ac2695_2_zero_cost_short_circuit() {
 static void ac2695_3_agent_route_callable() {
     std::println("\n--- #2695 AC4: explicit Agent rebind route callable ---");
     clear_ownership_rebind_for_test();
-    aura::compiler::OwnershipEnv env{};
     std::vector<aura::ast::NodeId> roots(2);
     const bool ares = aura::compiler::ownership_rebind_after_remap(
-        env, std::span<const aura::ast::NodeId>(roots.data(), roots.size()),
+        std::span<const aura::compiler::OwnershipRebindNodeId>(roots.data(), roots.size()),
         aura::compiler::RemapReason::ExplicitAgent);
     CHECK(ares, "AC4: explicit Agent route → returns true");
     CHECK(aura::compiler::ownership_rebind_explicit_agent_total_v_read() >= 2,
