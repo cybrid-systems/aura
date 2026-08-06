@@ -1677,7 +1677,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_cross_cow_soft_migrate.cpp` (—) [domain_suite, theme_compiler] — AC1: soft migrate enabled by default; stale within drift → restamp + continue
 - `tests/compiler/test_dead_coercion_elim.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2066 — DeadCoercionElimination IR-layer CastOp elision test.
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_dead_coercion_elision_narrow_batch.cpp — dead_coercion_elision_narrow pair
-- `tests/compiler/test_dead_coercion_layered.cpp` (—) [domain_suite, theme_compiler] — test_dead_coercion_layered.cpp
+- `tests/compiler/test_dead_coercion_layered.cpp` (—) [large, domain_suite, theme_compiler] — test_dead_coercion_layered.cpp
 - `tests/compiler/test_defuse_version_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #189/#417/#419/#456 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_delta_truncate_goal_priority.cpp` (—) [domain_suite, theme_compiler] — AC1: Truncate + non-empty occurrence_goals → goal-priority reverify
 - `tests/compiler/test_densify_envframe_ok.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → envframe_ok stays true (vacuous)

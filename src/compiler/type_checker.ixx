@@ -1838,12 +1838,6 @@ private:
     bool linear_synth_hard_fail_ = false;
     std::uint64_t linear_synth_violation_count_ = 0;
 
-    // Issue #2672 / #2621: test-only sticky cone-truncate stamp on the
-    // engine (force_partial_cone_truncate_for_test). Production
-    // infer_flat_partial stamps the long-lived TypeChecker twin.
-    bool last_partial_cone_truncated_ = false;
-    std::uint64_t last_partial_cone_dropped_ = 0;
-
     void check_flat_call(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                          aura::ast::NodeView v, aura::core::TypeId expected);
     void check_flat_lambda(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,

@@ -822,22 +822,6 @@ extern "C" __attribute__((weak)) void
 aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms) {
     g_epoch_invariant_periodic_period_ms_stub.store(ms, std::memory_order_relaxed);
 }
-// Issue #2668: event-driven walk counters (distinct from periodic).
-static std::atomic<std::uint64_t> g_epoch_invariant_event_walks_total_stub{0};
-static std::atomic<std::uint64_t> g_epoch_invariant_event_skipped_off_total_stub{0};
-static std::atomic<std::uint64_t> g_epoch_invariant_event_skipped_wrong_mode_total_stub{0};
-extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_event_walks_total_v_read(void) {
-    return g_epoch_invariant_event_walks_total_stub.load(std::memory_order_relaxed);
-}
-extern "C" __attribute__((weak)) std::uint64_t
-aura_epoch_invariant_event_skipped_off_total_v_read(void) {
-    return g_epoch_invariant_event_skipped_off_total_stub.load(std::memory_order_relaxed);
-}
-extern "C" __attribute__((weak)) std::uint64_t
-aura_epoch_invariant_event_skipped_wrong_mode_total_v_read(void) {
-    return g_epoch_invariant_event_skipped_wrong_mode_total_stub.load(std::memory_order_relaxed);
-}
-extern "C" __attribute__((weak)) void aura_event_driven_epoch_invariant_walk_if_due(void) {}
 extern "C" __attribute__((weak)) void aura_periodic_epoch_invariant_walk_if_due(void) {
     // No-op in light bundles (no AOT table, no JIT). Counters stay zero.
 }

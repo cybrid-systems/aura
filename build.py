@@ -485,6 +485,19 @@ def cmd_lint():
             "dead-coercion layered evidence chain (#2645) coverage linter failed — run python3 scripts/coverage/checks/check_dead_coercion_layered_evidence_2645.py"
         )
         return r
+    # Issue #2674: layered dead-coercion evidence-coherence production gate
+    # (refine #2645 — adds production-path consistency check + Agent-visible
+    # query surface; Soft/Sampled observe-only diverge counter).
+    lec_script = COVERAGE_CHECKS / "check_layered_evidence_coherence_2674.py"
+    if not lec_script.exists():
+        fail(f"missing {lec_script}")
+        return 1
+    r = run([sys.executable, str(lec_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "layered evidence coherence (#2674) coverage linter failed — run python3 scripts/coverage/checks/check_layered_evidence_coherence_2674.py"
+        )
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +
