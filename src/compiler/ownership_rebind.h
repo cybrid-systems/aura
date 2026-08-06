@@ -86,8 +86,13 @@ bool ownership_rebind_after_remap(class OwnershipEnv& env,
 [[nodiscard]] inline bool ownership_rebind_after_remap_c(class OwnershipEnv& env,
                                                          const aura::ast::NodeId* roots,
                                                          std::size_t n, RemapReason why) noexcept {
-    return ownership_rebind_after_remap(
-        env, std::span<const aura::ast::NodeId>(roots, static_cast<std::size_t>(n)), why);
+    // Issue: C++20 std::span template deduction failed when called with
+    // `(roots, static_cast<std::size_t>(n))` — the compiler treated
+    // `roots` as a reference (`const NodeId*&`) and couldn't match the
+    // span constructor. Use a local const pointer to force pass-by-value.
+    const auto* const rp = roots;
+    const auto sz = static_cast<std::ptrdiff_t>(n);
+    return ownership_rebind_after_remap(env, std::span<const aura::ast::NodeId>(rp, sz), why);
 }
 
 } // namespace aura::compiler
