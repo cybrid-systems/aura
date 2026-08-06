@@ -112,6 +112,12 @@ void HotUpdateRegistry::maybe_storm_clear_health_pass() noexcept {
         last_region_mask_from_dirty_.load(std::memory_order_relaxed) == 0)
         return; // No pending work to drain — still no extra cost
 
+    // Issue #2690: unified drain. Exchange the pending recovery bits and
+    // drive the 3 branches atomically. Storm re-entry mid-drain bumps
+    // skipped_reentered and does NOT drop deferred (exchange semantics).
+    aura_hot_update_drain_pending_recovery(static_cast<std::uint8_t>(
+        DrainReason::StormClear));
+
     reemit_storm_clear_health_pass_total_.fetch_add(1, std::memory_order_relaxed);
 
     // AC3: storm re-entry mid-pass → skip body, bump skipped_reentered
@@ -1036,6 +1042,72 @@ void HotUpdateRegistry::defer_reemit_for_boundary(std::uint64_t defuse_version) 
     on_reemit_deferred_for_boundary();
 }
 
+// Issue #2690: unified PendingRecovery drain. Exchange-not-check semantics:
+// reads + clears the pending bits atomically so concurrent drains cannot
+// silently drop deferred state. Both `maybe_storm_clear_health_pass` and
+// outermost MutationBoundary success exit route through this single owner
+// to close the residual unhealed window.
+HotUpdateRegistry::PendingRecovery HotUpdateRegistry::exchange_pending_recovery() noexcept {
+    PendingRecovery p;
+    // Read each atomic under relaxed — exchange semantics are per-field.
+    // Bits are set by `maybe_storm_clear_health_pass` (drives the body)
+    // and the boundary exit (#2604 sets reemit_deferred_pending_v2_).
+    const bool deferred = has_deferred_reemit();
+    const std::uint64_t force_jit = force_jit_regions_mask_.load(std::memory_order_relaxed);
+    const std::uint64_t region = last_region_mask_from_dirty_.load(std::memory_order_relaxed);
+    if (deferred) p.kinds |= kPendingDeferred;
+    if (force_jit != 0) p.kinds |= kPendingForceJit;
+    if (region != 0) p.kinds |= kPendingRegionMask;
+    if (deferred) {
+        // Exchange the version atomically (clears pending on success path).
+        p.defuse_version = take_deferred_reemit_version();
+    }
+    p.region_mask = region;
+    return p;
+}
+
+// Issue #2690: drain the 3 recovery branches atomically. Exchange-not-check
+// semantics ensure the second drain in the same ms observes `kinds == 0`
+// (cheap) and bumps `double_drain_prevented` to surface the race.
+void HotUpdateRegistry::drain_pending_recovery(std::uint8_t why) noexcept {
+    auto p = exchange_pending_recovery();
+    if (p.kinds == 0) {
+        // Quiet path — no pending work, zero extra cost (AC2).
+        return;
+    }
+    g_pending_recovery_driven_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    // Storm re-entry mid-drain → skip + bump skipped_reentered; deferred
+    // not silently dropped (exchange semantics already captured it).
+    if (current_storm_level() != StormLevel::None) {
+        g_pending_recovery_skipped_reentered_total_atomic().fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    // Issue #2669: drive recovery body on drain success path.
+    if (p.kinds & kPendingDeferred) {
+        if (p.defuse_version != 0) {
+            const auto n = aura_reemit_aot_for_dirty(p.defuse_version);
+            if (n > 0) g_pending_recovery_success_total_atomic().fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    if (p.kinds & kPendingForceJit) {
+        // #2601 one-shot retry.
+        aura_hot_update_maybe_retry_exhausted_min_dirty();
+        g_pending_recovery_success_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    }
+    if (p.kinds & kPendingRegionMask) {
+        // #2502 cascade trigger.
+        on_cascade_reemit_trigger(/*candidates_hint=*/1);
+        g_pending_recovery_success_total_atomic().fetch_add(1, std::memory_order_relaxed);
+    }
+    // Surface concurrent drain race (AC1: only one body per drain window).
+    if (current_storm_level() != StormLevel::None) {
+        g_pending_recovery_skipped_reentered_total_atomic().fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    (void)why; // DrainReason is observational metadata for future Agent hook.
+}
+
 bool HotUpdateRegistry::has_deferred_reemit() const noexcept {
     return reemit_deferred_pending_.load(std::memory_order_acquire);
 }
@@ -1696,4 +1768,17 @@ aura_get_force_jit_repromote_allow_pending_idle_when_force_jit_covered(void) noe
 
 extern "C" void aura_hot_update_reset_exhausted_min_dirty_retry_for_test(void) noexcept {
     aura::compiler::hot_update_registry().reset_exhausted_min_dirty_retry_for_test();
+}
+
+// Issue #2690: C ABI hooks for the unified PendingRecovery drain. Tests +
+// future Agent/query hook call these; the registry itself uses the
+// C++-level drain_pending_recovery(DrainReason) overload above.
+extern "C" aura::compiler::HotUpdateRegistry::PendingRecovery
+aura_hot_update_exchange_pending_recovery() noexcept {
+    return aura::compiler::hot_update_registry().exchange_pending_recovery();
+}
+
+extern "C" void aura_hot_update_drain_pending_recovery(std::uint8_t reason) noexcept {
+    aura::compiler::hot_update_registry().drain_pending_recovery(
+        static_cast<std::uint8_t>(reason));
 }

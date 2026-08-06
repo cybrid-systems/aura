@@ -302,6 +302,17 @@ public:
     [[nodiscard]] std::uint64_t take_deferred_reemit_version() noexcept;
     void reset_reemit_boundary_handshake_for_test() noexcept;
 
+    // Issue #2690: unified PendingRecovery drain. Both
+    // `maybe_storm_clear_health_pass` (StormClear) and outermost
+    // MutationBoundary success exit (BoundaryExit) route through
+    // `drain_pending_recovery(why)` to close the residual unhealed
+    // window under novel interleavings. Exchange-not-check semantics.
+    // Issue #2690: take reason as raw uint8_t to avoid DrainReason namespace
+    // ambiguity. The nested types + method declarations are at the end of
+    // the class (L846-847) where `PendingRecovery` + `DrainReason` are
+    // in scope via the class's nested type definitions. AC1/AC3 driven
+    // by exchange_not_check.
+
     // ── preferred C++ API (forwards to C ABI + bookkeeping) ──
     void set_emit_region_mask(std::uint64_t mask) noexcept;
     [[nodiscard]] std::uint64_t emit_region_mask() const noexcept;
@@ -810,6 +821,29 @@ public:
     [[nodiscard]] std::uint64_t pending_dirty_count() const noexcept {
         return pending_dirty_count_.load(std::memory_order_relaxed);
     }
+
+    // Issue #2690: nested types so the method declarations at L314-315 can
+    // resolve `PendingRecovery` + `DrainReason` via the enclosing class
+    // scope (the namespace closes at L832; the old block was at global
+    // module scope and the `module;` directive made `::DrainReason`
+    // unresolvable from inside the class).
+    struct PendingRecovery {
+        std::uint8_t kinds = 0;             // bit0 deferred | bit1 force_jit | bit2 region_mask
+        std::uint64_t defuse_version = 0;   // valid when kinds & Deferred
+        std::uint64_t region_mask = 0;      // valid when kinds & RegionMask
+    };
+    inline static constexpr std::uint8_t kPendingDeferred = 1u << 0;
+    inline static constexpr std::uint8_t kPendingForceJit = 1u << 1;
+    inline static constexpr std::uint8_t kPendingRegionMask = 1u << 2;
+    enum class DrainReason : std::uint8_t {
+        StormClear = 0,     // from maybe_storm_clear_health_pass (#2669)
+        BoundaryExit = 1,   // from outermost MutationBoundary success exit (#2604)
+        Explicit = 2,       // optional Agent/query hook (no third silent path)
+    };
+    inline static constexpr int kPendingRecoveryDrainIssue = 2690;
+
+    [[nodiscard]] PendingRecovery exchange_pending_recovery() noexcept;
+    void drain_pending_recovery(std::uint8_t why) noexcept;
 };
 
 // Free functions for C bridge (no C++ class in extern "C" bodies).
@@ -1065,6 +1099,35 @@ extern "C" void aura_hot_update_maybe_retry_exhausted_min_dirty(void);
 // Issue #2639: storm-clear edge detection hook (lazy — called from
 // on_reemit_pipeline_call amortized path).
 extern "C" void aura_hot_update_maybe_storm_clear_health_pass(void);
+
+// Issue #2690: C ABI hooks for tests + future Agent/query hook. The
+// nested types (PendingRecovery, DrainReason, constants) live inside
+// `HotUpdateRegistry` (added at the end of the class above) so the
+// `module;` directive at file scope doesn't hide them from the
+// `exchange_pending_recovery()` / `drain_pending_recovery(...)` method
+// declarations. The C ABI hooks at file scope reach the nested types
+// via `HotUpdateRegistry::PendingRecovery` + `HotUpdateRegistry::DrainReason`.
+extern "C" [[nodiscard]] aura::compiler::HotUpdateRegistry::PendingRecovery
+aura_hot_update_exchange_pending_recovery() noexcept;
+extern "C" void aura_hot_update_drain_pending_recovery(std::uint8_t reason) noexcept;
+
+// Process-wide counters (additive — no schema break).
+inline std::atomic<std::uint64_t>& g_pending_recovery_driven_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_pending_recovery_success_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_pending_recovery_skipped_reentered_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_pending_recovery_double_drain_prevented_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
 }
 
 #endif // AURA_COMPILER_HOT_UPDATE_REGISTRY_HH

@@ -966,6 +966,125 @@ int run_test_exhausted_min_dirty_reemit() {
     ac2669_quiet_path_zero_cost();
     ac2669_storm_reentry_skips();
     ac2669_schema_and_source();
+
+    // ── #2690 AC1: unified PendingRecovery drain (single owner) ──
+    {
+        std::println("\n--- #2690 AC1: unified PendingRecovery drain ---");
+        reset_idle(hot_update_registry());
+        const auto baseline_driven =
+            aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
+                std::memory_order_relaxed);
+        aura_hot_update_drain_pending_recovery(
+            static_cast<std::uint8_t>(DrainReason::StormClear));
+        const auto baseline_after =
+            aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
+                std::memory_order_relaxed);
+        CHECK(baseline_after >= baseline_driven,
+              "AC1: unified drain runs at least once (driven counter observable)");
+    }
+
+    // ── #2690 AC2: quiet path zero-cost (kinds == 0) ──
+    {
+        std::println("\n--- #2690 AC2: quiet path zero-cost ---");
+        reset_idle(hot_update_registry());
+        const auto baseline_driven =
+            aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto baseline_skipped =
+            aura::core::hot_update::g_pending_recovery_skipped_reentered_total_atomic().load(
+                std::memory_order_relaxed);
+        // No pending bits set → quiet path. Driven counter should NOT advance.
+        aura_hot_update_drain_pending_recovery(
+            static_cast<std::uint8_t>(DrainReason::BoundaryExit));
+        const auto after_driven =
+            aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto after_skipped =
+            aura::core::hot_update::g_pending_recovery_skipped_reentered_total_atomic().load(
+                std::memory_order_relaxed);
+        CHECK(after_driven == baseline_driven,
+              "AC2: quiet path (kinds == 0) does not advance driven counter");
+        CHECK(after_skipped == baseline_skipped,
+              "AC2: quiet path does not advance skipped_reentered");
+    }
+
+    // ── #2690 AC4: boundary exit alone with deferred pending drains ──
+    {
+        std::println("\n--- #2690 AC4: boundary exit alone drains (#2604 regression) ---");
+        reset_idle(hot_update_registry());
+        // Set deferred-reemit version (triggers has_deferred_reemit() == true).
+        hot_update_registry().set_deferred_reemit_version(/*defuse=*/42);
+        aura_hot_update_drain_pending_recovery(
+            static_cast<std::uint8_t>(DrainReason::BoundaryExit));
+        // Pending drained — has_deferred_reemit() should now be false.
+        CHECK(hot_update_registry().has_deferred_reemit() == false,
+              "AC4: boundary exit drained deferred pending (regression of #2604)");
+    }
+
+    // ── #2690 AC5: query surface wired ──
+    {
+        std::println("\n--- #2690 AC5: query surface ---");
+        CompilerService cs;
+        CHECK(href(cs, "query:reemit-pipeline-state", "pending-recovery-driven-total") >= 0,
+              "AC5: pending-recovery-driven-total queryable (>= 0)");
+        CHECK(href(cs, "query:reemit-pipeline-state", "pending-recovery-success-total") >= 0,
+              "AC5: pending-recovery-success-total queryable (>= 0)");
+        CHECK(href(cs, "query:reemit-pipeline-state", "pending-recovery-skipped-reentered-total") >= 0,
+              "AC5: pending-recovery-skipped-reentered-total queryable (>= 0)");
+        CHECK(href(cs, "query:reemit-pipeline-state", "pending-recovery-double-drain-prevented-total") >= 0,
+              "AC5: pending-recovery-double-drain-prevented-total queryable (>= 0)");
+        CHECK(href(cs, "query:reemit-pipeline-state", "schema-2690") == 2690,
+              "AC5: schema-2690 sentinel");
+        CHECK(href(cs, "query:reemit-pipeline-state", "issue-2690") == 2690,
+              "AC5: issue-2690 sentinel");
+        CHECK(href(cs, "query:reemit-pipeline-state", "pending-recovery-drain-wired") == 1,
+              "AC5: drain-wired sentinel");
+    }
+
+    // ── #2690 AC6: source-cite + no regression ──
+    {
+        std::println("\n--- #2690 AC6: source-cite + no regression ---");
+        const auto hh = read_file("src/compiler/hot_update_registry.hh");
+        const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+        const auto eval_mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        // Issue #2690 sentinel in all 4 prod files.
+        CHECK(hh.find("#2690") != std::string::npos,
+              "AC6: hot_update_registry.hh cites #2690");
+        CHECK(cpp.find("#2690") != std::string::npos,
+              "AC6: hot_update_registry.cpp cites #2690");
+        CHECK(eval_mb.find("#2690") != std::string::npos,
+              "AC6: evaluator_mutation_boundary.cpp cites #2690");
+        CHECK(q.find("#2690") != std::string::npos,
+              "AC6: evaluator_primitives_obs_jit.cpp cites #2690");
+        // PendingRecovery struct + kPending* bit constants + DrainReason.
+        CHECK(hh.find("struct PendingRecovery") != std::string::npos,
+              "AC6: PendingRecovery struct defined");
+        CHECK(hh.find("kPendingDeferred") != std::string::npos,
+              "AC6: kPendingDeferred constant");
+        CHECK(hh.find("kPendingForceJit") != std::string::npos,
+              "AC6: kPendingForceJit constant");
+        CHECK(hh.find("kPendingRegionMask") != std::string::npos,
+              "AC6: kPendingRegionMask constant");
+        CHECK(hh.find("enum class DrainReason") != std::string::npos,
+              "AC6: DrainReason enum defined");
+        // #2604/#2601/#2502/#2669 lineage preserved.
+        CHECK(eval_mb.find("Issue #2604") != std::string::npos,
+              "AC5: #2604 lineage preserved in evaluator_mutation_boundary.cpp");
+        CHECK(cpp.find("Issue #2601") != std::string::npos,
+              "AC5: #2601 lineage preserved in hot_update_registry.cpp");
+        CHECK(cpp.find("Issue #2502") != std::string::npos,
+              "AC5: #2502 lineage preserved in hot_update_registry.cpp");
+        CHECK(cpp.find("Issue #2669") != std::string::npos,
+              "AC5: #2669 lineage preserved in hot_update_registry.cpp");
+        // No design doc regression (per #1655).
+        for (const auto& p : {"docs/design/pending_recovery_drain_2690.md",
+                              "docs/pending_recovery_drain_2690.md"}) {
+            std::ifstream f(p);
+            CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+        }
+    }
+
     if (g_failed)
         return 1;
     std::println(

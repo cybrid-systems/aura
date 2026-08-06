@@ -975,6 +975,29 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2688", make_int(2688)},
                 {"issue-2688", make_int(2688)},
                 {"capability-production-default-armed", make_int(1)},
+                // Issue #2690: unified PendingRecovery drain. Both
+                // maybe_storm_clear_health_pass (StormClear) and
+                // outermost MutationBoundary success exit (BoundaryExit)
+                // route through the same single-owner drain.
+                {"pending-recovery-driven-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"pending-recovery-success-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::hot_update::g_pending_recovery_success_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"pending-recovery-skipped-reentered-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::hot_update::g_pending_recovery_skipped_reentered_total_atomic().load(
+                             std::memory_order_relaxed)))},
+                {"pending-recovery-double-drain-prevented-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::hot_update::g_pending_recovery_double_drain_prevented_total_atomic().load(
+                             std::memory_order_relaxed)))},
+                {"schema-2690", make_int(2690)},
+                {"issue-2690", make_int(2690)},
+                {"pending-recovery-drain-wired", make_int(1)},
                 // Issue #2181: partial-entry desync hard gate
                 {"soa_dirty_desync_detected_total",
                  make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},
