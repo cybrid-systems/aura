@@ -80,6 +80,20 @@ import aura.compiler.evaluator;
 import aura.compiler.value;
 
 namespace {
+// Source-cite AC helpers (#2338 / #2710).
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+} // namespace
+
+namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;

@@ -70,41 +70,6 @@ module;
 #include "compiler/shape_profiler.h"         // Issue #2255: current_global_shape_version
 #include "orch/security_schedule_gate.h"     // Issue #2630: evaluate_security_schedule admit
 
-// Issue #2724: region/subtree-scoped MutationBoundary concurrent admit
-// counters (file-scope atomics, additive — all #2701/#2720/#2587/#2630
-// counters preserved). Distinct from the in-CompilerMetrics
-// workspace_region_fallback_global_total (#2121) which tracks the
-// fallback path; #2724 tracks the concurrent admit / overlap reject
-// outcomes under the disjoint-region check.
-inline std::atomic<std::uint64_t> g_mutation_region_concurrent_admit_total{0};
-inline std::atomic<std::uint64_t> g_mutation_region_overlap_reject_total{0};
-inline std::atomic<std::uint32_t> g_mutation_region_concurrent_wired{1};
-inline constexpr int kMutationRegionConcurrentIssue = 2724;
-
-[[nodiscard]] inline std::uint64_t mutation_region_concurrent_admit_total_v_read() noexcept {
-    return g_mutation_region_concurrent_admit_total.load(std::memory_order_relaxed);
-}
-[[nodiscard]] inline std::uint64_t mutation_region_overlap_reject_total_v_read() noexcept {
-    return g_mutation_region_overlap_reject_total.load(std::memory_order_relaxed);
-}
-[[nodiscard]] inline std::uint32_t mutation_region_concurrent_wired_v_read() noexcept {
-    return g_mutation_region_concurrent_wired.load(std::memory_order_relaxed);
-}
-
-// Issue #2724: simple disjointness check for #2724 first ship. Two regions
-// with distinct region_keys are considered disjoint (they target distinct
-// subtrees by construction — region_key is allocated per-subtree). The
-// future PR can wire a stronger cone-based check (parent-chain + dirty
-// mask) when densify_exposes a remapped root set accessor (issue body
-// hint: "Prefer reusing existing region / ImpactScope / dirty bit
-// machinery already used by partial cone and densify so the disjoint
-// check is a mask AND, not a tree walk on the hot path"). For #2724
-// first ship, region_key-equality is sufficient (already provides true
-// disjointness for non-overlapping subtrees).
-[[nodiscard]] inline bool regions_disjoint(std::uint64_t a, std::uint64_t b) noexcept {
-    return a != 0 && b != 0 && a != b;
-}
-
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -129,6 +94,9 @@ import aura.compiler.root_remap_pass;     // Issue #2341: last_root_remap_any_fa
 import aura.compiler.ir_soa;              // Issue #2432: current_ir_soa_generation_fence
 import aura.compiler.type_checker;        // Issue #2608: maybe_persist_occurrence_snapshot
 import aura.compiler.optimization_passes; // Issue #2674: layered evidence-coherence
+
+// Issue #2724 counters + regions_disjoint live in mutation_hold_budget.h
+// (shared with query:mutation-boundary-hold-stats).
 
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
 
@@ -3233,12 +3201,10 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
         static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
     cp.valid = true;
     bump_hygiene_checkpoint_save_total();
-    // Issue #2717: stamp TypeLinearCommitProof on boundary exit
-    // (covers render-fast-exit success, composite ok/reject,
-    // non-composite ok/reject — all paths that fall through
-    // to here). The linear-synth-hard-fail early-return above
-    // has its own stamp.
-    (void)typed_audit::build_type_linear_commit_proof_from_live(cp.version);
+    // Issue #2717: stamp TypeLinearCommitProof on hygiene save (Agent-
+    // visible dual-epoch proof). Use saved_defuse_version (HygieneCheckpoint
+    // has no .version field — that is MutationCheckpoint).
+    (void)typed_audit::build_type_linear_commit_proof_from_live(cp.saved_defuse_version);
     return cp;
 }
 

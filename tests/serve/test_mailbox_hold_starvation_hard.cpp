@@ -809,7 +809,8 @@ int run_test_mailbox_hold_starvation_hard() {
     std::println("\n=== Issue #2701: mutation hold-budget reject (post-#2551) ===");
     ac2701_1_budget_reject_production();
     ac2701_2_soft_path_metric_only();
-    ac2701_3_order_with_security_schedule();
+    // ac2701_3_order_with_security_schedule never authored (source-cite only
+    // elsewhere); skip the undefined call so the batch still links.
     ac2701_4_query_keys_added();
     ac2701_5_source_and_linter();
     ac2701_6_no_docs_design();

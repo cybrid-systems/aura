@@ -248,9 +248,10 @@ static void ac5_source_and_gate() {
 // behavior stays single-workspace.
 
 // Synthetic eval owner pointers (distinct process-equivalent addresses).
-static constexpr void* k2670EvalA = reinterpret_cast<void*>(0x1000ULL);
-static constexpr void* k2670EvalB = reinterpret_cast<void*>(0x2000ULL);
-static constexpr void* k2670EvalC = reinterpret_cast<void*>(0x3000ULL);
+// Not constexpr: integer→pointer reinterpret_cast is not a constant expression.
+static void* k2670EvalA = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1000ULL));
+static void* k2670EvalB = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2000ULL));
+static void* k2670EvalC = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x3000ULL));
 
 static void ac2670_distinct_sids_per_eval() {
     std::println("\n--- #2670 AC1: two evals, same Define name → distinct stable_func_ids ---");

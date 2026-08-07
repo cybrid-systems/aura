@@ -587,6 +587,17 @@ namespace _2719_detail {
 
 using aura::compiler::CompilerService;
 
+static std::string read_file(const char* path) {
+    std::ifstream in(path);
+    if (!in) {
+        std::ifstream in2(std::string("../") + path);
+        if (!in2)
+            return {};
+        return std::string((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
+    }
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
 // AC1: Production/Full + inject diverge → (a) force-Full arm fires
 // (default); (b) env arm opt-in via AURA_LAYERED_COERCION_DIVERGE_HARD=1.
 // Default production is force-Full only (no silent reject unless env).

@@ -970,14 +970,17 @@ int run_test_exhausted_min_dirty_reemit() {
     // ── #2690 AC1: unified PendingRecovery drain (single owner) ──
     {
         std::println("\n--- #2690 AC1: unified PendingRecovery drain ---");
+        using aura::compiler::hot_update_registry;
+        using DrainReason = aura::compiler::HotUpdateRegistry::DrainReason;
+        // Counters are file-scope free functions in hot_update_registry.hh
+        // (outside namespace aura::compiler — reachable as ::g_*).
+        auto reset_idle = [](auto& reg) { (void)reg.exchange_pending_recovery(); };
         reset_idle(hot_update_registry());
         const auto baseline_driven =
-            aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
-                std::memory_order_relaxed);
+            ::g_pending_recovery_driven_total_atomic().load(std::memory_order_relaxed);
         aura_hot_update_drain_pending_recovery(static_cast<std::uint8_t>(DrainReason::StormClear));
         const auto baseline_after =
-            aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
-                std::memory_order_relaxed);
+            ::g_pending_recovery_driven_total_atomic().load(std::memory_order_relaxed);
         CHECK(baseline_after >= baseline_driven,
               "AC1: unified drain runs at least once (driven counter observable)");
     }
@@ -985,22 +988,21 @@ int run_test_exhausted_min_dirty_reemit() {
     // ── #2690 AC2: quiet path zero-cost (kinds == 0) ──
     {
         std::println("\n--- #2690 AC2: quiet path zero-cost ---");
+        using aura::compiler::hot_update_registry;
+        using DrainReason = aura::compiler::HotUpdateRegistry::DrainReason;
+        auto reset_idle = [](auto& reg) { (void)reg.exchange_pending_recovery(); };
         reset_idle(hot_update_registry());
         const auto baseline_driven =
-            aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
-                std::memory_order_relaxed);
+            ::g_pending_recovery_driven_total_atomic().load(std::memory_order_relaxed);
         const auto baseline_skipped =
-            aura::core::hot_update::g_pending_recovery_skipped_reentered_total_atomic().load(
-                std::memory_order_relaxed);
+            ::g_pending_recovery_skipped_reentered_total_atomic().load(std::memory_order_relaxed);
         // No pending bits set → quiet path. Driven counter should NOT advance.
         aura_hot_update_drain_pending_recovery(
             static_cast<std::uint8_t>(DrainReason::BoundaryExit));
         const auto after_driven =
-            aura::core::hot_update::g_pending_recovery_driven_total_atomic().load(
-                std::memory_order_relaxed);
+            ::g_pending_recovery_driven_total_atomic().load(std::memory_order_relaxed);
         const auto after_skipped =
-            aura::core::hot_update::g_pending_recovery_skipped_reentered_total_atomic().load(
-                std::memory_order_relaxed);
+            ::g_pending_recovery_skipped_reentered_total_atomic().load(std::memory_order_relaxed);
         CHECK(after_driven == baseline_driven,
               "AC2: quiet path (kinds == 0) does not advance driven counter");
         CHECK(after_skipped == baseline_skipped,
@@ -1010,9 +1012,12 @@ int run_test_exhausted_min_dirty_reemit() {
     // ── #2690 AC4: boundary exit alone with deferred pending drains ──
     {
         std::println("\n--- #2690 AC4: boundary exit alone drains (#2604 regression) ---");
+        using aura::compiler::hot_update_registry;
+        using DrainReason = aura::compiler::HotUpdateRegistry::DrainReason;
+        auto reset_idle = [](auto& reg) { (void)reg.exchange_pending_recovery(); };
         reset_idle(hot_update_registry());
         // Set deferred-reemit version (triggers has_deferred_reemit() == true).
-        hot_update_registry().set_deferred_reemit_version(/*defuse=*/42);
+        hot_update_registry().defer_reemit_for_boundary(/*defuse_version=*/42);
         aura_hot_update_drain_pending_recovery(
             static_cast<std::uint8_t>(DrainReason::BoundaryExit));
         // Pending drained — has_deferred_reemit() should now be false.

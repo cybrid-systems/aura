@@ -60,8 +60,10 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
@@ -79,12 +81,26 @@ using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
 using aura::compiler::OccurrenceGoal;
+using aura::compiler::typed_audit::clear_occurrence_stability_epoch_for_test;
+using aura::compiler::typed_audit::occurrence_stability_epoch_v_read;
+using aura::compiler::typed_audit::occurrence_stability_fence;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::TypeId;
 using aura::core::TypeRegistry;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 
 // Build a fresh ConstraintSystem with a single CompilerMetrics we can
 // read directly (avoids the public/private gap on CompilerService's

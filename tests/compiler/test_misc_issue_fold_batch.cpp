@@ -35,16 +35,16 @@ extern int run_test_reset_slot_parent_edges();
 extern int run_test_restamp_sla_observability();
 extern int run_test_subtree_dirty_bounds();
 extern int run_test_transaction_guard();
-extern int run_test_ir_pod_phase4();
-extern int run_test_opcode_reflect();
-extern int run_test_reflect_isolation();
+// Reflect members (test_ir_pod_phase4 / test_opcode_reflect /
+// test_reflect_isolation) run as standalone -freflection binaries —
+// they cannot live in this CXX_MODULE_STD batch (P2996 + import std).
 
 int main() {
     using aura::test::g_failed;
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_misc_issue_fold_batch (30 members) ===");
+    std::println("=== test_misc_issue_fold_batch (27 members) ===");
 
     std::println("\n──── test_aether_denseness_residual ────");
     g_passed = 0;
@@ -341,39 +341,6 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_transaction_guard ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_ir_pod_phase4 ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_ir_pod_phase4() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_ir_pod_phase4 ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_ir_pod_phase4 ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_opcode_reflect ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_opcode_reflect() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_opcode_reflect ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_opcode_reflect ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_reflect_isolation ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_reflect_isolation() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_reflect_isolation ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_reflect_isolation ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
