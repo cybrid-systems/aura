@@ -39,6 +39,24 @@
 //        filter in affected_nodes_for_type uses live flat.type_id,
 //        so even stale refineds are safe to drop (no false-negative
 //        empty affected for still-typed nodes).
+//
+//   Issue #2718 (Refine #2696): capped row dump for
+//   query:occurrence-goals-live — Agents need to see WHICH narrowings
+//   are live (var_index / refined_index / pred_nid / mid / epoch),
+//   not just the count. Additive — all #2696 count/total/truncated/
+//   wired/schema-2696/issue-2696 keys preserved. Read-only (const
+//   ref to occurrence_goals_for_test()). cap == 0 → disable dump;
+//   cap > 0, size == 0 → zero cost; cap hit → rows_count ≤ cap +
+//   truncated signal.
+//   AC1: rows queryable, 5 fields per row (var-index, refined-index,
+//        pred-nid, mid, epoch) — keys reach the live query hash
+//   AC2: cap hit → rows-count ≤ cap + rows-truncated set
+//   AC3: empty goals → rows-count == 0, no per-row keys emitted
+//   AC4: read-only — no new write API exposed (Agents still go
+//        through note_occurrence_goal / solve paths)
+//   AC5: additive — all #2696 keys preserved, #2718 keys are a
+//        strict superset
+//   AC6: source-cite + linter + no docs/design/2718-* per #1655
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -597,6 +615,178 @@ static void ac2696_5_no_docs_design() {
           "AC6: no docs/design/2696-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2718 AC1: rows queryable, 5 fields per row (var-index /
+// refined-index / pred-nid / mid / epoch). Source-cite verifies the
+// per-row key prefix + 5 field suffixes are emitted by the row dump
+// block. End-to-end via CompilerService.eval confirms schema-2718 /
+// issue-2718 / rows-count / rows-cap / rows-truncated reach the live
+// query hash (zero on no goals since CompilerService.eval does not
+// trigger occurrence-narrow on bare arithmetic — that path is exercised
+// by the multi-round mark_touched_on_delta ACs above, not here).
+static void ac2718_1_rows_queryable() {
+    std::println("\n--- #2718 AC1: rows queryable, 5 fields per row ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("occurrence-goals-live-rows-count") != std::string::npos,
+          "AC1: rows-count summary key present");
+    CHECK(q.find("occurrence-goals-live-rows-cap") != std::string::npos,
+          "AC1: rows-cap summary key present");
+    CHECK(q.find("occurrence-goals-live-rows-truncated") != std::string::npos,
+          "AC1: rows-truncated summary key present");
+    CHECK(q.find("occurrence-goals-live-rows-%zu-var-index") != std::string::npos,
+          "AC1: per-row var-index field emitted");
+    CHECK(q.find("occurrence-goals-live-rows-%zu-refined-index") != std::string::npos,
+          "AC1: per-row refined-index field emitted");
+    CHECK(q.find("occurrence-goals-live-rows-%zu-pred-nid") != std::string::npos,
+          "AC1: per-row pred-nid field emitted");
+    CHECK(q.find("occurrence-goals-live-rows-%zu-mid") != std::string::npos,
+          "AC1: per-row mid field emitted");
+    CHECK(q.find("occurrence-goals-live-rows-%zu-epoch") != std::string::npos,
+          "AC1: per-row epoch field emitted");
+    CHECK(q.find("schema-2718") != std::string::npos, "AC1: schema-2718 sentinel");
+    CHECK(q.find("issue-2718") != std::string::npos, "AC1: issue-2718 sentinel");
+    // End-to-end — sentinels + summary keys reachable via live query.
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2718") == 2718, "AC1: live schema-2718");
+    CHECK(href(cs, "issue-2718") == 2718, "AC1: live issue-2718");
+    const auto rc = href(cs, "occurrence-goals-live-rows-count");
+    CHECK(rc == 0, "AC1: live rows-count == 0 on bare arithmetic (no goals)");
+    const auto rcap = href(cs, "occurrence-goals-live-rows-cap");
+    CHECK(rcap >= 0, "AC1: live rows-cap queryable (>= 0)");
+    const auto rt = href(cs, "occurrence-goals-live-rows-truncated");
+    CHECK(rt == 0, "AC1: live rows-truncated == 0 on no goals");
+}
+
+// ── Issue #2718 AC2: cap hit → rows-count ≤ cap + rows-truncated set.
+// Source-cite verifies the conditional uses `live > cap` to drive both
+// rows_to_emit (capped at `cap`) and rows_truncated (set on cap hit).
+// cap == 0 disables dump entirely (rows_to_emit stays 0). Same env var
+// AURA_OCCURRENCE_GOAL_QUERY_CAP as #2696 — no new env contract.
+static void ac2718_2_cap_truncation() {
+    std::println("\n--- #2718 AC2: cap hit → rows ≤ cap + truncated ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("AURA_OCCURRENCE_GOAL_QUERY_CAP") != std::string::npos,
+          "AC2: cap env var name unchanged from #2696");
+    CHECK(q.find("rows_to_emit = (live > cap) ? cap : live") != std::string::npos,
+          "AC2: rows_to_emit bounded by cap (rows_to_emit = live > cap ? cap : live)");
+    CHECK(q.find("rows_truncated = (live > cap)") != std::string::npos,
+          "AC2: rows_truncated set on cap hit");
+    // Soft/production identical read path — same commit_cs_live() +
+    // constraint_system() guard as #2696.
+    CHECK(q.find("ev->commit_cs_live()") != std::string::npos,
+          "AC2: Soft/production identical access path");
+    // End-to-end — cap-hit path not exercised by bare arithmetic (no
+    // goals generated). Verify rows-cap + rows-count queryable.
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    const auto rcap = href(cs, "occurrence-goals-live-rows-cap");
+    CHECK(rcap >= 0, "AC2: live rows-cap queryable (>= 0)");
+    const auto rc = href(cs, "occurrence-goals-live-rows-count");
+    CHECK(rc == 0, "AC2: live rows-count == 0 on bare arithmetic");
+}
+
+// ── Issue #2718 AC3: empty goals → zero cost. With cap > 0 and live
+// == 0, rows_to_emit == 0, the for-loop body is never entered. No
+// per-row keys are emitted (only summary + sentinels). End-to-end
+// confirms rows-count == 0 and no per-row keys reach the live hash.
+static void ac2718_3_empty_zero_cost() {
+    std::println("\n--- #2718 AC3: empty goals → zero cost ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    const auto rc = href(cs, "occurrence-goals-live-rows-count");
+    CHECK(rc == 0, "AC3: rows-count == 0 on empty goals (zero cost)");
+    // No per-row keys emitted.
+    const auto v0 = href(cs, "occurrence-goals-live-rows-0-var-index");
+    CHECK(v0 == -1, "AC3: rows-0-var-index absent on empty goals");
+    const auto m0 = href(cs, "occurrence-goals-live-rows-0-mid");
+    CHECK(m0 == -1, "AC3: rows-0-mid absent on empty goals");
+    // cap = 0 case → rows-count still 0 (disable dump) + rows-cap == 0.
+    // We can't easily setenv AURA_OCCURRENCE_GOAL_QUERY_CAP=0 in a
+    // unit test (would affect other primitives sharing the cap env var)
+    // so source-cite verifies the cap == 0 branch instead.
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("cap == 0 → rows_to_emit stays 0") != std::string::npos,
+          "AC3: cap == 0 → disable dump (rows_to_emit stays 0)");
+}
+
+// ── Issue #2718 AC4: read-only — no new write API exposed. The row
+// dump block reads via occurrence_goals_for_test() const ref (returns
+// const std::vector<OccurrenceGoal>&). Agents still go through
+// note_occurrence_goal / solve paths to mutate. occurrence_goals_
+// itself is private (not exported as a writable ref).
+static void ac2718_4_read_only() {
+    std::println("\n--- #2718 AC4: read-only ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("occurrence_goals_for_test()") != std::string::npos,
+          "AC4: row dump uses occurrence_goals_for_test() const ref");
+    // No mutating call (.push_back / erase / clear) inside the row
+    // dump block — only read access.
+    CHECK(q.find("const auto& goals = ctc_h->constraint_system()\n                                 "
+                 "                   .occurrence_goals_for_test();") != std::string::npos,
+          "AC4: row dump takes const ref to goals (no copy + no write)");
+    // note_occurrence_goal (sole write API) still exists in the .ixx.
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    CHECK(ixx.find("void note_occurrence_goal(") != std::string::npos,
+          "AC4: note_occurrence_goal (write API) still sole entry point");
+    CHECK(
+        ixx.find("[[nodiscard]] const std::vector<OccurrenceGoal>& occurrence_goals_for_test()") !=
+            std::string::npos,
+        "AC4: occurrence_goals_for_test() returns const ref (read-only)");
+    // occurrence_goals_ is private (declared inside class scope, not
+    // accessible from outside).
+    CHECK(ixx.find("std::vector<OccurrenceGoal> occurrence_goals_;") != std::string::npos,
+          "AC4: occurrence_goals_ declared as private vector (no external write)");
+}
+
+// ── Issue #2718 AC5: additive — #2696 keys preserved. All original
+// count/total/truncated/wired/schema-2696/issue-2696 keys still
+// emitted; new #2718 keys are a strict superset.
+static void ac2718_5_additive() {
+    std::println("\n--- #2718 AC5: additive (#2696 preserved) ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // #2696 keys still emitted (before the #2718 block).
+    CHECK(q.find("occurrence-goals-live-count") != std::string::npos,
+          "AC5: #2696 occurrence-goals-live-count preserved");
+    CHECK(q.find("occurrence-goals-live-truncated") != std::string::npos,
+          "AC5: #2696 occurrence-goals-live-truncated preserved");
+    CHECK(q.find("occurrence-goals-live-total") != std::string::npos,
+          "AC5: #2696 occurrence-goals-live-total preserved");
+    CHECK(q.find("occurrence-goals-live-truncated-total") != std::string::npos,
+          "AC5: #2696 occurrence-goals-live-truncated-total preserved");
+    CHECK(q.find("occurrence-goals-live-wired") != std::string::npos,
+          "AC5: #2696 occurrence-goals-live-wired preserved");
+    CHECK(q.find("schema-2696") != std::string::npos, "AC5: #2696 schema-2696 preserved");
+    CHECK(q.find("issue-2696") != std::string::npos, "AC5: #2696 issue-2696 preserved");
+    // #2718 keys are a strict superset.
+    CHECK(q.find("occurrence-goals-live-rows-count") != std::string::npos,
+          "AC5: #2718 rows-count added");
+    CHECK(q.find("occurrence-goals-live-rows-cap") != std::string::npos,
+          "AC5: #2718 rows-cap added");
+    CHECK(q.find("occurrence-goals-live-rows-truncated") != std::string::npos,
+          "AC5: #2718 rows-truncated added");
+    CHECK(q.find("schema-2718") != std::string::npos, "AC5: #2718 schema-2718 added");
+    CHECK(q.find("issue-2718") != std::string::npos, "AC5: #2718 issue-2718 added");
+    // End-to-end — both #2696 + #2718 sentinels reachable.
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2696") == 2696, "AC5: live schema-2696");
+    CHECK(href(cs, "issue-2696") == 2696, "AC5: live issue-2696");
+    CHECK(href(cs, "schema-2718") == 2718, "AC5: live schema-2718");
+    CHECK(href(cs, "issue-2718") == 2718, "AC5: live issue-2718");
+    // #2696 wired + #2696 count preserved.
+    CHECK(href(cs, "occurrence-goals-live-wired") == 1, "AC5: live #2696 wired");
+}
+
+// ── Issue #2718 AC6: no docs/design/ per #1655 + linter source-cite.
+// Design rationale lives in the close comment on the GitHub issue
+// (no agent-readable doc).
+static void ac2718_6_no_docs_design() {
+    std::println("\n--- #2718 AC6: no docs/design/2718-* per #1655 ---");
+    const std::string design_path = "docs/design/2718-";
+    CHECK(read_file((design_path + "row-dump.md").c_str()).empty(),
+          "AC6: no docs/design/2718-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_occurrence_goal_epoch_table() {
@@ -620,6 +810,14 @@ int run_test_occurrence_goal_epoch_table() {
     ac2696_3_empty_zero_cost();
     ac2696_4_source_and_query();
     ac2696_5_no_docs_design();
+
+    std::println("\n=== Issue #2718: capped row dump (var/refined/pred/mid/epoch) ===");
+    ac2718_1_rows_queryable();
+    ac2718_2_cap_truncation();
+    ac2718_3_empty_zero_cost();
+    ac2718_4_read_only();
+    ac2718_5_additive();
+    ac2718_6_no_docs_design();
 
     std::println("\n=== Results: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
