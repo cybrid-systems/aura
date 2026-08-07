@@ -31,6 +31,31 @@
 //              sentinels reachable via query:gc-defer-reason-stats.
 //   AC_2338_3: source-cite wire-up in security_defaults.hh
 //              (set_gc_defer_production_locked(!dev_off) call present).
+//
+//   Issue #2710 (Refine #2667): production-hard panic checkpoint policy
+//   on steal-complete (unify residual clear). Closes the residual
+//   half-open loop where a stolen fiber with a live PanicCheckpoint
+//   could enqueue Ready without clearing the previous Eval's GC arm.
+//   Production / AURA_PANIC_CONTRACT=hard now clears PanicCheckpoint
+//   on both hard_failed (#2667 — existing counter continues to bump)
+//   AND Ok paths (new counter — additive). Soft / dev_off / unset stays
+//   metric-only (no behavior change for Soft ergonomics). Aligns with
+//   #2598 densify panic defer audit.
+//
+//   AC2710_1: production + live PanicCheckpoint stolen successfully →
+//             cleared; panic_checkpoint_cleared_on_steal_total advances;
+//             panic_checkpoint_cleared_on_steal_ok_total advances
+//             (Ok-path counter, additive); residual GcDeferReason::Panic
+//             == 0 before enqueue Ready.
+//   AC2710_2: Soft / dev_off / unset → metric-only (clear optional;
+//             no hard cancel). AURA_PANIC_CONTRACT=hard forces hard face.
+//   AC2710_3: Steal RejectHard path never stamps resume ticket and never
+//             leaves orphan panic defer armed (#2699 / #2702 preserved).
+//   AC2710_4: align with #2598 densify audit — production lock + residual
+//             panic outliving cleared checkpoint → same hard face.
+//   AC2710_5: additive query keys only — preserve #2667 / #2546 / #2314 /
+//             #2203 surfaces + schema sentinels.
+//   AC2710_6: source-cite + coverage linter + no docs/design/.
 
 #include "test_harness.hpp"
 #include <fstream>
@@ -979,6 +1004,134 @@ static void ac2338_3_source_cite() {
     CHECK(gtxt.find("g_production_locked{0}") != std::string::npos,
           "AC_2338_3.6: g_production_locked atomic in gc_hooks.h");
 }
+// Issue #2710 AC1: production-hard panic clear on Ok path.
+static void ac2710_1_production_hard_clear_on_ok_path() {
+    std::println("\n--- #2710 AC1: production-hard panic clear on Ok path ---");
+    const auto lp = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    CHECK(lp.find("Issue #2710") != std::string::npos,
+          "AC1: evaluator_fiber_mutation.cpp cites #2710");
+    CHECK(gh.find("Issue #2710") != std::string::npos, "AC1: gc_hooks.h cites #2710");
+    CHECK(gh.find("g_panic_checkpoint_cleared_on_steal_ok_total") != std::string::npos,
+          "AC1: new Ok-path counter declared in gc_hooks.h");
+    CHECK(gh.find("g_panic_contract_hard_pref") != std::string::npos,
+          "AC1: panic_contract_hard_pref declared in gc_hooks.h");
+    // The .fetch_add() call splits across lines in the source — check
+    // both substrings independently since string match doesn't span newlines.
+    CHECK(lp.find("g_panic_checkpoint_cleared_on_steal_ok_total") != std::string::npos,
+          "AC1: Ok-path counter referenced on !hard_failed branch");
+    CHECK(lp.find(".fetch_add(1, std::memory_order_relaxed)") != std::string::npos,
+          "AC1: .fetch_add call present (Ok-path counter bumped)");
+    CHECK(lp.find("aura::gc_hooks::g_panic_checkpoint_cleared_on_steal_total.fetch_add") !=
+              std::string::npos,
+          "AC1: existing #2667 counter continues to bump (regression-safe)");
+    CHECK(lp.find("production_defaults_active()") != std::string::npos,
+          "AC1: production_defaults_active() gates the hard-face policy");
+}
+
+// Issue #2710 AC2: Soft / dev_off / unset stays metric-only.
+static void ac2710_2_soft_metric_only() {
+    std::println("\n--- #2710 AC2: Soft / dev_off / unset metric-only ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    const auto lp = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(gh.find("apply_panic_contract_env") != std::string::npos,
+          "AC2: apply_panic_contract_env declared in gc_hooks.h");
+    CHECK(gh.find("AURA_PANIC_CONTRACT") != std::string::npos,
+          "AC2: AURA_PANIC_CONTRACT env var wiring in gc_hooks.h");
+    CHECK(gh.find("\"hard\"") != std::string::npos || gh.find("\"off\"") != std::string::npos,
+          "AC2: env parser handles hard / off values");
+    CHECK(lp.find("panic_contract_hard_pref_v_read() == 1") != std::string::npos,
+          "AC2: production_hard predicate reads panic_contract_hard_pref");
+    CHECK(lp.find("Soft / dev_off / unset: no action") != std::string::npos,
+          "AC2: Soft path comment documents metric-only behavior");
+}
+
+// Issue #2710 AC3: RejectHard path never stamps resume ticket + no orphan panic defer.
+static void ac2710_3_reject_hard_no_orphan_panic_defer() {
+    std::println("\n--- #2710 AC3: RejectHard path no orphan panic defer ---");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    const auto sh = read_file("src/serve/steal_safety.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(ss.find("RejectHard") != std::string::npos, "AC3: RejectHard path present");
+    CHECK(ss.find("set_resume_safety_ticket") != std::string::npos,
+          "AC3: ticket stamp only on Ok path");
+    // StealSafetyDecision::RejectHard is referenced in steal_safety.cpp
+    // (return statements), not the header (which only declares the enum).
+    CHECK(ss.find("StealSafetyDecision::RejectHard") != std::string::npos,
+          "AC3: StealSafetyDecision enum value used in steal_safety.cpp");
+    // #2710 replaced `if (hard_failed && prev_eval_id != nullptr)` with
+    // `if (prev_eval_id != nullptr)` + `if (!hard_failed)` inside — both
+    // paths now clear under production / AURA_PANIC_CONTRACT.
+    CHECK(efm.find("if (!hard_failed)") != std::string::npos,
+          "AC3: !hard_failed branch now also clears panic under production (#2710)");
+}
+
+// Issue #2710 AC4: align with #2598 densify panic defer audit.
+static void ac2710_4_align_with_densify_audit_2598() {
+    std::println("\n--- #2710 AC4: align with #2598 densify panic defer audit ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("production_defaults_active()") != std::string::npos,
+          "AC4: production_defaults_active() gate mirrors #2598");
+    CHECK(efm.find("panic_contract_hard_pref_v_read() == 1") != std::string::npos,
+          "AC4: AURA_PANIC_CONTRACT=hard mirror of #2598");
+    CHECK(efm.find("production_hard") != std::string::npos,
+          "AC4: production_hard predicate defined");
+}
+
+// Issue #2710 AC5: additive query keys.
+static void ac2710_5_query_keys_added() {
+    std::println("\n--- #2710 AC5: additive query keys ---");
+    const auto ob = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(ob.find("panic-checkpoint-cleared-on-steal-ok-total") != std::string::npos,
+          "AC5: obs_jit exposes panic-checkpoint-cleared-on-steal-ok-total");
+    CHECK(ob.find("panic_checkpoint_cleared_on_steal_ok_total") != std::string::npos,
+          "AC5: obs_jit exposes camelCase ok_total");
+    CHECK(ob.find("panic-contract-hard-wired") != std::string::npos,
+          "AC5: obs_jit exposes panic-contract-hard-wired sentinel");
+    CHECK(ob.find("schema-2710") != std::string::npos, "AC5: schema-2710 sentinel");
+    CHECK(ob.find("issue-2710") != std::string::npos, "AC5: issue-2710 sentinel");
+    CHECK(ob.find("panic-checkpoint-cleared-on-steal-total") != std::string::npos,
+          "AC5: #2667 surface preserved");
+    CHECK(ob.find("schema-2667") != std::string::npos, "AC5: schema-2667 preserved");
+}
+
+// Issue #2710 AC6: source-cite + linter + no docs/design/.
+static void ac2710_6_source_and_linter() {
+    std::println("\n--- #2710 AC6: source-cite + linter + no docs/design/ ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto ob = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    const auto t = read_file("tests/serve/test_scheduler_gc_defer_pending_panic_steal.cpp");
+    const auto lint = read_file("scripts/check_panic_checkpoint_steal_hard_2710.py");
+    const auto build = read_file("build.py");
+
+    CHECK(gh.find("Issue #2710") != std::string::npos, "AC6: gc_hooks.h cites #2710");
+    CHECK(efm.find("Issue #2710") != std::string::npos,
+          "AC6: evaluator_fiber_mutation.cpp cites #2710");
+    CHECK(ob.find("Issue #2710") != std::string::npos,
+          "AC6: evaluator_primitives_obs_jit.cpp cites #2710");
+    CHECK(ss.find("#2710") != std::string::npos,
+          "AC6: steal_safety.cpp cites #2710 (extending step 4)");
+    CHECK(t.find("ac2710_1_production_hard_clear_on_ok_path") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2710_2_soft_metric_only") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2710_3_reject_hard_no_orphan_panic_defer") != std::string::npos,
+          "AC6: AC3 test present");
+    CHECK(t.find("ac2710_4_align_with_densify_audit_2598") != std::string::npos,
+          "AC6: AC4 test present");
+    CHECK(t.find("ac2710_5_query_keys_added") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2710_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2710") != std::string::npos,
+          "AC6: coverage linter present and cites #2710");
+    CHECK(build.find("check_panic_checkpoint_steal_hard_2710") != std::string::npos ||
+              build.find("cmd_panic_checkpoint_steal_hard_2710_coverage") != std::string::npos,
+          "AC6: build.py gate entry");
+    const std::string design_path = "docs/design/2710-";
+    CHECK(read_file((design_path + "panic-checkpoint-steal-hard.md").c_str()).empty(),
+          "AC6: no docs/design/2710-* per #1655");
+}
+
 int main() {
     std::println("=== test_scheduler_gc_defer_pending_panic_steal (#1581 + #2002) ===");
     ac1_collector_request_defers();
@@ -999,6 +1152,12 @@ int main() {
     ac2338_1_production_lock_roundtrip();
     ac2338_2_query_schema();
     ac2338_3_source_cite();
+    ac2710_1_production_hard_clear_on_ok_path();
+    ac2710_2_soft_metric_only();
+    ac2710_3_reject_hard_no_orphan_panic_defer();
+    ac2710_4_align_with_densify_audit_2598();
+    ac2710_5_query_keys_added();
+    ac2710_6_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

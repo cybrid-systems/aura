@@ -15,7 +15,10 @@
 //   3. Residual GcDefer hard-AND == 0 (after clear); non-zero → Cancel+Done
 //      — aura::gc_hooks::force_clear_residual_defer_for_evaluator
 //   4. Live PanicCheckpoint clear under production (#2667 semantics
-//      preserved) — aura_evaluator_on_steal_complete
+//      preserved on hard_failed; #2710 extends to Ok path under
+//      production / AURA_PANIC_CONTRACT=hard so a stolen fiber with a
+//      live PanicCheckpoint cannot enqueue Ready without clearing the
+//      previous Eval's GC arm) — aura_evaluator_on_steal_complete
 //   5. LayoutStamp dual-check / forced restamp — aura_evaluator_on_steal_complete
 //   6. Linear / StableNodeRef provenance probe — aura_evaluator_on_steal_complete
 //   7. Stamp resume_safety_ticket only on Ok path — fiber.cpp
