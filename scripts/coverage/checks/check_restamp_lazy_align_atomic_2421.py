@@ -37,22 +37,25 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
+    # FlatAST decomp step 3: restamp body (store paths) lives in ast_impl.cpp.
+    impl = _read("src/core/ast_impl.cpp")
+    restamp_src = ast + "\n" + impl
     test = _read("tests/core/test_restamp_lazy_align_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    must("Issue #2421", "AC1", ast)
+    must("Issue #2421", "AC1", restamp_src)
     must("mutable std::atomic<bool> restamp_lazy_align_enabled_{false}", "AC1", ast)
-    must_not("mutable bool restamp_lazy_align_enabled_{false}", "AC1", ast)
+    must_not("mutable bool restamp_lazy_align_enabled_{false}", "AC1", restamp_src)
     must("2421 AC1", "AC1", test)
 
-    must("restamp_lazy_align_enabled_.load(std::memory_order_acquire)", "AC2", ast)
-    must("restamp_lazy_align_enabled_.store(true, std::memory_order_release)", "AC2", ast)
-    must("restamp_lazy_align_enabled_.store(false, std::memory_order_release)", "AC2", ast)
+    must("restamp_lazy_align_enabled_.load(std::memory_order_acquire)", "AC2", restamp_src)
+    must("restamp_lazy_align_enabled_.store(true, std::memory_order_release)", "AC2", restamp_src)
+    must("restamp_lazy_align_enabled_.store(false, std::memory_order_release)", "AC2", restamp_src)
     must("2421 AC2", "AC2", test)
 
-    must_not("restamp_lazy_align_enabled_ = true", "AC3", ast)
-    must_not("restamp_lazy_align_enabled_ = false", "AC3", ast)
+    must_not("restamp_lazy_align_enabled_ = true", "AC3", restamp_src)
+    must_not("restamp_lazy_align_enabled_ = false", "AC3", restamp_src)
     must("2421 AC3", "AC3", test)
 
     must("2421 AC4", "AC4", test)
