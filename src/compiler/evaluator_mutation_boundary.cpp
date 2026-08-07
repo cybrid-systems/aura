@@ -1664,6 +1664,39 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #2726: cross-fiber hold-budget cancel poll (one-shot CAS).
+    // If the cross-fiber force-degrade path (aura_evaluator_force_
+    // degrade_outermost_holder) set this holder's pending_hold_budget_
+    // cancel_ flag during this Guard's lifetime, consume it now and
+    // flip *flag_=false so the outermost dtor runs the failure path —
+    // same effect as the same-fiber path's mark_outermost_mutation_failed
+    // (the existing #1897/#1818 exception auto-flip above uses the same
+    // shape).
+    //
+    // AC3 — only outermost Guards observe/clear the flag. Nested
+    // guards fall through to the nested depth_slot-- branch below;
+    // is_outermost_ is ctor-captured (#2120) so the guard is robust
+    // against mid-exit migration.
+    //
+    // AC2 — production gating: only consume under production/hard-env
+    // so Soft / sandbox=off callers (test ergonomics) keep existing
+    // behavior. The cross-fiber fire path is already gated by
+    // mutation_hold_budget_reject_enabled() inside
+    // aura_evaluator_force_degrade_outermost_holder; the defensive
+    // check here is for ABI calls from non-gated entry points.
+    //
+    // Happy path (flag unset): one relaxed atomic load on the holder's
+    // flag, CAS falls through, single relaxed atomic on the gate
+    // predicate. Zero cost on the common case.
+    if (is_outermost_ && aura::serve::g_current_fiber &&
+        aura::serve::g_current_fiber->consume_hold_budget_cancel() &&
+        mutation_hold_budget_reject_enabled()) {
+        if (flag_) {
+            *flag_ = false;
+        }
+        g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
     bool success = flag_ ? *flag_ : true;
     // Issue #2120: use ctor-captured is_outermost_ so depth_slot can
     // stay elevated until unlock (steal/GC must not see depth==0 mid

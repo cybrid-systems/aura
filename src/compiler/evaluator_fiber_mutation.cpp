@@ -39,6 +39,18 @@ bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64
 void aura_aot_record_deopt_on_steal();
 // Issue #1631: force JIT/active-closure walk on post-steal bridge_epoch drift.
 std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch);
+// Issue #2726: per-Fiber pending hold-budget cancel setter (cross-fiber
+// path of force-degrade). Defined in src/serve/fiber.cpp (strong def
+// always linked when fibers are used). Returns 1 when the holder was
+// found and the pending flag was set, 0 when the holder is gone
+// (registry miss → no-op). Soft / sandbox=off / production-not-active
+// gating is the caller's responsibility (mutation_hold_budget_
+// reject_enabled() inside aura_evaluator_force_degrade_outermost_holder
+// below — same gate as #2701/#2720/#2724 reject_enabled).
+extern int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noexcept;
+// Issue #2726: read-only diagnostic peek for tests + observability.
+// Returns 1 if the flag is currently set on the holder, 0 otherwise.
+extern int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept;
 }
 
 namespace aura::compiler {
@@ -1198,11 +1210,32 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
             ev->mark_outermost_mutation_failed();
         return;
     }
-    // Cross-fiber path: bump cross_fiber counter + leave follow-up note.
-    // Real cancel needs a per-fiber pending-cancel map (the target fiber
-    // polls its own flag at safepoints). g_current_fiber is thread_local
-    // and only names the admitter; the holder runs on a different worker.
+    // Cross-fiber path: bump cross_fiber counter + Issue #2726 close
+    // the residual — set the per-Fiber pending-cancel flag on the
+    // recorded holder via registry lookup. The holder observes the flag
+    // at outermost MutationBoundaryGuard Phase-5 exit (and at
+    // safepoints) and exits the Guard with failure, releasing the
+    // workspace_mtx_ exclusive + GcDeferReason::MutationHold.
+    //
+    // AC2: only set the flag when production/hard-env is active (Soft /
+    // sandbox=off → counter-only, no flag set). The caller (try_acquire
+    // / try_acquire_for_region in evaluator_mutation_boundary.cpp)
+    // already gates via mutation_hold_budget_reject_enabled() before
+    // calling this ABI; the defensive check below is for cases where
+    // the ABI is called from a different entry point.
+    //
+    // fired != consumed is observable under Fiber lifetime races:
+    // cross_fiber_cancel_fired_total advances when we successfully set
+    // the flag; cross_fiber_cancel_consumed_total advances when the
+    // holder actually exits the Guard. Divergence = holder gone or
+    // flag lost under crash (Agent health signal — see mutation_
+    // hold_budget.h for the additive counters).
     g_mutation_hold_budget_holder_degrade_cross_fiber_total.fetch_add(1, std::memory_order_relaxed);
+    if (mutation_hold_budget_reject_enabled() &&
+        aura_fiber_request_hold_budget_cancel(fiber_id) != 0) {
+        g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
 }
 
 // Issue #63723: clear all per-thread/process-wide Evaluator
