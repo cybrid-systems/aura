@@ -6406,6 +6406,64 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               g_occurrence_goals_live_wired.load(std::memory_order_relaxed)));
                 insert_kv("schema-2696", 2696);
                 insert_kv("issue-2696", 2696);
+                // Issue #2718: capped goal row dump (not count-only) — Agents
+                // need to see WHICH narrowings are live (var_index /
+                // refined_index / pred_nid / mid / epoch) for "protect
+                // narrowing X" self-evo policies. #2696 shipped count + cap
+                // + truncated counters only; full row dump wires in this
+                // follow-up. Additive: all #2696 keys preserved. Capped walk
+                // over occurrence_goals_for_test() const ref (production-safe
+                // read-only accessor — #2278 note; used by #5292 / #10429
+                // already in production). Empty → no allocation (cap > 0,
+                // size == 0 → rows_to_emit == 0, no loop body executed).
+                // cap == 0 → disable dump (rows-count == 0). Read-only: no
+                // new write API exposed (Agents still go through
+                // note_occurrence_goal / solve paths). TypeId.index is the
+                // natural opaque registry handle (uint32 zero-extended to
+                // int64); cheaper than type_hash() (no registry walk) and
+                // sufficient for Agents to join mid via mutation log.
+                // Production/Soft identical (same commit_cs_live() +
+                // constraint_system() access path as #2696).
+                {
+                    std::size_t rows_to_emit = 0;
+                    bool rows_truncated = false;
+                    if (cap > 0) {
+                        rows_to_emit = (live > cap) ? cap : live;
+                        rows_truncated = (live > cap);
+                    } // cap == 0 → rows_to_emit stays 0 (disable dump)
+                    insert_kv("occurrence-goals-live-rows-count",
+                              static_cast<std::int64_t>(rows_to_emit));
+                    insert_kv("occurrence-goals-live-rows-cap", static_cast<std::int64_t>(cap));
+                    insert_kv("occurrence-goals-live-rows-truncated", rows_truncated ? 1 : 0);
+                    if (rows_to_emit > 0 && ev && ev->commit_cs_live()) {
+                        if (auto* ctc_h = static_cast<aura::compiler::TypeChecker*>(
+                                ev->commit_type_checker_handle())) {
+                            const auto& goals =
+                                ctc_h->constraint_system().occurrence_goals_for_test();
+                            char kbuf[96];
+                            for (std::size_t i = 0; i < rows_to_emit; ++i) {
+                                const auto& g = goals[i];
+                                std::snprintf(kbuf, sizeof(kbuf),
+                                              "occurrence-goals-live-rows-%zu-var-index", i);
+                                insert_kv(kbuf, static_cast<std::int64_t>(g.var.index));
+                                std::snprintf(kbuf, sizeof(kbuf),
+                                              "occurrence-goals-live-rows-%zu-refined-index", i);
+                                insert_kv(kbuf, static_cast<std::int64_t>(g.refined.index));
+                                std::snprintf(kbuf, sizeof(kbuf),
+                                              "occurrence-goals-live-rows-%zu-pred-nid", i);
+                                insert_kv(kbuf, static_cast<std::int64_t>(g.predicate_cond_node));
+                                std::snprintf(kbuf, sizeof(kbuf),
+                                              "occurrence-goals-live-rows-%zu-mid", i);
+                                insert_kv(kbuf, static_cast<std::int64_t>(g.source_mutation_id));
+                                std::snprintf(kbuf, sizeof(kbuf),
+                                              "occurrence-goals-live-rows-%zu-epoch", i);
+                                insert_kv(kbuf, static_cast<std::int64_t>(g.epoch));
+                            }
+                        }
+                    }
+                    insert_kv("schema-2718", 2718);
+                    insert_kv("issue-2718", 2718);
+                }
                 // Issue #2697: TypeLinearCommitProof single facade. Additive
                 // on top of #2613 health. Builds proof on-the-fly from live
                 // state — no stamp required during composite_txn_commit for
