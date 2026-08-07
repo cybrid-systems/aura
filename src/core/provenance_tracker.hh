@@ -19,7 +19,8 @@
 
 #include <atomic>
 #include <cstdint>
-#include <cstdlib> // getenv — Issue #2404 AURA_STABLE_REF_EXPORT_HARD_REJECT
+#include <cstdlib>     // getenv — Issue #2404 AURA_STABLE_REF_EXPORT_HARD_REJECT
+#include <string_view> // Issue #2705 AURA_HARD_CAPTURE_TENANT env parse
 
 namespace aura::core::provenance {
 
@@ -222,9 +223,11 @@ inline void set_isolation_capture_tenant(std::uint64_t tid) noexcept {
 // counters below let Agent dashboards distinguish the paths:
 //   - local:        Evaluator::stamp_stable_ref (per-Evaluator, authority)
 //   - global_fallback: maybe_stamp_stable_ref_isolation_tenant used global
-//   - evaluator_miss:   maybe_stamp_stable_ref_isolation_tenant called but
-//                      caller was under an active Evaluator (should have used
-//                      Evaluator::stamp_stable_ref) — diagnostic, not fail
+//                      (Soft / single-tenant / harness only)
+//   - evaluator_miss:   Issue #2705 — maybe_stamp refused under hard-close
+//                      (production multi-tenant / Strict / AURA_HARD_CAPTURE_TENANT);
+//                      also diagnostic when a FlatAST factory should have used
+//                      Evaluator::stamp_stable_ref instead of the global path
 inline std::atomic<std::uint64_t>& g_isolation_capture_stamp_local_total_atomic() noexcept {
     static std::atomic<std::uint64_t> v{0};
     return v;
@@ -240,6 +243,32 @@ g_isolation_capture_stamp_evaluator_miss_total_atomic() noexcept {
     return v;
 }
 inline constexpr int kEvaluatorCaptureTenantIssue = 2687;
+// Issue #2705: production hard-close of FlatAST global capture fallback.
+// Armed by apply_production_security_defaults under multi-tenant / Strict
+// (or AURA_HARD_CAPTURE_TENANT=1). Soft / AURA_SANDBOX=off / tenant=0 stay
+// permissive (#2687 AC4 / #2705 AC2).
+inline constexpr int kHardCaptureTenantIssue = 2705;
+inline std::atomic<bool>& g_hard_capture_tenant_pref() noexcept {
+    static std::atomic<bool> v{false};
+    return v;
+}
+inline void set_hard_capture_tenant(bool on) noexcept {
+    g_hard_capture_tenant_pref().store(on, std::memory_order_release);
+}
+// Env AURA_HARD_CAPTURE_TENANT always wins when set:
+//   1|true|yes|on  → hard-close on
+//   0|false|off|no → hard-close off (canary / Soft override)
+// Unset → armed preference from production defaults.
+[[nodiscard]] inline bool hard_capture_tenant_active() noexcept {
+    if (const char* e = std::getenv("AURA_HARD_CAPTURE_TENANT"); e && *e) {
+        const std::string_view v(e);
+        if (v == "0" || v == "false" || v == "off" || v == "no")
+            return false;
+        if (v == "1" || v == "true" || v == "on" || v == "yes")
+            return true;
+    }
+    return g_hard_capture_tenant_pref().load(std::memory_order_acquire);
+}
 
 // Issue #2037: process-wide mutate hotpath hygiene restamp / fail counters
 // (mirrored into CompilerMetrics when available).
@@ -593,6 +622,12 @@ inline void stamp_stable_ref_fields(StableRefT& ref, std::uint64_t tenant_id,
 // stays unstamped for single-tenant and #2056 "capability-only" paths.
 // Shares stamp_stable_ref_fields with Evaluator::stamp_stable_ref /
 // pin_node_for_atomic_batch (defense-in-depth on the batch path).
+//
+// Issue #2705: under production multi-tenant / Strict / AURA_HARD_CAPTURE_TENANT
+// the global path is hard-closed — refuse stamp, leave tenant_id unchanged,
+// bump evaluator_miss. Soft / sandbox=off / tenant=0 stay zero-cost permissive
+// (#2687 AC4). Production multi-eval authority is Evaluator::stamp_stable_ref
+// (capability_tenant_id_ per Evaluator).
 template <typename StableRefT>
 inline bool maybe_stamp_stable_ref_isolation_tenant(StableRefT& ref,
                                                     std::uint32_t fiber_id = 0) noexcept {
@@ -603,6 +638,14 @@ inline bool maybe_stamp_stable_ref_isolation_tenant(StableRefT& ref,
     const auto tid = isolation_capture_tenant();
     if (tid == 0)
         return false;
+    // Issue #2705: production hard-close — no stamp from process-global under
+    // multi-tenant / Strict (prevents cross-tenant provenance pollution when
+    // FlatAST make_ref races a foreign g_isolation_capture_tenant).
+    if (hard_capture_tenant_active()) {
+        g_isolation_capture_stamp_evaluator_miss_total_atomic().fetch_add(
+            1, std::memory_order_relaxed);
+        return false;
+    }
     g_isolation_capture_stamp_global_fallback_total_atomic().fetch_add(1,
                                                                        std::memory_order_relaxed);
     stamp_stable_ref_fields(ref, tid, fiber_id);

@@ -4361,6 +4361,28 @@ def cmd_evaluator_capture_tenant_2687_coverage():
     return 0
 
 
+def cmd_hard_capture_tenant_2705_coverage():
+    """Issue #2705: production hard-close FlatAST global capture fallback.
+
+    Refines #2687 residual: under multi-tenant / Strict / AURA_HARD_CAPTURE_TENANT,
+    maybe_stamp_stable_ref_isolation_tenant refuses process-global stamp and
+    bumps evaluator_miss (global_fallback stays 0). Soft / tenant=0 / sandbox=off
+    stay permissive. Additive observability: isolation-capture-hard-close-armed
+    + schema-2705 / issue-2705 (#2687 keys preserved).
+    """
+    print(f"{B}=== hard capture tenant hard-close coverage (#2705) ==={N}")
+    script = COVERAGE_CHECKS / "check_hard_capture_tenant_2705.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hard capture tenant (#2705) coverage contract rows failed")
+        return 1
+    ok("hard capture tenant (#2705) coverage clean")
+    return 0
+
+
 def cmd_capability_production_default_2688_coverage():
     """Issue #2688: production-default hard_fiber_isolation + grant epoch retain window.
 
@@ -8548,6 +8570,7 @@ def cmd_gate():
         or cmd_moving_unified_success_2682_coverage()
         or cmd_shape_storm_isolation_2683_coverage()
         or cmd_evaluator_capture_tenant_2687_coverage()
+        or cmd_hard_capture_tenant_2705_coverage()
         or cmd_capability_production_default_2688_coverage()
         or cmd_closure_anon_captured_remount_2691_coverage()
         or cmd_aot_slot_owner_consistency_2692_coverage()
@@ -9554,6 +9577,7 @@ def main():
         "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
+        "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,
         "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
         "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,

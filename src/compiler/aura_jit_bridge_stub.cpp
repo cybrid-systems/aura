@@ -408,6 +408,12 @@ aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_count, std::uint
     if (fail_count)
         *fail_count = 0;
 }
+// Issue #2691: counter bumper used by aura_jit_runtime.cpp remount path.
+// Production impl is in aura_jit_bridge.cpp; light bundles need a weak
+// stub so --no-allow-shlib-undefined does not fail on libaura_jit_light.
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_sync_remount_anon_captured_totals(std::uint64_t /*ok*/,
+                                                         std::uint64_t /*fail*/) {}
 // Issue #2637: env opt-in flag weak stub (default 0 = off per AC1).
 extern "C" __attribute__((weak)) int aura_sync_remount_anon_enabled_default() {
     return 0;

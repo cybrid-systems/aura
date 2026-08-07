@@ -948,6 +948,14 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                          .load(std::memory_order_relaxed)))},
                 {"schema-2687", make_int(2687)},
                 {"issue-2687", make_int(2687)},
+                // Issue #2705: production hard-close of FlatAST global capture
+                // fallback (refine #2687 residual). Armed under multi-tenant /
+                // Strict / AURA_HARD_CAPTURE_TENANT; Soft stays permissive.
+                // evaluator-miss advances on every refused global stamp.
+                {"isolation-capture-hard-close-armed",
+                 make_int(aura::core::provenance::hard_capture_tenant_active() ? 1 : 0)},
+                {"schema-2705", make_int(2705)},
+                {"issue-2705", make_int(2705)},
                 // Issue #2688: production-default hard_fiber_isolation +
                 // grant epoch retain window. Wire query surface so Agent
                 // dashboards can verify apply_production_security_defaults

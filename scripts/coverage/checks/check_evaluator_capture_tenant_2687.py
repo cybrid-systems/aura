@@ -141,14 +141,27 @@ def main() -> int:
     must("issue-2687", "AC5", q)
     # Global-fallback counter must be bumped from
     # maybe_stamp_stable_ref_isolation_tenant (FlatAST fallback path).
-    m = re.search(
-        r"inline\s+bool\s+maybe_stamp_stable_ref_isolation_tenant\s*\([^)]*\)\s*(?:noexcept)?\s*\{(.+?)\n\s*\}",
-        prov,
-        re.MULTILINE | re.DOTALL,
-    )
-    if not m:
+    # Brace-count extract (nested if for #2705 hard-close defeats non-greedy).
+    fn_sig = "bool maybe_stamp_stable_ref_isolation_tenant"
+    fi = prov.find(fn_sig)
+    if fi < 0:
+        fi = prov.find("maybe_stamp_stable_ref_isolation_tenant")
+    body = ""
+    if fi >= 0:
+        brace = prov.find("{", fi)
+        if brace >= 0:
+            depth = 0
+            for j in range(brace, len(prov)):
+                if prov[j] == "{":
+                    depth += 1
+                elif prov[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        body = prov[brace + 1 : j]
+                        break
+    if not body:
         fails.append("AC5: maybe_stamp_stable_ref_isolation_tenant impl not found")
-    elif "g_isolation_capture_stamp_global_fallback_total_atomic" not in m.group(1):
+    elif "g_isolation_capture_stamp_global_fallback_total_atomic" not in body:
         fails.append(
             "AC5: maybe_stamp_stable_ref_isolation_tenant must bump "
             "g_isolation_capture_stamp_global_fallback_total_atomic"
