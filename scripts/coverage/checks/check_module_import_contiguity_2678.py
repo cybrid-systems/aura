@@ -6,10 +6,10 @@ Contract:
   AC1 evaluator_mutation_boundary.cpp has a clear ownership boundary
      marker at the top, listing critical-path sections. Prevents
      accidental truncation under partial edits.
-  AC2 Bulk restamp / invalidate (restamp_all_pins_for_arena /
-     invalidate_all_pins_for_arena / live_pin_count) live ONLY in
-     lifetime_pin.ixx. Header declares only; no dual free-function
-     definitions. Documented in lifetime_pin.hh.
+  AC2 LifetimePin SSOT is lifetime_pin.hh (header-only). The module
+     unit lifetime_pin.ixx only re-exports (resource_quota pattern) —
+     no second LifetimePin / bulk-restamp body. Documented dual-include
+     ban in lifetime_pin.hh (do not both #include and import).
   AC3 Module import block is the first thing after `module X;` and
      remains contiguous. A simple linter rejects non-contiguous imports.
   AC4 asan-build, ubsan-smoke, deployment-health, reproducible-build
@@ -115,34 +115,33 @@ def main() -> int:
     must("layout-stamp fence", "AC1", eval_b)
     must("DO NOT split this file", "AC1", eval_b)
 
-    # AC2: bulk restamp/invalidate ONLY in lifetime_pin.ixx.
-    # Header must NOT define these free functions (only the comment).
-    must("restamp_all_pins_for_arena", "AC2", lpin_ixx)
-    must("invalidate_all_pins_for_arena", "AC2", lpin_ixx)
-    # Header must document the rule.
-    must("Do NOT reintroduce header-form free functions", "AC2", lpin_hh)
+    # AC2: SSOT in lifetime_pin.hh; module unit re-exports only.
+    # Bulk restamp/invalidate bodies live in the header (single registry).
+    must("restamp_all_pins_for_arena", "AC2", lpin_hh)
+    must("invalidate_all_pins_for_arena", "AC2", lpin_hh)
+    must("pin_registry_shards", "AC2", lpin_hh)
+    # Module re-exports the same symbols (no second body).
+    must("using ::aura::core::lifetime::restamp_all_pins_for_arena", "AC2", lpin_ixx)
+    must("using ::aura::core::lifetime::invalidate_all_pins_for_arena", "AC2", lpin_ixx)
+    must('#include "core/lifetime_pin.hh"', "AC2", lpin_ixx)
+    # Dual-include ban documented for GCC module ambiguity.
     must("Module consumers: import aura.core.lifetime_pin", "AC2", lpin_hh)
+    must("Do NOT reintroduce a second LifetimePin", "AC2", lpin_hh)
 
-    # Reject inline definitions in the header. Use regex to match
-    # function definitions (not comments). Must be at line start (not
-    # preceded by `// `) and followed by `{` or `noexcept {`.
-    def is_definition_in_header(hay: str, name: str) -> bool:
-        # Match `inline std::size_t <name>(` or `std::size_t <name>(`
-        # followed by `)` and `{` or `noexcept {`. Reject if at line start
-        # (not inside a // comment).
-        pattern = rf"^[ \t]*(?:inline\s+)?std::size_t\s+{re.escape(name)}\s*\([^)]*\)\s*(?:noexcept)?\s*\{{"
-        return bool(re.search(pattern, hay, re.MULTILINE))
+    # Reject a second full LifetimePin class body in the module unit.
+    # (re-export using is fine; re-defining class LifetimePin { is not.)
+    def has_class_body(hay: str, name: str) -> bool:
+        pattern = rf"class\s+{re.escape(name)}\s*\{{"
+        return bool(re.search(pattern, hay))
 
-    if is_definition_in_header(lpin_hh, "restamp_all_pins_for_arena"):
+    if has_class_body(lpin_ixx, "LifetimePin"):
         fails.append(
-            "AC2: lifetime_pin.hh MUST NOT define restamp_all_pins_for_arena "
-            "as inline free function (dual-def bug — see #2678)"
+            "AC2: lifetime_pin.ixx MUST NOT redefine class LifetimePin (SSOT is lifetime_pin.hh — dual-def bug)"
         )
-    if is_definition_in_header(lpin_hh, "invalidate_all_pins_for_arena"):
-        fails.append(
-            "AC2: lifetime_pin.hh MUST NOT define invalidate_all_pins_for_arena "
-            "as inline free function (dual-def bug — see #2678)"
-        )
+    # Reject legacy process-wide registry residue in either surface.
+    for label, hay in (("hh", lpin_hh), ("ixx", lpin_ixx)):
+        if re.search(r"inline\s+std::vector<LifetimePin\*>&\s+pin_registry\s*\(\s*\)", hay):
+            fails.append(f"AC2: lifetime_pin.{label} must not restore legacy pin_registry()")
 
     # AC3: module import contiguity in evaluator_mutation_boundary.cpp.
     fails.extend(_check_import_contiguity("evaluator_mutation_boundary.cpp", eval_b))

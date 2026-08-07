@@ -3,7 +3,7 @@
 adopt gap (P0 lifetime safety).
 
 Contract (one row per AC):
-  AC1 src/core/lifetime_pin.ixx wire_general_object_create_pair bumps
+  AC1 src/core/lifetime_pin.hh wire_general_object_create_pair bumps
      g_general_object_pin_required_enforced_total when
      g_general_object_pin_required_pref.load() > 0 (production-default
      locked via #2597 step 15) AND either pin fails. Soft / dev_off /
@@ -11,7 +11,7 @@ Contract (one row per AC):
   AC2 src/compiler/evaluator_primitives_obs_eval.cpp exposes additive
      query keys: general-object-pin-required-enforced-total +
      general-object-pin-required-wired + schema-2665 + issue-2665.
-  AC3 lifetime_pin.ixx comment documents Soft / dev_off / unset
+  AC3 lifetime_pin.hh comment documents Soft / dev_off / unset
      zero-cost retention (gated on pref <= 0).
   AC4 tests/core/test_general_object_pin_coverage_gate.cpp extended
      with #2665 AC1-AC4 source-cite block (per #81967 — no new file).
@@ -46,7 +46,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    lp = _read("src/core/lifetime_pin.ixx")
+    lp = _read("src/core/lifetime_pin.hh")  # SSOT
     obs = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/core/test_general_object_pin_coverage_gate.cpp")
     build = _read("build.py")

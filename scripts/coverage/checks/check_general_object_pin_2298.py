@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-LP = ROOT / "src" / "core" / "lifetime_pin.ixx"
+LP = ROOT / "src" / "core" / "lifetime_pin.hh"  # SSOT
 Q = ROOT / "src" / "compiler" / "evaluator_primitives_obs_eval.cpp"
 M = ROOT / "src" / "compiler" / "evaluator_primitives_mutate.cpp"
 TEST = ROOT / "tests" / "core" / "test_general_object_pin.cpp"

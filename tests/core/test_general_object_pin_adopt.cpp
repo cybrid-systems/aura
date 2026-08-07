@@ -153,7 +153,7 @@ static void ac5_inventory_query() {
     std::println("\n--- AC5: inventory 7 sites + schema-2363 ---");
     CHECK(kGeneralObjectPinAdoptSiteCount == 7, "AC5: adopt site count == 7");
 
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
     const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");

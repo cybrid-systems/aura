@@ -3,7 +3,7 @@
 
 Contract:
   AC1 densify selective-invalidate uses sharded helper (not pin_registry())
-  AC2 pin_registry() / pin_registry_mtx() removed from lifetime_pin.ixx
+  AC2 pin_registry() / pin_registry_mtx() removed from lifetime_pin SSOT (.hh)
   AC3 invalidate_pins_not_in_new_addrs preserves non-remapped pin nulling
   AC4 unit test / gate wire cites #2374
 
@@ -38,7 +38,8 @@ def main() -> int:
             fails.append(f"{label}: forbidden residue {n!r}")
 
     arena = _read("src/core/arena.ixx")
-    pin = _read("src/core/lifetime_pin.ixx")
+    pin = _read("src/core/lifetime_pin.hh")  # SSOT
+    pin_mod = _read("src/core/lifetime_pin.ixx")
     test = _read("tests/core/test_moving_compact.cpp")
     bp = _read("build.py")
 
@@ -55,6 +56,8 @@ def main() -> int:
     must_not("inline std::mutex& pin_registry_mtx()", "AC2", pin)
     must("pin_registry_shards", "AC2", pin)
     must("Issue #2374", "AC2", pin)
+    must_not("inline std::vector<LifetimePin*>& pin_registry()", "AC2", pin_mod)
+    must_not("inline std::mutex& pin_registry_mtx()", "AC2", pin_mod)
 
     # AC3: sharded selective invalidate helper
     must("invalidate_pins_not_in_new_addrs", "AC3", pin)

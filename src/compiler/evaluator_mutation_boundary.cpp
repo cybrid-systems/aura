@@ -20,9 +20,10 @@
 //   5. restamp_all_pins_for_arena (call site)  (~L1848)
 //
 // DO NOT split this file unless adding an explicit ownership boundary marker
-// at the top of each new TU. DO NOT add bulk restamp/invalidate free functions
-// to lifetime_pin.hh — they live only in lifetime_pin.ixx (sharded registry,
-// #2342/#2375). See check_module_import_contiguity_2678.py for lint gate.
+// at the top of each new TU. LifetimePin SSOT is lifetime_pin.hh (sharded
+// registry, #2342/#2375); lifetime_pin.ixx only re-exports. Do not both
+// #include and import the pin API in this TU (GCC module ambiguity).
+// See check_module_import_contiguity_2678.py for lint gate.
 // ═══════════════════════════════════════════════════════════════════════════
 
 module;

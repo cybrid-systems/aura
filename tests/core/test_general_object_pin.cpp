@@ -95,13 +95,13 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 
 void ac5_inventory_and_surface() {
     std::println("\n--- AC5: inventory + query surface ---");
-    auto lp = read_file("src/core/lifetime_pin.ixx");
+    auto lp = read_file("src/core/lifetime_pin.hh");
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     // Issue #2626: render_primitives.cpp removed with TUI surface.
     CHECK(lp.find("Object class") != std::string::npos ||
               lp.find("object class") != std::string::npos ||
               lp.find("Object class × required protocol inventory") != std::string::npos,
-          "AC5: object-class inventory in lifetime_pin.ixx");
+          "AC5: object-class inventory in lifetime_pin.hh");
     CHECK(lp.find("pin_or_fail") != std::string::npos, "AC5: pin_or_fail helper");
     CHECK(lp.find("GeneralObjectPin") != std::string::npos, "AC5: GeneralObjectPin class");
     CHECK(lp.find("Intermediate general buffers") != std::string::npos ||

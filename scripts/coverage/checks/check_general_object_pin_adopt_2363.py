@@ -32,7 +32,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    lp = _read("src/core/lifetime_pin.ixx")
+    lp = _read("src/core/lifetime_pin.hh")  # SSOT
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     qw = _read("src/compiler/evaluator_primitives_query_workspace.cpp")

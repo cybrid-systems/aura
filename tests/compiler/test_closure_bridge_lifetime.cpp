@@ -509,11 +509,11 @@ static void ac15_boundary_restamp_uses_actual_gen() {
           "boundary_gen local variable present");
 
     // Source cite: validate() bumps gen_mismatch_total.
-    std::ifstream lpi("src/core/lifetime_pin.ixx");
+    std::ifstream lpi("src/core/lifetime_pin.hh");
     std::string lpi_contents((std::istreambuf_iterator<char>(lpi)),
                              std::istreambuf_iterator<char>());
     CHECK(lpi_contents.find("gen_mismatch_total") != std::string::npos,
-          "lifetime_pin.ixx exposes gen_mismatch_total");
+          "lifetime_pin.hh exposes gen_mismatch_total");
     CHECK(lpi_contents.find("++g_lifetime_pin_stats.gen_mismatch_total") != std::string::npos,
           "validate() bumps gen_mismatch_total on mismatch");
 }

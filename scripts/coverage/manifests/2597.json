@@ -17,7 +17,7 @@
     },
     {
       "ac": "AC17",
-      "path": "src/core/lifetime_pin.ixx",
+      "path": "src/core/lifetime_pin.hh",
       "contains": [
         "apply_general_object_pin_required_env",
         "g_general_object_pin_required_pref.store(0, std::memory_order_release)"
@@ -33,14 +33,14 @@
     },
     {
       "ac": "AC18",
-      "path": "src/core/lifetime_pin.ixx",
+      "path": "src/core/lifetime_pin.hh",
       "contains": [
         "g_general_object_pin_required_pref{-1}"
       ]
     },
     {
       "ac": "AC19",
-      "path": "src/core/lifetime_pin.ixx",
+      "path": "src/core/lifetime_pin.hh",
       "contains": [
         "apply_general_object_pin_required_env",
         "AURA_GENERAL_OBJECT_PIN",
@@ -49,7 +49,7 @@
     },
     {
       "ac": "AC20",
-      "path": "src/core/lifetime_pin.ixx",
+      "path": "src/core/lifetime_pin.hh",
       "contains": [
         "GENERAL_OBJECT_PIN_EXEMPT",
         "stable-handle",

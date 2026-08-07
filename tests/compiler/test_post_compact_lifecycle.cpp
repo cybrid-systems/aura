@@ -156,7 +156,7 @@ int run_test_post_compact_lifecycle() {
     {
         std::println("\n--- #2436 AC3: pin-or-remap hard-fail path ---");
         auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-        auto pin = read_file("src/core/lifetime_pin.ixx");
+        auto pin = read_file("src/core/lifetime_pin.hh");
         CHECK(mut.find("AURA_MOVING_PIN_CONTRACT") != std::string::npos, "AC3: hard env gate");
         CHECK(mut.find("note_lifecycle_pin_fail") != std::string::npos, "AC3: pin fail counter");
         CHECK(pin.find("verify_pins_under_moving_compact") != std::string::npos,

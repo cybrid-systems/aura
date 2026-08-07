@@ -49,7 +49,7 @@ def _must(cond: bool, msg: str, fails: list) -> None:
 def check() -> list:
     fails = []
 
-    pin = _read("src/core/lifetime_pin.ixx")
+    pin = _read("src/core/lifetime_pin.hh")  # SSOT
     arena = _read("src/core/arena.ixx")
     met = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
@@ -267,7 +267,7 @@ def check() -> list:
     )
     _must(
         "Issue #2342" in pin,
-        "AC_2342: lifetime_pin.ixx must cite Issue #2342",
+        "AC_2342: lifetime_pin.hh must cite Issue #2342",
         fails,
     )
     # Compact functions rewired to iterate shards (no longer use

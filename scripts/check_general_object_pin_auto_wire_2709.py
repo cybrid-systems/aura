@@ -148,7 +148,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    lp = _read("src/core/lifetime_pin.ixx")
+    lp = _read("src/core/lifetime_pin.hh")  # SSOT (module re-exports only)
     _read("CMakeLists.txt")
     build = _read("build.py")
     test = _read("tests/core/test_general_object_pin_coverage_gate.cpp")

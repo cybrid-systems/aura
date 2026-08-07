@@ -27,7 +27,7 @@
 //              (pin-registry-shard-count kebab+snake + max-pin-count
 //              + lock-wait-us-total + wired sentinel + schema/issue).
 //   AC_2342_5: source-cite sharded registry infrastructure across
-//              lifetime_pin.ixx (kPinRegistryShardCount +
+//              lifetime_pin.hh (kPinRegistryShardCount +
 //              pin_registry_shards + accessors + ctor/dtor/move/pin
 //              shard routing) + evaluator_primitives_obs_jit.cpp
 //              (query surface).
@@ -114,7 +114,7 @@ struct MovingFlagGuard {
 void ac2256_moving_compact_production_default() {
     std::println("\n--- AC #2256: Moving-compact production default ---");
     auto arena_h = read_file("src/core/arena.ixx");
-    auto pin_h = read_file("src/core/lifetime_pin.ixx");
+    auto pin_h = read_file("src/core/lifetime_pin.hh");
     auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     auto shape = read_file("src/compiler/shape_profiler.cpp");
     auto soa = read_file("src/compiler/ir_soa.ixx");
@@ -285,12 +285,12 @@ void ac2342_5_source_cite() {
                   std::format("AC_2342_5: {} contains {}", tag, needle).c_str());
         }
     };
-    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/core/lifetime_pin.ixx",
+    check(std::filesystem::path(AURA_SOURCE_DIR) / "src/core/lifetime_pin.hh",
           {"Issue #2342", "kPinRegistryShardCount", "PinRegistryShard", "pin_registry_shards",
            "pin_registry_shard_index", "pin_registry_lock_wait_us_total", "shard_index_",
            "Issue #2375"},
-          "lifetime_pin.ixx");
-    // Issue cite appears in lifetime_pin.ixx; fallback probe for the
+          "lifetime_pin.hh");
+    // Issue cite appears in lifetime_pin.hh; fallback probe for the
     // primary keyword (drop the optional secondary if absent).
     check(std::filesystem::path(AURA_SOURCE_DIR) / "src/compiler/evaluator_primitives_obs_jit.cpp",
           {"Issue #2342", "pin-registry-shard-count", "pin-registry-shard-wired", "schema-2342",
@@ -380,7 +380,7 @@ void ac2375_all_shards_on_arena_zero() {
     // AC4/AC6 source: all-shard loop + Issue #2375 cite (TSAN path = same
     // lock order as remap — shards 0..15 sequential).
     {
-        const auto pin = read_file("src/core/lifetime_pin.ixx");
+        const auto pin = read_file("src/core/lifetime_pin.hh");
         CHECK(pin.find("Issue #2375") != std::string::npos, "AC4: cites #2375");
         CHECK(pin.find("restamp_all_pins_for_arena") != std::string::npos, "AC4: restamp API");
         CHECK(pin.find("invalidate_all_pins_for_arena") != std::string::npos,
@@ -700,9 +700,9 @@ int run_test_moving_compact() {
         CHECK(ar.find("Issue #2374") != std::string::npos, "arena cites #2374");
         CHECK(ar.find("pin_registry_mtx()") == std::string::npos,
               "Issue #2374: no legacy pin_registry_mtx densify walk");
-        const auto pin = read_file("src/core/lifetime_pin.ixx");
+        const auto pin = read_file("src/core/lifetime_pin.hh");
         CHECK(pin.find("invalidate_pins_not_in_new_addrs") != std::string::npos,
-              "Issue #2374: helper in lifetime_pin.ixx");
+              "Issue #2374: helper in lifetime_pin.hh");
         CHECK(pin.find("inline std::vector<LifetimePin*>& pin_registry()") == std::string::npos,
               "Issue #2374: pin_registry() removed from module");
         CHECK(pin.find("inline std::mutex& pin_registry_mtx()") == std::string::npos,
