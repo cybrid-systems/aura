@@ -36,6 +36,24 @@ inline constexpr std::uint64_t kAuditForceNodesChanged = 8;
 inline constexpr std::uint64_t kAuditForceNodesChangedProduction = 1;
 inline constexpr std::size_t kAuditNameCap = 48;
 
+// Issue #2728: forward-declaration block for symbols that have cyclic
+// or out-of-order dependencies. Grouped here (per the issue
+// recommendation: "Prefer moving pure declarations to the top / a
+// separate forward block") so the header is self-consistent and
+// aura_test_objects rebuilds cleanly without forward-reference
+// errors. Definitions remain in their original positions below.
+struct CommitReadinessInput;
+struct CommitReadiness;
+[[nodiscard]] inline CommitReadinessInput commit_readiness_live_policy() noexcept;
+[[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept;
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_total_v_read() noexcept;
+[[nodiscard]] inline std::uint64_t occurrence_empty_after_fence_total_v_read() noexcept;
+// NOTE: g_occurrence_hard_face_full_solve_recover_total is an `inline
+// std::atomic{0}` defined below (line 1053 — BEFORE the usage site at
+// line 1092 in commit_readiness_live_policy). No `extern` forward decl
+// here — the prior extern/inline split tripped gcc 16.1's namespace
+// parser (cp_parser_namespace_body ICE) in typed_mutation_audit_hooks.cpp.
+
 enum class AuditStrategy : std::uint8_t {
     Off = 0,
     Sampled = 1,
@@ -881,16 +899,6 @@ inline void reset_type_linear_commit_proof_stamped_total_for_test() noexcept {
     g_type_linear_commit_proof_stamped_total.store(0, std::memory_order_relaxed);
 }
 
-// Issue #2728 ship co-traveler: forward declarations for
-// commit_readiness_live_policy + commit_readiness (defined below in
-// the same header). The build_type_linear_commit_proof_from_live helper
-// below calls both, but their definitions appear further down the file
-// — without these forward decls the strict-order compiler rejects the
-// calls as 'undeclared in this scope' (pre-existing P1 noted on every
-// recent P0 ship; #2726 ship co-traveler so the build verifies).
-[[nodiscard]] inline CommitReadinessInput commit_readiness_live_policy() noexcept;
-[[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept;
-
 // Build a TypeLinearCommitProof from live state. Pure read — no
 // bumps, no atomics beyond the existing typed_audit counters. Cheap
 // on the quiet path (per AC3): no extra heavy walks solely for the
@@ -1042,20 +1050,14 @@ build_type_linear_commit_proof_from_live(std::uint64_t current_epoch_or_defuse) 
     return (set("ok", true, 10000), r);
 }
 
-// Issue #2728 ship co-traveler: forward declarations for the live
-// counters used inside commit_readiness_live_policy() below. The
-// counters themselves are defined further down the file (line 1866
-// + 1899 + 1921 in the audit-stats section). Without these forward
-// decls the live-policy helper fails to compile as 'undeclared in
-// this scope'. Co-traveler with the #2726 ship; same #81967 source-cite.
-[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_total_v_read() noexcept;
-[[nodiscard]] inline std::uint64_t occurrence_empty_after_fence_total_v_read() noexcept;
 // Issue #2716 occurrence hard-face active-branch counter. Defined here
 // (before commit_readiness_live_policy below) so the helper can bump it
 // without a forward declaration — the prior extern/inline split tripped
 // gcc 16.1's parser in typed_mutation_audit_hooks.cpp (cp_parser_namespace_body
 // ICE). Single inline definition (module-scoped atomic, ODR-safe across
-// TUs); the accessor below uses it by name.
+// TUs); the accessor below uses it by name. The `extern` declaration
+// of this atomic at the top of the file (Issue #2728 forward block) pairs
+// with this inline definition (ODR-safe across TUs).
 inline std::atomic<std::uint64_t> g_occurrence_hard_face_full_solve_recover_total{0};
 
 // Fill hard flags from live audit process state (still pure w.r.t. inputs

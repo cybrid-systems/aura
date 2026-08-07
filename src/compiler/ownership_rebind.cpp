@@ -144,8 +144,6 @@ bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remappe
     return true;
 }
 
-} // namespace aura::compiler
-
 // Issue #2723: non-empty span collector for densify Phase-5 + steal resume.
 // Single source of truth (AC4): both call sites route through this helper
 // so densify and steal share the same collection logic. Thread-local
@@ -196,4 +194,5 @@ std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind(
         g_ownership_rebind_nonempty_span_total.fetch_add(1, std::memory_order_relaxed);
     }
     return std::span<const OwnershipRebindNodeId>(scratch.data(), scratch.size());
-}
+} // namespace aura::compiler
+} // namespace aura::compiler
