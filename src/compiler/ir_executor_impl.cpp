@@ -612,15 +612,25 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
         if (is_float(v))
             return static_cast<std::int64_t>(as_float(v));
         if (is_string(v)) {
-            auto idx = as_string_idx(v);
-            if (idx < string_heap_.size()) {
+            // make_string indices are prim_heap indices (ConstString /
+            // interpreter push_string_heap). Local string_heap_ can lag
+            // when prim_heap already held entries at ConstString first
+            // hit — prefer prim_heap, fall back to local (eq_str path).
+            const auto idx = as_string_idx(v);
+            auto& prim_heap = context_.primitives.string_heap();
+            const std::string* s = nullptr;
+            if (idx < prim_heap.size())
+                s = &prim_heap[idx];
+            else if (idx < string_heap_.size())
+                s = &string_heap_[idx];
+            if (s) {
                 try {
-                    return static_cast<std::int64_t>(std::stoll(string_heap_[idx]));
+                    return static_cast<std::int64_t>(std::stoll(*s));
                 } catch (...) {
                     // [SILENCE-PRIM-#615] string→int coerce failure —
                     // log + return 0 (#1669 class A IR coerce contract).
                     std::println(std::cerr, "error: type mismatch — expected Int, got String '{}'",
-                                 string_heap_[idx]);
+                                 *s);
                     return 0;
                 }
             }
@@ -804,19 +814,22 @@ IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                         break;
                     }
                     // First hit: store in both heaps — primitives (display /
-                    // prims) and local (coercion / eq_str_content). Keep
-                    // indices lockstep so make_string(prim_idx) is valid
-                    // for both.
+                    // prims) and local (coercion / eq_str_content). Pad so
+                    // sizes match before push: make_string(idx) is a
+                    // prim_heap index; coerce_i / eq_str also need the same
+                    // idx valid on string_heap_ when they consult it.
                     auto& prim_heap = context_.primitives.string_heap();
-                    auto prim_idx = prim_heap.size();
-                    if (pool_idx < module_.string_pool.size()) {
-                        prim_heap.push_back(module_.string_pool[pool_idx]);
-                        string_heap_.push_back(module_.string_pool[pool_idx]);
-                    } else {
-                        prim_heap.push_back("");
-                        string_heap_.push_back("");
-                    }
-                    auto val = make_string(prim_idx);
+                    while (string_heap_.size() < prim_heap.size())
+                        string_heap_.push_back({});
+                    while (prim_heap.size() < string_heap_.size())
+                        prim_heap.push_back({});
+                    const auto idx = prim_heap.size();
+                    const std::string content = (pool_idx < module_.string_pool.size())
+                                                    ? module_.string_pool[pool_idx]
+                                                    : std::string{};
+                    prim_heap.push_back(content);
+                    string_heap_.push_back(content);
+                    auto val = make_string(idx);
                     const_string_cache_.emplace(pool_idx, val);
                     locals[ops[0]] = val;
                     break;

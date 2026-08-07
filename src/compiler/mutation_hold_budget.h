@@ -337,6 +337,30 @@ inline void clear_mutation_hold_budget_holder_degrade_cross_fiber_cancel_for_tes
         0, std::memory_order_relaxed);
 }
 
+// Issue #2724: region/subtree-scoped MutationBoundary concurrent admit.
+// Shared header so evaluator_mutation_boundary (writers) and
+// evaluator_primitives_query (query surface) share one definition.
+// Additive — all #2701/#2720/#2587/#2630 surfaces preserved.
+inline std::atomic<std::uint64_t> g_mutation_region_concurrent_admit_total{0};
+inline std::atomic<std::uint64_t> g_mutation_region_overlap_reject_total{0};
+inline std::atomic<std::uint32_t> g_mutation_region_concurrent_wired{1};
+inline constexpr int kMutationRegionConcurrentIssue = 2724;
+
+[[nodiscard]] inline std::uint64_t mutation_region_concurrent_admit_total_v_read() noexcept {
+    return g_mutation_region_concurrent_admit_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t mutation_region_overlap_reject_total_v_read() noexcept {
+    return g_mutation_region_overlap_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_region_concurrent_wired_v_read() noexcept {
+    return g_mutation_region_concurrent_wired.load(std::memory_order_relaxed);
+}
+
+// Issue #2724: simple disjointness check (region_key equality for first ship).
+[[nodiscard]] inline bool regions_disjoint(std::uint64_t a, std::uint64_t b) noexcept {
+    return a != 0 && b != 0 && a != b;
+}
+
 } // namespace aura::compiler
 
 #endif // AURA_COMPILER_MUTATION_HOLD_BUDGET_H

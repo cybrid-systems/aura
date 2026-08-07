@@ -3401,9 +3401,9 @@ add_executable(test_misc_issue_fold_batch
     tests/core/test_restamp_sla_observability.cpp
     tests/core/test_subtree_dirty_bounds.cpp
     tests/core/test_transaction_guard.cpp
-    tests/reflect/test_ir_pod_phase4.cpp
-    tests/reflect/test_opcode_reflect.cpp
-    tests/reflect/test_reflect_isolation.cpp
+    # Reflect TUs stay on standalone -freflection targets (test_ir_pod_phase4 /
+    # test_opcode_reflect / test_reflect_isolation). Folding them into this
+    # CXX_MODULE_STD batch compiles without -freflection and breaks P2996.
 )
 set_property(TARGET test_misc_issue_fold_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_misc_issue_fold_batch PRIVATE src tests)

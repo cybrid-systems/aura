@@ -204,6 +204,40 @@ static void ac5_source_wiring() {
     CHECK(q.find("steal-safety-ticket-mismatch-total") != std::string::npos, "AC5: query key");
 }
 
+// ── AC1 (Issue #2702): production hard-fail resume invariant exists.
+// Source-cite per #81967 — production path cancels + Done on mismatch.
+static void ac2702_1_resume_invariant_exists() {
+    std::println("\n--- #2702 AC1: resume invariant hard-fail path exists ---");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    CHECK(fc.find("check_and_enforce_resume_snapshot_invariant") != std::string::npos,
+          "AC1: check_and_enforce_resume_snapshot_invariant in fiber.cpp");
+    CHECK(fc.find("request_cancel") != std::string::npos, "AC1: request_cancel on hard fail");
+    CHECK(fc.find("set_state(FiberState::Done)") != std::string::npos,
+          "AC1: set_state(Done) on hard fail");
+    CHECK(fc.find("is_steal_snapshot_hard_mode") != std::string::npos,
+          "AC1: hard-mode gate consulted");
+    CHECK(fc.find("bump_mutation_steal_snapshot_mismatch") != std::string::npos,
+          "AC1: mismatch counter bump");
+    CHECK(fc.find("bump_steal_safety_ticket_mismatch") != std::string::npos,
+          "AC1: ticket mismatch counter bump");
+    CHECK(fc.find("bump_steal_snapshot_hard_fail") != std::string::npos,
+          "AC1: hard-fail counter bump");
+    CHECK(fh.find("Issue #2702") != std::string::npos, "AC1: fiber.h cites #2702");
+}
+
+// ── AC2 (Issue #2702): Soft / test-override is metric-only continue.
+static void ac2702_2_soft_path_metric_only() {
+    std::println("\n--- #2702 AC2: Soft path metric-only continue ---");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    CHECK(fc.find("is_steal_snapshot_soft_mode") != std::string::npos,
+          "AC2: soft-mode gate consulted");
+    CHECK(fc.find("AURA_STEAL_SNAPSHOT_SOFT") != std::string::npos,
+          "AC2: AURA_STEAL_SNAPSHOT_SOFT override");
+    CHECK(fc.find("AURA_STEAL_SNAPSHOT_HARD") != std::string::npos,
+          "AC2: AURA_STEAL_SNAPSHOT_HARD override");
+}
+
 // ── AC3 (Issue #2702): ticket is one-shot — cleared via
 // clear_resume_safety_ticket after the check; never re-used across
 // steals. File-content source-cite per #81967.
@@ -280,11 +314,10 @@ int run_test_steal_safety_ticket() {
     std::println("\n=== Issue #2702: Resume hard-fail unified path (post-#2518) ===");
     ac2702_1_resume_invariant_exists();
     ac2702_2_soft_path_metric_only();
-    // Issue #2726 ship co-traveler: ac2702_3..6 were never defined in
-    // this file (test stubs were referenced from run() but not authored).
-    // Keep the AC1+AC2 surface (which IS defined below) — the AC3..6
-    // stubs are tracked as a separate test-coverage follow-up; do NOT
-    // fail the build by calling undefined functions. Same #81967 source-cite.
+    ac2702_3_ticket_one_shot();
+    ac2702_4_steal_safety_ticket_interaction();
+    ac2702_5_query_keys_and_source_cite();
+    ac2702_6_no_docs_design();
     // Leave process Soft-clean for subsequent tests in same binary (none).
     ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");

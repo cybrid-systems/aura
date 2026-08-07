@@ -13,11 +13,15 @@
 #include "compiler/aura_jit_bridge.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <fstream>
 #include <print>
 #include <string>
 
 #include "compiler/typed_mutation_audit.h" // typed_audit::apply_*_audit_defaults (header form; module BMI not always linked into issue batches)
+
+// Soft-fuse heal counter (defined in aura_jit_bridge.cpp / stub).
+extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void);
 
 import std;
 import aura.compiler.service;
@@ -507,14 +511,14 @@ static void ac2693_4_linter_self_test() {
         const std::string cmd =
             std::format("python3 scripts/coverage/checks/check_joint_epoch_bump_coverage.py "
                         "--self-test");
-        std::FILE* p = std::popen(cmd.c_str(), "r");
+        std::FILE* p = ::popen(cmd.c_str(), "r");
         if (!p)
             return false;
         char buf[4096];
         std::string out;
         while (std::fgets(buf, sizeof(buf), p))
             out += buf;
-        const int rc = std::pclose(p);
+        const int rc = ::pclose(p);
         (void)out;
         return rc == 0;
     };

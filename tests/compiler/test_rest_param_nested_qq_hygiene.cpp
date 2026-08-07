@@ -47,11 +47,11 @@
 #include <vector>
 
 
-// Forward decls for test access (declared in src/compiler/macro_expansion.cpp).
+// Forward decl only for the non-module-exported counter (sandbox strict).
+// #2239 counters are export'ed from aura.compiler.macro_expansion — do not
+// redeclare them here (module import makes dual decls ambiguous).
 namespace aura::compiler::macro_exp {
 extern std::atomic<std::uint64_t> g_macro_expand_sandbox_strict;
-extern std::atomic<std::uint64_t> g_macro_rest_param_nested_qq_hits_total;
-extern std::atomic<std::uint64_t> g_macro_schema_cache_rest_stamped_total;
 } // namespace aura::compiler::macro_exp
 
 

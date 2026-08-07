@@ -19,7 +19,9 @@
 #include "compiler/hot_update_registry.hh"
 
 #include <cstdint>
+#include <fstream>
 #include <print>
+#include <string>
 
 
 // C-linkage decls from src/compiler/hot_update_registry.cpp (Issue #2236).
@@ -38,7 +40,10 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::HotUpdateRegistry;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
 using aura::test::g_failed;
+using aura::test::g_passed;
 
 static std::string read_file(const char* path) {
     const std::string rel(path);
@@ -50,7 +55,19 @@ static std::string read_file(const char* path) {
     }
     return {};
 }
-using aura::test::g_passed;
+
+static std::int64_t href(CompilerService& cs, const char* key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:shape-profiler-stats\") \"{}\")", key));
+    if (!r || !is_int(*r)) {
+        // Fallback: hot-update registry stats (schema-2274 etc.).
+        r = cs.eval(std::format(
+            "(hash-ref (engine:metrics \"query:hot-update-registry-stats\") \"{}\")", key));
+    }
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
 
 // C-linkage declarations (Issue #2236). Declared extern "C" to
 // match the definitions in src/compiler/hot_update_registry.cpp.

@@ -959,17 +959,17 @@ static void ac2722_1_release_hard_gate_exists() {
 static void ac2722_2_hard_fail_env_matrix() {
     std::println("\n--- #2722 AC2: hard-fail env matrix + 4 hard-fail counters ---");
     const auto build = read_file("build.py");
-    CHECK(build.find('env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1"') != std::string::npos,
+    CHECK(build.find(R"(env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1")") != std::string::npos,
           "AC2: production-concurrency gate env set");
-    CHECK(build.find('env["AURA_LOCK_ORDER_CANARY"] = "1"') != std::string::npos,
+    CHECK(build.find(R"(env["AURA_LOCK_ORDER_CANARY"] = "1")") != std::string::npos,
           "AC2: lock-order canary env set");
-    CHECK(build.find('env["AURA_CHAOS_FULL"] = "1"') != std::string::npos,
+    CHECK(build.find(R"(env["AURA_CHAOS_FULL"] = "1")") != std::string::npos,
           "AC2: chaos-full env set");
-    CHECK(build.find('env["AURA_CHAOS_SOAK"] = "1"') != std::string::npos,
+    CHECK(build.find(R"(env["AURA_CHAOS_SOAK"] = "1")") != std::string::npos,
           "AC2: chaos-soak env set");
-    CHECK(build.find('env["AURA_CHAOS_SOAK_HARD_GATE"] = "1"') != std::string::npos,
+    CHECK(build.find(R"(env["AURA_CHAOS_SOAK_HARD_GATE"] = "1")") != std::string::npos,
           "AC2: chaos-soak-hard-gate env set (distinct from PR gate)");
-    CHECK(build.find('env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)') != std::string::npos,
+    CHECK(build.find(R"(env.pop("AURA_STEAL_SNAPSHOT_SOFT", None))") != std::string::npos,
           "AC2: Soft steal FORBIDDEN under hard gate");
     // Chaos binary covers 4 hard-fail invariants.
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");

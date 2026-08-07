@@ -22,6 +22,7 @@ module;
 #include "compiler/ownership_escape_lowering_gate.h" // Issue #2507: clear escape gate on steal
 #include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-steal
 #include "compiler/mutation_boundary_shared_exit.h" // Issue #2600: shared exit helper (soft + full Guard)
+#include "compiler/mutation_hold_budget.h" // Issue #2720/#2726: holder degrade counters + reject_enabled
 #include "compiler/typed_mutation_audit.h" // Issue #2710: production_defaults_active on steal Ok clear
 #include "core/layout_stamp.hh"            // Issue #2519: full 8-field LayoutStamp equality
 #include <algorithm>                       // Issue #2189: remove_if for pin table invalidate
@@ -1202,10 +1203,10 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
     // Same-fiber path: g_current_fiber is the holder. Cancel + mark
     // outermost failed → Guard exits with failure, MutationHold releases,
     // steal/GC can progress.
-    if (g_current_fiber && g_current_fiber->id() == fiber_id) {
+    if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->id() == fiber_id) {
         g_mutation_hold_budget_holder_degrade_same_fiber_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
-        g_current_fiber->request_cancel();
+        aura::serve::g_current_fiber->request_cancel();
         if (auto* ev = Evaluator::get_query_evaluator())
             ev->mark_outermost_mutation_failed();
         return;
