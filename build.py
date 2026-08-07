@@ -3583,6 +3583,31 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
     return 0
 
 
+def cmd_deferred_reemit_steal_sticky_2715_coverage():
+    """Issue #2715: deferred reemit on steal stays sticky until BoundaryExit.
+
+    Closes the residual contract gap from #2690 (PendingRecovery unified
+    exchange-drain) / #2604 (boundary auto-drain) / #2273 (steal-path
+    observability). Steal may observe pending deferred reemit on a foreign
+    worker; running the reemit body off the mutation-boundary / owner eval
+    thread races with the owning-eval invariants. #2715 gates the
+    steal-complete foreign-worker drain on `!production_defaults_active()`:
+    production skips the drain, pending stays sticky until the next
+    legitimate BoundaryExit on the owning eval.
+    """
+    print(f"{B}=== deferred reemit steal sticky (#2715) ==={N}")
+    script = ROOT / "scripts" / "check_deferred_reemit_steal_sticky_2715.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("deferred reemit steal sticky (#2715) contract rows failed")
+        return 1
+    ok("deferred reemit steal sticky (#2715) clean")
+    return 0
+
+
 def cmd_panic_residual_densify_hard_2598_coverage():
     """Issue #2598: production densify-after panic residual → hard
     (align with steal residual hard-AND).
@@ -8593,6 +8618,7 @@ def cmd_gate():
         or cmd_epoch_invariant_soft_fuse_heal_2712_coverage()
         or cmd_cross_eval_epoch_bump_2713_coverage()
         or cmd_captured_anon_sync_remount_prod_default_2714_coverage()
+        or cmd_deferred_reemit_steal_sticky_2715_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()
