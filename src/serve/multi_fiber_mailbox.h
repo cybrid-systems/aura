@@ -52,6 +52,14 @@ extern "C" void aura_orch_note_mailbox_backpressure();
 // Issue #2347: force outermost mutation success_flag=false (strong def in
 // evaluator_fiber_mutation.cpp; weak no-op when Evaluator not linked).
 extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept;
+
+// Issue #2720: P0 holder-degrade path (#2701 residual). Force-degrade the
+// recorded holder fiber when production (or AURA_MUTATION_HOLD_BUDGET_HARD=1)
+// and live hold > budget. Same-fiber cancel via g_current_fiber +
+// mark_outermost_mutation_failed; cross-fiber counter bump only (real
+// cancel = follow-up). Caller (try_acquire) still rejects *this* admit
+// (#2701 path); this just adds the holder-side cancel.
+extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fiber_id) noexcept;
 // Issue #2346 / #2347: production canary probe (strong in audit hooks).
 extern "C" int aura_production_defaults_active_probe() noexcept;
 

@@ -6620,6 +6620,30 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                             insert_kv("mutation-hold-budget-wired", wired);
                             insert_kv("schema-2701", 2701);
                             insert_kv("issue-2701", 2701);
+                            // Issue #2720: P0 holder-degrade path (#2701 residual).
+                            // Same query surface (query:mutation-hold-budget-gate)
+                            // so Agents see #2701 reject + #2720 degrade counters
+                            // together — the full story. Additive — all #2701
+                            // keys above preserved. Same-fiber / cross-fiber
+                            // split lets Agents attribute "degrade hit the
+                            // current fiber" vs "cross-fiber attempt (real
+                            // cancel = follow-up)".
+                            const auto deg_total = static_cast<std::int64_t>(
+                                mutation_hold_budget_holder_degrade_total_v_read());
+                            const auto deg_same = static_cast<std::int64_t>(
+                                mutation_hold_budget_holder_degrade_same_fiber_total_v_read());
+                            const auto deg_cross = static_cast<std::int64_t>(
+                                mutation_hold_budget_holder_degrade_cross_fiber_total_v_read());
+                            const auto deg_wired = static_cast<std::int64_t>(
+                                mutation_hold_budget_holder_degrade_wired_v_read());
+                            insert_kv("mutation-hold-budget-holder-degrade-total", deg_total);
+                            insert_kv("mutation-hold-budget-holder-degrade-same-fiber-total",
+                                      deg_same);
+                            insert_kv("mutation-hold-budget-holder-degrade-cross-fiber-total",
+                                      deg_cross);
+                            insert_kv("mutation-hold-budget-holder-degrade-wired", deg_wired);
+                            insert_kv("schema-2720", 2720);
+                            insert_kv("issue-2720", 2720);
                             // Issue #2702: query:resume-hard-fail — Agent-visible resume
                             // hard-fail surface. Production path: ticket mismatch or
                             // mutation_safety_snapshot_inconsistent → request_cancel +
