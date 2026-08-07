@@ -14831,6 +14831,28 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"reemit-cross-eval-filter-wired", make_int(1)},
                 {"schema-2606", make_int(2606)},
                 {"issue-2606", make_int(2606)},
+                // Issue #2713: cross-eval epoch tax observability
+                // (#2670/#2606 asymmetry). Bumped when joint epoch
+                // advance happens under >1 live AotState. Single-eval
+                // / process-default (map size ≤1) keeps the counter
+                // at 0 — zero extra work beyond one relaxed load of
+                // the map size. Joint bridge / AOT table epoch
+                // remains process-global by design (per #2606 comment:
+                // "joint epoch remains process-global — isolation
+                // is ownership + region mask + PerEval storm, not
+                // per-eval epoch domains"); the observability surface
+                // lets Agents see / throttle the cross-eval tax.
+                // #2670 / #2692 / #2606 / #2046 surfaces preserved
+                // (additive only).
+                {"cross-eval-epoch-bump-total",
+                 make_int(static_cast<std::int64_t>(cross_eval_epoch_bump_total_v_read()))},
+                {"cross-eval-epoch-bump-last-owner",
+                 make_int(
+                     reinterpret_cast<std::int64_t>(last_cross_eval_epoch_bump_owner_v_read()))},
+                {"cross-eval-epoch-bump-wired",
+                 make_int(static_cast<std::int64_t>(cross_eval_epoch_bump_wired_v_read()))},
+                {"schema-2713", make_int(2713)},
+                {"issue-2713", make_int(2713)},
                 // Issue #2602: synchronous remount walk on reemit success
                 // (named closures with stable_func_id != 0). Distinct
                 // from call-time closure_capture_remount_ok / _fail.

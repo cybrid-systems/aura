@@ -3535,6 +3535,30 @@ def cmd_epoch_invariant_soft_fuse_heal_2712_coverage():
     return 0
 
 
+def cmd_cross_eval_epoch_bump_2713_coverage():
+    """Issue #2713: measure + bound process-global epoch cross-eval invalidation.
+
+    Closes the #2670/#2606 asymmetry: joint bridge / AOT table epoch remains
+    process-global by design. Under concurrent multi-Evaluator hosts, eval A's
+    cascade/invalidate still forces eval B live AOT/JIT into generation-behind
+    even when sid maps and slot ownership are isolated. #2713 adds
+    observability (not domain split) — counter bumps when >1 live AotState
+    is registered at aura_aot_bump_func_table_epoch(); single-eval short-circuits
+    to zero work.
+    """
+    print(f"{B}=== cross eval epoch bump (#2713) ==={N}")
+    script = ROOT / "scripts" / "check_cross_eval_epoch_bump_2713.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cross eval epoch bump (#2713) contract rows failed")
+        return 1
+    ok("cross eval epoch bump (#2713) clean")
+    return 0
+
+
 def cmd_panic_residual_densify_hard_2598_coverage():
     """Issue #2598: production densify-after panic residual → hard
     (align with steal residual hard-AND).
@@ -8543,6 +8567,7 @@ def cmd_gate():
         or cmd_panic_checkpoint_steal_hard_2710_coverage()
         or cmd_envframe_lifetime_proof_2711_coverage()
         or cmd_epoch_invariant_soft_fuse_heal_2712_coverage()
+        or cmd_cross_eval_epoch_bump_2713_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()

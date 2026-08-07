@@ -1654,6 +1654,40 @@ extern "C" std::uint64_t aura_jit_closure_safe_fallbacks(void) {
 // generation-behind so aura_aot_probe_fn_ptr rejects them until
 // reemit/register. Notifies HotUpdateRegistry epoch listeners so
 // agents/plugins stay aligned with JIT hot-swap.
+//
+// Issue #2713: observability for cross-eval epoch tax (#2670/#2606
+// asymmetry). Joint bridge / AOT table epoch remains process-global
+// by design (per #2606 comment: "joint epoch remains process-global
+// — isolation is ownership + region mask + PerEval storm, not per-eval
+// epoch domains"). When a single-eval host bumps the epoch the cost
+// is local; when >1 live AotState is registered, eval A's cascade
+// still forces eval B live AOT/JIT into generation-behind. The
+// observability surface is bumped AFTER the joint epoch advance so
+// dashboards can attribute cross-eval bumps. The epoch advance
+// itself is unchanged — domain split is an explicit non-goal for
+// this issue (per AC4 stretch). Quiet path: single-eval /
+// process-default (nullptr owner, map size ≤1) → counter stays 0;
+// one relaxed load of the map size is the only extra work.
+static std::atomic<std::uint64_t> g_cross_eval_epoch_bump_total{0};
+// Last owner that triggered a cross-eval epoch bump. Stored as
+// atomic<void*> (nullptr when no cross-eval bump has happened, or
+// when the last owner was process-default). Agent dashboards surface
+// this to attribute the most recent cross-eval bump to a specific
+// eval. Relaxed order — observability only, no control flow.
+static std::atomic<void*> g_last_cross_eval_epoch_bump_owner{nullptr};
+// Read accessors (mirror the #2693 / #2668 / #2640 file-scope counter
+// style — queryable in light-link test bundles without the production
+// CompilerMetrics TU).
+extern "C" std::uint64_t cross_eval_epoch_bump_total_v_read(void) {
+    return g_cross_eval_epoch_bump_total.load(std::memory_order_relaxed);
+}
+extern "C" void* last_cross_eval_epoch_bump_owner_v_read(void) {
+    return g_last_cross_eval_epoch_bump_owner.load(std::memory_order_relaxed);
+}
+extern "C" std::uint32_t cross_eval_epoch_bump_wired_v_read(void) {
+    return 1;
+}
+
 extern "C" void aura_aot_bump_func_table_epoch(void) {
     const std::uint64_t new_epoch = g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (auto* m = aot_metrics()) {
@@ -1670,6 +1704,18 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
         }
         if (stale_slots > 0)
             m->aot_region_stale_mark_total.fetch_add(stale_slots, std::memory_order_relaxed);
+    }
+    // Issue #2713: cross-eval epoch bump observability. Only bumps
+    // when >1 live AotState is registered (single-eval / process-
+    // default short-circuits to zero work beyond the relaxed load).
+    // Current owner sourced from the per-eval reemit register
+    // (per #2606 lineage). Stamp owner for dashboard attribution.
+    // Epoch advance itself is unchanged — observability first; per-eval
+    // epoch domain split is a follow-up (per AC4 stretch).
+    if (aura_aot_state_map_size() > 1) {
+        g_cross_eval_epoch_bump_total.fetch_add(1, std::memory_order_relaxed);
+        g_last_cross_eval_epoch_bump_owner.store(aura_aot_get_register_owner_eval(),
+                                                 std::memory_order_relaxed);
     }
     // Fan-out: same path as commit_func_table_swap so invalidate and
     // successful reload share one epoch-listener contract.
