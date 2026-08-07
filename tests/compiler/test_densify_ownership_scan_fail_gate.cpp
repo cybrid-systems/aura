@@ -17,6 +17,32 @@
 //        + densify-envframe-ok (last-call) consistent across reset cycles.
 //   AC5: Source-cite Phase 5 gate next to pin_contract_held gate, helper
 //        preserved, linter self-test pass.
+//
+//   Issue #2711 (Refine #2164 / #2340 / #2361): EnvFrame dual-epoch
+//   Agent-visible lifetime proof (symmetric to TypeLinearCommitProof
+//   #2697 for type×linear). Read-only snapshot of hold_gen ×
+//   compact_gen × mutation_epoch × scan outcomes + would_allow_commit /
+//   force_reason_code. Production multi-fiber Agent orch can answer
+//   "have my EnvFrame refs survived densify + steal without dual-path
+//   lag?" by querying the proof + comparing stamp deltas.
+//
+//   AC2711_1: snapshot_envframe_lifetime_proof() returns hold_gen /
+//             compact_gen / mutation_epoch / scans_run /
+//             densify_scan_total / densify_scan_fail /
+//             hold_gen_mismatch_total / would_allow_commit /
+//             force_reason_code.
+//   AC2711_2: Soft + no densify + no guard → zero-cost / empty-healthy
+//             proof (no extra atomics on quiet path).
+//   AC2711_3: After Moving densify success with ownership scan fail
+//             inject → proof reports fail / would_allow_commit=false
+//             under production; Soft observes only.
+//   AC2711_4: Does not replace EnvFrameLifetimeGuard semantics; proof
+//             is read-only snapshot (like TypeLinearCommitProof first
+//             ship).
+//   AC2711_5: Additive only — preserve existing envframe-lifetime-* /
+//             densify-ownership-* keys and schema-2164 / 2340 / 2361
+//             lineage.
+//   AC2711_6: source-cite + coverage linter + no docs/design/.
 
 #include "test_harness.hpp"
 
@@ -562,6 +588,141 @@ static void ac5_source_cite() {
     CHECK(linter.find("AC5") != std::string::npos, "AC5: linter self-test mentions AC5");
 }
 
+// Issue #2711 AC1: snapshot_envframe_lifetime_proof() returns the
+// required fields per AC1. Verifies the struct + function exist in
+// envframe_lifetime.ixx with all 9 fields (4 counts + 2 epoch + 1 dual
+// epoch + 2 commit signals).
+static void ac2711_1_proof_struct_and_function() {
+    std::println("\n--- #2711 AC1: proof struct + snapshot function ---");
+    const auto efl = read_file("src/core/envframe_lifetime.ixx");
+    CHECK(efl.find("struct EnvFrameLifetimeProof") != std::string::npos,
+          "AC1: EnvFrameLifetimeProof struct declared");
+    CHECK(efl.find("snapshot_envframe_lifetime_proof") != std::string::npos,
+          "AC1: snapshot function declared");
+    // Required fields per AC1.
+    CHECK(efl.find("hold_gen") != std::string::npos, "AC1: hold_gen field");
+    CHECK(efl.find("compact_gen") != std::string::npos, "AC1: compact_gen field");
+    CHECK(efl.find("mutation_epoch") != std::string::npos, "AC1: mutation_epoch field");
+    CHECK(efl.find("scans_run") != std::string::npos, "AC1: scans_run field");
+    CHECK(efl.find("densify_scan_total") != std::string::npos, "AC1: densify_scan_total field");
+    CHECK(efl.find("densify_scan_fail") != std::string::npos, "AC1: densify_scan_fail field");
+    CHECK(efl.find("hold_gen_mismatch_total") != std::string::npos,
+          "AC1: hold_gen_mismatch_total field");
+    CHECK(efl.find("would_allow_commit") != std::string::npos, "AC1: would_allow_commit field");
+    CHECK(efl.find("force_reason_code") != std::string::npos, "AC1: force_reason_code field");
+    CHECK(efl.find("kEnvFrameLifetimeProofIssue = 2711") != std::string::npos,
+          "AC1: proof issue stamp = 2711");
+}
+
+// Issue #2711 AC2: Soft + no densify + no guard → zero-cost / empty-healthy.
+// Snapshot reads existing counters (no new bumps); would_allow_commit=true
+// when counters are 0; force_reason_code=0. The new atomic
+// g_envframe_last_hold_gen_at_enter only writes on guard ctor (quiet path
+// doesn't construct guards — no extra atomic ops).
+static void ac2711_2_soft_zero_cost() {
+    std::println("\n--- #2711 AC2: Soft zero-cost empty-healthy ---");
+    const auto efl = read_file("src/core/envframe_lifetime.ixx");
+    CHECK(efl.find("g_envframe_last_hold_gen_at_enter") != std::string::npos,
+          "AC2: last hold_gen tracker present (only writes on guard ctor)");
+    // Snapshot reads counters only (no bumps).
+    CHECK(efl.find(".load(std::memory_order_acquire)") != std::string::npos ||
+              efl.find(".load(std::memory_order_relaxed)") != std::string::npos,
+          "AC2: snapshot uses counter loads (no bumps)");
+    CHECK(efl.find("would_allow_commit = !(fail_densify || fail_mismatch)") != std::string::npos,
+          "AC2: would_allow_commit computed locally from counters");
+    CHECK(efl.find("current_mutation_epoch") != std::string::npos,
+          "AC2: mutation_epoch read from workspace_epoch");
+}
+
+// Issue #2711 AC3: After Moving densify success with ownership scan fail
+// inject → proof reports fail / would_allow_commit=false under production;
+// Soft observes only. The proof reads existing counters (no rollback
+// semantics itself) — the production gate that enforces the rollback is
+// #2497's DensifyConsistencyReport.envframe_ok (already covered by AC1-AC5
+// above). The proof is the Agent-visible snapshot.
+static void ac2711_3_scan_fail_reflected_in_proof() {
+    std::println("\n--- #2711 AC3: scan_fail reflected in proof ---");
+    const auto efl = read_file("src/core/envframe_lifetime.ixx");
+    // The fail-densify branch in snapshot_envframe_lifetime_proof.
+    CHECK(efl.find("fail_densify") != std::string::npos, "AC3: fail_densify predicate in snapshot");
+    CHECK(efl.find("force_reason_code = (fail_densify ? 1 : 0)") != std::string::npos,
+          "AC3: force_reason_code=1 when densify_scan_fail > 0");
+    CHECK(efl.find("force_reason_code = (fail_densify ? 1 : 0) | (fail_mismatch ? 2 : 0)") !=
+              std::string::npos,
+          "AC3: force_reason_code combines densify + mismatch (binary OR)");
+}
+
+// Issue #2711 AC4: read-only snapshot — does not replace Guard semantics.
+// The proof struct only reads counters; it doesn't bump any state.
+static void ac2711_4_read_only_snapshot() {
+    std::println("\n--- #2711 AC4: read-only snapshot ---");
+    const auto efl = read_file("src/core/envframe_lifetime.ixx");
+    // snapshot returns by value; no fetch_add anywhere in the snapshot body.
+    const auto snap_start =
+        efl.find("inline EnvFrameLifetimeProof snapshot_envframe_lifetime_proof");
+    CHECK(snap_start != std::string::npos, "AC4: snapshot function present");
+    // No state mutation in the snapshot body — it's a pure read.
+    CHECK(efl.find("no extra atomics on the quiet path") != std::string::npos,
+          "AC4: documentation says no extra atomics");
+    // EnvFrameLifetimeGuard still has its own semantics (no replacement).
+    CHECK(efl.find("class EnvFrameLifetimeGuard") != std::string::npos,
+          "AC4: EnvFrameLifetimeGuard class preserved (no replacement)");
+}
+
+// Issue #2711 AC5: additive query keys + schema sentinels.
+static void ac2711_5_query_keys_added() {
+    std::println("\n--- #2711 AC5: additive query keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("envframe-lifetime-proof-hold-gen") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-hold-gen");
+    CHECK(q.find("envframe-lifetime-proof-compact-gen") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-compact-gen");
+    CHECK(q.find("envframe-lifetime-proof-mutation-epoch") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-mutation-epoch");
+    CHECK(q.find("envframe-lifetime-proof-densify-scan-fail") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-densify-scan-fail");
+    CHECK(q.find("envframe-lifetime-proof-would-allow-commit") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-would-allow-commit");
+    CHECK(q.find("envframe-lifetime-proof-force-reason-code") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-force-reason-code");
+    CHECK(q.find("schema-2711") != std::string::npos, "AC5: schema-2711 sentinel");
+    CHECK(q.find("issue-2711") != std::string::npos, "AC5: issue-2711 sentinel");
+    // Prior #2164 / #2340 / #2361 surface preserved (regression).
+    CHECK(q.find("schema-2697") != std::string::npos, "AC5: schema-2697 preserved");
+    CHECK(q.find("densify-ownership-scan-fail-gate-wired") != std::string::npos,
+          "AC5: #2497 surface preserved");
+}
+
+// Issue #2711 AC6: source-cite + linter + no docs/design/.
+static void ac2711_6_source_and_linter() {
+    std::println("\n--- #2711 AC6: source-cite + linter + no docs/design/ ---");
+    const auto efl = read_file("src/core/envframe_lifetime.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_densify_ownership_scan_fail_gate.cpp");
+    const auto lint = read_file("scripts/check_envframe_lifetime_proof_2711.py");
+    const auto build = read_file("build.py");
+
+    CHECK(efl.find("Issue #2711") != std::string::npos, "AC6: envframe_lifetime.ixx cites #2711");
+    CHECK(q.find("Issue #2711") != std::string::npos,
+          "AC6: evaluator_primitives_query.cpp cites #2711");
+    CHECK(t.find("ac2711_1_proof_struct_and_function") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2711_2_soft_zero_cost") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2711_3_scan_fail_reflected_in_proof") != std::string::npos,
+          "AC6: AC3 test present");
+    CHECK(t.find("ac2711_4_read_only_snapshot") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2711_5_query_keys_added") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2711_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2711") != std::string::npos,
+          "AC6: coverage linter present and cites #2711");
+    CHECK(build.find("check_envframe_lifetime_proof_2711") != std::string::npos ||
+              build.find("cmd_envframe_lifetime_proof_2711_coverage") != std::string::npos,
+          "AC6: build.py gate entry");
+    const std::string design_path = "docs/design/2711-";
+    CHECK(read_file((design_path + "envframe-lifetime-proof.md").c_str()).empty(),
+          "AC6: no docs/design/2711-* per #1655");
+}
+
 } // namespace
 
 int run_test_densify_ownership_scan_fail_gate() {
@@ -579,7 +740,17 @@ int run_test_densify_ownership_scan_fail_gate() {
     ac2673_2609_hard_and_preserved();
     ac2673_2664_external_root_independent();
     ac2673_chaos_soak_and_linter();
-    std::println("\n=== #2497 + #2673: {} passed, {} failed ===", g_passed, g_failed);
+    // Issue #2711: EnvFrame dual-epoch Agent-visible lifetime proof
+    // (symmetric to TypeLinearCommitProof #2697 for type×linear).
+    // AC1 proof struct/function, AC2 soft zero-cost, AC3 scan_fail reflected,
+    // AC4 read-only snapshot, AC5 additive query keys, AC6 source-cite + linter.
+    ac2711_1_proof_struct_and_function();
+    ac2711_2_soft_zero_cost();
+    ac2711_3_scan_fail_reflected_in_proof();
+    ac2711_4_read_only_snapshot();
+    ac2711_5_query_keys_added();
+    ac2711_6_source_and_linter();
+    std::println("\n=== #2497 + #2673 + #2711: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -31,6 +31,8 @@ export module aura.core.envframe_lifetime;
 
 import std;
 
+#include "core/workspace_epoch.hh" // #2711 current_mutation_epoch() for proof
+
 export namespace aura::core::envframe_lifetime {
 
 // Issue #2164: Phase 3 — hold-pin (active registry + compact gate).
@@ -102,6 +104,16 @@ inline std::atomic<std::uint64_t>& g_envframe_active_guard_depth() noexcept {
 inline std::atomic<std::uint64_t>& g_envframe_compact_generation() noexcept {
     static std::atomic<std::uint64_t> g{0};
     return g;
+}
+
+// Issue #2711: Agent-visible dual-epoch lifetime proof (symmetric to
+// TypeLinearCommitProof #2697 for type×linear). Per-guard hold_gen is
+// local to the guard instance; the proof needs a "last seen" across
+// all guards. This atomic tracks the last hold_gen_at_enter across
+// the lifetime of the process (guarded by the guard's ctor).
+inline std::atomic<std::uint64_t>& g_envframe_last_hold_gen_at_enter() noexcept {
+    static std::atomic<std::uint64_t> h{0};
+    return h;
 }
 
 [[nodiscard]] inline std::uint64_t active_guard_depth() noexcept {
@@ -215,6 +227,12 @@ public:
             hold_gen_at_enter_ = host_.hold_generation(host_.ctx);
         else
             hold_gen_at_enter_ = compact_generation();
+        // Issue #2711: publish the last hold_gen_at_enter across all
+        // guards for the Agent-visible EnvFrameLifetimeProof. Same
+        // memory order as the active_depth publish above (acq_rel) so
+        // a subsequent snapshot_envframe_lifetime_proof() observes the
+        // latest guard's hold_gen on the acquire load.
+        g_envframe_last_hold_gen_at_enter().store(hold_gen_at_enter_, std::memory_order_release);
     }
     ~EnvFrameLifetimeGuard() noexcept {
         // Drop depth before scan so concurrent Force/compact can proceed after hold.
@@ -254,5 +272,71 @@ private:
     EnvFrameLifetimeSite site_;
     std::uint64_t hold_gen_at_enter_ = 0;
 };
+
+// Issue #2711: EnvFrameLifetimeProof — Agent-visible dual-epoch lifetime
+// proof (symmetric to TypeLinearCommitProof #2697 for type×linear).
+// Read-only snapshot of hold_gen × compact_gen × mutation_epoch × scan
+// outcomes + would_allow_commit / force_reason_code. Does not replace
+// EnvFrameLifetimeGuard semantics (proof is read-only — same first-ship
+// approach as #2697). Production multi-fiber Agent orch can answer
+// "have my EnvFrame refs survived densify + steal without dual-path lag?"
+// by querying this struct + comparing hold_gen / compact_gen /
+// mutation_epoch across the lifetime of the process.
+//
+// AC1: returns hold_gen / compact_gen / mutation_epoch / scans_run /
+//      densify_ownership_scan_total / densify_ownership_scan_fail_total /
+//      hold_gen_mismatch_total / would_allow_commit / force_reason_code.
+// AC2: Soft + no densify + no guard → zero-cost / empty-healthy proof
+//      (no extra atomics on quiet path — only counter reads).
+// AC3: After Moving densify success with ownership scan fail inject →
+//      proof reports fail / would_allow_commit=false under production;
+//      Soft observes only (counter reads only, no rollback semantics).
+// AC4: Read-only snapshot — does not replace EnvFrameLifetimeGuard
+//      semantics; Agents compare stamp deltas across process lifetime.
+struct EnvFrameLifetimeProof {
+    std::uint64_t hold_gen = 0;                // last hold_gen_at_enter across guards
+    std::uint64_t compact_gen = 0;             // current compact_generation
+    std::uint64_t mutation_epoch = 0;          // current_mutation_epoch (workspace_epoch)
+    std::uint64_t scans_run = 0;               // guard dtor scan_skip_freed count
+    std::uint64_t densify_scan_total = 0;      // #2340 per-call-site densify scans
+    std::uint64_t densify_scan_fail = 0;       // #2361 densify ownership scan failures
+    std::uint64_t hold_gen_mismatch_total = 0; // #2164 Phase 2b compact gen under hold
+    bool would_allow_commit = true;            // healthy when no scan_fail / mismatch
+    int force_reason_code = 0;                 // 0 = healthy, 1 = scan_fail, 2 = hold_gen_mismatch
+    // Schema / issue sentinels (additive — no regression on #2164 / #2340 / #2361).
+    static constexpr int kEnvFrameLifetimeProofIssue = 2711;
+};
+
+// Issue #2711: read-only snapshot. no extra atomics on the quiet path
+// beyond the relaxed counter loads (proof function only reads existing
+// counters; only writes are g_envframe_last_hold_gen_at_enter on guard
+// ctor — quiet path doesn't construct guards, so no extra atomic ops).
+// The hold_gen / compact_gen /
+// mutation_epoch / scans_run / densify_ownership_scan_total /
+// densify_ownership_scan_fail_total / hold_gen_mismatch_total fields
+// are read from existing counters (no new bumps). would_allow_commit
+// is computed locally from the snapshot; force_reason_code maps to
+// (densify_scan_fail > 0 ? 1 : 0) | (hold_gen_mismatch_total > 0 ? 2 : 0).
+//
+// Soft / dev_off / unset: same counter reads; would_allow_commit still
+// computed from the scan_fail + mismatch counter values. Production
+// Agents consume would_allow_commit to gate commit; Soft observers just
+// observe.
+inline EnvFrameLifetimeProof snapshot_envframe_lifetime_proof() noexcept {
+    EnvFrameLifetimeProof p;
+    p.hold_gen = g_envframe_last_hold_gen_at_enter().load(std::memory_order_acquire);
+    p.compact_gen = compact_generation();
+    // mutation_epoch from workspace_epoch.hh (#2388 process-global atomic).
+    p.mutation_epoch = ::aura::core::current_mutation_epoch();
+    p.scans_run = g_envframe_lifetime_stats.scans_run;
+    p.densify_scan_total = g_envframe_lifetime_stats.densify_ownership_scan_total;
+    p.densify_scan_fail = g_envframe_lifetime_stats.densify_ownership_scan_fail_total;
+    p.hold_gen_mismatch_total = g_envframe_lifetime_stats.hold_gen_mismatch_total;
+    const bool fail_densify = (p.densify_scan_fail > 0);
+    const bool fail_mismatch = (p.hold_gen_mismatch_total > 0);
+    p.would_allow_commit = !(fail_densify || fail_mismatch);
+    p.force_reason_code = (fail_densify ? 1 : 0) | (fail_mismatch ? 2 : 0);
+    return p;
+}
 
 } // namespace aura::core::envframe_lifetime
