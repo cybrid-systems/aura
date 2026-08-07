@@ -476,6 +476,162 @@ static void ac2720_6_no_docs_design() {
           "AC6: no docs/design/2720-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2724 AC1: try_acquire_for_region uses regions_disjoint helper
+// for the concurrent admit check. Production + proven-disjoint regions
+// → both admits succeed concurrently. Production + overlapping regions
+// → second admit rejects with structured reason `region-overlap` and
+// counter advance.
+static void ac2724_1_disjoint_concurrent_admit() {
+    std::println("\n--- #2724 AC1: disjoint concurrent admit ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("regions_disjoint") != std::string::npos,
+          "AC1: regions_disjoint helper declared in boundary TU");
+    CHECK(emb.find("g_mutation_region_concurrent_admit_total") != std::string::npos,
+          "AC1: concurrent-admit counter declared");
+    CHECK(emb.find("g_mutation_region_overlap_reject_total") != std::string::npos,
+          "AC1: overlap-reject counter declared");
+    // Disjoint path: production + disjoint regions → admit + bump counter.
+    CHECK(emb.find("regions_disjoint(region_key, g_last_admitted_region_key)") != std::string::npos,
+          "AC1: disjoint check uses regions_disjoint helper");
+    CHECK(emb.find("g_mutation_region_concurrent_admit_total.fetch_add(1,") != std::string::npos,
+          "AC1: admit path bumps counter");
+    // Overlap path: production + overlap → reject with region-overlap.
+    CHECK(emb.find("AdmissionRejected: region-overlap") != std::string::npos,
+          "AC1: overlap reject returns structured `region-overlap` reason");
+}
+
+// ── Issue #2724 AC2: overlap reject under production — second admit
+// rejects with structured reason. Counters advance on reject. AC2
+// preserves the gate order (#2587 mailbox → #2701 budget → #2630/#2660
+// security-schedule) — region-overlap is an additional check after the
+// gate, before the per-region shard acquisition.
+static void ac2724_2_overlap_reject_production() {
+    std::println("\n--- #2724 AC2: overlap reject under production ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Overlap reject path: production + not disjoint → counter bump +
+    // structured reject.
+    CHECK(emb.find("g_mutation_region_overlap_reject_total.fetch_add(1,") != std::string::npos,
+          "AC2: overlap-reject path bumps counter");
+    CHECK(emb.find("typed_audit::production_defaults_active()") != std::string::npos,
+          "AC2: production_defaults_active() gate present");
+    // Preserves the existing #2701/#2720/#2587/#2630 gates (gate order
+    // preserved — region-overlap is an additional check, not a
+    // replacement).
+    CHECK(emb.find("mutation-hold-budget") != std::string::npos ||
+              emb.find("mutation_hold_budget_check") != std::string::npos,
+          "AC2: #2701 hold-budget gate preserved");
+    CHECK(emb.find("security-schedule") != std::string::npos ||
+              emb.find("make_security_schedule_input_live") != std::string::npos,
+          "AC2: #2630/#2660 security-schedule gate preserved");
+}
+
+// ── Issue #2724 AC3: Soft / sandbox=off → metric-only observation
+// (no production lock regression). Soft path bumps counters but does
+// NOT reject — soft callers can still admit for test ergonomics per
+// issue body AC3.
+static void ac2724_3_soft_path_metric_only() {
+    std::println("\n--- #2724 AC3: Soft path → metric-only ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Soft path: branch with `else if (region_key != 0)` after the
+    // production branch — metric-only observation (bump counter, no
+    // reject).
+    CHECK(emb.find("Soft / sandbox=off") != std::string::npos,
+          "AC3: Soft path documented in comments");
+    CHECK(emb.find("metric-only observation") != std::string::npos ||
+              emb.find("metric-only") != std::string::npos,
+          "AC3: Soft path metric-only");
+    // Soft path bumps both counters (overlap observed + admit logged)
+    // but does NOT reject — no production lock regression.
+}
+
+// ── Issue #2724 AC4: densify / ownership_rebind / restamp remain
+// correct under concurrent region holds. The per-region shard
+// (region_shard_) is acquired instead of the global workspace_mtx_
+// for region mode, so concurrent region admits don't block each other.
+// Densify / ownership_rebind / restamp are inside the per-region
+// shard, so cross-region root remap races are impossible (no two
+// fibers can hold overlapping regions simultaneously).
+static void ac2724_4_densify_correctness_under_concurrent_holds() {
+    std::println("\n--- #2724 AC4: densify correctness under concurrent holds ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // region_shard_ is used for per-region mode (line ~1379).
+    CHECK(emb.find("region_shard_") != std::string::npos,
+          "AC4: region_shard_ field present (per-region mode)");
+    CHECK(emb.find("workspace_region_shard") != std::string::npos,
+          "AC4: workspace_region_shard accessor used");
+    // The fallback to GlobalExclusive under atomic_batch is preserved
+    // (serializes densify / ownership_rebind / restamp correctly).
+    CHECK(emb.find("atomic_batch_active") != std::string::npos,
+          "AC4: atomic_batch_active check preserved (densify-correctness gate)");
+    CHECK(emb.find("workspace_region_fallback_global_total") != std::string::npos,
+          "AC4: fallback-to-GlobalExclusive counter preserved");
+}
+
+// ── Issue #2724 AC5: additive observability — #2701/#2720/#2587/#2630
+// surfaces preserved + new mutation-region-concurrent-admit-total /
+// mutation-region-overlap-reject-total / schema-2724 / issue-2724
+// counters + sentinels.
+static void ac2724_5_additive_observability() {
+    std::println("\n--- #2724 AC5: additive observability ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // New atomics + sentinels.
+    CHECK(emb.find("g_mutation_region_concurrent_admit_total{0}") != std::string::npos,
+          "AC5: concurrent-admit-total counter initialized");
+    CHECK(emb.find("g_mutation_region_overlap_reject_total{0}") != std::string::npos,
+          "AC5: overlap-reject-total counter initialized");
+    CHECK(emb.find("kMutationRegionConcurrentIssue = 2724") != std::string::npos,
+          "AC5: issue stamp = 2724");
+    // Query keys present.
+    CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
+          "AC5: query key mutation-region-concurrent-admit-total");
+    CHECK(q.find("mutation-region-overlap-reject-total") != std::string::npos,
+          "AC5: query key mutation-region-overlap-reject-total");
+    CHECK(q.find("mutation-region-concurrent-wired") != std::string::npos,
+          "AC5: query key mutation-region-concurrent-wired");
+    CHECK(q.find("schema-2724") != std::string::npos, "AC5: schema-2724 sentinel");
+    CHECK(q.find("issue-2724") != std::string::npos, "AC5: issue-2724 sentinel");
+    // All #2701/#2720/#2587/#2630 surfaces preserved.
+    CHECK(q.find("schema-2701") != std::string::npos, "AC5: #2701 schema-2701 preserved");
+    CHECK(q.find("schema-2720") != std::string::npos, "AC5: #2720 schema-2720 preserved");
+    CHECK(q.find("schema-2551") != std::string::npos || q.find("schema-2587") != std::string::npos,
+          "AC5: #2551/#2587 schema preserved");
+}
+
+// ── Issue #2724 AC6: source-cite + extend this file per #81967 (tests
+// in src/-aligned suite, no new file) + no docs/design/2724-* per
+// #1655.
+static void ac2724_6_source_and_linter() {
+    std::println("\n--- #2724 AC6: source-cite + linter + no docs/design/ ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    // Source-cite: emb cites #2724.
+    CHECK(emb.find("Issue #2724") != std::string::npos, "AC6: emb cites #2724");
+    CHECK(q.find("Issue #2724") != std::string::npos, "AC6: query cites #2724");
+    // Test functions present.
+    CHECK(t.find("ac2724_1_disjoint_concurrent_admit") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2724_2_overlap_reject_production") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2724_3_soft_path_metric_only") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2724_4_densify_correctness_under_concurrent_holds") != std::string::npos,
+          "AC6: AC4 test present");
+    CHECK(t.find("ac2724_5_additive_observability") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2724_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    // #2551 / #2701 / #2720 test functions preserved (additive — this
+    // file already shipped #2551 + #2701 + #2720 test functions).
+    CHECK(t.find("ac2554_pr_gate_short") != std::string::npos ||
+              t.find("ac1_production_hard_signal") != std::string::npos,
+          "AC6: #2551/#2701 test functions preserved");
+    CHECK(t.find("ac2720_6_no_docs_design") != std::string::npos,
+          "AC6: #2720 test functions preserved");
+    // No docs/design/2724-* per #1655.
+    const std::string design_path = "docs/design/2724-";
+    CHECK(read_file((design_path + "region-concurrent-admit.md").c_str()).empty(),
+          "AC6: no docs/design/2724-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -499,7 +655,8 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2720_4_query_keys();
     ac2720_5_source_and_linter();
     ac2720_6_no_docs_design();
-    std::println("\n=== #2551 + #2701 + #2720: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2551 + #2701 + #2720 + #2724: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

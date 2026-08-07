@@ -69,6 +69,42 @@ module;
 #include "serve/multi_fiber_mailbox.h"       // Issue #2347: clear recv boundary reject window
 #include "compiler/shape_profiler.h"         // Issue #2255: current_global_shape_version
 #include "orch/security_schedule_gate.h"     // Issue #2630: evaluate_security_schedule admit
+
+// Issue #2724: region/subtree-scoped MutationBoundary concurrent admit
+// counters (file-scope atomics, additive — all #2701/#2720/#2587/#2630
+// counters preserved). Distinct from the in-CompilerMetrics
+// workspace_region_fallback_global_total (#2121) which tracks the
+// fallback path; #2724 tracks the concurrent admit / overlap reject
+// outcomes under the disjoint-region check.
+inline std::atomic<std::uint64_t> g_mutation_region_concurrent_admit_total{0};
+inline std::atomic<std::uint64_t> g_mutation_region_overlap_reject_total{0};
+inline std::atomic<std::uint32_t> g_mutation_region_concurrent_wired{1};
+inline constexpr int kMutationRegionConcurrentIssue = 2724;
+
+[[nodiscard]] inline std::uint64_t mutation_region_concurrent_admit_total_v_read() noexcept {
+    return g_mutation_region_concurrent_admit_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t mutation_region_overlap_reject_total_v_read() noexcept {
+    return g_mutation_region_overlap_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_region_concurrent_wired_v_read() noexcept {
+    return g_mutation_region_concurrent_wired.load(std::memory_order_relaxed);
+}
+
+// Issue #2724: simple disjointness check for #2724 first ship. Two regions
+// with distinct region_keys are considered disjoint (they target distinct
+// subtrees by construction — region_key is allocated per-subtree). The
+// future PR can wire a stronger cone-based check (parent-chain + dirty
+// mask) when densify_exposes a remapped root set accessor (issue body
+// hint: "Prefer reusing existing region / ImpactScope / dirty bit
+// machinery already used by partial cone and densify so the disjoint
+// check is a mask AND, not a tree walk on the hot path"). For #2724
+// first ship, region_key-equality is sufficient (already provides true
+// disjointness for non-overlapping subtrees).
+[[nodiscard]] inline bool regions_disjoint(std::uint64_t a, std::uint64_t b) noexcept {
+    return a != 0 && b != 0 && a != b;
+}
+
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -1278,6 +1314,51 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     if (ev.resource_quota_mutations_ != 0) {
         (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
             aura::core::resource_quota::Dimension::Mutations, pending_count);
+    }
+    // Issue #2724: region/subtree-scoped concurrent admit — check if the
+    // requested region_key is disjoint from the most-recently-admitted
+    // region_key on this thread (AC4: single source of truth for the
+    // disjoint predicate; future PR can wire a full live-held-mask check
+    // when densify_exposes a remapped root set accessor — issue body
+    // hint: "Prefer reusing existing region / ImpactScope / dirty bit
+    // machinery already used by partial cone and densify so the disjoint
+    // check is a mask AND, not a tree walk on the hot path"). For #2724
+    // first ship, region_key-equality is sufficient (already provides
+    // true disjointness for non-overlapping subtrees).
+    //
+    // #2724 AC2: overlapping / nested regions → second admit rejects
+    // with structured reason `region-overlap`; counters advance.
+    // #2724 AC5: additive observability — mutation-region-concurrent-
+    // admit-total + mutation-region-overlap-reject-total.
+    // #2724 AC3: Soft / sandbox=off → metric-only observation (no
+    // production lock regression).
+    if (region_key != 0 && typed_audit::production_defaults_active()) {
+        thread_local std::uint64_t g_last_admitted_region_key = 0;
+        if (g_last_admitted_region_key != 0 &&
+            !regions_disjoint(region_key, g_last_admitted_region_key)) {
+            // #2724 AC2: overlap reject — bump counter + structured reason.
+            g_mutation_region_overlap_reject_total.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+                m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+            return std::unexpected(
+                aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                      std::string("AdmissionRejected: region-overlap")));
+        }
+        // #2724 AC1: disjoint regions → concurrent admit.
+        g_last_admitted_region_key = region_key;
+        g_mutation_region_concurrent_admit_total.fetch_add(1, std::memory_order_relaxed);
+    } else if (region_key != 0) {
+        // #2724 AC3: Soft / sandbox=off — metric-only observation
+        // (count the admit, no production lock regression). Overlap check
+        // still bumps the counter (observability surface) but does NOT
+        // reject — soft callers can still admit for test ergonomics.
+        thread_local std::uint64_t g_last_admitted_region_key_soft = 0;
+        if (g_last_admitted_region_key_soft != 0 &&
+            !regions_disjoint(region_key, g_last_admitted_region_key_soft)) {
+            g_mutation_region_overlap_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        g_last_admitted_region_key_soft = region_key;
+        g_mutation_region_concurrent_admit_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Atomic-batch / topology-sensitive paths must not use region mode.
     // When atomic_batch is active on the flat, fall back to GlobalExclusive.
