@@ -553,6 +553,28 @@ def cmd_lint():
             "Issue #2727 fiber evaluator_id linter failed — run python3 scripts/coverage/checks/check_fiber_evaluator_id_2727.py"
         )
         return r
+    # Issue #2728: typed_mutation_audit.h forward-reference cascade
+    # (blocks aura_test_objects rebuild — noted on every recent P0 ship
+    # #2717/#2718/#2719/#2720/#2721). Wires
+    # check_typed_mutation_audit_h_forward_ref_2728.py so the
+    # single-block forward declarations at the top of the header
+    # (commit_readiness_live_policy / commit_readiness / cone_… /
+    # occurrence_… v_read helpers + CommitReadinessInput / CommitReadiness
+    # struct forward decls) plus the original-position inline
+    # definitions stay enforced. The header is now self-consistent
+    # and aura_test_objects rebuilds cleanly without forward-reference
+    # errors. Co-traveler with the ownership_rebind.cpp namespace
+    # fix (was a separate pre-existing build blocker).
+    tma_script = COVERAGE_CHECKS / "check_typed_mutation_audit_h_forward_ref_2728.py"
+    if not tma_script.exists():
+        fail(f"missing {tma_script}")
+        return 1
+    r = run([sys.executable, str(tma_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2728 typed_mutation_audit.h forward-ref linter failed — run python3 scripts/coverage/checks/check_typed_mutation_audit_h_forward_ref_2728.py"
+        )
+        return r
     # Issue #2703: production hard-face when partial cone truncates
     # outside-If OccurrenceGoals. Wires
     # check_cone_outside_goal_drop_2703.py so the distinct force_reason
