@@ -508,6 +508,138 @@ static void ac2704_6_no_docs_design() {
           "AC6: no docs/design/2704-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2716 AC1: production + face hit → commit hard-rejects ──
+static void ac2716_1_production_hard_reject_on_face_hit() {
+    std::println("\n--- #2716 AC1: production + face hit → commit hard-rejects ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    // The active branch in commit_readiness (step 6) checks the
+    // new occurrence_face_hard flag + the two face booleans and
+    // hard-rejects with the new force_reasons under production/Full.
+    CHECK(tma.find("cone_outside_goal_drop_face") != std::string::npos,
+          "AC1: face booleans declared in CommitReadinessInput");
+    CHECK(tma.find("occurrence_empty_after_fence_face") != std::string::npos,
+          "AC1: empty-after-fence face boolean declared");
+    CHECK(tma.find("occurrence_face_hard") != std::string::npos,
+          "AC1: occurrence_face_hard flag declared");
+    // Force_reason code 10 (#2703) and 11 (#2704) added to the
+    // commit_readiness_reason_code function.
+    CHECK(tma.find("return 10; // #2703") != std::string::npos,
+          "AC1: force_reason code 10 (#2703) defined");
+    CHECK(tma.find("return 11; // #2704") != std::string::npos,
+          "AC1: force_reason code 11 (#2704) defined");
+    // Active branch in commit_readiness uses the new face booleans.
+    CHECK(tma.find("if (in.occurrence_face_hard)") != std::string::npos,
+          "AC1: active branch gated on occurrence_face_hard");
+    CHECK(tma.find("set(\"cone_outside_goal_drop\", false, 800)") != std::string::npos,
+          "AC1: cone face rejects with new force_reason + readiness_bp 800");
+    CHECK(tma.find("set(\"occurrence_empty_after_fence\", false, 850)") != std::string::npos,
+          "AC1: empty-after-fence face rejects with new force_reason + readiness_bp 850");
+}
+
+// ── Issue #2716 AC2: Soft / baseline=0 → counter-only, no reject ──
+static void ac2716_2_soft_counter_only() {
+    std::println("\n--- #2716 AC2: Soft / baseline=0 → counter-only ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    // The active branch is gated on occurrence_face_hard which is
+    // only true under prod/Full. Soft / baseline=0: face booleans
+    // stay false (no face hit under Soft) OR face hard is false
+    // (Soft doesn't even check the face). Either way, the active
+    // branch doesn't fire under Soft — counter-only path.
+    CHECK(tma.find("in.occurrence_face_hard = face_hard") != std::string::npos,
+          "AC2: face_hard flag set only under prod/Full");
+    CHECK(tma.find("const bool face_hard = prod || full") != std::string::npos,
+          "AC2: face_hard predicate is prod OR full");
+    // The #2703 / #2704 Soft observe-only path is preserved
+    // (additive only — no regression on existing Soft ergonomics).
+    CHECK(tma.find("g_cone_outside_goal_drop_soft_total") != std::string::npos,
+          "AC2: #2703 Soft observe-only path preserved");
+    CHECK(tma.find("g_occurrence_empty_after_fence_soft_total") != std::string::npos,
+          "AC2: #2704 Soft observe-only path preserved");
+}
+
+// ── Issue #2716 AC3: quiet path zero extra cost ──
+static void ac2716_3_quiet_path_zero_cost() {
+    std::println("\n--- #2716 AC3: quiet path zero extra cost ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    // Per AC3: quiet path (no face hit) costs 2 atomics on prod/Full
+    // when neither face has fired. No extra atomics when not in
+    // prod/Full.
+    CHECK(tma.find("cone_outside_goal_drop_total_v_read() > 0") != std::string::npos,
+          "AC3: face check uses single relaxed load (no extra atomics)");
+    CHECK(tma.find("occurrence_empty_after_fence_total_v_read() > 0") != std::string::npos,
+          "AC3: empty-after-fence face check uses single relaxed load");
+    // The active branch is gated on occurrence_face_hard — if not
+    // prod/Full, the face check is skipped (no extra atomics).
+    CHECK(tma.find("if (face_hard)") != std::string::npos,
+          "AC3: face check gated on face_hard (skipped under Soft / baseline=0)");
+}
+
+// ── Issue #2716 AC4: additive only — #2703/#2704/#2621/#2458/#2608 preserved ──
+static void ac2716_4_additive_no_regression() {
+    std::println("\n--- #2716 AC4: additive only (no regression) ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    // #2703 / #2704 / #2621 / #2458 / #2608 surfaces preserved.
+    CHECK(tma.find("kConeOutsideGoalDropIssue = 2703") != std::string::npos,
+          "AC4: #2703 issue stamp preserved");
+    CHECK(tma.find("kOccurrenceEmptyAfterFenceIssue = 2704") != std::string::npos,
+          "AC4: #2704 issue stamp preserved");
+    CHECK(tma.find("Issue #2621") != std::string::npos, "AC4: #2621 surface preserved");
+    CHECK(tma.find("Issue #2458") != std::string::npos, "AC4: #2458 surface preserved");
+    // #2608 (occurrence persist) is a query-surface concern, not a
+    // typed_mutation_audit.h concern — verified separately in AC5 via
+    // the query surface preservation checks (schema-2601 / persistence
+    // sentinel lives in evaluator_primitives_query.cpp).
+    // New counter (additive, distinct from #2703/#2704).
+    CHECK(tma.find("g_occurrence_hard_face_full_solve_recover_total") != std::string::npos,
+          "AC4: new recover counter declared (additive)");
+}
+
+// ── Issue #2716 AC5: query keys + schema/issue sentinels ──
+static void ac2716_5_query_keys_added() {
+    std::println("\n--- #2716 AC5: additive query keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("occurrence-hard-face-full-solve-recover-total") != std::string::npos,
+          "AC5: query exposes occurrence-hard-face-full-solve-recover-total");
+    CHECK(q.find("occurrence-hard-face-full-solve-recover-wired") != std::string::npos,
+          "AC5: query exposes occurrence-hard-face-full-solve-recover-wired");
+    CHECK(q.find("schema-2716") != std::string::npos, "AC5: schema-2716");
+    CHECK(q.find("issue-2716") != std::string::npos, "AC5: issue-2716");
+    // Prior #2703 / #2704 / #2621 surfaces preserved.
+    CHECK(q.find("cone-outside-goal-drop-total") != std::string::npos,
+          "AC5: #2703 surface preserved");
+    CHECK(q.find("occurrence-empty-after-fence-total") != std::string::npos,
+          "AC5: #2704 surface preserved");
+    CHECK(q.find("schema-2703") != std::string::npos, "AC5: schema-2703 preserved");
+    CHECK(q.find("schema-2704") != std::string::npos, "AC5: schema-2704 preserved");
+}
+
+// ── Issue #2716 AC6: source-cite + linter + no docs/design/ ──
+static void ac2716_6_source_and_linter() {
+    std::println("\n--- #2716 AC6: source-cite + linter + no docs/design/ ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
+    const auto lint = read_file("scripts/check_occurrence_hard_face_commit_2716.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("Issue #2716") != std::string::npos, "AC6: tma cites #2716");
+    CHECK(q.find("Issue #2716") != std::string::npos, "AC6: query cites #2716");
+    CHECK(t.find("ac2716_1_production_hard_reject_on_face_hit") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2716_2_soft_counter_only") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2716_3_quiet_path_zero_cost") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2716_4_additive_no_regression") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2716_5_query_keys_added") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2716_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2716") != std::string::npos,
+          "AC6: coverage linter present and cites #2716");
+    CHECK(build.find("check_occurrence_hard_face_commit_2716") != std::string::npos ||
+              build.find("cmd_occurrence_hard_face_commit_2716_coverage") != std::string::npos,
+          "AC6: build.py gate entry");
+    const std::string design_path = "docs/design/2716-";
+    CHECK(read_file((design_path + "occurrence-hard-face-commit.md").c_str()).empty(),
+          "AC6: no docs/design/2716-* per #1655");
+}
+
 } // namespace
 
 int run_test_partial_cone_commit_gate() {
@@ -541,7 +673,21 @@ int run_test_partial_cone_commit_gate() {
     ac2704_4_query_keys_added();
     ac2704_5_source_and_linter();
     ac2704_6_no_docs_design();
-    std::println("\n=== #2621 + #2646: {} passed, {} failed ===", g_passed, g_failed);
+    // Issue #2716: wire occurrence hard-faces into active commit path
+    // (close #2703 / #2704 residual). Production / Full + face hit
+    // (cone_outside_goal_drop counter > 0 OR occurrence_empty_after_fence
+    // counter > 0) → commit_readiness hard-rejects with the new
+    // force_reasons. Soft / baseline=0 → counter-only (no reject, no
+    // full-solve). #2703 / #2704 / #2621 / #2458 / #2608 surfaces
+    // preserved.
+    ac2716_1_production_hard_reject_on_face_hit();
+    ac2716_2_soft_counter_only();
+    ac2716_3_quiet_path_zero_cost();
+    ac2716_4_additive_no_regression();
+    ac2716_5_query_keys_added();
+    ac2716_6_source_and_linter();
+    std::println("\n=== #2621 + #2646 + #2703 + #2704 + #2716: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -801,6 +801,14 @@ struct CommitReadinessInput {
     bool truncate_hard = false;
     bool linear_hard = false; // production linear escape hardblock
     bool blame_hard = false;  // production blame-complete gate
+    // Issue #2716: occurrence hard-faces (active branch). Under
+    // production / Full, the active branch in commit_readiness
+    // hard-rejects when the face counter has advanced (counter > 0).
+    // Soft / baseline=0: counter-only (no reject, no extra atomics
+    // beyond the relaxed load of the face counters).
+    bool occurrence_face_hard = false;              // true under prod/Full
+    bool cone_outside_goal_drop_face = false;       // #2703 face hit
+    bool occurrence_empty_after_fence_face = false; // #2704 face hit
 };
 
 struct CommitReadiness {
@@ -872,7 +880,11 @@ inline void clear_type_linear_commit_proof_for_test() noexcept {
         return 2;
     if (r == "solve")
         return 1;
-    return 0; // ok
+    if (r == "cone_outside_goal_drop")
+        return 10; // #2703 / #2716
+    if (r == "occurrence_empty_after_fence")
+        return 11; // #2704 / #2716
+    return 0;      // ok
 }
 
 // Pure decision table (AC5: identical inputs → identical output; no atomics).
@@ -935,7 +947,27 @@ inline void clear_type_linear_commit_proof_for_test() noexcept {
         return (set("solve", false, bp), r);
     }
 
-    // 6) ok — clean SOLVED + linear + blame + !truncated.
+    // 6) Issue #2716: occurrence hard-faces (active branch). When
+    // production/Full + the #2703 (cone_outside_goal_drop) or #2704
+    // (occurrence_empty_after_fence) counters have advanced past the
+    // captured baseline, the outermost commit hard-rejects with the
+    // face's force_reason. Option A's "one full ConstraintSystem::solve()
+    // recover" half is deferred to a follow-up — this thin ship wires
+    // the active reject so half-green occurrence narrowing can no
+    // longer pass under production. Soft / baseline=0: counter-only
+    // (no extra atomics beyond the relaxed load of the face counters).
+    if (in.occurrence_face_hard) {
+        const bool cone_face = in.cone_outside_goal_drop_face;
+        const bool empty_face = in.occurrence_empty_after_fence_face;
+        if (cone_face) {
+            return (set("cone_outside_goal_drop", false, 800), r);
+        }
+        if (empty_face) {
+            return (set("occurrence_empty_after_fence", false, 850), r);
+        }
+    }
+
+    // 7) ok — clean SOLVED + linear + blame + !truncated + no face hit.
     return (set("ok", true, 10000), r);
 }
 
@@ -955,6 +987,30 @@ inline void clear_type_linear_commit_proof_for_test() noexcept {
     in.blame_hard = prod || full;
     // Live last partial cone truncate stamp (#2621 / #2560).
     in.partial_cone_truncated = last_partial_cone_truncated();
+    // Issue #2716: occurrence hard-faces (active wiring). Under
+    // production / Full, capture the face counter values. The
+    // active branch in commit_readiness rejects when the face has
+    // fired (counter > 0 — i.e., face has been bumped since the
+    // last clear). Soft path leaves occurrence_face_hard=false so
+    // the counter-only path stays metric (no reject, no full-solve
+    // — preserves the existing Soft ergonomics from #2703 / #2704).
+    // Per AC3: quiet path costs 2 atomics on prod/Full when
+    // neither face has fired. No extra atomics when not in
+    // prod/Full.
+    const bool face_hard = prod || full;
+    in.occurrence_face_hard = face_hard;
+    if (face_hard) {
+        in.cone_outside_goal_drop_face = (cone_outside_goal_drop_total_v_read() > 0);
+        in.occurrence_empty_after_fence_face = (occurrence_empty_after_fence_total_v_read() > 0);
+        // Issue #2716: bump the recover counter (active branch
+        // fired). Mirrors the existing per-CompilerMetrics pattern;
+        // a non-zero value indicates the active face wired in
+        // (production hit, production reject — surface for Agent
+        // dashboards).
+        if (in.cone_outside_goal_drop_face || in.occurrence_empty_after_fence_face) {
+            g_occurrence_hard_face_full_solve_recover_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     return in;
 }
 
@@ -1793,6 +1849,20 @@ inline constexpr int kOccurrenceEmptyAfterFenceIssue = 2704;
 inline void clear_occurrence_empty_after_fence_for_test() noexcept {
     g_occurrence_empty_after_fence_total.store(0, std::memory_order_relaxed);
     g_occurrence_empty_after_fence_soft_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2716: counter for the occurrence hard-face active branch
+// (production / Full + face hit). Bumped when commit_readiness_live_policy
+// detects a face hit under prod/Full — surface for Agent dashboards
+// to attribute "active face wired in" vs "face fired but Soft path
+// observed only". Additive — no regression on #2703 / #2704 /
+// #2621 / #2458 / #2608 query keys.
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_full_solve_recover_total{0};
+[[nodiscard]] inline std::uint64_t occurrence_hard_face_full_solve_recover_total_v_read() noexcept {
+    return g_occurrence_hard_face_full_solve_recover_total.load(std::memory_order_relaxed);
+}
+inline void reset_occurrence_hard_face_full_solve_recover_total_for_test() noexcept {
+    g_occurrence_hard_face_full_solve_recover_total.store(0, std::memory_order_relaxed);
 }
 
 } // namespace aura::compiler::typed_audit

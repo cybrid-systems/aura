@@ -3608,6 +3608,32 @@ def cmd_deferred_reemit_steal_sticky_2715_coverage():
     return 0
 
 
+def cmd_occurrence_hard_face_commit_2716_coverage():
+    """Issue #2716: wire occurrence hard-faces into active commit path.
+
+    Closes the #2703 / #2704 residual: #2703 / #2704 shipped force_reason
+    codes + counters + Soft/Production routing surface for
+    cone_outside_goal_drop (code 10) and occurrence_empty_after_fence
+    (code 11), but commit_readiness / outermost boundary still did NOT
+    actively force a full ConstraintSystem::solve() recover or hard-reject
+    based on these counters. #2716 wires the active branch: under
+    production/Full + face hit (counter > 0), commit_readiness hard-rejects
+    with the new force_reasons. Soft / baseline=0: counter-only. Option A's
+    "one full ConstraintSystem::solve() recover" half is deferred (thin ship).
+    """
+    print(f"{B}=== occurrence hard face commit (#2716) ==={N}")
+    script = ROOT / "scripts" / "check_occurrence_hard_face_commit_2716.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence hard face commit (#2716) contract rows failed")
+        return 1
+    ok("occurrence hard face commit (#2716) clean")
+    return 0
+
+
 def cmd_panic_residual_densify_hard_2598_coverage():
     """Issue #2598: production densify-after panic residual → hard
     (align with steal residual hard-AND).
@@ -8642,6 +8668,7 @@ def cmd_gate():
         or cmd_cross_eval_epoch_bump_2713_coverage()
         or cmd_captured_anon_sync_remount_prod_default_2714_coverage()
         or cmd_deferred_reemit_steal_sticky_2715_coverage()
+        or cmd_occurrence_hard_face_commit_2716_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()
