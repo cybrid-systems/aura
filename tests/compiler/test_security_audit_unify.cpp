@@ -125,9 +125,9 @@ int run_test_security_audit_unify() {
         const auto seq_before = g_security_event_ring().seq.load(std::memory_order_relaxed);
 
         // Deny: Restricted without mutate grant.
-        const bool denied = !ev.check_and_record_effect(kEffectMutate, kEffectMutate, "test:deny",
-                                                        0, /*tenant_id=*/7,
-                                                        /*provenance_mutation_id=*/9000);
+        const bool denied = !ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                                 "test:deny", 0, /*tenant_id=*/7,
+                                                                 /*provenance_mutation_id=*/9000);
         CHECK(denied, "Restricted without grant denies");
         const auto seq_after_deny = g_security_event_ring().seq.load(std::memory_order_relaxed);
         CHECK(seq_after_deny > seq_before, "deny increments security event seq");
@@ -147,9 +147,9 @@ int run_test_security_audit_unify() {
         g_capability_registry().grant(7, "mutate", static_cast<Effect>(kEffectMutate));
         const auto seq_mid = g_security_event_ring().seq.load(std::memory_order_relaxed);
         const bool allowed =
-            ev.check_and_record_effect(kEffectMutate, kEffectMutate, "test:allow-2054", 0,
-                                       /*tenant_id=*/7,
-                                       /*provenance_mutation_id=*/9001);
+            ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "test:allow-2054", 0,
+                                                /*tenant_id=*/7,
+                                                /*provenance_mutation_id=*/9001);
         CHECK(allowed, "direct check_and_record_effect allows after grant");
         const auto seq_after_allow = g_security_event_ring().seq.load(std::memory_order_relaxed);
         CHECK(seq_after_allow > seq_mid, "allow increments security event seq");
@@ -173,8 +173,9 @@ int run_test_security_audit_unify() {
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(0); // Off so allow path is free
         const std::uint64_t mid = 4242;
-        const bool ok = ev.check_and_record_effect(kEffectMutate, kEffectMutate, "mutate-corr", 11,
-                                                   /*tenant_id=*/3, mid);
+        const bool ok =
+            ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "mutate-corr", 11,
+                                                /*tenant_id=*/3, mid);
         CHECK(ok, "allow check under Off sandbox");
         TypedMutationAuditEvent te{};
         CHECK(trail_find_by_mutation_id(mid, te), "typed trail has mutation_id");
@@ -190,9 +191,9 @@ int run_test_security_audit_unify() {
         ev.set_effect_sandbox_mode(1); // Restricted
         reset_capability_effects_for_test();
         const std::uint64_t mid_deny = 5252;
-        const bool denied =
-            !ev.check_and_record_effect(kEffectMutate, kEffectMutate, "mutate-deny-corr", 12,
-                                        /*tenant_id=*/3, mid_deny);
+        const bool denied = !ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                                 "mutate-deny-corr", 12,
+                                                                 /*tenant_id=*/3, mid_deny);
         CHECK(denied, "Restricted without grant denies");
         TypedMutationAuditEvent te2{};
         CHECK(trail_find_by_mutation_id(mid_deny, te2), "typed trail has deny mutation_id");
@@ -306,12 +307,14 @@ int run_test_security_audit_unify() {
             CHECK(ev.enable_mutation_audit_wal(dir.string()), "enable WAL");
             // Allow under Off
             ev.set_effect_sandbox_mode(0);
-            (void)ev.check_and_record_effect(kEffectMutate, kEffectMutate, "wal-a", 1, 1, 8001);
+            (void)ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "wal-a", 1, 1,
+                                                      8001);
             // Deny under Restricted
             apply_production_security_defaults();
             ev.set_effect_sandbox_mode(1);
             reset_capability_effects_for_test();
-            (void)ev.check_and_record_effect(kEffectMutate, kEffectMutate, "wal-deny", 2, 1, 8002);
+            (void)ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "wal-deny", 2,
+                                                      1, 8002);
             CHECK(g_mutation_audit_wal().is_enabled(), "WAL enabled");
             const auto seq_live = g_security_event_ring().seq.load(std::memory_order_relaxed);
             CHECK(seq_live >= 2, "at least 2 security events before restart sim");

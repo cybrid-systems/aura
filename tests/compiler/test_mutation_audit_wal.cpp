@@ -84,7 +84,8 @@ int main() {
         ev.set_capability_tenant_id(7);
         // Drive both emit paths: structural + effect
         ev.emit_mutation_audit(3, 1, "test-mutate", 42);
-        CHECK(ev.check_and_record_effect(kEffectMutate, kEffectMutate, "effect-op", 99, 7, 12345),
+        CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "effect-op", 99, 7,
+                                                  12345),
               "effect path records");
         CHECK(snapshot_audit_wal_stats().persisted >= 2, "records persisted");
         CHECK(href_m(cs, "persisted") >= 2, "stats persisted");
@@ -151,7 +152,7 @@ int main() {
         ev.set_capability_tenant_id(11);
         ev.emit_mutation_audit(1, 0, "a", 1);
         ev.set_capability_tenant_id(22);
-        (void)ev.check_and_record_effect(kEffectMutate, kEffectMutate, "b", 2, 22, 999);
+        (void)ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "b", 2, 22, 999);
         // Filter tenant=22
         auto log = cs.eval("(engine:metrics \"query:mutation-audit-log\" 20 22)");
         // engine:metrics may only take name — try direct if registered as stats

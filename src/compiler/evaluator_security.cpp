@@ -158,7 +158,8 @@ void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
     }
 }
 
-// Issue #1565 / #1876: force side-effect paths through capability effect check.
+// Issue #1565 / #1876 / #2706: private capability effect check + audit.
+// Production entry is require_effect / require_effect_on_ref only (#2706).
 // #1876: under sandbox, also validate/record StableNodeRef provenance and
 // bump sandbox_violations_total + capability_denials_by_effect metrics.
 bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
@@ -362,6 +363,18 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
 bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view op,
                                       const ast::FlatAST::StableNodeRef& ref) noexcept {
     return require_effect(req_bits, op, ref.id, ref.tenant_id);
+}
+
+// Issue #2706: test-only public surface — forwards to private
+// check_and_record_effect. Unit Soft paths that need explicit mid or
+// required≠actual bits use this; production prims must not.
+bool Evaluator::check_and_record_effect_for_test(std::uint16_t required_effect_bits,
+                                                 std::uint16_t actual_effect_bits,
+                                                 std::string_view op, ast::NodeId target_node,
+                                                 std::uint64_t tenant_id,
+                                                 std::uint64_t provenance_mutation_id) noexcept {
+    return check_and_record_effect(required_effect_bits, actual_effect_bits, op, target_node,
+                                   tenant_id, provenance_mutation_id);
 }
 
 // Issue #1567: enable WAL under persist_dir; replay prior records into ring.

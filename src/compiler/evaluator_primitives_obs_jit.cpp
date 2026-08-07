@@ -956,6 +956,13 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                  make_int(aura::core::provenance::hard_capture_tenant_active() ? 1 : 0)},
                 {"schema-2705", make_int(2705)},
                 {"issue-2705", make_int(2705)},
+                // Issue #2706: sole public side-effect gate =
+                // require_effect / require_effect_on_ref. Armed sentinel so
+                // Agent dashboards verify check_and_record_effect is private
+                // (production prims cannot bypass isolation).
+                {"sole-require-effect-gate-armed", make_int(1)},
+                {"schema-2706", make_int(2706)},
+                {"issue-2706", make_int(2706)},
                 // Issue #2688: production-default hard_fiber_isolation +
                 // grant epoch retain window. Wire query surface so Agent
                 // dashboards can verify apply_production_security_defaults

@@ -105,8 +105,8 @@ static void ac1_effect_stamps_mutation() {
     CHECK(g.grant_epoch == me || g.grant_epoch == 1, "grant_epoch = Mutation");
 
     // Effect check must stamp Mutation (audit ring / SecurityEvent).
-    const bool ok = ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac1-effect", 0, 100,
-                                               g.bound_mutation_id);
+    const bool ok = ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac1-effect",
+                                                        0, 100, g.bound_mutation_id);
     CHECK(ok, "effect allowed under grant");
 
     // Latest capability audit entry carries Mutation epoch.
@@ -141,7 +141,8 @@ static void ac2_bridge_bump_no_flip() {
     CHECK(g_capability_registry().find_grant(200, "bridge-iso", g), "grant");
     const auto mid = g.bound_mutation_id;
 
-    CHECK(ev.check_and_record_effect(kEffectMutate, kEffectMutate, "pre-bridge", 0, 200, mid),
+    CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "pre-bridge", 0, 200,
+                                              mid),
           "allow before Bridge bump");
 
     // Bump ONLY Bridge — Mutation (and grant_epoch) stay put.
@@ -150,7 +151,8 @@ static void ac2_bridge_bump_no_flip() {
     CHECK(current_mutation_epoch() == me_before, "Mutation unchanged");
     CHECK(current_bridge_epoch() != me_before, "Bridge diverged");
 
-    CHECK(ev.check_and_record_effect(kEffectMutate, kEffectMutate, "post-bridge", 0, 200, mid),
+    CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "post-bridge", 0, 200,
+                                              mid),
           "AC2: still allow after Bridge-only bump");
     EffectProvenance call{};
     call.mutation_id = mid;
@@ -182,8 +184,8 @@ static void ac3_min_valid_fence() {
           "epoch-fence-hits advanced");
 
     // Full effect path also denies under Strict + expired grant.
-    CHECK(!ev.check_and_record_effect(kEffectMutate, kEffectMutate, "fence-deny", 0, 300,
-                                      g.bound_mutation_id),
+    CHECK(!ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "fence-deny", 0, 300,
+                                               g.bound_mutation_id),
           "AC3: effect path denies expired grant");
 }
 
@@ -216,7 +218,7 @@ static void ac5_security_event_schema() {
     ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(500);
     ev.grant_effect_capability(500, "ac5-g", kEffectMutate, /*prov=*/42);
-    CHECK(ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac5-op", 0, 500, 42),
+    CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac5-op", 0, 500, 42),
           "effect allow");
 
     // SecurityEvent ring should carry mutation_id + Mutation epoch.

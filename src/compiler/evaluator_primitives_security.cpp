@@ -156,13 +156,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(true);
     });
 
-    // Issue #1565: (security:check-effect required-bits) → #t/#f
+    // Issue #1565 / #2706: (security:check-effect required-bits) → #t/#f
+    // Routes through require_effect (sole public side-effect gate) so
+    // isolation + live mid stamp run the same as production prims.
     add("security:check-effect", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         const auto bits = static_cast<std::uint16_t>(as_int(a[0]));
-        return make_bool(ev.check_and_record_effect(bits, bits, "security:check-effect", 0,
-                                                    ev.capability_tenant_id(), 0));
+        return make_bool(ev.require_effect(bits, "security:check-effect"));
     });
 
     ObservabilityPrims::register_stats_impl(

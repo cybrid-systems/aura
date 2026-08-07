@@ -147,8 +147,9 @@ int run_test_hard_fiber_isolation() {
         set_effect_fiber_id_override(200);
         const auto mismatch0 = g_capability_effect_metrics().capability_fiber_mismatch_total.load();
         const auto hard0 = g_capability_effect_metrics().capability_fiber_hard_deny_total.load();
-        const bool ok = ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac1-soft",
-                                                   /*target=*/0, /*tenant=*/42, /*mid=*/0);
+        const bool ok =
+            ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac1-soft",
+                                                /*target=*/0, /*tenant=*/42, /*mid=*/0);
         CHECK(ok, "AC1: soft mismatch allows");
         CHECK(g_capability_effect_metrics().capability_fiber_mismatch_total.load() > mismatch0,
               "AC1: fiber-mismatch metric advanced");
@@ -182,7 +183,7 @@ int run_test_hard_fiber_isolation() {
         reset_security_event_ring_for_test();
 
         const bool ok =
-            ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac2-hard", 0, 77, 0);
+            ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac2-hard", 0, 77, 0);
         CHECK(!ok, "AC2: hard mismatch denies");
         CHECK(g_capability_effect_metrics().capability_fiber_hard_deny_total.load() > hard0,
               "AC2: fiber-hard-deny metric advanced");
@@ -194,7 +195,7 @@ int run_test_hard_fiber_isolation() {
         // Same fiber still allowed.
         set_effect_fiber_id_override(11);
         const bool ok_same =
-            ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac2-same", 0, 77, 0);
+            ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac2-same", 0, 77, 0);
         CHECK(ok_same, "AC2: same-fiber grant still allows");
         set_effect_fiber_id_override(0);
     }
@@ -218,8 +219,8 @@ int run_test_hard_fiber_isolation() {
             ev.grant_effect_capability(99, "mutate-scope", kEffectMutate, 0);
 
             set_effect_fiber_id_override(502);
-            const bool denied =
-                !ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac3-fiber", 0, 99, 0);
+            const bool denied = !ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                                     "ac3-fiber", 0, 99, 0);
             CHECK(denied, "AC3: hard deny under TenantScope");
         }
         // After scope exit, prior principal restored.
@@ -254,8 +255,8 @@ int run_test_hard_fiber_isolation() {
         g_capability_registry().set_grant_min_valid_epoch(ge + 100);
         set_effect_fiber_id_override(31); // same fiber — fence still wins
         const auto fence0 = g_capability_effect_metrics().capability_epoch_fence_hit_total.load();
-        const bool fence_deny =
-            !ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac4-fence", 0, 55, 0);
+        const bool fence_deny = !ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                                     "ac4-fence", 0, 55, 0);
         CHECK(fence_deny, "AC4: epoch fence denies under wildcard");
         CHECK(g_capability_effect_metrics().capability_epoch_fence_hit_total.load() > fence0,
               "AC4: epoch-fence metric advanced");
@@ -267,8 +268,8 @@ int run_test_hard_fiber_isolation() {
         ev.grant_effect_capability(55, "mutate-fence2", kEffectMutate, 0);
         set_effect_fiber_id_override(99);
         const auto hard0 = g_capability_effect_metrics().capability_fiber_hard_deny_total.load();
-        const bool fiber_deny =
-            !ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac4-fiber", 0, 55, 0);
+        const bool fiber_deny = !ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                                     "ac4-fiber", 0, 55, 0);
         CHECK(fiber_deny, "AC4: fiber hard-deny after provenance_ok under wildcard");
         CHECK(g_capability_effect_metrics().capability_fiber_hard_deny_total.load() > hard0,
               "AC4: hard-deny metric on wildcard path");
@@ -334,7 +335,7 @@ int run_test_hard_fiber_isolation() {
         set_effect_fiber_id_override(1);
         ev2.grant_effect_capability(8, "m", kEffectMutate, 0);
         set_effect_fiber_id_override(2);
-        (void)ev2.check_and_record_effect(kEffectMutate, kEffectMutate, "q", 0, 8, 0);
+        (void)ev2.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "q", 0, 8, 0);
         CHECK(href(cs2, "hard-fiber-isolation") == 1, "query flag on");
         CHECK(href(cs2, "fiber-hard-deny") >= 1, "query fiber-hard-deny count");
         CHECK(href(cs2, "fiber-mismatch") >= 1, "query fiber-mismatch count");

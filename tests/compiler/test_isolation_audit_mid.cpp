@@ -169,8 +169,8 @@ int run_test_isolation_audit_mid() {
         ev.set_effect_sandbox_mode(2); // Strict, no grant
         ev.set_capability_tenant_id(3);
         const auto epoch = current_mutation_epoch();
-        (void)ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac2-effect", 0, 3,
-                                         /*provenance_mutation_id=*/0);
+        (void)ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac2-effect", 0, 3,
+                                                  /*provenance_mutation_id=*/0);
         // Effect path uses seq or provenance as mid — not tenant 3 as pollution.
         auto& ring = g_security_event_ring();
         const auto total = ring.total.load();
