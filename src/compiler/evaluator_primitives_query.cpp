@@ -6644,6 +6644,21 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                             insert_kv("mutation-hold-budget-holder-degrade-wired", deg_wired);
                             insert_kv("schema-2720", 2720);
                             insert_kv("issue-2720", 2720);
+                            // Issue #2724: region/subtree-scoped concurrent
+                            // admit — Agent-visible counters for the disjoint
+                            // region check. Additive — all #2701/#2720/
+                            // #2587/#2630 surfaces preserved.
+                            insert_kv("mutation-region-concurrent-admit-total",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_concurrent_admit_total_v_read()));
+                            insert_kv("mutation-region-overlap-reject-total",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_overlap_reject_total_v_read()));
+                            insert_kv("mutation-region-concurrent-wired",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_concurrent_wired_v_read()));
+                            insert_kv("schema-2724", 2724);
+                            insert_kv("issue-2724", 2724);
                             // Issue #2702: query:resume-hard-fail — Agent-visible resume
                             // hard-fail surface. Production path: ticket mismatch or
                             // mutation_safety_snapshot_inconsistent → request_cancel +
