@@ -342,14 +342,10 @@ PostRestoreReport FlatAST::validate_post_restore(std::vector<ValidationError>* e
 
 // ── Issue #378: post-class free functions + non-template visitors ──────
 //
-// Scope-limited first cut: move the non-template post-class items from
-// ast.ixx to this impl unit. Templates (MutationVisitor / PureMutationFn
-// concepts, MutationFnWrap<F>, run_mutation_* templates) MUST stay in the
-// interface unit — templates with external linkage can't be defined in a
-// non-exported module implementation unit.
-//
-// All declarations stay `export` in ast.ixx (declarations only, no body);
-// the bodies below live here in module aura.core.ast (no `export`).
+// Non-template post-class items live here. MutationVisitor /
+// run_mutation_pipeline templates live in aura.core.ast_mutation_pipeline
+// (FlatAST decomp step 2). Visitor class declarations stay exported from
+// ast.ixx; bodies below are module aura.core.ast (no `export`).
 
 // ── StableNodeRef + MutationRecord helpers ───────────────────
 FlatAST::StableNodeRef mutation_target_ref(const FlatAST& flat,

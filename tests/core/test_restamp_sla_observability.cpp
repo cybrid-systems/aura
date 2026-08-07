@@ -118,15 +118,20 @@ static void ac3_is_valid_correct_after_incremental() {
 // ── AC4: configurable SLO budget; breach counter increments when exceeded ──
 static void ac4_configurable_slo_budget_breach() {
     std::println("\n--- AC4: configurable SLO budget; breach counter increments when exceeded ---");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
     const auto astx = read_file("src/core/ast.ixx");
-    // resolve_restamp_slo_us() reads AURA_REStamp_SLO_US env.
-    CHECK(astx.find("AURA_REStamp_SLO_US") != std::string::npos,
+    // resolve_restamp_slo_us() reads AURA_REStamp_SLO_US env (SSOT restamp header).
+    CHECK(restamp.find("AURA_REStamp_SLO_US") != std::string::npos ||
+              astx.find("AURA_REStamp_SLO_US") != std::string::npos,
           "AC4: AURA_REStamp_SLO_US env resolution present");
-    CHECK(astx.find("resolve_restamp_slo_us") != std::string::npos,
+    CHECK(restamp.find("resolve_restamp_slo_us") != std::string::npos ||
+              astx.find("resolve_restamp_slo_us") != std::string::npos,
           "AC4: resolve_restamp_slo_us() helper present");
-    // Default 500 µs per issue body.
-    CHECK(astx.find("resolve_restamp_slo_us()") != std::string::npos &&
-              astx.find("cached{500}") != std::string::npos,
+    // Default 500 µs per issue body (SSOT in flatast_restamp.hh).
+    CHECK((restamp.find("resolve_restamp_slo_us()") != std::string::npos ||
+           astx.find("resolve_restamp_slo_us()") != std::string::npos) &&
+              (restamp.find("cached{500}") != std::string::npos ||
+               astx.find("cached{500}") != std::string::npos),
           "AC4: default SLO budget 500 µs (matches issue Required change 2)");
     // Breach detection: restamp_us_last > budget → bump.
     CHECK(astx.find("if (us_u > slo_budget_us)") != std::string::npos,

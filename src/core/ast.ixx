@@ -28,6 +28,9 @@ module;
 #include "core/persistent_child_vector.hh"
 #include "core/cpp26_contract_stats.h"
 #include "core/provenance_tracker.hh" // #2125: maybe_stamp_stable_ref_isolation_tenant
+#include "core/flatast_restamp.hh"    // FlatAST decomp step 1: RestampPolicy SSOT
+#include "core/owned_shared_mutex.hh" // FlatAST decomp step 1: OwnedSharedMutex
+#include "core/flatast_domains.hh"    // FlatAST decomp map (agent blast-radius)
 #include "reflect/node_tag_names.hh"  // Wave B1: shared NodeTag names
 #include <contracts>
 #include <shared_mutex>
@@ -45,71 +48,13 @@ namespace aura::ast {
 // NodeId / NULL_NODE / SymId come from aura.core.mutation (#275).
 export constexpr SymId INVALID_SYM = ~0u;
 
-// Issue #2402: generation-wrap restamp policy (production default = Auto).
-//   Full:        always restamp all live nodes on wrap recovery
-//   Incremental: dirty/touched cone only; empty cone → lazy-align only
-//                (no O(N) full walk); density never forces full
-//   Auto:        #2122 density-gated: incremental when touched density
-//                ≤ threshold; full fallback when empty cone or dense
-// Env: AURA_RESTAMP_POLICY=full|incremental|auto (default auto).
-// Zero cost when no wrap / no pending restamp (policy is only read
-// inside restamp_all_node_generations on wrap recovery).
-export enum class RestampPolicy : std::uint8_t {
-    Full = 0,
-    Incremental = 1,
-    Auto = 2,
-};
-
-export inline constexpr int kRestampIncrementalDefaultIssue = 2402;
-
-// Resolve process-wide restamp policy from AURA_RESTAMP_POLICY.
-// Default Auto = production-friendly density-gated incremental (#2122/#2402).
-export [[nodiscard]] inline RestampPolicy resolve_restamp_policy() noexcept {
-    const char* e = std::getenv("AURA_RESTAMP_POLICY");
-    if (!e || !*e)
-        return RestampPolicy::Auto;
-    // Case-insensitive-ish: accept common spellings.
-    if ((e[0] == 'f' || e[0] == 'F') && (e[1] == 'u' || e[1] == 'U'))
-        return RestampPolicy::Full;
-    if ((e[0] == 'i' || e[0] == 'I') && (e[1] == 'n' || e[1] == 'N'))
-        return RestampPolicy::Incremental;
-    if ((e[0] == 'a' || e[0] == 'A') && (e[1] == 'u' || e[1] == 'U'))
-        return RestampPolicy::Auto;
-    return RestampPolicy::Auto;
-}
-
-// Issue #2528: resolve AURA_REStamp_SLO_US env once on first call.
-// Cached static atomic — subsequent calls return the cached budget
-// (idempotent thereafter). Default 500 µs. Caller should read via this
-// helper rather than the member directly so the env override applies
-// without per-call env reads.
-export [[nodiscard]] inline std::uint32_t resolve_restamp_slo_us() noexcept {
-    static std::atomic<std::uint32_t> cached{500};
-    static std::atomic<bool> initialized{false};
-    if (!initialized.load(std::memory_order_acquire)) {
-        const char* e = std::getenv("AURA_REStamp_SLO_US");
-        if (e && *e) {
-            char* end = nullptr;
-            const unsigned long v = std::strtoul(e, &end, 10);
-            if (end != e && v >= 1ul && v <= 60000000ul)
-                cached.store(static_cast<std::uint32_t>(v), std::memory_order_release);
-        }
-        initialized.store(true, std::memory_order_release);
-    }
-    return cached.load(std::memory_order_acquire);
-}
-
-export [[nodiscard]] inline const char* restamp_policy_name(RestampPolicy p) noexcept {
-    switch (p) {
-        case RestampPolicy::Full:
-            return "full";
-        case RestampPolicy::Incremental:
-            return "incremental";
-        case RestampPolicy::Auto:
-        default:
-            return "auto";
-    }
-}
+// ── Restamp policy (SSOT: flatast_restamp.hh) ────────────────
+// Re-exported so `import aura.core.ast` keeps prior public surface.
+export using ::aura::ast::RestampPolicy;
+export using ::aura::ast::kRestampIncrementalDefaultIssue;
+export using ::aura::ast::resolve_restamp_policy;
+export using ::aura::ast::resolve_restamp_slo_us;
+export using ::aura::ast::restamp_policy_name;
 
 // ── Wave B3: small public AST PODs on auto_serialize ─────────
 //
@@ -291,70 +236,9 @@ export [[nodiscard]] std::uint64_t stringpool_intern_concurrent_readers_total() 
     return g_stringpool_intern_concurrent_readers_total.load(std::memory_order_relaxed);
 }
 
-// ── Issue #222: OwnedSharedMutex wrapper ──────────────────────
-//
-// std::shared_mutex is neither copyable nor movable, so a class
-// containing it directly has its implicit copy/move ctors
-// deleted. This wrapper stores the mutex inline and defines the
-// copy/move semantics we want for FlatAST + StringPool:
-//
-//   - Copy ctor: placement-new a FRESH shared_mutex. Each copy
-//     gets its own mutex (independent mutation isolation).
-//   - Copy assign: no-op (the destination keeps its own mutex;
-//     only the data members are overwritten).
-//   - Move ctor / move assign: destination gets a fresh mutex;
-//     the source keeps its own until destroyed (lock state is
-//     not transferred — same discipline as the old unique_ptr
-//     move, which left the moved-from FlatAST with nullptr).
-//
-// Issue #300 follow-up #1: the previous unique_ptr<std::shared_mutex>
-// allocated the mutex on the heap. ~FlatAST ran ~OwnedSharedMutex
-// (freeing that heap block) before ~children_, and ASAN caught a
-// PCV shared_ptr control block UAF — the freed mutex block was
-// reused with a corrupted use_count. Inline storage removes the
-// extra heap free entirely.
-//
-// Used as the type of `FlatAST::structural_mtx_` /
-// `FlatAST::metadata_mtx_` and `StringPool::mtx_` (Issue #2062).
-class OwnedSharedMutex {
-public:
-    OwnedSharedMutex() noexcept { construct(); }
-    ~OwnedSharedMutex() { destroy(); }
-
-    // Copy: fresh mutex (independent isolation).
-    OwnedSharedMutex(const OwnedSharedMutex&) noexcept { construct(); }
-    // Move: fresh mutex in the destination; source keeps its own.
-    OwnedSharedMutex(OwnedSharedMutex&&) noexcept { construct(); }
-    // Copy-assign: keep our own mutex (the data being copied
-    // doesn't include the mutex state).
-    OwnedSharedMutex& operator=(const OwnedSharedMutex&) noexcept { return *this; }
-    // Move-assign: keep our own mutex.
-    OwnedSharedMutex& operator=(OwnedSharedMutex&&) noexcept { return *this; }
-
-    std::shared_mutex& get() noexcept { return *mutex_ptr(); }
-    const std::shared_mutex& get() const noexcept { return *mutex_ptr(); }
-    // Like get() but returns a non-const reference even through
-    // a const OwnedSharedMutex. Needed because shared_lock /
-    // unique_lock require a non-const mutex reference to acquire
-    // (the lock state is part of the mutex). The const_cast is
-    // safe here because acquiring a lock is a "logical const"
-    // operation: it doesn't modify the protected data.
-    std::shared_mutex& mutable_get() const noexcept {
-        return *const_cast<std::shared_mutex*>(mutex_ptr());
-    }
-
-private:
-    alignas(std::shared_mutex) std::byte storage_[sizeof(std::shared_mutex)];
-
-    std::shared_mutex* mutex_ptr() noexcept {
-        return std::launder(reinterpret_cast<std::shared_mutex*>(storage_));
-    }
-    const std::shared_mutex* mutex_ptr() const noexcept {
-        return std::launder(reinterpret_cast<const std::shared_mutex*>(storage_));
-    }
-    void construct() { std::construct_at(mutex_ptr()); }
-    void destroy() { std::destroy_at(mutex_ptr()); }
-};
+// OwnedSharedMutex — SSOT in owned_shared_mutex.hh (GMF include above).
+// Used as FlatAST::structural_mtx_ / metadata_mtx_ / dirty_column_mtx_ /
+// flatast_mutex_ and StringPool::mtx_ (Issue #2062 / #222 / #300).
 
 export class StringPool {
 public:
@@ -9715,41 +9599,11 @@ public:
     mutable std::atomic<std::uint64_t> atomic_batch_metadata_captured_total_{0};
 };
 
-// ── MutationVisitor concept (Issue #274) ─────────────────────
-//
-// Mirrors the Pass / AnalysisPass pattern in pass_manager.ixx,
-// but for FlatAST mutation records instead of IRModule transforms.
-// Visitors observe or react to committed mutations; the pipeline
-// folds over the mutation log with short-circuit on has_error().
-export template <typename V>
-concept MutationVisitor = requires(V& v, FlatAST& flat, const MutationRecord& rec) {
-    { v.visit_mutation(flat, rec) } -> std::same_as<void>;
-    { v.has_error() } -> std::convertible_to<bool>;
-};
-
-// Pure-function mutation callbacks (no persistent visitor state).
-export template <typename Fn>
-concept PureMutationFn = requires(Fn& fn, FlatAST& flat, const MutationRecord& rec) {
-    { fn(flat, rec) } -> std::same_as<void>;
-};
-
-export template <PureMutationFn Fn> class MutationFnWrap {
-public:
-    explicit MutationFnWrap(Fn& fn)
-        : fn_(&fn) {}
-
-    void visit_mutation(FlatAST& flat, const MutationRecord& rec) { (*fn_)(flat, rec); }
-    [[nodiscard]] bool has_error() const noexcept { return false; }
-
-private:
-    Fn* fn_;
-};
-
 // ── StableNodeRef + MutationRecord helpers ───────────────────
-// Issue #378: bodies moved to ast_impl.cpp (non-template post-class
-// items). Templates above (MutationFnWrap / run_mutation_*) MUST stay
-// in this interface unit because templates with external visibility
-// can't be defined in a non-exported module implementation unit.
+// Issue #378: bodies in ast_impl.cpp.
+// MutationVisitor / run_mutation_pipeline live in
+// aura.core.ast_mutation_pipeline (FlatAST decomp step 2) — import
+// that module for the fold pipeline; example visitors stay here.
 export [[nodiscard]] FlatAST::StableNodeRef mutation_target_ref(const FlatAST& flat,
                                                                 const MutationRecord& rec) noexcept;
 export [[nodiscard]] FlatAST::StableNodeRef mutation_parent_ref(const FlatAST& flat,
@@ -9759,41 +9613,8 @@ export [[nodiscard]] bool is_mutation_target_valid(const FlatAST& flat,
 export [[nodiscard]] bool is_mutation_parent_valid(const FlatAST& flat,
                                                    const MutationRecord& rec) noexcept;
 
-// ── run_mutation_pipeline — fold over mutation log ───────────
-export template <MutationVisitor V>
-bool run_mutation_visitor_one(FlatAST& flat, const MutationRecord& rec, V& visitor) {
-    visitor.visit_mutation(flat, rec);
-    return !visitor.has_error();
-}
-
-export template <MutationVisitor... Visitors>
-bool run_mutation_one(FlatAST& flat, const MutationRecord& rec, Visitors&... visitors) {
-    return (run_mutation_visitor_one(flat, rec, visitors) && ...);
-}
-
-export template <MutationVisitor... Visitors>
-bool run_mutation_pipeline(FlatAST& flat, Visitors&... visitors) {
-    for (const auto& rec : flat.all_mutations()) {
-        if (!run_mutation_one(flat, rec, visitors...))
-            return false;
-    }
-    return true;
-}
-
-export template <MutationVisitor... Visitors>
-bool run_mutation_pipeline(FlatAST& flat, std::span<const MutationRecord> records,
-                           Visitors&... visitors) {
-    for (const auto& rec : records) {
-        if (!run_mutation_one(flat, rec, visitors...))
-            return false;
-    }
-    return true;
-}
-
-// ── Example mutation visitors ──────────────────────────────────
-// Issue #378: bodies moved to ast_impl.cpp. These classes are non-template
-// and the bodies don't need to be in the interface unit for instantiation
-// — the impl unit provides the definitions.
+// ── Example mutation visitors (Issue #274 / #378) ─────────────
+// Bodies in ast_impl.cpp. Satisfy MutationVisitor (pipeline module).
 export class MutationCountVisitor {
 public:
     void visit_mutation(FlatAST&, const MutationRecord& rec);

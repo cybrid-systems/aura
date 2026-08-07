@@ -137,12 +137,15 @@ int run_test_incremental_restamp() {
     // ── #2122 AC1: source docs ──
     {
         std::println("\n--- #2122 AC1: source cites policy ---");
+        auto pol = read_file("src/core/flatast_restamp.hh");
         auto src = read_file("src/core/ast.ixx");
-        CHECK(!src.empty(), "read ast.ixx");
-        CHECK(src.find("#2122") != std::string::npos, "cites #2122");
+        CHECK(!pol.empty() || !src.empty(), "read flatast_restamp.hh and/or ast.ixx");
+        CHECK(pol.find("#2122") != std::string::npos || src.find("#2122") != std::string::npos,
+              "cites #2122");
         CHECK(src.find("restamp_incremental") != std::string::npos ||
                   src.find("dirty-cone") != std::string::npos ||
-                  src.find("use_incremental") != std::string::npos,
+                  src.find("use_incremental") != std::string::npos ||
+                  pol.find("Incremental") != std::string::npos,
               "incremental policy present");
         CHECK(src.find("restamp_full_fallback_total") != std::string::npos, "fallback counter");
     }
@@ -337,8 +340,12 @@ int run_test_incremental_restamp() {
         } else {
             CHECK(true, "#2402 AC4: skip live workspace keys (no flat)");
         }
-        auto src = read_file("src/core/ast.ixx");
-        CHECK(src.find("#2402") != std::string::npos, "#2402 AC4: ast.ixx cites #2402");
+        auto src = read_file("src/core/flatast_restamp.hh");
+        auto astx = read_file("src/core/ast.ixx");
+        if (src.empty())
+            src = astx;
+        CHECK(src.find("#2402") != std::string::npos || astx.find("#2402") != std::string::npos,
+              "#2402 AC4: ast.ixx cites #2402");
         CHECK(src.find("AURA_RESTAMP_POLICY") != std::string::npos,
               "#2402 AC4: AURA_RESTAMP_POLICY env documented");
         CHECK(src.find("resolve_restamp_policy") != std::string::npos,
