@@ -183,6 +183,69 @@ export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_with_evidenc
 // Full/Production: optional escalate via fidelity-health note. No abort path.
 export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_total{0};
 
+// Issue #2719: Full/production optional hard gate on layered evidence
+// diverge (#2674 residual). When diverge is observed under
+// production_defaults_active() || get_strategy() == Full:
+//   - (default arm) bump force-armed counter + set force-full-pending
+//     flag so the next MutationBoundary runs a Full invariant sample
+//     (a fidelity-health note, not a hard-reject of the current commit).
+//   - (opt-in env arm AURA_LAYERED_COERCION_DIVERGE_HARD=1) bump
+//     hard-reject counter + set hard-reject-pending flag so the next
+//     commit can be rejected (Agents decide downstream policy). Default
+//     production: force-Full arm only (no silent reject unless env).
+// Soft/Sampled: observe-only (#2674 behavior preserved — no force-armed
+// bump, no flag set).
+export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_force_armed_total{0};
+export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_hard_reject_total{0};
+export inline std::atomic<std::uint32_t> g_layered_evidence_diverge_force_full_pending{0};
+export inline std::atomic<std::uint32_t> g_layered_evidence_diverge_hard_reject_pending{0};
+
+// Env var helper for #2719 hard-reject arm. Reads
+// AURA_LAYERED_COERCION_DIVERGE_HARD (any non-zero value enables).
+// Cached once at first call (env vars don't change at runtime in
+// production — matches existing pattern in this module).
+export [[nodiscard]] inline bool layered_diverge_hard_enabled() noexcept {
+    static const bool enabled = []() noexcept -> bool {
+        const char* e = std::getenv("AURA_LAYERED_COERCION_DIVERGE_HARD");
+        if (e && *e) {
+            char* end = nullptr;
+            const auto n = std::strtoull(e, &end, 10);
+            if (end != e && n > 0)
+                return true;
+        }
+        return false;
+    }();
+    return enabled;
+}
+
+// Accessors + test resets for #2719 surface.
+export [[nodiscard]] inline std::uint64_t
+layered_evidence_diverge_force_armed_total_v_read() noexcept {
+    return g_layered_evidence_diverge_force_armed_total.load(std::memory_order_relaxed);
+}
+export inline void reset_layered_evidence_diverge_force_armed_total_for_test() noexcept {
+    g_layered_evidence_diverge_force_armed_total.store(0, std::memory_order_relaxed);
+}
+export [[nodiscard]] inline std::uint64_t
+layered_evidence_diverge_hard_reject_total_v_read() noexcept {
+    return g_layered_evidence_diverge_hard_reject_total.load(std::memory_order_relaxed);
+}
+export inline void reset_layered_evidence_diverge_hard_reject_total_for_test() noexcept {
+    g_layered_evidence_diverge_hard_reject_total.store(0, std::memory_order_relaxed);
+}
+export [[nodiscard]] inline bool layered_evidence_diverge_force_full_pending() noexcept {
+    return g_layered_evidence_diverge_force_full_pending.load(std::memory_order_relaxed) != 0;
+}
+export inline void clear_layered_evidence_diverge_force_full_pending_for_test() noexcept {
+    g_layered_evidence_diverge_force_full_pending.store(0, std::memory_order_relaxed);
+}
+export [[nodiscard]] inline bool layered_evidence_diverge_hard_reject_pending() noexcept {
+    return g_layered_evidence_diverge_hard_reject_pending.load(std::memory_order_relaxed) != 0;
+}
+export inline void clear_layered_evidence_diverge_hard_reject_pending_for_test() noexcept {
+    g_layered_evidence_diverge_hard_reject_pending.store(0, std::memory_order_relaxed);
+}
+
 // Issue #2102 / #2185: provenance-miss policy atomics + helpers live in
 // coercion_provenance_policy.hh (re-exported above). Process start keeps
 // reject=false; apply_production_security_defaults forces reject=true
@@ -255,7 +318,12 @@ export [[nodiscard]] inline std::uint64_t coercion_evidence_loss_bp() noexcept {
 // (ir_narrow + meta_stamps are monotonically non-decreasing per process
 // lifetime; a snapshot at boundary exit is consistent with the per-window
 // coherence check).
-export inline void
+// Issue #2719: return diverge_delta (the amount by which the AST
+// evidence-backed elision counter exceeded the union of IR narrow + deopt
+// meta stamps) so the boundary call site can arm the Full/production hard
+// gate (#2674 was observe-only and returned void — additive: existing
+// callers can ignore the return). Zero on invariant holds (no diverge).
+export inline std::uint64_t
 check_layered_evidence_coherence(std::uint64_t ir_narrow_evidence_hits_external) noexcept {
     using namespace ::aura::compiler::dce_deopt;
     const auto ast_with_ev =
@@ -268,7 +336,9 @@ check_layered_evidence_coherence(std::uint64_t ir_narrow_evidence_hits_external)
     if (ast_with_ev > ir_narrow_evidence_hits_external + meta_stamps) {
         const auto diverge_delta = ast_with_ev - (ir_narrow_evidence_hits_external + meta_stamps);
         g_layered_evidence_diverge_total.fetch_add(diverge_delta, std::memory_order_relaxed);
+        return diverge_delta;
     }
+    return 0;
 }
 
 // ── CoercionEntry — one deferred coercion ────────────────

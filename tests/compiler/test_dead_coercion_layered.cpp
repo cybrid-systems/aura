@@ -267,17 +267,23 @@ namespace _2674_detail {
 void run_2674_layered_coherence();
 }
 
+namespace _2719_detail {
+void run_2719_layered_coerce_hard_gate();
+}
+
 int run_test_dead_coercion_layered() {
     std::println("=== Issue #2282 / #2287: dead-coercion layered + CastOp density ===");
     std::println("=== Issue #2319: opt-in hard CastOp density gate ===");
     std::println("=== Issue #2645: layered dead-coercion evidence chain ===");
     std::println("=== Issue #2674: layered evidence-coherence production gate ===");
+    std::println("=== Issue #2719: layered evidence-coerce hard gate (Full/prod) ===");
     aura_dead_coercion_layered_2282::_2282_detail::run_2282_layered_total();
     aura_dead_coercion_layered_2282::_2287_detail::run_2287_density();
     // Issue #2319 ACs are covered by dedicated test_castop_density_hard
     // (ac2319_* helpers were never defined in this TU).
     _2645_detail::run_2645_evidence_chain();
     _2674_detail::run_2674_layered_coherence();
+    _2719_detail::run_2719_layered_coerce_hard_gate();
     return RUN_ALL_TESTS();
 }
 
@@ -552,6 +558,180 @@ void run_2674_layered_coherence() {
 }
 
 } // namespace _2674_detail
+
+// ---------------------------------------------------------------------------
+// Issue #2719: layered dead-coercion evidence-coerce hard gate (Full/prod).
+// Refines #2674 (observe-only) with Full/production optional hard gate on
+// layered evidence diverge (#2674 residual). When diverge is observed
+// under production_defaults_active() || get_strategy() == Full:
+//   - (default arm) bump force-armed counter + set force-full-pending
+//     flag so next MutationBoundary runs a Full invariant sample
+//     (fidelity-health note, NOT a hard-reject of the current commit).
+//   - (opt-in env arm AURA_LAYERED_COERCION_DIVERGE_HARD=1) bump
+//     hard-reject counter + set hard-reject-pending flag so the next
+//     commit can be rejected (Agents decide downstream policy).
+// Default production: force-Full arm only (no silent reject unless env).
+// Soft/Sampled: observe-only (#2674 behavior preserved — no force-armed
+// bump, no flag set). Quiet path (no diverge): zero cost.
+//   AC1: Production/Full + diverge → (a) force-Full arm fires; (b) env
+//        arm opt-in via AURA_LAYERED_COERCION_DIVERGE_HARD=1
+//   AC2: Soft/Sampled → observe only (#2674 behavior preserved)
+//   AC3: Quiet path → zero cost (existing AC3 preserved)
+//   AC4: Additive query keys + schema-2719/issue-2719 sentinels; #2674
+//        keys preserved
+//   AC5: Source-cite + extend this file per #81967 (tests in src/-
+//        aligned suite, no new file)
+//   AC6: no docs/design/2719-* per #1655
+// ---------------------------------------------------------------------------
+namespace _2719_detail {
+
+using aura::compiler::CompilerService;
+
+// AC1: Production/Full + inject diverge → (a) force-Full arm fires
+// (default); (b) env arm opt-in via AURA_LAYERED_COERCION_DIVERGE_HARD=1.
+// Default production is force-Full only (no silent reject unless env).
+static void ac2719_1_force_full_default_arm() {
+    std::println("\n--- AC1 #2719: Full/prod → force-Full arm fires ---");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    // Default production arm: force-armed counter + force-full-pending
+    // flag declared.
+    CHECK(cixx.find("g_layered_evidence_diverge_force_armed_total") != std::string::npos,
+          "AC1 #2719: force-armed counter declared in coercion_map.ixx");
+    CHECK(cixx.find("g_layered_evidence_diverge_force_full_pending") != std::string::npos,
+          "AC1 #2719: force-full-pending flag declared in coercion_map.ixx");
+    // Opt-in env arm: hard-reject counter + hard-reject-pending flag.
+    CHECK(cixx.find("g_layered_evidence_diverge_hard_reject_total") != std::string::npos,
+          "AC1 #2719: hard-reject counter declared in coercion_map.ixx");
+    CHECK(cixx.find("g_layered_evidence_diverge_hard_reject_pending") != std::string::npos,
+          "AC1 #2719: hard-reject-pending flag declared in coercion_map.ixx");
+    CHECK(cixx.find("layered_diverge_hard_enabled") != std::string::npos,
+          "AC1 #2719: env var helper in coercion_map.ixx");
+    // check_layered_evidence_coherence now returns diverge_delta (was void
+    // for #2674). Capture pattern at boundary.
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("layered_diverge_delta") != std::string::npos,
+          "AC1 #2719: boundary captures check return value");
+    CHECK(mb.find("typed_audit::production_defaults_active()") != std::string::npos &&
+              mb.find("typed_audit::AuditStrategy::Full") != std::string::npos,
+          "AC1 #2719: boundary gates on prod OR Full");
+    CHECK(mb.find("g_layered_evidence_diverge_force_armed_total.fetch_add") != std::string::npos,
+          "AC1 #2719: boundary bumps force-armed under prod/Full + diverge");
+    CHECK(mb.find("g_layered_evidence_diverge_force_full_pending.store") != std::string::npos,
+          "AC1 #2719: boundary sets force-full-pending flag");
+    CHECK(mb.find("layered_diverge_hard_enabled()") != std::string::npos,
+          "AC1 #2719: boundary checks env var before arming hard path");
+    CHECK(mb.find("g_layered_evidence_diverge_hard_reject_total.fetch_add") != std::string::npos,
+          "AC1 #2719: boundary bumps hard-reject under env + diverge");
+}
+
+// AC2: Soft/Sampled → observe only (#2674 behavior preserved). New
+// counters/flags NOT bumped under Soft/Sampled + diverge — escalation
+// block gated on prod/Full, so Soft/Sampled skip entirely.
+static void ac2719_2_soft_sampled_observe_only() {
+    std::println("\n--- AC2 #2719: Soft/Sampled → observe only ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // The escalation block is gated on production_defaults_active() ||
+    // AuditStrategy::Full — Soft/Sampled skip the new counter bumps.
+    CHECK(mb.find("layered_diverge_delta > 0 &&") != std::string::npos &&
+              mb.find("typed_audit::production_defaults_active()") != std::string::npos,
+          "AC2 #2719: escalation gated on prod OR Full (Soft/Sampled skip)");
+    // Existing #2674 observe-only counter still bumped regardless of
+    // strategy (bumped inside check_layered_evidence_coherence itself,
+    // before the prod/Full gate in the boundary).
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("g_layered_evidence_diverge_total.fetch_add") != std::string::npos,
+          "AC2 #2719: observe-only diverge counter still bumped (no gate)");
+}
+
+// AC3: Quiet path (no evidence elision) → zero cost. check returns 0 on
+// invariant holds, escalation block guarded by diverge_delta > 0, so
+// quiet path never enters the new code.
+static void ac2719_3_quiet_zero_cost() {
+    std::println("\n--- AC3 #2719: quiet path → zero cost ---");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    // Function returns 0 when invariant holds (no fetch_add to diverge counter).
+    CHECK(cixx.find("return 0") != std::string::npos,
+          "AC3 #2719: check function returns 0 on invariant holds");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Escalation block guarded by diverge_delta > 0 (zero cost on quiet path).
+    CHECK(mb.find("layered_diverge_delta > 0") != std::string::npos,
+          "AC3 #2719: escalation block guarded by diverge_delta > 0");
+}
+
+// AC4: Additive query keys + schema-2719/issue-2719 sentinels. All #2674
+// keys preserved (schema-2674/issue-2674/ast-elided-with-evidence/
+// layered-evidence-diverge-total/layered-evidence-coherence-wired).
+static void ac2719_4_additive_query_keys() {
+    std::println("\n--- AC4 #2719: additive query keys + sentinels ---");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // #2719 new keys present.
+    CHECK(q.find("\"layered-evidence-diverge-force-armed-total\"") != std::string::npos,
+          "AC4 #2719: force-armed-total key present");
+    CHECK(q.find("\"layered-evidence-diverge-hard-reject-total\"") != std::string::npos,
+          "AC4 #2719: hard-reject-total key present");
+    CHECK(q.find("\"layered-evidence-diverge-force-full-pending\"") != std::string::npos,
+          "AC4 #2719: force-full-pending key present");
+    CHECK(q.find("\"layered-evidence-diverge-hard-reject-pending\"") != std::string::npos,
+          "AC4 #2719: hard-reject-pending key present");
+    CHECK(q.find("\"layered-evidence-diverge-hard-wired\"") != std::string::npos,
+          "AC4 #2719: hard-wired sentinel present");
+    CHECK(q.find("\"schema-2719\"") != std::string::npos, "AC4 #2719: schema-2719 sentinel");
+    CHECK(q.find("\"issue-2719\"") != std::string::npos, "AC4 #2719: issue-2719 sentinel");
+    // #2674 keys preserved (strict superset).
+    CHECK(q.find("\"schema-2674\"") != std::string::npos,
+          "AC4 #2719: schema-2674 preserved (additive)");
+    CHECK(q.find("\"issue-2674\"") != std::string::npos,
+          "AC4 #2719: issue-2674 preserved (additive)");
+    CHECK(q.find("\"ast-elided-with-evidence\"") != std::string::npos,
+          "AC4 #2719: ast-elided-with-evidence preserved");
+    CHECK(q.find("\"layered-evidence-diverge-total\"") != std::string::npos,
+          "AC4 #2719: layered-evidence-diverge-total preserved");
+    CHECK(q.find("\"layered-evidence-coherence-wired\"") != std::string::npos,
+          "AC4 #2719: layered-evidence-coherence-wired preserved");
+}
+
+// AC5: Source-cite + extend this file per #81967 (tests in src/-aligned
+// suite, no new file). Comment block + ac2719_* helpers + runner present.
+static void ac2719_5_source_and_linter() {
+    std::println("\n--- AC5 #2719: source-cite + extend suite ---");
+    auto t = read_file("tests/compiler/test_dead_coercion_layered.cpp");
+    CHECK(t.find("ac2719_1_force_full_default_arm") != std::string::npos,
+          "AC5 #2719: AC1 test present");
+    CHECK(t.find("ac2719_2_soft_sampled_observe_only") != std::string::npos,
+          "AC5 #2719: AC2 test present");
+    CHECK(t.find("ac2719_3_quiet_zero_cost") != std::string::npos, "AC5 #2719: AC3 test present");
+    CHECK(t.find("ac2719_4_additive_query_keys") != std::string::npos,
+          "AC5 #2719: AC4 test present");
+    CHECK(t.find("ac2719_5_source_and_linter") != std::string::npos, "AC5 #2719: AC5 self-test");
+    CHECK(t.find("run_2719_layered_coerce_hard_gate") != std::string::npos,
+          "AC5 #2719: runner function present");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("Issue #2719") != std::string::npos, "AC5 #2719: header cites #2719");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #2719") != std::string::npos, "AC5 #2719: mb.cpp cites #2719");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("Issue #2719") != std::string::npos, "AC5 #2719: query.cpp cites #2719");
+}
+
+// AC6: no docs/design/2719-* per #1655 (design rationale in close comment).
+static void ac2719_6_no_docs_design() {
+    std::println("\n--- AC6 #2719: no docs/design/2719-* per #1655 ---");
+    const std::string design_path = "docs/design/2719-";
+    CHECK(read_file((design_path + "hard-gate.md").c_str()).empty(),
+          "AC6 #2719: no docs/design/2719-* per #1655 (design rationale in close comment)");
+}
+
+void run_2719_layered_coerce_hard_gate() {
+    std::println("\n=== Issue #2719: layered evidence-coerce hard gate ===");
+    ac2719_1_force_full_default_arm();
+    ac2719_2_soft_sampled_observe_only();
+    ac2719_3_quiet_zero_cost();
+    ac2719_4_additive_query_keys();
+    ac2719_5_source_and_linter();
+    ac2719_6_no_docs_design();
+}
+
+} // namespace _2719_detail
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {

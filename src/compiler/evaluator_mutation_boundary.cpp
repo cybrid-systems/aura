@@ -2718,7 +2718,31 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     const auto ir_narrow_evidence_hits_snapshot =
         ::aura::compiler::opt_registry::dead_coercion_ir_narrow_evidence_hits.load(
             std::memory_order_relaxed);
-    aura::compiler::check_layered_evidence_coherence(ir_narrow_evidence_hits_snapshot);
+    const auto layered_diverge_delta =
+        aura::compiler::check_layered_evidence_coherence(ir_narrow_evidence_hits_snapshot);
+    // Issue #2719: Full/production optional hard gate on layered evidence
+    // diverge (#2674 residual). Default production arm: force-Full on next
+    // boundary (fidelity-health note, not a hard-reject of the current
+    // commit). Opt-in arm: env AURA_LAYERED_COERCION_DIVERGE_HARD=1 →
+    // hard reject path (Agents decide downstream policy). Soft/Sampled:
+    // observe-only — #2674 behavior preserved (no force-armed bump, no
+    // flag set). Zero cost when no diverge (diverge_delta == 0). Bumping
+    // counters + setting flags from a destructor is safe (no throw past
+    // remaining dtor work per #1766 — atomic ops only).
+    if (layered_diverge_delta > 0 &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        ::aura::compiler::g_layered_evidence_diverge_force_armed_total.fetch_add(
+            layered_diverge_delta, std::memory_order_relaxed);
+        ::aura::compiler::g_layered_evidence_diverge_force_full_pending.store(
+            1, std::memory_order_relaxed);
+        if (::aura::compiler::layered_diverge_hard_enabled()) {
+            ::aura::compiler::g_layered_evidence_diverge_hard_reject_total.fetch_add(
+                layered_diverge_delta, std::memory_order_relaxed);
+            ::aura::compiler::g_layered_evidence_diverge_hard_reject_pending.store(
+                1, std::memory_order_relaxed);
+        }
+    }
     // Issue #464: bump the ArenaGroup
     // auto_compact_guard_call_count_ counter on
     // every guard dtor (the closed-loop signal for
