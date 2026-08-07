@@ -1111,6 +1111,16 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         const auto check = mutation_hold_budget_check();
         if (check.over_budget) {
             if (mutation_hold_budget_reject_enabled()) {
+                // Issue #2720: P0 holder-degrade path (#2701 residual).
+                // Force-degrade the recorded holder fiber — same-fiber
+                // cancel via g_current_fiber + mark_outermost_mutation_failed,
+                // cross-fiber counter bump only (real cancel = follow-up).
+                // try_acquire already rejected *this* admit; this also
+                // unblocks steal/GC by retiring the over-budget holder.
+                const auto hold_snap = mutation_hold_live_snapshot();
+                if (hold_snap.fiber_id != 0) {
+                    aura_evaluator_force_degrade_outermost_holder(hold_snap.fiber_id);
+                }
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                     m->mutation_guard_try_acquire_reject_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -1215,6 +1225,15 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
         const auto check = mutation_hold_budget_check();
         if (check.over_budget) {
             if (mutation_hold_budget_reject_enabled()) {
+                // Issue #2720: P0 holder-degrade path (#2701 residual).
+                // Force-degrade the recorded holder fiber — same pattern
+                // as try_acquire above. Same-fiber cancel via
+                // g_current_fiber + mark_outermost_mutation_failed;
+                // cross-fiber counter bump only (real cancel = follow-up).
+                const auto hold_snap = mutation_hold_live_snapshot();
+                if (hold_snap.fiber_id != 0) {
+                    aura_evaluator_force_degrade_outermost_holder(hold_snap.fiber_id);
+                }
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                     m->mutation_guard_try_acquire_reject_total.fetch_add(1,
                                                                          std::memory_order_relaxed);

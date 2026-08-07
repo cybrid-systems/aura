@@ -1366,7 +1366,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_mailbox_bp_admit_default.cpp` (—) [domain_suite, theme_orch] — AC1: no env → resolve_mailbox_bp_admit_threshold() == 32
 - `tests/serve/test_mailbox_fiber_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — test_mailbox_fiber_batch.cpp — thematic multi-TU batch
 - `tests/serve/test_mailbox_hold_exit_drain.cpp` (—) [domain_suite, theme_serve] — AC1: outermost Guard exit calls drain_deferred_under_budget (source-cite)
-- `tests/serve/test_mailbox_hold_starvation_hard.cpp` (—) [domain_suite, theme_serve] — AC1: Production/Strict + residual after budget → hard counter + flag
+- `tests/serve/test_mailbox_hold_starvation_hard.cpp` (—) [large, domain_suite, theme_serve] — AC1: Production/Strict + residual after budget → hard counter + flag
 - `tests/serve/test_mailbox_recv_mutation_boundary.cpp` (—) [large, domain_suite, theme_serve] — Issue #2347 — Strict/hard audit + optional Guard-window threshold
 - `tests/serve/test_mailbox_tenant_principal.cpp` (—) [domain_suite, theme_serve] — tests/serve/test_mailbox_tenant_principal.cpp
 - `tests/serve/test_mutation_safety_snapshot_steal.cpp` (—) [large, domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +

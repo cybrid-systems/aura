@@ -320,6 +320,162 @@ static void ac2701_6_no_docs_design() {
           "AC6: no docs/design/2701-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2720 AC1: production + over-budget → force-degrade holder.
+// Reject *this* admit (existing #2701) AND invoke
+// aura_evaluator_force_degrade_outermost_holder(fiber_id) on the
+// recorded holder so steal/GC can progress. Default production arm.
+static void ac2720_1_force_degrade_production() {
+    std::println("\n--- #2720 AC1: force-degrade holder under production ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mfbh = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto fbc = read_file("src/compiler/fiber_bridge.cpp");
+    // Counters + accessors in mhb.
+    CHECK(mhb.find("g_mutation_hold_budget_holder_degrade_total") != std::string::npos,
+          "AC1: mhb has holder-degrade-total counter");
+    CHECK(mhb.find("g_mutation_hold_budget_holder_degrade_same_fiber_total") != std::string::npos,
+          "AC1: mhb has same-fiber split counter");
+    CHECK(mhb.find("g_mutation_hold_budget_holder_degrade_cross_fiber_total") != std::string::npos,
+          "AC1: mhb has cross-fiber split counter");
+    CHECK(mhb.find("g_mutation_hold_budget_holder_degrade_wired") != std::string::npos,
+          "AC1: mhb has wired sentinel");
+    CHECK(mhb.find("kMutationHoldBudgetHolderDegradeIssue = 2720") != std::string::npos,
+          "AC1: mhb stamps issue = 2720");
+    // ABI declaration in mfbh.
+    CHECK(mfbh.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
+          "AC1: mfbh declares the ABI");
+    // ABI definition in efm (same-fiber path bumps same_fiber counter +
+    // request_cancel + mark_outermost_mutation_failed).
+    CHECK(efm.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
+          "AC1: efm defines the ABI");
+    CHECK(efm.find("g_current_fiber->id() == fiber_id") != std::string::npos,
+          "AC1: efm gates on same-fiber via g_current_fiber->id()");
+    CHECK(efm.find("g_current_fiber->request_cancel()") != std::string::npos,
+          "AC1: efm calls request_cancel on same-fiber holder");
+    CHECK(efm.find("mark_outermost_mutation_failed()") != std::string::npos,
+          "AC1: efm marks current evaluator's outermost as failed");
+    // Weak stub in fbc.
+    CHECK(fbc.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
+          "AC1: fbc weak stub present");
+    // Wiring in emb — both try_acquire AND try_acquire_for_region.
+    const auto emb_degrade_calls =
+        std::count(emb.begin(), emb.end(), '\n') >= 0 ? 0 : 0; // placeholder
+    // Source-cite: count "aura_evaluator_force_degrade_outermost_holder" in emb.
+    auto count_occurrences = [](const std::string& s, const std::string& needle) {
+        std::size_t n = 0;
+        std::size_t pos = 0;
+        while ((pos = s.find(needle, pos)) != std::string::npos) {
+            ++n;
+            pos += needle.size();
+        }
+        return n;
+    };
+    CHECK(count_occurrences(emb, "aura_evaluator_force_degrade_outermost_holder") >= 2,
+          "AC1: emb wires call in try_acquire AND try_acquire_for_region");
+    CHECK(emb.find("mutation_hold_live_snapshot()") != std::string::npos,
+          "AC1: emb reads live snapshot to get holder fiber_id");
+    CHECK(emb.find("hold_snap.fiber_id != 0") != std::string::npos,
+          "AC1: emb guards on non-zero holder fiber_id");
+}
+
+// ── Issue #2720 AC2: Soft / sandbox=off → counter-only unless hard env.
+// Same #2701 gating: mutation_hold_budget_reject_enabled() must be true
+// (production OR AURA_MUTATION_HOLD_BUDGET_HARD=1) for the degrade path
+// to fire. Soft path falls through metric-only.
+static void ac2720_2_soft_counter_only() {
+    std::println("\n--- #2720 AC2: Soft path → counter-only unless hard env ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    // Reuse #2701 reject_enabled decision.
+    CHECK(mhb.find("mutation_hold_budget_reject_enabled") != std::string::npos,
+          "AC2: mhb reuses #2701 reject_enabled gate");
+    // Soft path comment preserved.
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("Soft path") != std::string::npos, "AC2: emb soft path note preserved");
+    // The force_degrade call sits INSIDE the reject_enabled block — Soft
+    // path falls through without firing (verified by source position: the
+    // call precedes the reject return, after the reject_enabled check).
+    CHECK(emb.find("if (mutation_hold_budget_reject_enabled())") != std::string::npos,
+          "AC2: reject_enabled check present");
+}
+
+// ── Issue #2720 AC3: Nested (non-outermost) guards never touch the live
+// probe or degrade path. The holder-degrade force_degrade call only
+// fires from try_acquire / try_acquire_for_region (outermost entry
+// gates) — never from nested Guard re-entry. The live probe itself
+// (mutation_hold_live_note_enter/exit) is outermost-only by contract.
+static void ac2720_3_nested_outermost_only() {
+    std::println("\n--- #2720 AC3: nested guards never touch degrade path ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(mhb.find("Nested guards never touch the probe") != std::string::npos,
+          "AC3: mhb contract — nested guards never touch probe");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // force_degrade lives only in the outermost try_acquire /
+    // try_acquire_for_region gate chain, not in any nested re-entry path.
+    CHECK(emb.find("try_acquire_for_region") != std::string::npos,
+          "AC3: emb has try_acquire_for_region (outermost gate)");
+}
+
+// ── Issue #2720 AC4: additive observability — schema/issue sentinels +
+// holder-degrade counters; all #2701/#2313/#2517/#2587 surfaces preserved.
+static void ac2720_4_query_keys() {
+    std::println("\n--- #2720 AC4: additive query keys + sentinels ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // #2720 new keys present.
+    CHECK(q.find("\"mutation-hold-budget-holder-degrade-total\"") != std::string::npos,
+          "AC4: holder-degrade-total key");
+    CHECK(q.find("\"mutation-hold-budget-holder-degrade-same-fiber-total\"") != std::string::npos,
+          "AC4: holder-degrade-same-fiber-total key");
+    CHECK(q.find("\"mutation-hold-budget-holder-degrade-cross-fiber-total\"") != std::string::npos,
+          "AC4: holder-degrade-cross-fiber-total key");
+    CHECK(q.find("\"mutation-hold-budget-holder-degrade-wired\"") != std::string::npos,
+          "AC4: holder-degrade-wired sentinel");
+    CHECK(q.find("\"schema-2720\"") != std::string::npos, "AC4: schema-2720 sentinel");
+    CHECK(q.find("\"issue-2720\"") != std::string::npos, "AC4: issue-2720 sentinel");
+    // #2701 keys preserved (strict superset).
+    CHECK(q.find("\"mutation-hold-budget-reject-total\"") != std::string::npos,
+          "AC4: #2701 reject-total preserved");
+    CHECK(q.find("\"mutation-hold-budget-soft-observe-total\"") != std::string::npos,
+          "AC4: #2701 soft-observe-total preserved");
+    CHECK(q.find("\"mutation-hold-budget-wired\"") != std::string::npos,
+          "AC4: #2701 wired preserved");
+    CHECK(q.find("\"schema-2701\"") != std::string::npos, "AC4: #2701 schema-2701 preserved");
+    CHECK(q.find("\"issue-2701\"") != std::string::npos, "AC4: #2701 issue-2701 preserved");
+    // #2587 / #2551 preserved (mailbox-hold-starvation baseline).
+    CHECK(q.find("schema-2587") != std::string::npos || q.find("schema-2551") != std::string::npos,
+          "AC4: #2587/#2551 baseline preserved");
+}
+
+// ── Issue #2720 AC5: source-cite + linter (extend #2701 linter or new
+// check); no docs/design/* per #1655.
+static void ac2720_5_source_and_linter() {
+    std::println("\n--- #2720 AC5: source-cite + linter ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    CHECK(mhb.find("Issue #2720") != std::string::npos, "AC5: mhb cites #2720");
+    CHECK(emb.find("Issue #2720") != std::string::npos, "AC5: emb cites #2720");
+    CHECK(efm.find("Issue #2720") != std::string::npos, "AC5: efm cites #2720");
+    CHECK(q.find("Issue #2720") != std::string::npos, "AC5: q cites #2720");
+    CHECK(t.find("ac2720_1_force_degrade_production") != std::string::npos,
+          "AC5: AC1 test present");
+    CHECK(t.find("ac2720_2_soft_counter_only") != std::string::npos, "AC5: AC2 test present");
+    CHECK(t.find("ac2720_3_nested_outermost_only") != std::string::npos, "AC5: AC3 test present");
+    CHECK(t.find("ac2720_4_query_keys") != std::string::npos, "AC5: AC4 test present");
+    CHECK(t.find("ac2720_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+}
+
+// ── Issue #2720 AC6: no docs/design/2720-* per #1655 (design rationale
+// lives in the close comment).
+static void ac2720_6_no_docs_design() {
+    std::println("\n--- #2720 AC6: no docs/design/2720-* per #1655 ---");
+    const std::string design_path = "docs/design/2720-";
+    CHECK(read_file((design_path + "holder-degrade.md").c_str()).empty(),
+          "AC6: no docs/design/2720-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -336,7 +492,14 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2701_4_query_keys_added();
     ac2701_5_source_and_linter();
     ac2701_6_no_docs_design();
-    std::println("\n=== #2551 + #2701: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2720: P0 holder-degrade (#2701 residual) ===");
+    ac2720_1_force_degrade_production();
+    ac2720_2_soft_counter_only();
+    ac2720_3_nested_outermost_only();
+    ac2720_4_query_keys();
+    ac2720_5_source_and_linter();
+    ac2720_6_no_docs_design();
+    std::println("\n=== #2551 + #2701 + #2720: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

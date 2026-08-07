@@ -1163,6 +1163,48 @@ extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept {
         ev->mark_outermost_mutation_failed();
 }
 
+// Issue #2720: P0 holder-degrade path (#2701 residual). #2701 only rejected
+// new admits when live longest outermost hold exceeded budget — the holder
+// itself kept owning workspace_mtx_ exclusive + GcDeferReason::MutationHold,
+// starving work-stealing and GC while only future mutates were refused.
+// #2720 force-degrades the recorded holder fiber when production (or
+// AURA_MUTATION_HOLD_BUDGET_HARD=1) and live hold > budget. Bumps the
+// holder-degrade counters (total + same/cross fiber split) + invokes
+// cooperative cancel on the holder when admitter and holder are the same
+// fiber (g_current_fiber->id() == fiber_id). Cross-fiber cancel needs a
+// per-fiber pending-cancel map polled at safepoints (follow-up — #2720
+// ships the surface + same-fiber path; cross-fiber wire is a separate
+// issue).
+//
+// Pre-conditions: caller (MutationBoundaryGuard::try_acquire) has already
+// confirmed over_budget AND mutation_hold_budget_reject_enabled() AND
+// snap.fiber_id != 0. This function does the holder-side cancel + bump
+// counters; the caller still rejects *this* admit (existing #2701 path).
+extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return; // no live holder recorded
+    using namespace aura::compiler;
+    // Bump total counter first (always — even cross-fiber case counts the
+    // attempt so dashboards can attribute "we tried to degrade a holder").
+    g_mutation_hold_budget_holder_degrade_total.fetch_add(1, std::memory_order_relaxed);
+    // Same-fiber path: g_current_fiber is the holder. Cancel + mark
+    // outermost failed → Guard exits with failure, MutationHold releases,
+    // steal/GC can progress.
+    if (g_current_fiber && g_current_fiber->id() == fiber_id) {
+        g_mutation_hold_budget_holder_degrade_same_fiber_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        g_current_fiber->request_cancel();
+        if (auto* ev = Evaluator::get_query_evaluator())
+            ev->mark_outermost_mutation_failed();
+        return;
+    }
+    // Cross-fiber path: bump cross_fiber counter + leave follow-up note.
+    // Real cancel needs a per-fiber pending-cancel map (the target fiber
+    // polls its own flag at safepoints). g_current_fiber is thread_local
+    // and only names the admitter; the holder runs on a different worker.
+    g_mutation_hold_budget_holder_degrade_cross_fiber_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Issue #63723: clear all per-thread/process-wide Evaluator
 // pointers that point at this dying instance. Without this,
 // when the closure that owned this Evaluator returns, the

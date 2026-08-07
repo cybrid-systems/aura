@@ -240,6 +240,52 @@ inline void clear_mutation_hold_budget_reject_for_test() noexcept {
     g_mutation_hold_budget_soft_observe_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #2720: P0 holder-degrade path (#2701 residual). #2701 only
+// rejected new admits when the live longest outermost hold exceeded
+// budget — the holder itself kept owning workspace_mtx_ exclusive +
+// GcDeferReason::MutationHold, starving work-stealing and GC while
+// only future mutates were refused. #2720 force-degrades the recorded
+// holder fiber when production (or AURA_MUTATION_HOLD_BUDGET_HARD=1)
+// and live hold > budget: bump holder-degrade counter + invoke the
+// cooperative cancel ABI on the holder fiber. Soft / sandbox=off:
+// counter-only (same as #2701) unless hard env set. Zero cost on
+// happy path (hold ≤ budget): try_acquire already paid one snapshot
+// compare via #2701's probe — #2720 only fires when that compare
+// flipped over_budget.
+//
+// Cross-fiber cancel note: g_current_fiber is thread_local; the
+// current implementation degrades the holder when admitter and
+// holder are the same fiber (g_current_fiber->id() == snap.fiber_id).
+// True cross-fiber cancel (different worker thread) needs a per-fiber
+// pending-cancel map polled at safepoints — follow-up. The surface
+// (counter + ABI + query keys + test) ships in #2720.
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_holder_degrade_total{0};
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_holder_degrade_same_fiber_total{0};
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_holder_degrade_cross_fiber_total{0};
+inline std::atomic<std::uint32_t> g_mutation_hold_budget_holder_degrade_wired{1};
+inline constexpr int kMutationHoldBudgetHolderDegradeIssue = 2720;
+
+[[nodiscard]] inline std::uint64_t mutation_hold_budget_holder_degrade_total_v_read() noexcept {
+    return g_mutation_hold_budget_holder_degrade_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+mutation_hold_budget_holder_degrade_same_fiber_total_v_read() noexcept {
+    return g_mutation_hold_budget_holder_degrade_same_fiber_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+mutation_hold_budget_holder_degrade_cross_fiber_total_v_read() noexcept {
+    return g_mutation_hold_budget_holder_degrade_cross_fiber_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_hold_budget_holder_degrade_wired_v_read() noexcept {
+    return g_mutation_hold_budget_holder_degrade_wired.load(std::memory_order_relaxed);
+}
+
+inline void clear_mutation_hold_budget_holder_degrade_for_test() noexcept {
+    g_mutation_hold_budget_holder_degrade_total.store(0, std::memory_order_relaxed);
+    g_mutation_hold_budget_holder_degrade_same_fiber_total.store(0, std::memory_order_relaxed);
+    g_mutation_hold_budget_holder_degrade_cross_fiber_total.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::compiler
 
 #endif // AURA_COMPILER_MUTATION_HOLD_BUDGET_H
