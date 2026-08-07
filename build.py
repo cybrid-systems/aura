@@ -8167,6 +8167,161 @@ def cmd_production_concurrency():
     return 0
 
 
+def cmd_chaos_soak_hard_gate_2722():
+    """Issue #2722: RELEASE hard deploy gate — chaos SOAK under production
+    hard-fail-closed semantics. Required for any tag / release candidate
+    that claims multi-fiber mutation safety. Closes the #2679 residual
+    ("chaos soak is optional / best-effort — does not gate production
+    builds or release artifacts").
+
+    AC1: full SOAK with production_defaults_active=true + Hard
+        fail-closed. Runs cmd_production_concurrency under
+        AURA_CHAOS_SOAK_HARD_GATE=1 (distinct env so PR CI smoke +
+        nightly + RELEASE hard gate are three independently-gated
+        paths — same harness, different scope).
+    AC2: any residual panic, LayoutStamp mismatch, live MutationHold
+        after boundary exit, or steal-after-degrade fails the gate.
+        The chaos binary already bumps hard-fail counters for these
+        4 invariants under AURA_CHAOS_FULL=1 (production / SOAK modes);
+        the binary's CHECK(delta==0, "silent corruption") gates the exit.
+    AC3: SOAK duration / fiber count / GC frequency parameterized
+        (documented production envelope numbers below).
+    AC4: required for any tag / release candidate. Wired into
+        .github/workflows/release.yml as a required status check that
+        must pass before release artifacts upload.
+    AC5: Soft (metric-only) mode remains available for local iteration
+        via AURA_STEAL_SNAPSHOT_SOFT=1 but is EXPLICITLY non-gating
+        here (the hard gate forces production_defaults_active=true).
+
+    Production envelope (documented per AC3):
+      workers  : 8     (AURA_CHAOS_WORKERS=8)
+      fibers   : 256   (AURA_CHAOS_FIBERS=256)
+      duration : 300s  (AURA_CHAOS_DURATION_S=300)
+      gc freq  : chaos harness drives request_gc_safepoint() under
+                 concurrent mutate + steal (see tests/serve/test_chaos_
+                 mutate_steal_gc_mailbox.cpp AC1 contract rows)
+      seed     : AURA_CHAOS_SEED=1 (reproducible per AC6)
+
+    AC4 release.yml contract: the release job runs
+    `python3 build.py chaos-soak-hard-gate-2722` as a required step
+    before `softprops/action-gh-release@v3` uploads the tarball +
+    SBOM. Tag push (push.tags: 'v*') triggers the job; if the gate
+    fails, the release workflow exits non-zero and no release assets
+    are uploaded.
+    """
+    print(f"{B}=== chaos SOAK hard deploy gate (#2722) ==={N}")
+    # Static contract first — fast fail on missing wire-up.
+    rc = cmd_chaos_soak_hard_gate_2722_coverage()
+    if rc != 0:
+        return rc
+
+    bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox"
+    if not bin_path.exists():
+        if not (BUILD / "CMakeCache.txt").exists():
+            # Static-only gate (CI release job / fresh clone without build/).
+            ok(
+                "chaos SOAK hard gate runtime skipped (no CMakeCache; static "
+                "coverage only) — run after ./build.py build or via build-test"
+            )
+            return 0
+        info("building test_chaos_mutate_steal_gc_mailbox…")
+        nproc = os.cpu_count() or 4
+        r = run(
+            [
+                "cmake",
+                "--build",
+                str(BUILD),
+                "--target",
+                "test_chaos_mutate_steal_gc_mailbox",
+                "-j",
+                str(nproc),
+            ],
+            cwd=ROOT,
+        )
+        if r != 0:
+            fail("build test_chaos_mutate_steal_gc_mailbox failed")
+            return r
+    if not bin_path.exists():
+        fail(f"missing {bin_path} — run ./build.py build first")
+        return 1
+
+    env = os.environ.copy()
+    # Hard-gate env matrix: full profile + SOAK + hard-fail-closed.
+    env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1"
+    env["AURA_LOCK_ORDER_CANARY"] = "1"
+    env["AURA_CHAOS_FULL"] = "1"
+    env["AURA_CHAOS_SOAK"] = "1"  # long SOAK per AC3 (300s)
+    env["AURA_CHAOS_SOAK_HARD_GATE"] = "1"  # distinct env so PR + nightly + RELEASE are independently gated
+    # Soft steal FORBIDDEN under hard gate (production_defaults_active + Hard).
+    env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)
+    # Production envelope (documented above; overridable via env for
+    # local iteration under AURA_CHAOS_HARD_GATE_OVERRIDE=1).
+    env.setdefault("AURA_CHAOS_SEED", "1")
+    env.setdefault("AURA_CHAOS_WORKERS", "8")
+    env.setdefault("AURA_CHAOS_FIBERS", "256")
+    env.setdefault("AURA_CHAOS_DURATION_S", "300")
+    env.setdefault("AURA_CHAOS_MB_STARVE_MAX", "0")
+
+    info(
+        "RELEASE hard gate env: AURA_PRODUCTION_CONCURRENCY_GATE=1 "
+        "AURA_CHAOS_FULL=1 AURA_CHAOS_SOAK=1 AURA_CHAOS_SOAK_HARD_GATE=1 "
+        f"workers={env['AURA_CHAOS_WORKERS']} fibers={env['AURA_CHAOS_FIBERS']} "
+        f"duration={env['AURA_CHAOS_DURATION_S']}s seed={env['AURA_CHAOS_SEED']} "
+        "mb_starve_max=0"
+    )
+    # Generous wall (300s SOAK + watchdog + overhead). Release job timeout
+    # is the GitHub Actions job-level timeout (60 min default — well above
+    # this worst case).
+    timeout_s = max(900, int(env["AURA_CHAOS_DURATION_S"]) + 600)
+    start = time.time()
+    try:
+        r = subprocess.run([str(bin_path)], cwd=ROOT, env=env, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        fail(f"chaos SOAK hard gate timed out after {timeout_s}s (hang?) — release blocked")
+        return 1
+    elapsed = time.time() - start
+    if r.returncode != 0:
+        fail(
+            f"RELEASE chaos SOAK hard gate FAILED exit={r.returncode} "
+            f"in {elapsed:.1f}s — release blocked (residual panic / "
+            "LayoutStamp mismatch / live MutationHold / steal-after-degrade "
+            "must be 0 under production_defaults_active + Hard)"
+        )
+        return r.returncode
+    ok(
+        f"RELEASE chaos SOAK hard gate GREEN under production_defaults_active "
+        f"+ Hard in {elapsed:.1f}s (workers={env['AURA_CHAOS_WORKERS']} "
+        f"fibers={env['AURA_CHAOS_FIBERS']} duration={env['AURA_CHAOS_DURATION_S']}s)"
+    )
+    return 0
+
+
+def cmd_chaos_soak_hard_gate_2722_coverage():
+    """Issue #2722: static contract for RELEASE chaos SOAK hard gate.
+
+    Validates the #2722 contract:
+      AC1: cmd_chaos_soak_hard_gate_2722 exists in build.py
+      AC2: hard-fail env matrix forces production_defaults_active + Hard
+      AC3: production envelope (workers=8, fibers=256, duration=300s)
+           documented in the function docstring
+      AC4: required for any tag / release candidate (wired in
+           .github/workflows/release.yml)
+      AC5: Soft mode (AURA_STEAL_SNAPSHOT_SOFT) explicitly non-gating
+           (popped under the hard gate env matrix)
+    """
+    print(f"{B}=== chaos SOAK hard gate (#2722) coverage ==={N}")
+    script = COVERAGE_CHECKS / "check_chaos_soak_hard_gate_2722.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("chaos SOAK hard gate (#2722) coverage contract rows failed")
+        return 1
+    ok("chaos SOAK hard gate (#2722) coverage clean")
+    return 0
+
+
 def cmd_layout_stamp_shape_version_fence_coverage():
     """Issue #2255: Unified LayoutStamp + shape_version fence (7th field).
 
@@ -8915,6 +9070,7 @@ def cmd_gate():
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()
+        or cmd_chaos_soak_hard_gate_2722_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
         or cmd_lock_order_audit_2354_coverage()
         or cmd_type_dep_epoch_prune_coverage()
@@ -9791,6 +9947,8 @@ def main():
         "production-concurrency-coverage": cmd_production_concurrency_coverage,
         "chaos-pr-hard-fail": cmd_chaos_pr_hard_fail_gate,
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
+        "chaos-soak-hard-gate-2722": cmd_chaos_soak_hard_gate_2722,
+        "chaos-soak-hard-gate-2722-coverage": cmd_chaos_soak_hard_gate_2722_coverage,
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,

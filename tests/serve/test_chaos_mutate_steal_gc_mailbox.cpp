@@ -924,6 +924,138 @@ static void ac2715_6_source_and_linter() {
           "AC6: no docs/design/2715-* per #1655");
 }
 
+// ── Issue #2722 AC1: RELEASE chaos SOAK hard deploy gate exists in
+// build.py + registered in command table + wired into main gate chain.
+// Closes #2679 residual: chaos SOAK was optional / best-effort — the
+// previous fixes (#2720 holder-degrade, #2721 steal residual hard-AND)
+// cannot be proven production-safe without this gate being REQUIRED for
+// any tag / release candidate that claims multi-fiber mutation safety.
+static void ac2722_1_release_hard_gate_exists() {
+    std::println("\n--- #2722 AC1: RELEASE hard gate exists ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("def cmd_chaos_soak_hard_gate_2722(") != std::string::npos,
+          "AC1: build.py defines cmd_chaos_soak_hard_gate_2722");
+    CHECK(build.find("def cmd_chaos_soak_hard_gate_2722_coverage(") != std::string::npos,
+          "AC1: build.py defines coverage function");
+    CHECK(build.find("\"chaos-soak-hard-gate-2722\": cmd_chaos_soak_hard_gate_2722,") !=
+              std::string::npos,
+          "AC1: command-table registration (chaos-soak-hard-gate-2722)");
+    CHECK(build.find(
+              "\"chaos-soak-hard-gate-2722-coverage\": cmd_chaos_soak_hard_gate_2722_coverage,") !=
+              std::string::npos,
+          "AC1: command-table registration (coverage)");
+    CHECK(build.find("or cmd_chaos_soak_hard_gate_2722()") != std::string::npos,
+          "AC1: wired into main gate command chain");
+    CHECK(build.find("Issue #2722") != std::string::npos, "AC1: build.py cites #2722");
+}
+
+// ── Issue #2722 AC2: hard-fail env matrix forces production_defaults_active
+// + Hard. AURA_PRODUCTION_CONCURRENCY_GATE=1 + AURA_CHAOS_FULL=1 +
+// AURA_CHAOS_SOAK=1 + AURA_CHAOS_SOAK_HARD_GATE=1 + Soft steal popped.
+// Chaos binary's 4 hard-fail counters (steal_snapshot_hard_fail,
+// join_drain_residual_still_running, mutation_steal_snapshot_mismatch,
+// layout_stamp_resume_mismatch) + residual_panic arm/release cover the
+// 4 invariants from issue body AC2.
+static void ac2722_2_hard_fail_env_matrix() {
+    std::println("\n--- #2722 AC2: hard-fail env matrix + 4 hard-fail counters ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find('env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1"') != std::string::npos,
+          "AC2: production-concurrency gate env set");
+    CHECK(build.find('env["AURA_LOCK_ORDER_CANARY"] = "1"') != std::string::npos,
+          "AC2: lock-order canary env set");
+    CHECK(build.find('env["AURA_CHAOS_FULL"] = "1"') != std::string::npos,
+          "AC2: chaos-full env set");
+    CHECK(build.find('env["AURA_CHAOS_SOAK"] = "1"') != std::string::npos,
+          "AC2: chaos-soak env set");
+    CHECK(build.find('env["AURA_CHAOS_SOAK_HARD_GATE"] = "1"') != std::string::npos,
+          "AC2: chaos-soak-hard-gate env set (distinct from PR gate)");
+    CHECK(build.find('env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)') != std::string::npos,
+          "AC2: Soft steal FORBIDDEN under hard gate");
+    // Chaos binary covers 4 hard-fail invariants.
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    CHECK(chaos.find("steal_snapshot_hard_fail_total") != std::string::npos,
+          "AC2: steal-after-degrade counter covered");
+    CHECK(chaos.find("join_drain_residual_still_running") != std::string::npos,
+          "AC2: live MutationHold-after-exit counter covered");
+    CHECK(chaos.find("mutation_steal_snapshot_mismatch_total") != std::string::npos,
+          "AC2: snapshot-mismatch counter covered");
+    CHECK(chaos.find("layout_stamp_resume_mismatch") != std::string::npos,
+          "AC2: LayoutStamp mismatch counter covered");
+    CHECK(chaos.find("residual_panic") != std::string::npos,
+          "AC2: residual-panic check (via AURA_CHAOS_FAULT arm/release)");
+}
+
+// ── Issue #2722 AC3: SOAK parameters documented (workers=8, fibers=256,
+// duration=300s, seed=1, mb_starve_max=0). Production envelope numbers
+// must be visible in the function docstring AND the env-setdefault
+// contracts (overridable for local iteration under override env).
+static void ac2722_3_soak_parameters_documented() {
+    std::println("\n--- #2722 AC3: SOAK parameters documented ---");
+    const auto build = read_file("build.py");
+    // Docstring documents the production envelope.
+    CHECK(build.find("workers  : 8") != std::string::npos, "AC3: workers=8 documented");
+    CHECK(build.find("fibers   : 256") != std::string::npos, "AC3: fibers=256 documented");
+    CHECK(build.find("duration : 300s") != std::string::npos, "AC3: duration=300s documented");
+    CHECK(build.find("seed     : AURA_CHAOS_SEED=1") != std::string::npos,
+          "AC3: seed=1 documented");
+    CHECK(build.find("mb_starve_max=0") != std::string::npos, "AC3: mb_starve_max=0 documented");
+    // Env-setdefault contracts (overrideable but default to production).
+    CHECK(build.find('env.setdefault("AURA_CHAOS_WORKERS", "8")') != std::string::npos,
+          "AC3: workers env-setdefault = 8");
+    CHECK(build.find('env.setdefault("AURA_CHAOS_FIBERS", "256")') != std::string::npos,
+          "AC3: fibers env-setdefault = 256");
+    CHECK(build.find('env.setdefault("AURA_CHAOS_DURATION_S", "300")') != std::string::npos,
+          "AC3: duration env-setdefault = 300s");
+    CHECK(build.find('env.setdefault("AURA_CHAOS_MB_STARVE_MAX", "0")') != std::string::npos,
+          "AC3: mb_starve_max env-setdefault = 0");
+}
+
+// ── Issue #2722 AC4: required for any tag / release candidate.
+// .github/workflows/release.yml wires chaos-soak-hard-gate-2722 as a
+// required step BEFORE the release-asset upload. Fail-closed: gate
+// failure → non-zero exit → release assets not uploaded.
+static void ac2722_4_release_wired_required() {
+    std::println("\n--- #2722 AC4: required for tags via release.yml ---");
+    const auto release = read_file(".github/workflows/release.yml");
+    CHECK(release.find("chaos-soak-hard-gate-2722") != std::string::npos,
+          "AC4: chaos-soak-hard-gate-2722 step in release.yml");
+    // Tag push trigger.
+    CHECK(release.find("v*") != std::string::npos, "AC4: tag push trigger (v*)");
+    // Fail-closed ordering: gate step must PRECEDE release-asset upload.
+    const auto gate_pos = release.find("chaos-soak-hard-gate-2722");
+    const auto upload_pos = release.find("softprops/action-gh-release");
+    CHECK(gate_pos != std::string::npos, "AC4: gate step present");
+    CHECK(upload_pos != std::string::npos, "AC4: release-asset upload step present");
+    CHECK(gate_pos < upload_pos, "AC4: gate step PRECEDES upload (fail-closed)");
+    // Coverage linter asserts the ordering too (cross-check).
+    const auto lint = read_file("scripts/coverage/checks/check_chaos_soak_hard_gate_2722.py");
+    CHECK(lint.find("chaos_step_pos >= upload_step") != std::string::npos,
+          "AC4: linter asserts gate PRECEDES upload ordering");
+}
+
+// ── Issue #2722 AC5: Soft mode (AURA_STEAL_SNAPSHOT_SOFT=1) explicitly
+// non-gating under cmd_chaos_soak_hard_gate_2722. Available for local
+// iteration via other paths (PR gate, nightly production-concurrency)
+// but NOT under the RELEASE hard gate. No docs/design/2722-* per #1655.
+static void ac2722_5_soft_non_gating_no_docs_design() {
+    std::println("\n--- #2722 AC5: Soft mode non-gating + no docs/design/ ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("Soft (metric-only) mode remains available") != std::string::npos,
+          "AC5: Soft mode documented as available for local iteration");
+    CHECK(build.find("EXPLICITLY non-gating") != std::string::npos,
+          "AC5: Soft mode EXPLICITLY non-gating under hard gate");
+    CHECK(build.find('env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)') != std::string::npos,
+          "AC5: Soft steal env popped under hard gate");
+    // Soft mode still available via the chaos harness under non-hard-gate
+    // paths (PR gate / nightly) — preserved for local iteration.
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    CHECK(chaos.find("AURA_STEAL_SNAPSHOT_SOFT") != std::string::npos,
+          "AC5: chaos harness preserves AURA_STEAL_SNAPSHOT_SOFT for local iteration");
+    // No docs/design/2722-* per #1655.
+    CHECK(!std::filesystem::exists("docs/design/2722-release-hard-gate.md"),
+          "AC5: no docs/design/2722-* per #1655");
+}
+
 } // namespace
 
 int run_test_chaos_mutate_steal_gc_mailbox() {
@@ -937,6 +1069,17 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         std::println("\n=== Results (PR gate only): {} passed, {} failed ===", g_passed, g_failed);
         return g_failed ? 1 : 0;
     }
+
+    // Issue #2722: RELEASE chaos SOAK hard deploy gate (source-cite + linter +
+    // no docs/design/2722-* per #1655 — ships the surface so the previous
+    // #2720/#2721 P0 fixes can be proven production-safe under the
+    // release-time chaos envelope).
+    std::println("\n=== Issue #2722: RELEASE chaos SOAK hard deploy gate ===");
+    ac2722_1_release_hard_gate_exists();
+    ac2722_2_hard_fail_env_matrix();
+    ac2722_3_soak_parameters_documented();
+    ac2722_4_release_wired_required();
+    ac2722_5_soft_non_gating_no_docs_design();
 
     // Optional fault-only mode for debugging inject paths.
     const std::string fault = chaos_fault();
