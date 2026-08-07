@@ -1,4 +1,7 @@
-// sandbox.hh — Issues #1180/#1565/#2657: header form for evaluator TUs.
+// sandbox.hh — Issues #1180/#1565/#2657: SSOT for SandboxMode.
+//
+// Module consumers: `import aura.core.sandbox;` re-exports this header
+// (no second set_mode body). Non-module TUs: #include this file.
 //
 // Issue #2657: single authority for SandboxMode. The legacy `g_sandbox_
 // state().mode` plain enum is now mirror-only — the canonical source of

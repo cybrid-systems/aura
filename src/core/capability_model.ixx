@@ -1,7 +1,14 @@
-// capability_model.ixx — Issues #1180/#1187/#1192/#1565: Capability + Effect model.
-// Full check_and_record_effect lives in capability_model.hh (header form).
+// capability_model.ixx — module re-export of Capability / Effect SSOT.
+//
+// Full check_and_record_effect + CapabilityRegistry live in
+// capability_model.hh. This unit only re-exports for C++ module
+// consumers (resource_quota / lifetime_pin pattern).
+//
+// Do NOT reintroduce a second Effect enum / registry scaffold here
+// (prior stub drifted from the header authority).
 
 module;
+#include "core/capability_model.hh"
 
 export module aura.core.capability_model;
 
@@ -9,44 +16,47 @@ import std;
 
 export namespace aura::core::capability {
 
-inline constexpr int kCapabilityModelPhase = 2;
-inline constexpr int kCapabilityModelIssue = 1565;
+using ::aura::core::capability::kCapabilityModelIssue;
+using ::aura::core::capability::kCapabilityModelPhase;
+using ::aura::core::capability::kDefaultGrantEpochRetainWindowMultiTenant;
+using ::aura::core::capability::kDefaultGrantEpochRetainWindowRestricted;
+using ::aura::core::capability::kEffectEpochUnifyIssue;
+using ::aura::core::capability::kGrantEpochFiberBindIssue;
+using ::aura::core::capability::kGrantEpochRetainRestrictedIssue;
+using ::aura::core::capability::kGrantEpochRetainWindowIssue;
+using ::aura::core::capability::kHardFiberIsolationIssue;
 
-enum class Effect : std::uint16_t {
-    None = 0,
-    Read = 1 << 0,
-    Write = 1 << 1,
-    Exec = 1 << 2,
-    Mutate = 1 << 3,
-    Network = 1 << 4,
-    Ffi = 1 << 5,
-    Render = 1 << 6,
-    MacroSelfEvo = 1 << 7, // Issue #2023 — keep in sync with capability_model.hh
-    TenantAdmin = 1 << 8,  // Issue #2387
-    Syscall = 1 << 9,      // Issue #2387
-};
+using ::aura::core::capability::Effect;
+using ::aura::core::capability::operator|;
+using ::aura::core::capability::operator&;
+using ::aura::core::capability::has_effect;
 
-// Issue #2023: policy limits (header form in capability_model.hh is authoritative).
-struct MacroSelfEvoPolicy {
-    std::uint32_t max_expansion_passes = 32;
-    std::uint32_t max_depth = 256;
-    bool allow_rest_hygiene = true;
-    bool allow_concurrent_fiber = true;
-};
+using ::aura::core::capability::AtomicEffectSandboxMode;
+using ::aura::core::capability::AtomicTenantId;
+using ::aura::core::capability::CapabilityEffectMetrics;
+using ::aura::core::capability::CapabilityGrant;
+using ::aura::core::capability::CapabilityRegistry;
+using ::aura::core::capability::EffectAuditEntry;
+using ::aura::core::capability::EffectProvenance;
+using ::aura::core::capability::EffectSandboxMode;
+using ::aura::core::capability::MacroSelfEvoCheck;
+using ::aura::core::capability::MacroSelfEvoPolicy;
+using ::aura::core::capability::PublishedAuditSlot;
+using ::aura::core::capability::RegistryStateSnapshot;
+using ::aura::core::capability::TenantId;
 
-[[nodiscard]] constexpr Effect operator|(Effect a, Effect b) noexcept {
-    return static_cast<Effect>(static_cast<std::uint16_t>(a) | static_cast<std::uint16_t>(b));
-}
-
-[[nodiscard]] constexpr bool has_effect(Effect set, Effect bit) noexcept {
-    return (static_cast<std::uint16_t>(set) & static_cast<std::uint16_t>(bit)) != 0;
-}
-
-// Layout-stable core fields (name/effects/tenant_id).
-struct CapabilityGrant {
-    std::string_view name;
-    Effect effects = Effect::None;
-    std::uint64_t tenant_id = 0;
-};
+using ::aura::core::capability::CapabilityEffectStatsSnapshot;
+using ::aura::core::capability::check_and_record_effect;
+using ::aura::core::capability::check_macro_self_evo;
+using ::aura::core::capability::effect_fiber_id_or;
+using ::aura::core::capability::effect_for_cap_name;
+using ::aura::core::capability::g_capability_effect_metrics;
+using ::aura::core::capability::g_capability_registry;
+using ::aura::core::capability::g_effect_fiber_id_override;
+using ::aura::core::capability::grant_epoch_window_bump_trampoline;
+using ::aura::core::capability::install_grant_epoch_window_hook;
+using ::aura::core::capability::reset_capability_effects_for_test;
+using ::aura::core::capability::set_effect_fiber_id_override;
+using ::aura::core::capability::snapshot_capability_effect_stats;
 
 } // namespace aura::core::capability

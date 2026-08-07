@@ -245,8 +245,8 @@ int run_test_sandbox_mode_authority_2657() {
     {
         std::println("\n--- AC6: source-cite + linter ---");
         // The refactor is fully captured by:
-        //   - src/core/sandbox.hh (set_mode is the atomic + broadcast)
-        //   - src/core/sandbox.ixx (module mirror)
+        //   - src/core/sandbox.hh (set_mode SSOT — atomic + broadcast)
+        //   - src/core/sandbox.ixx (module re-export only)
         //   - src/core/capability_model.hh (sandbox_mode private +
         //     friend declaration)
         //   - src/compiler/evaluator_security.cpp (set_effect_sandbox_mode

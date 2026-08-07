@@ -1,5 +1,7 @@
-// capability_model.hh — Issues #1180/#1187/#1192/#1565: Capability Effects enforcement.
-// Header form for evaluator TUs + tests. Keep in sync with capability_model.ixx.
+// capability_model.hh — Issues #1180/#1187/#1192/#1565: Capability Effects SSOT.
+// Module consumers: `import aura.core.capability_model;` re-exports this
+// header. Non-module TUs: #include. Do not reintroduce a stub Effect enum
+// in capability_model.ixx.
 
 #ifndef AURA_CORE_CAPABILITY_MODEL_HH
 #define AURA_CORE_CAPABILITY_MODEL_HH
@@ -133,7 +135,7 @@ struct CapabilityGrant {
     bool single_use = false;
 };
 
-// Sandbox mode mirror for effect checks (also in sandbox.ixx).
+// Sandbox mode mirror for effect checks (written only via sandbox::set_mode).
 enum class EffectSandboxMode : std::uint8_t {
     Off = 0,
     Restricted = 1, // sandbox_mode_ style: need grant when active
@@ -306,7 +308,7 @@ struct CapabilityRegistry {
     std::unordered_map<TenantId, MacroSelfEvoPolicy> macro_self_evo_by_tenant;
     // Issue #2426 / #2427: atomic (was plain enum / TenantId — policy flip race).
     // Issue #2657: Process-wide authority is `aura::core::sandbox::set_mode`
-    // (sandbox.hh / sandbox.ixx). The field remains public for reads
+    // (sandbox.hh SSOT). The field remains public for reads
     // (acquire-load via `reg.sandbox_mode.load()` or `==` comparison
     // are unchanged). Direct writes from outside the authority are
     // gated by the coverage linter

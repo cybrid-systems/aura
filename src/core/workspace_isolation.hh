@@ -1,6 +1,7 @@
-// workspace_isolation.hh — Issues #1180/#1183/#1566: WorkspaceIsolationPolicy
-// enforcement (header form for evaluator TUs + tests).
-// TenantPrincipal layout stable (id, name, allow_cross_tenant).
+// workspace_isolation.hh — Issues #1180/#1183/#1566: WorkspaceIsolationPolicy SSOT.
+// Module consumers: `import aura.core.workspace_isolation;` re-exports this
+// header. Non-module TUs: #include. TenantPrincipal layout stable
+// (id, name, allow_cross_tenant).
 
 #ifndef AURA_CORE_WORKSPACE_ISOLATION_HH
 #define AURA_CORE_WORKSPACE_ISOLATION_HH

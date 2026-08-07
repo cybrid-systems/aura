@@ -19,10 +19,10 @@
       "ac": "AC1",
       "path": "src/core/sandbox.ixx",
       "contains": [
-        "g_sandbox_mode_atomic",
-        "set_mode",
-        "g_capability_registry().sandbox_mode",
-        "g_workspace_isolation().set_strict_sandbox_linked"
+        "#include \"core/sandbox.hh\"",
+        "using ::aura::core::sandbox::set_mode",
+        "using ::aura::core::sandbox::g_sandbox_mode_atomic",
+        "Do NOT reintroduce a second set_mode"
       ]
     },
     {
