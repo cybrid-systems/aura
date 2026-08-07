@@ -91,6 +91,13 @@ extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_tot
 extern "C" std::uint64_t aura_jit_guest_exception_bridge_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_ok_total();
+// Issue #2713: cross-eval epoch tax observability (defs in aura_jit_bridge.cpp;
+// weak stubs in aura_jit_bridge_stub.cpp for light test link).
+extern "C" std::uint64_t cross_eval_epoch_bump_total_v_read(void);
+extern "C" void* last_cross_eval_epoch_bump_owner_v_read(void);
+extern "C" std::uint32_t cross_eval_epoch_bump_wired_v_read(void);
+// Issue #2712: Soft fuse heal total (defs in aura_jit_bridge.cpp).
+extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void);
 }
 
 // Issue #2372: steal_snapshot_soft_production_locked() is declared in

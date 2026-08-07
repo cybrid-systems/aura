@@ -355,6 +355,17 @@ aura_lookup_stable_func_id_for_eval(void* /*eval_ptr*/, const char* /*name*/) {
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_clear_stable_func_id_map_for_eval(void* /*eval_ptr*/) {}
+// Issue #2713: cross-eval epoch tax observability weak stubs (production
+// in aura_jit_bridge.cpp). Light tests see zero tax / not wired.
+extern "C" __attribute__((weak)) std::uint64_t cross_eval_epoch_bump_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void* last_cross_eval_epoch_bump_owner_v_read(void) {
+    return nullptr;
+}
+extern "C" __attribute__((weak)) std::uint32_t cross_eval_epoch_bump_wired_v_read(void) {
+    return 0;
+}
 // Issue #2092: legacy name-fallback toggle (off by default in strict
 // tests). Production aura_jit_runtime.cpp owns the real atomic; the
 // weak stub returns 0 so light test binaries without the production
@@ -866,6 +877,11 @@ extern "C" __attribute__((weak)) void aura_event_driven_epoch_invariant_walk_if_
 static std::atomic<std::uint64_t> g_2693_soft_fuse_fallback_total_stub{0};
 static std::atomic<std::uint64_t> g_2693_consecutive_dirty_total_stub{0};
 static std::atomic<int> g_2693_soft_fuse_k_stub{3};
+// Issue #2712: Soft fuse heal total (production in aura_jit_bridge.cpp).
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_soft_fuse_heal_total_v_read(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_soft_fuse_total_v_read(void) {
     return g_2693_soft_fuse_fallback_total_stub.load(std::memory_order_relaxed);
 }

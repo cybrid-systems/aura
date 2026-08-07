@@ -27,11 +27,13 @@
 
 module;
 
+// Include BEFORE import std — GCC 16 modules otherwise attach following
+// decls to namespace std (breaks EnvFrameLifetimeGuard member lookup).
+#include "core/workspace_epoch.hh" // #2711 current_mutation_epoch() for proof
+
 export module aura.core.envframe_lifetime;
 
 import std;
-
-#include "core/workspace_epoch.hh" // #2711 current_mutation_epoch() for proof
 
 export namespace aura::core::envframe_lifetime {
 

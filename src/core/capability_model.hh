@@ -167,6 +167,11 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_effect_enforced_total{0};
     std::atomic<std::uint64_t> capability_effect_denied_total{0};
     std::atomic<std::uint64_t> capability_provenance_mismatch_total{0};
+    // Issue #2707: zero mid on either grant.bound_mutation_id or
+    // prov.mutation_id under Restricted/Strict (fail-closed join deny).
+    // Subset of provenance_mismatch; Agents can chart zero-join holes
+    // separately from strict-equality mismatches (mid N vs N+1).
+    std::atomic<std::uint64_t> capability_mid_join_zero_deny_total{0};
     std::atomic<std::uint64_t> capability_grant_total{0};
     std::atomic<std::uint64_t> capability_revoke_total{0};
     std::atomic<std::uint64_t> capability_check_total{0};
@@ -507,6 +512,15 @@ struct CapabilityRegistry {
 
     // Optional provenance binding check: if grant has bound_mutation_id != 0
     // and caller's prov.mutation_id is non-zero and differs → mismatch.
+    //
+    // Issue #2707: under production sandbox (Restricted or Strict) the mid
+    // join is **fail-closed**:
+    //   - prov.mutation_id == 0 → deny (+ mid_join_zero_deny)
+    //   - any non-revoked grant with bound_mutation_id == 0 → deny
+    //   - else require bound_mutation_id == prov.mutation_id (strict eq)
+    // Soft / Off keeps legacy skip-when-zero (zero-cost happy path, AC4).
+    // Deny does not consume single-use (#2586) — caller only consumes on allow.
+    //
     // Issue #2074: anti privilege-sticky — if grant has grant_epoch != 0
     // AND the registry's min_valid_epoch is set AND grant_epoch < min_valid_epoch,
     // the grant is expired (issued at a stale mutation epoch) → deny.
@@ -522,12 +536,33 @@ struct CapabilityRegistry {
         if (it == by_tenant.end())
             return true; // no grants → not a mismatch (denied separately)
         const bool hard_fiber = hard_fiber_isolation_.load(std::memory_order_acquire);
+        // Issue #2707: fail-closed mid join under Restricted/Strict.
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        const bool fail_closed_mid =
+            (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+        if (fail_closed_mid && prov.mutation_id == 0) {
+            g_capability_effect_metrics().capability_mid_join_zero_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return false;
+        }
         for (const auto& g : it->second) {
             if (g.revoked)
                 continue;
-            if (g.bound_mutation_id != 0 && prov.mutation_id != 0 &&
-                g.bound_mutation_id != prov.mutation_id) {
-                return false;
+            if (fail_closed_mid) {
+                // Production: zero bound mid is not a silent skip — refuse.
+                if (g.bound_mutation_id == 0) {
+                    g_capability_effect_metrics().capability_mid_join_zero_deny_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    return false;
+                }
+                if (g.bound_mutation_id != prov.mutation_id)
+                    return false;
+            } else {
+                // Soft / Off: legacy skip-when-zero (AC4).
+                if (g.bound_mutation_id != 0 && prov.mutation_id != 0 &&
+                    g.bound_mutation_id != prov.mutation_id) {
+                    return false;
+                }
             }
             // Issue #2074 / #2055 / #2154: expired grant — grant_epoch behind
             // min_valid (manual set or sliding retain window).
@@ -933,6 +968,7 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_effect_enforced_total.store(0, std::memory_order_relaxed);
     m.capability_effect_denied_total.store(0, std::memory_order_relaxed);
     m.capability_provenance_mismatch_total.store(0, std::memory_order_relaxed);
+    m.capability_mid_join_zero_deny_total.store(0, std::memory_order_relaxed); // #2707
     m.capability_grant_total.store(0, std::memory_order_relaxed);
     m.capability_revoke_total.store(0, std::memory_order_relaxed);
     m.capability_check_total.store(0, std::memory_order_relaxed);
@@ -957,6 +993,8 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t enforced = 0;
     std::uint64_t denied = 0;
     std::uint64_t provenance_mismatch = 0;
+    // Issue #2707: zero mid join denials under Restricted/Strict.
+    std::uint64_t mid_join_zero_deny = 0;
     std::uint64_t grants = 0;
     std::uint64_t revokes = 0;
     std::uint64_t checks = 0;
@@ -1005,6 +1043,8 @@ struct CapabilityEffectStatsSnapshot {
         s.denied = m.capability_effect_denied_total.load(std::memory_order_acquire);
         s.provenance_mismatch =
             m.capability_provenance_mismatch_total.load(std::memory_order_acquire);
+        s.mid_join_zero_deny =
+            m.capability_mid_join_zero_deny_total.load(std::memory_order_acquire); // #2707
         s.grants = m.capability_grant_total.load(std::memory_order_acquire);
         s.revokes = m.capability_revoke_total.load(std::memory_order_acquire);
         s.checks = m.capability_check_total.load(std::memory_order_acquire);
