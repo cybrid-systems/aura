@@ -532,6 +532,130 @@ static void ac2721_6_source_and_linter() {
           "AC6: no docs/design/2721-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ───────
+// AC1: durable per-Fiber evaluator_id set on Guard enter.
+// AC2: cleared on Guard exit / cancel so stale steals cannot see a previous evaluator.
+// AC3: Soft + production paths identical; #2721 hard-AND counters continue to attribute.
+// AC4: identity assert + GC-defer residual under known evaluator + source-cite + linter.
+// AC5: zero-cost on hot steal path (one extra atomic load — same cost as the prior
+//      mutation_stack_ptr() proxy it replaces).
+
+// ── AC1: durable evaluator_id set on Guard enter ─────────────────────────
+static void ac2727_1_evaluator_id_set_on_guard_enter() {
+    std::println("\n--- #2727 AC1: durable evaluator_id set on Guard enter ---");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Fiber stores the durable evaluator_id (not just mutation_stack_ptr proxy).
+    CHECK(fh.find("evaluator_id_") != std::string::npos,
+          "AC1: fiber.h stores evaluator_id_ atomic");
+    CHECK(fh.find("set_evaluator_id") != std::string::npos,
+          "AC1: fiber.h exposes set_evaluator_id setter");
+    CHECK(fh.find("clear_evaluator_id") != std::string::npos,
+          "AC1: fiber.h exposes clear_evaluator_id clearer");
+    CHECK(fh.find("evaluator_id()") != std::string::npos,
+          "AC1: fiber.h exposes evaluator_id() atomic load reader");
+    // Strong def returns the stored id (atomic load).
+    CHECK(fc.find("return fb->evaluator_id()") != std::string::npos,
+          "AC1: fiber.cpp strong def returns evaluator_id()");
+    // Guard ctor stamps it on outermost.
+    CHECK(emb.find("set_evaluator_id(static_cast<void*>(ev_))") != std::string::npos,
+          "AC1: Guard ctor sets evaluator_id (this Evaluator) on enter");
+    CHECK(emb.find("if (outermost)") != std::string::npos ||
+              emb.find("if (is_outermost_)") != std::string::npos,
+          "AC1: Guard ctor has outermost guard");
+}
+
+// ── AC2: id cleared on Guard exit / cancel ───────────────────────────────
+static void ac2727_2_evaluator_id_cleared_on_guard_exit() {
+    std::println("\n--- #2727 AC2: id cleared on Guard exit / cancel ---");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(fh.find("clear_evaluator_id") != std::string::npos,
+          "AC2: fiber.h has clear_evaluator_id accessor");
+    // Guard dtor clears at the end (after all teardown so in-flight steals see the id).
+    CHECK(emb.find("clear_evaluator_id()") != std::string::npos,
+          "AC2: Guard dtor calls clear_evaluator_id");
+    CHECK(emb.find("is_outermost_ && aura::serve::g_current_fiber") != std::string::npos,
+          "AC2: clear gated on is_outermost_ + current fiber");
+}
+
+// ── AC3: Soft + production paths identical ──────────────────────────────
+static void ac2727_3_soft_and_production_identical() {
+    std::println("\n--- #2727 AC3: soft + production paths identical ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    // Set / clear are unconditional (no Soft/production gate — Soft callers keep
+    // existing behavior; production gains the precise identity).
+    CHECK(emb.find("set_evaluator_id(static_cast<void*>(ev_))") != std::string::npos,
+          "AC3: set unconditional in Guard ctor");
+    CHECK(emb.find("clear_evaluator_id()") != std::string::npos,
+          "AC3: clear unconditional in Guard dtor");
+    // C-linkage signature unchanged (steal_safety.cpp callers preserved).
+    CHECK(fc.find("extern \"C\" void* aura_fiber_evaluator_id_for_steal_safety") !=
+              std::string::npos,
+          "AC3: C-linkage signature preserved");
+}
+
+// ── AC4: GC-defer residual under known evaluator ────────────────────────
+static void ac2727_4_gc_defer_residual_under_known_evaluator() {
+    std::println("\n--- #2727 AC4: GC-defer residual under known evaluator ---");
+    const auto sc = read_file("src/serve/steal_safety.cpp");
+    // The steal_safety transaction calls aura_fiber_evaluator_id_for_steal_safety
+    // for the victim (used by gc_deferred_for_evaluator in predicate (d) —
+    // GC-defer arm state for the victim's evaluator).
+    CHECK(sc.find("aura_fiber_evaluator_id_for_steal_safety") != std::string::npos,
+          "AC4: steal_safety.cpp calls the new identity getter");
+    CHECK(sc.find("victim_eval_id") != std::string::npos,
+          "AC4: steal_safety.cpp uses the returned identity");
+    // Comment cites #2721 + #2727 lineage.
+    CHECK(sc.find("#2721") != std::string::npos || sc.find("2721") != std::string::npos,
+          "AC4: lineage cites #2721");
+    CHECK(sc.find("#2727") != std::string::npos || sc.find("2727") != std::string::npos,
+          "AC4: lineage cites #2727");
+}
+
+// ── AC5: source-cite + linter + no docs/design ──────────────────────────
+static void ac2727_5_source_and_linter() {
+    std::println("\n--- #2727 AC5: source-cite + linter + no docs/design ---");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fbc = read_file("src/compiler/fiber_bridge.cpp");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_fiber_evaluator_id_2727.py");
+    // Source-cite across 4 prod files.
+    CHECK(fh.find("Issue #2727") != std::string::npos, "AC5: fiber.h cites #2727");
+    CHECK(fc.find("Issue #2727") != std::string::npos, "AC5: fiber.cpp cites #2727");
+    CHECK(emb.find("Issue #2727") != std::string::npos, "AC5: emb cites #2727");
+    // Weak stub in fiber_bridge.cpp preserved (returns nullptr — no Evaluator).
+    CHECK(fbc.find("aura_fiber_evaluator_id_for_steal_safety") != std::string::npos,
+          "AC5: fiber_bridge.cpp weak stub preserved");
+    // Test functions present (this file per #81967).
+    CHECK(t.find("ac2727_1_evaluator_id_set_on_guard_enter") != std::string::npos,
+          "AC5: AC1 test present");
+    CHECK(t.find("ac2727_2_evaluator_id_cleared_on_guard_exit") != std::string::npos,
+          "AC5: AC2 test present");
+    CHECK(t.find("ac2727_3_soft_and_production_identical") != std::string::npos,
+          "AC5: AC3 test present");
+    CHECK(t.find("ac2727_4_gc_defer_residual_under_known_evaluator") != std::string::npos,
+          "AC5: AC4 test present");
+    CHECK(t.find("ac2727_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+    // #81967: NO new test file — extend the existing one.
+    CHECK(read_file("tests/serve/test_issue_2727.cpp").empty(),
+          "AC5: no tests/serve/test_issue_2727.cpp per #81967");
+    // build.py wires the linter.
+    CHECK(build.find("check_fiber_evaluator_id_2727") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty(), "AC5: linter present");
+    CHECK(lint.find("2727") != std::string::npos, "AC5: linter covers #2727");
+    // No docs/design/2727-* per #1655.
+    const std::string design_path = "docs/design/2727-";
+    CHECK(read_file((design_path + "fiber-evaluator-id.md").c_str()).empty(),
+          "AC5: no docs/design/2727-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_steal_complete_restamp_txn() {
@@ -555,9 +679,16 @@ int run_test_steal_complete_restamp_txn() {
     ac2721_3_ticket_consistency();
     ac2721_5_production_fail_closed();
     ac2721_6_source_and_linter();
+    std::println("\n=== Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ===");
+    ac2727_1_evaluator_id_set_on_guard_enter();
+    ac2727_2_evaluator_id_cleared_on_guard_exit();
+    ac2727_3_soft_and_production_identical();
+    ac2727_4_gc_defer_residual_under_known_evaluator();
+    ac2727_5_source_and_linter();
     if (g_failed)
         return 1;
-    std::println("steal-complete restamp txn #2510 + #2699 + #2721: OK ({} passed)", g_passed);
+    std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2727: OK ({} passed)",
+                 g_passed);
     return 0;
 }
 

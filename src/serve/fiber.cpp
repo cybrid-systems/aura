@@ -54,23 +54,19 @@ extern "C" int aura_evaluator_check_resume_layout_stamp(void* fiber_ptr) noexcep
 
 // Issue #2721: per-victim evaluator_id getter for the steal_safety
 // transaction hard-AND (predicate (d) — GC-defer arm state for the
-// victim's evaluator). Fiber does not store its evaluator_id directly
-// (the resolution goes through evaluator_for_scheduler_hooks() in
-// evaluator_fiber_mutation.cpp, which resolves the CURRENT thread-local
-// — the STEALER's evaluator, not the victim's). The closest stable
-// identity the fiber exposes is mutation_stack_ptr() (atomic load of
-// the storage pointer owned by the victim's evaluator). Returning the
-// mutation_stack_ptr as the handle lets steal_safety.cpp call
-// gc_deferred_for_evaluator() against the victim's stack — the
-// steal_safety transaction then guards against concurrent re-arm
-// races between on_steal_complete (step 3-6 clear) and ticket stamp
-// (step 7). A per-fiber evaluator_id field is the cleanest future
-// fix (follow-up); for now, mutation_stack_ptr is the best stable
-// identity available without a new internal field.
+// victim's evaluator).
+// Issue #2727: Fiber now stores a durable evaluator_id_ field
+// (set on MutationBoundaryGuard enter, cleared on Guard exit /
+// cancel). This strong def returns that stored id, replacing the
+// prior mutation_stack_ptr() proxy (#2721 follow-up note — the stack
+// pointer was a pragmatic but indirect handle and could be null when
+// no stack was bound yet). residual checks (LayoutStamp ownership,
+// ticket provenance, GC-defer arm state, etc.) read the precise
+// victim evaluator without indirection.
 //
-// Returns nullptr when the fiber has no stack bound yet (cold-path
-// test setup). steal_safety.cpp already handles nullptr (skips the
-// GC defer check).
+// Returns nullptr when the fiber has no Guard entered (cold-path test
+// setup or post-exit). steal_safety.cpp already handles nullptr
+// (skips the GC defer check).
 //
 // Strong def here; weak no-op stub in fiber_bridge.cpp keeps
 // non-evaluator link units building (returns nullptr).
@@ -78,7 +74,7 @@ extern "C" void* aura_fiber_evaluator_id_for_steal_safety(void* fiber_ptr) noexc
     if (!fiber_ptr) [[unlikely]]
         return nullptr;
     auto* fb = static_cast<Fiber*>(fiber_ptr);
-    return fb->mutation_stack_ptr();
+    return fb->evaluator_id();
 }
 
 std::atomic<uint64_t> Fiber::next_id_{1};
