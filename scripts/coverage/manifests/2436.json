@@ -11,22 +11,27 @@
         "finish_dirty_sync",
         "on_arena_compact",
         "LayoutStamp",
-        "kPostCompactLifecycleIssue"
+        "kPostCompactLifecycleIssue",
+        "run_post_compact_close",
+        "PostCompactCloseHooks",
+        "PostCompactCloseInput"
       ]
     },
     {
       "ac": "AC1",
       "path": "tests/compiler/test_post_compact_lifecycle.cpp",
       "contains": [
-        "2436 AC1"
+        "2436 AC1",
+        "run_post_compact_close"
       ]
     },
     {
       "ac": "AC2",
       "path": "src/compiler/evaluator_mutation_boundary.cpp",
       "contains": [
-        "note_lifecycle_run",
-        "note_lifecycle_soft_skip"
+        "run_post_compact_close",
+        "PostCompactCloseInput",
+        "densify_gate_ok"
       ]
     },
     {
@@ -48,8 +53,15 @@
       "ac": "AC3",
       "path": "src/compiler/evaluator_mutation_boundary.cpp",
       "contains": [
-        "note_lifecycle_pin_fail",
+        "pin_contract_held",
         "AURA_MOVING_PIN_CONTRACT"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/post_compact_lifecycle.hh",
+      "contains": [
+        "note_lifecycle_pin_fail"
       ]
     },
     {
@@ -63,7 +75,8 @@
       "ac": "AC4",
       "path": "src/compiler/evaluator_mutation_boundary.cpp",
       "contains": [
-        "note_lifecycle_stamp_publish",
+        "run_post_compact_close",
+        "set_fiber_resume_stamp",
         "Issue #2436 AC4"
       ]
     },
@@ -78,7 +91,8 @@
       "ac": "AC5",
       "path": "src/core/post_compact_lifecycle.hh",
       "contains": [
-        "post_compact_lifecycle_soft_skip_total"
+        "post_compact_lifecycle_soft_skip_total",
+        "post_compact_lifecycle_orchestrator_total"
       ]
     },
     {

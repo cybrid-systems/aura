@@ -2743,27 +2743,52 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // Moving densify success site (Phase 5) is wired by #2361
             // (envframe_ok computation above) — single call site, no
             // duplicate scan here.
-            // Issue #2436: lifecycle close steps 9–10 after densify 1–6 +
-            // arena hook (steps 7–8 Shape + IR dirty). Soft densify → soft_skip.
-            if (had_moving_densify) {
-                aura::core::post_compact_lifecycle::note_lifecycle_run();
-            } else {
-                aura::core::post_compact_lifecycle::note_lifecycle_soft_skip();
-            }
-        } else if (!pin_contract_held) {
-            aura::core::post_compact_lifecycle::note_lifecycle_pin_fail();
         }
-        // Issue #2436 AC4: LayoutStamp re-publish AFTER compact + shape/IR
-        // close so fiber resume fences observe post-compact shape_version +
-        // ir_soa_generation (lifecycle step 9). publish + set_resume stay
-        // adjacent (#2250 Phase 5 ordering proximity).
-        (void)ev_->publish_layout_stamp();
-        if (auto* cur_fiber = aura::serve::g_current_fiber) {
-            const auto stamp = ev_->current_layout_stamp();
-            cur_fiber->set_resume_layout_stamp(
-                stamp.arena_id, stamp.arena_gen, stamp.flat_gen, stamp.mutation_epoch,
-                stamp.env_gen, stamp.defuse_version, stamp.shape_version, stamp.ir_soa_generation);
-            aura::core::post_compact_lifecycle::note_lifecycle_stamp_publish();
+        // Issue #2436: single ordered lifecycle close (steps 7–10).
+        // Densify core (1–6) already finished above. Compact hook may have
+        // already run IR dirty sync (step 7) + ShapeProfiler (step 8);
+        // pass already_done so the orchestrator does not re-run them.
+        // Soft densify → soft_skip; pin fail → pin_fail; Moving success → run.
+        // LayoutStamp re-publish AFTER compact + shape/IR so fiber resume
+        // fences observe post-compact shape_version + ir_soa_generation
+        // (lifecycle step 9). publish + set_resume stay adjacent
+        // (#2250 Phase 5 ordering proximity) inside the orchestrator hooks.
+        {
+            using namespace aura::core::post_compact_lifecycle;
+            PostCompactCloseInput close_in{};
+            close_in.had_moving_densify = had_moving_densify;
+            close_in.pin_contract_held = pin_contract_held;
+            close_in.densify_gate_ok = pin_contract_held && densify_consistency.overall_ok();
+            // service.ixx compact notify already force_soa_instruction_dirty_sync
+            // + note_lifecycle_ir_sync when compact hooks fire.
+            close_in.ir_sync_already_done = true;
+            close_in.shape_already_done = true;
+
+            PostCompactCloseHooks close_hooks{};
+            close_hooks.ctx = static_cast<void*>(ev_);
+            close_hooks.publish_layout_stamp = [](void* c) noexcept {
+                static_cast<Evaluator*>(c)->publish_layout_stamp();
+            };
+            close_hooks.set_fiber_resume_stamp = [](void* c) noexcept -> bool {
+                auto* ev = static_cast<Evaluator*>(c);
+                auto* cur_fiber = aura::serve::g_current_fiber;
+                if (!cur_fiber)
+                    return false;
+                const auto stamp = ev->current_layout_stamp();
+                cur_fiber->set_resume_layout_stamp(stamp.arena_id, stamp.arena_gen, stamp.flat_gen,
+                                                   stamp.mutation_epoch, stamp.env_gen,
+                                                   stamp.defuse_version, stamp.shape_version,
+                                                   stamp.ir_soa_generation);
+                return true;
+            };
+            close_hooks.read_shape_version = [](void* /*c*/) noexcept -> std::uint64_t {
+                return aura::compiler::shape::current_global_shape_version();
+            };
+            close_hooks.read_ir_soa_generation = [](void* /*c*/) noexcept -> std::uint64_t {
+                return aura::compiler::current_ir_soa_generation_fence();
+            };
+            // Issue #2436 AC4: orchestrated stamp publish after densify close.
+            (void)run_post_compact_close(close_in, close_hooks);
         }
         // Issue #2364: PanicCheckpoint residual × densify closed loop.
         // After densify (success or fail leaving evaluator live), residual

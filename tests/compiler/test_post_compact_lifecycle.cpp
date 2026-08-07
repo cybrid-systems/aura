@@ -2,7 +2,7 @@
 // @reason: Issue #2436 — Arena Moving × IR SoA × Shape × fiber post-compact
 //          single atomic lifecycle (ordered + soft zero-cost).
 //
-//   AC1: Documented ordered lifecycle in post_compact_lifecycle.hh
+//   AC1: Documented ordered lifecycle + executable run_post_compact_close
 //   AC2: Chaos proxy: multi-thread mutate/compact stress (no silent-stale)
 //   AC3: pin-or-remap fail path wired (hard-fail env + counters)
 //   AC4: LayoutStamp published after compact sees shape_version + ir_soa_gen
@@ -35,10 +35,14 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::post_compact_lifecycle::kPostCompactLifecycleIssue;
 using aura::core::post_compact_lifecycle::post_compact_lifecycle_ir_sync_total;
+using aura::core::post_compact_lifecycle::post_compact_lifecycle_orchestrator_total;
 using aura::core::post_compact_lifecycle::post_compact_lifecycle_runs_total;
 using aura::core::post_compact_lifecycle::post_compact_lifecycle_soft_skip_total;
 using aura::core::post_compact_lifecycle::post_compact_lifecycle_stamp_publish_total;
 using aura::core::post_compact_lifecycle::post_compact_lifecycle_wired;
+using aura::core::post_compact_lifecycle::PostCompactCloseHooks;
+using aura::core::post_compact_lifecycle::PostCompactCloseInput;
+using aura::core::post_compact_lifecycle::run_post_compact_close;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -86,19 +90,38 @@ int run_test_post_compact_lifecycle() {
         CHECK(hh.find("finish_dirty_sync") != std::string::npos, "AC1: step IR dirty sync");
         CHECK(hh.find("on_arena_compact") != std::string::npos, "AC1: step ShapeProfiler");
         CHECK(hh.find("LayoutStamp") != std::string::npos, "AC1: step LayoutStamp");
-        CHECK(hh.find("pin-or-remap") != std::string::npos ||
-                  hh.find("pin-or-remap") != std::string::npos,
-              "AC1: pin-or-remap");
+        CHECK(hh.find("run_post_compact_close") != std::string::npos,
+              "AC1: executable orchestrator");
+        CHECK(hh.find("PostCompactCloseHooks") != std::string::npos, "AC1: type-erased hooks");
+        CHECK(hh.find("pin-or-remap") != std::string::npos, "AC1: pin-or-remap");
         CHECK(dens.find("densify-success closed-loop") != std::string::npos ||
                   dens.find("RootRemapPass") != std::string::npos,
               "AC1: densify steps cited");
-        // Phase 5 publishes stamp after compact (not before)
+        // Phase 5 drives close via orchestrator (not ad-hoc note scatter).
         CHECK(mut.find("Issue #2436") != std::string::npos, "AC1: Phase 5 #2436");
-        CHECK(mut.find("note_lifecycle_stamp_publish") != std::string::npos,
-              "AC1: stamp publish step");
+        CHECK(mut.find("run_post_compact_close") != std::string::npos,
+              "AC1: Phase 5 calls orchestrator");
         CHECK(svc.find("force_soa_instruction_dirty_sync") != std::string::npos &&
                   svc.find("note_lifecycle_ir_sync") != std::string::npos,
               "AC1: service IR sync on compact hook");
+    }
+
+    // ── AC1b: pure-unit soft-skip orchestrator (no Evaluator) ───────
+    {
+        std::println("\n--- #2436 AC1b: pure soft-skip orchestrator ---");
+        const auto soft0 = post_compact_lifecycle_soft_skip_total.load();
+        const auto orch0 = post_compact_lifecycle_orchestrator_total.load();
+        PostCompactCloseInput in{};
+        in.had_moving_densify = false;
+        in.pin_contract_held = true;
+        in.densify_gate_ok = true;
+        PostCompactCloseHooks hooks{}; // no hooks — stamp-less pure path
+        auto r = run_post_compact_close(in, hooks);
+        CHECK(r.soft_skip, "AC1b: soft_skip result");
+        CHECK(!r.ran, "AC1b: not a full run");
+        CHECK(r.pin_ok, "AC1b: pin ok");
+        CHECK(post_compact_lifecycle_soft_skip_total.load() == soft0 + 1, "AC1b: soft counter");
+        CHECK(post_compact_lifecycle_orchestrator_total.load() == orch0 + 1, "AC1b: orch counter");
     }
 
     // ── AC5: soft path (no compact) → soft_skip, stamp still publishes ─
@@ -144,12 +167,14 @@ int run_test_post_compact_lifecycle() {
             CHECK(current_ir_soa_generation_fence() >= 0, "AC4: ir fence readable");
         }
         auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-        // Stamp publish must come after densify lifecycle notes (source order).
-        const auto note_run = mut.find("note_lifecycle_run");
-        const auto stamp_pub = mut.find("note_lifecycle_stamp_publish");
-        CHECK(note_run != std::string::npos && stamp_pub != std::string::npos &&
-                  stamp_pub > note_run,
-              "AC4: stamp publish after lifecycle run note (source order)");
+        // Orchestrator owns ordered stamp publish after densify close.
+        const auto orch = mut.find("run_post_compact_close");
+        const auto densify_gate = mut.find("densify_gate_ok");
+        CHECK(orch != std::string::npos, "AC4: orchestrator call present");
+        CHECK(densify_gate != std::string::npos && densify_gate < orch,
+              "AC4: densify gate feeds orchestrator (source order)");
+        CHECK(mut.find("set_fiber_resume_stamp") != std::string::npos,
+              "AC4: fiber resume hook wired");
     }
 
     // ── AC3: pin-or-remap hard-fail path still present ──────────────
@@ -158,7 +183,10 @@ int run_test_post_compact_lifecycle() {
         auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
         auto pin = read_file("src/core/lifetime_pin.hh");
         CHECK(mut.find("AURA_MOVING_PIN_CONTRACT") != std::string::npos, "AC3: hard env gate");
-        CHECK(mut.find("note_lifecycle_pin_fail") != std::string::npos, "AC3: pin fail counter");
+        CHECK(mut.find("pin_contract_held") != std::string::npos, "AC3: pin contract feeds close");
+        auto hh = read_file("src/core/post_compact_lifecycle.hh");
+        CHECK(hh.find("note_lifecycle_pin_fail") != std::string::npos,
+              "AC3: pin fail counter in orchestrator");
         CHECK(pin.find("verify_pins_under_moving_compact") != std::string::npos,
               "AC3: verify_pins still present");
         CHECK(pin.find("g_moving_compact_pin_contract_fail_total") != std::string::npos,
