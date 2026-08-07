@@ -28,6 +28,20 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           ./scripts/release.sh "$VERSION"
 
+      # Issue #2722: RELEASE chaos SOAK hard deploy gate. Required for
+      # any tag / release candidate that claims multi-fiber mutation
+      # safety. Runs the full SOAK (300s / 8 workers / 256 fibers)
+      # under production_defaults_active + Hard fail-closed semantics.
+      # If any residual panic / LayoutStamp mismatch / live MutationHold
+      # / steal-after-degrade fires, the gate fails (exit non-zero) and
+      # the release-asset upload step below is skipped. Static contract
+      # is asserted by scripts/coverage/checks/check_chaos_soak_hard_gate_2722.py
+      # (also wired in build.py gate chain).
+      - name: chaos SOAK hard gate (#2722)
+        run: |
+          python3 build.py chaos-soak-hard-gate-2722-coverage
+          python3 build.py chaos-soak-hard-gate-2722
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v3
         with:
