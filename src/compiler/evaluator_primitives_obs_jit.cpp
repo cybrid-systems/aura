@@ -11170,6 +11170,29 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("panic-checkpoint-cleared-on-steal-wired", 1);
             insert_kv("schema-2667", 2667);
             insert_kv("issue-2667", 2667);
+            // Issue #2710: production-hard panic checkpoint policy on
+            // steal-complete (unify residual clear). Closes the
+            // residual half-open loop where a stolen fiber with a
+            // live PanicCheckpoint could enqueue Ready without
+            // clearing the previous Eval's GC arm. Production /
+            // AURA_PANIC_CONTRACT=hard now clears PanicCheckpoint on
+            // both hard_failed (#2667 — existing counter continues to
+            // bump) AND Ok paths (new counter — additive). Soft /
+            // dev_off / unset stays metric-only (no behavior change
+            // for Soft ergonomics). #2667 / #2546 / #2314 / #2203
+            // surfaces preserved (additive only). Aligns with #2598
+            // densify panic defer audit (production lock + residual
+            // panic outliving cleared checkpoint → same hard face).
+            insert_kv("panic-checkpoint-cleared-on-steal-ok-total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::panic_checkpoint_cleared_on_steal_ok_total()));
+            insert_kv("panic_checkpoint_cleared_on_steal_ok_total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::panic_checkpoint_cleared_on_steal_ok_total()));
+            insert_kv("panic-contract-hard-wired",
+                      aura::gc_hooks::panic_contract_hard_pref_v_read() > 0 ? 1 : 0);
+            insert_kv("schema-2710", 2710);
+            insert_kv("issue-2710", 2710);
             // Issue #2609: hard-AND residual + linear force + type fence.
             {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());

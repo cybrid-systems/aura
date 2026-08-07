@@ -2857,12 +2857,31 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         // PanicCheckpointGuard dtor #1727 cross-evaluator clear path.
         // Soft / dev_off: no action (preserve Soft semantics; panic defer
         // stays armed — observed via PanicDeferDensifyAudit #2598).
-        if (hard_failed && prev_eval_id != nullptr) {
+        // Issue #2710: production / AURA_PANIC_CONTRACT=hard also clears
+        // on the Ok path (steal successfully enqueued) — closes the
+        // residual half-open loop where a stolen fiber with a live
+        // PanicCheckpoint could enqueue Ready without clearing the
+        // previous Eval's GC arm. Bumps g_panic_checkpoint_cleared_on_steal_ok_total
+        // (additive) on Ok path; existing g_panic_checkpoint_cleared_on_steal_total
+        // continues to bump on the hard_failed path (regression on #2667).
+        if (prev_eval_id != nullptr) {
+            const bool production_hard =
+                aura::compiler::typed_audit::production_defaults_active() ||
+                aura::gc_hooks::panic_contract_hard_pref_v_read() == 1;
             if (auto* ev = evaluator_for_scheduler_hooks()) {
                 if (ev->has_panic_checkpoint()) {
-                    ev->clear_panic_checkpoint();
-                    aura::gc_hooks::g_panic_checkpoint_cleared_on_steal_total.fetch_add(
-                        1, std::memory_order_relaxed);
+                    if (production_hard) {
+                        ev->clear_panic_checkpoint();
+                        aura::gc_hooks::g_panic_checkpoint_cleared_on_steal_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (!hard_failed) {
+                            aura::gc_hooks::g_panic_checkpoint_cleared_on_steal_ok_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                    }
+                    // Soft / dev_off / unset: no action — preserve Soft
+                    // ergonomics; panic defer stays armed (observed via
+                    // PanicDeferDensifyAudit #2598).
                 }
             }
         }

@@ -439,6 +439,21 @@ inline std::atomic<std::uint64_t> g_residual_defer_steal_soft_leftover_total{0};
 // action (preserve Soft semantics). Mirrors g_residual_defer_steal_*
 // axis (production vs Soft + additive query counter).
 inline std::atomic<std::uint64_t> g_panic_checkpoint_cleared_on_steal_total{0}; // #2667
+// Issue #2710: PanicCheckpoint cleared on steal-complete (production
+// Ok path). Bumped when aura_evaluator_on_steal_complete clears a live
+// PanicCheckpoint under production / Hard + AURA_PANIC_CONTRACT=hard
+// when the steal successfully enqueues (Ok path) — closes the residual
+// half-open loop where a stolen fiber could enqueue Ready with a live
+// PanicCheckpoint armed. Distinguishes from the #2667 hard-failed-path
+// counter (g_panic_checkpoint_cleared_on_steal_total) so dashboards
+// can attribute clears to Ok vs hard_failed paths. Soft / dev_off /
+// unset: no action (preserve Soft ergonomics). Additive only — no
+// regression on #2667 / #2546 / #2314 / #2203 surfaces.
+inline std::atomic<std::uint64_t> g_panic_checkpoint_cleared_on_steal_ok_total{0}; // #2710
+// Issue #2710: AURA_PANIC_CONTRACT=hard preference (process-wide).
+// -1 = env/default unset, 0 = off (Soft observe), 1 = hard (production).
+// Mirrors the AURA_GENERAL_OBJECT_PIN=required pattern (#2496 / #2597).
+inline std::atomic<int> g_panic_contract_hard_pref{-1};
 // Issue #2377: steal-complete strong entry missing (weak no-op or null
 // under light/sandbox). Bumped when production would abort but Soft/
 // sandbox path takes weak stub or legacy N-call fallback. Production
@@ -462,6 +477,30 @@ inline std::atomic<std::uint64_t> g_steal_complete_entry_missing_total{0}; // #2
 // Issue #2667: getter for panic-checkpoint cleared-on-steal counter.
 [[nodiscard]] inline std::uint64_t panic_checkpoint_cleared_on_steal_total() noexcept {
     return g_panic_checkpoint_cleared_on_steal_total.load(std::memory_order_relaxed);
+}
+// Issue #2710: getter for panic-checkpoint cleared-on-steal Ok-path counter.
+[[nodiscard]] inline std::uint64_t panic_checkpoint_cleared_on_steal_ok_total() noexcept {
+    return g_panic_checkpoint_cleared_on_steal_ok_total.load(std::memory_order_relaxed);
+}
+// Issue #2710: getter for panic-contract-hard preference (process-wide).
+[[nodiscard]] inline int panic_contract_hard_pref_v_read() noexcept {
+    return g_panic_contract_hard_pref.load(std::memory_order_relaxed);
+}
+// Issue #2710: read AURA_PANIC_CONTRACT env var at process start
+// (called from production security defaults step). Values: "hard" /
+// "1" / "true" / "yes" / "on" → enable production-hard face. "off" /
+// "0" / "false" / "no" → disable (Soft observe). Unset → -1 (no
+// preference; Soft path).
+inline void apply_panic_contract_env() noexcept {
+    const char* e = std::getenv("AURA_PANIC_CONTRACT");
+    if (!e || !*e)
+        return;
+    std::string_view v(e);
+    if (v == "hard" || v == "1" || v == "true" || v == "yes" || v == "on") {
+        g_panic_contract_hard_pref.store(1, std::memory_order_release);
+    } else if (v == "off" || v == "0" || v == "false" || v == "no") {
+        g_panic_contract_hard_pref.store(0, std::memory_order_release);
+    }
 }
 [[nodiscard]] inline std::uint64_t steal_complete_entry_missing_total() noexcept {
     return g_steal_complete_entry_missing_total.load(std::memory_order_relaxed);

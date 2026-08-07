@@ -3465,6 +3465,29 @@ def cmd_general_object_pin_auto_wire_2709_coverage():
     return 0
 
 
+def cmd_panic_checkpoint_steal_hard_2710_coverage():
+    """Issue #2710: PanicCheckpoint production-hard policy on steal-complete.
+
+    Closes the residual half-open loop where a stolen fiber with a live
+    PanicCheckpoint could enqueue Ready without clearing the previous Eval's
+    GC arm. Production / AURA_PANIC_CONTRACT=hard now clears PanicCheckpoint
+    on both hard_failed (#2667 — existing counter continues to bump) AND Ok
+    paths (new counter — additive). Soft / dev_off / unset stays metric-only.
+    Aligns with #2598 densify panic defer audit.
+    """
+    print(f"{B}=== panic checkpoint steal hard (#2710) ==={N}")
+    script = ROOT / "scripts" / "check_panic_checkpoint_steal_hard_2710.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("panic checkpoint steal hard (#2710) contract rows failed")
+        return 1
+    ok("panic checkpoint steal hard (#2710) clean")
+    return 0
+
+
 def cmd_panic_residual_densify_hard_2598_coverage():
     """Issue #2598: production densify-after panic residual → hard
     (align with steal residual hard-AND).
@@ -8448,6 +8471,7 @@ def cmd_gate():
         or cmd_moving_untracked_production_hard_2596_coverage()
         or cmd_general_object_pin_auto_wire_2597_coverage()
         or cmd_general_object_pin_auto_wire_2709_coverage()
+        or cmd_panic_checkpoint_steal_hard_2710_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()
