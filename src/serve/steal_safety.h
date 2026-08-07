@@ -48,6 +48,7 @@ enum class StealSafetyDecision : std::uint8_t {
 };
 
 inline constexpr int kStealSafetyTransactionIssue = 2699;
+inline constexpr int kStealSafetyTransactionHardAndIssue = 2721;
 
 // File-scope atomics (mirror #2693/#2694/#2695/#2696/#2697/#2698 pattern).
 // The transaction itself is the caller; these counters surface the
@@ -56,6 +57,22 @@ inline std::atomic<std::uint64_t> g_steal_safety_transaction_calls_total{0};
 inline std::atomic<std::uint64_t> g_steal_safety_transaction_reject_hard_total{0};
 inline std::atomic<std::uint64_t> g_steal_safety_transaction_ok_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_transaction_wired{1};
+
+// Issue #2721: hard-AND residual safety checks inside the atomic
+// decision. #2699 stamped the ticket only on the Ok path, but residual
+// predicates (per-fiber mutation boundary safety, LayoutStamp match,
+// resume-ticket consistency, GC-defer arm state) were still consulted
+// AFTER the transaction returned Ok in some resume / yield paths —
+// opening a window for stale-ticket resume or concurrent MutationHold
+// steal. #2721 hard-ANDs all 4 inside the transaction BEFORE the ticket
+// stamp. If any fails → bump the matching counter + RejectHard WITHOUT
+// stamping the ticket (no post-transaction escape hatch). Production
+// fail-closed (soft / sandbox stays metric-only per #2699 contract).
+inline std::atomic<std::uint64_t> g_steal_safety_residual_boundary_unsafe_total{0};
+inline std::atomic<std::uint64_t> g_steal_safety_residual_layout_stamp_mismatch_total{0};
+inline std::atomic<std::uint64_t> g_steal_safety_residual_ticket_mismatch_total{0};
+inline std::atomic<std::uint64_t> g_steal_safety_residual_gc_defer_armed_total{0};
+inline std::atomic<std::uint32_t> g_steal_safety_residual_hard_and_wired{1};
 
 [[nodiscard]] inline std::uint64_t steal_safety_transaction_calls_v_read() noexcept {
     return g_steal_safety_transaction_calls_total.load(std::memory_order_relaxed);
@@ -68,6 +85,22 @@ inline std::atomic<std::uint32_t> g_steal_safety_transaction_wired{1};
 }
 [[nodiscard]] inline std::uint32_t steal_safety_transaction_wired_v_read() noexcept {
     return g_steal_safety_transaction_wired.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t steal_safety_residual_boundary_unsafe_total_v_read() noexcept {
+    return g_steal_safety_residual_boundary_unsafe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
+    return g_steal_safety_residual_layout_stamp_mismatch_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t steal_safety_residual_ticket_mismatch_total_v_read() noexcept {
+    return g_steal_safety_residual_ticket_mismatch_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t steal_safety_residual_gc_defer_armed_total_v_read() noexcept {
+    return g_steal_safety_residual_gc_defer_armed_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t steal_safety_residual_hard_and_wired_v_read() noexcept {
+    return g_steal_safety_residual_hard_and_wired.load(std::memory_order_relaxed);
 }
 
 // The single authoritative transaction. Returns Ok (fiber ready to

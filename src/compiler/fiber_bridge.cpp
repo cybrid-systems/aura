@@ -53,6 +53,13 @@ extern "C" __attribute__((weak)) void aura_evaluator_mark_outermost_mutation_fai
 extern "C" __attribute__((weak)) void
 aura_evaluator_force_degrade_outermost_holder(std::uint64_t) noexcept {}
 
+// Issue #2721: per-victim evaluator_id getter weak stub (returns
+// nullptr — steal_safety.cpp already handles nullptr by skipping the
+// GC defer check). Strong def lives in src/serve/fiber.cpp.
+extern "C" __attribute__((weak)) void* aura_fiber_evaluator_id_for_steal_safety(void*) noexcept {
+    return nullptr;
+}
+
 // Issue #588: per-fiber stack depth probe (weak stub).
 __attribute__((weak)) std::size_t
 aura_evaluator_mutation_stack_depth_from_ptr(void* /*mutation_stack_storage*/) {
