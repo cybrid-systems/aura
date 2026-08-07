@@ -27,11 +27,12 @@ module;
 #include <vector>
 #include "core/persistent_child_vector.hh"
 #include "core/cpp26_contract_stats.h"
-#include "core/provenance_tracker.hh" // #2125: maybe_stamp_stable_ref_isolation_tenant
-#include "core/flatast_restamp.hh"    // FlatAST decomp step 1: RestampPolicy SSOT
-#include "core/owned_shared_mutex.hh" // FlatAST decomp step 1: OwnedSharedMutex
-#include "core/flatast_domains.hh"    // FlatAST decomp map (agent blast-radius)
-#include "reflect/node_tag_names.hh"  // Wave B1: shared NodeTag names
+#include "core/provenance_tracker.hh"   // #2125: maybe_stamp_stable_ref_isolation_tenant
+#include "core/flatast_restamp.hh"      // FlatAST decomp step 1: RestampPolicy SSOT
+#include "core/owned_shared_mutex.hh"   // FlatAST decomp step 1: OwnedSharedMutex
+#include "core/flatast_domains.hh"      // FlatAST decomp map (agent blast-radius)
+#include "core/flatast_domain_views.hh" // FlatAST decomp step 4: Storage/Index views
+#include "reflect/node_tag_names.hh"    // Wave B1: shared NodeTag names
 #include <contracts>
 #include <shared_mutex>
 
@@ -5600,6 +5601,22 @@ public:
 
     std::size_t size() const { return tag_.size(); }
     bool empty() const { return tag_.empty(); }
+
+    // FlatAST decomp step 4: non-owning domain views (see flatast_domain_views.hh).
+    // Storage = SoA + free-slot + parent/children reads; Indexes = tag/arity +
+    // multi-parent. Locks stay on FlatAST — views never own concurrency state.
+    [[nodiscard]] domains::FlatASTStorageView<FlatAST> storage_domain() noexcept {
+        return domains::storage_view(*this);
+    }
+    [[nodiscard]] domains::FlatASTStorageView<const FlatAST> storage_domain() const noexcept {
+        return domains::storage_view(*this);
+    }
+    [[nodiscard]] domains::FlatASTIndexView<FlatAST> index_domain() noexcept {
+        return domains::index_view(*this);
+    }
+    [[nodiscard]] domains::FlatASTIndexView<const FlatAST> index_domain() const noexcept {
+        return domains::index_view(*this);
+    }
 
     // Issue #402: walk only the root subtree (iterative
     // DFS, bounded by max_nodes as a safety net). Returns

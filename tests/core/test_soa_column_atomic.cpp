@@ -240,18 +240,20 @@ int run_test_soa_column_atomic() {
               "AC2: feedback metric ≤ node count");
     }
 
-    // Source-cite
+    // Source-cite (FlatAST decomp step 3: fetch_or bodies in ast_impl.cpp)
     {
         auto ast = read_file("src/core/ast.ixx");
+        auto impl = read_file("src/core/ast_impl.cpp");
+        auto src = ast + "\n" + impl;
         CHECK(ast.find("Issue #2440") != std::string::npos, "source-cite #2440");
-        CHECK(ast.find("std::atomic_ref<std::uint64_t>") != std::string::npos,
+        CHECK(src.find("std::atomic_ref<std::uint64_t>") != std::string::npos,
               "atomic_ref uint64 on epoch");
-        CHECK(ast.find("std::atomic_ref<std::uint8_t>") != std::string::npos,
+        CHECK(src.find("std::atomic_ref<std::uint8_t>") != std::string::npos,
               "atomic_ref uint8 on dirty/stale");
-        CHECK(ast.find("is_always_lock_free") != std::string::npos &&
-                  ast.find("uint64") != std::string::npos,
+        CHECK(src.find("is_always_lock_free") != std::string::npos &&
+                  src.find("uint64") != std::string::npos,
               "is_always_lock_free assert present");
-        CHECK(ast.find("fetch_or(reasons") != std::string::npos, "fetch_or verification path");
+        CHECK(src.find("fetch_or(reasons") != std::string::npos, "fetch_or verification path");
     }
 
     std::println("\n=== #2440 results: {} passed, {} failed ===", g_passed, g_failed);
