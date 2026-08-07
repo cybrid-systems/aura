@@ -180,15 +180,17 @@ int run_test_macro_dirty_bits_lock() {
         CHECK(flat.macro_expansion_dirty_total() == 1, "AC3: expansion once");
     }
 
-    // Source-cite
+    // Source-cite (FlatAST decomp step 3: body in ast_impl.cpp)
     {
         auto ast = read_file("src/core/ast.ixx");
+        auto impl = read_file("src/core/ast_impl.cpp");
+        auto src = ast + "\n" + impl;
         CHECK(ast.find("Issue #2441") != std::string::npos, "source-cite #2441");
-        CHECK(ast.find("apply_macro_dirty_bits") != std::string::npos &&
-                  ast.find("dirty_column_mtx_") != std::string::npos,
+        CHECK(src.find("apply_macro_dirty_bits") != std::string::npos &&
+                  src.find("dirty_column_mtx_") != std::string::npos,
               "lock used in apply_macro");
-        CHECK(ast.find("fetch_or(reasons") != std::string::npos &&
-                  ast.find("newly_set = static_cast<std::uint8_t>(reasons & ~prev)") !=
+        CHECK(src.find("fetch_or(reasons") != std::string::npos &&
+                  src.find("newly_set = static_cast<std::uint8_t>(reasons & ~prev)") !=
                       std::string::npos,
               "newly_set via fetch_or prev");
     }

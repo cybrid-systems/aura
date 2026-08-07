@@ -206,14 +206,16 @@ int run_test_clear_macro_dirty_concurrent() {
         CHECK(flat.macro_dirty_count() == 0, "AC2: final count 0");
     }
 
-    // Source-cite
+    // Source-cite (FlatAST decomp step 3: clear body in ast_impl.cpp)
     {
         auto ast = read_file("src/core/ast.ixx");
+        auto impl = read_file("src/core/ast_impl.cpp");
+        auto src = ast + "\n" + impl;
         CHECK(ast.find("Issue #2442") != std::string::npos, "source-cite #2442");
-        CHECK(ast.find("clear_macro_dirty_all") != std::string::npos &&
-                  ast.find("atomic_ref<std::uint8_t>") != std::string::npos,
+        CHECK(src.find("clear_macro_dirty_all") != std::string::npos &&
+                  src.find("atomic_ref<std::uint8_t>") != std::string::npos,
               "clear uses atomic_ref");
-        CHECK(ast.find("unique_lock") != std::string::npos, "exclusive lock on clear path");
+        CHECK(src.find("unique_lock") != std::string::npos, "exclusive lock on clear path");
     }
 
     std::println("\n=== #2442 results: {} passed, {} failed ===", g_passed, g_failed);

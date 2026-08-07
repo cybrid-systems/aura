@@ -19,8 +19,9 @@
 //     - mark_dirty*, mark_dirty_upward*, restamp_*, bump_generation*
 //     - private columns remain on FlatAST (no layout break)
 //
-//   Step 4: storage / index friends only if step 3 proves stable
-//     - Optional FlatASTStorage / FlatASTIndex *views* (not ownership)
+//   Step 4 (done): storage / index *views* (not ownership)
+//     - flatast_domain_views.hh  FlatASTStorageView / FlatASTIndexView
+//     - FlatAST::storage_domain() / index_domain() thin accessors
 //     - Never split locks across types without lock-order rewrite
 //
 // Domain inventory (what may depend on what):
@@ -49,7 +50,7 @@
 namespace aura::ast::domains {
 
 inline constexpr int kFlatAstDecomposeIssue = 0; // program; no single GH issue
-inline constexpr int kFlatAstDecomposeStep = 3;  // current completed step
+inline constexpr int kFlatAstDecomposeStep = 4;  // current completed step
 inline constexpr int kFlatAstDecomposeStepCount = 4;
 
 enum class FlatAstDomain : std::uint8_t {

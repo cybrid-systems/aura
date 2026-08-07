@@ -188,16 +188,18 @@ int run_test_verification_dirty_bits_lock() {
         CHECK(flat.verify_sva_dirty_total() == 1, "AC3: sva once");
     }
 
-    // Source-cite
+    // Source-cite (FlatAST decomp step 3: body in ast_impl.cpp)
     {
         auto ast = read_file("src/core/ast.ixx");
+        auto impl = read_file("src/core/ast_impl.cpp");
+        auto src = ast + "\n" + impl;
         CHECK(ast.find("Issue #2439") != std::string::npos, "source-cite #2439");
-        CHECK(ast.find("dirty_column_mtx_") != std::string::npos &&
-                  ast.find("apply_verification_dirty_bits") != std::string::npos,
+        CHECK(src.find("dirty_column_mtx_") != std::string::npos &&
+                  src.find("apply_verification_dirty_bits") != std::string::npos,
               "lock used in apply_verification");
         // newly_set from atomic fetch_or prev (Issue #2440 strengthens #2439)
-        CHECK(ast.find("fetch_or(reasons") != std::string::npos &&
-                  ast.find("newly_set = static_cast<std::uint8_t>(reasons & ~prev)") !=
+        CHECK(src.find("fetch_or(reasons") != std::string::npos &&
+                  src.find("newly_set = static_cast<std::uint8_t>(reasons & ~prev)") !=
                       std::string::npos,
               "newly_set under exclusive path via fetch_or");
     }
