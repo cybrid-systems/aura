@@ -4465,10 +4465,23 @@ static std::atomic<std::uint64_t> g_consecutive_dirty_count{0};
 // mirrors the #2640/#2668 file-scope counter style and keeps query
 // surfaces queryable in light-link test bundles.
 static std::atomic<std::uint64_t> g_2693_soft_fuse_fallback_total{0};
+// Issue #2712: Soft fuse → bounded physical heal. Bumped once per
+// fuse trip under production / Soft / consec >= K when the heal body
+// actually runs (invalidate stale slots + must_deopt stale live
+// closures). Distinct from epoch_invariant_soft_fuse_total (which
+// bumps on every consec >= K walk) so dashboards can attribute
+// "fuse fired" vs "heal ran" separately. Soft / K=0 / mode=Off → no
+// heal body, so this counter stays at 0.
+static std::atomic<std::uint64_t> g_2693_soft_fuse_heal_fallback_total{0};
 static std::atomic<int> g_2693_soft_fuse_k{3};
 
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_total_v_read(void) {
     return g_2693_soft_fuse_fallback_total.load(std::memory_order_relaxed);
+}
+// Issue #2712: read accessor for the soft-fuse heal counter
+// (production + Soft + consec >= K + heal body ran).
+extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void) {
+    return g_2693_soft_fuse_heal_fallback_total.load(std::memory_order_relaxed);
 }
 extern "C" std::uint64_t aura_epoch_invariant_consecutive_dirty_total_v_read(void) {
     return g_consecutive_dirty_count.load(std::memory_order_relaxed);
@@ -4506,6 +4519,17 @@ struct EpochInvariantSoftFuseKEnvInit {
 // clean walks, and fire the fuse counter when consecutive_dirty
 // reaches K (K=0 disables). Shared by periodic + event-driven
 // walks so both paths contribute to the same fuse signal.
+//
+// Issue #2712: production + Soft + consec >= K additionally drives
+// a bounded physical heal — invalidates stale slots via reemit-owner
+// TLS (when set) + must-deopt stale live closures. Heal is bounded
+// to at most one physical clear per fuse trip (consec resets to 0
+// after the heal body runs, so re-entry mid-walk / next walk
+// requires K fresh stuck walks before another heal). Soft / K=0 /
+// mode=Off: no heal body, no extra cost. The fuse counter still
+// bumps on consec >= K (additive — mirrors the existing #2693 path);
+// the new heal counter bumps only when the heal body actually runs
+// (production + Soft + consec >= K).
 static void aura_2693_soft_fuse_record(std::size_t behind_after_clear) {
     if (behind_after_clear > 0) {
         g_consecutive_dirty_count.fetch_add(1, std::memory_order_relaxed);
@@ -4517,6 +4541,26 @@ static void aura_2693_soft_fuse_record(std::size_t behind_after_clear) {
         const std::uint64_t consec = g_consecutive_dirty_count.load(std::memory_order_relaxed);
         if (consec >= static_cast<std::uint64_t>(k)) {
             g_2693_soft_fuse_fallback_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2712: drive bounded physical heal under
+            // production + Soft. Reuse #2541 / #2299 / #2606 helpers
+            // (aura_aot_invalidate_all_stale_slots_for_eval +
+            // aura_epoch_invariant_must_deopt_stale_live_closures).
+            // Prefer reemit-owner TLS (per AC4) so multi-eval hosts
+            // do not wipe foreign slots; helper falls back to
+            // process-default when reemit owner is unset. Heal is
+            // bounded: consec resets to 0 below, so the next heal
+            // requires K fresh stuck walks (rate-limited naturally).
+            if (aura::compiler::typed_audit::production_defaults_active() &&
+                aura_epoch_invariant_mode() == 1) { // 1 = Soft (per #2541)
+                g_2693_soft_fuse_heal_fallback_total.fetch_add(1, std::memory_order_relaxed);
+                void* reemit_owner = aura_aot_get_reemit_owner_eval();
+                (void)aura_aot_invalidate_all_stale_slots_for_eval(reemit_owner);
+                (void)aura_epoch_invariant_must_deopt_stale_live_closures();
+                // Reset consec to 0 so re-entry / next walk requires
+                // K fresh stuck walks before the next heal — bounds
+                // physical-clear rate (per AC3).
+                g_consecutive_dirty_count.store(0, std::memory_order_relaxed);
+            }
         }
     }
 }

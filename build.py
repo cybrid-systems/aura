@@ -3512,6 +3512,29 @@ def cmd_envframe_lifetime_proof_2711_coverage():
     return 0
 
 
+def cmd_epoch_invariant_soft_fuse_heal_2712_coverage():
+    """Issue #2712: Soft epoch-invariant fuse must drive bounded physical heal.
+
+    Closes the #2693 §A follow-up: #2693 shipped Soft consecutive-dirty fuse
+    (observability-only — fuse counter bumps after K consecutive stuck walks
+    but no heal action ran). Under production Soft + sustained mutation,
+    generation-behind AOT slots and stale live closures could remain
+    observable for many Soft walks while Agents only saw fuse counters.
+    Zero-downtime hot-update requires fuse → heal, not fuse → metric-only.
+    """
+    print(f"{B}=== epoch invariant soft fuse heal (#2712) ==={N}")
+    script = ROOT / "scripts" / "check_epoch_invariant_soft_fuse_heal_2712.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("epoch invariant soft fuse heal (#2712) contract rows failed")
+        return 1
+    ok("epoch invariant soft fuse heal (#2712) clean")
+    return 0
+
+
 def cmd_panic_residual_densify_hard_2598_coverage():
     """Issue #2598: production densify-after panic residual → hard
     (align with steal residual hard-AND).
@@ -8519,6 +8542,7 @@ def cmd_gate():
         or cmd_general_object_pin_auto_wire_2709_coverage()
         or cmd_panic_checkpoint_steal_hard_2710_coverage()
         or cmd_envframe_lifetime_proof_2711_coverage()
+        or cmd_epoch_invariant_soft_fuse_heal_2712_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()
