@@ -6659,6 +6659,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                           mutation_region_concurrent_wired_v_read()));
                             insert_kv("schema-2724", 2724);
                             insert_kv("issue-2724", 2724);
+                            // Issue #2726: P0 cross-fiber hold-budget
+                            // force-degrade real cancel (per-fiber
+                            // pending-cancel map polled at safepoints) —
+                            // closes #2720 residual. Additive — all
+                            // #2701/#2720/#2724/#2587/#2630 surfaces
+                            // preserved. fired vs consumed divergence
+                            // is observable (Fiber lifetime race =
+                            // holder gone before consume; Agent health).
+                            insert_kv(
+                                "mutation-hold-budget-holder-degrade-cross-fiber-cancel-fired-"
+                                "total",
+                                static_cast<std::int64_t>(
+                                    mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total_v_read()));
+                            insert_kv(
+                                "mutation-hold-budget-holder-degrade-cross-fiber-cancel-consumed-"
+                                "total",
+                                static_cast<std::int64_t>(
+                                    mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total_v_read()));
+                            insert_kv("schema-2726", 2726);
+                            insert_kv("issue-2726", 2726);
                             // Issue #2702: query:resume-hard-fail — Agent-visible resume
                             // hard-fail surface. Production path: ticket mismatch or
                             // mutation_safety_snapshot_inconsistent → request_cancel +

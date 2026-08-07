@@ -46,7 +46,16 @@
 #include "compiler/ownership_rebind.h"
 
 #include "compiler/typed_mutation_audit.h" // #2708 production_defaults_active()
-#include "core/lifetime_pin.ixx"           // #2723: linear_roots() registry for root collection
+#include <span> // std::span used by collect_linear_or_dirty_roots_for_rebind() (#2723).
+// Issue #2726 ship co-traveler: switched from `#include "core/lifetime_pin.ixx"`
+// (illegal C++20 — lifetime_pin.ixx declares `module;` + `export module aura.core.lifetime_pin;`)
+// to `import aura.core.lifetime_pin;`. The needed linear_roots() /
+// linear_roots_mtx() helpers live inside the `export namespace aura::core::lifetime { ... }`
+// block of lifetime_pin.ixx (auto-exported). Import exposes them at
+// `aura::core::lifetime::linear_roots` / `aura::core::lifetime::linear_roots_mtx`
+// (qualified names updated in collect_linear_or_dirty_roots_for_rebind() below).
+// #2723 originally wired the include path; this flips it to import.
+import aura.core.lifetime_pin;
 
 #include <cstdio>
 #include <vector>
@@ -161,8 +170,8 @@ std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind(
     // because linear_roots() carries the canonical "object survived the
     // densify/steal pass" identity.
     {
-        std::lock_guard<std::mutex> lock(aura::core::linear_roots_mtx());
-        for (const void* obj : aura::core::linear_roots()) {
+        std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+        for (const void* obj : aura::core::lifetime::linear_roots()) {
             // linear_roots() stores opaque void* (object identity). For the
             // #2708 validate-walk sentinel, we use the pointer as a 32-bit
             // hash of the address — sufficient to drive the per-root walk

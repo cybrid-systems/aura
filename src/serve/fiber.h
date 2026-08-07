@@ -697,6 +697,35 @@ public:
     [[nodiscard]] bool is_cancel_requested() const noexcept {
         return cancel_requested_.load(std::memory_order_acquire);
     }
+    // Issue #2726: per-fiber pending hold-budget cancel flag. Set by the
+    // cross-fiber force-degrade path (aura_evaluator_force_degrade_outermost_holder)
+    // when the admitter and the holder run on different fibers; holder
+    // observes the flag at the outermost MutationBoundaryGuard Phase-5 exit
+    // (and at safepoints) so the Guard exits with failure and releases the
+    // workspace_mtx_ exclusive hold. Soft / sandbox=off path does NOT set
+    // the flag unless AURA_MUTATION_HOLD_BUDGET_HARD=1 — same gating as
+    // #2701/#2720 (zero cost on happy path).
+    //
+    // request_hold_budget_cancel: cross-fiber setter (called from the
+    // force-degrade ABI; atomic store under release).
+    //
+    // consume_hold_budget_cancel: one-shot CAS true→false; returns true iff
+    // the flag was set, so the caller can fire mark_outermost_mutation_failed
+    // exactly once per request. AC3 — only the outermost Guard poll path
+    // calls this (nested guards ignore the flag).
+    //
+    // peek_hold_budget_cancel: read-only diagnostic accessor (relaxed load).
+    void request_hold_budget_cancel() noexcept {
+        pending_hold_budget_cancel_.store(true, std::memory_order_release);
+    }
+    [[nodiscard]] bool consume_hold_budget_cancel() noexcept {
+        bool expected = true;
+        return pending_hold_budget_cancel_.compare_exchange_strong(
+            expected, false, std::memory_order_acq_rel, std::memory_order_acquire);
+    }
+    [[nodiscard]] bool peek_hold_budget_cancel() const noexcept {
+        return pending_hold_budget_cancel_.load(std::memory_order_acquire);
+    }
     // Issue #2533: force cooperative safepoint after hard-reclaim so non-yield
     // bodies still hit a bound edge (check_gc_safepoint / yield) and retire
     // still_running. Ok join / cooperative yield pays zero extra (flag unset).
@@ -1043,6 +1072,13 @@ private:
     std::uint32_t resume_layout_stamp_set_ = 0;
     // Issue #1584: cooperative cancel flag.
     std::atomic<bool> cancel_requested_{false};
+    // Issue #2726: per-fiber hold-budget cancel pending flag, polled at
+    // outermost Guard Phase-5 exit / safepoints (one-shot CAS consume).
+    // Set by aura_evaluator_force_degrade_outermost_holder cross-fiber path
+    // (production / AURA_MUTATION_HOLD_BUDGET_HARD=1 only). AC3 — nested
+    // guards never observe or clear this flag (consume lives in the
+    // outermost dtor Phase-5 exit path only).
+    std::atomic<bool> pending_hold_budget_cancel_{false};
     // Issue #2118: orch agent body soft mutation-boundary window active
     // (per-fiber stack depth registered; steal/GC visibility).
     std::atomic<bool> orch_agent_boundary_active_{false};

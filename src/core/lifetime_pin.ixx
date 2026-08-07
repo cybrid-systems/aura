@@ -909,6 +909,15 @@ inline std::atomic<std::uint64_t> g_linear_pin_miss_total{0};
 // Registry of live linear roots (addresses that must survive Moving
 // compact). Function-static so it's process-wide and accessible from
 // inline free functions. Mutex-guarded for thread safety.
+// Issue #2726 ship co-traveler: these helpers live inside the
+// `export namespace aura::core::lifetime { ... }` block opened above
+// (line 51), so they're automatically exported as
+// `aura::core::lifetime::linear_roots` / `aura::core::lifetime::linear_roots_mtx`.
+// Non-module consumers (e.g. ownership_rebind.cpp) access them via
+// `import aura.core.lifetime_pin;` (replaces the C++20-illegal
+// `#include "core/lifetime_pin.ixx"` from #2723). Bare `inline`
+// suffices — no extra `export` qualifier (export may only occur once
+// per export declaration per C++20 modules; #2728 ship co-traveler).
 inline std::unordered_set<void*>& linear_roots() {
     static std::unordered_set<void*> s;
     return s;

@@ -12,6 +12,7 @@
 #include "../compiler/shape.h"            // Issue #570: record_shape_fiber_refresh
 #include "aura_platform.h"
 #include "core/gc_hooks.h" // Issue #1364
+#include <unordered_map> // Issue #2726: process-wide Fiber* registry for cross-fiber cancel lookup
 
 #include <sys/mman.h>
 #include <cassert> // Issue #354 / #2200: assert for yield-during-boundary check
@@ -170,6 +171,78 @@ extern "C" void aura_gc_frequency_tune_ratio_store(std::uint32_t v) {
 thread_local Fiber* g_current_fiber = nullptr;
 // TLS: current worker's dispatch loop context
 thread_local WorkerContext* g_worker_ctx = nullptr;
+
+// Issue #2726: process-wide Fiber* registry for cross-fiber force-degrade
+// cancel (admitter fiber → holder fiber). The cross-fiber path of
+// aura_evaluator_force_degrade_outermost_holder resolves the recorded
+// holder fiber_id via this registry; same-fiber path
+// (g_current_fiber->id() == snap.fiber_id) skips the lookup. Mutex-
+// guarded unordered_map keyed by Fiber::id() — single critical section
+// on register/unregister/lookup. Lookups dominate under force-degrade
+// (rare path); registrations dominate under spawn. Hash collisions on
+// Fiber::id() are negligible (id_ is monotonic u64).
+//
+// Register at construction (post id_ init, pre resume exposure);
+// unregister at destruction (pre mutation_stack release, while Fiber*
+// is still valid for any in-flight force-degrade reference). The
+// erase on unregister happens before ~Fiber clears mutation_stack_
+// and yield_checkpoint_storage_ so an in-flight force-degrade that
+// resolves after unregister simply sees nullptr (no-op), which is
+// the desired behavior (the fiber is gone, no cancel target).
+namespace {
+    std::mutex g_fiber_registry_mtx;
+    std::unordered_map<std::uint64_t, Fiber*> g_fiber_registry;
+
+    void register_fiber_in_registry(Fiber* f) noexcept {
+        if (!f)
+            return;
+        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+        g_fiber_registry.emplace(f->id(), f);
+    }
+
+    void unregister_fiber_from_registry(Fiber* f) noexcept {
+        if (!f)
+            return;
+        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+        g_fiber_registry.erase(f->id());
+    }
+
+    Fiber* find_fiber_by_id_locked_held(std::uint64_t id) noexcept {
+        // Caller already holds g_fiber_registry_mtx (used by the C-linkage
+        // shim below). Returns the registered Fiber* or nullptr when the
+        // id is 0 or no longer registered.
+        if (id == 0)
+            return nullptr;
+        auto it = g_fiber_registry.find(id);
+        return it != g_fiber_registry.end() ? it->second : nullptr;
+    }
+} // namespace
+
+// Issue #2726: C-linkage accessor for the cross-fiber force-degrade
+// path (evaluator_fiber_mutation.cpp calls this with the recorded
+// holder fiber_id). Returns 1 when the holder was found and the
+// pending cancel flag was set, 0 when the holder is gone (no-op).
+// Lookup is a single mutex critical section + unordered_map find
+// (O(1) amortized). Production gates the caller (mutation_hold_budget_
+// reject_enabled); Soft / sandbox=off → counter-only, no flag set.
+extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noexcept {
+    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    Fiber* f = find_fiber_by_id_locked_held(fiber_id);
+    if (!f)
+        return 0;
+    f->request_hold_budget_cancel();
+    return 1;
+}
+
+// Issue #2726: read-only diagnostic accessor (peek, no consume).
+// Used by tests + observability; weak no-op when fiber not found.
+extern "C" int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept {
+    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    Fiber* f = find_fiber_by_id_locked_held(fiber_id);
+    if (!f)
+        return 0;
+    return f->peek_hold_budget_cancel() ? 1 : 0;
+}
 
 // Issue #2650 / #2649: host-only depth when no fiber is current.
 // Fibers store depth on Fiber (see eval_c_stack_depth_slot).
@@ -599,6 +672,14 @@ Fiber::Fiber(Func func, size_t stack_size)
     uint32_t id_high = static_cast<uint32_t>(id_ >> 32);
     uint32_t id_low = static_cast<uint32_t>(id_ & 0xFFFFFFFF);
     ::makecontext(&ctx_, reinterpret_cast<void (*)()>(&trampoline), 2, id_high, id_low);
+    // Issue #2726: register Fiber* in the process-wide registry so the
+    // cross-fiber force-degrade path can resolve holder fiber_id →
+    // Fiber*. Registration happens after id_ is published (atomic id
+    // increment is the only ordering) and before the fiber is exposed
+    // to any spawn/steal path (so a force-degrade that races construction
+    // either sees the fiber in the registry or sees it via
+    // g_current_fiber on the same-fiber path).
+    register_fiber_in_registry(this);
     g_fiber_init_aura_result_ok.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -745,6 +826,13 @@ std::uint64_t Fiber::join_drain_residual_body_retired_total() noexcept {
 // ── Destructor ───────────────────────────────────────
 
 Fiber::~Fiber() {
+    // Issue #2726: unregister Fiber* from the process-wide registry
+    // first (before any teardown that might race an in-flight
+    // force-degrade reference). After this point, any concurrent
+    // aura_fiber_request_hold_budget_cancel(id) returns 0 (no-op).
+    // Idempotent w.r.t. partial construction (register may not have
+    // fired if a ctor path threw — the destructor still runs).
+    unregister_fiber_from_registry(this);
     // Issue #2636: finalize body-age for the abandon path (no
     // note_body_exit_if_reclaimed in this case). Same CAS-update as
     // note_body_exit_if_reclaimed — body may have been reclaimed

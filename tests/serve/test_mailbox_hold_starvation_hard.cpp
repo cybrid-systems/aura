@@ -632,6 +632,171 @@ static void ac2724_6_source_and_linter() {
           "AC6: no docs/design/2724-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2726 AC1: cross-fiber force-degrade sets per-Fiber
+// pending_hold_budget_cancel_ flag via registry lookup; holder observes
+// the flag at outermost MutationBoundaryGuard dtor (Phase-5 exit) and
+// the Guard flips *flag_=false so the failure path runs (same as
+// mark_outermost_mutation_failed). Within one dtor window the holder
+// exits Guard + workspace_mtx_ exclusive + GcDeferReason::MutationHold
+// released + new admits succeed (counters advance same/cross-fiber).
+static void ac2726_1_cross_fiber_real_cancel() {
+    std::println("\n--- #2726 AC1: cross-fiber force-degrade real cancel ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    // Counters (mhb).
+    CHECK(mhb.find("g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total") !=
+              std::string::npos,
+          "AC1: mhb has cross-fiber-cancel-fired counter");
+    CHECK(mhb.find("g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total") !=
+              std::string::npos,
+          "AC1: mhb has cross-fiber-cancel-consumed counter");
+    CHECK(mhb.find("kMutationHoldBudgetHolderDegradeCrossFiberCancelIssue = 2726") !=
+              std::string::npos,
+          "AC1: mhb stamps issue = 2726");
+    // Fiber pending-cancel flag + accessors (fh).
+    CHECK(fh.find("request_hold_budget_cancel") != std::string::npos,
+          "AC1: fiber.h has request_hold_budget_cancel");
+    CHECK(fh.find("consume_hold_budget_cancel") != std::string::npos,
+          "AC1: fiber.h has consume_hold_budget_cancel");
+    CHECK(fh.find("peek_hold_budget_cancel") != std::string::npos,
+          "AC1: fiber.h has peek_hold_budget_cancel");
+    CHECK(fh.find("pending_hold_budget_cancel_") != std::string::npos,
+          "AC1: fiber.h has pending_hold_budget_cancel_ atomic");
+    // Fiber* registry + C-linkage shim (fc).
+    CHECK(fc.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+          "AC1: fiber.cpp declares the C-linkage shim");
+    CHECK(fc.find("register_fiber_in_registry") != std::string::npos,
+          "AC1: fiber.cpp registers Fiber* in process-wide registry");
+    CHECK(fc.find("unregister_fiber_from_registry") != std::string::npos,
+          "AC1: fiber.cpp unregisters on dtor");
+    // Cross-fiber wire-up (efm).
+    CHECK(efm.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+          "AC1: efm calls the C-linkage shim");
+    CHECK(efm.find("g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total") !=
+              std::string::npos,
+          "AC1: efm bumps fired counter on success");
+    // Phase-5 poll (emb).
+    CHECK(emb.find("consume_hold_budget_cancel") != std::string::npos,
+          "AC1: emb polls consume_hold_budget_cancel at dtor");
+    CHECK(emb.find("g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total") !=
+              std::string::npos,
+          "AC1: emb bumps consumed counter on consume");
+    CHECK(emb.find("is_outermost_") != std::string::npos,
+          "AC1: emb poll is ctor-captured outermost (AC3 nested-guards-safe)");
+}
+
+// ── Issue #2726 AC2: Soft / sandbox=off → flag not set unless
+// AURA_MUTATION_HOLD_BUDGET_HARD=1. Same #2701/#2720 gating via
+// mutation_hold_budget_reject_enabled() inside the cross-fiber fire
+// path. Soft / test override callers see counter advance only.
+static void ac2726_2_soft_counter_only() {
+    std::println("\n--- #2726 AC2: Soft path → counter-only unless hard env ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Cross-fiber wire-up inside aura_evaluator_force_degrade_outermost_holder
+    // gates the cancel-flag set on mutation_hold_budget_reject_enabled().
+    CHECK(efm.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "AC2: efm cross-fiber gate reuses #2701/#2720 reject_enabled");
+    // Phase-5 poll likewise gates on reject_enabled so a flag set
+    // under Soft (somehow, e.g. direct C-linkage call) is not consumed.
+    CHECK(emb.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "AC2: emb poll gates on reject_enabled (defense-in-depth)");
+}
+
+// ── Issue #2726 AC3: nested / non-outermost Guards never observe or
+// clear the pending-cancel flag. The consume call sits in the
+// outermost dtor Phase-5 exit path (is_outermost_ ctor-captured per
+// #2120); nested guards fall through to the nested depth_slot--
+// branch below without touching the flag.
+static void ac2726_3_nested_outermost_only() {
+    std::println("\n--- #2726 AC3: nested guards never touch pending-cancel ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // The poll block is gated by is_outermost_ (ctor-captured, never
+    // reads thread_local current_fiber mid-exit).
+    CHECK(emb.find("is_outermost_ && aura::serve::g_current_fiber") != std::string::npos,
+          "AC3: emb poll gated on is_outermost_ (nested skip)");
+    // Comment cites AC3 contract.
+    CHECK(emb.find("AC3") != std::string::npos,
+          "AC3: emb source-cites AC3 nested-guards-skip contract");
+}
+
+// ── Issue #2726 AC4: additive observability — schema/issue sentinels +
+// cross-fiber-cancel-fired/consumed counters; all #2701/#2720/#2587
+// surfaces preserved (strict superset).
+static void ac2726_4_query_keys() {
+    std::println("\n--- #2726 AC4: additive query keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // #2726 new keys present.
+    CHECK(q.find("\"mutation-hold-budget-holder-degrade-cross-fiber-cancel-fired-total\"") !=
+              std::string::npos,
+          "AC4: cross-fiber-cancel-fired-total key");
+    CHECK(q.find("\"mutation-hold-budget-holder-degrade-cross-fiber-cancel-consumed-total\"") !=
+              std::string::npos,
+          "AC4: cross-fiber-cancel-consumed-total key");
+    CHECK(q.find("\"schema-2726\"") != std::string::npos, "AC4: schema-2726 sentinel");
+    CHECK(q.find("\"issue-2726\"") != std::string::npos, "AC4: issue-2726 sentinel");
+    // #2701 / #2720 / #2724 / #2551 surfaces preserved (strict superset).
+    CHECK(q.find("\"mutation-hold-budget-reject-total\"") != std::string::npos,
+          "AC4: #2701 reject-total preserved");
+    CHECK(q.find("\"mutation-hold-budget-soft-observe-total\"") != std::string::npos,
+          "AC4: #2701 soft-observe-total preserved");
+    CHECK(q.find("\"schema-2701\"") != std::string::npos, "AC4: #2701 schema-2701 preserved");
+    CHECK(q.find("\"schema-2720\"") != std::string::npos, "AC4: #2720 schema-2720 preserved");
+    CHECK(q.find("\"schema-2724\"") != std::string::npos, "AC4: #2724 schema-2724 preserved");
+    CHECK(q.find("schema-2551") != std::string::npos || q.find("schema-2587") != std::string::npos,
+          "AC4: #2551/#2587 baseline preserved");
+}
+
+// ── Issue #2726 AC5: source-cite + linter (extend #2701/#2720/#2724
+// surface, no docs/design/* per #1655); test is in src/-aligned suite
+// per #81967 (this file, no new test_issue_2726.cpp).
+static void ac2726_5_source_and_linter() {
+    std::println("\n--- #2726 AC5: source-cite + linter + no new test file ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_cross_fiber_hold_budget_cancel_2726.py");
+    // Source-cite: mhb / emb / efm / q / fh / fc all cite #2726.
+    CHECK(mhb.find("Issue #2726") != std::string::npos, "AC5: mhb cites #2726");
+    CHECK(emb.find("Issue #2726") != std::string::npos, "AC5: emb cites #2726");
+    CHECK(efm.find("Issue #2726") != std::string::npos, "AC5: efm cites #2726");
+    CHECK(q.find("Issue #2726") != std::string::npos, "AC5: q cites #2726");
+    CHECK(fh.find("Issue #2726") != std::string::npos, "AC5: fiber.h cites #2726");
+    CHECK(fc.find("Issue #2726") != std::string::npos, "AC5: fiber.cpp cites #2726");
+    // Test functions present (this file per #81967).
+    CHECK(t.find("ac2726_1_cross_fiber_real_cancel") != std::string::npos, "AC5: AC1 test present");
+    CHECK(t.find("ac2726_2_soft_counter_only") != std::string::npos, "AC5: AC2 test present");
+    CHECK(t.find("ac2726_3_nested_outermost_only") != std::string::npos, "AC5: AC3 test present");
+    CHECK(t.find("ac2726_4_query_keys") != std::string::npos, "AC5: AC4 test present");
+    CHECK(t.find("ac2726_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+    // #81967: NO new test file — extend tests/serve/test_mailbox_hold_starvation_hard.cpp only.
+    CHECK(read_file("tests/serve/test_issue_2726.cpp").empty(),
+          "AC5: no tests/serve/test_issue_2726.cpp per #81967");
+    // build.py wires the linter.
+    CHECK(build.find("check_cross_fiber_hold_budget_cancel_2726") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty(), "AC5: linter present");
+    CHECK(lint.find("2726") != std::string::npos, "AC5: linter covers #2726");
+}
+
+// ── Issue #2726 AC6: no docs/design/2726-* per #1655 (design
+// rationale lives in the close comment, not in a per-issue plan doc).
+static void ac2726_6_no_docs_design() {
+    std::println("\n--- #2726 AC6: no docs/design/2726-* per #1655 ---");
+    const std::string design_path = "docs/design/2726-";
+    CHECK(read_file((design_path + "cross-fiber-hold-budget-cancel.md").c_str()).empty(),
+          "AC6: no docs/design/2726-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -656,6 +821,16 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2720_5_source_and_linter();
     ac2720_6_no_docs_design();
     std::println("\n=== #2551 + #2701 + #2720 + #2724: {} passed, {} failed ===", g_passed,
+                 g_failed);
+    std::println(
+        "\n=== Issue #2726: P0 cross-fiber force-degrade real cancel (#2720 residual) ===");
+    ac2726_1_cross_fiber_real_cancel();
+    ac2726_2_soft_counter_only();
+    ac2726_3_nested_outermost_only();
+    ac2726_4_query_keys();
+    ac2726_5_source_and_linter();
+    ac2726_6_no_docs_design();
+    std::println("\n=== #2551 + #2701 + #2720 + #2724 + #2726: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }

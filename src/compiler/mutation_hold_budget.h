@@ -286,6 +286,57 @@ inline void clear_mutation_hold_budget_holder_degrade_for_test() noexcept {
     g_mutation_hold_budget_holder_degrade_cross_fiber_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #2726: P0 cross-fiber real cancel (#2720 residual). #2720 wired
+// same-fiber cancel + cross-fiber counter bump; the cross-fiber path
+// still left the recorded holder starving until it voluntarily yielded.
+// #2726 closes the loop with a per-Fiber pending-cancel flag
+// (Fiber::request_hold_budget_cancel / consume_hold_budget_cancel —
+// see src/serve/fiber.h) + a process-wide Fiber* registry (see
+// src/serve/fiber.cpp, aura_fiber_request_hold_budget_cancel C-linkage
+// shim). Cross-fiber force-degrade sets the flag on the holder via
+// registry lookup; holder observes at outermost MutationBoundaryGuard
+// Phase-5 exit (and at safepoints) and exits the Guard with failure,
+// releasing the workspace_mtx_ exclusive + GcDeferReason::MutationHold.
+//
+// Observability counters (additive — #2720 counters preserved):
+//   g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total
+//     — bumped in aura_evaluator_force_degrade_outermost_holder when
+//       the cross-fiber path successfully sets the pending-cancel
+//       flag on a live holder (registry lookup returned non-null).
+//   g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total
+//     — bumped at outermost Guard Phase-5 exit when the holder
+//       consumes the flag (one-shot CAS true→false). Mirrors the
+//       fired total in steady state; divergence = "holder is gone
+//       or flag is lost under crash" (observable for Agent health).
+//
+// Production / hard-env gating: same #2701/#2720 reject_enabled gate
+// (mutation_hold_budget_reject_enabled). Soft / sandbox=off → counter-
+// only (no flag set). Nested guards never observe or clear the flag
+// (AC3 — consume is in the outermost dtor Phase-5 path only).
+inline std::atomic<std::uint64_t>
+    g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total{0};
+inline std::atomic<std::uint64_t>
+    g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total{0};
+inline constexpr int kMutationHoldBudgetHolderDegradeCrossFiberCancelIssue = 2726;
+
+[[nodiscard]] inline std::uint64_t
+mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total_v_read() noexcept {
+    return g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total.load(
+        std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total_v_read() noexcept {
+    return g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total.load(
+        std::memory_order_relaxed);
+}
+
+inline void clear_mutation_hold_budget_holder_degrade_cross_fiber_cancel_for_test() noexcept {
+    g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total.store(
+        0, std::memory_order_relaxed);
+    g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total.store(
+        0, std::memory_order_relaxed);
+}
+
 } // namespace aura::compiler
 
 #endif // AURA_COMPILER_MUTATION_HOLD_BUDGET_H

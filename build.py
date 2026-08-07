@@ -517,6 +517,23 @@ def cmd_lint():
             "Issue #2702 resume hard-fail linter failed — run python3 scripts/coverage/checks/check_resume_hard_fail_2702.py"
         )
         return r
+    # Issue #2726: cross-fiber hold-budget force-degrade real cancel
+    # (per-fiber pending-cancel map polled at safepoints) — #2720
+    # residual. Wires check_cross_fiber_hold_budget_cancel_2726.py so
+    # the per-Fiber pending-cancel flag + process-wide Fiber* registry
+    # + cross-fiber wire-up + outermost-dtor Phase-5 poll + additive
+    # query keys + nested-guards-skip AC3 contract stay enforced.
+    # Builds on #2701/#2720/#2724 surfaces (strict additive superset).
+    cfhb_script = COVERAGE_CHECKS / "check_cross_fiber_hold_budget_cancel_2726.py"
+    if not cfhb_script.exists():
+        fail(f"missing {cfhb_script}")
+        return 1
+    r = run([sys.executable, str(cfhb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2726 cross-fiber hold-budget cancel linter failed — run python3 scripts/coverage/checks/check_cross_fiber_hold_budget_cancel_2726.py"
+        )
+        return r
     # Issue #2703: production hard-face when partial cone truncates
     # outside-If OccurrenceGoals. Wires
     # check_cone_outside_goal_drop_2703.py so the distinct force_reason
