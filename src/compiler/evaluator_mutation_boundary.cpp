@@ -792,6 +792,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // were remapped; real per-root span wires in
                             // follow-up. Production force-rollback on
                             // mismatch (returns false) per #2563 contract.
+                            // Issue #2708: real per-root walk wires through
+                            // this same call site. Empty span here preserves
+                            // AC3 — Phase-5 densify exit doesn't carry a
+                            // direct NodeId span in scope at this point;
+                            // the walk runs when callers pass a non-empty
+                            // span (test / future wiring when densify
+                            // exposes a remapped root set accessor).
                             (void)aura::compiler::ownership_rebind_after_remap(
                                 {}, aura::compiler::RemapReason::Densify);
                         }

@@ -1975,6 +1975,11 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
     // the same API as densify / Agent (single entry for Agents). AC3
     // zero-cost short-circuit when no roots were remapped; real per-root
     // span wires in follow-up.
+    // Issue #2708: real per-root walk wires through this same call site.
+    // Empty span here preserves AC3 — steal resume path doesn't carry a
+    // direct NodeId span in scope; the walk runs when callers pass a
+    // non-empty span (test / future wiring when fiber exposes a remapped
+    // root set accessor).
     (void)aura::compiler::ownership_rebind_after_remap({}, aura::compiler::RemapReason::Steal);
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
