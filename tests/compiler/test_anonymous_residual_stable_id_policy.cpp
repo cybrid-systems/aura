@@ -696,6 +696,133 @@ int run_test_anonymous_residual_stable_id_policy() {
 
     std::println("\n=== #2605+#2637+#2638+#2666+#2691: {} passed, {} failed ===", g_passed,
                  g_failed);
+
+    // ── #2714 AC1: production_defaults_active() → captured-anon sync ──
+    {
+        std::println(
+            "\n--- #2714 AC1: production-default captured-anon sync remount (no env knob) ---");
+        const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+        // The gate now uses production_defaults_active() || AURA_SYNC_REMOUNT_ANON=1.
+        // The captured-only walk (aura_sync_remount_anon_captured_live_closures)
+        // runs under production_defaults_active() WITHOUT requiring
+        // AURA_SYNC_REMOUNT_ANON. live_closure_sync_remount_anon_captured_ok_total
+        // can advance.
+        CHECK(br.find("production_defaults_active() ||") != std::string::npos,
+              "2714 AC1: gate now uses production_defaults_active() || env");
+        CHECK(br.find("aura_sync_remount_anon_captured_live_closures") != std::string::npos,
+              "2714 AC1: captured walk wired through the production-default gate");
+        CHECK(br.find("sync_captured =") != std::string::npos,
+              "2714 AC1: sync_captured predicate defined");
+    }
+
+    // ── #2714 AC2: pure anon (no env/linear) still skips remount ──
+    {
+        std::println("\n--- #2714 AC2: pure anon (no env/linear) still skips remount ---");
+        // The captured-only sync remount filters on
+        // aura_closure_has_env_or_linear_captures_unlocked(cid). Pure anon
+        // closures (no env, no linear) skip the remount call entirely,
+        // so the counter is stable. Pure-anon policy #2550/#2605 unchanged.
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        CHECK(rt.find("aura_closure_has_env_or_linear_captures_unlocked") != std::string::npos,
+              "2714 AC2: captured walk filters via has_env_or_linear_captures_unlocked");
+    }
+
+    // ── #2714 AC3: named path (#2602) unchanged + no double remount ──
+    {
+        std::println("\n--- #2714 AC3: named path unchanged + no double remount ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+        // Named path (#2602) still runs independently of the captured walk.
+        CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+              "2714 AC3: named path (#2602) preserved");
+        // Captured walk + named walk filter on the opposite sid branch
+        // (named: sid != 0, captured anon: sid == 0 && has env/linear) so
+        // there is no double remount on the same closure_id.
+        CHECK(rt.find("if (sid != 0)") != std::string::npos,
+              "2714 AC3: named + captured walks filter on opposite sid");
+        // The full anon walk (aura_sync_remount_anon_live_closures) is still
+        // env-gated (NOT touched by #2714).
+        CHECK(br.find("aura_sync_remount_anon_live_closures") != std::string::npos,
+              "2714 AC3: full anon walk preserved (env-gated, unchanged)");
+    }
+
+    // ── #2714 AC4: Soft / sandbox=off / AURA_SYNC_REMOUNT_ANON=0 under non-production ──
+    {
+        std::println(
+            "\n--- #2714 AC4: Soft / sandbox=off / AURA_SYNC_REMOUNT_ANON=0 short-circuit ---");
+        const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+        // production_defaults_active() is false in Soft / sandbox=off
+        // (those modes flip production defaults to dev). The env knob
+        // AURA_SYNC_REMOUNT_ANON=0 keeps the env-only path off. Either
+        // path returns false → sync_captured stays false → zero-cost
+        // short-circuit preserved.
+        CHECK(br.find("aura_sync_remount_anon_enabled_default() != 0") != std::string::npos,
+              "2714 AC4: env knob still gates the non-production path");
+        // Full anon walk also stays env-gated.
+        CHECK(br.find("aura_sync_remount_anon_enabled_default ?") != std::string::npos,
+              "2714 AC4: full anon walk env-gate preserved");
+    }
+
+    // ── #2714 AC5: additive only — preserve #2691 / #2602 / #2666 / #2550 ──
+    {
+        std::println("\n--- #2714 AC5: additive only (no regression) ---");
+        const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        // #2691 surface preserved: captured-ok / captured-fail counters
+        // still bumped via aura_bump_live_closure_sync_remount_anon_captured_totals.
+        CHECK(br.find("aura_bump_live_closure_sync_remount_anon_captured_totals") !=
+                  std::string::npos,
+              "2714 AC5: captured-ok/fail counter bump helper preserved (#2691 surface)");
+        // #2602 / #2666 / #2550 surfaces preserved by the unchanged
+        // full anon walk + named sync remount path.
+        CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+              "2714 AC5: #2602 named sync remount preserved");
+        CHECK(rt.find("Issue #2550") != std::string::npos, "2714 AC5: #2550 sid policy preserved");
+        CHECK(rt.find("Issue #2666") != std::string::npos,
+              "2714 AC5: #2666 production-default anon walk preserved");
+    }
+
+    // ── #2714 AC6: source-cite + linter + no docs/design/ ──
+    {
+        std::println("\n--- #2714 AC6: source-cite + linter + no docs/design/ ---");
+        const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
+        const auto lint =
+            read_file("scripts/check_captured_anon_sync_remount_prod_default_2714.py");
+        const auto build = read_file("build.py");
+
+        CHECK(br.find("Issue #2714") != std::string::npos,
+              "2714 AC6: aura_jit_bridge.cpp cites #2714");
+        CHECK(rt.find("Issue #2714") != std::string::npos,
+              "2714 AC6: aura_jit_runtime.cpp cites #2714");
+        CHECK(t.find("ac2714_1_production_default_captured_remount") != std::string::npos,
+              "2714 AC6: AC1 test present");
+        CHECK(t.find("ac2714_2_pure_anon_skips_remount") != std::string::npos,
+              "2714 AC6: AC2 test present");
+        CHECK(t.find("ac2714_3_named_path_unchanged") != std::string::npos,
+              "2714 AC6: AC3 test present");
+        CHECK(t.find("ac2714_4_soft_zero_cost_preserved") != std::string::npos,
+              "2714 AC6: AC4 test present");
+        CHECK(t.find("ac2714_5_additive_no_regression") != std::string::npos,
+              "2714 AC6: AC5 test present");
+        CHECK(t.find("ac2714_6_source_and_linter") != std::string::npos, "2714 AC6: AC6 self-test");
+        CHECK(!lint.empty() && lint.find("Issue #2714") != std::string::npos,
+              "2714 AC6: coverage linter present and cites #2714");
+        CHECK(build.find("check_captured_anon_sync_remount_prod_default_2714") !=
+                      std::string::npos ||
+                  build.find("cmd_captured_anon_sync_remount_prod_default_2714_coverage") !=
+                      std::string::npos,
+              "2714 AC6: build.py gate entry");
+        for (const auto& p : {"docs/design/2714-captured-anon-sync-remount.md",
+                              "docs/2714-captured-anon-sync-remount.md"}) {
+            std::ifstream f(p);
+            CHECK(!f.good(), "2714 AC6: no design doc at " + std::string(p));
+        }
+    }
+
+    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -3559,6 +3559,30 @@ def cmd_cross_eval_epoch_bump_2713_coverage():
     return 0
 
 
+def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
+    """Issue #2714: production-default sync remount for captured anon.
+
+    Aligns #2691 (captured-only anon sync remount) with production defaults.
+    The captured walk is the highest-value anon subset for EDSL / agent code
+    (sid==0 && has env/linear). Without #2714, the walk is still gated on
+    AURA_SYNC_REMOUNT_ANON=1 — so under production defaults (env knob unset)
+    the first-call MustDeopt window is still paid. #2714 adds
+    production_defaults_active() || env_sync_remount_anon_enabled() to the
+    gate, aligning with the named #2602 path.
+    """
+    print(f"{B}=== captured anon sync remount prod default (#2714) ==={N}")
+    script = ROOT / "scripts" / "check_captured_anon_sync_remount_prod_default_2714.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("captured anon sync remount prod default (#2714) contract rows failed")
+        return 1
+    ok("captured anon sync remount prod default (#2714) clean")
+    return 0
+
+
 def cmd_panic_residual_densify_hard_2598_coverage():
     """Issue #2598: production densify-after panic residual → hard
     (align with steal residual hard-AND).
@@ -8568,6 +8592,7 @@ def cmd_gate():
         or cmd_envframe_lifetime_proof_2711_coverage()
         or cmd_epoch_invariant_soft_fuse_heal_2712_coverage()
         or cmd_cross_eval_epoch_bump_2713_coverage()
+        or cmd_captured_anon_sync_remount_prod_default_2714_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()

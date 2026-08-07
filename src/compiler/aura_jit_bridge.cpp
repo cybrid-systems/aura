@@ -3585,6 +3585,24 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             std::uint64_t anon_ok = 0;
             std::uint64_t anon_fail = 0;
             aura_sync_remount_anon_live_closures(&anon_ok, &anon_fail);
+        }
+        // Issue #2714: production-default sync remount for captured anon
+        // (align #2691 with defaults). Captured anon (sid==0 && has
+        // env/linear) is the highest-value anon subset for EDSL / agent
+        // code — first-call MustDeopt jitter under production defaults
+        // is a zero-downtime regression vs. the named #2602 path which
+        // already runs unconditionally. The captured walk now runs
+        // when either production_defaults_active() OR
+        // AURA_SYNC_REMOUNT_ANON=1 is set (per AC1). Soft / sandbox=off /
+        // explicit AURA_SYNC_REMOUNT_ANON=0 under non-production keeps
+        // the zero-cost short-circuit (per AC4). The full anon walk
+        // (aura_sync_remount_anon_live_closures) above remains env-gated
+        // for #2637 stress-test pattern — not affected by #2714.
+        const bool sync_captured = aura::compiler::typed_audit::production_defaults_active() ||
+                                   (aura_sync_remount_anon_enabled_default
+                                        ? (aura_sync_remount_anon_enabled_default() != 0)
+                                        : false);
+        if (sync_captured) {
             // Issue #2691: captured-only anon sync remount (filter by
             // aura_closure_has_env_or_linear_captures). Distinct counters
             // (anon_captured_ok / _fail) so Agents can distinguish
