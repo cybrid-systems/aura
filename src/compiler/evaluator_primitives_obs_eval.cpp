@@ -1879,6 +1879,34 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-2665", 2665);
                 insert_kv("issue-2665", 2665);
             }
+            // Issue #2709: GeneralObjectPin mandatory coverage beyond
+            // inventory-of-7. Closes the partial-adoption gap by replacing
+            // the static kGeneralObjectPinAdoptSiteCount = 7 with a dynamic
+            // count (auto_wire + exempt). New create paths that call
+            // wire_general_object_create_pair_or_exempt(..., nullptr) bump
+            // auto_wire; with non-null exempt_reason bump exempt (skip wire).
+            // Existing #2496 / #2597 / #2665 keys preserved (regression).
+            // Soft / dev_off / unset (pref <= 0) stays zero-cost — only
+            // counter reads, no atomic ops on the quiet path.
+            {
+                using aura::core::lifetime::general_object_pin_auto_wire_total_v_read;
+                using aura::core::lifetime::general_object_pin_exempt_total_v_read;
+                using aura::core::lifetime::general_object_pin_adopt_site_count_v_read;
+                insert_kv("general-object-pin-auto-wire-total",
+                          static_cast<std::int64_t>(general_object_pin_auto_wire_total_v_read()));
+                insert_kv("general_object_pin_auto_wire_total",
+                          static_cast<std::int64_t>(general_object_pin_auto_wire_total_v_read()));
+                insert_kv("general-object-pin-exempt-total",
+                          static_cast<std::int64_t>(general_object_pin_exempt_total_v_read()));
+                insert_kv("general_object_pin_exempt_total",
+                          static_cast<std::int64_t>(general_object_pin_exempt_total_v_read()));
+                insert_kv("general-object-pin-adopt-site-count",
+                          static_cast<std::int64_t>(general_object_pin_adopt_site_count_v_read()));
+                insert_kv("general_object_pin_adopt_site_count",
+                          static_cast<std::int64_t>(general_object_pin_adopt_site_count_v_read()));
+                insert_kv("schema-2709", 2709);
+                insert_kv("issue-2709", 2709);
+            }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in
             // evaluator_mutation_boundary.cpp) gates success metrics + bumps
