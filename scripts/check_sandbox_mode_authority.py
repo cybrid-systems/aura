@@ -2,11 +2,11 @@
 """Issue #2657: audit direct writes to CapabilityRegistry::sandbox_mode.
 
 The process-wide authority for SandboxMode is
-``aura::core::sandbox::set_mode`` (sandbox.hh / sandbox.ixx). It
-atomically updates the atomic source of truth, the plain enum
-mirror, the registry atomic, the workspace-isolation strict link,
-and the provenance tracker policy. Any code that writes the
-registry's ``sandbox_mode`` field directly via
+``aura::core::sandbox::set_mode`` (SSOT in sandbox.hh; sandbox.ixx
+only re-exports). It atomically updates the atomic source of truth,
+the plain enum mirror, the registry atomic, the workspace-isolation
+strict link, and the provenance tracker policy. Any code that writes
+the registry's ``sandbox_mode`` field directly via
 ``g_capability_registry().sandbox_mode = X`` (or any local
 ``reg.sandbox_mode = X``) bypasses the broadcast and silently
 re-introduces the triple-state drift the authority was created to
@@ -39,7 +39,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 # Files where the SOLE writer is allowed to touch the registry atomic.
-# - sandbox.hh / sandbox.ixx define the authority itself.
+# - sandbox.hh is the SSOT authority (set_mode body).
+# - sandbox.ixx only re-exports; listed so accidental second body stays
+#   scannable but must not reintroduce direct writes.
 # - capability_model.hh declares the friend + the private field, but does
 #   NOT write the field directly (the friend is the only writer).
 AUTHORITY_FILES = {

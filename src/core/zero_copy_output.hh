@@ -1,5 +1,6 @@
-// zero_copy_output.hh — Issues #1178/#1559/#1561: Arena-backed true zero-copy views.
-// Header form for renderer TUs + unit tests. Keep in sync with zero_copy_output.ixx.
+// zero_copy_output.hh — Issues #1178/#1559/#1561: Arena-backed zero-copy SSOT.
+// Module consumers: `import aura.core.zero_copy_output;` re-exports this
+// header. Non-module TUs: #include.
 
 #ifndef AURA_CORE_ZERO_COPY_OUTPUT_HH
 #define AURA_CORE_ZERO_COPY_OUTPUT_HH
