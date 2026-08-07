@@ -5883,21 +5883,16 @@ public:
     bool enable_security_event_wal(std::string_view persist_dir) noexcept;
     void disable_security_event_wal() noexcept;
     [[nodiscard]] bool security_event_wal_enabled() const noexcept;
-    // Issue #1565: capability effect check + audit (returns true if allowed).
-    // Integrates sandbox Strict/Restricted + grant matrix + provenance.
-    [[nodiscard]] bool check_and_record_effect(std::uint16_t required_effect_bits,
-                                               std::uint16_t actual_effect_bits,
-                                               std::string_view op, ast::NodeId target_node = 0,
-                                               std::uint64_t tenant_id = 0,
-                                               std::uint64_t provenance_mutation_id = 0) noexcept;
-    // Issue #2072 / #2384: single production entry for new side-effect paths.
-    // Wraps check_and_record_effect with standard args (required = actual,
-    // tenant = capability_tenant_id_). Issue #2384: stamps live provenance
-    // mutation id (host stamp / Mutation epoch / non-zero join) — never 0 —
-    // so bound grants + SecurityEvent correlation work on require_effect.
-    // All new FFI / network / exec / render / hotpath entry points MUST
-    // go through require_effect (not call check_and_record_effect directly)
-    // so the audit ring + capability metrics surface stays consistent.
+    // Issue #2072 / #2384 / #2706: sole public side-effect entry.
+    // Wraps private check_and_record_effect with standard args (required =
+    // actual, tenant = capability_tenant_id_). Issue #2384: stamps live
+    // provenance mutation id (host stamp / Mutation epoch / non-zero join)
+    // — never 0 — so bound grants + SecurityEvent correlation work.
+    // Issue #2706: production FFI / network / exec / render / hotpath /
+    // mutate / file-write MUST go through require_effect or
+    // require_effect_on_ref only — direct check_and_record_effect is private
+    // (security TU only). Coverage linter forbids bare
+    // check_and_record_effect( outside evaluator_security.cpp.
     // Issue #2658: optional `ref_tenant` carries StableNodeRef provenance so
     // cross-tenant refs deny under Restricted/Strict BEFORE the effect runs
     // (previously the auto-isolation check hardcoded ref_tenant=0 and the
@@ -5918,6 +5913,15 @@ public:
     // — no late-isolation-deny window.
     [[nodiscard]] bool require_effect_on_ref(std::uint16_t req_bits, std::string_view op,
                                              const ast::FlatAST::StableNodeRef& ref) noexcept;
+    // Issue #2706: test-only public surface for unit Soft paths that need
+    // explicit mid / required≠actual control. Production prims MUST NOT call
+    // this — use require_effect / require_effect_on_ref. Coverage linter
+    // allows `_for_test` only under tests/.
+    [[nodiscard]] bool
+    check_and_record_effect_for_test(std::uint16_t required_effect_bits,
+                                     std::uint16_t actual_effect_bits, std::string_view op,
+                                     ast::NodeId target_node = 0, std::uint64_t tenant_id = 0,
+                                     std::uint64_t provenance_mutation_id = 0) noexcept;
     void grant_effect_capability(std::uint64_t tenant_id, std::string_view name,
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0,
@@ -14034,6 +14038,17 @@ public:
     }
 
 private:
+    // Issue #1565 / #2706: capability effect check + audit (returns true if
+    // allowed). Integrates sandbox Strict/Restricted + grant matrix +
+    // provenance. PRIVATE — sole production callers are require_effect /
+    // require_effect_on_ref (and check_and_record_effect_for_test for Soft
+    // unit paths). Coverage linter forbids bare check_and_record_effect(
+    // outside evaluator_security.cpp.
+    [[nodiscard]] bool check_and_record_effect(std::uint16_t required_effect_bits,
+                                               std::uint16_t actual_effect_bits,
+                                               std::string_view op, ast::NodeId target_node = 0,
+                                               std::uint64_t tenant_id = 0,
+                                               std::uint64_t provenance_mutation_id = 0) noexcept;
     // Opaque InferenceEngine* + DiagnosticCollector* (#2144). Managed only
     // in evaluator_typecheck.cpp (avoids type_checker import in this iface).
     void* guard_infer_engine_opaque_ = nullptr;

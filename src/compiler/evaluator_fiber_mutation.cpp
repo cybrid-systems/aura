@@ -22,8 +22,9 @@ module;
 #include "compiler/ownership_escape_lowering_gate.h" // Issue #2507: clear escape gate on steal
 #include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-steal
 #include "compiler/mutation_boundary_shared_exit.h" // Issue #2600: shared exit helper (soft + full Guard)
-#include "core/layout_stamp.hh" // Issue #2519: full 8-field LayoutStamp equality
-#include <algorithm>            // Issue #2189: remove_if for pin table invalidate
+#include "compiler/typed_mutation_audit.h" // Issue #2710: production_defaults_active on steal Ok clear
+#include "core/layout_stamp.hh"            // Issue #2519: full 8-field LayoutStamp equality
+#include <algorithm>                       // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
 #include <memory>   // Issue #1880: unique_ptr for soft-path sentinel

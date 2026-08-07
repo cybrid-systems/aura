@@ -206,8 +206,27 @@ static void ac5_existing_prims_gain_isolation() {
     CHECK(!ok, "AC5: require_effect auto-enforces isolation for existing prims");
 }
 
-// Regression: #2384 live mid provenance still present in require_effect.
-CHECK(sec.find("Issue #2384") != std::string::npos, "AC6: #2384 live mid provenance preserved");
+// AC6: source-cite + registrations.
+static void ac6_source_and_gate() {
+    std::println("\n--- #2490 AC6: source-cite + gate ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(!sec.empty(), "AC6: evaluator_security.cpp readable");
+    CHECK(sec.find("Issue #2490") != std::string::npos, "AC6: evaluator_security.cpp cites #2490");
+    // require_effect must call check_workspace_isolation before
+    // check_and_record_effect.
+    const auto req = sec.find("bool Evaluator::require_effect");
+    CHECK(req != std::string::npos, "AC6: require_effect defined");
+    const auto iso = sec.find("check_workspace_isolation", req);
+    const auto effect = sec.find("check_and_record_effect", req);
+    CHECK(iso != std::string::npos && effect != std::string::npos,
+          "AC6: require_effect calls isolation + effect check");
+    CHECK(iso < effect, "AC6: isolation runs before effect check");
+    // Regression: #2384 live mid provenance still present in require_effect.
+    CHECK(sec.find("Issue #2384") != std::string::npos, "AC6: #2384 live mid provenance preserved");
+    // Coverage linter present.
+    const auto gate =
+        read_file("scripts/coverage/checks/check_require_effect_auto_isolation_2490.py");
+    CHECK(!gate.empty(), "AC6: coverage linter present");
 }
 
 // ─── Issue #2658: require_effect ref_tenant gate ──────────────────
@@ -457,6 +476,96 @@ static void ac2689_6_source_and_no_design_doc() {
     }
 }
 
+// ── #2706 AC1: inventory — production prims use require_effect only ──
+static void ac2706_1_inventory_require_effect_only() {
+    std::println("\n--- #2706 AC1: inventory require_effect sole gate ---");
+    // Source-cite table: side-effect entry TUs route through require_effect /
+    // require_effect_on_ref — never bare Evaluator::check_and_record_effect.
+    struct Row {
+        const char* path;
+        const char* gate;
+    };
+    const Row rows[] = {
+        {"src/compiler/evaluator_primitives_mutate.cpp", "require_effect"},
+        {"src/compiler/evaluator_primitives_file.cpp", "require_effect"},
+        {"src/compiler/evaluator_primitives_io.cpp", "require_effect"},
+        {"src/compiler/evaluator_primitives_security.cpp", "require_effect"},
+        {"src/compiler/evaluator_primitives_compile.cpp", "require_effect"},
+        {"src/compiler/evaluator_security.cpp", "require_effect"},
+    };
+    for (const auto& r : rows) {
+        const auto text = read_file(r.path);
+        CHECK(!text.empty(), std::string("AC1: readable ") + r.path);
+        CHECK(text.find(r.gate) != std::string::npos,
+              std::string("AC1: ") + r.path + " uses " + r.gate);
+        // No member call to private method from production prims (security TU
+        // may define / call it from require_effect body).
+        if (std::string_view(r.path).find("evaluator_security.cpp") == std::string_view::npos) {
+            CHECK(text.find(".check_and_record_effect(") == std::string::npos,
+                  std::string("AC1: ") + r.path + " has no .check_and_record_effect(");
+            CHECK(text.find("->check_and_record_effect(") == std::string::npos,
+                  std::string("AC1: ") + r.path + " has no ->check_and_record_effect(");
+        }
+    }
+}
+
+// ── #2706 AC2: private + for_test surface + linter ──
+static void ac2706_2_private_and_linter() {
+    std::println("\n--- #2706 AC2: private check_and_record_effect + for_test ---");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(ixx.find("check_and_record_effect_for_test") != std::string::npos,
+          "AC2: for_test public surface declared");
+    CHECK(sec.find("check_and_record_effect_for_test") != std::string::npos,
+          "AC2: for_test defined in security TU");
+    CHECK(sec.find("bool Evaluator::check_and_record_effect") != std::string::npos,
+          "AC2: private method still defined in security TU");
+    // require_effect still calls the private method.
+    CHECK(sec.find("return check_and_record_effect(") != std::string::npos ||
+              sec.find("check_and_record_effect(req_bits") != std::string::npos,
+          "AC2: require_effect calls private check_and_record_effect");
+    const auto linter = read_file("scripts/coverage/checks/check_sole_require_effect_2706.py");
+    CHECK(!linter.empty(), "AC2: coverage linter present");
+    CHECK(linter.find("check_and_record_effect") != std::string::npos,
+          "AC2: linter forbids bare check_and_record_effect");
+}
+
+// ── #2706 AC5: query surface ──
+static void ac2706_5_query_surface() {
+    std::println("\n--- #2706 AC5: query surface ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("sole-require-effect-gate-armed") != std::string::npos,
+          "AC5: sole-require-effect-gate-armed key");
+    CHECK(q.find("schema-2706") != std::string::npos, "AC5: schema-2706");
+    CHECK(q.find("issue-2706") != std::string::npos, "AC5: issue-2706");
+    // Soft / Off still works via for_test (unit path).
+    CompilerService cs;
+    reset_all();
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off
+    // for_test available for Soft unit mid control.
+    CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "2706-soft", 0, 0, 1),
+          "AC4/AC5: Soft Off for_test allow path");
+}
+
+// ── #2706 AC6: source-cite + no design doc ──
+static void ac2706_6_source_cite() {
+    std::println("\n--- #2706 AC6: source-cite + no design doc ---");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto side = read_file("src/compiler/security_side_effect.hh");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(ixx.find("#2706") != std::string::npos, "AC6: evaluator.ixx cites #2706");
+    CHECK(sec.find("#2706") != std::string::npos, "AC6: evaluator_security.cpp cites #2706");
+    CHECK(side.find("#2706") != std::string::npos, "AC6: security_side_effect.hh cites #2706");
+    CHECK(q.find("#2706") != std::string::npos, "AC6: obs_jit cites #2706");
+    for (const auto& p :
+         {"docs/design/sole_require_effect_2706.md", "docs/sole_require_effect_2706.md"}) {
+        std::ifstream f(p);
+        CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+    }
+}
+
 } // namespace
 
 int run_test_require_effect_auto_isolation() {
@@ -478,6 +587,11 @@ int run_test_require_effect_auto_isolation() {
     ac2689_1_inventory_stable_node_ref_paths();
     ac2689_5_linter_self_test();
     ac2689_6_source_and_no_design_doc();
+    std::println("\n=== Issue #2706: sole public require_effect gate ===");
+    ac2706_1_inventory_require_effect_only();
+    ac2706_2_private_and_linter();
+    ac2706_5_query_surface();
+    ac2706_6_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

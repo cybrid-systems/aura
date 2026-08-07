@@ -1258,7 +1258,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_query_by_marker_provenance.cpp` (—) [domain_suite, theme_compiler] — AC1: all 3 individual primitives are registered and return schema=2242
 - `tests/compiler/test_query_mutate_consistency.cpp` (—) [domain_suite, theme_compiler] — test_query_mutate_consistency.cpp — Issue #1374:
 - `tests/compiler/test_reemit_mutation_boundary_handshake.cpp` (—) [domain_suite, theme_compiler] — Handshake policy for Agent / plugin authors (AC5 / #2205):
-- `tests/compiler/test_require_effect_auto_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: Restricted + tenant principal unset + require_effect(Mutate) →
+- `tests/compiler/test_require_effect_auto_isolation.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Restricted + tenant principal unset + require_effect(Mutate) →
 - `tests/compiler/test_require_effect_live_mid.cpp` (—) [domain_suite, theme_compiler] — AC1: Grant Mutate bound_mutation_id=M; require_effect outside → deny
 - `tests/core/test_reset_slot_parent_edges.cpp` (—) [domain_suite, theme_core] — AC1: edges empty after every reset, even when index is dirty
 - `tests/compiler/test_residual_gc_defer_assert.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Success path of outermost exit leaves defer_reasons_snapshot()==0

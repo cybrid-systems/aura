@@ -5,7 +5,7 @@
 // Any new primitive that performs a real side effect (mutate / FFI /
 // network / exec / file write / render / agent self-mod) MUST either:
 //   1. Register via add_mutate (mutate:* family) — already enforced, OR
-//   2. Call Evaluator::require_effect / check_and_record_effect at entry, OR
+//   2. Call Evaluator::require_effect / require_effect_on_ref at entry, OR
 //   3. Set PrimMeta.required_effects so invoke_prim_with_telemetry enforces
 //      require_effect automatically (effect_enforced_in_body=false), OR
 //   4. Mark PrimMeta.security_exempt=true with a documented reason
@@ -22,11 +22,15 @@
 // or security_exempt. Last line of defense against novel prim names that
 // forget PrimMeta / add_mutate.
 //
-// Prefer require_effect (not bare check_and_record_effect) for new paths
-// so the audit ring + capability metrics stay consistent (#2072).
+// Issue #2706: require_effect / require_effect_on_ref are the SOLE public
+// side-effect gates. Evaluator::check_and_record_effect is private (security
+// TU only). Do NOT call check_and_record_effect from primitives — the
+// check_sole_require_effect_2706 linter fails the gate on bare calls.
 //
-// Gate: scripts/coverage/checks/check_side_effect_security.py (wired into ./build.py gate)
-// fails if a new effectful name is registered without coverage markers.
+// Gate: scripts/coverage/checks/check_side_effect_security.py +
+// scripts/coverage/checks/check_sole_require_effect_2706.py (./build.py gate)
+// fails if a new effectful name is registered without coverage markers or
+// if production TUs call check_and_record_effect directly.
 //
 // Do NOT open nested namespace aura::compiler::security inside module
 // partitions of aura.compiler.evaluator (wrong mangling).

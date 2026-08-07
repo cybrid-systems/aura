@@ -285,8 +285,8 @@ int run_test_grant_epoch_fiber_bind() {
         CHECK(g.grant_epoch != 0, "Off still non-zero epoch (#2055 AC)");
         // mutation_id not forced under Off
         CHECK(g.bound_mutation_id == 0, "Off no forced mutation_id bind");
-        const bool allowed =
-            ev.check_and_record_effect(kEffectMutate, kEffectMutate, "off-check", 0, 44, 0);
+        const bool allowed = ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                                 "off-check", 0, 44, 0);
         CHECK(allowed, "Off sandbox allows effect without grant matrix force");
     }
 
@@ -312,8 +312,8 @@ int run_test_grant_epoch_fiber_bind() {
         call.fiber_id = g.grant_fiber_id;
         call.epoch = g.grant_epoch;
         CHECK(!g_capability_registry().provenance_ok(55, call), "provenance_ok fences grant");
-        const bool denied = !ev.check_and_record_effect(kEffectMutate, kEffectMutate, "fenced", 0,
-                                                        55, g.bound_mutation_id);
+        const bool denied = !ev.check_and_record_effect_for_test(
+            kEffectMutate, kEffectMutate, "fenced", 0, 55, g.bound_mutation_id);
         CHECK(denied, "Strict effect denied under epoch fence");
     }
 

@@ -146,11 +146,13 @@ static void ac3_replay_security_events() {
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(77);
         // Deny un-granted mutate.
-        CHECK(!ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac3-deny", 0, 77, 11),
+        CHECK(!ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac3-deny", 0, 77,
+                                                   11),
               "deny without grant");
         // Grant + allow.
         ev.grant_effect_capability(77, "m", kEffectMutate, 22);
-        CHECK(ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac3-allow", 0, 77, 22),
+        CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac3-allow", 0, 77,
+                                                  22),
               "allow with grant");
         CHECK(g_mutation_audit_wal().is_enabled(), "WAL still on");
         // Flush by disabling (close + fflush).

@@ -4600,6 +4600,29 @@ def cmd_require_effect_on_ref_2689_coverage():
     return 0
 
 
+def cmd_sole_require_effect_2706_coverage():
+    """Issue #2706: sole public side-effect gate = require_effect / on_ref.
+
+    Narrows Evaluator::check_and_record_effect to private (security TU);
+    production prims must use require_effect / require_effect_on_ref only.
+    Test Soft paths use check_and_record_effect_for_test. Coverage linter
+    forbids bare check_and_record_effect( in evaluator_primitives_* + FFI/
+    network/exec entry TUs. Additive query: sole-require-effect-gate-armed
+    + schema-2706 / issue-2706.
+    """
+    print(f"{B}=== sole require_effect gate coverage (#2706) ==={N}")
+    script = COVERAGE_CHECKS / "check_sole_require_effect_2706.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("sole require_effect gate (#2706) coverage contract rows failed")
+        return 1
+    ok("sole require_effect gate (#2706) coverage clean")
+    return 0
+
+
 def cmd_pending_recovery_drain_2690_coverage():
     """Issue #2690: unified PendingRecovery drain (close residual unhealed windows).
 
@@ -8700,6 +8723,7 @@ def cmd_gate():
         or cmd_closure_anon_captured_remount_2691_coverage()
         or cmd_aot_slot_owner_consistency_2692_coverage()
         or cmd_require_effect_on_ref_2689_coverage()
+        or cmd_sole_require_effect_2706_coverage()
         or cmd_pending_recovery_drain_2690_coverage()
         or cmd_workspace_mtx_contention_coverage()
         or cmd_module_partition_map_coverage()
@@ -9707,6 +9731,7 @@ def main():
         "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
+        "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
         "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,

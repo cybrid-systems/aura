@@ -214,8 +214,8 @@ int main() {
         ev.set_effect_sandbox_mode(2);
         // Wildcard should allow effect check even under Strict.
         EffectProvenance prov{};
-        const bool ok = ev.check_and_record_effect(kEffectMutate, kEffectMutate, "mutate-wild", 0,
-                                                   ev.capability_tenant_id(), 0);
+        const bool ok = ev.check_and_record_effect_for_test(
+            kEffectMutate, kEffectMutate, "mutate-wild", 0, ev.capability_tenant_id(), 0);
         CHECK(ok, "wildcard allows mutate effect under Strict");
     }
 
@@ -245,11 +245,13 @@ int main() {
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(2);
         const auto denied0 = snapshot_capability_effect_stats().denied;
-        CHECK(!ev.check_and_record_effect(kEffectWrite, kEffectWrite, "pre-grant", 0, 0, 0),
-              "pre-grant write denied");
+        CHECK(
+            !ev.check_and_record_effect_for_test(kEffectWrite, kEffectWrite, "pre-grant", 0, 0, 0),
+            "pre-grant write denied");
         ev.grant_effect_capability(0, "io-write", kEffectWrite, 0);
-        CHECK(ev.check_and_record_effect(kEffectWrite, kEffectWrite, "post-grant", 0, 0, 0),
-              "post-grant write allowed");
+        CHECK(
+            ev.check_and_record_effect_for_test(kEffectWrite, kEffectWrite, "post-grant", 0, 0, 0),
+            "post-grant write allowed");
         CHECK(snapshot_capability_effect_stats().denied > denied0, "denial recorded before grant");
     }
 
@@ -392,7 +394,8 @@ int main() {
                             ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                   ->sandbox_violations_total.load()
                             : 0;
-        CHECK(!ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac2-mutate", 0, 0, 0),
+        CHECK(!ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac2-mutate", 0, 0,
+                                                   0),
               "Strict without grant denies Mutate");
         CHECK(ev.capability_denial_count() > den0, "capability_denial_count bumped");
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -418,8 +421,8 @@ int main() {
         ev.grant_capability(kCapWildcard);
         ev.set_effect_sandbox_mode(2);
         // Wildcard allows; sandbox still active → provenance record.
-        CHECK(ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac3-allow", 42,
-                                         ev.capability_tenant_id(), 0),
+        CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac3-allow", 42,
+                                                  ev.capability_tenant_id(), 0),
               "wildcard allows Mutate under Strict");
         CHECK(m && m->sandbox_provenance_records_total.load() >= 1,
               "provenance record under sandbox allow");
@@ -441,7 +444,7 @@ int main() {
             m2->capability_denials_by_effect.store(0);
         }
         ev2.set_effect_sandbox_mode(2);
-        CHECK(!ev2.check_and_record_effect(kEffectFfi, kEffectFfi, "ac3-ffi", 0, 0, 0),
+        CHECK(!ev2.check_and_record_effect_for_test(kEffectFfi, kEffectFfi, "ac3-ffi", 0, 0, 0),
               "Strict denies Ffi without grant");
         CHECK(m2 && m2->capability_denial_ffi_total.load() >= 1, "ffi denial counted");
         CHECK(m2->capability_denials_by_effect.load() & kEffectFfi, "by_effect has Ffi bit");
@@ -463,7 +466,7 @@ int main() {
         auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
         if (m)
             m->sandbox_violations_total.store(0);
-        CHECK(ev.check_and_record_effect(kEffectWrite, kEffectWrite, "ac4-off", 0, 0, 0),
+        CHECK(ev.check_and_record_effect_for_test(kEffectWrite, kEffectWrite, "ac4-off", 0, 0, 0),
               "Off allows without grant");
         // Restricted inactive allows:
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
@@ -472,7 +475,8 @@ int main() {
               "Restricted+inactive allows");
         // After Strict path, status shows counters
         ev.set_effect_sandbox_mode(2);
-        (void)ev.check_and_record_effect(kEffectMutate, kEffectMutate, "ac4-strict", 0, 0, 0);
+        (void)ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac4-strict", 0, 0,
+                                                  0);
         auto h2 = cs.eval(R"((engine:metrics \"query:capability-effect-stats\"))");
         CHECK(h2 && is_hash(*h2), "stats still hash");
         CHECK(href(cs, "sandbox-strict") == 1, "sandbox-strict flag set");
