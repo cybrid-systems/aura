@@ -534,6 +534,25 @@ def cmd_lint():
             "Issue #2726 cross-fiber hold-budget cancel linter failed — run python3 scripts/coverage/checks/check_cross_fiber_hold_budget_cancel_2726.py"
         )
         return r
+    # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
+    # the prior mutation_stack_ptr() proxy with a stable, non-null handle
+    # on every Fiber that has entered a mutation boundary. Wires
+    # check_fiber_evaluator_id_2727.py so the per-Fiber evaluator_id_
+    # atomic + Guard ctor/dtor set/clear (outermost) + steal_safety.cpp
+    # uses the new identity getter + additive test extension (ac2727_1..5
+    # in tests/serve/test_steal_complete_restamp_txn.cpp per #81967) +
+    # no docs/design/2727-* per #1655 stay enforced. Builds on #2721
+    # hard-AND residual ship (steal_safety transaction).
+    feid_script = COVERAGE_CHECKS / "check_fiber_evaluator_id_2727.py"
+    if not feid_script.exists():
+        fail(f"missing {feid_script}")
+        return 1
+    r = run([sys.executable, str(feid_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2727 fiber evaluator_id linter failed — run python3 scripts/coverage/checks/check_fiber_evaluator_id_2727.py"
+        )
+        return r
     # Issue #2703: production hard-face when partial cone truncates
     # outside-If OccurrenceGoals. Wires
     # check_cone_outside_goal_drop_2703.py so the distinct force_reason

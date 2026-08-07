@@ -726,6 +726,27 @@ public:
     [[nodiscard]] bool peek_hold_budget_cancel() const noexcept {
         return pending_hold_budget_cancel_.load(std::memory_order_acquire);
     }
+    // Issue #2727: per-Fiber durable evaluator identity for precise
+    // GC-defer + residual checks in steal_safety (#2721 residual).
+    // Replaces the prior mutation_stack_ptr() proxy with a stable,
+    // non-null handle on every Fiber that has entered a mutation
+    // boundary. Set on MutationBoundaryGuard enter by the owning
+    // Evaluator; cleared on exit / cancel (or on dtor) so stale
+    // steals cannot observe a previous evaluator.
+    //
+    // evaluator_id: atomic load (acquire) — hot steal path
+    // (aura_fiber_evaluator_id_for_steal_safety callsite).
+    // set_evaluator_id: atomic store (release) — Guard enter.
+    // clear_evaluator_id: atomic store nullptr (release) — Guard
+    // exit / cancel / dtor.
+    //
+    // AC5: same cost as the prior mutation_stack_ptr() proxy
+    // (one atomic load on the hot steal path).
+    [[nodiscard]] void* evaluator_id() const noexcept {
+        return evaluator_id_.load(std::memory_order_acquire);
+    }
+    void set_evaluator_id(void* ev) noexcept { evaluator_id_.store(ev, std::memory_order_release); }
+    void clear_evaluator_id() noexcept { evaluator_id_.store(nullptr, std::memory_order_release); }
     // Issue #2533: force cooperative safepoint after hard-reclaim so non-yield
     // bodies still hit a bound edge (check_gc_safepoint / yield) and retire
     // still_running. Ok join / cooperative yield pays zero extra (flag unset).
@@ -1047,6 +1068,13 @@ private:
     // patterns allowed.
     std::atomic<void*> mutation_stack_storage_{nullptr};
     std::atomic<void*> yield_checkpoint_storage_{nullptr};
+    // Issue #2727: per-Fiber evaluator identity (set on Guard enter,
+    // cleared on Guard exit / cancel). Replaces the prior
+    // mutation_stack_ptr() proxy (see #2721 follow-up note). Atomic
+    // so the hot steal path can read with acquire while Guard enter /
+    // exit write with release (one extra load — same cost as the
+    // mutation_stack_ptr() proxy it replaces).
+    std::atomic<void*> evaluator_id_{nullptr};
     // Issue #2650 / #2649: fiber-local recursion depths (see public slots).
     std::size_t eval_c_stack_depth_ = 0;
     std::size_t env_lookup_depth_ = 0;

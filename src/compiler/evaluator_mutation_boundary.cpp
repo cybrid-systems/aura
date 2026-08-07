@@ -1640,6 +1640,16 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         ev_->bump_guard_aura_result_path();
         if (had_panic_checkpoint_)
             ev_->bump_guard_panic_checkpoint_aura_result();
+        // Issue #2727: stamp the durable per-Fiber evaluator_id so
+        // the steal_safety transaction hard-AND (predicate (d) —
+        // GC-defer arm state for the victim's evaluator) can address
+        // the exact victim evaluator without indirection. Replaces
+        // the prior mutation_stack_ptr() proxy. Set only on outermost
+        // (nested guards inherit the outermost's id). Idempotent for
+        // re-entry; zero cost on non-mutation fibers.
+        if (aura::serve::g_current_fiber) {
+            aura::serve::g_current_fiber->set_evaluator_id(static_cast<void*>(ev_));
+        }
     }
 }
 
@@ -2965,6 +2975,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // (mode != Soft / sandbox=off / disabled take a fast no-op skip path).
     if (outermost && success)
         aura_periodic_epoch_invariant_walk_if_due();
+    // Issue #2727: clear the durable per-Fiber evaluator_id so stale
+    // steals cannot observe a previous evaluator. Only outermost
+    // guards own the id (nested guards inherit it); clear happens at
+    // the very end of the dtor so any in-flight steal sees the id
+    // throughout the Guard lifetime. Atomic store nullptr (release).
+    if (is_outermost_ && aura::serve::g_current_fiber) {
+        aura::serve::g_current_fiber->clear_evaluator_id();
+    }
     // unique_lock destructor runs automatically here.
 }
 
