@@ -14,6 +14,8 @@ set(AURA_CXX_MODULE_CORE
     src/core/mutation.ixx
     src/core/mutators.ixx
     src/core/ast.ixx
+    # FlatAST decomp step 2: MutationVisitor pipeline (imports ast; after ast.ixx).
+    src/core/ast_mutation_pipeline.ixx
     # Issue #2000 Phase 2: real LifetimePin RAII pinning + generation stamp
     # + FFI handoff + restamp/invalidate hooks (refines #1226 Phase 1 scaffold).
     src/core/lifetime_pin.ixx

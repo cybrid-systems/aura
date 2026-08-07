@@ -22,6 +22,7 @@ import aura.compiler.evaluator;
 import aura.compiler.value;
 import aura.core.error;
 import aura.core.ast;
+import aura.core.ast_mutation_pipeline; // FlatAST decomp step 2: MutationVisitor
 
 
 // ─── from test_guard_dtor_invariant_noexcept.cpp →
