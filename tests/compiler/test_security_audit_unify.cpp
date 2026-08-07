@@ -56,6 +56,7 @@ using aura::compiler::types::is_string;
 using aura::core::audit_wal::g_mutation_audit_wal;
 using aura::core::audit_wal::reset_audit_wal_for_test;
 using aura::core::capability::Effect;
+using aura::core::capability::EffectProvenance;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::sandbox::SandboxMode;
@@ -143,8 +144,14 @@ int run_test_security_audit_unify() {
                   "deny reason visible to Agent");
         }
 
-        // Allow: grant mutate effect to tenant 7.
-        g_capability_registry().grant(7, "mutate", static_cast<Effect>(kEffectMutate));
+        // Allow: grant mutate effect to tenant 7 bound to mid 9001
+        // (#2707: production Restricted fail-closed mid join requires match).
+        {
+            EffectProvenance gp{};
+            gp.mutation_id = 9001;
+            gp.epoch = 9001;
+            g_capability_registry().grant(7, "mutate", static_cast<Effect>(kEffectMutate), gp);
+        }
         const auto seq_mid = g_security_event_ring().seq.load(std::memory_order_relaxed);
         const bool allowed =
             ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "test:allow-2054", 0,

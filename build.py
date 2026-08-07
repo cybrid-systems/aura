@@ -2503,6 +2503,27 @@ def cmd_require_effect_live_mid_coverage():
     return 0
 
 
+def cmd_mid_join_fail_closed_2707_coverage():
+    """Issue #2707: fail-closed mutation_id join under production sandbox.
+
+    provenance_ok under Restricted/Strict denies when either bound mid or
+    effect mid is zero (or they differ). Soft/Off keeps skip-when-zero.
+    Additive: capability_mid_join_zero_deny_total + query:capability-effect-stats
+    keys (mid-join-zero-deny / schema-2707).
+    """
+    print(f"{B}=== mid-join fail-closed coverage (#2707) ==={N}")
+    script = COVERAGE_CHECKS / "check_mid_join_fail_closed_2707.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mid-join fail-closed (#2707) coverage contract rows failed")
+        return 1
+    ok("mid-join fail-closed (#2707) coverage clean")
+    return 0
+
+
 def cmd_require_effect_auto_isolation_2490_coverage():
     """Issue #2490: require_effect auto-enforces workspace isolation.
 
@@ -8654,6 +8675,7 @@ def cmd_gate():
         or cmd_arena_dtor_clears_hooks_coverage()
         or cmd_has_on_compact_hook_lock_coverage()
         or cmd_require_effect_live_mid_coverage()
+        or cmd_mid_join_fail_closed_2707_coverage()
         or cmd_require_effect_auto_isolation_2490_coverage()
         or cmd_tenant_scope_fiber_mandate_2491_coverage()
         or cmd_security_audit_wal_force_restricted_2492_coverage()
@@ -9786,6 +9808,7 @@ def main():
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
+        "mid-join-fail-closed-2707": cmd_mid_join_fail_closed_2707_coverage,
         "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,

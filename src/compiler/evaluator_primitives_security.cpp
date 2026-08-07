@@ -497,6 +497,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("enforced", static_cast<std::int64_t>(snap.enforced));
             insert_kv("denied", static_cast<std::int64_t>(snap.denied));
             insert_kv("provenance-mismatch", static_cast<std::int64_t>(snap.provenance_mismatch));
+            // Issue #2707: fail-closed mid join zero-deny under Restricted/Strict.
+            insert_kv("mid-join-zero-deny", static_cast<std::int64_t>(snap.mid_join_zero_deny));
+            insert_kv("mid-join-fail-closed-armed",
+                      snap.sandbox_mode != 0 ? 1 : 0); // Restricted/Strict → armed
+            insert_kv("schema-2707", 2707);
+            insert_kv("issue-2707", 2707);
             insert_kv("grants", static_cast<std::int64_t>(snap.grants));
             insert_kv("revokes", static_cast<std::int64_t>(snap.revokes));
             insert_kv("checks", static_cast<std::int64_t>(snap.checks));
