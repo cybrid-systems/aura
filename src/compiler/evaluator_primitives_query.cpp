@@ -6592,6 +6592,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                         insert_kv("schema-2704", 2704);
                                         insert_kv("issue-2704", 2704);
                                     }
+                                    // Issue #2716: occurrence hard-faces active branch
+                                    // (close #2703 / #2704 residual). When production / Full
+                                    // + face hit under commit_readiness_live_policy, the
+                                    // active branch in commit_readiness hard-rejects
+                                    // with force_reason "cone_outside_goal_drop" (code
+                                    // 10) or "occurrence_empty_after_fence" (code 11).
+                                    // This counter bumps whenever the active branch
+                                    // fires under prod/Full — surface for Agent
+                                    // dashboards to attribute "active face wired in"
+                                    // vs "face fired but Soft path observed only".
+                                    // Additive — no replacement of #2703 / #2704 /
+                                    // #2621 / #2458 / #2608 query keys (preserved
+                                    // above). #2703 / #2704 still surface the face
+                                    // counters; #2716 surfaces the active-branch
+                                    // recover counter (production / Full only).
+                                    {
+                                        const auto recover = static_cast<std::int64_t>(
+                                            occurrence_hard_face_full_solve_recover_total_v_read());
+                                        insert_kv("occurrence-hard-face-full-solve-recover-total",
+                                                  recover);
+                                        insert_kv("occurrence-hard-face-full-solve-recover-wired",
+                                                  1);
+                                        insert_kv("schema-2716", 2716);
+                                        insert_kv("issue-2716", 2716);
+                                    }
                                 }
                             }
                         }
