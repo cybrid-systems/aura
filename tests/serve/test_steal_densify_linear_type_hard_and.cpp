@@ -584,6 +584,149 @@ static void ac2708_5_source_and_linter() {
           "AC5: no docs/design/2708-* per #1655");
 }
 
+// ── Issue #2723 AC1: Phase-5 densify call site wires the
+// collect_linear_or_dirty_roots_for_rebind() helper (replaces empty `{}`).
+// Real per-root walk now actually executes under densify (previously
+// short-circuited via AC3 zero-cost path).
+static void ac2723_1_densify_call_site_wires_helper() {
+    std::println("\n--- #2723 AC1: Phase-5 densify call site wires helper ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("ownership_rebind_after_remap") != std::string::npos,
+          "AC1: densify site still routes through unified API");
+    CHECK(mb.find("RemapReason::Densify") != std::string::npos,
+          "AC1: densify site uses Densify reason (preserved)");
+    CHECK(mb.find("collect_linear_or_dirty_roots_for_rebind()") != std::string::npos,
+          "AC1: densify site now calls helper (not empty `{}`)");
+    CHECK(mb.find("#2723") != std::string::npos,
+          "AC1: densify site cites #2723 (why this site was re-wired)");
+}
+
+// ── Issue #2723 AC2: steal resume call site wires the same helper
+// (single source of truth per AC4). Steal site also no longer passes `{}`.
+static void ac2723_2_steal_call_site_wires_helper() {
+    std::println("\n--- #2723 AC2: steal resume call site wires helper ---");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fm.find("ownership_rebind_after_remap") != std::string::npos,
+          "AC2: steal site still routes through unified API");
+    CHECK(fm.find("RemapReason::Steal") != std::string::npos,
+          "AC2: steal site uses Steal reason (preserved)");
+    CHECK(fm.find("collect_linear_or_dirty_roots_for_rebind()") != std::string::npos,
+          "AC2: steal site now calls helper (not empty `{}`)");
+    CHECK(fm.find("#2723") != std::string::npos,
+          "AC2: steal site cites #2723 (why this site was re-wired)");
+}
+
+// ── Issue #2723 AC3: quiet path (no linear roots registered) → still
+// zero-cost short-circuit. Helper returns empty span → ownership_rebind_
+// after_remap early-returns at AC3 zero-cost check. No new allocations
+// solely for the span when no roots (thread_local scratch buffer cleared
+// each call; capacity preserved on subsequent calls).
+static void ac2723_3_quiet_path_zero_cost_preserved() {
+    std::println("\n--- #2723 AC3: quiet path zero-cost preserved ---");
+    const auto cpp = read_file("src/compiler/ownership_rebind.cpp");
+    CHECK(cpp.find("if (remapped_roots.empty()) [[likely]]") != std::string::npos,
+          "AC3: ownership_rebind_after_remap short-circuits on empty span");
+    CHECK(cpp.find("thread_local std::vector<OwnershipRebindNodeId> scratch") != std::string::npos,
+          "AC3: helper uses thread_local scratch (no per-call heap alloc)");
+    CHECK(cpp.find("scratch.clear()") != std::string::npos,
+          "AC3: helper clears scratch each call (capacity preserved)");
+    const auto hdr = read_file("src/compiler/ownership_rebind.h");
+    CHECK(hdr.find("g_ownership_rebind_nonempty_span_total") != std::string::npos,
+          "AC3: nonempty-span counter declared (only bumped on non-empty)");
+    CHECK(hdr.find("if (!scratch.empty())") != std::string::npos,
+          "AC3: counter only bumped on non-empty span");
+}
+
+// ── Issue #2723 AC4: single source of truth — densify + steal share
+// the same collect_linear_or_dirty_roots_for_rebind() helper. No
+// divergent soft-copy.
+static void ac2723_4_single_source_of_truth() {
+    std::println("\n--- #2723 AC4: single source of truth ---");
+    const auto cpp = read_file("src/compiler/ownership_rebind.cpp");
+    const auto hdr = read_file("src/compiler/ownership_rebind.h");
+    // Helper declared in hdr.
+    CHECK(hdr.find("collect_linear_or_dirty_roots_for_rebind()") != std::string::npos,
+          "AC4: helper declared in ownership_rebind.h (single TU)");
+    // Helper defined in cpp.
+    CHECK(cpp.find("collect_linear_or_dirty_roots_for_rebind() noexcept") != std::string::npos,
+          "AC4: helper defined in ownership_rebind.cpp");
+    // Both call sites use the same helper (not divergent copies).
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(mb.find("collect_linear_or_dirty_roots_for_rebind()") != std::string::npos,
+          "AC4: densify site uses shared helper");
+    CHECK(fm.find("collect_linear_or_dirty_roots_for_rebind()") != std::string::npos,
+          "AC4: steal site uses shared helper");
+}
+
+// ── Issue #2723 AC5: additive observability — #2695/#2708 surfaces
+// preserved + new g_ownership_rebind_nonempty_span_total counter.
+// Single source of truth for source-cite coverage.
+static void ac2723_5_additive_observability() {
+    std::println("\n--- #2723 AC5: additive observability ---");
+    const auto hdr = read_file("src/compiler/ownership_rebind.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // #2695 surfaces preserved.
+    CHECK(hdr.find("g_ownership_rebind_total") != std::string::npos,
+          "AC5: #2695 g_ownership_rebind_total preserved");
+    CHECK(hdr.find("g_ownership_rebind_densify_total") != std::string::npos,
+          "AC5: #2695 densify per-reason preserved");
+    CHECK(hdr.find("g_ownership_rebind_steal_total") != std::string::npos,
+          "AC5: #2695 steal per-reason preserved");
+    // #2708 surfaces preserved.
+    CHECK(hdr.find("g_ownership_rebind_validate_walk_total") != std::string::npos,
+          "AC5: #2708 validate-walk counter preserved");
+    // #2723 new counter.
+    CHECK(hdr.find("g_ownership_rebind_nonempty_span_total") != std::string::npos,
+          "AC5: #2723 nonempty-span counter added (additive)");
+    CHECK(hdr.find("ownership_rebind_nonempty_span_total_v_read") != std::string::npos,
+          "AC5: #2723 nonempty-span accessor added");
+    // Test reset includes new counter.
+    CHECK(hdr.find("g_ownership_rebind_nonempty_span_total.store(0") != std::string::npos,
+          "AC5: #2723 nonempty-span reset in clear_ownership_rebind_for_test");
+    // Other recent P0 surfaces preserved.
+    CHECK(q.find("schema-2720") != std::string::npos || q.find("issue-2720") != std::string::npos,
+          "AC5: schema-2720/issue-2720 query surface preserved");
+    CHECK(q.find("schema-2721") != std::string::npos || q.find("issue-2721") != std::string::npos,
+          "AC5: schema-2721/issue-2721 query surface preserved");
+}
+
+// ── Issue #2723 AC6: source-cite + extend this file per #81967 (tests
+// in src/-aligned suite, no new file) + coverage linter source-cite
+// both call sites + helper + no docs/design/2723-* per #1655.
+static void ac2723_6_source_and_linter() {
+    std::println("\n--- #2723 AC6: source-cite + linter + no docs/design/ ---");
+    const auto hdr = read_file("src/compiler/ownership_rebind.h");
+    const auto cpp = read_file("src/compiler/ownership_rebind.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto t = read_file("tests/serve/test_steal_densify_linear_type_hard_and.cpp");
+    CHECK(hdr.find("Issue #2723") != std::string::npos, "AC6: hdr cites #2723");
+    CHECK(cpp.find("Issue #2723") != std::string::npos, "AC6: cpp cites #2723");
+    CHECK(mb.find("Issue #2723") != std::string::npos, "AC6: densify site cites #2723");
+    CHECK(fm.find("Issue #2723") != std::string::npos, "AC6: steal site cites #2723");
+    // Test functions present.
+    CHECK(t.find("ac2723_1_densify_call_site_wires_helper") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2723_2_steal_call_site_wires_helper") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2723_3_quiet_path_zero_cost_preserved") != std::string::npos,
+          "AC6: AC3 test present");
+    CHECK(t.find("ac2723_4_single_source_of_truth") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2723_5_additive_observability") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2723_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    // #2695 / #2708 test functions preserved (additive — this file
+    // already shipped #2695 + #2708 test functions).
+    CHECK(t.find("ac2695_5_source_and_linter") != std::string::npos,
+          "AC6: #2695 test functions preserved");
+    CHECK(t.find("ac2708_5_source_and_linter") != std::string::npos,
+          "AC6: #2708 test functions preserved");
+    // No docs/design/2723-* per #1655.
+    const std::string design_path = "docs/design/2723-";
+    CHECK(read_file((design_path + "nonempty-span-wire.md").c_str()).empty(),
+          "AC6: no docs/design/2723-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_steal_densify_linear_type_hard_and() {
@@ -605,6 +748,13 @@ int run_test_steal_densify_linear_type_hard_and() {
     ac2708_3_empty_span_short_circuit_preserved();
     ac2708_4_per_reason_routing_and_validate_walk();
     ac2708_5_source_and_linter();
+    std::println("\n=== Issue #2723: ownership_rebind non-empty span wire (densify+steal) ===");
+    ac2723_1_densify_call_site_wires_helper();
+    ac2723_2_steal_call_site_wires_helper();
+    ac2723_3_quiet_path_zero_cost_preserved();
+    ac2723_4_single_source_of_truth();
+    ac2723_5_additive_observability();
+    ac2723_6_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

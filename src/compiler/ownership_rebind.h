@@ -96,6 +96,13 @@ inline std::atomic<std::uint64_t> g_ownership_rebind_explicit_agent_fail_total{0
 // (i.e. remapped_roots was non-empty). Lets dashboards distinguish
 // zero-cost short-circuits (AC3) from real rebinds that walked the span.
 inline std::atomic<std::uint64_t> g_ownership_rebind_validate_walk_total{0};
+// Issue #2723: lifetime walks that received a non-empty span from
+// production call sites (densify Phase-5 + steal resume). Lets dashboards
+// distinguish "call site still passes empty" (zero-cost short-circuit —
+// pre-#2723) from "call site wired non-empty" (real rebind under
+// densify/steal). AC4 (single source of truth — densify + steal share
+// the same helper) + AC5 (additive observability only).
+inline std::atomic<std::uint64_t> g_ownership_rebind_nonempty_span_total{0};
 // Test-injected mismatch sentinel. ~0u is the "no mismatch" sentinel —
 // chosen because NodeId 0xFFFFFFFF is reserved (NULL_NODE / out-of-range).
 // Atomic so a concurrent test injector + the walk TU don't race on plain
@@ -133,6 +140,9 @@ inline std::atomic<std::uint32_t> g_ownership_rebind_test_injected_root{~0u};
 [[nodiscard]] inline std::uint64_t ownership_rebind_validate_walk_total_v_read() noexcept {
     return g_ownership_rebind_validate_walk_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t ownership_rebind_nonempty_span_total_v_read() noexcept {
+    return g_ownership_rebind_nonempty_span_total.load(std::memory_order_relaxed);
+}
 [[nodiscard]] inline std::uint32_t ownership_rebind_test_injected_root_v_read() noexcept {
     return g_ownership_rebind_test_injected_root.load(std::memory_order_relaxed);
 }
@@ -149,6 +159,7 @@ inline void clear_ownership_rebind_for_test() noexcept {
     g_ownership_rebind_steal_fail_total.store(0, std::memory_order_relaxed);
     g_ownership_rebind_explicit_agent_fail_total.store(0, std::memory_order_relaxed);
     g_ownership_rebind_validate_walk_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_nonempty_span_total.store(0, std::memory_order_relaxed);
     g_ownership_rebind_test_injected_root.store(~0u, std::memory_order_relaxed);
 }
 
@@ -172,6 +183,16 @@ inline void clear_ownership_rebind_mismatch_for_test() noexcept {
 // remapped_roots element type is OwnershipRebindNodeId (== NodeId / uint32_t).
 bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remapped_roots,
                                   RemapReason why) noexcept;
+
+// Issue #2723: non-empty span collector for densify Phase-5 + steal resume.
+// Single source of truth (AC4): both call sites route through this helper
+// so densify and steal share the same collection logic. Returns
+// std::span<const OwnershipRebindNodeId> over a thread-local scratch
+// buffer — no per-call heap allocation (AC3 zero-cost on the quiet path).
+// Lifetime of the returned span is until the next call from the same
+// thread. When no linear roots are registered, returns an empty span
+// (preserves AC3 zero-cost short-circuit in ownership_rebind_after_remap).
+std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind() noexcept;
 
 // C ABI overload for tests / FFI bridges that pass raw ptr + size.
 // std::span(ptr, count) is well-formed once the element type is complete

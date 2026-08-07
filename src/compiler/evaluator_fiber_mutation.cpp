@@ -2038,11 +2038,13 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
     // zero-cost short-circuit when no roots were remapped; real per-root
     // span wires in follow-up.
     // Issue #2708: real per-root walk wires through this same call site.
-    // Empty span here preserves AC3 — steal resume path doesn't carry a
-    // direct NodeId span in scope; the walk runs when callers pass a
-    // non-empty span (test / future wiring when fiber exposes a remapped
-    // root set accessor).
-    (void)aura::compiler::ownership_rebind_after_remap({}, aura::compiler::RemapReason::Steal);
+    // Issue #2723: wire non-empty span via
+    // collect_linear_or_dirty_roots_for_rebind() — single source of
+    // truth shared with densify Phase-5 exit (AC4). AC3 zero-cost
+    // preserved when no linear roots registered.
+    (void)aura::compiler::ownership_rebind_after_remap(
+        aura::compiler::collect_linear_or_dirty_roots_for_rebind(),
+        aura::compiler::RemapReason::Steal);
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
         m->linear_join_enforcement_total.fetch_add(1, std::memory_order_relaxed);
