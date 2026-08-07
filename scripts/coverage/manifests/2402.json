@@ -34,7 +34,15 @@
       "contains": [
         "restamp_nodes_last_",
         "restamp_us_last_",
-        "lazy_only"
+        "restamp_all_node_generations"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast_impl.cpp",
+      "contains": [
+        "lazy_only",
+        "FlatAST::restamp_all_node_generations"
       ]
     },
     {
