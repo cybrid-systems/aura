@@ -3442,6 +3442,29 @@ def cmd_general_object_pin_auto_wire_2597_coverage():
     return 0
 
 
+def cmd_general_object_pin_auto_wire_2709_coverage():
+    """Issue #2709: GeneralObjectPin mandatory coverage beyond inventory-of-7.
+
+    Closes the partial-adoption gap: the static kGeneralObjectPinAdoptSiteCount = 7
+    inventory could drift behind new create paths. #2709 replaces the static list
+    with a dynamic count (auto_wire_total + exempt_total) so adoption coverage
+    grows automatically. Coverage linter scans evaluator_primitives_*.cpp +
+    evaluator_eval_flat.cpp for allocate patterns and fails when a create site
+    lacks wire_general_object_create_pair or GENERAL_OBJECT_PIN_EXEMPT marker.
+    """
+    print(f"{B}=== general object pin mandatory coverage (#2709) ==={N}")
+    script = ROOT / "scripts" / "check_general_object_pin_auto_wire_2709.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("general object pin mandatory coverage (#2709) contract rows failed")
+        return 1
+    ok("general object pin mandatory coverage (#2709) clean")
+    return 0
+
+
 def cmd_panic_residual_densify_hard_2598_coverage():
     """Issue #2598: production densify-after panic residual → hard
     (align with steal residual hard-AND).
@@ -8424,6 +8447,7 @@ def cmd_gate():
         or cmd_densify_unified_gate_2595_coverage()
         or cmd_moving_untracked_production_hard_2596_coverage()
         or cmd_general_object_pin_auto_wire_2597_coverage()
+        or cmd_general_object_pin_auto_wire_2709_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()

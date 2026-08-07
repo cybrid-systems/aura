@@ -64,10 +64,23 @@ inline constexpr int kGeneralObjectPinAdoptIssue = 2363;
 // lacks wire call (note_general_object_pin_mutate_wire /
 // wire_general_object_create_pair).
 inline constexpr int kGeneralObjectPinCoverageGateIssue = 2496;
+// Issue #2709: mandatory coverage beyond inventory-of-7. The original
+// #2496 inventory was a hardcoded list (replace-pattern ×2, query:pattern ×2,
+// load, eval-expr, require import parse). #2709 replaces the static
+// list with a dynamic count derived from
+// `general_object_pin_auto_wire_total + general_object_pin_exempt_total`,
+// so any new create path that calls `wire_general_object_create_pair`
+// (or marks `GENERAL_OBJECT_PIN_EXEMPT(reason)`) automatically rolls
+// into coverage without bumping kGeneralObjectPinAdoptSiteCount by hand.
+// `kGeneralObjectPinAdoptSiteCount` is retained as the **legacy baseline**
+// (the original 7) so existing dashboards / #2496 contract rows still
+// surface the floor — new sites add on top via auto_wire + exempt.
+inline constexpr int kGeneralObjectPinAutoWireIssue = 2709;
 // Expected adopted wire sites (mutate/agent/scratch intermediate create).
-// Bumped when a new site calls wire_general_object_create_pair /
-// note_general_object_pin_mutate_wire. Dashboard compares wire total
-// growth against this inventory for coverage.
+// #2709: original 7-site floor — kept as a static baseline so existing
+// #2496 contract rows / dashboards still anchor the floor. New sites
+// roll into coverage via auto_wire + exempt counters (see
+// general_object_pin_adopt_site_count() accessor below).
 //   1 mutate:replace-pattern          (evaluator_primitives_mutate.cpp)
 //   2 batch :replace-pattern          (evaluator_eval_flat.cpp)
 //   3 require import parse            (evaluator_eval_flat.cpp)
@@ -140,6 +153,17 @@ struct LifetimePinStats {
     // Distinct from general_object_pin_total (per-allocate) — this is
     // per-site so dashboards track adoption coverage (#2363 complete).
     std::uint64_t general_object_pin_mutate_wire_total = 0; // #2337/#2363
+    // Issue #2709: dynamic coverage counters. New create paths that
+    // call wire_general_object_create_pair_or_exempt(..., nullptr)
+    // (default-on wire) bump auto_wire_total. New create paths that
+    // call wire_general_object_create_pair_or_exempt(..., "reason")
+    // (EXEMPT) bump exempt_total. The sum auto_wire_total + exempt_total
+    // is the new dynamic adopted-site count (general_object_pin_adopt_site_count());
+    // kGeneralObjectPinAdoptSiteCount (legacy = 7) stays as the floor.
+    // #2496 dashboards compare (auto_wire_total + exempt_total + legacy)
+    // against the expected coverage gate.
+    std::uint64_t general_object_pin_auto_wire_total = 0; // #2709 default-on wire calls
+    std::uint64_t general_object_pin_exempt_total = 0;    // #2709 EXEMPT site hits (reason-tagged)
 };
 
 inline LifetimePinStats g_lifetime_pin_stats{};
@@ -1031,6 +1055,66 @@ inline bool wire_general_object_create_pair(GeneralObjectPin& pin_a, GeneralObje
         g_general_object_pin_required_enforced_total.fetch_add(1, std::memory_order_relaxed);
     }
     return ok_a && ok_b;
+}
+
+// Issue #2709: default-on wire for shared create helpers. Replaces the
+// static kGeneralObjectPinAdoptSiteCount = 7 inventory pattern with a
+// dynamic count (auto_wire_total + exempt_total). New create paths
+// funnel through this helper so adoption coverage grows automatically.
+//
+// When exempt_reason is nullptr: bumps auto_wire_total + delegates to
+// wire_general_object_create_pair (which bumps mutate_wire_total +
+// applies #2665 required-mode fail-closed).
+//
+// When exempt_reason is non-null: bumps exempt_total + returns true
+// (skip wire). Production telemetry surfaces the EXEMPT reason via
+// the reason-string contract enforced by the coverage linter (AC2).
+//
+// Reason-class taxonomy (linter source-cite enforced):
+//   stable-handle | RootRemap-registered | hot-path-bypass
+//
+// Returns ok_a && ok_b (true when both pins succeeded, or when EXEMPT).
+inline bool wire_general_object_create_pair_or_exempt(GeneralObjectPin& pin_a,
+                                                      GeneralObjectPin& pin_b, void* a, void* b,
+                                                      const char* exempt_reason = nullptr,
+                                                      std::uint64_t gen = 0,
+                                                      std::uint64_t arena_id = 0) noexcept {
+    if (exempt_reason != nullptr) {
+        // EXEMPT path: bump counter, skip wire (return true to keep
+        // call-site happy — site is documented stable-handle /
+        // RootRemap-registered / hot-path-bypass).
+        ++g_lifetime_pin_stats.general_object_pin_exempt_total;
+        return true;
+    }
+    // Default-on wire path: bump auto_wire counter + delegate to the
+    // existing wire function (which already bumps mutate_wire_total +
+    // applies #2665 required-mode fail-closed).
+    ++g_lifetime_pin_stats.general_object_pin_auto_wire_total;
+    return wire_general_object_create_pair(pin_a, pin_b, a, b, gen, arena_id);
+}
+
+// Issue #2709: dynamic adopted-site count (legacy 7 + auto_wire + exempt).
+// Replaces the static kGeneralObjectPinAdoptSiteCount for dashboard /
+// coverage-gate comparisons. Existing call sites that read
+// kGeneralObjectPinAdoptSiteCount directly still see 7 (the legacy
+// floor); this accessor is the additive surface for new sites.
+inline std::uint64_t general_object_pin_adopt_site_count() noexcept {
+    return kGeneralObjectPinAdoptSiteCount +
+           g_lifetime_pin_stats.general_object_pin_auto_wire_total +
+           g_lifetime_pin_stats.general_object_pin_exempt_total;
+}
+
+// Issue #2709: read-side accessors for the new dynamic coverage
+// counters. Surface in `query:general-object-pin-stats` (additive only,
+// no #2496 / #2597 / #2665 regression on existing keys).
+[[nodiscard]] inline std::uint64_t general_object_pin_auto_wire_total_v_read() noexcept {
+    return g_lifetime_pin_stats.general_object_pin_auto_wire_total;
+}
+[[nodiscard]] inline std::uint64_t general_object_pin_exempt_total_v_read() noexcept {
+    return g_lifetime_pin_stats.general_object_pin_exempt_total;
+}
+[[nodiscard]] inline std::uint64_t general_object_pin_adopt_site_count_v_read() noexcept {
+    return general_object_pin_adopt_site_count();
 }
 
 // Issue #2280: linear pin check under Moving compact. Returns true if

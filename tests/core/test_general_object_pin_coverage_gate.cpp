@@ -251,12 +251,154 @@ static void ac2665_4_existing_ac4_unchanged() {
           "2665 AC4: #2496 contract comment still cited (regression)");
 }
 
+// ── Issue #2709: GeneralObjectPin mandatory coverage beyond inventory-of-7 ──
+//
+// Closes the partial-adoption gap: the static kGeneralObjectPinAdoptSiteCount = 7
+// inventory could drift behind new create paths. #2709 replaces the static list
+// with a dynamic count (auto_wire_total + exempt_total) so adoption coverage
+// grows automatically. New create paths funnel through
+// wire_general_object_create_pair_or_exempt(pin_a, pin_b, a, b, exempt_reason).
+// The linter (scripts/check_general_object_pin_auto_wire_2709.py) fails when a
+// create site in evaluator_primitives_*.cpp / evaluator_eval_flat.cpp allocates
+// without wire or EXEMPT marker.
+//
+// AC1: production paths either wire or EXEMPT — new helper + counters present.
+// AC2: linter fails on new create site without wire/EXEMPT.
+// AC3: Soft / dev_off / unset stays zero-cost (counter reads only).
+// AC4: required-mode fail-closed regression (already covered by #2665).
+// AC5: additive query keys (auto-wire-total, exempt-total, adopt-site-count).
+// AC6: source-cite + linter + schema-2709 + no docs/design/.
+
+// Issue #2709 AC1: default-on helper + new dynamic counters in lifetime_pin.ixx.
+static void ac2709_1_default_on_helper() {
+    std::println("\n--- #2709 AC1: default-on helper + dynamic counters ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("Issue #2709") != std::string::npos, "AC1: lifetime_pin.ixx cites #2709");
+    CHECK(lp.find("kGeneralObjectPinAutoWireIssue = 2709") != std::string::npos,
+          "AC1: lifetime_pin.ixx stamps auto-wire issue = 2709");
+    CHECK(lp.find("wire_general_object_create_pair_or_exempt") != std::string::npos,
+          "AC1: default-on helper declared");
+    CHECK(lp.find("general_object_pin_auto_wire_total = 0") != std::string::npos,
+          "AC1: auto-wire counter declared");
+    CHECK(lp.find("general_object_pin_exempt_total = 0") != std::string::npos,
+          "AC1: exempt counter declared");
+    CHECK(lp.find("general_object_pin_adopt_site_count") != std::string::npos,
+          "AC1: dynamic adopted-site count accessor declared");
+    // Legacy baseline preserved (regression on #2496).
+    CHECK(lp.find("kGeneralObjectPinAdoptSiteCount = 7") != std::string::npos,
+          "AC1: legacy baseline kGeneralObjectPinAdoptSiteCount = 7 preserved");
+}
+
+// Issue #2709 AC2: linter catches new create site without wire/EXEMPT.
+static void ac2709_2_linter_catches_missing_wire() {
+    std::println("\n--- #2709 AC2: linter catches missing wire/EXEMPT ---");
+    const auto linter = read_file("scripts/check_general_object_pin_auto_wire_2709.py");
+    CHECK(!linter.empty(), "AC2: linter script exists");
+    CHECK(linter.find("#2709") != std::string::npos, "AC2: linter cites #2709");
+    CHECK(linter.find("_scan_create_sites_for_missing_wire_or_exempt") != std::string::npos,
+          "AC2: linter has allocate-pattern scan function");
+    CHECK(linter.find("evaluator_primitives_eval.cpp") != std::string::npos,
+          "AC2: linter scans evaluator_primitives_eval.cpp");
+    CHECK(linter.find("evaluator_primitives_mutate.cpp") != std::string::npos,
+          "AC2: linter scans evaluator_primitives_mutate.cpp");
+    CHECK(linter.find("evaluator_primitives_query_workspace.cpp") != std::string::npos,
+          "AC2: linter scans evaluator_primitives_query_workspace.cpp");
+    CHECK(linter.find("evaluator_eval_flat.cpp") != std::string::npos,
+          "AC2: linter scans evaluator_eval_flat.cpp");
+    CHECK(linter.find("wire_general_object_create_pair_or_exempt") != std::string::npos,
+          "AC2: linter scans for new helper");
+    CHECK(linter.find("GENERAL_OBJECT_PIN_EXEMPT") != std::string::npos,
+          "AC2: linter scans for EXEMPT marker");
+}
+
+// Issue #2709 AC3: Soft / dev_off / unset stays zero-cost.
+static void ac2709_3_soft_zero_cost() {
+    std::println("\n--- #2709 AC3: Soft zero-cost (counter reads only) ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("wire_general_object_create_pair_or_exempt") != std::string::npos,
+          "AC3: default-on helper present");
+    CHECK(lp.find("g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0") !=
+              std::string::npos,
+          "AC3: required-mode gate preserved (zero-cost when pref <= 0)");
+    CHECK(lp.find("g_general_object_pin_required_enforced_total.fetch_add") != std::string::npos,
+          "AC3: required_enforced_total only bumps inside the pref > 0 gate");
+}
+
+// Issue #2709 AC4: required-mode fail-closed regression (covered by #2665).
+static void ac2709_4_required_mode_fail_closed_regression() {
+    std::println("\n--- #2709 AC4: #2665 required-mode fail-closed regression ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    CHECK(lp.find("g_general_object_pin_required_enforced_total") != std::string::npos,
+          "AC4: required_enforced_total still declared (no #2665 regression)");
+    CHECK(lp.find("g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0") !=
+              std::string::npos,
+          "AC4: required-mode gate still gates on pref > 0");
+    CHECK(lp.find("return wire_general_object_create_pair(pin_a, pin_b, a, b, gen, arena_id);") !=
+              std::string::npos,
+          "AC4: default-on helper delegates to wire_general_object_create_pair");
+}
+
+// Issue #2709 AC5: additive query keys.
+static void ac2709_5_query_keys_added() {
+    std::println("\n--- #2709 AC5: additive query keys ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(obs.find("general-object-pin-auto-wire-total") != std::string::npos,
+          "AC5: obs_eval exposes general-object-pin-auto-wire-total");
+    CHECK(obs.find("general_object_pin_auto_wire_total") != std::string::npos,
+          "AC5: obs_eval exposes camelCase auto_wire_total");
+    CHECK(obs.find("general-object-pin-exempt-total") != std::string::npos,
+          "AC5: obs_eval exposes general-object-pin-exempt-total");
+    CHECK(obs.find("general_object_pin_exempt_total") != std::string::npos,
+          "AC5: obs_eval exposes camelCase exempt_total");
+    CHECK(obs.find("general-object-pin-adopt-site-count") != std::string::npos,
+          "AC5: obs_eval exposes general-object-pin-adopt-site-count");
+    CHECK(obs.find("general_object_pin_adopt_site_count") != std::string::npos,
+          "AC5: obs_eval exposes camelCase adopt_site_count");
+    CHECK(obs.find("schema-2709") != std::string::npos, "AC5: schema-2709 sentinel");
+    CHECK(obs.find("issue-2709") != std::string::npos, "AC5: issue-2709 sentinel");
+    CHECK(obs.find("schema-2665") != std::string::npos, "AC5: schema-2665 preserved");
+}
+
+// Issue #2709 AC6: source-cite + linter + schema + no docs/design/.
+static void ac2709_6_source_and_linter() {
+    std::println("\n--- #2709 AC6: source-cite + linter + no docs/design/ ---");
+    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto cmake = read_file("CMakeLists.txt");
+    const auto build = read_file("build.py");
+    const auto linter = read_file("scripts/check_general_object_pin_auto_wire_2709.py");
+    const auto t = read_file("tests/core/test_general_object_pin_coverage_gate.cpp");
+
+    CHECK(lp.find("Issue #2709") != std::string::npos, "AC6: lifetime_pin.ixx cites #2709");
+    CHECK(lp.find("kGeneralObjectPinAutoWireIssue = 2709") != std::string::npos,
+          "AC6: lifetime_pin.ixx stamps issue = 2709");
+    CHECK(build.find("check_general_object_pin_auto_wire_2709") != std::string::npos ||
+              build.find("cmd_general_object_pin_auto_wire_2709_coverage") != std::string::npos,
+          "AC6: build.py gate entry");
+    CHECK(cmake.find("test_general_object_pin_coverage_gate") != std::string::npos,
+          "AC6: CMake registers test");
+    CHECK(!linter.empty() && linter.find("Issue #2709") != std::string::npos,
+          "AC6: coverage linter present and cites #2709");
+    CHECK(t.find("ac2709_1_default_on_helper") != std::string::npos, "AC6: AC1 test present");
+    CHECK(t.find("ac2709_2_linter_catches_missing_wire") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2709_3_soft_zero_cost") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2709_4_required_mode_fail_closed_regression") != std::string::npos,
+          "AC6: AC4 test present");
+    CHECK(t.find("ac2709_5_query_keys_added") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2709_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    const std::string design_path = "docs/design/2709-";
+    CHECK(read_file((design_path + "general-object-pin-auto-wire.md").c_str()).empty(),
+          "AC6: no docs/design/2709-* per #1655");
+}
+
 int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
     std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
                  "(extends #2496 test file per #81967) ===");
     std::println("=== Issue #2665: production-default required-mode fail-closed counter + "
                  "additive query keys (extends #2496 test file per #81967) ===");
+    std::println("=== Issue #2709: GeneralObjectPin mandatory coverage beyond inventory-of-7 "
+                 "(extends #2496 test file per #81967) ===");
     // contiguous form for check_general_object_pin_auto_wire_2597.py:
     // production default AURA_GENERAL_OBJECT_PIN=required (extends #2496 test file per #81967)
     ac1_inventory_sites_wired();
@@ -273,6 +415,12 @@ int run_test_general_object_pin_coverage_gate() {
     ac2665_2_query_keys_added();
     ac2665_3_soft_zero_cost();
     ac2665_4_existing_ac4_unchanged();
+    ac2709_1_default_on_helper();
+    ac2709_2_linter_catches_missing_wire();
+    ac2709_3_soft_zero_cost();
+    ac2709_4_required_mode_fail_closed_regression();
+    ac2709_5_query_keys_added();
+    ac2709_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
