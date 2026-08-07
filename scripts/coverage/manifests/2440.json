@@ -27,10 +27,16 @@
       "path": "src/core/ast.ixx",
       "contains": [
         "std::atomic_ref<std::uint8_t>",
-        "fetch_or(reasons",
-        "fetch_or(verify_reasons",
         "apply_verification_dirty_bits",
         "apply_verify_dirty_bits"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast_impl.cpp",
+      "contains": [
+        "fetch_or(reasons",
+        "fetch_or(verify_reasons"
       ]
     },
     {

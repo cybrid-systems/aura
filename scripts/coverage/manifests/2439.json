@@ -9,7 +9,14 @@
       "contains": [
         "Issue #2439",
         "apply_verification_dirty_bits",
-        "dirty_column_mtx_.mutable_get()",
+        "dirty_column_mtx_.mutable_get()"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/ast_impl.cpp",
+      "contains": [
+        "FlatAST::apply_verification_dirty_bits",
         "fetch_or(reasons",
         "newly_set = static_cast<std::uint8_t>(reasons & ~prev)"
       ]
@@ -25,7 +32,14 @@
       "ac": "AC2",
       "path": "src/core/ast.ixx",
       "contains": [
-        "apply_verify_dirty_bits",
+        "apply_verify_dirty_bits"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast_impl.cpp",
+      "contains": [
+        "FlatAST::apply_verify_dirty_bits",
         "fetch_or(verify_reasons",
         "newly_set = static_cast<std::uint8_t>(verify_reasons & ~prev)"
       ]
