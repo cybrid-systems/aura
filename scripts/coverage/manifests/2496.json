@@ -5,7 +5,7 @@
   "checks": [
     {
       "ac": "AC1",
-      "path": "src/core/lifetime_pin.ixx",
+      "path": "src/core/lifetime_pin.hh",
       "contains": [
         "Issue #2496",
         "kGeneralObjectPinIssue = 2298",
@@ -25,7 +25,7 @@
     },
     {
       "ac": "AC2",
-      "path": "src/core/lifetime_pin.ixx",
+      "path": "src/core/lifetime_pin.hh",
       "contains": [
         "kGeneralObjectPinAdoptSiteCount = 7",
         "wire_general_object_create_pair"
@@ -33,14 +33,14 @@
     },
     {
       "ac": "AC3",
-      "path": "src/core/lifetime_pin.ixx",
+      "path": "src/core/lifetime_pin.hh",
       "contains": [
         "note_general_object_pin_mutate_wire"
       ]
     },
     {
       "ac": "AC4",
-      "path": "src/core/lifetime_pin.ixx",
+      "path": "src/core/lifetime_pin.hh",
       "contains": [
         "kGeneralObjectPinAdoptSiteCount",
         "general_object_pin_mutate_wire_total",

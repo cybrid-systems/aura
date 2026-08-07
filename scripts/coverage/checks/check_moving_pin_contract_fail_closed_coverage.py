@@ -48,7 +48,7 @@ def _must(cond: bool, msg: str, fails: list) -> None:
 def check() -> list:
     fails = []
 
-    pin = _read("src/core/lifetime_pin.ixx")
+    pin = _read("src/core/lifetime_pin.hh")  # SSOT
     arena = _read("src/core/arena.ixx")
     met = _read("src/compiler/observability_metrics.h")
     q = _read("src/compiler/evaluator_primitives_obs_eval.cpp")

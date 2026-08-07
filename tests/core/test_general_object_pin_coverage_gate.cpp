@@ -42,7 +42,7 @@ static std::string read_file(const char* path) {
     return {};
 }
 
-// AC1: inventory sites documented in lifetime_pin.ixx (kGeneralObjectPinAdoptSiteCount = 7).
+// AC1: inventory sites documented in lifetime_pin.hh (kGeneralObjectPinAdoptSiteCount = 7).
 static void ac1_inventory_sites_wired() {
     std::println("\n--- #2496 AC1: inventory sites wired ---");
     CHECK(kGeneralObjectPinIssue == 2298, "AC1: kGeneralObjectPinIssue = 2298");
@@ -50,7 +50,7 @@ static void ac1_inventory_sites_wired() {
     CHECK(kGeneralObjectPinAdoptSiteCount == 7,
           "AC1: kGeneralObjectPinAdoptSiteCount = 7 (inventory size)");
 
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("wire_general_object_create_pair") != std::string::npos,
           "AC1: wire helper defined");
     CHECK(lp.find("note_general_object_pin_mutate_wire") != std::string::npos,
@@ -71,7 +71,7 @@ static void ac2_soft_zero_cost_retained() {
 // is the only hot-path touch under Moving; zero cost when no pin adopted.
 static void ac3_query_inventory_vs_wire() {
     std::println("\n--- #2496 AC3: query inventory vs wire ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("general_object_pin_mutate_wire_total") != std::string::npos,
           "AC3: wire_total counter exposed for query");
 }
@@ -79,7 +79,7 @@ static void ac3_query_inventory_vs_wire() {
 // AC4: AURA_GENERAL_OBJECT_PIN=required fail-closed env var (optional).
 static void ac4_required_mode_fail_closed() {
     std::println("\n--- #2496 AC4: required mode fail-closed ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("AURA_GENERAL_OBJECT_PIN") != std::string::npos,
           "AC4: AURA_GENERAL_OBJECT_PIN env var wiring");
 }
@@ -87,8 +87,8 @@ static void ac4_required_mode_fail_closed() {
 // AC5: source-cite registrations + linter.
 static void ac5_source_cite_registrations() {
     std::println("\n--- #2496 AC5: source-cite + gate ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
-    CHECK(lp.find("Issue #2496") != std::string::npos, "AC5: lifetime_pin.ixx cites #2496");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(lp.find("Issue #2496") != std::string::npos, "AC5: lifetime_pin.hh cites #2496");
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(cmake.find("test_general_object_pin_coverage_gate") != std::string::npos,
           "AC5: CMake registers test");
@@ -117,7 +117,7 @@ static void ac5_source_cite_registrations() {
 //       (pref stays at default -1).
 // AC19: apply_general_object_pin_required_env handles required / off
 //       env values (linter source-cite + call site in security_defaults).
-// AC20: GENERAL_OBJECT_PIN_EXEMPT marker source-cite in lifetime_pin.ixx
+// AC20: GENERAL_OBJECT_PIN_EXEMPT marker source-cite in lifetime_pin.hh
 //       (for sites that don't need a wire call — stable handle /
 //       RootRemap-registered only).
 static void ac16_production_default_required() {
@@ -141,9 +141,9 @@ static void ac16_production_default_required() {
 
 static void ac17_env_off_operator_override() {
     std::println("\n--- #2597 AC17: AURA_GENERAL_OBJECT_PIN=off overrides production ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("apply_general_object_pin_required_env") != std::string::npos,
-          "AC17: lifetime_pin.ixx declares env parser");
+          "AC17: lifetime_pin.hh declares env parser");
     CHECK(lp.find("g_general_object_pin_required_pref.store(0, std::memory_order_release)") !=
               std::string::npos,
           "AC17: env=off branch stored as Soft (operator override)");
@@ -157,16 +157,16 @@ static void ac18_soft_unset_keeps_observe() {
           "AC18: dev_off is the sandbox=off sentinel");
     CHECK(hh.find("&& !dev_off") != std::string::npos,
           "AC18: production-default branch gated on !dev_off");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("g_general_object_pin_required_pref{-1}") != std::string::npos,
           "AC18: pref default -1 (unset → observe-only)");
 }
 
 static void ac19_env_parser_source_cite() {
     std::println("\n--- #2597 AC19: env parser source-cite ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("apply_general_object_pin_required_env") != std::string::npos,
-          "AC19: lifetime_pin.ixx declares apply_general_object_pin_required_env");
+          "AC19: lifetime_pin.hh declares apply_general_object_pin_required_env");
     CHECK(lp.find("AURA_GENERAL_OBJECT_PIN") != std::string::npos,
           "AC19: env name AURA_GENERAL_OBJECT_PIN");
     CHECK(lp.find("required") != std::string::npos, "AC19: 'required' env value recognized");
@@ -175,9 +175,9 @@ static void ac19_env_parser_source_cite() {
 
 static void ac20_exempt_marker_source_cite() {
     std::println("\n--- #2597 AC20: GENERAL_OBJECT_PIN_EXEMPT marker source-cite ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("GENERAL_OBJECT_PIN_EXEMPT") != std::string::npos,
-          "AC20: lifetime_pin.ixx defines GENERAL_OBJECT_PIN_EXEMPT marker");
+          "AC20: lifetime_pin.hh defines GENERAL_OBJECT_PIN_EXEMPT marker");
     CHECK(lp.find("stable-handle") != std::string::npos ||
               lp.find("RootRemap-registered") != std::string::npos,
           "AC20: EXEMPT marker documents use cases (stable-handle / RootRemap-registered)");
@@ -196,7 +196,7 @@ static void ac20_exempt_marker_source_cite() {
 // stays zero-cost.
 //
 // AC1: wire_general_object_create_pair bumps enforced_total on
-//      required-mode failure (source-cite lifetime_pin.ixx).
+//      required-mode failure (source-cite lifetime_pin.hh).
 // AC2: additive query keys (general-object-pin-required-enforced-
 //      total + general-object-pin-required-wired + schema-2665 +
 //      issue-2665) — source-cite obs_eval.cpp.
@@ -205,9 +205,9 @@ static void ac20_exempt_marker_source_cite() {
 //      (regression check — the new bump doesn't break the old gate).
 static void ac2665_1_production_required_enforcement() {
     std::println("\n--- #2665 AC1: production-default required-mode fail-closed ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("Issue #2665") != std::string::npos,
-          "2665 AC1: lifetime_pin.ixx cites #2665 production-default required-mode");
+          "2665 AC1: lifetime_pin.hh cites #2665 production-default required-mode");
     CHECK(lp.find("wire_general_object_create_pair") != std::string::npos,
           "2665 AC1: wire_general_object_create_pair is the enforcement site");
     CHECK(lp.find("g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0") !=
@@ -234,14 +234,14 @@ static void ac2665_2_query_keys_added() {
 
 static void ac2665_3_soft_zero_cost() {
     std::println("\n--- #2665 AC3: Soft / dev_off / unset zero-cost ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("Soft / dev_off / unset (pref <= 0)") != std::string::npos,
           "2665 AC3: Soft path comment documents zero-cost (gated on pref <= 0)");
 }
 
 static void ac2665_4_existing_ac4_unchanged() {
     std::println("\n--- #2665 AC4: existing #2496 ac4_required_mode_fail_closed unchanged ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("g_general_object_pin_required_enforced_total") != std::string::npos,
           "2665 AC4: counter still declared (no regression on #2496)");
     CHECK(lp.find("general_object_pin_required_enforced_total") != std::string::npos ||
@@ -269,13 +269,13 @@ static void ac2665_4_existing_ac4_unchanged() {
 // AC5: additive query keys (auto-wire-total, exempt-total, adopt-site-count).
 // AC6: source-cite + linter + schema-2709 + no docs/design/.
 
-// Issue #2709 AC1: default-on helper + new dynamic counters in lifetime_pin.ixx.
+// Issue #2709 AC1: default-on helper + new dynamic counters in lifetime_pin.hh.
 static void ac2709_1_default_on_helper() {
     std::println("\n--- #2709 AC1: default-on helper + dynamic counters ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
-    CHECK(lp.find("Issue #2709") != std::string::npos, "AC1: lifetime_pin.ixx cites #2709");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(lp.find("Issue #2709") != std::string::npos, "AC1: lifetime_pin.hh cites #2709");
     CHECK(lp.find("kGeneralObjectPinAutoWireIssue = 2709") != std::string::npos,
-          "AC1: lifetime_pin.ixx stamps auto-wire issue = 2709");
+          "AC1: lifetime_pin.hh stamps auto-wire issue = 2709");
     CHECK(lp.find("wire_general_object_create_pair_or_exempt") != std::string::npos,
           "AC1: default-on helper declared");
     CHECK(lp.find("general_object_pin_auto_wire_total = 0") != std::string::npos,
@@ -314,7 +314,7 @@ static void ac2709_2_linter_catches_missing_wire() {
 // Issue #2709 AC3: Soft / dev_off / unset stays zero-cost.
 static void ac2709_3_soft_zero_cost() {
     std::println("\n--- #2709 AC3: Soft zero-cost (counter reads only) ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("wire_general_object_create_pair_or_exempt") != std::string::npos,
           "AC3: default-on helper present");
     CHECK(lp.find("g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0") !=
@@ -327,7 +327,7 @@ static void ac2709_3_soft_zero_cost() {
 // Issue #2709 AC4: required-mode fail-closed regression (covered by #2665).
 static void ac2709_4_required_mode_fail_closed_regression() {
     std::println("\n--- #2709 AC4: #2665 required-mode fail-closed regression ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     CHECK(lp.find("g_general_object_pin_required_enforced_total") != std::string::npos,
           "AC4: required_enforced_total still declared (no #2665 regression)");
     CHECK(lp.find("g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0") !=
@@ -362,15 +362,15 @@ static void ac2709_5_query_keys_added() {
 // Issue #2709 AC6: source-cite + linter + schema + no docs/design/.
 static void ac2709_6_source_and_linter() {
     std::println("\n--- #2709 AC6: source-cite + linter + no docs/design/ ---");
-    const auto lp = read_file("src/core/lifetime_pin.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
     const auto linter = read_file("scripts/check_general_object_pin_auto_wire_2709.py");
     const auto t = read_file("tests/core/test_general_object_pin_coverage_gate.cpp");
 
-    CHECK(lp.find("Issue #2709") != std::string::npos, "AC6: lifetime_pin.ixx cites #2709");
+    CHECK(lp.find("Issue #2709") != std::string::npos, "AC6: lifetime_pin.hh cites #2709");
     CHECK(lp.find("kGeneralObjectPinAutoWireIssue = 2709") != std::string::npos,
-          "AC6: lifetime_pin.ixx stamps issue = 2709");
+          "AC6: lifetime_pin.hh stamps issue = 2709");
     CHECK(build.find("check_general_object_pin_auto_wire_2709") != std::string::npos ||
               build.find("cmd_general_object_pin_auto_wire_2709_coverage") != std::string::npos,
           "AC6: build.py gate entry");

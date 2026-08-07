@@ -40,7 +40,7 @@ def check() -> list:
     fails = []
 
     arena_h = _read("src/core/arena.ixx")
-    pin_h = _read("src/core/lifetime_pin.ixx")
+    pin_h = _read("src/core/lifetime_pin.hh")  # SSOT
     mut = _read("src/compiler/evaluator_mutation_boundary.cpp")
     shape = _read("src/compiler/shape_profiler.cpp")
     soa = _read("src/compiler/ir_soa.ixx")

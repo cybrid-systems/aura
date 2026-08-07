@@ -59,13 +59,15 @@ def main() -> int:
         if not cond:
             fails.append(msg)
 
-    pin = _read("src/core/lifetime_pin.ixx")
+    pin = _read("src/core/lifetime_pin.hh")  # SSOT bodies
+    pin_mod = _read("src/core/lifetime_pin.ixx")  # re-export surface
     test = _read("tests/core/test_moving_compact.cpp")
     bp = _read("build.py")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     gc = _read("src/compiler/evaluator_gc.cpp")
 
-    must("Issue #2375" in pin, "AC6: lifetime_pin.ixx cites #2375")
+    must("Issue #2375" in pin, "AC6: lifetime_pin.hh cites #2375")
+    must("Issue #2375" in pin_mod or "#2375" in pin_mod, "AC6: module re-export cites #2375")
     must("restamp_all_pins_for_arena" in pin, "AC1: restamp_all present")
     must("invalidate_all_pins_for_arena" in pin, "AC1: invalidate_all present")
 
