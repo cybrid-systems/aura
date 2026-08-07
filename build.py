@@ -3488,6 +3488,30 @@ def cmd_panic_checkpoint_steal_hard_2710_coverage():
     return 0
 
 
+def cmd_envframe_lifetime_proof_2711_coverage():
+    """Issue #2711: EnvFrame dual-epoch Agent-visible lifetime proof.
+
+    Closes the multi-fiber Agent observability gap: agents previously had to
+    join several counters (hold_gen / compact_gen / workspace_epoch /
+    densify_ownership_scan_* / hold_gen_mismatch_total) to answer "have my
+    EnvFrame refs survived densify + steal without dual-path lag?". #2711
+    adds a single read-only snapshot (symmetric to TypeLinearCommitProof
+    #2697 for type×linear) that packages all the relevant state into one
+    struct + one query surface.
+    """
+    print(f"{B}=== envframe lifetime proof (#2711) ==={N}")
+    script = ROOT / "scripts" / "check_envframe_lifetime_proof_2711.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("envframe lifetime proof (#2711) contract rows failed")
+        return 1
+    ok("envframe lifetime proof (#2711) clean")
+    return 0
+
+
 def cmd_panic_residual_densify_hard_2598_coverage():
     """Issue #2598: production densify-after panic residual → hard
     (align with steal residual hard-AND).
@@ -8494,6 +8518,7 @@ def cmd_gate():
         or cmd_general_object_pin_auto_wire_2597_coverage()
         or cmd_general_object_pin_auto_wire_2709_coverage()
         or cmd_panic_checkpoint_steal_hard_2710_coverage()
+        or cmd_envframe_lifetime_proof_2711_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()

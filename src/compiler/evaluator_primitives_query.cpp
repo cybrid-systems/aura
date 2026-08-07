@@ -6434,6 +6434,45 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               g_type_linear_commit_proof_wired.load(std::memory_order_relaxed)));
                 insert_kv("schema-2697", 2697);
                 insert_kv("issue-2697", 2697);
+                // Issue #2711: EnvFrame dual-epoch Agent-visible lifetime
+                // proof (symmetric to TypeLinearCommitProof #2697 for
+                // type×linear). Read-only snapshot of hold_gen ×
+                // compact_gen × mutation_epoch × scan outcomes +
+                // would_allow_commit / force_reason_code. Production
+                // multi-fiber Agent orch can answer "have my EnvFrame
+                // refs survived densify + steal without dual-path lag?"
+                // by querying this struct + comparing stamp deltas.
+                // Soft / dev_off / unset: zero-cost / empty-healthy
+                // proof on quiet path (no extra atomics — counter reads
+                // only). #2164 / #2340 / #2361 surfaces preserved (no
+                // regression). Additive only — schema lineage extends
+                // with schema-2711 / issue-2711 sentinels.
+                {
+                    using aura::core::envframe_lifetime::snapshot_envframe_lifetime_proof;
+                    using aura::core::envframe_lifetime::EnvFrameLifetimeProof;
+                    const EnvFrameLifetimeProof p = snapshot_envframe_lifetime_proof();
+                    insert_kv("envframe-lifetime-proof-hold-gen",
+                              static_cast<std::int64_t>(p.hold_gen));
+                    insert_kv("envframe-lifetime-proof-compact-gen",
+                              static_cast<std::int64_t>(p.compact_gen));
+                    insert_kv("envframe-lifetime-proof-mutation-epoch",
+                              static_cast<std::int64_t>(p.mutation_epoch));
+                    insert_kv("envframe-lifetime-proof-scans-run",
+                              static_cast<std::int64_t>(p.scans_run));
+                    insert_kv("envframe-lifetime-proof-densify-scan-total",
+                              static_cast<std::int64_t>(p.densify_scan_total));
+                    insert_kv("envframe-lifetime-proof-densify-scan-fail",
+                              static_cast<std::int64_t>(p.densify_scan_fail));
+                    insert_kv("envframe-lifetime-proof-hold-gen-mismatch-total",
+                              static_cast<std::int64_t>(p.hold_gen_mismatch_total));
+                    insert_kv("envframe-lifetime-proof-would-allow-commit",
+                              p.would_allow_commit ? 1 : 0);
+                    insert_kv("envframe-lifetime-proof-force-reason-code",
+                              static_cast<std::int64_t>(p.force_reason_code));
+                    insert_kv("envframe-lifetime-proof-wired", 1);
+                    insert_kv("schema-2711", 2711);
+                    insert_kv("issue-2711", 2711);
+                }
                 // Issue #2698: query:occurrence-stability-epoch — independent
                 // monotonic epoch (decoupled from cache_epoch). Advances only on
                 // outermost success + persist (#2608), densify/steal that
