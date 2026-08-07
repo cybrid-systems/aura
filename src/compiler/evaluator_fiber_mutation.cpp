@@ -811,7 +811,26 @@ void aura::compiler::Evaluator::on_arena_compact_hook() {
                              : 0;
     aura_hot_update_on_deferred_reemit_seen_on_steal(steal_fiber_id);
 
-    if (mutation_boundary_depth() == 0 && aura_hot_update_has_deferred_reemit() != 0) {
+    // Issue #2715: deferred reemit on steal stays sticky until
+    // BoundaryExit (no foreign-worker drain). Under production, the
+    // reemit body (run_hot_update_recovery_if_needed) must NOT run on
+    // the steal-complete path — the stealing worker is not the owning
+    // eval thread, and running the reemit body off-thread races with
+    // the mutation-boundary / owning-eval invariants. Pending stays
+    // sticky (deferred_reemit_pending_v2_ stays true) until the next
+    // legitimate BoundaryExit on the owning eval (per #2604 — the
+    // sole automatic drain site for Deferred kind under production).
+    // The observability counter (reemit_deferred_seen_on_steal_total)
+    // already bumps above (line 812 — unconditional) so Agents can
+    // correlate "pending was observed on this steal". Soft / test
+    // path keeps the existing behavior (drain on steal) so unit tests
+    // can exercise the recovery path without setting up BoundaryExit
+    // sequencing. The gate is `!production_defaults_active()` —
+    // production multi-worker must not off-thread reemit under
+    // exchange races (per #2690 exchange-not-check). Decision table
+    // documented in hot_update_registry.hh near ReemitBoundaryPolicy.
+    if (!aura::compiler::typed_audit::production_defaults_active() &&
+        mutation_boundary_depth() == 0 && aura_hot_update_has_deferred_reemit() != 0) {
         const auto cur = defuse_version_.load(std::memory_order_acquire);
         const auto dirty_n = workspace_flat_ ? workspace_flat_->mark_dirty_upward_call_count() : 0;
         run_hot_update_recovery_if_needed(/*success=*/true, cur, dirty_n);

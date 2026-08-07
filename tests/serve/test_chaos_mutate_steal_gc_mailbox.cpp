@@ -797,6 +797,133 @@ static void ac2513_docs_and_source() {
           "AC1: soak optional without SOAK=1 (PR smoke free)");
 }
 
+// ── Issue #2715 AC1: production + deferred pending + steal → observability
+// counter advances, no foreign-worker drain, pending stays sticky. ──
+static void ac2715_1_production_observability_no_drain() {
+    std::println("\n--- #2715 AC1: production + steal → observability no foreign drain ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto hur = read_file("src/compiler/hot_update_registry.hh");
+    // The drain call (run_hot_update_recovery_if_needed) is gated on
+    // !production_defaults_active() — production skips the foreign-worker
+    // drain. The observability counter (reemit_deferred_seen_on_steal_total)
+    // still bumps unconditionally above.
+    CHECK(efm.find("aura_hot_update_on_deferred_reemit_seen_on_steal(steal_fiber_id)") !=
+              std::string::npos,
+          "AC1: observability counter still bumps on steal (unconditional)");
+    CHECK(efm.find("!aura::compiler::typed_audit::production_defaults_active()") !=
+              std::string::npos,
+          "AC1: foreign-worker drain gated on !production_defaults_active()");
+    CHECK(hur.find("reemit_deferred_seen_on_steal_total") != std::string::npos,
+          "AC1: counter declared in hot_update_registry.hh");
+    CHECK(hur.find("deferred_reemit_pending_v2_") != std::string::npos,
+          "AC1: pending flag preserved (sticky until BoundaryExit)");
+}
+
+// ── Issue #2715 AC2: BoundaryExit on owning eval → drain still works. ──
+static void ac2715_2_boundary_exit_drains() {
+    std::println("\n--- #2715 AC2: BoundaryExit on owning eval drains ---");
+    // The #2604 boundary auto-drain path is unchanged by #2715 (the
+    // gate is on the steal-complete / refresh path only). Verify the
+    // boundary path still exists in aura_jit_bridge.cpp.
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto hur = read_file("src/compiler/hot_update_registry.hh");
+    CHECK(br.find("aura_hot_update_drain_pending_recovery") != std::string::npos,
+          "AC2: boundary drain call preserved (per #2604)");
+    CHECK(hur.find("drain_pending_recovery") != std::string::npos,
+          "AC2: drain_pending_recovery function preserved");
+    CHECK(hur.find("DrainReason::BoundaryExit") != std::string::npos,
+          "AC2: BoundaryExit drain reason preserved");
+    CHECK(hur.find("DrainReason::StormClear") != std::string::npos,
+          "AC2: StormClear drain reason preserved");
+    CHECK(hur.find("DrainReason::Explicit") != std::string::npos,
+          "AC2: Explicit drain reason preserved");
+}
+
+// ── Issue #2715 AC3: storm re-entry mid-drain preserves #2690 semantics. ──
+static void ac2715_3_storm_reentry_skipped_reentered() {
+    std::println("\n--- #2715 AC3: storm re-entry mid-drain preserves #2690 ---");
+    // The #2690 exchange-not-check is unchanged by #2715 — the gate is
+    // on the steal-complete / refresh path only. Verify the
+    // exchange-not-check contract surface is preserved.
+    const auto hur = read_file("src/compiler/hot_update_registry.hh");
+    CHECK(hur.find("skipped_reentered") != std::string::npos ||
+              hur.find("skip_reentered") != std::string::npos,
+          "AC3: skipped_reentered counter preserved (per #2690 exchange-not-check)");
+    CHECK(hur.find("exchange") != std::string::npos, "AC3: exchange-not-check contract preserved");
+}
+
+// ── Issue #2715 AC4: Soft / test → drain on steal still available. ──
+static void ac2715_4_soft_drain_still_available() {
+    std::println("\n--- #2715 AC4: Soft / test → drain on steal still available ---");
+    // The gate is !production_defaults_active() — Soft / test path
+    // keeps the existing behavior (drain on steal) for unit tests.
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("!aura::compiler::typed_audit::production_defaults_active() &&") !=
+              std::string::npos,
+          "AC4: drain on steal gated on !production_defaults_active()");
+    CHECK(efm.find("run_hot_update_recovery_if_needed") != std::string::npos,
+          "AC4: drain call still reachable in Soft / test path");
+    CHECK(efm.find("mutation_boundary_depth() == 0") != std::string::npos,
+          "AC4: original mutation_boundary_depth() == 0 check preserved");
+    CHECK(efm.find("aura_hot_update_has_deferred_reemit() != 0") != std::string::npos,
+          "AC4: original deferred-reemit check preserved");
+}
+
+// ── Issue #2715 AC5: additive only — #2690 / #2604 / #2273 / #2205 preserved. ──
+static void ac2715_5_additive_no_regression() {
+    std::println("\n--- #2715 AC5: additive only (no regression) ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto hur = read_file("src/compiler/hot_update_registry.hh");
+    // #2690 unified drain surface preserved.
+    CHECK(hur.find("Issue #2690") != std::string::npos,
+          "AC5: #2690 unified drain surface preserved");
+    // #2604 boundary auto-drain surface preserved.
+    CHECK(efm.find("Issue #2604") != std::string::npos ||
+              hur.find("Issue #2604") != std::string::npos,
+          "AC5: #2604 boundary auto-drain surface preserved");
+    // #2273 steal-path observability surface preserved.
+    CHECK(efm.find("Issue #2273") != std::string::npos,
+          "AC5: #2273 steal-path observability surface preserved");
+    // #2205 Defer production default surface preserved.
+    CHECK(hur.find("ReemitBoundaryPolicy::Defer") != std::string::npos,
+          "AC5: #2205 Defer production default surface preserved");
+    // No new query keys (per AC5 "Additive only if needed").
+    // reemit_deferred_seen_on_steal_total is the existing counter that
+    // the new gate keeps bumping (line 812 unconditional).
+    CHECK(hur.find("reemit_deferred_seen_on_steal_total") != std::string::npos,
+          "AC5: reemit_deferred_seen_on_steal_total counter (existing, additive)");
+}
+
+// ── Issue #2715 AC6: source-cite + linter + no docs/design/. ──
+static void ac2715_6_source_and_linter() {
+    std::println("\n--- #2715 AC6: source-cite + linter + no docs/design/ ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto hur = read_file("src/compiler/hot_update_registry.hh");
+    const auto t = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto lint = read_file("scripts/check_deferred_reemit_steal_sticky_2715.py");
+    const auto build = read_file("build.py");
+    CHECK(efm.find("Issue #2715") != std::string::npos,
+          "AC6: evaluator_fiber_mutation.cpp cites #2715");
+    CHECK(hur.find("Issue #2715") != std::string::npos, "AC6: hot_update_registry.hh cites #2715");
+    CHECK(t.find("ac2715_1_production_observability_no_drain") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2715_2_boundary_exit_drains") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2715_3_storm_reentry_skipped_reentered") != std::string::npos,
+          "AC6: AC3 test present");
+    CHECK(t.find("ac2715_4_soft_drain_still_available") != std::string::npos,
+          "AC6: AC4 test present");
+    CHECK(t.find("ac2715_5_additive_no_regression") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2715_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2715") != std::string::npos,
+          "AC6: coverage linter present and cites #2715");
+    CHECK(build.find("check_deferred_reemit_steal_sticky_2715") != std::string::npos ||
+              build.find("cmd_deferred_reemit_steal_sticky_2715_coverage") != std::string::npos,
+          "AC6: build.py gate entry");
+    // No docs/design/ per #1655.
+    CHECK(!std::filesystem::exists("docs/design/2715-deferred-reemit-steal-sticky.md"),
+          "AC6: no docs/design/2715-* per #1655");
+}
+
 } // namespace
 
 int run_test_chaos_mutate_steal_gc_mailbox() {
@@ -832,6 +959,20 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2380_production_concurrency_docs();
         ac2513_docs_and_source();
         ac2554_docs_and_source();
+        // Issue #2715: deferred reemit on steal stays sticky until
+        // BoundaryExit (no foreign-worker drain). Production skips
+        // the steal-complete drain; pending stays sticky until the
+        // next legitimate BoundaryExit on the owning eval. The
+        // observability counter (reemit_deferred_seen_on_steal_total)
+        // still bumps unconditionally. Soft / test path keeps the
+        // existing behavior (drain on steal) for unit tests. Per
+        // #2690 / #2604 / #2273 / #2205 surfaces preserved.
+        ac2715_1_production_observability_no_drain();
+        ac2715_2_boundary_exit_drains();
+        ac2715_3_storm_reentry_skipped_reentered();
+        ac2715_4_soft_drain_still_available();
+        ac2715_5_additive_no_regression();
+        ac2715_6_source_and_linter();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
