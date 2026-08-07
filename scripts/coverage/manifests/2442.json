@@ -10,8 +10,15 @@
         "Issue #2442",
         "clear_macro_dirty_all",
         "dirty_column_mtx_.mutable_get()",
-        "std::atomic_ref<std::uint8_t>(b).store(0",
         "unique_lock"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/ast_impl.cpp",
+      "contains": [
+        "FlatAST::clear_macro_dirty_all",
+        "std::atomic_ref<std::uint8_t>(b).store(0"
       ]
     },
     {

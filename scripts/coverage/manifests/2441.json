@@ -10,9 +10,16 @@
         "Issue #2441",
         "apply_macro_dirty_bits",
         "dirty_column_mtx_.mutable_get()",
-        "fetch_or(reasons",
-        "newly_set = static_cast<std::uint8_t>(reasons & ~prev)",
         "macro_dirty_"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/ast_impl.cpp",
+      "contains": [
+        "FlatAST::apply_macro_dirty_bits",
+        "fetch_or(reasons",
+        "newly_set = static_cast<std::uint8_t>(reasons & ~prev)"
       ]
     },
     {
