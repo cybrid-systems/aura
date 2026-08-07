@@ -5,12 +5,20 @@
   "checks": [
     {
       "ac": "AC1",
-      "path": "src/core/ast.ixx",
+      "path": "src/core/flatast_restamp.hh",
       "contains": [
         "Issue #2402",
         "RestampPolicy",
         "resolve_restamp_policy",
         "AURA_RESTAMP_POLICY"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "flatast_restamp.hh",
+        "resolve_restamp_policy"
       ]
     },
     {
