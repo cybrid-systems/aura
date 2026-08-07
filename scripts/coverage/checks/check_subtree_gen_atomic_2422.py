@@ -37,6 +37,9 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
+    # FlatAST decomp step 3: load_subtree_gen body lives in ast_impl.cpp.
+    impl = _read("src/core/ast_impl.cpp")
+    ast_src = ast + "\n" + impl
     test = _read("tests/core/test_subtree_gen_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
@@ -44,7 +47,7 @@ def main() -> int:
     must("Issue #2422", "AC1", ast)
     must("std::pmr::vector<std::uint32_t> subtree_gen_", "AC1", ast)
     must("std::atomic_ref<std::uint32_t>", "AC1", ast)
-    must("load_subtree_gen", "AC1", ast)
+    must("load_subtree_gen", "AC1", ast_src)
     must_not("std::pmr::vector<std::uint16_t> subtree_gen_", "AC1", ast)
     must("2422 AC1", "AC1", test)
 

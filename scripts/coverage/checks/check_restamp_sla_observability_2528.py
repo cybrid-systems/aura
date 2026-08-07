@@ -44,6 +44,10 @@ def main() -> int:
             fails.append(f"{label}: missing {n!r}")
 
     astx = _read("src/core/ast.ixx")
+    # FlatAST decomp step 3: restamp SLO counters/body live in ast_impl + flatast_restamp.hh.
+    impl = _read("src/core/ast_impl.cpp")
+    restamp = _read("src/core/flatast_restamp.hh")
+    ast_src = astx + "\n" + impl + "\n" + restamp
     sec = _read("src/compiler/evaluator_primitives_security.cpp")
     test = _read("tests/core/test_restamp_sla_observability.cpp")
     cmake = _read("CMakeLists.txt")
@@ -63,11 +67,11 @@ def main() -> int:
 
     # AC2 — soft / no-wrap path: counters stay 0; no measurable overhead.
     # Counters live INSIDE restamp_all_node_generations() (the only wrap path).
-    must("restamp_slo_breach_total_.fetch_add", "AC2", astx)
-    must("restamp_us_p99_.compare_exchange_weak", "AC2", astx)
+    must("restamp_slo_breach_total_.fetch_add", "AC2", ast_src)
+    must("restamp_us_p99_.compare_exchange_weak", "AC2", ast_src)
     # Fresh Arena → all counters 0 (verified by test AC2).
     # Default SLO budget 500 µs.
-    must("cached{500}", "AC2", astx)
+    must("cached{500}", "AC2", ast_src)
 
     # AC3 — is_valid / refresh_if_stale correct after incremental restamp.
     # Covered by existing fixtures (#2402 / #2122 / #2394 / #2393 lineage).
@@ -79,12 +83,12 @@ def main() -> int:
     must("mutable std::atomic<std::uint64_t> restamp_us_total_", "AC3", astx)
 
     # AC4 — configurable SLO budget; breach counter increments when exceeded.
-    must("AURA_REStamp_SLO_US", "AC4", astx)
-    must("resolve_restamp_slo_us", "AC4", astx)
-    must("if (us_u > slo_budget_us)", "AC4", astx)
-    must("restamp_slo_breach_total_.fetch_add(1", "AC4", astx)
-    must("set_restamp_slo_us_budget", "AC4", astx)
-    must("60'000'000u", "AC4", astx)  # upper clamp 60s
+    must("AURA_REStamp_SLO_US", "AC4", ast_src)
+    must("resolve_restamp_slo_us", "AC4", ast_src)
+    must("if (us_u > slo_budget_us)", "AC4", ast_src)
+    must("restamp_slo_breach_total_.fetch_add(1", "AC4", ast_src)
+    must("set_restamp_slo_us_budget", "AC4", ast_src)
+    must("60'000'000u", "AC4", ast_src)  # upper clamp 60s
 
     # AC5 — chaos soak (TSan clean) — covered by existing #2061 fixture.
     # No new TSan surface introduced (SLA surface is additive observability).

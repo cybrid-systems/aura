@@ -37,6 +37,9 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
+    # FlatAST decomp step 3: binding_gens load/CAS/store live in ast_impl.cpp.
+    impl = _read("src/core/ast_impl.cpp")
+    ast_src = ast + "\n" + impl
     test = _read("tests/core/test_binding_gens_atomic.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
@@ -50,11 +53,11 @@ def main() -> int:
     )
     must("2417 AC1", "AC1", test)
 
-    must("binding_gens_.load(std::memory_order_acquire)", "AC2", ast)
-    must("compare_exchange_weak", "AC2", ast)
+    must("binding_gens_.load(std::memory_order_acquire)", "AC2", ast_src)
+    must("compare_exchange_weak", "AC2", ast_src)
     must("2417 AC2", "AC2", test)
 
-    must("binding_gens_.store(std::make_shared<BindingGenMap>()", "AC3", ast)
+    must("binding_gens_.store(std::make_shared<BindingGenMap>()", "AC3", ast_src)
     must("2417 AC3", "AC3", test)
 
     # In-place mutate on shared map without COW is gone
