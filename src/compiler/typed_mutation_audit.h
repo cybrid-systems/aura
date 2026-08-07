@@ -861,6 +861,67 @@ inline void clear_type_linear_commit_proof_for_test() noexcept {
     g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
 }
 
+// Issue #2717: active stamp inside boundary + composite commit. The
+// low-level stamp_type_linear_commit_proof above only stores the
+// epoch — the proof struct itself is built on-the-fly by the query
+// path. #2717 fills the proof from live state at the four stamping
+// sites (boundary success, boundary reject, composite ok, composite
+// reject) so Agents can hold a single TypeLinearCommitProof across
+// densify / steal / remap and re-check defuse_or_epoch_stamp without
+// re-joining N query surfaces. The struct is returned by value; the
+// epoch stamp is stored to g_last_type_linear_commit_proof_stamp so
+// the existing query:last-type-linear-commit-proof path stays
+// additive. The new counter g_type_linear_commit_proof_stamped_total
+// bumps once per call (additive — no regression on #2613 / #2697).
+inline std::atomic<std::uint64_t> g_type_linear_commit_proof_stamped_total{0};
+[[nodiscard]] inline std::uint64_t type_linear_commit_proof_stamped_total_v_read() noexcept {
+    return g_type_linear_commit_proof_stamped_total.load(std::memory_order_relaxed);
+}
+inline void reset_type_linear_commit_proof_stamped_total_for_test() noexcept {
+    g_type_linear_commit_proof_stamped_total.store(0, std::memory_order_relaxed);
+}
+
+// Build a TypeLinearCommitProof from live state. Pure read — no
+// bumps, no atomics beyond the existing typed_audit counters. Cheap
+// on the quiet path (per AC3): no extra heavy walks solely for the
+// stamp. Fields:
+//   - readiness_bp / force_reason_code / would_allow_commit: from
+//     commit_readiness_live_policy() (which already reads the live
+//     typed_audit counters).
+//   - linear_ok: from the live linear OK counter (typed_audit).
+//   - occurrence_consistent: from the live occurrence consistency
+//     counter (typed_audit).
+//   - defuse_or_epoch_stamp: from the caller's current_epoch_or_defuse
+//     (caller picks the source — cp.version / current_mutation_epoch
+//     / commit_epoch).
+//   - live_goal_count + linear_root_count: from live counters (0 if
+//     not available — matches the existing #2697 on-the-fly path;
+//     per #2708, real per-root walk wires through the same call site).
+inline TypeLinearCommitProof
+build_type_linear_commit_proof_from_live(std::uint64_t current_epoch_or_defuse) noexcept {
+    TypeLinearCommitProof p{};
+    const auto ready = commit_readiness_live_policy();
+    const auto live_r = commit_readiness(ready);
+    p.readiness_bp = live_r.readiness_bp;
+    p.force_reason_code = static_cast<std::uint32_t>(live_r.force_reason_code);
+    p.would_allow_commit = live_r.would_allow_commit;
+    p.linear_ok = ready.linear_ok;
+    p.occurrence_consistent = ready.cs_has_work || !ready.expected_partial;
+    p.defuse_or_epoch_stamp = current_epoch_or_defuse;
+    p.live_goal_count = 0;   // #2708 future wire — real per-root walk
+    p.linear_root_count = 0; // #2708 future wire — real per-root walk
+    p.schema = kTypeLinearCommitProofIssue;
+    // Bump the stamped total (additive — surface for Agent
+    // dashboards to attribute "active stamp fired" vs "face fired
+    // but Soft path observed only").
+    g_type_linear_commit_proof_stamped_total.fetch_add(1, std::memory_order_relaxed);
+    // Also stamp the epoch (existing low-level helper) so the
+    // existing query:last-type-linear-commit-proof path stays
+    // additive — query path returns the latest stamp epoch.
+    stamp_type_linear_commit_proof(current_epoch_or_defuse);
+    return p;
+}
+
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
     if (r == "cone_truncate")
         return 9; // #2621
