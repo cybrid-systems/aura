@@ -6434,6 +6434,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               g_type_linear_commit_proof_wired.load(std::memory_order_relaxed)));
                 insert_kv("schema-2697", 2697);
                 insert_kv("issue-2697", 2697);
+                // Issue #2717: stamp TypeLinearCommitProof on boundary +
+                // composite commit (close #2697 residual). The existing
+                // #2697 surface stays additive (readiness_bp /
+                // force-reason-code / would-allow-commit / linear-ok /
+                // occurrence-consistent / defuse-or-epoch-stamp /
+                // live-goal-count / linear-root-count / last-stamp /
+                // wired / schema-2697 / issue-2697 — unchanged). The
+                // new counter g_type_linear_commit_proof_stamped_total
+                // bumps once per boundary + composite commit exit
+                // (stamping the durable proof) — surface for Agent
+                // dashboards to attribute "active stamp fired" vs
+                // "face fired but Soft path observed only". Additive
+                // only — no replacement of #2613 / #2697 query keys
+                // or the existing query:last-type-linear-commit-proof
+                // path. #2613 health surface preserved (no regression).
+                {
+                    using aura::compiler::typed_audit::
+                        type_linear_commit_proof_stamped_total_v_read;
+                    insert_kv(
+                        "type-linear-commit-proof-stamped-total",
+                        static_cast<std::int64_t>(type_linear_commit_proof_stamped_total_v_read()));
+                    insert_kv("type-linear-commit-proof-stamped-wired", 1);
+                    insert_kv("schema-2717", 2717);
+                    insert_kv("issue-2717", 2717);
+                }
                 // Issue #2711: EnvFrame dual-epoch Agent-visible lifetime
                 // proof (symmetric to TypeLinearCommitProof #2697 for
                 // type×linear). Read-only snapshot of hold_gen ×

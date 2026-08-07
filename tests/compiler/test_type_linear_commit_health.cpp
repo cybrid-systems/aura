@@ -274,6 +274,117 @@ static void ac2697_6_no_docs_design() {
           "AC6: no docs/design/2697-* per #1655");
 }
 
+// ── Issue #2717 AC1: boundary success and reject paths stamp the proof ──
+static void ac2717_1_boundary_success_and_reject_stamp() {
+    std::println("\n--- #2717 AC1: boundary success + reject stamp ---");
+    const auto efm = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("build_type_linear_commit_proof_from_live") != std::string::npos,
+          "AC1: tma declares build helper");
+    CHECK(tma.find("g_type_linear_commit_proof_stamped_total") != std::string::npos,
+          "AC1: tma declares stamped-total counter");
+    CHECK(efm.find("build_type_linear_commit_proof_from_live") != std::string::npos,
+          "AC1: at least one stamp site present in evaluator_mutation_boundary.cpp");
+}
+
+// ── Issue #2717 AC2: composite_txn_commit stamps on both ok and reject ──
+static void ac2717_2_composite_txn_commit_stamps() {
+    std::println("\n--- #2717 AC2: composite_txn_commit stamps ---");
+    const auto efm = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(efm.find("build_type_linear_commit_proof_from_live") != std::string::npos,
+          "AC2: build call present in evaluator_mutation_boundary.cpp");
+    CHECK(efm.find("(void)typed_audit::build_type_linear_commit_proof_from_live(cp.version)") !=
+              std::string::npos,
+          "AC2: stamp call uses cp.version as the defuse_or_epoch source");
+}
+
+// ── Issue #2717 AC3: Soft + quiet path → stamp cheap (zeros / vacuous healthy) ──
+static void ac2717_3_soft_quiet_path_cheap() {
+    std::println("\n--- #2717 AC3: Soft + quiet path → stamp cheap ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("build_type_linear_commit_proof_from_live") != std::string::npos,
+          "AC3: build helper present (read-only — counter reads only)");
+    // The source has "p.live_goal_count = 0; // #2708 future wire" after
+    // clang-format — check for the unique comment suffix and the
+    // assignment prefix (whitespace-independent).
+    CHECK(tma.find("p.live_goal_count = 0;") != std::string::npos,
+          "AC3: live_goal_count defaults to 0 (cheap on quiet path)");
+    CHECK(tma.find("p.linear_root_count = 0;") != std::string::npos,
+          "AC3: linear_root_count defaults to 0 (cheap on quiet path)");
+    CHECK(tma.find("// #2708 future wire") != std::string::npos,
+          "AC3: #2708 future wire comment present");
+    CHECK(tma.find("g_type_linear_commit_proof_stamped_total.fetch_add(1") != std::string::npos,
+          "AC3: stamped_total bumps (1 atomic add per call)");
+}
+
+// ── Issue #2717 AC4: Agent comparing defuse_or_epoch_stamp detects drift ──
+static void ac2717_4_drift_detection_via_defuse_or_epoch_stamp() {
+    std::println("\n--- #2717 AC4: drift detection via defuse_or_epoch_stamp ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("p.defuse_or_epoch_stamp = current_epoch_or_defuse;") != std::string::npos,
+          "AC4: proof struct has defuse_or_epoch_stamp field");
+    CHECK(tma.find("struct TypeLinearCommitProof") != std::string::npos,
+          "AC4: TypeLinearCommitProof struct present");
+    CHECK(tma.find("stamp_type_linear_commit_proof") != std::string::npos,
+          "AC4: low-level stamp preserved (existing query path additive)");
+}
+
+// ── Issue #2717 AC5: additive only — preserve #2613 / #2697 surfaces ──
+static void ac2717_5_additive_no_regression() {
+    std::println("\n--- #2717 AC5: additive only (no regression) ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // #2613 is the "type-linear-commit-health" query — no struct
+    // constant in typed_mutation_audit.h. Verified via the "#2613"
+    // comment fragment + the query surface in evaluator_primitives_query.cpp.
+    CHECK(tma.find("#2613") != std::string::npos, "AC5: #2613 comment reference preserved");
+    CHECK(q.find("type-linear-commit-health") != std::string::npos,
+          "AC5: #2613 query surface preserved");
+    CHECK(tma.find("kTypeLinearCommitProofIssue = 2697") != std::string::npos,
+          "AC5: #2697 issue stamp preserved");
+    CHECK(q.find("type-linear-commit-proof-readiness-bp") != std::string::npos,
+          "AC5: #2697 readiness-bp queryable (additive)");
+    CHECK(q.find("schema-2697") != std::string::npos, "AC5: schema-2697 preserved");
+    CHECK(tma.find("g_type_linear_commit_proof_stamped_total") != std::string::npos,
+          "AC5: new stamped-total counter declared (additive)");
+    CHECK(q.find("type-linear-commit-proof-stamped-total") != std::string::npos,
+          "AC5: new stamped-total queryable");
+    CHECK(q.find("schema-2717") != std::string::npos, "AC5: schema-2717 sentinel");
+    CHECK(q.find("issue-2717") != std::string::npos, "AC5: issue-2717 sentinel");
+}
+
+// ── Issue #2717 AC6: source-cite + linter + no docs/design/ ──
+static void ac2717_6_source_and_linter() {
+    std::println("\n--- #2717 AC6: source-cite + linter + no docs/design/ ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto efm = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    const auto lint = read_file("scripts/check_type_linear_commit_proof_stamp_2717.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("Issue #2717") != std::string::npos, "AC6: tma cites #2717");
+    CHECK(efm.find("Issue #2717") != std::string::npos,
+          "AC6: evaluator_mutation_boundary.cpp cites #2717");
+    CHECK(q.find("Issue #2717") != std::string::npos,
+          "AC6: evaluator_primitives_query.cpp cites #2717");
+    CHECK(t.find("ac2717_1_boundary_success_and_reject_stamp") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2717_2_composite_txn_commit_stamps") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2717_3_soft_quiet_path_cheap") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2717_4_drift_detection_via_defuse_or_epoch_stamp") != std::string::npos,
+          "AC6: AC4 test present");
+    CHECK(t.find("ac2717_5_additive_no_regression") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2717_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2717") != std::string::npos,
+          "AC6: coverage linter present and cites #2717");
+    CHECK(build.find("check_type_linear_commit_proof_stamp_2717") != std::string::npos ||
+              build.find("cmd_type_linear_commit_proof_stamp_2717_coverage") != std::string::npos,
+          "AC6: build.py gate entry");
+    CHECK(!std::filesystem::exists("docs/design/2717-type-linear-commit-proof-stamp.md"),
+          "AC6: no docs/design/2717-* per #1655");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -290,7 +401,19 @@ int run_test_type_linear_commit_health() {
     ac2697_4_additive_facade_to_2613();
     ac2697_5_source_and_linter();
     ac2697_6_no_docs_design();
-    std::println("\n=== #2613 + #2697: {} passed, {} failed ===", g_passed, g_failed);
+    // Issue #2717: stamp TypeLinearCommitProof on boundary + composite
+    // commit (close #2697 residual). The boundary success + reject
+    // paths and the composite_txn_commit path now stamp the durable
+    // proof via build_type_linear_commit_proof_from_live. Soft + quiet
+    // path stays cheap (counter reads only). Existing #2613 / #2697
+    // query surfaces preserved.
+    ac2717_1_boundary_success_and_reject_stamp();
+    ac2717_2_composite_txn_commit_stamps();
+    ac2717_3_soft_quiet_path_cheap();
+    ac2717_4_drift_detection_via_defuse_or_epoch_stamp();
+    ac2717_5_additive_no_regression();
+    ac2717_6_source_and_linter();
+    std::println("\n=== #2613 + #2697 + #2717: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -719,6 +719,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             typed_audit::MutationKind::Structural, cp.version, epoch_after,
                             typed_audit::AuditOutcome::Error,
                             static_cast<std::uint32_t>(audit_target), 0, fid, 0);
+                    // Issue #2717: stamp TypeLinearCommitProof on boundary
+                    // reject path. Agents can hold the proof across
+                    // densify / steal / remap and re-check
+                    // defuse_or_epoch_stamp without re-joining N
+                    // query surfaces. Cheap (no extra heavy walks).
+                    (void)typed_audit::build_type_linear_commit_proof_from_live(cp.version);
                     return cp;
                 }
                 // Composite paths never under-sample (self-evo multi-step safety).
@@ -3051,6 +3057,12 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
         static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
     cp.valid = true;
     bump_hygiene_checkpoint_save_total();
+    // Issue #2717: stamp TypeLinearCommitProof on boundary exit
+    // (covers render-fast-exit success, composite ok/reject,
+    // non-composite ok/reject — all paths that fall through
+    // to here). The linear-synth-hard-fail early-return above
+    // has its own stamp.
+    (void)typed_audit::build_type_linear_commit_proof_from_live(cp.version);
     return cp;
 }
 
