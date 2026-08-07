@@ -615,6 +615,148 @@ static void ac2693_6_source_and_linter() {
           "AC6: no docs/design/2693-* per #1655 (design rationale in close comment)");
 }
 
+// Issue #2712 AC1: production + Soft + consec >= K → heal body runs
+// (heal counter bumps, slots invalidated, must_deopt called).
+static void ac2712_1_production_soft_heal_fires() {
+    std::println("\n--- #2712 AC1: production + Soft + consec >= K → heal fires ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_set_epoch_invariant_mode(1); // Soft
+    aura_set_epoch_invariant_periodic_period_ms(50);
+    aura_set_epoch_invariant_soft_fuse_k(1); // K=1 fires on first stuck walk
+    const auto heal0 = aura_epoch_invariant_soft_fuse_heal_total_v_read();
+    // Inject stale slot so behind_after_clear > 0 after the walk.
+    for (int i = 0; i < 16; ++i)
+        aura_aot_clear_slot_for_test(i);
+    aura_aot_inject_live_stale_slot_for_test(13);
+    aura_periodic_epoch_invariant_walk_if_due(); // consec >= 1, K=1 → heal fires
+    const auto heal1 = aura_epoch_invariant_soft_fuse_heal_total_v_read();
+    CHECK(
+        heal1 > heal0,
+        "AC1: epoch_invariant_soft_fuse_heal_total bumped on consec >= K under production + Soft");
+    aura_aot_clear_slot_for_test(13);
+    aura_set_epoch_invariant_mode(0);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_set_epoch_invariant_soft_fuse_k(3);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// Issue #2712 AC2: Soft / K=0 / mode=Off → no heal body.
+static void ac2712_2_soft_k0_or_off_no_heal() {
+    std::println("\n--- #2712 AC2: Soft/K=0/mode=Off → no heal body ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_set_epoch_invariant_mode(1);
+    aura_set_epoch_invariant_periodic_period_ms(50);
+    // K=0 disables fuse (and thus heal) entirely.
+    aura_set_epoch_invariant_soft_fuse_k(0);
+    const auto heal_pre = aura_epoch_invariant_soft_fuse_heal_total_v_read();
+    for (int i = 0; i < 16; ++i)
+        aura_aot_clear_slot_for_test(i);
+    aura_aot_inject_live_stale_slot_for_test(15);
+    aura_periodic_epoch_invariant_walk_if_due(); // K=0 → no fuse, no heal
+    const auto heal_post = aura_epoch_invariant_soft_fuse_heal_total_v_read();
+    CHECK(heal_post == heal_pre, "AC2: K=0 → epoch_invariant_soft_fuse_heal_total never bumps");
+    aura_aot_clear_slot_for_test(15);
+    // mode=Off: walk doesn't run → no heal.
+    aura_set_epoch_invariant_mode(0);
+    const auto heal_pre2 = aura_epoch_invariant_soft_fuse_heal_total_v_read();
+    aura_aot_inject_live_stale_slot_for_test(16);
+    aura_periodic_epoch_invariant_walk_if_due(); // mode=Off → skip
+    const auto heal_post2 = aura_epoch_invariant_soft_fuse_heal_total_v_read();
+    CHECK(heal_post2 == heal_pre2,
+          "AC2: mode=Off → epoch_invariant_soft_fuse_heal_total never bumps");
+    aura_aot_clear_slot_for_test(16);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_set_epoch_invariant_soft_fuse_k(3);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+// Issue #2712 AC3: heal is bounded — consec resets to 0 after heal so
+// the next heal requires K fresh stuck walks (re-entry mid-walk /
+// consecutive walks don't double-clear).
+static void ac2712_3_heal_bounded() {
+    std::println("\n--- #2712 AC3: heal bounded (consec resets to 0) ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_set_epoch_invariant_mode(1);
+    aura_set_epoch_invariant_periodic_period_ms(50);
+    aura_set_epoch_invariant_soft_fuse_k(1);
+    for (int i = 0; i < 16; ++i)
+        aura_aot_clear_slot_for_test(i);
+    aura_aot_inject_live_stale_slot_for_test(17);
+    const auto consec0 = aura_epoch_invariant_consecutive_dirty_total_v_read();
+    aura_periodic_epoch_invariant_walk_if_due(); // consec>=1 → heal fires
+    const auto consec1 = aura_epoch_invariant_consecutive_dirty_total_v_read();
+    CHECK(consec1 == 0,
+          "AC3: consec resets to 0 after heal (next heal requires K fresh stuck walks)");
+    // Next walk with no inject → consec stays 0 (clean walk).
+    aura_periodic_epoch_invariant_walk_if_due();
+    const auto consec2 = aura_epoch_invariant_consecutive_dirty_total_v_read();
+    CHECK(consec2 == 0, "AC3: clean walk keeps consec at 0");
+    aura_aot_clear_slot_for_test(17);
+    aura_set_epoch_invariant_mode(0);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_set_epoch_invariant_soft_fuse_k(3);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    (void)consec0;
+}
+
+// Issue #2712 AC4: reemit-owner TLS preferred. The heal body uses
+// aura_aot_get_reemit_owner_eval() so multi-eval hosts don't wipe
+// foreign slots (per #2299 / #2606).
+static void ac2712_4_reemit_owner_tls() {
+    std::println("\n--- #2712 AC4: reemit-owner TLS preferred ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("void* reemit_owner = aura_aot_get_reemit_owner_eval()") != std::string::npos,
+          "AC4: heal body calls aura_aot_get_reemit_owner_eval()");
+    CHECK(br.find("aura_aot_invalidate_all_stale_slots_for_eval(reemit_owner)") !=
+              std::string::npos,
+          "AC4: heal body passes reemit_owner to invalidate helper");
+    CHECK(br.find("aura_epoch_invariant_must_deopt_stale_live_closures()") != std::string::npos,
+          "AC4: heal body calls must_deopt stale live closures");
+}
+
+// Issue #2712 AC5: additive query keys (kebab + camelCase + schema/issue).
+static void ac2712_5_query_keys_added() {
+    std::println("\n--- #2712 AC5: additive query keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("epoch-invariant-soft-fuse-heal-total") != std::string::npos,
+          "AC5: query exposes epoch-invariant-soft-fuse-heal-total");
+    CHECK(q.find("epoch-invariant-soft-fuse-heal-wired") != std::string::npos,
+          "AC5: query exposes epoch-invariant-soft-fuse-heal-wired sentinel");
+    CHECK(q.find("schema-2712") != std::string::npos, "AC5: schema-2712 sentinel");
+    CHECK(q.find("issue-2712") != std::string::npos, "AC5: issue-2712 sentinel");
+    // Prior #2693 / #2668 / #2640 / #2541 surface preserved (regression).
+    CHECK(q.find("epoch-invariant-soft-fuse-total") != std::string::npos,
+          "AC5: #2693 surface preserved");
+    CHECK(q.find("schema-2693") != std::string::npos, "AC5: schema-2693 preserved");
+}
+
+// Issue #2712 AC6: source-cite + linter + no docs/design/.
+static void ac2712_6_source_and_linter() {
+    std::println("\n--- #2712 AC6: source-cite + linter + no docs/design/ ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto t = read_file("tests/compiler/test_epoch_invariant_walk.cpp");
+    const auto lint = read_file("scripts/check_epoch_invariant_soft_fuse_heal_2712.py");
+    const auto build = read_file("build.py");
+    CHECK(br.find("Issue #2712") != std::string::npos, "AC6: bridge cites #2712");
+    CHECK(q.find("Issue #2712") != std::string::npos, "AC6: obs_eval cites #2712");
+    CHECK(t.find("ac2712_1_production_soft_heal_fires") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2712_2_soft_k0_or_off_no_heal") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2712_3_heal_bounded") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2712_4_reemit_owner_tls") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2712_5_query_keys_added") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2712_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2712") != std::string::npos,
+          "AC6: coverage linter present and cites #2712");
+    CHECK(build.find("check_epoch_invariant_soft_fuse_heal_2712") != std::string::npos ||
+              build.find("cmd_epoch_invariant_soft_fuse_heal_2712_coverage") != std::string::npos,
+          "AC6: build.py gate entry");
+    const std::string design_path = "docs/design/2712-";
+    CHECK(read_file((design_path + "soft-fuse-heal.md").c_str()).empty(),
+          "AC6: no docs/design/2712-* per #1655");
+}
+
 } // namespace
 
 int run_test_epoch_invariant_walk() {
@@ -644,7 +786,19 @@ int run_test_epoch_invariant_walk() {
     ac2693_4_linter_self_test();
     ac2693_5_query_keys_added();
     ac2693_6_source_and_linter();
-    std::println("\n=== #2366 + #2640 + #2668 + #2693: {} passed, {} failed ===", g_passed,
+    // Issue #2712: Soft fuse → bounded physical heal (close #2693
+    // residual). Production + Soft + consec >= K additionally drives
+    // the heal body — invalidate stale slots via reemit-owner TLS +
+    // must-deopt stale live closures. Bounded (consec resets to 0
+    // after heal). Soft / K=0 / mode=Off → no heal body, no extra
+    // cost. #2693 / #2668 / #2640 / #2541 surfaces preserved.
+    ac2712_1_production_soft_heal_fires();
+    ac2712_2_soft_k0_or_off_no_heal();
+    ac2712_3_heal_bounded();
+    ac2712_4_reemit_owner_tls();
+    ac2712_5_query_keys_added();
+    ac2712_6_source_and_linter();
+    std::println("\n=== #2366 + #2640 + #2668 + #2693 + #2712: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }

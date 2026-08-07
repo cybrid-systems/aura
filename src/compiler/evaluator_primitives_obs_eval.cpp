@@ -14597,6 +14597,23 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"epoch-invariant-soft-fuse-wired", make_int(1)},
                 {"schema-2693", make_int(2693)},
                 {"issue-2693", make_int(2693)},
+                // Issue #2712: Soft fuse → bounded physical heal (close
+                // #2693 residual). Production + Soft + consec >= K
+                // drives the heal body — invalidates stale slots via
+                // reemit-owner TLS + must-deopt stale live closures.
+                // epoch_invariant_soft_fuse_heal_total bumps only when
+                // the heal body actually runs (production + Soft +
+                // consec >= K). Soft / K=0 / mode=Off → no heal body,
+                // counter stays at 0. Bounded: consec resets to 0
+                // after heal so the next heal requires K fresh stuck
+                // walks (per AC3). #2693 / #2668 / #2640 / #2541
+                // surfaces preserved (additive only).
+                {"epoch-invariant-soft-fuse-heal-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_soft_fuse_heal_total_v_read()))},
+                {"epoch-invariant-soft-fuse-heal-wired", make_int(1)},
+                {"schema-2712", make_int(2712)},
+                {"issue-2712", make_int(2712)},
             {"schema-2366", make_int(2366)},
             {"issue-2366", make_int(2366)},
             {"schema-2304", make_int(2304)},
