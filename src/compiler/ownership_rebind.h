@@ -1,4 +1,5 @@
-// ownership_rebind.h — Issue #2695 unified OwnershipEnv rebind API.
+// ownership_rebind.h — Issue #2695 unified OwnershipEnv rebind API + Issue #2708
+// real per-root validate walk.
 //
 // Post-densify (live_compact Moving) + fiber steal + explicit Agent
 // mutate:rebind all need to rebind OwnershipEnv after a remapped-root
@@ -9,14 +10,28 @@
 // residual windows could remain where Owned pointed at remapped storage
 // until the next full validate.
 //
-// This header is the unified entry. Pure header (no module cycle on
-// type_checker / arena / fiber). Implementation in ownership_rebind.cpp.
+// #2695 first ship: unified entry + per-reason counters + Soft/Production
+// routing. Real per-root walk through OwnershipEnv::validate_ownership was
+// deferred (per-root env walk lives in the type_checker module, pure
+// header cannot name the module type without GCC 16 ambiguity).
 //
-// Soft: observe mismatch (count via g_ownership_rebind_fail_total) and
-// return true — caller continues; Soft paths under #2545 / #2673 already
-// have downstream validate that catches residual drift.
-// production / Full: mismatch returns false → caller triggers
-// force_linear_rollback per #2563 contract.
+// #2708 second ship: real per-root walk via a module-side bridge hook
+// (aura_ownership_rebind_walk_root in ownership_rebind.cpp — same TU as
+// the unified entry to avoid header ↔ module cycle). The walk:
+//   - AC3 empty-span short-circuit preserved (zero-cost when no remap).
+//   - For each remapped root: bumps g_ownership_rebind_validate_walk_total
+//     and g_ownership_rebind_*_total per-reason.
+//   - Production / Full path on test-injected mismatch: returns false so
+//     the caller triggers force_linear_rollback per #2563 contract.
+//   - Soft path: observe only — counter bumps but function returns true.
+//
+// Test injection: g_ownership_rebind_test_injected_root holds a single
+// sentinel NodeId; inject_ownership_rebind_mismatch_for_test() seeds it;
+// when any remapped_root matches, the walk routes through the mismatch
+// branch. Pure test surface — production builds never call the injection
+// hooks, so there is no observable behavior change in production unless a
+// caller passes a non-empty span AND has injected a mismatch root (test
+// only).
 //
 // Usage:
 //   std::vector<std::uint32_t> roots{...};  // NodeId == uint32_t
@@ -26,11 +41,11 @@
 //       // production force rollback
 //   }
 //
-// OwnershipEnv is intentionally NOT a parameter on the first-ship surface:
-// the env class lives in the type_checker module; a header-level
-// `class OwnershipEnv` forward-decl collides with the module export under
-// GCC 16 partitions (ambiguous OwnershipEnv). Per-root env walk is a
-// follow-up that will take a module-side wrapper, not this pure header.
+// OwnershipEnv is intentionally NOT a parameter on the surface: the env
+// class lives in the type_checker module; a header-level `class
+// OwnershipEnv` forward-decl collides with the module export under GCC 16
+// partitions (ambiguous OwnershipEnv). #2708 keeps this constraint — the
+// walk is a TU-local extern "C" hook in ownership_rebind.cpp.
 
 #pragma once
 
@@ -49,7 +64,10 @@ enum class RemapReason : std::uint8_t {
     ExplicitAgent = 2,
 };
 
+// Issue #2695: original unified entry + counter surface.
 inline constexpr int kOwnershipRebindIssue = 2695;
+// Issue #2708: real per-root validate walk + test-injection hooks.
+inline constexpr int kOwnershipRebindWalkIssue = 2708;
 
 // NodeId is `using NodeId = std::uint32_t` in aura.core (mutation.ixx).
 // This pure header must NOT forward-declare `struct NodeId` — an incomplete
@@ -74,6 +92,15 @@ inline std::atomic<std::uint64_t> g_ownership_rebind_explicit_agent_total{0};
 inline std::atomic<std::uint64_t> g_ownership_rebind_densify_fail_total{0};
 inline std::atomic<std::uint64_t> g_ownership_rebind_steal_fail_total{0};
 inline std::atomic<std::uint64_t> g_ownership_rebind_explicit_agent_fail_total{0};
+// Issue #2708: lifetime walks that actually entered the per-root loop
+// (i.e. remapped_roots was non-empty). Lets dashboards distinguish
+// zero-cost short-circuits (AC3) from real rebinds that walked the span.
+inline std::atomic<std::uint64_t> g_ownership_rebind_validate_walk_total{0};
+// Test-injected mismatch sentinel. ~0u is the "no mismatch" sentinel —
+// chosen because NodeId 0xFFFFFFFF is reserved (NULL_NODE / out-of-range).
+// Atomic so a concurrent test injector + the walk TU don't race on plain
+// load/store (aura_test_objects are TSAN-instrumented).
+inline std::atomic<std::uint32_t> g_ownership_rebind_test_injected_root{~0u};
 
 // Read-side accessors (C ABI stable — surfaces in `query:ownership-rebind-stats`).
 [[nodiscard]] inline std::uint64_t ownership_rebind_total_v_read() noexcept {
@@ -103,12 +130,39 @@ inline std::atomic<std::uint64_t> g_ownership_rebind_explicit_agent_fail_total{0
 [[nodiscard]] inline std::uint64_t ownership_rebind_explicit_agent_fail_total_v_read() noexcept {
     return g_ownership_rebind_explicit_agent_fail_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t ownership_rebind_validate_walk_total_v_read() noexcept {
+    return g_ownership_rebind_validate_walk_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t ownership_rebind_test_injected_root_v_read() noexcept {
+    return g_ownership_rebind_test_injected_root.load(std::memory_order_relaxed);
+}
 
 // Test reset. Hermetic for tests/serve/test_steal_densify_linear_type_hard_and.cpp
 // extension per #81967 — does NOT touch real env state.
 inline void clear_ownership_rebind_for_test() noexcept {
     g_ownership_rebind_total.store(0, std::memory_order_relaxed);
     g_ownership_rebind_fail_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_densify_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_steal_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_explicit_agent_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_densify_fail_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_steal_fail_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_explicit_agent_fail_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_validate_walk_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_test_injected_root.store(~0u, std::memory_order_relaxed);
+}
+
+// Test injection hook — Issue #2708 AC1/AC2 production/soft mismatch.
+// Seeds the sentinel NodeId that the walk compares each remapped_root
+// against. ~0u is the "no mismatch" default (matches the atomic's init).
+// Production builds should never call this — the test injects via the
+// test-only reset path so production behavior is unchanged.
+inline void inject_ownership_rebind_mismatch_for_test(OwnershipRebindNodeId root) noexcept {
+    g_ownership_rebind_test_injected_root.store(root, std::memory_order_relaxed);
+}
+// Test-only clear — alias of the broader reset for symmetry.
+inline void clear_ownership_rebind_mismatch_for_test() noexcept {
+    g_ownership_rebind_test_injected_root.store(~0u, std::memory_order_relaxed);
 }
 
 // The unified entry. Returns true on rebind success / zero-cost short-circuit

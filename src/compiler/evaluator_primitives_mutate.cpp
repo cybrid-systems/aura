@@ -2807,6 +2807,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                             // First-ship: empty remapped-root span (linear_bindings
                             // is name set, not NodeId list). Per-root NodeId span
                             // wires in follow-up; AC3 zero-cost short-circuit here.
+                            // Issue #2708: real per-root walk wires through this
+                            // same call site. Empty span here preserves AC3 —
+                            // Agent mutate:rebind validates by name set above
+                            // (linear_bindings), not by NodeId span; the walk
+                            // runs when callers pass a non-empty span (test /
+                            // future wiring when Agent rebind exposes a NodeId
+                            // remapped root set).
                             (void)aura::compiler::ownership_rebind_after_remap(
                                 {}, aura::compiler::RemapReason::ExplicitAgent);
                         }
