@@ -1532,6 +1532,11 @@ aura_issue_test_link_light(test_arena_auto_compact_intelligent)
 # pattern (F-004, sibling of B-010 / D-001).
 aura_add_issue_test(test_workspace_state_lock)
 aura_issue_test_link_light(test_workspace_state_lock)
+# Issue #1566 / #2659 / #2687 / #2705: WorkspaceIsolationPolicy enforcement +
+# per-Evaluator capture tenant + production hard-close of FlatAST global
+# capture fallback. Lives in tests/core/ per #81934/#81967.
+aura_add_issue_test(test_tenant_isolation_enforcement)
+aura_issue_test_link_light(test_tenant_isolation_enforcement)
 # Wave1 B-03/B-09: eval-current short pin + WorkspaceFlatPin adopt under Guard
 aura_add_issue_test(test_workspace_lock_reentrancy)
 aura_issue_test_link_llvm_jit(test_workspace_lock_reentrancy)

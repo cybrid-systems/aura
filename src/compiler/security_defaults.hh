@@ -417,6 +417,33 @@ inline void apply_production_security_defaults() noexcept {
         }
     }
 
+    // 7b) Issue #2705: hard-close FlatAST global capture fallback under
+    //     production multi-tenant / Strict. Soft / AURA_SANDBOX=off stay
+    //     permissive (#2687 AC4). Env AURA_HARD_CAPTURE_TENANT always wins
+    //     when set (1|true|on|yes / 0|false|off|no). Stricter default =
+    //     always refuse process-global stamp when armed (no TLS probe needed);
+    //     Evaluator::stamp_stable_ref remains the production authority.
+    {
+        using aura::core::provenance::set_hard_capture_tenant;
+        if (dev_off) {
+            set_hard_capture_tenant(false);
+        } else {
+            const char* hct = std::getenv("AURA_HARD_CAPTURE_TENANT");
+            if (hct && *hct) {
+                std::string_view hv(hct);
+                const bool on = (hv == "1" || hv == "true" || hv == "yes" || hv == "on");
+                set_hard_capture_tenant(on);
+            } else {
+                const bool strict =
+                    g_sandbox_state().mode == SandboxMode::Strict ||
+                    g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
+                // multi-tenant always escalates to Strict above, so multi_tenant
+                // || strict covers both AURA_MULTI_TENANT and AURA_SANDBOX=strict.
+                set_hard_capture_tenant(multi_tenant || strict);
+            }
+        }
+    }
+
     // 8) Issue #2207 / #2182: LinearEnforceMode process default is Strict
     //    (align with Full audit). Soft under AURA_SANDBOX=off so unit tests
     //    keep Soft metric-only incomplete trails. AURA_LINEAR_ENFORCE=soft|
