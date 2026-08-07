@@ -37,24 +37,27 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
+    # FlatAST decomp step 3: dirty-column lock bodies live in ast_impl.cpp.
+    impl = _read("src/core/ast_impl.cpp")
+    ast_src = ast + "\n" + impl
     test = _read("tests/core/test_dirty_column_lock.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
     must("Issue #2423", "AC1", ast)
-    must("dirty_column_mtx_", "AC1", ast)
+    must("dirty_column_mtx_", "AC1", ast_src)
     must("dirty_nodes_in_range", "AC1", ast)
     must("is_subtree_dirty_node", "AC1", ast)
     # shared lock appears near the short-circuit readers
-    must("std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get())", "AC1", ast)
+    must("std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get())", "AC1", ast_src)
     must("2423 AC1", "AC1", test)
 
-    must("std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get())", "AC2", ast)
+    must("std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get())", "AC2", ast_src)
     must("mark_dirty", "AC2", ast)
     must("2423 AC2", "AC2", test)
 
     must_not("Both are const and thread-safe.", "AC3", ast)
-    must("dirty_column_mtx_", "AC3", ast)
+    must("dirty_column_mtx_", "AC3", ast_src)
     must("2423 AC3", "AC3", test)
 
     must("2423 AC4", "AC4", test)

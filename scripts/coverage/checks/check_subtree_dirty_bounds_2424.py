@@ -38,6 +38,9 @@ def main() -> int:
             fails.append(f"{label}: unexpected {n!r}")
 
     ast = _read("src/core/ast.ixx")
+    # FlatAST decomp step 3: is_subtree_dirty_node body lives in ast_impl.cpp.
+    impl = _read("src/core/ast_impl.cpp")
+    ast_src = ast + "\n" + impl
     test = _read("tests/core/test_subtree_dirty_bounds.cpp")
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
@@ -46,8 +49,8 @@ def main() -> int:
     must("is_subtree_dirty_node", "AC1", ast)
     # Extract is_subtree_dirty_node body; forbid bare size()/tag_.size() bounds.
     m = re.search(
-        r"bool is_subtree_dirty_node\(NodeId id\) const noexcept \{(.*?)\}",
-        ast,
+        r"(?:bool is_subtree_dirty_node\(NodeId id\) const noexcept|bool FlatAST::is_subtree_dirty_node\(NodeId id\) const noexcept)\s*\{(.*?)\}",
+        ast_src,
         re.DOTALL,
     )
     if not m:
