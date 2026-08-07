@@ -1402,7 +1402,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp` (—) [domain_suite, theme_serve] — test_scheduler_llm_bottleneck_adaptive_steal_gc.cpp — Issue #754:
 - `tests/orch/test_security_schedule_gate.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_security_schedule_gate.cpp
 - `tests/serve/test_steal_complete_gc_defer.cpp` (—) [domain_suite, theme_serve] — AC1: try_steal_from success always invokes aura_evaluator_on_steal_complete
-- `tests/serve/test_steal_complete_restamp_txn.cpp` (—) [domain_suite, theme_serve] — AC1: on_steal_complete is the sole restamp entry (source-cite + gate)
+- `tests/serve/test_steal_complete_restamp_txn.cpp` (—) [large, domain_suite, theme_serve] — AC1: on_steal_complete is the sole restamp entry (source-cite + gate)
 - `tests/serve/test_steal_complete_strong_entry.cpp` (—) [domain_suite, theme_serve] — legacy residual-less path under production).
 - `tests/serve/test_steal_densify_linear_type_hard_and.cpp` (—) [large, domain_suite, theme_serve] — AC1: Inject residual OR linear force under Hard → Cancel+Done; fail +1
 - `tests/serve/test_steal_layout_stamp.cpp` (—) [domain_suite, theme_serve] — AC1: Steal with matching stamp → no mismatch bump

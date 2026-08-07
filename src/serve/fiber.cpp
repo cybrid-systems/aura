@@ -51,6 +51,35 @@ extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
 // from Fiber::resume that reuses the existing #2346/#2372 path).
 extern "C" int aura_evaluator_check_resume_layout_stamp(void* fiber_ptr) noexcept;
 
+// Issue #2721: per-victim evaluator_id getter for the steal_safety
+// transaction hard-AND (predicate (d) — GC-defer arm state for the
+// victim's evaluator). Fiber does not store its evaluator_id directly
+// (the resolution goes through evaluator_for_scheduler_hooks() in
+// evaluator_fiber_mutation.cpp, which resolves the CURRENT thread-local
+// — the STEALER's evaluator, not the victim's). The closest stable
+// identity the fiber exposes is mutation_stack_ptr() (atomic load of
+// the storage pointer owned by the victim's evaluator). Returning the
+// mutation_stack_ptr as the handle lets steal_safety.cpp call
+// gc_deferred_for_evaluator() against the victim's stack — the
+// steal_safety transaction then guards against concurrent re-arm
+// races between on_steal_complete (step 3-6 clear) and ticket stamp
+// (step 7). A per-fiber evaluator_id field is the cleanest future
+// fix (follow-up); for now, mutation_stack_ptr is the best stable
+// identity available without a new internal field.
+//
+// Returns nullptr when the fiber has no stack bound yet (cold-path
+// test setup). steal_safety.cpp already handles nullptr (skips the
+// GC defer check).
+//
+// Strong def here; weak no-op stub in fiber_bridge.cpp keeps
+// non-evaluator link units building (returns nullptr).
+extern "C" void* aura_fiber_evaluator_id_for_steal_safety(void* fiber_ptr) noexcept {
+    if (!fiber_ptr) [[unlikely]]
+        return nullptr;
+    auto* fb = static_cast<Fiber*>(fiber_ptr);
+    return fb->mutation_stack_ptr();
+}
+
 std::atomic<uint64_t> Fiber::next_id_{1};
 std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};
 std::atomic<std::uint64_t> Fiber::join_total_{0};

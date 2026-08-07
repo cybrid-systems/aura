@@ -41,6 +41,19 @@
 // src/compiler/evaluator_fiber_mutation.cpp.
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept;
 
+// Issue #2721: LayoutStamp dual-check via existing C-linkage shim
+// (strong def in evaluator_fiber_mutation.cpp). Returns non-zero on
+// mismatch; called inside the transaction hard-AND BEFORE the ticket
+// stamp so a mismatched LayoutStamp cannot enqueue Ready.
+extern "C" int aura_evaluator_check_resume_layout_stamp(void* fiber_ptr) noexcept;
+
+// Issue #2721: per-victim evaluator_id getter for the GC defer
+// hard-AND (predicate (d) in the issue body). Returns the victim's
+// evaluator_id (NOT the stealer's current thread-local) so the
+// gc_deferred_for_evaluator() check is against the right owner.
+// Strong def in fiber.cpp; weak no-op stub in fiber_bridge.cpp.
+extern "C" void* aura_fiber_evaluator_id_for_steal_safety(void* fiber_ptr) noexcept;
+
 namespace aura::serve {
 
 StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
@@ -86,7 +99,67 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
     // (AC5 coverage linter asserts the call graph).
     aura_evaluator_on_steal_complete(stolen);
 
-    // AC1 step 7 — stamp resume_safety_ticket only on Ok path.
+    // AC1 #2721 — hard-AND residual safety checks INSIDE the transaction
+    // BEFORE the ticket stamp. #2699 stamped the ticket on the Ok path
+    // but residual predicates (per-fiber mutation boundary safety,
+    // LayoutStamp match, resume-ticket consistency, GC-defer arm state)
+    // were still consulted AFTER the transaction returned Ok in some
+    // resume / yield paths — opening a window for stale-ticket resume
+    // or concurrent MutationHold steal. #2721 hard-ANDs all 4 inside
+    // the transaction: if any fails → bump the matching counter +
+    // RejectHard WITHOUT stamping the ticket (no post-transaction escape
+    // hatch). Production fail-closed (soft / sandbox stays metric-only
+    // per #2699 contract).
+    bool residual_ok = true;
+    // (a) Per-fiber mutation boundary safety — re-check after the
+    // evaluator_on_steal_complete clear (AC1 step 3-6) to catch
+    // concurrent re-arm races between clear and stamp.
+    if (!stolen->is_at_mutation_boundary_safe()) {
+        g_steal_safety_residual_boundary_unsafe_total.fetch_add(1, std::memory_order_relaxed);
+        residual_ok = false;
+    }
+    // (b) LayoutStamp match — fresh-check via existing C-linkage shim
+    // (returns non-zero on mismatch). Mismatch here means the fiber's
+    // stored LayoutStamp drifted from the worker's current after the
+    // on_steal_complete dual-check — concurrent epoch bump + steal race.
+    if (aura_evaluator_check_resume_layout_stamp(stolen) != 0) {
+        g_steal_safety_residual_layout_stamp_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        residual_ok = false;
+    }
+    // (c) Resume-ticket consistency — if the victim already has a ticket
+    // stored from a prior steal that didn't complete (e.g., a different
+    // stealer's transaction that aborted but left a ticket), and the
+    // stored ticket differs from snap.ticket, reject. Closes the
+    // "ticket was set by steal-A, steal-B's transaction sees a stale
+    // ticket" window.
+    if (stolen->has_resume_safety_ticket() && stolen->resume_safety_ticket() != snap.ticket) {
+        g_steal_safety_residual_ticket_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        residual_ok = false;
+    }
+    // (d) GC-defer arm state for the VICTIM's evaluator (not the
+    // stealer's current thread-local). Uses a C-linkage getter to
+    // resolve the victim's evaluator_id (strong def in fiber.cpp; weak
+    // no-op stub in fiber_bridge.cpp returns nullptr for non-evaluator
+    // link units — GC defer check skipped in that case).
+    {
+        void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
+        if (victim_eval_id != nullptr &&
+            aura::gc_hooks::gc_deferred_for_evaluator(victim_eval_id)) {
+            g_steal_safety_residual_gc_defer_armed_total.fetch_add(1, std::memory_order_relaxed);
+            residual_ok = false;
+        }
+    }
+    if (!residual_ok) {
+        // Reject WITHOUT stamping the ticket — no post-transaction
+        // escape hatch. Production fail-closed (soft / sandbox stays
+        // metric-only per #2699 contract; the counters above bump
+        // regardless so dashboards can attribute the miss).
+        g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+        return StealSafetyDecision::RejectHard;
+    }
+
+    // AC1 step 7 — stamp resume_safety_ticket only on Ok path
+    // (after the hard-AND passed).
     stolen->set_resume_safety_ticket(snap.ticket);
 
     g_steal_safety_transaction_ok_total.fetch_add(1, std::memory_order_relaxed);

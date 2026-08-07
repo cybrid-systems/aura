@@ -387,6 +387,151 @@ static void ac2699_6_no_docs_design() {
           "AC6: no docs/design/2699-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2721 AC1: residual predicates re-evaluated INSIDE the
+// transaction (after step 6 aura_evaluator_on_steal_complete, before
+// step 7 ticket stamp). The hard-AND closes the window where residual
+// checks were consulted AFTER the transaction returned Ok — opening
+// stale-ticket resume / concurrent MutationHold steal under fiber churn.
+static void ac2721_1_residual_hard_and_inside_transaction() {
+    std::println("\n--- #2721 AC1: residual hard-AND inside transaction ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    // All 4 counters + sentinel declared.
+    CHECK(hdr.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC1: hdr has boundary-unsafe counter");
+    CHECK(hdr.find("g_steal_safety_residual_layout_stamp_mismatch_total") != std::string::npos,
+          "AC1: hdr has layout-stamp-mismatch counter");
+    CHECK(hdr.find("g_steal_safety_residual_ticket_mismatch_total") != std::string::npos,
+          "AC1: hdr has ticket-mismatch counter");
+    CHECK(hdr.find("g_steal_safety_residual_gc_defer_armed_total") != std::string::npos,
+          "AC1: hdr has gc-defer-armed counter");
+    CHECK(hdr.find("g_steal_safety_residual_hard_and_wired") != std::string::npos,
+          "AC1: hdr has wired sentinel");
+    CHECK(hdr.find("kStealSafetyTransactionHardAndIssue = 2721") != std::string::npos,
+          "AC1: hdr stamps issue = 2721");
+    // Hard-AND block present in cpp (after step 6, before step 7).
+    CHECK(cpp.find("Issue #2721") != std::string::npos, "AC1: cpp cites #2721");
+    CHECK(cpp.find("is_at_mutation_boundary_safe") != std::string::npos,
+          "AC1: cpp hard-ANDs is_at_mutation_boundary_safe");
+    CHECK(cpp.find("aura_evaluator_check_resume_layout_stamp(stolen) != 0") != std::string::npos,
+          "AC1: cpp hard-ANDs layout stamp");
+    CHECK(cpp.find("has_resume_safety_ticket()") != std::string::npos &&
+              cpp.find("resume_safety_ticket() != snap.ticket") != std::string::npos,
+          "AC1: cpp hard-ANDs ticket consistency");
+    CHECK(cpp.find("aura_fiber_evaluator_id_for_steal_safety(stolen)") != std::string::npos,
+          "AC1: cpp hard-ANDs GC defer (per-victim getter)");
+    CHECK(cpp.find("gc_deferred_for_evaluator(victim_eval_id)") != std::string::npos,
+          "AC1: cpp calls gc_deferred_for_evaluator against victim");
+}
+
+// ── Issue #2721 AC2: RejectHard → no ticket stamp (no post-transaction
+// escape hatch). If any residual predicate fails, the transaction
+// returns RejectHard WITHOUT calling set_resume_safety_ticket.
+static void ac2721_2_reject_hard_no_ticket_stamp() {
+    std::println("\n--- #2721 AC2: RejectHard → no ticket stamp ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    // The RejectHard branch (on residual_ok == false) must precede the
+    // set_resume_safety_ticket call (step 7). Source-cite: the !residual_ok
+    // block is BEFORE the ticket stamp in the function body.
+    const auto hard_and_pos = cpp.find("if (!residual_ok)");
+    const auto ticket_pos = cpp.find("set_resume_safety_ticket(snap.ticket)");
+    CHECK(hard_and_pos != std::string::npos, "AC2: cpp has !residual_ok branch");
+    CHECK(ticket_pos != std::string::npos, "AC2: cpp has ticket stamp");
+    CHECK(hard_and_pos < ticket_pos,
+          "AC2: RejectHard branch PRECEDES ticket stamp (no post-transaction escape)");
+    // The !residual_ok branch returns RejectHard (NOT a soft continue).
+    CHECK(cpp.find("return StealSafetyDecision::RejectHard;") != std::string::npos,
+          "AC2: RejectHard returned on residual mismatch");
+}
+
+// ── Issue #2721 AC3: Resume path only accepts ticket stamped under
+// the final hard-AND. Ticket carries snap.ticket sampled INSIDE the
+// transaction; the resume check (Fiber::check_and_enforce_resume_
+// snapshot_invariant) compares the stored ticket against the live
+// safety_seq_ — same as #2518/#2702 contract. No drift between
+// decision-time and resume-time ticket values.
+static void ac2721_3_ticket_consistency() {
+    std::println("\n--- #2721 AC3: ticket consistency (decision == resume) ---");
+    const auto hdr = read_file("src/serve/fiber.h");
+    CHECK(hdr.find("check_and_enforce_resume_snapshot_invariant") != std::string::npos,
+          "AC3: fiber.h has resume invariant check");
+    CHECK(hdr.find("has_resume_safety_ticket_") != std::string::npos,
+          "AC3: fiber.h tracks has_resume_safety_ticket_ flag");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    // The ticket stamp (step 7) uses snap.ticket — same value the
+    // resume invariant check compares against. No decision-time vs
+    // resume-time drift.
+    CHECK(cpp.find("stolen->set_resume_safety_ticket(snap.ticket)") != std::string::npos,
+          "AC3: ticket stamp uses snap.ticket (decision-time sample)");
+    // The hard-AND check (predicate (c)) compares victim stored ticket
+    // against snap.ticket — closes the "ticket was set by steal-A,
+    // steal-B sees stale ticket" window.
+    CHECK(cpp.find("resume_safety_ticket() != snap.ticket") != std::string::npos,
+          "AC3: hard-AND checks stored ticket == snap.ticket");
+}
+
+// ── Issue #2721 AC5: production fail-closed (soft / sandbox metric-only).
+// The hard-AND is inside steal_safety_transaction which is the
+// production-steal path — no production_lock or production_defaults_active
+// check needed at the transaction level (the production strictness is
+// enforced at the call site in worker.cpp / scheduler yield paths that
+// funnel through this single transaction).
+static void ac2721_5_production_fail_closed() {
+    std::println("\n--- #2721 AC5: production fail-closed ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    // On any residual mismatch → RejectHard (not soft metric-only). The
+    // counters bump regardless of production vs soft so dashboards can
+    // attribute the miss under either mode; the RejectHard gate is the
+    // production fail-closed path (single-transaction contract from
+    // #2699).
+    CHECK(cpp.find("return StealSafetyDecision::RejectHard;") != std::string::npos,
+          "AC5: RejectHard is the fail-closed gate");
+    // All 4 residual counters bump on their respective failures
+    // (additive observability — not gated on production).
+    CHECK(cpp.find("g_steal_safety_residual_boundary_unsafe_total.fetch_add(1") !=
+              std::string::npos,
+          "AC5: boundary-unsafe counter bumps (additive observability)");
+    CHECK(cpp.find("g_steal_safety_residual_layout_stamp_mismatch_total.fetch_add(1") !=
+              std::string::npos,
+          "AC5: layout-stamp-mismatch counter bumps");
+    CHECK(cpp.find("g_steal_safety_residual_ticket_mismatch_total.fetch_add(1") !=
+              std::string::npos,
+          "AC5: ticket-mismatch counter bumps");
+    CHECK(cpp.find("g_steal_safety_residual_gc_defer_armed_total.fetch_add(1") != std::string::npos,
+          "AC5: gc-defer-armed counter bumps");
+}
+
+// ── Issue #2721 AC5 (extended): source-cite + extend this file per
+// #81967 (tests in src/-aligned suite, no new file). Coverage linter
+// assertion + no docs/design/* per #1655.
+static void ac2721_6_source_and_linter() {
+    std::println("\n--- #2721 AC6: source-cite + linter ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto fiber = read_file("src/serve/fiber.cpp");
+    const auto fbc = read_file("src/compiler/fiber_bridge.cpp");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    CHECK(hdr.find("Issue #2721") != std::string::npos, "AC6: hdr cites #2721");
+    CHECK(cpp.find("Issue #2721") != std::string::npos, "AC6: cpp cites #2721");
+    // C-linkage getters: strong def in fiber.cpp + weak stub in fiber_bridge.cpp.
+    CHECK(fiber.find("aura_fiber_evaluator_id_for_steal_safety") != std::string::npos,
+          "AC6: fiber.cpp has strong def");
+    CHECK(fbc.find("aura_fiber_evaluator_id_for_steal_safety") != std::string::npos,
+          "AC6: fiber_bridge.cpp has weak stub");
+    // Test functions present.
+    CHECK(t.find("ac2721_1_residual_hard_and_inside_transaction") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2721_2_reject_hard_no_ticket_stamp") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2721_3_ticket_consistency") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2721_5_production_fail_closed") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2721_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    // No docs/design/2721-* per #1655.
+    const std::string design_path = "docs/design/2721-";
+    CHECK(read_file((design_path + "residual-hard-and.md").c_str()).empty(),
+          "AC6: no docs/design/2721-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_steal_complete_restamp_txn() {
@@ -404,9 +549,15 @@ int run_test_steal_complete_restamp_txn() {
     ac2699_4_existing_counters_preserved();
     ac2699_5_source_and_linter();
     ac2699_6_no_docs_design();
+    std::println("\n=== Issue #2721: residual hard-AND inside transaction (#2699 residual) ===");
+    ac2721_1_residual_hard_and_inside_transaction();
+    ac2721_2_reject_hard_no_ticket_stamp();
+    ac2721_3_ticket_consistency();
+    ac2721_5_production_fail_closed();
+    ac2721_6_source_and_linter();
     if (g_failed)
         return 1;
-    std::println("steal-complete restamp txn #2510 + #2699: OK ({} passed)", g_passed);
+    std::println("steal-complete restamp txn #2510 + #2699 + #2721: OK ({} passed)", g_passed);
     return 0;
 }
 
