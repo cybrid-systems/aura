@@ -49,6 +49,8 @@ enum class StealSafetyDecision : std::uint8_t {
 
 inline constexpr int kStealSafetyTransactionIssue = 2699;
 inline constexpr int kStealSafetyTransactionHardAndIssue = 2721;
+// Issue #2745: EnvFrame hold_gen / dual-epoch residual hard-AND arm.
+inline constexpr int kStealSafetyEnvFrameResidualIssue = 2745;
 
 // File-scope atomics (mirror #2693/#2694/#2695/#2696/#2697/#2698 pattern).
 // The transaction itself is the caller; these counters surface the
@@ -72,6 +74,8 @@ inline std::atomic<std::uint64_t> g_steal_safety_residual_boundary_unsafe_total{
 inline std::atomic<std::uint64_t> g_steal_safety_residual_layout_stamp_mismatch_total{0};
 inline std::atomic<std::uint64_t> g_steal_safety_residual_ticket_mismatch_total{0};
 inline std::atomic<std::uint64_t> g_steal_safety_residual_gc_defer_armed_total{0};
+// Issue #2745: EnvFrame residual (last densify envframe_ok=false or dual_epoch lag).
+inline std::atomic<std::uint64_t> g_steal_safety_residual_envframe_lag_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_residual_hard_and_wired{1};
 
 [[nodiscard]] inline std::uint64_t steal_safety_transaction_calls_v_read() noexcept {
@@ -99,6 +103,9 @@ steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
 [[nodiscard]] inline std::uint64_t steal_safety_residual_gc_defer_armed_total_v_read() noexcept {
     return g_steal_safety_residual_gc_defer_armed_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t steal_safety_residual_envframe_lag_total_v_read() noexcept {
+    return g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed);
+}
 [[nodiscard]] inline std::uint32_t steal_safety_residual_hard_and_wired_v_read() noexcept {
     return g_steal_safety_residual_hard_and_wired.load(std::memory_order_relaxed);
 }
@@ -117,6 +124,11 @@ inline void clear_steal_safety_transaction_for_test() noexcept {
     g_steal_safety_transaction_calls_total.store(0, std::memory_order_relaxed);
     g_steal_safety_transaction_reject_hard_total.store(0, std::memory_order_relaxed);
     g_steal_safety_transaction_ok_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_residual_boundary_unsafe_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_residual_layout_stamp_mismatch_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_residual_ticket_mismatch_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_residual_gc_defer_armed_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_residual_envframe_lag_total.store(0, std::memory_order_relaxed);
 }
 
 } // namespace aura::serve
