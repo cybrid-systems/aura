@@ -75,6 +75,7 @@
 #include "serve/metrics.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
+#include "serve/steal_safety.h" // Issue #2755: residual hard-AND counters
 
 #include <atomic>
 #include <chrono>
@@ -155,6 +156,15 @@ static bool chaos_full() noexcept {
 
 [[nodiscard]] static bool chaos_pr_gate_only() noexcept {
     const char* e = std::getenv("AURA_CHAOS_PR_GATE_ONLY");
+    return e && e[0] == '1';
+}
+
+// Issue #2755 / #2722: RELEASE chaos SOAK hard deploy gate env
+// (AURA_CHAOS_SOAK_HARD_GATE=1). Distinct from PR gate + nightly so residual
+// steal-safety hard-AND counters are mandatory-zero only under the RELEASE
+// hard gate / production concurrency envelope (Soft local remains non-gating).
+[[nodiscard]] static bool chaos_soak_hard_gate() noexcept {
+    const char* e = std::getenv("AURA_CHAOS_SOAK_HARD_GATE");
     return e && e[0] == '1';
 }
 
@@ -313,6 +323,17 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
         aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
             std::memory_order_relaxed);
     const auto still_run0 = Fiber::join_drain_residual_still_running();
+    // Issue #2755: steal-safety residual hard-AND baselines (#2721 four arms
+    // + related layout / force-deopt / resume hard-fail). Hard-zero under
+    // SOAK hard gate / production concurrency; Soft / local non-gating.
+    const auto res_boundary0 = aura::serve::steal_safety_residual_boundary_unsafe_total_v_read();
+    const auto res_layout0 =
+        aura::serve::steal_safety_residual_layout_stamp_mismatch_total_v_read();
+    const auto res_ticket0 = aura::serve::steal_safety_residual_ticket_mismatch_total_v_read();
+    const auto res_gc_defer0 = aura::serve::steal_safety_residual_gc_defer_armed_total_v_read();
+    const auto layout_resume0 = Fiber::layout_stamp_resume_mismatch_total();
+    const auto force_deopt0 = Fiber::steal_snapshot_mismatch_force_deopt_total();
+    const auto resume_hard0 = aura::serve::resume_hard_fail_total_v_read();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
 
@@ -472,6 +493,60 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     if (prod_gate) {
         CHECK(!aura::serve::is_steal_snapshot_soft_mode(),
               "#2380: Soft still forbidden at end of production-concurrency pass");
+    }
+
+    // Issue #2755: residual steal-safety hard-AND counters must be hard-zero
+    // under SOAK hard gate / production concurrency (extend #2722). The four
+    // #2721 residual arms are the strongest silent-corruption canaries under
+    // multi-fiber mutate × steal × densify; non-zero residual means the
+    // transaction rejected an unsafe steal that production must not ship.
+    // Soft / local iteration paths remain non-gating (metric-only print).
+    //
+    // Counter list (source-cite; also documented in cmd_chaos_soak_hard_gate_2722):
+    //   g_steal_safety_residual_boundary_unsafe_total
+    //   g_steal_safety_residual_layout_stamp_mismatch_total
+    //   g_steal_safety_residual_ticket_mismatch_total
+    //   g_steal_safety_residual_gc_defer_armed_total
+    //   + related hard-zero: force_deopt / resume_hard_fail
+    //   + related observe-only: layout_stamp_resume_mismatch (can grow under
+    //     legitimate concurrent densify×steal races already covered by
+    //     residual_layout_stamp + snapshot mismatch hard-zero; keep printed
+    //     for dashboards, do not fail the gate on it alone).
+    const bool residual_zero_gate = chaos_soak_hard_gate() || prod_gate;
+    const auto res_boundary1 = aura::serve::steal_safety_residual_boundary_unsafe_total_v_read();
+    const auto res_layout1 =
+        aura::serve::steal_safety_residual_layout_stamp_mismatch_total_v_read();
+    const auto res_ticket1 = aura::serve::steal_safety_residual_ticket_mismatch_total_v_read();
+    const auto res_gc_defer1 = aura::serve::steal_safety_residual_gc_defer_armed_total_v_read();
+    const auto layout_resume1 = Fiber::layout_stamp_resume_mismatch_total();
+    const auto force_deopt1 = Fiber::steal_snapshot_mismatch_force_deopt_total();
+    const auto resume_hard1 = aura::serve::resume_hard_fail_total_v_read();
+    const auto d_boundary = res_boundary1 - res_boundary0;
+    const auto d_layout = res_layout1 - res_layout0;
+    const auto d_ticket = res_ticket1 - res_ticket0;
+    const auto d_gc_defer = res_gc_defer1 - res_gc_defer0;
+    const auto d_layout_resume = layout_resume1 - layout_resume0;
+    const auto d_force_deopt = force_deopt1 - force_deopt0;
+    const auto d_resume_hard = resume_hard1 - resume_hard0;
+    if (residual_zero_gate || d_boundary || d_layout || d_ticket || d_gc_defer || d_layout_resume ||
+        d_force_deopt || d_resume_hard) {
+        std::println("  #2755 residual hard-AND deltas: boundary={} layout={} ticket={} "
+                     "gc_defer={} layout_resume={} (observe) force_deopt={} resume_hard={} "
+                     "(gate={})",
+                     d_boundary, d_layout, d_ticket, d_gc_defer, d_layout_resume, d_force_deopt,
+                     d_resume_hard, residual_zero_gate ? 1 : 0);
+    }
+    if (residual_zero_gate) {
+        CHECK(d_boundary == 0,
+              "#2755: residual_boundary_unsafe delta == 0 (SOAK hard / prod gate)");
+        CHECK(d_layout == 0,
+              "#2755: residual_layout_stamp_mismatch delta == 0 (SOAK hard / prod gate)");
+        CHECK(d_ticket == 0, "#2755: residual_ticket_mismatch delta == 0 (SOAK hard / prod gate)");
+        CHECK(d_gc_defer == 0, "#2755: residual_gc_defer_armed delta == 0 (SOAK hard / prod gate)");
+        CHECK(d_force_deopt == 0,
+              "#2755: steal_snapshot_mismatch_force_deopt delta == 0 (related surface)");
+        CHECK(d_resume_hard == 0, "#2755: resume_hard_fail delta == 0 (related surface)");
+        // layout_stamp_resume_mismatch: observe-only (printed above).
     }
 
     CHECK(st.ops.load() > 0, "ops progressed");
@@ -999,8 +1074,10 @@ static void ac2722_1_release_hard_gate_exists() {
               "\"chaos-soak-hard-gate-2722-coverage\": cmd_chaos_soak_hard_gate_2722_coverage,") !=
               std::string::npos,
           "AC1: command-table registration (coverage)");
-    CHECK(build.find("or cmd_chaos_soak_hard_gate_2722()") != std::string::npos,
-          "AC1: wired into main gate command chain");
+    // Main pre-push gate chain runs coverage-only (fast); full SOAK is
+    // release.yml / command-table (AC4). Match the #2722 linter contract.
+    CHECK(build.find("or cmd_chaos_soak_hard_gate_2722_coverage()") != std::string::npos,
+          "AC1: wired into main gate command chain (coverage)");
     CHECK(build.find("Issue #2722") != std::string::npos, "AC1: build.py cites #2722");
 }
 
@@ -1111,6 +1188,132 @@ static void ac2722_5_soft_non_gating_no_docs_design() {
           "AC5: no docs/design/2722-* per #1655");
 }
 
+// ── Issue #2755 AC1: residual steal-safety hard-AND counters hard-zero
+// under SOAK hard gate / production concurrency (extend #2722).
+static void ac2755_1_residual_zero_under_hard_gate() {
+    std::println("\n--- #2755 AC1: residual hard-AND zero under hard gate ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    CHECK(chaos.find("chaos_soak_hard_gate") != std::string::npos,
+          "AC1: chaos_soak_hard_gate helper present");
+    CHECK(chaos.find("residual_zero_gate") != std::string::npos,
+          "AC1: residual_zero_gate decision present");
+    CHECK(chaos.find("steal_safety_residual_boundary_unsafe_total_v_read") != std::string::npos,
+          "AC1: residual boundary_unsafe reader");
+    CHECK(chaos.find("steal_safety_residual_layout_stamp_mismatch_total_v_read") !=
+              std::string::npos,
+          "AC1: residual layout_stamp_mismatch reader");
+    CHECK(chaos.find("steal_safety_residual_ticket_mismatch_total_v_read") != std::string::npos,
+          "AC1: residual ticket_mismatch reader");
+    CHECK(chaos.find("steal_safety_residual_gc_defer_armed_total_v_read") != std::string::npos,
+          "AC1: residual gc_defer_armed reader");
+    CHECK(chaos.find("#2755: residual_boundary_unsafe delta == 0") != std::string::npos,
+          "AC1: boundary_unsafe delta==0 CHECK");
+    CHECK(chaos.find("#2755: residual_layout_stamp_mismatch delta == 0") != std::string::npos,
+          "AC1: layout_stamp_mismatch delta==0 CHECK");
+    CHECK(chaos.find("#2755: residual_ticket_mismatch delta == 0") != std::string::npos,
+          "AC1: ticket_mismatch delta==0 CHECK");
+    CHECK(chaos.find("#2755: residual_gc_defer_armed delta == 0") != std::string::npos,
+          "AC1: gc_defer_armed delta==0 CHECK");
+    CHECK(build.find(R"(env["AURA_PRODUCTION_CONCURRENCY_GATE"] = "1")") != std::string::npos,
+          "AC1: hard gate still forces production concurrency");
+    CHECK(build.find(R"(env["AURA_CHAOS_SOAK_HARD_GATE"] = "1")") != std::string::npos,
+          "AC1: hard gate still sets SOAK_HARD_GATE");
+    CHECK(build.find("cmd_chaos_soak_residual_zero_2755_coverage") != std::string::npos,
+          "AC1: 2755 coverage wired in build.py");
+}
+
+// ── Issue #2755 AC2: Soft / local paths remain non-gating for residual.
+static void ac2755_2_soft_non_gating() {
+    std::println("\n--- #2755 AC2: Soft / local residual non-gating ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    CHECK(chaos.find("residual_zero_gate = chaos_soak_hard_gate() || prod_gate") !=
+              std::string::npos,
+          "AC2: residual gate only under SOAK hard / prod (not Soft alone)");
+    CHECK(chaos.find("Soft / local") != std::string::npos ||
+              chaos.find("non-gating") != std::string::npos,
+          "AC2: Soft / local non-gating documented in harness");
+    CHECK(build.find(R"(env.pop("AURA_STEAL_SNAPSHOT_SOFT", None))") != std::string::npos,
+          "AC2: Soft steal still popped under hard gate (#2722 AC5 preserved)");
+}
+
+// ── Issue #2755 AC3: counter list documented in gate + harness + linter.
+static void ac2755_3_counter_list_documented() {
+    std::println("\n--- #2755 AC3: residual counter list documented ---");
+    const auto build = read_file("build.py");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_chaos_soak_residual_zero_2755.py");
+    CHECK(build.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC3: boundary_unsafe in gate docstring");
+    CHECK(build.find("g_steal_safety_residual_layout_stamp_mismatch_total") != std::string::npos,
+          "AC3: layout_stamp_mismatch in gate docstring");
+    CHECK(build.find("g_steal_safety_residual_ticket_mismatch_total") != std::string::npos,
+          "AC3: ticket_mismatch in gate docstring");
+    CHECK(build.find("g_steal_safety_residual_gc_defer_armed_total") != std::string::npos,
+          "AC3: gc_defer_armed in gate docstring");
+    CHECK(build.find("layout_stamp_resume_mismatch_total") != std::string::npos,
+          "AC3: related layout_resume in gate docstring");
+    CHECK(build.find("steal_snapshot_mismatch_force_deopt_total") != std::string::npos,
+          "AC3: related force_deopt in gate docstring");
+    CHECK(build.find("resume_hard_fail_total") != std::string::npos,
+          "AC3: related resume_hard_fail in gate docstring");
+    CHECK(chaos.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC3: harness source-cites four residual counters");
+    CHECK(lint.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC3: linter source-cites residual counter list");
+}
+
+// ── Issue #2755 AC4: existing #2722 ACs preserved (additive).
+static void ac2755_4_2722_preserved() {
+    std::println("\n--- #2755 AC4: #2722 ACs preserved ---");
+    const auto build = read_file("build.py");
+    const auto release = read_file(".github/workflows/release.yml");
+    CHECK(build.find("def cmd_chaos_soak_hard_gate_2722(") != std::string::npos,
+          "AC4: #2722 hard gate function preserved");
+    CHECK(build.find("workers  : 8") != std::string::npos, "AC4: workers=8 preserved");
+    CHECK(build.find("fibers   : 256") != std::string::npos, "AC4: fibers=256 preserved");
+    CHECK(build.find("duration : 300s") != std::string::npos, "AC4: duration=300s preserved");
+    CHECK(release.find("chaos-soak-hard-gate-2722") != std::string::npos,
+          "AC4: release.yml still wires hard gate");
+    const auto gate_pos = release.find("chaos-soak-hard-gate-2722");
+    const auto upload_pos = release.find("softprops/action-gh-release");
+    CHECK(gate_pos != std::string::npos && upload_pos != std::string::npos && gate_pos < upload_pos,
+          "AC4: gate still PRECEDES release-asset upload");
+    CHECK(build.find("check_chaos_soak_hard_gate_2722") != std::string::npos,
+          "AC4: #2722 coverage linter still wired");
+}
+
+// ── Issue #2755 AC5: source-cite + linter + no docs/design/* per #1655.
+static void ac2755_5_source_and_linter() {
+    std::println("\n--- #2755 AC5: source-cite + linter + no docs/design/ ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_chaos_soak_residual_zero_2755.py");
+    CHECK(chaos.find("Issue #2755") != std::string::npos, "AC5: chaos harness cites #2755");
+    CHECK(build.find("Issue #2755") != std::string::npos, "AC5: build.py cites #2755");
+    CHECK(!lint.empty(), "AC5: linter present");
+    CHECK(lint.find("2755") != std::string::npos, "AC5: linter covers #2755");
+    CHECK(build.find("check_chaos_soak_residual_zero_2755") != std::string::npos,
+          "AC5: build.py wires 2755 linter");
+    CHECK(build.find("or cmd_chaos_soak_residual_zero_2755_coverage()") != std::string::npos,
+          "AC5: main gate chain includes 2755 coverage");
+    CHECK(build.find("\"chaos-soak-residual-zero-2755-coverage\": "
+                     "cmd_chaos_soak_residual_zero_2755_coverage,") != std::string::npos,
+          "AC5: command-table registration");
+    CHECK(chaos.find("ac2755_1_residual_zero_under_hard_gate") != std::string::npos,
+          "AC5: AC1 test present");
+    CHECK(chaos.find("ac2755_2_soft_non_gating") != std::string::npos, "AC5: AC2 test present");
+    CHECK(chaos.find("ac2755_3_counter_list_documented") != std::string::npos,
+          "AC5: AC3 test present");
+    CHECK(chaos.find("ac2755_4_2722_preserved") != std::string::npos, "AC5: AC4 test present");
+    CHECK(chaos.find("ac2755_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+    CHECK(read_file("tests/serve/test_issue_2755.cpp").empty(),
+          "AC5: no tests/serve/test_issue_2755.cpp per #81967");
+    CHECK(read_file("docs/design/2755-residual-zero.md").empty(),
+          "AC5: no docs/design/2755-* per #1655");
+}
+
 } // namespace
 
 int run_test_chaos_mutate_steal_gc_mailbox() {
@@ -1135,6 +1338,15 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     ac2722_3_soak_parameters_documented();
     ac2722_4_release_wired_required();
     ac2722_5_soft_non_gating_no_docs_design();
+
+    // Issue #2755: residual steal-safety hard-AND hard-zero under SOAK hard
+    // gate (extend #2722). Soft / local remain non-gating; no docs/design/*.
+    std::println("\n=== Issue #2755: residual hard-AND zero under SOAK hard gate ===");
+    ac2755_1_residual_zero_under_hard_gate();
+    ac2755_2_soft_non_gating();
+    ac2755_3_counter_list_documented();
+    ac2755_4_2722_preserved();
+    ac2755_5_source_and_linter();
 
     // Optional fault-only mode for debugging inject paths.
     const std::string fault = chaos_fault();
