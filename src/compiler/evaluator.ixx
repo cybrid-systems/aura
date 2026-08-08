@@ -2571,9 +2571,20 @@ public:
     }
     // Issue #1495: prefer partial re-lower of dirty ir_cache_v2_
     // defines before tree-walker eval-current (AI set-body hot path).
+    //
+    // Issue #2813: production MUST wire this callback. CompilerService
+    // ctor sets it to relower_dirty_defines_from_workspace. When left
+    // null, push_post_mutate_incremental_cascade still marks defines
+    // dirty + bumps defuse but skips eager ir_cache_v2 re-lower
+    // (cascade_relower_skipped_total + one-shot stderr warn). REPL-only
+    // Evaluators without IR cache may leave it null intentionally.
     std::function<void()> relower_dirty_defines_fn_ = nullptr;
     void set_relower_dirty_defines_fn(std::function<void()> fn) {
         relower_dirty_defines_fn_ = std::move(fn);
+    }
+    // Issue #2813: true when eager cascade re-lower is wired (Agent/ops probe).
+    [[nodiscard]] bool relower_dirty_defines_wired() const noexcept {
+        return static_cast<bool>(relower_dirty_defines_fn_);
     }
     // Phase 3: read cache entry from outside the module.
     using IsDefineDirtyFn = bool(const std::string&);

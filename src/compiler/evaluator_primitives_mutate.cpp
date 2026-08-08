@@ -8203,10 +8203,37 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         }
     }
 
-    // 3) Optional eager partial re-lower of dirty ir_cache_v2 entries
+    // 3) Eager partial re-lower of dirty ir_cache_v2 entries
     // (service-owned; must be re-entrant under Workspace hold).
-    if (relower_dirty_defines_fn_ && defines_n > 0)
-        relower_dirty_defines_fn_();
+    //
+    // Issue #2813: production deployments MUST wire
+    // set_relower_dirty_defines_fn (CompilerService ctor does). When
+    // defines_n > 0 but the callback is null, the cascade used to
+    // silently skip re-lower → stale ir_cache_v2 while defuse bumped.
+    // Now: bump cascade_relower_skipped_total + one-shot stderr warn
+    // so misconfigured Evaluators are visible (not silent success).
+    // defines_n == 0 is a true no-op (nothing affected) — not a skip.
+    if (defines_n > 0) {
+        if (relower_dirty_defines_fn_) {
+            relower_dirty_defines_fn_();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->cascade_relower_ran_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->cascade_relower_skipped_total.fetch_add(1, std::memory_order_relaxed);
+            // One-shot process-wide warn (avoid log spam on every mutate).
+            static std::atomic<int> s_relower_unwired_warned{0};
+            if (s_relower_unwired_warned.exchange(1, std::memory_order_relaxed) == 0) {
+                std::fprintf(
+                    stderr,
+                    "[#2813 cascade] relower_dirty_defines_fn_ is null while "
+                    "defines_n=%llu — eager IR re-lower skipped (stale ir_cache_v2 "
+                    "risk). Production must call set_relower_dirty_defines_fn "
+                    "(CompilerService wires this). Metric: cascade_relower_skipped_total.\n",
+                    static_cast<unsigned long long>(defines_n));
+            }
+        }
+    }
 
     // 4) Issue #2762: post-mutate incremental macro re-expand +
     // MacroIntroduced restamp. Reuses post_mutation_macro_reexpand
