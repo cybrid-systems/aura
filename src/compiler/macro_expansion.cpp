@@ -201,6 +201,19 @@ thread_local bool s_allow_rest_hygiene = true;
 thread_local bool s_force_hygienic = false;
 thread_local std::uint32_t s_max_gensym_map_size = 0;
 thread_local std::uint32_t s_max_violations_per_fiber = 0;
+// Issue #2804: process-wide test override for gensym-map ceiling. When
+// non-zero, rename_binding_pre / rename_binding use this instead of the
+// TLS s_max_gensym_map_size (TopLevelMacroCapGuard overwrites TLS from
+// capability each expand). Production always leaves override at 0.
+static std::atomic<std::uint32_t> g_test_max_gensym_map_size_override{0};
+
+// Effective gensym-map-size cap (TLS policy or test override).
+static std::uint32_t effective_max_gensym_map_size() noexcept {
+    const auto o = g_test_max_gensym_map_size_override.load(std::memory_order_relaxed);
+    if (o > 0)
+        return o;
+    return s_max_gensym_map_size;
+}
 
 // Issue #2101: process-wide runtime caps (atomics for concurrent set+expand).
 // Depth default = hard ceiling (no extra clamp). Pass default = 0 (no clamp).
@@ -329,6 +342,9 @@ std::atomic<std::uint64_t> g_macro_self_evo_depth_clamp_total{0};
 // enforcement sites in clone_macro_body.
 std::atomic<std::uint64_t> g_macro_self_evo_force_hygienic_denied_total{0};
 std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total{0};
+// Issue #2804: clone-walk rename_binding ceiling denials (distinct from
+// pre-scan rename_binding_pre bumps of gensym_map_size_exceeded_total).
+std::atomic<std::uint64_t> g_clone_walk_gensym_ceiling_exceeded_total{0};
 
 // Forward decl — body runs under MacroSelfEvo TLS depth policy set by expand entry.
 static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
@@ -651,6 +667,17 @@ extern "C" std::uint64_t aura_macro_self_evo_force_hygienic_denied_total_v_read(
 }
 extern "C" std::uint64_t aura_macro_self_evo_gensym_map_size_exceeded_total_v_read(void) noexcept {
     return g_macro_self_evo_gensym_map_size_exceeded_total.load(std::memory_order_relaxed);
+}
+// Issue #2804: clone-walk gensym ceiling denials + test hook for map-size cap.
+extern "C" std::uint64_t aura_clone_walk_gensym_ceiling_exceeded_total_v_read(void) noexcept {
+    return g_clone_walk_gensym_ceiling_exceeded_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_set_max_gensym_map_size_for_test(std::uint32_t n) noexcept {
+    // Process-wide override (not TLS): TopLevelMacroCapGuard rewrites TLS.
+    g_test_max_gensym_map_size_override.store(n, std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_clone_walk_gensym_ceiling_exceeded_total_for_test(void) noexcept {
+    g_clone_walk_gensym_ceiling_exceeded_total.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2241: check whether a fiber is allowed to expand given its
@@ -1238,7 +1265,9 @@ aura::ast::NodeId clone_macro_body(
         // (bump counter + sentinel) instead of letting name_map balloon under
         // adversarial macros. Empty name_map (pre-scan not run yet) is
         // allowed.
-        if (s_max_gensym_map_size > 0 && name_map && name_map->size() >= s_max_gensym_map_size) {
+        // Issue #2804: use effective_max_gensym_map_size (TLS or test override).
+        const auto gensym_cap = effective_max_gensym_map_size();
+        if (gensym_cap > 0 && name_map && name_map->size() >= gensym_cap) {
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
@@ -1391,6 +1420,18 @@ aura::ast::NodeId clone_macro_body(
         // Macro params, builtins keep their name (free uses → Variable subst)
         if ((subst && subst->count(name)) || detail::hygiene_builtins().count(name))
             return transplant(sid);
+        // Issue #2804: gensym-map-size ceiling — parity with rename_binding_pre.
+        // Clone walk can still allocate names pre-scan missed or refused;
+        // without this check max_gensym_map_size is only half-enforced.
+        const auto gensym_cap = effective_max_gensym_map_size();
+        if (gensym_cap > 0 && name_map->size() >= gensym_cap) {
+            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+            return aura::ast::NULL_NODE;
+        }
         // Gensym! Create fresh name and track in name_map
         auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
         (*name_map)[name] = fresh;

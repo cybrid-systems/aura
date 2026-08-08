@@ -290,6 +290,11 @@ extern "C" void aura_test_reset_macro_self_evo_fiber_violation_deny_total_for_te
 // live). Lock-free reads, safe for high-freq Agent polling.
 extern "C" std::uint64_t aura_macro_self_evo_force_hygienic_denied_total_v_read(void) noexcept;
 extern "C" std::uint64_t aura_macro_self_evo_gensym_map_size_exceeded_total_v_read(void) noexcept;
+// Issue #2804: clone-walk gensym ceiling (distinct from pre-scan exceeded_total).
+extern "C" std::uint64_t aura_clone_walk_gensym_ceiling_exceeded_total_v_read(void) noexcept;
+// Issue #2804: test-only arm of TLS s_max_gensym_map_size for clone_macro_body.
+extern "C" void aura_test_set_max_gensym_map_size_for_test(std::uint32_t n) noexcept;
+extern "C" void aura_test_reset_clone_walk_gensym_ceiling_exceeded_total_for_test(void) noexcept;
 
 // Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
 // Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call
