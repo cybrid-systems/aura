@@ -1694,9 +1694,17 @@ public:
     // over raw workspace_flat() for multi-step readers.
     //
     // When an outermost MutationBoundaryGuard already holds exclusive
-    // workspace_mtx_ on this thread, re-locking shared would throw
+    // workspace_mtx_ on **this thread**, re-locking shared would throw
     // EDEADLK ("Resource deadlock avoided") — std::shared_mutex is
     // non-recursive. Adopt the outer exclusive hold (no re-lock).
+    //
+    // Issue #2738: only *this thread's* Guard depth counts as outer
+    // exclusive. Process-wide mutation_boundary_held_ is true while any
+    // fiber holds a Guard; using it (or CLI g_main_thread_stack size
+    // via static mutation_boundary_depth()) made a second CLI thread
+    // skip locking and race FlatAST::get mid-add_node (SoA column tear
+    // → SIGABRT on dual-fiber concurrent rebind). Use
+    // any_active_mutation_boundary() (TLS depth slot) only.
     class WorkspaceFlatPin {
         std::shared_lock<std::shared_mutex> lock_;
         ast::FlatAST* ptr_ = nullptr;
@@ -1706,8 +1714,8 @@ public:
 
     public:
         explicit WorkspaceFlatPin(Evaluator& ev) {
-            const bool outer_exclusive =
-                ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0;
+            // Same-thread Guard only (TLS depth slot). See #2738.
+            const bool outer_exclusive = ev.any_active_mutation_boundary();
             if (!outer_exclusive) {
                 lock_ = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
                 owns_shared_ = true;
@@ -1734,14 +1742,19 @@ public:
     // Wave1 B-09: unique workspace lock that adopts an outer Guard's exclusive
     // hold (no re-lock). Use for write primitives that may run under
     // MutationBoundaryGuard (nested unique would EDEADLK).
+    //
+    // Issue #2738: adopt only when *this thread* holds Guard (TLS depth
+    // slot via any_active_mutation_boundary). mutation_boundary_held_ is
+    // process-wide; static mutation_boundary_depth() may observe shared
+    // g_main_thread_stack on CLI thread-fallback fibers — neither may
+    // skip the lock on a concurrent fiber.
     class WorkspaceUniqueIfNeeded {
         std::unique_lock<std::shared_mutex> lock_;
         bool owns_unique_ = false;
 
     public:
         explicit WorkspaceUniqueIfNeeded(Evaluator& ev) {
-            const bool outer_exclusive =
-                ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0;
+            const bool outer_exclusive = ev.any_active_mutation_boundary();
             if (!outer_exclusive) {
                 lock_ = std::unique_lock<std::shared_mutex>(ev.workspace_mtx_);
                 owns_unique_ = true;
@@ -1753,8 +1766,15 @@ public:
         WorkspaceUniqueIfNeeded& operator=(WorkspaceUniqueIfNeeded&&) noexcept = default;
         [[nodiscard]] bool owns_unique_lock() const noexcept { return owns_unique_; }
     };
+    // Observability: process-wide held OR this-thread TLS Guard depth.
+    // For lock-skip / reentrancy adopt, use any_active_mutation_boundary()
+    // only (#2738).
     [[nodiscard]] bool workspace_exclusive_held() const noexcept {
-        return mutation_boundary_held() || mutation_boundary_depth() > 0;
+        return mutation_boundary_held() || any_active_mutation_boundary();
+    }
+    /// True only when the calling thread holds MutationBoundaryGuard.
+    [[nodiscard]] bool workspace_exclusive_held_on_this_thread() const noexcept {
+        return any_active_mutation_boundary();
     }
     // Issue #223: returns the current bridge_epoch from the
     // service (or 0 if no service is bound). Closure-construction

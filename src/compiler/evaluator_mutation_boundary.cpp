@@ -1178,10 +1178,12 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
             aura::core::resource_quota::Dimension::Mutations, pending_count);
     }
-    // Issue #2686: nested mutate under (eval-current) shared pin — fail closed
+    // Issue #2686 / #2738: nested mutate under (eval-current) pin — fail closed
     // before Guard ctor so Agents get a structured error (not partial apply).
-    if (Evaluator::eval_current_holds_shared_pin() &&
-        !(ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0)) {
+    // Exempt only when *this thread* already holds Guard (TLS depth slot).
+    // Process-wide mutation_boundary_held_ / shared g_main_thread_stack size
+    // must not skip the reject (EDEADLK under concurrent CLI fibers).
+    if (Evaluator::eval_current_holds_shared_pin() && !ev.any_active_mutation_boundary()) {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
             m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
         return std::unexpected(aura::core::AuraError(
@@ -1201,9 +1203,9 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                                          std::uint64_t pending_count,
                                                          bool* success_flag,
                                                          bool fine_rollback) noexcept {
-    // Issue #2686: same nested-under-eval-current gate as try_acquire.
-    if (Evaluator::eval_current_holds_shared_pin() &&
-        !(ev.mutation_boundary_held() || ev.mutation_boundary_depth() > 0)) {
+    // Issue #2686 / #2738: same nested-under-eval-current gate as try_acquire
+    // (TLS depth slot only — not process-wide mutation_boundary_held_).
+    if (Evaluator::eval_current_holds_shared_pin() && !ev.any_active_mutation_boundary()) {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
             m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
         return std::unexpected(aura::core::AuraError(

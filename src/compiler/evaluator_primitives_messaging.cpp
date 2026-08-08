@@ -70,6 +70,14 @@ namespace {
     std::mutex s_fiber_results_mtx;
     std::condition_variable s_fiber_results_cv;
 
+    // Issue #2738: CLI thread-fallback fibers share one Evaluator (string_heap_,
+    // env, FlatAST readers outside MutationBoundary). Concurrent apply_closure
+    // races those structures even when rebind/eval-current take workspace_mtx_.
+    // Serialize the entire fiber body on the thread backend only; serve-async
+    // scheduler fibers keep their own isolation. Product semantics of dual-name
+    // rebind still hold (both bindings apply; no SIGABRT).
+    std::mutex s_cli_thread_fiber_body_mtx;
+
 } // namespace
 
 void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -559,6 +567,16 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
         // the worker runs complete_fiber.
         auto fid_holder = std::make_shared<std::atomic<int64_t>>(0);
         auto complete_fiber = [&ev, cid, result_ptr, fid_holder]() {
+            // Issue #2738: when using CLI std::thread backend, serialize body
+            // evaluation against other thread-fibers on this process. Scheduler
+            // path (g_fiber_spawn) does not take this lock — fibers are isolated.
+            // Detect thread-backend after spawn by checking g_fiber_spawn absence
+            // at run time would be racy; instead lock only when the launch path
+            // sets the "thread" fid bit (see below). Here: always take the mutex
+            // when g_fiber_spawn is null at body start (CLI denseness).
+            std::unique_lock<std::mutex> body_lock(s_cli_thread_fiber_body_mtx, std::defer_lock);
+            if (!aura::messaging::g_fiber_spawn)
+                body_lock.lock();
             *result_ptr = ev.apply_closure(cid, {});
             // Issue #1291: wait until spawn path publishes the real fid
             // AND registers s_fiber_results[fid] (g_fiber_spawn may run
