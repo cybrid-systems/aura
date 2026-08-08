@@ -1037,6 +1037,15 @@ void HotUpdateRegistry::on_reemit_rejected_require_real() noexcept {
 
 void HotUpdateRegistry::defer_reemit_for_boundary(std::uint64_t defuse_version) noexcept {
     reemit_deferred_version_.store(defuse_version, std::memory_order_relaxed);
+    // Issue #2748: stamp deferred_since_ms (steady clock) for age query.
+    // Only stamp when not already pending so steal observes continuous age.
+    if (!reemit_deferred_pending_.load(std::memory_order_relaxed)) {
+        using clock = std::chrono::steady_clock;
+        const auto ms = static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(clock::now().time_since_epoch())
+                .count());
+        reemit_deferred_since_ms_.store(ms, std::memory_order_relaxed);
+    }
     reemit_deferred_pending_.store(true, std::memory_order_release);
     on_reemit_deferred_for_boundary();
 }
@@ -1126,7 +1135,49 @@ void HotUpdateRegistry::on_deferred_reemit_seen_on_steal(std::int64_t fiber_id) 
 std::uint64_t HotUpdateRegistry::take_deferred_reemit_version() noexcept {
     if (!reemit_deferred_pending_.exchange(false, std::memory_order_acq_rel))
         return 0;
+    // Issue #2748: sample age into max_observed, then clear since stamp.
+    const auto age = deferred_reemit_age_ms();
+    if (age > 0) {
+        auto prev = reemit_deferred_age_max_observed_ms_.load(std::memory_order_relaxed);
+        while (age > prev && !reemit_deferred_age_max_observed_ms_.compare_exchange_weak(
+                                 prev, age, std::memory_order_relaxed)) {
+        }
+    }
+    reemit_deferred_since_ms_.store(0, std::memory_order_relaxed);
     return reemit_deferred_version_.exchange(0, std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::deferred_reemit_age_ms() const noexcept {
+    // Quiet path: no pending → 0 without clock read when since==0.
+    if (!reemit_deferred_pending_.load(std::memory_order_acquire))
+        return 0;
+    const auto since = reemit_deferred_since_ms_.load(std::memory_order_relaxed);
+    if (since == 0)
+        return 0;
+    using clock = std::chrono::steady_clock;
+    const auto now_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(clock::now().time_since_epoch())
+            .count());
+    const auto age = (now_ms >= since) ? (now_ms - since) : 0;
+    // Issue #2748 AC4: optional deadline env (metric only — no force drain).
+    if (const char* e = std::getenv("AURA_DEFERRED_REEMIT_DEADLINE_MS"); e && *e) {
+        const auto deadline = static_cast<std::uint64_t>(std::strtoull(e, nullptr, 10));
+        if (deadline > 0 && age > deadline) {
+            // Best-effort bump; may overcount under concurrent readers — OK
+            // for first-ship observability.
+            const_cast<HotUpdateRegistry*>(this)->reemit_deferred_deadline_hit_total_.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    return age;
+}
+
+std::uint64_t HotUpdateRegistry::deferred_reemit_age_max_observed_ms() const noexcept {
+    return reemit_deferred_age_max_observed_ms_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::deferred_reemit_deadline_hit_total() const noexcept {
+    return reemit_deferred_deadline_hit_total_.load(std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::reset_reemit_boundary_handshake_for_test() noexcept {
@@ -1139,6 +1190,9 @@ void HotUpdateRegistry::reset_reemit_boundary_handshake_for_test() noexcept {
     reemit_rejected_require_real_.store(0, std::memory_order_relaxed);
     reemit_deferred_pending_.store(false, std::memory_order_relaxed);
     reemit_deferred_version_.store(0, std::memory_order_relaxed);
+    reemit_deferred_since_ms_.store(0, std::memory_order_relaxed);
+    // max_observed + deadline_hit intentionally NOT cleared — lifetime
+    // counters (tests that need zero call a separate clear if added).
     // Clear TLS soft depth for this thread (test isolation).
     g_soft_reemit_boundary_depth = 0;
 }
@@ -1729,6 +1783,17 @@ extern "C" int aura_hot_update_soft_reemit_boundary_active(void) {
 
 extern "C" int aura_hot_update_has_deferred_reemit(void) {
     return aura::compiler::hot_update_registry().has_deferred_reemit() ? 1 : 0;
+}
+
+// Issue #2748: deferred reemit age observability (C ABI for module TUs).
+extern "C" std::uint64_t aura_hot_update_deferred_reemit_age_ms(void) {
+    return aura::compiler::hot_update_registry().deferred_reemit_age_ms();
+}
+extern "C" std::uint64_t aura_hot_update_deferred_reemit_age_max_observed_ms(void) {
+    return aura::compiler::hot_update_registry().deferred_reemit_age_max_observed_ms();
+}
+extern "C" std::uint64_t aura_hot_update_deferred_reemit_deadline_hit_total(void) {
+    return aura::compiler::hot_update_registry().deferred_reemit_deadline_hit_total();
 }
 
 // Issue #2273: C ABI bumper for steal-path observability.

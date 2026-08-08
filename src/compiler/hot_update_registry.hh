@@ -300,6 +300,11 @@ public:
     void bump_reemit_auto_drain_throttled_total() noexcept;
     // Returns pending version and clears deferred flag. 0 if none.
     [[nodiscard]] std::uint64_t take_deferred_reemit_version() noexcept;
+    // Issue #2748: deferred reemit age observability (steady-clock ms).
+    // 0 when not pending. max_observed retains lifetime peak across drains.
+    [[nodiscard]] std::uint64_t deferred_reemit_age_ms() const noexcept;
+    [[nodiscard]] std::uint64_t deferred_reemit_age_max_observed_ms() const noexcept;
+    [[nodiscard]] std::uint64_t deferred_reemit_deadline_hit_total() const noexcept;
     void reset_reemit_boundary_handshake_for_test() noexcept;
 
     // Issue #2690: unified PendingRecovery drain. Both
@@ -663,6 +668,10 @@ private:
     std::atomic<std::uint64_t> reemit_rejected_require_real_{0}; // #2205
     std::atomic<bool> reemit_deferred_pending_{false};
     std::atomic<std::uint64_t> reemit_deferred_version_{0};
+    // Issue #2748: steady-clock ms stamp when defer was set (0 = not pending).
+    std::atomic<std::uint64_t> reemit_deferred_since_ms_{0};
+    std::atomic<std::uint64_t> reemit_deferred_age_max_observed_ms_{0};
+    std::atomic<std::uint64_t> reemit_deferred_deadline_hit_total_{0};
     // Issue #2236: StormIsolation mode + per-region sliding-window state.
     // The mode atomic is file-scope-singleton level (1 instance of the
     // registry); the region_windows_ map is bounded to 64 entries
