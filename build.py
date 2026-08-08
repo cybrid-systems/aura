@@ -2347,6 +2347,21 @@ def cmd_orch_mvp_scope():
     return 0
 
 
+def cmd_workflow_failure_policy_2756_coverage():
+    """Issue #2756: WorkflowFailurePolicy composition (batch + AgentScope + residual)."""
+    print(f"{B}=== workflow FailurePolicy composition (#2756) coverage ==={N}")
+    script = COVERAGE_CHECKS / "check_workflow_failure_policy_2756.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("workflow FailurePolicy composition (#2756) coverage contract rows failed")
+        return 1
+    ok("workflow FailurePolicy composition (#2756) coverage clean")
+    return 0
+
+
 def cmd_aot_env_linear_stamp():
     """Issue #2091 / #2168: forbid literal (0,0) env/linear on production mangle/emit.
 
@@ -8945,6 +8960,7 @@ def cmd_gate():
         or cmd_catch_silent_swallow()
         or cmd_mutation_guard_coverage()
         or cmd_orch_mvp_scope()
+        or cmd_workflow_failure_policy_2756_coverage()
         or cmd_aot_env_linear_stamp()
         or cmd_legacy_test_inventory()
         or cmd_source_to_ir_strict()
@@ -10052,6 +10068,7 @@ def main():
         "catch-silent-swallow": cmd_catch_silent_swallow,
         "mutation-guard-coverage": cmd_mutation_guard_coverage,
         "orch-mvp-scope": cmd_orch_mvp_scope,
+        "workflow-failure-policy-2756-coverage": cmd_workflow_failure_policy_2756_coverage,
         "aot-env-linear-stamp": cmd_aot_env_linear_stamp,
         "legacy-test-inventory": cmd_legacy_test_inventory,
         "source-to-ir-strict": cmd_source_to_ir_strict,

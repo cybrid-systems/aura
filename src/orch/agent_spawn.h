@@ -331,6 +331,14 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> agent_restart_total{0};
     std::atomic<std::uint64_t> agent_restart_exhausted_total{0};
     std::atomic<std::uint64_t> agent_consecutive_stall_total{0};
+    // Issue #2756: workflow-level FailurePolicy composition counters.
+    // Bumped by compose_workflow_policy / note_workflow_residual_reclaim_
+    // under_policy. Additive — #2007/#2229/#2539 surfaces unchanged.
+    std::atomic<std::uint64_t> workflow_compose_total{0};
+    std::atomic<std::uint64_t> workflow_retry_total{0};        // composed RetryN
+    std::atomic<std::uint64_t> workflow_circuit_open_total{0}; // composed CircuitBreaker
+    std::atomic<std::uint64_t> workflow_residual_reclaim_under_policy_total{0};
+    std::atomic<std::uint32_t> workflow_failure_policy_wired{1};
     // Issue #2588: Aura language surface for AgentScope supervision
     // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
     // orch:scope-cancel-all). Counters per public prim invocation;
@@ -2129,6 +2137,125 @@ to_agent_policy(serve::parallel_orch::FailurePolicy p, std::uint32_t max_restart
 to_agent_policy(const serve::parallel_orch::ParallelPolicy& pp) noexcept {
     const auto fp = serve::parallel_orch::resolved_failure_policy(pp);
     return to_agent_policy(fp, pp.max_retries, pp.consecutive_fail_limit, pp.retry_backoff_ms);
+}
+
+// ── Issue #2756: workflow-level FailurePolicy composition ──────────────
+// Composes batch FailurePolicy (#2007 parallel_intend) + long-lived
+// AgentFailurePolicy (#2229 AgentScope::watch_all) + residual/reclaim
+// preference into a single host-facing contract. Additive over #2539
+// bridge — existing defaults unchanged when the helper is not used.
+//
+// Typical production workflow:
+//   parallel_intend (hypothesis fan-out) → AgentScope (long-lived) → residual
+//
+// Non-goals: durable saga log; changing #2661 hard-reclaim mechanics;
+// automatic cross-scope RestartN (still scope-local).
+//
+// Residual preference is advisory for hosts — it does NOT alter
+// complete_agent_join_cleanup / Scheduler::note_orphan_fiber. Hosts may
+// observe residual-reclaim-under-policy-total when residual is seen under
+// a composed policy (AC2).
+enum class ResidualReclaimPreference : std::uint8_t {
+    Report = 0, // default: observe residual only (#2661 cleanup unchanged)
+    Cancel = 1, // prefer host-level cancel-on-residual (still #2661 reclaim)
+    Defer = 2,  // prefer deferred cleanup path (#2661 already defers)
+};
+
+struct WorkflowFailurePolicy {
+    // Batch phase (parallel_intend / parallel_run).
+    serve::parallel_orch::FailurePolicy batch_policy =
+        serve::parallel_orch::FailurePolicy::CollectAll;
+    bool fail_fast = false; // convenience → FailFast (matches ParallelPolicy)
+    std::uint32_t max_retries = 0;
+    std::uint32_t consecutive_fail_limit = 3;
+    std::uint32_t retry_backoff_ms = 0;
+    // Supervision phase (AgentScope::watch_all) — filled by compose via
+    // to_agent_policy (#2539). Callers may override after compose.
+    AgentFailurePolicy agent_policy{};
+    // Residual / reclaim preference (advisory; #2661 contract preserved).
+    ResidualReclaimPreference residual = ResidualReclaimPreference::Report;
+};
+
+inline constexpr int kWorkflowFailurePolicyIssue = 2756;
+
+// Compose from batch FailurePolicy (+ residual preference). Maps agent
+// via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.
+// Bumps OrchModuleStats workflow-compose + policy-class counters.
+[[nodiscard]] inline WorkflowFailurePolicy
+compose_workflow_policy(serve::parallel_orch::FailurePolicy batch,
+                        ResidualReclaimPreference residual = ResidualReclaimPreference::Report,
+                        std::uint32_t max_retries = 0, std::uint32_t consecutive_fail_limit = 3,
+                        std::uint32_t retry_backoff_ms = 0) noexcept {
+    WorkflowFailurePolicy w;
+    w.batch_policy = batch;
+    w.max_retries = max_retries;
+    w.consecutive_fail_limit = consecutive_fail_limit;
+    w.retry_backoff_ms = retry_backoff_ms;
+    w.residual = residual;
+    w.agent_policy = to_agent_policy(batch, max_retries, consecutive_fail_limit, retry_backoff_ms);
+    // Observability (additive; no-op for callers that never compose).
+    g_orch_module_stats.workflow_compose_total.fetch_add(1, std::memory_order_relaxed);
+    using FP = serve::parallel_orch::FailurePolicy;
+    if (batch == FP::RetryN)
+        g_orch_module_stats.workflow_retry_total.fetch_add(1, std::memory_order_relaxed);
+    else if (batch == FP::CircuitBreaker)
+        g_orch_module_stats.workflow_circuit_open_total.fetch_add(1, std::memory_order_relaxed);
+    return w;
+}
+
+// Compose from ParallelPolicy (resolved_failure_policy + field threading).
+[[nodiscard]] inline WorkflowFailurePolicy compose_workflow_policy(
+    const serve::parallel_orch::ParallelPolicy& pp,
+    ResidualReclaimPreference residual = ResidualReclaimPreference::Report) noexcept {
+    WorkflowFailurePolicy w;
+    w.batch_policy = serve::parallel_orch::resolved_failure_policy(pp);
+    w.fail_fast = pp.fail_fast;
+    w.max_retries = pp.max_retries;
+    w.consecutive_fail_limit = pp.consecutive_fail_limit;
+    w.retry_backoff_ms = pp.retry_backoff_ms;
+    w.residual = residual;
+    w.agent_policy = to_agent_policy(pp);
+    g_orch_module_stats.workflow_compose_total.fetch_add(1, std::memory_order_relaxed);
+    using FP = serve::parallel_orch::FailurePolicy;
+    if (w.batch_policy == FP::RetryN)
+        g_orch_module_stats.workflow_retry_total.fetch_add(1, std::memory_order_relaxed);
+    else if (w.batch_policy == FP::CircuitBreaker)
+        g_orch_module_stats.workflow_circuit_open_total.fetch_add(1, std::memory_order_relaxed);
+    return w;
+}
+
+// Project onto ParallelPolicy for parallel_intend / parallel_run (AC1).
+[[nodiscard]] inline serve::parallel_orch::ParallelPolicy
+to_parallel_policy(const WorkflowFailurePolicy& w) noexcept {
+    serve::parallel_orch::ParallelPolicy pp;
+    pp.failure_policy = w.batch_policy;
+    pp.fail_fast = w.fail_fast;
+    pp.max_retries = w.max_retries;
+    pp.consecutive_fail_limit = w.consecutive_fail_limit;
+    pp.retry_backoff_ms = w.retry_backoff_ms;
+    return pp;
+}
+
+// Project onto AgentFailurePolicy for AgentScope::watch_all (AC1).
+// Returns the agent_policy field (already mapped at compose time).
+[[nodiscard]] inline AgentFailurePolicy to_agent_policy(const WorkflowFailurePolicy& w) noexcept {
+    return w.agent_policy;
+}
+
+// Residual preference helpers (advisory; do not change #2661 reclaim).
+[[nodiscard]] inline bool residual_prefers_cancel(const WorkflowFailurePolicy& w) noexcept {
+    return w.residual == ResidualReclaimPreference::Cancel;
+}
+[[nodiscard]] inline bool residual_prefers_defer(const WorkflowFailurePolicy& w) noexcept {
+    return w.residual == ResidualReclaimPreference::Defer;
+}
+
+// Observe residual/reclaim under a workflow policy (AC2). Call when the
+// host sees residual under a composed policy. Does not perform reclaim.
+inline void
+note_workflow_residual_reclaim_under_policy(const WorkflowFailurePolicy& /*w*/) noexcept {
+    g_orch_module_stats.workflow_residual_reclaim_under_policy_total.fetch_add(
+        1, std::memory_order_relaxed);
 }
 
 // Wait up to stall_timeout_ms (default 2× keepalive_interval_ms) for a
