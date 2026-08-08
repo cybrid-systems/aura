@@ -2296,6 +2296,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // Issue #2746: optional :region-keys vector of ints, same length as
         // tasks (or prefix; missing → 0). Paired into TaskSpec.region_key.
         std::vector<std::uint64_t> region_keys;
+        // Issue #2760: optional :cone-masks vector of ints (ImpactScope /
+        // dirty-bit packed masks) for #2754/#2757 mask-AND concurrent admit
+        // when keys collide or are zero. Paired into TaskSpec.cone_mask.
+        std::vector<std::uint64_t> cone_masks;
 
         // Collect 0-arg closure ids from vector or list.
         std::vector<std::uint64_t> cids;
@@ -2404,6 +2408,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                 region_keys.push_back(0);
                         }
                     }
+                } else if ((k == "cone-masks" || k == "cone_masks") && types::is_vector(val)) {
+                    // Issue #2760: per-task ImpactScope / dirty-bit cone masks
+                    // for #2754/#2757 mask-AND when keys collide or are zero.
+                    auto cvidx = types::as_vector_idx(val);
+                    if (cvidx < ev.vector_heap_.size()) {
+                        cone_masks.clear();
+                        for (auto& e : ev.vector_heap_[cvidx]) {
+                            if (types::is_int(e))
+                                cone_masks.push_back(static_cast<std::uint64_t>(
+                                    std::max<std::int64_t>(0, types::as_int(e))));
+                            else
+                                cone_masks.push_back(0);
+                        }
+                    }
                 }
                 i += 2;
                 continue;
@@ -2496,19 +2514,25 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         for (std::size_t i = 0; i < cids.size(); ++i) {
             const auto cid = cids[i];
             const std::uint64_t rkey = (i < region_keys.size()) ? region_keys[i] : 0;
+            const std::uint64_t cmask = (i < cone_masks.size()) ? cone_masks[i] : 0;
             tasks.push_back(aura::serve::parallel_orch::TaskSpec{
-                .body = [&ev, ash, cid, i, pure_mode,
-                         rkey]() -> aura::serve::parallel_orch::TaskResult {
-                    // Issue #2746: stamp parallel-task region TLS so
-                    // try_acquire → try_acquire_for_region (#2724) when
-                    // region concurrency is enabled and rkey != 0.
-                    struct RegionKeyTls {
-                        explicit RegionKeyTls(std::uint64_t k) {
+                .body = [&ev, ash, cid, i, pure_mode, rkey,
+                         cmask]() -> aura::serve::parallel_orch::TaskResult {
+                    // Issue #2746 / #2760: stamp parallel-task region + cone
+                    // TLS so try_acquire → try_acquire_for_region (#2724) and
+                    // mask-AND concurrent admit (#2754/#2757) when enabled.
+                    struct RegionTls {
+                        explicit RegionTls(std::uint64_t k, std::uint64_t m) {
                             if (k != 0)
                                 Evaluator::note_parallel_task_region_key(k);
+                            if (m != 0)
+                                Evaluator::note_parallel_task_cone_mask(m);
                         }
-                        ~RegionKeyTls() { Evaluator::clear_parallel_task_region_key(); }
-                    } region_tls(rkey);
+                        ~RegionTls() {
+                            Evaluator::clear_parallel_task_region_key();
+                            Evaluator::clear_parallel_task_cone_mask();
+                        }
+                    } region_tls(rkey, cmask);
                     aura::serve::parallel_orch::TaskResult tr;
                     tr.task_index = i;
                     try {
@@ -2616,6 +2640,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 },
                 .name = "aura-task-" + std::to_string(i),
                 .region_key = rkey,
+                .cone_mask = cmask,
             });
         }
 

@@ -431,6 +431,62 @@ inline constexpr int kMutationRegionMaskDisjointIssue = 2757;
     return mask_a != 0 && mask_b != 0 && (mask_a & mask_b) == 0;
 }
 
+// ── Issue #2760: ImpactScope / dirty-bit mask production enablement ──
+// #2754/#2757 upgraded regions_disjoint to mask-AND; residual was that
+// commercial multi-hypothesis paths rarely stamped proven masks (TLS /
+// parallel-intend only supplied region_key). #2760:
+//   - impact_block_to_region_mask_bit: offline pack (func, block) → bit
+//     (no tree walk at admit — ImpactScope computed earlier)
+//   - effective_region_cone_mask: prefer TLS proven mask; fall back to
+//     single-bit from region_key only when key != 0 (safe equal-key
+//     still overlaps; different keys still take #2724 key-disjoint first)
+//   - impact-mask-admit counter: concurrent admits that used a non-zero
+//     proven ImpactScope/dirty-style cone mask (TLS or derived)
+// Quiet path (tls==0 && key==0): still zero extra cost (#2757 AC4).
+inline std::atomic<std::uint64_t> g_mutation_region_impact_mask_admit_total{0};
+inline std::atomic<std::uint32_t> g_mutation_region_impact_mask_wired{1};
+inline constexpr int kMutationRegionImpactMaskIssue = 2760;
+
+[[nodiscard]] inline std::uint64_t mutation_region_impact_mask_admit_total_v_read() noexcept {
+    return g_mutation_region_impact_mask_admit_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_region_impact_mask_wired_v_read() noexcept {
+    return g_mutation_region_impact_mask_wired.load(std::memory_order_relaxed);
+}
+
+// Issue #2760: pack an ImpactScope (function, block) into one bit of a
+// 64-bit region cone mask. Agents OR bits offline from
+// compute_impact_scope / dirty propagation, then stamp via
+// note_parallel_task_cone_mask or parallel-intend :cone-masks.
+// Hot path admit remains a single mask AND (no tree walk).
+[[nodiscard]] inline std::uint64_t
+impact_block_to_region_mask_bit(std::size_t function_index, std::uint32_t block_index) noexcept {
+    // Mix into [0, 63) — leave bit 63 free for a future "global" sentinel.
+    const auto h = (static_cast<std::uint64_t>(function_index) * 1315423911ull) ^
+                   (static_cast<std::uint64_t>(block_index) * 2654435761ull);
+    return 1ULL << (h % 63ull);
+}
+
+// Issue #2760: single-bit fallback from region_key when no TLS cone mask
+// was stamped. Equal keys → same bit → still overlap-reject (safe).
+// Different keys → key-disjoint fast path still wins first in
+// regions_disjoint (this bit is only consulted when keys collide/zero).
+[[nodiscard]] inline std::uint64_t region_key_as_impact_mask(std::uint64_t region_key) noexcept {
+    if (region_key == 0)
+        return 0;
+    return 1ULL << (region_key % 63ull);
+}
+
+// Issue #2760: effective cone / ImpactScope mask for concurrent admit.
+// Prefer producer-stamped TLS (proven ImpactScope / dirty-bit mask);
+// else soft single-bit from region_key. Zero when both unset (quiet).
+[[nodiscard]] inline std::uint64_t effective_region_cone_mask(std::uint64_t tls_cone_mask,
+                                                              std::uint64_t region_key) noexcept {
+    if (tls_cone_mask != 0)
+        return tls_cone_mask;
+    return region_key_as_impact_mask(region_key);
+}
+
 } // namespace aura::compiler
 
 #endif // AURA_COMPILER_MUTATION_HOLD_BUDGET_H

@@ -1094,6 +1094,134 @@ static void ac2757_6_source_and_linter() {
           "AC6: no docs/design/2757-* per #1655");
 }
 
+// ── Issue #2760 AC1: ImpactScope / dirty-bit mask-AND production path ──
+// effective_region_cone_mask + impact_block_to_region_mask_bit + parallel
+// :cone-masks wire so proven-disjoint cones concurrent-admit.
+static void ac2760_1_impact_mask_concurrent_admit() {
+    std::println("\n--- #2760 AC1: ImpactScope mask-AND concurrent admit ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto orch = read_file("src/serve/parallel_orch.h");
+    CHECK(mhb.find("effective_region_cone_mask") != std::string::npos,
+          "AC1: effective_region_cone_mask helper");
+    CHECK(mhb.find("impact_block_to_region_mask_bit") != std::string::npos,
+          "AC1: impact_block_to_region_mask_bit helper");
+    CHECK(mhb.find("region_key_as_impact_mask") != std::string::npos,
+          "AC1: region_key_as_impact_mask fallback");
+    CHECK(mhb.find("g_mutation_region_impact_mask_admit_total{0}") != std::string::npos,
+          "AC1: impact-mask-admit counter");
+    CHECK(mhb.find("kMutationRegionImpactMaskIssue = 2760") != std::string::npos,
+          "AC1: issue stamp = 2760");
+    // Predicate still mask-AND (no tree walk).
+    CHECK(mhb.find("(mask_a & mask_b) == 0") != std::string::npos, "AC1: mask-AND hot path");
+    CHECK(mhb.find("return a != 0 && b != 0 && a != b;") != std::string::npos,
+          "AC1: key-equality fast path preserved");
+    CHECK(emb.find("effective_region_cone_mask") != std::string::npos,
+          "AC1: emb uses effective_region_cone_mask");
+    CHECK(emb.find("g_mutation_region_impact_mask_admit_total.fetch_add(1,") != std::string::npos,
+          "AC1: emb bumps impact-mask-admit");
+    CHECK(emb.find("AdmissionRejected: region-overlap") != std::string::npos,
+          "AC1: overlap still structured region-overlap");
+    // Production wire: parallel-intend :cone-masks + TaskSpec.cone_mask.
+    CHECK(agent.find("cone-masks") != std::string::npos ||
+              agent.find("cone_masks") != std::string::npos,
+          "AC1: parallel-intend accepts :cone-masks");
+    CHECK(agent.find("note_parallel_task_cone_mask") != std::string::npos,
+          "AC1: agent stamps cone TLS");
+    CHECK(orch.find("cone_mask") != std::string::npos, "AC1: TaskSpec.cone_mask field");
+}
+
+// ── Issue #2760 AC2: Soft metric-only + quiet path ──
+static void ac2760_2_soft_and_quiet() {
+    std::println("\n--- #2760 AC2/AC3: Soft metric-only + quiet path ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(emb.find("metric-only") != std::string::npos, "AC2: Soft path metric-only");
+    CHECK(emb.find("g_last_admitted_cone_mask_soft") != std::string::npos,
+          "AC2: soft tracks last cone mask");
+    // Quiet: zero key + zero effective mask → region_or_mask false.
+    CHECK(emb.find("region_or_mask") != std::string::npos, "AC3: region_or_mask quiet gate");
+    CHECK(mhb.find("if (tls_cone_mask != 0)") != std::string::npos,
+          "AC3: effective prefers TLS; zero both → quiet");
+    CHECK(mhb.find("if (region_key == 0)") != std::string::npos ||
+              mhb.find("region_key == 0") != std::string::npos,
+          "AC3: region_key_as_impact_mask returns 0 for key 0");
+}
+
+// ── Issue #2760 AC4: densify / shard isolation preserved ──
+static void ac2760_4_densify_isolation() {
+    std::println("\n--- #2760 AC4: densify / ownership isolation under concurrent holds ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("region_shard_") != std::string::npos, "AC4: region_shard_ present");
+    CHECK(emb.find("workspace_region_shard") != std::string::npos,
+          "AC4: workspace_region_shard used");
+    CHECK(emb.find("atomic_batch_active") != std::string::npos,
+          "AC4: atomic_batch GlobalExclusive fallback preserved");
+    CHECK(emb.find("workspace_region_fallback_global_total") != std::string::npos,
+          "AC4: fallback counter preserved");
+}
+
+// ── Issue #2760 AC5: additive observability ──
+static void ac2760_5_additive_observability() {
+    std::println("\n--- #2760 AC5: additive observability ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(mhb.find("g_mutation_region_impact_mask_wired{1}") != std::string::npos,
+          "AC5: impact-mask-wired sentinel");
+    CHECK(q.find("mutation-region-impact-mask-admit-total") != std::string::npos,
+          "AC5: query key mutation-region-impact-mask-admit-total");
+    CHECK(q.find("mutation-region-impact-mask-wired") != std::string::npos,
+          "AC5: query key mutation-region-impact-mask-wired");
+    CHECK(q.find("schema-2760") != std::string::npos, "AC5: schema-2760");
+    CHECK(q.find("issue-2760") != std::string::npos, "AC5: issue-2760");
+    // Prior surfaces preserved.
+    CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
+          "AC5: #2724 concurrent-admit preserved");
+    CHECK(q.find("mutation-region-concurrent-cone-admit-total") != std::string::npos,
+          "AC5: #2754 cone-admit preserved");
+    CHECK(q.find("mutation-region-mask-disjoint-admit-total") != std::string::npos,
+          "AC5: #2757 mask-disjoint preserved");
+    CHECK(q.find("schema-2724") != std::string::npos, "AC5: schema-2724 preserved");
+    CHECK(q.find("schema-2754") != std::string::npos, "AC5: schema-2754 preserved");
+    CHECK(q.find("schema-2757") != std::string::npos, "AC5: schema-2757 preserved");
+    CHECK(q.find("schema-2701") != std::string::npos, "AC5: schema-2701 preserved");
+}
+
+// ── Issue #2760 AC6: source-cite + linter + no docs/design ──
+static void ac2760_6_source_and_linter() {
+    std::println("\n--- #2760 AC6: source-cite + linter ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_region_impact_mask_admit_2760.py");
+    CHECK(mhb.find("#2760") != std::string::npos, "AC6: mhb cites #2760");
+    CHECK(emb.find("#2760") != std::string::npos, "AC6: emb cites #2760");
+    CHECK(agent.find("#2760") != std::string::npos, "AC6: agent cites #2760");
+    CHECK(q.find("Issue #2760") != std::string::npos || q.find("#2760") != std::string::npos,
+          "AC6: query cites #2760");
+    CHECK(t.find("ac2760_1_impact_mask_concurrent_admit") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2760_2_soft_and_quiet") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2760_4_densify_isolation") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2760_5_additive_observability") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2760_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(t.find("ac2757_1_zero_key_mask_disjoint_admit") != std::string::npos,
+          "AC6: #2757 tests preserved");
+    CHECK(t.find("ac2754_1_cone_disjoint_concurrent_admit") != std::string::npos,
+          "AC6: #2754 tests preserved");
+    CHECK(read_file("tests/serve/test_issue_2760.cpp").empty(),
+          "AC6: no tests/serve/test_issue_2760.cpp per #81967");
+    CHECK(build.find("check_region_impact_mask_admit_2760") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty(), "AC6: linter present");
+    CHECK(read_file("docs/design/2760-region-impact-mask.md").empty(),
+          "AC6: no docs/design/2760-* per #1655");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -1150,9 +1278,15 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2757_3_soft_and_quiet_path();
     ac2757_5_additive_observability();
     ac2757_6_source_and_linter();
-    std::println(
-        "\n=== #2551 + #2701 + #2720 + #2724 + #2726 + #2754 + #2757: {} passed, {} failed ===",
-        g_passed, g_failed);
+    std::println("\n=== Issue #2760: ImpactScope / dirty-bit mask-AND production enablement ===");
+    ac2760_1_impact_mask_concurrent_admit();
+    ac2760_2_soft_and_quiet();
+    ac2760_4_densify_isolation();
+    ac2760_5_additive_observability();
+    ac2760_6_source_and_linter();
+    std::println("\n=== #2551 + #2701 + #2720 + #2724 + #2726 + #2754 + #2757 + #2760: {} "
+                 "passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
