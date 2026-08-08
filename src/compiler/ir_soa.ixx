@@ -156,6 +156,14 @@ export inline std::atomic<std::uint64_t> g_ir_soa_batch_dirty_blocks_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_single_dirty_marks_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_batch_bit_only_cascades_total{0};
 
+// Issue #2774: residual multi-block cascade via N× mark_block_dirty on the
+// same function without an intervening batch API. Soft production metric —
+// Agents / CI smoke fail when residual > 0 under production defaults.
+// True single-block mark_block_dirty remains AC2 (streak stays 1).
+export inline constexpr int kIrSoaMultiViaSingleBanIssue = 2774;
+export inline std::atomic<std::uint64_t> g_ir_soa_residual_multi_via_single_cascades_total{0};
+export inline std::atomic<std::uint64_t> g_ir_soa_residual_multi_via_single_marks_total{0};
+
 // ── Issue #2773: logical invalidation epoch (process-wide) ──────────
 // One tick per *logical* cascade so Agents can answer "how many fence
 // advances did one mutation cause?" without joining N layer counters.
@@ -358,17 +366,9 @@ export struct IRFunctionSoA {
     // bulk-fill + single bump is the canonical full-function
     // dirty (vs. multi-block mark_blocks_dirty batches). No
     // regression — AC4 of #2681 lints this body has exactly
-    // one bump_generation() call.
-    void mark_all_blocks_dirty() {
-        std::fill(block_dirty_.begin(), block_dirty_.end(), std::uint8_t{1});
-        // Issue #380: cascade the all-blocks invalidate to all
-        // instructions too. Bulk fill (Issue #2522).
-        std::fill(instruction_dirty_.begin(), instruction_dirty_.end(), std::uint8_t{1});
-        // Issue #2111: generation fence on full-function dirty (once).
-        bump_generation();
-        // Issue #2773: full-function dirty is one logical cascade (batch class).
-        note_logical_invalidation_epoch(kInvSrcIrSoaBatch);
-    }
+    // one bump_generation() call. Body defined after residual
+    // helpers (#2774 clear streak).
+    void mark_all_blocks_dirty();
 
     // Clear a single block's dirty flag (called by the
     // smarter-re-lower after re-lowering the block).
@@ -567,6 +567,45 @@ namespace detail {
     }
 } // namespace detail
 
+// Issue #2774: thread-local streak of mark_block_dirty on the same function.
+// Reset by any batch API so multi-block production paths never trip residual.
+// Quiet path: never touched until a dirty mark runs.
+namespace detail {
+    inline IRFunctionSoA*& residual_single_fn_tls() noexcept {
+        thread_local IRFunctionSoA* fn = nullptr;
+        return fn;
+    }
+    inline std::uint32_t& residual_single_streak_tls() noexcept {
+        thread_local std::uint32_t streak = 0;
+        return streak;
+    }
+    inline void note_single_mark_for_residual(IRFunctionSoA* self) noexcept {
+        auto*& last = residual_single_fn_tls();
+        auto& streak = residual_single_streak_tls();
+        if (last == self) {
+            ++streak;
+            // First time we observe ≥2 singles on same fn without batch → cascade residual.
+            if (streak == 2)
+                g_ir_soa_residual_multi_via_single_cascades_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            // Every single mark from the 2nd onward is a residual mark.
+            if (streak >= 2)
+                g_ir_soa_residual_multi_via_single_marks_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        } else {
+            last = self;
+            streak = 1;
+        }
+    }
+    inline void clear_single_mark_residual(IRFunctionSoA* self) noexcept {
+        auto*& last = residual_single_fn_tls();
+        if (last == self || last == nullptr) {
+            last = nullptr;
+            residual_single_streak_tls() = 0;
+        }
+    }
+} // namespace detail
+
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
     detail::mark_block_dirty_no_bump(*this, block_id);
     // Issue #2111 / #2432: generation fence on block dirty (and instr cascade).
@@ -575,12 +614,14 @@ inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
     g_ir_soa_single_dirty_marks_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #2773: logical cascade (single residual path counted separately).
     note_logical_invalidation_epoch(kInvSrcIrSoaSingle);
+    // Issue #2774: detect multi-via-single residual on this function.
+    detail::note_single_mark_for_residual(this);
 }
 
 // Issue #2522 / #2615: batch API — N blocks, one fence.
 inline void IRFunctionSoA::mark_blocks_dirty(std::span<const std::uint32_t> block_ids) {
     if (block_ids.empty())
-        return;
+        return; // AC3 quiet: no bump, no residual accounting
     for (const auto block_id : block_ids)
         detail::mark_block_dirty_no_bump(*this, block_id);
     bump_generation(); // once regardless of block count
@@ -588,12 +629,14 @@ inline void IRFunctionSoA::mark_blocks_dirty(std::span<const std::uint32_t> bloc
     g_ir_soa_batch_dirty_blocks_total.fetch_add(block_ids.size(), std::memory_order_relaxed);
     // Issue #2773: one logical epoch per multi-block cascade (AC1).
     note_logical_invalidation_epoch(kInvSrcIrSoaBatch);
+    // Issue #2774: batch path is the production multi-block entry — clear streak.
+    detail::clear_single_mark_residual(this);
 }
 
 // Issue #2615: multi-block bit-only + one fence (precise ImpactScope path).
 inline void IRFunctionSoA::mark_blocks_dirty_bits_only(std::span<const std::uint32_t> block_ids) {
     if (block_ids.empty())
-        return;
+        return; // AC3 quiet
     for (const auto block_id : block_ids)
         detail::mark_block_dirty_bit_only_no_bump(*this, block_id);
     bump_generation(); // once
@@ -601,6 +644,7 @@ inline void IRFunctionSoA::mark_blocks_dirty_bits_only(std::span<const std::uint
     g_ir_soa_batch_dirty_blocks_total.fetch_add(block_ids.size(), std::memory_order_relaxed);
     // Issue #2773: bit-only multi-block is still one logical cascade.
     note_logical_invalidation_epoch(kInvSrcIrSoaBatch);
+    detail::clear_single_mark_residual(this);
 }
 
 // Issue #2522: optional range API + one fence.
@@ -612,6 +656,20 @@ inline void IRFunctionSoA::mark_instruction_range_dirty(std::uint32_t start_idx,
     bump_generation();
     // Issue #2773: range invalidate = single logical cascade (not multi-block batch).
     note_logical_invalidation_epoch(kInvSrcIrSoaSingle);
+}
+
+// Issue #2522 / #2681 / #2773 / #2774: bulk fill + single bump + logical batch epoch.
+inline void IRFunctionSoA::mark_all_blocks_dirty() {
+    std::fill(block_dirty_.begin(), block_dirty_.end(), std::uint8_t{1});
+    // Issue #380: cascade the all-blocks invalidate to all
+    // instructions too. Bulk fill (Issue #2522).
+    std::fill(instruction_dirty_.begin(), instruction_dirty_.end(), std::uint8_t{1});
+    // Issue #2111: generation fence on full-function dirty (once).
+    bump_generation();
+    // Issue #2773: full-function dirty is one logical cascade (batch class).
+    note_logical_invalidation_epoch(kInvSrcIrSoaBatch);
+    // Issue #2774: ends multi-via-single streak on this function.
+    detail::clear_single_mark_residual(this);
 }
 
 // Issue #1920: invoke Fn(block_id, BasicBlockSoA&) for each dirty

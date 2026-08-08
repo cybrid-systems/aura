@@ -14,6 +14,13 @@
 //   #2773 AC3: Shape compact isolation #2617 still cited (no IR→shape force)
 //   #2773 AC4: schema-2773 + unified-dirty-fence-advance-total
 //   #2773 AC5: single residual mark counted separately from batch
+//
+//   #2774 AC1: production multi-block uses batch only (static + residual==0)
+//   #2774 AC2: single mark_block_dirty still allowed (streak 1, no residual)
+//   #2774 AC3: empty span quiet (no residual bump)
+//   #2774 AC4: residual multi-via-single counters + schema-2774
+//   #2774 AC5: N× mark_block_dirty trips residual; batch clears streak
+
 #include "test_harness.hpp"
 
 #include <cstdint>
@@ -36,6 +43,8 @@ using aura::compiler::CompilerService;
 using aura::compiler::current_ir_soa_generation_fence;
 using aura::compiler::g_ir_soa_batch_dirty_blocks_total;
 using aura::compiler::g_ir_soa_batch_dirty_cascades_total;
+using aura::compiler::g_ir_soa_residual_multi_via_single_cascades_total;
+using aura::compiler::g_ir_soa_residual_multi_via_single_marks_total;
 using aura::compiler::g_ir_soa_single_dirty_marks_total;
 using aura::compiler::g_unified_dirty_fence_advance_total;
 using aura::compiler::g_unified_dirty_ir_batch_total;
@@ -46,6 +55,7 @@ using aura::compiler::IRModuleV2;
 using aura::compiler::kInvSrcIrSoaBatch;
 using aura::compiler::kInvSrcIrSoaSingle;
 using aura::compiler::kIrSoaBatchDirtyDisciplineIssue;
+using aura::compiler::kIrSoaMultiViaSingleBanIssue;
 using aura::compiler::kUnifiedDirtyFenceIssue;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -433,6 +443,107 @@ static void ac2773_5_source_cite_quiet() {
           "AC5: no docs/design/2773-* per #1655");
 }
 
+// ── Issue #2774: residual multi-via-single ban ──
+
+static void ac2774_1_batch_no_residual() {
+    std::println("\n--- #2774 AC1: multi-block batch leaves residual==0 ---");
+    CHECK(kIrSoaMultiViaSingleBanIssue == 2774, "AC1: issue stamp");
+    auto fn = make_n_block_fn(5);
+    // Use a fresh function so streak TLS starts clean relative to this object.
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    const auto m0 = g_ir_soa_residual_multi_via_single_marks_total.load(std::memory_order_relaxed);
+    const std::uint32_t ids[] = {0, 1, 2, 3, 4};
+    fn.mark_blocks_dirty(ids);
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) == r0,
+          "AC1: batch path no residual cascade");
+    CHECK(g_ir_soa_residual_multi_via_single_marks_total.load(std::memory_order_relaxed) == m0,
+          "AC1: batch path no residual marks");
+    // Production sources still cite batch (lineage #2615/#2681).
+    const auto dce = read_file("src/compiler/pass_impls.ixx");
+    CHECK(dce.find("mark_blocks_dirty") != std::string::npos, "AC1: DCE uses batch");
+}
+
+static void ac2774_2_single_allowed() {
+    std::println("\n--- #2774 AC2: true single mark_block_dirty no residual ---");
+    auto fn = make_n_block_fn(3);
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    const auto m0 = g_ir_soa_residual_multi_via_single_marks_total.load(std::memory_order_relaxed);
+    const auto s0 = g_ir_soa_single_dirty_marks_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(1);
+    CHECK(g_ir_soa_single_dirty_marks_total.load(std::memory_order_relaxed) == s0 + 1,
+          "AC2: single marks counter +1");
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) == r0,
+          "AC2: one single mark → residual cascades unchanged");
+    CHECK(g_ir_soa_residual_multi_via_single_marks_total.load(std::memory_order_relaxed) == m0,
+          "AC2: one single mark → residual marks unchanged");
+}
+
+static void ac2774_3_empty_quiet() {
+    std::println("\n--- #2774 AC3: empty span quiet ---");
+    auto fn = make_n_block_fn(2);
+    const auto fence0 = current_ir_soa_generation_fence();
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    fn.mark_blocks_dirty(std::span<const std::uint32_t>{});
+    CHECK(current_ir_soa_generation_fence() == fence0, "AC3: empty span no fence");
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) == r0,
+          "AC3: empty span no residual");
+}
+
+static void ac2774_4_residual_trips_and_schema() {
+    std::println("\n--- #2774 AC4: N× mark_block_dirty residual + schema ---");
+    auto fn = make_n_block_fn(4);
+    // Clear streak by batch first, then deliberately residual-loop.
+    const std::uint32_t one[] = {0};
+    fn.mark_blocks_dirty(one);
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    const auto m0 = g_ir_soa_residual_multi_via_single_marks_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(1);
+    fn.mark_block_dirty(2);
+    fn.mark_block_dirty(3);
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) ==
+              r0 + 1,
+          "AC4: residual cascade +1 on second single");
+    CHECK(g_ir_soa_residual_multi_via_single_marks_total.load(std::memory_order_relaxed) == m0 + 2,
+          "AC4: residual marks +2 (2nd and 3rd singles)");
+    // Batch clears streak — further singles on same fn start fresh.
+    const std::uint32_t ids[] = {0, 1};
+    fn.mark_blocks_dirty(ids);
+    const auto r1 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(2);
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) == r1,
+          "AC4: after batch, single mark does not residual");
+
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("schema-2774") != std::string::npos, "AC4: schema-2774");
+    CHECK(q.find("soa-residual-multi-via-single-cascades-total") != std::string::npos,
+          "AC4: residual cascades key");
+    CHECK(q.find("soa-residual-multi-via-single-ban-wired") != std::string::npos,
+          "AC4: wired sentinel");
+    // #2522 / #2615 preserved
+    CHECK(q.find("schema-2522") != std::string::npos, "AC4: schema-2522 preserved");
+    CHECK(q.find("schema-2615") != std::string::npos, "AC4: schema-2615 preserved");
+}
+
+static void ac2774_5_source_cite() {
+    std::println("\n--- #2774 AC5: source-cite + linter wire ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    CHECK(soa.find("#2774") != std::string::npos, "AC5: ir_soa cites #2774");
+    CHECK(soa.find("g_ir_soa_residual_multi_via_single_cascades_total") != std::string::npos,
+          "AC5: residual cascade counter");
+    CHECK(soa.find("note_single_mark_for_residual") != std::string::npos, "AC5: residual helper");
+    CHECK(soa.find("clear_single_mark_residual") != std::string::npos, "AC5: clear helper");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_batch_dirty_multi_via_single_ban_2774") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/2774-multi-via-single-ban.md").empty(),
+          "AC5: no docs/design/2774-* per #1655");
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
@@ -450,7 +561,13 @@ int run_test_batch_dirty_discipline() {
     ac2773_3_shape_isolation();
     ac2773_4_obs_schema();
     ac2773_5_source_cite_quiet();
-    std::println("\n=== #2615/#2681/#2773: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2774: residual multi-via-single ban ===");
+    ac2774_1_batch_no_residual();
+    ac2774_2_single_allowed();
+    ac2774_3_empty_quiet();
+    ac2774_4_residual_trips_and_schema();
+    ac2774_5_source_cite();
+    std::println("\n=== #2615/#2681/#2773/#2774: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

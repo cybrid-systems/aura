@@ -33,12 +33,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 80 | 80 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 223 | 223 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 222 | 222 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 99 | 99 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 43 | 43 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 49 | 49 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 50 | 50 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 128 | 128 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
 
@@ -89,7 +89,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_batch_dirty_cascade.cpp` → theme `mutation_dirty`
-- `tests/compiler/test_batch_dirty_discipline.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_batch_dirty_discipline.cpp` → theme `shape_soa`
 - `tests/compiler/test_build_kv_hash_batch.cpp` → theme `jit_incremental`
 - `tests/core/test_capability_sandbox_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_cascade_impact_batch.cpp` → theme `uncategorized`
@@ -1080,13 +1080,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_subsecond_clock.cpp` (—) [domain_suite, theme_compiler] — AC1: current-time-ms / monotonic-ms return ints
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (223)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (222)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (223)
+#### domain/ (222)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1103,7 +1103,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_audit_wal_force_multi_tenant.cpp` (—) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
 - `tests/compiler/test_aura_sandbox_env.cpp` (—) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable
 - `tests/compiler/test_batch_dirty_cascade.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: Batch API exists; one generation bump per call regardless of N
-- `tests/compiler/test_batch_dirty_discipline.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #2773 — unified logical invalidation epoch (extend per #81967).
 - `tests/compiler/test_blame_complete_commit_gate.cpp` (—) [domain_suite, theme_compiler] — AC1: Production defaults enable reject-on-miss + require-blame-on-commit;
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
 - `tests/compiler/test_blame_soft_recover.cpp` (—) [domain_suite, theme_compiler] — AC1: Sampled incomplete → recover restores dual fields OR escalate
@@ -1589,16 +1588,17 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape.cpp` (—) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (49)
+### `shape_soa` — Shape / SoA / column layout (50)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (49)
+#### domain/ (50)
 
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_ast_concurrency.cpp` (—) [domain_suite, theme_core] — Issue #2444 — region_by_sym_dense_ concurrent set_function_region +
+- `tests/compiler/test_batch_dirty_discipline.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — Issue #2773 — unified logical invalidation epoch (extend per #81967).
 - `tests/core/test_binding_gens_atomic.cpp` (—) [domain_suite, theme_core] — AC1: atomic shared_ptr snapshot for readers
 - `tests/compiler/test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp` (—) [domain_suite, theme_compiler] — test_cpp26_contracts_hotpath_arena_soa_value_shape_pass.cpp — Issue #742:
 - `tests/compiler/test_dead_coercion_columnar.cpp` (—) [domain_suite, theme_compiler] — AC1: residual_aos_bridge_total unchanged by DCE SoA path; columnar_total bumps

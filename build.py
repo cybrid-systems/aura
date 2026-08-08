@@ -784,6 +784,19 @@ def cmd_lint():
             "Issue #2773 unified dirty fence linter failed — run python3 scripts/coverage/checks/check_unified_dirty_fence_2773.py"
         )
         return r
+    # Issue #2774: production multi-block dirty cascade batch-only —
+    # residual N× mark_block_dirty Soft metric + static loop ban
+    # (#2522/#2615/#2681 residual). ac2774_* in test_batch_dirty_discipline.
+    mvs_script = COVERAGE_CHECKS / "check_batch_dirty_multi_via_single_ban_2774.py"
+    if not mvs_script.exists():
+        fail(f"missing {mvs_script}")
+        return 1
+    r = run([sys.executable, str(mvs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2774 multi-via-single ban linter failed — run python3 scripts/coverage/checks/check_batch_dirty_multi_via_single_ban_2774.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
