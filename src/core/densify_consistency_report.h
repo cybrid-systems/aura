@@ -137,6 +137,17 @@ inline std::atomic<std::uint8_t> g_last_densify_remap_pairing_forced{0};
 //   envframe: 1=ownership_scan, 2=dual_epoch, 3=linear_type (composed at Phase 5)
 //   closure:  1=capture_remap_delta, 2=dual_epoch
 inline std::atomic<std::uint64_t> g_last_densify_call_seq{0};
+// Issue #2749: auto-registered intermediate pins that remapped successfully
+// vs still-untracked incomplete roots (split incomplete-remap surface).
+inline std::atomic<std::uint64_t> g_moving_auto_registered_remapped_total{0};
+inline std::atomic<std::uint64_t> g_moving_still_untracked_incomplete_total{0};
+inline constexpr int kMovingIncompleteRemapResidualIssue = 2749;
+[[nodiscard]] inline std::uint64_t moving_auto_registered_remapped_total_v_read() noexcept {
+    return g_moving_auto_registered_remapped_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t moving_still_untracked_incomplete_total_v_read() noexcept {
+    return g_moving_still_untracked_incomplete_total.load(std::memory_order_relaxed);
+}
 inline std::atomic<std::uint8_t> g_last_densify_envframe_fail_code{0};
 inline std::atomic<std::uint8_t> g_last_densify_closure_fail_code{0};
 

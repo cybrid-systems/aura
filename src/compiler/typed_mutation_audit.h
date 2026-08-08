@@ -1026,23 +1026,31 @@ build_type_linear_commit_proof_from_live(std::uint64_t current_epoch_or_defuse) 
         return (set("solve", false, bp), r);
     }
 
-    // 6) Issue #2716: occurrence hard-faces (active branch). When
-    // production/Full + the #2703 (cone_outside_goal_drop) or #2704
-    // (occurrence_empty_after_fence) counters have advanced past the
-    // captured baseline, the outermost commit hard-rejects with the
-    // face's force_reason. Option A's "one full ConstraintSystem::solve()
-    // recover" half is deferred to a follow-up — this thin ship wires
-    // the active reject so half-green occurrence narrowing can no
-    // longer pass under production. Soft / baseline=0: counter-only
-    // (no extra atomics beyond the relaxed load of the face counters).
+    // 6) Issue #2716 / #2750: occurrence hard-faces. When production/Full
+    // + face counters advanced, try one full ConstraintSystem::solve()
+    // recover (hook) before hard-reject. Soft / baseline=0: counter-only
+    // (no full solve — preserves #2703/#2704 Soft ergonomics).
     if (in.occurrence_face_hard) {
         const bool cone_face = in.cone_outside_goal_drop_face;
         const bool empty_face = in.occurrence_empty_after_fence_face;
-        if (cone_face) {
-            return (set("cone_outside_goal_drop", false, 800), r);
-        }
-        if (empty_face) {
-            return (set("occurrence_empty_after_fence", false, 850), r);
+        if (cone_face || empty_face) {
+            // Issue #2750: Option A recover half — one full solve via hook.
+            // Quiet path (no face) never reaches here → zero extra solve cost.
+            if (g_occurrence_full_solve_recover_fn != nullptr &&
+                g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx)) {
+                g_occurrence_hard_face_recover_success_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                // Consume faces so re-entry does not immediately re-reject.
+                clear_cone_outside_goal_drop_for_test();
+                clear_occurrence_empty_after_fence_for_test();
+                // Fall through to step 7 ok (recovered).
+            } else {
+                g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+                if (cone_face) {
+                    return (set("cone_outside_goal_drop", false, 800), r);
+                }
+                return (set("occurrence_empty_after_fence", false, 850), r);
+            }
         }
     }
 
@@ -1059,6 +1067,22 @@ build_type_linear_commit_proof_from_live(std::uint64_t current_epoch_or_defuse) 
 // of this atomic at the top of the file (Issue #2728 forward block) pairs
 // with this inline definition (ODR-safe across TUs).
 inline std::atomic<std::uint64_t> g_occurrence_hard_face_full_solve_recover_total{0};
+// Issue #2750: true recover success/fail (distinct from #2716 reject-arm bump).
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_success_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_fail_total{0};
+// Optional full-solve recover hook (wired by TypeChecker / Evaluator).
+// Returns true when SOLVED + occurrence roots restored. nullptr = no recover.
+using OccurrenceFullSolveRecoverFn = bool (*)(void* ctx) noexcept;
+inline OccurrenceFullSolveRecoverFn g_occurrence_full_solve_recover_fn = nullptr;
+inline void* g_occurrence_full_solve_recover_ctx = nullptr;
+inline void install_occurrence_full_solve_recover(OccurrenceFullSolveRecoverFn fn,
+                                                  void* ctx) noexcept {
+    g_occurrence_full_solve_recover_fn = fn;
+    g_occurrence_full_solve_recover_ctx = ctx;
+}
+// Forward decls — defined later with face counter clear helpers (#2703/#2704).
+inline void clear_cone_outside_goal_drop_for_test() noexcept;
+inline void clear_occurrence_empty_after_fence_for_test() noexcept;
 
 // Fill hard flags from live audit process state (still pure w.r.t. inputs
 // once copied; callers that want hermetic tests pass CommitReadinessInput
@@ -1091,16 +1115,20 @@ inline std::atomic<std::uint64_t> g_occurrence_hard_face_full_solve_recover_tota
     if (face_hard) {
         in.cone_outside_goal_drop_face = (cone_outside_goal_drop_total_v_read() > 0);
         in.occurrence_empty_after_fence_face = (occurrence_empty_after_fence_total_v_read() > 0);
-        // Issue #2716: bump the recover counter (active branch
-        // fired). Mirrors the existing per-CompilerMetrics pattern;
-        // a non-zero value indicates the active face wired in
-        // (production hit, production reject — surface for Agent
-        // dashboards).
+        // Issue #2716: face-hit observe counter (not true recover).
+        // #2750 moves true recover success to recover_success_total.
         if (in.cone_outside_goal_drop_face || in.occurrence_empty_after_fence_face) {
             g_occurrence_hard_face_full_solve_recover_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
     return in;
+}
+
+[[nodiscard]] inline std::uint64_t occurrence_hard_face_recover_success_total_v_read() noexcept {
+    return g_occurrence_hard_face_recover_success_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_hard_face_recover_fail_total_v_read() noexcept {
+    return g_occurrence_hard_face_recover_fail_total.load(std::memory_order_relaxed);
 }
 
 // Issue #2145: Agent-stable deny reason (mirror #2076 format_deny_reason shape).
