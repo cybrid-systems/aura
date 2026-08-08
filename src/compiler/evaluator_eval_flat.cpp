@@ -2418,12 +2418,24 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         std::string filled_repl = repl_template;
         // Issue #1694: snapshot pre-parse size; resolve parent only in that
         // range after parse (do not treat parse-appended nodes as parents).
+        // Issue #2798: free_orphan_nodes_from on every skip after parse so
+        // unlinked replacement trees do not accumulate (rollback_atomic_batch
+        // only clears bump suppression — not parse appends).
         const auto size_before_parse = static_cast<std::size_t>(flat.size());
+        auto free_repl_parse_orphans = [&flat, size_before_parse]() {
+            if (size_before_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+        };
         auto repl_pr = aura::parser::parse_to_flat(filled_repl, flat, *workspace_pool_);
-        if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE)
+        if (!repl_pr.success || repl_pr.root == aura::ast::NULL_NODE) {
+            free_repl_parse_orphans(); // #2798 partial/failed parse
             continue;
-        if (static_cast<std::size_t>(id) >= size_before_parse || !flat.is_live_node(id))
+        }
+        if (static_cast<std::size_t>(id) >= size_before_parse || !flat.is_live_node(id)) {
+            free_repl_parse_orphans(); // #2798
             continue;
+        }
         aura::ast::NodeId parent_id = flat.parent_of(id);
         std::uint32_t child_idx = 0;
         bool found = false;
@@ -2458,13 +2470,19 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
                     break;
             }
         }
-        if (!found) [[unlikely]]
+        if (!found) [[unlikely]] {
+            free_repl_parse_orphans(); // #2798 unmatched slot
             continue;
+        }
         flat.set_child(parent_id, child_idx, repl_pr.root);
         ++replaced_count;
     }
     if (replaced_count == 0) {
         flat.rollback_atomic_batch();
+        // Issue #2798: free any remaining parse appends from skip paths
+        // (belt-and-suspenders if a continue missed free).
+        if (static_cast<std::size_t>(end_id) < flat.size())
+            (void)flat.free_orphan_nodes_from(static_cast<aura::ast::NodeId>(end_id));
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError,
             "batch :replace-pattern: no matches found (or all parse-failed)"});
