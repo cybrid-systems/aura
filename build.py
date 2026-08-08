@@ -915,6 +915,18 @@ def cmd_lint():
             "Issue #2784 workspace:sync-from body linter failed — run python3 scripts/coverage/checks/check_workspace_sync_from_body_2784.py"
         )
         return r
+    # Issue #2785: workspace:switch consolidated bind (no duplicate assign;
+    # always set_workspace_cow_epoch). ac2785 in test_workspace_switch.
+    wsb_script = COVERAGE_CHECKS / "check_workspace_switch_bind_2785.py"
+    if not wsb_script.exists():
+        fail(f"missing {wsb_script}")
+        return 1
+    r = run([sys.executable, str(wsb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2785 workspace:switch bind linter failed — run python3 scripts/coverage/checks/check_workspace_switch_bind_2785.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
