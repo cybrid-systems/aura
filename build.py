@@ -547,6 +547,23 @@ def cmd_lint():
             "Issue #2726 cross-fiber hold-budget cancel linter failed — run python3 scripts/coverage/checks/check_cross_fiber_hold_budget_cancel_2726.py"
         )
         return r
+    # Issue #2754: region concurrent cone / ImpactScope mask-AND
+    # disjointness (#2724 residual). Equal keys + proven cone masks
+    # (mask AND == 0) → concurrent admit; true overlap still rejects.
+    # Wires check_region_cone_disjoint_admit_2754.py so the 4-arg
+    # regions_disjoint + regions_cone_disjoint helpers + TLS cone mask
+    # + cone-admit counter + additive query keys + test extension stay
+    # enforced. Builds on #2724 (strict additive superset).
+    rcda_script = COVERAGE_CHECKS / "check_region_cone_disjoint_admit_2754.py"
+    if not rcda_script.exists():
+        fail(f"missing {rcda_script}")
+        return 1
+    r = run([sys.executable, str(rcda_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2754 region cone-disjoint admit linter failed — run python3 scripts/coverage/checks/check_region_cone_disjoint_admit_2754.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

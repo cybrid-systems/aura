@@ -12741,6 +12741,13 @@ public:
     static void note_parallel_task_region_key(std::uint64_t key) noexcept;
     static void clear_parallel_task_region_key() noexcept;
     [[nodiscard]] static std::uint64_t parallel_task_region_key() noexcept;
+    // Issue #2754: optional cone / ImpactScope bit mask paired with the
+    // region key. When non-zero on both admits, equal keys may still
+    // concurrent-admit if (mask_a & mask_b) == 0 (mask-AND hot path).
+    // 0 = unknown → equal keys keep #2724 conservative overlap reject.
+    static void note_parallel_task_cone_mask(std::uint64_t mask) noexcept;
+    static void clear_parallel_task_cone_mask() noexcept;
+    [[nodiscard]] static std::uint64_t parallel_task_cone_mask() noexcept;
     [[nodiscard]] static bool eval_current_holds_shared_pin() noexcept;
 
     // Issue #264: yield-boundary checkpoint handshake (per-fiber

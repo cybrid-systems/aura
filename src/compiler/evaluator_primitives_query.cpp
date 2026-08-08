@@ -6659,6 +6659,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                           mutation_region_concurrent_wired_v_read()));
                             insert_kv("schema-2724", 2724);
                             insert_kv("issue-2724", 2724);
+                            // Issue #2754: cone / ImpactScope mask-AND residual
+                            // (#2724 follow-up). Equal keys + proven cone
+                            // disjoint → concurrent admit; dashboards split
+                            // key-disjoint vs cone-disjoint via the cone
+                            // counter. Additive — all #2724 surfaces above
+                            // preserved.
+                            insert_kv("mutation-region-concurrent-cone-admit-total",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_concurrent_cone_admit_total_v_read()));
+                            insert_kv("mutation-region-cone-disjoint-wired",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_cone_disjoint_wired_v_read()));
+                            insert_kv("schema-2754", 2754);
+                            insert_kv("issue-2754", 2754);
                             // Issue #2726: P0 cross-fiber hold-budget
                             // force-degrade real cancel (per-fiber
                             // pending-cancel map polled at safepoints) —

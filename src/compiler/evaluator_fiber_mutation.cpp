@@ -1140,8 +1140,12 @@ bool Evaluator::eval_current_holds_shared_pin() noexcept {
 }
 
 // Issue #2746: TLS region key while a parallel-intend task body runs.
+// Issue #2754: companion cone / ImpactScope mask (bitset) for equal-key
+// mask-AND disjointness on the concurrent admit path. 0 = unknown cone
+// (conservative: equal keys still reject as overlap under production).
 namespace {
     thread_local std::uint64_t g_parallel_task_region_key = 0;
+    thread_local std::uint64_t g_parallel_task_cone_mask = 0;
 } // namespace
 
 void Evaluator::note_parallel_task_region_key(std::uint64_t key) noexcept {
@@ -1152,6 +1156,17 @@ void Evaluator::clear_parallel_task_region_key() noexcept {
 }
 std::uint64_t Evaluator::parallel_task_region_key() noexcept {
     return g_parallel_task_region_key;
+}
+
+// Issue #2754: TLS cone / ImpactScope mask for #2724 residual concurrent admit.
+void Evaluator::note_parallel_task_cone_mask(std::uint64_t mask) noexcept {
+    g_parallel_task_cone_mask = mask;
+}
+void Evaluator::clear_parallel_task_cone_mask() noexcept {
+    g_parallel_task_cone_mask = 0;
+}
+std::uint64_t Evaluator::parallel_task_cone_mask() noexcept {
+    return g_parallel_task_cone_mask;
 }
 
 // ═════════════════════════════════════════════════════════════════════════
