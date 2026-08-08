@@ -4165,6 +4165,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("issue-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("agent-scope-concurrent-detect-wired", 1);
+            // Issue #2777: directory_snapshot concurrent enter (read-path
+            // residual of #2399). Additive; distinct from misuse_total.
+            insert_kv("directory-snapshot-concurrent-total",
+                      static_cast<std::int64_t>(
+                          os.directory_snapshot_concurrent_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2777", aura::orch::kAgentScopeReadGuardIssue);
+            insert_kv("issue-2777", aura::orch::kAgentScopeReadGuardIssue);
+            insert_kv("agent-scope-read-guard-wired", 1);
             // Issue #2231 / #2401 / #2538: agent-ask + agent-reply metrics (additive).
             insert_kv("agent-ask-total", static_cast<std::int64_t>(
                                              os.agent_ask_total.load(std::memory_order_relaxed)));
