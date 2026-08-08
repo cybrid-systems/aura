@@ -5440,6 +5440,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
 // function is safe to call on any mutation record —
 // bails on malformed input (NULL_NODE, out-of-range,
 // empty macros_ registry).
+// Issue #2762: also covers MacroDef body mutates (workspace-wide
+// call-site re-expand of that macro) and splices expanded roots
+// into the parent via set_child so next eval-current sees them.
 std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
                                                     aura::ast::StringPool& pool,
                                                     const aura::ast::MutationRecord& rec) {
@@ -5449,14 +5452,13 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     if (rec.target_node == NULL_NODE && rec.parent_id == NULL_NODE)
         return 0;
     if (macros_.empty())
-        return 0; // no macros registered, nothing to do
+        return 0; // no macros registered, nothing to do (quiet path)
 
     // Collect affected node IDs: descendants of target_node
     // + parent_id + dirty-upward chain. This is a conservative
     // set — we may visit nodes that aren't actually affected
-    // by the macro, but the re-expansion is idempotent
-    // (re-expanding an already-expanded call site is a no-op
-    // in effect, just reuses the same gensym).
+    // by the macro, but the re-expansion is idempotent for
+    // already-fresh gensym (fresh clone each time under hygiene).
     std::vector<NodeId> affected;
     auto add_subtree = [&](NodeId root_id) {
         if (root_id == NULL_NODE || root_id >= flat.size())
@@ -5494,59 +5496,58 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
         }
     }
 
-    // Walk the affected set, find Call nodes whose callee is
-    // a registered macro, and re-expand them.
-    // Issue #2096: track last successfully re-expanded root so the
-    // post-loop per-cloned-subtree restamp (NodeId-rooted helper) has
-    // a visible NodeId to anchor on. NULL when no re-expand succeeded.
-    aura::ast::NodeId last_expanded = aura::ast::NULL_NODE;
-    for (auto id : affected) {
-        if (id == NULL_NODE || id >= flat.size())
-            continue;
-        auto v = flat.get(id);
-        if (v.tag != NodeTag::Call || v.children.empty())
-            continue;
+    // Issue #2762: which registered macros had their body / MacroDef
+    // definition mutated? Those need workspace-wide call-site re-expand
+    // (call sites may lie outside the local dirty cone).
+    std::unordered_set<std::string> macros_body_dirty;
+    {
+        std::unordered_set<NodeId> affected_set(affected.begin(), affected.end());
+        for (const auto& [name, md] : macros_) {
+            if (md.body_id != NULL_NODE && affected_set.count(md.body_id) != 0)
+                macros_body_dirty.insert(name);
+        }
+        for (auto id : affected) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            auto v = flat.get(id);
+            if (v.tag == NodeTag::MacroDef && v.has_name())
+                macros_body_dirty.insert(std::string(pool.resolve(v.sym_id)));
+        }
+    }
 
+    // Re-expand one Call site: clone + expand_inner + splice into parent.
+    aura::ast::NodeId last_expanded = aura::ast::NULL_NODE;
+    auto reexpand_call = [&](NodeId call_id) -> bool {
+        if (call_id == NULL_NODE || call_id >= flat.size())
+            return false;
+        auto v = flat.get(call_id);
+        if (v.tag != NodeTag::Call || v.children.empty())
+            return false;
         auto callee_id = v.child(0);
         if (callee_id == NULL_NODE || callee_id >= flat.size())
-            continue;
+            return false;
         auto callee_v = flat.get(callee_id);
         if (!callee_v.has_name())
-            continue;
-        auto callee_name = pool.resolve(callee_v.sym_id);
-
-        // Is the callee a registered macro?
-        auto macro_it = macros_.find(std::string(callee_name));
+            return false;
+        auto callee_name = std::string(pool.resolve(callee_v.sym_id));
+        auto macro_it = macros_.find(callee_name);
         if (macro_it == macros_.end())
-            continue;
-
+            return false;
         const auto& md = macro_it->second;
 
-        // Build substitution: macro param names → call arg node IDs
         std::vector<aura::ast::NodeId> call_args;
-        for (std::size_t i = 1; i < v.children.size(); ++i) {
+        for (std::size_t i = 1; i < v.children.size(); ++i)
             call_args.push_back(v.child(i));
-        }
-        auto subst_view = std::span<const aura::ast::NodeId>(call_args);
 
-        // Compute substitution: param string → call arg node id.
-        // For each param name, find the corresponding call arg
-        // by position. If params has dotted-rest, the last param
-        // binds to a list of remaining args.
         std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
                            std::equal_to<>>
             subst_map;
         std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                            std::equal_to<>>
             rename_map;
-        for (std::size_t i = 0; i < md.params.size() && i < call_args.size(); ++i) {
+        for (std::size_t i = 0; i < md.params.size() && i < call_args.size(); ++i)
             subst_map[md.params[i]] = call_args[i];
-        }
-        // Handle dotted-rest param (the last param absorbs remaining args)
         if (md.dotted && !md.params.empty() && call_args.size() >= md.params.size()) {
-            // Build a proper-list from the remaining args by
-            // consing them with add_pair. Build right-to-left
-            // so we get (a . (b . (c . nil))).
             std::size_t first_rest_idx = md.params.size() - 1;
             aura::ast::NodeId list_end = aura::ast::NULL_NODE;
             for (std::size_t k = call_args.size(); k > first_rest_idx; --k) {
@@ -5556,45 +5557,83 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
             subst_map[md.params.back()] = list_end;
         }
 
-        // Clone the macro body into the calling flat with
-        // substitution + (for hygienic) name rename map.
-        // For non-hygienic macros, the name_map is empty (no
-        // gensym) and the params bind to call-site names (legacy
-        // defmacro behavior).
-        // Issue #190: pass MacroIntroduced so the cloned nodes
-        // get the correct SyntaxMarker at creation time. (The
-        // post-clone BFS marker-set that used to be here is now
-        // redundant — clone_macro_body handles it.)
         auto* src_pool = md.pool ? md.pool : &pool;
         auto* src_flat = md.flat ? md.flat : &flat;
         auto expanded =
             clone_macro_body(flat, pool, *src_flat, *src_pool, md.body_id, &subst_map, &rename_map,
                              /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced);
         if (expanded == NULL_NODE)
-            continue;
-
-        // Recursively expand any nested macro calls in the
-        // cloned body. Bounded by depth=10 to prevent infinite
-        // loops (a macro that expands to itself).
+            return false;
         expanded =
             expand_inner_macros(&flat, &pool, expanded, 0, 10, as_expansion_registry(macros_));
+        if (expanded == NULL_NODE)
+            return false;
 
-        // Issue #2096: remember the last successfully expanded root
-        // so the post-loop helper call can anchor on it.
+        // Issue #2762: splice expanded root into the Call's parent slot
+        // so subsequent eval-current / IR lower sees the hygienic tree.
+        const auto pid = flat.parent_of(call_id);
+        if (pid != NULL_NODE && pid < flat.size()) {
+            auto pv = flat.get(pid);
+            for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+                if (pv.child(ci) == call_id) {
+                    flat.set_child(pid, ci, expanded);
+                    flat.mark_dirty_upward(expanded);
+                    break;
+                }
+            }
+        }
         last_expanded = expanded;
+        return true;
+    };
 
-        ++re_expanded;
+    // (b) Call sites inside the local dirty cone.
+    for (auto id : affected) {
+        if (reexpand_call(id))
+            ++re_expanded;
     }
 
-    // Issue #2019: after post-mutate re-expand, restamp MacroIntroduced
+    // (a) MacroDef body mutated → re-expand every live Call to that
+    // macro (workspace-wide). Only runs when macros_body_dirty is
+    // non-empty (zero cost on pure non-macro-def mutates).
+    if (!macros_body_dirty.empty()) {
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            if (!flat.is_live_node(id))
+                continue;
+            auto v = flat.get(id);
+            if (v.tag != NodeTag::Call || v.children.empty())
+                continue;
+            auto callee_id = v.child(0);
+            if (callee_id == NULL_NODE || callee_id >= flat.size())
+                continue;
+            auto callee_v = flat.get(callee_id);
+            if (!callee_v.has_name())
+                continue;
+            auto cname = std::string(pool.resolve(callee_v.sym_id));
+            if (macros_body_dirty.count(cname) == 0)
+                continue;
+            // Skip if already re-expanded in local walk (parent now
+            // points at expanded MacroIntroduced, not the old Call).
+            if (reexpand_call(id))
+                ++re_expanded;
+        }
+    }
+
+    // Issue #2019 / #2096 / #2762: after re-expand, restamp MacroIntroduced
     // gens so subsequent mutate/query/JIT see stable markers.
     if (re_expanded > 0) {
         (void)flat.restamp_macro_introduced_generations();
-        // Issue #2096: per-cloned-subtree restamp on the last expanded
-        // root inside the post-mutate re-expand pass (subtree-local
-        // coherence, scoped to the just-re-expanded subtree root).
         if (last_expanded != aura::ast::NULL_NODE)
             (void)flat.restamp_macro_introduced_subtree(last_expanded);
+        // Also restamp any MacroIntroduced in the local dirty cone that
+        // carries kMacroExpansion (marker consistency after structural splice).
+        constexpr auto kExpansion =
+            static_cast<std::uint8_t>(FlatAST::MacroDirtyReason::kMacroExpansion);
+        for (auto id : affected) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (flat.is_macro_introduced(id) && (flat.macro_dirty(id) & kExpansion) != 0)
+                (void)flat.restamp_macro_introduced_subtree(id);
+        }
     }
 
     return re_expanded;

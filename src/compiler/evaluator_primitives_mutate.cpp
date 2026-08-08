@@ -7939,6 +7939,20 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     if (relower_dirty_defines_fn_ && defines_n > 0)
         relower_dirty_defines_fn_();
 
+    // 4) Issue #2762: post-mutate incremental macro re-expand +
+    // MacroIntroduced restamp. Reuses post_mutation_macro_reexpand
+    // (#165) so EDSL mutate:* under MutationBoundaryGuard sees fully
+    // hygienic expansions on next eval-current (typed_mutate path in
+    // service.ixx already called this; Guard cascade did not).
+    // Quiet path: macros_.empty() → post_mutation_macro_reexpand returns 0
+    // with no walk (zero measurable overhead on pure non-macro mutates).
+    std::uint64_t reexpand_sites = 0;
+    if (!macros_.empty() && mutation_log_begin < log.size()) {
+        for (std::size_t i = mutation_log_begin; i < log.size(); ++i)
+            reexpand_sites +=
+                static_cast<std::uint64_t>(post_mutation_macro_reexpand(flat, pool, log[i]));
+    }
+
     const auto t1 = std::chrono::steady_clock::now();
     const auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     const auto uus = static_cast<std::uint64_t>(us > 0 ? us : 0);
@@ -7947,6 +7961,13 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         m->post_mutate_incremental_defines_total.fetch_add(defines_n, std::memory_order_relaxed);
         m->post_mutate_incremental_latency_us_total.fetch_add(uus, std::memory_order_relaxed);
         m->post_mutate_incremental_latency_samples.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2762: Agent-visible re-expand counters (cascade + sites).
+        if (reexpand_sites > 0) {
+            m->post_mutate_macro_reexpand_cascade_total.fetch_add(1, std::memory_order_relaxed);
+            m->post_mutate_macro_reexpand_total.fetch_add(reexpand_sites,
+                                                          std::memory_order_relaxed);
+            m->hygiene_mutate_restamp_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 }
 

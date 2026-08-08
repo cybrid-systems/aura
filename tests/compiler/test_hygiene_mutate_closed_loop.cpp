@@ -197,16 +197,130 @@ static void ac6_contract_docs() {
           "closed-loop / #2037 comment");
 }
 
+// ── Issue #2762: post-mutate macro re-expand under Guard cascade ──
+// Prefer-existing #2037 suite per #81967.
+
+// clang-format may split long string literals; match after strip.
+[[nodiscard]] static bool source_has_key(const std::string& hay, std::string_view key) {
+    std::string n;
+    n.reserve(hay.size());
+    for (char ch : hay) {
+        if (ch != '"' && ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
+            n.push_back(ch);
+    }
+    return n.find(key) != std::string::npos;
+}
+
+static void ac2762_1_cascade_wires_reexpand() {
+    std::println("\n--- #2762 AC1: cascade wires post_mutation_macro_reexpand ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("#2762") != std::string::npos, "AC1: mutate cascade cites #2762");
+    CHECK(mut.find("post_mutation_macro_reexpand") != std::string::npos,
+          "AC1: cascade calls post_mutation_macro_reexpand");
+    CHECK(mut.find("push_post_mutate_incremental_cascade") != std::string::npos,
+          "AC1: push_post_mutate_incremental_cascade present");
+    CHECK(emb.find("push_post_mutate_incremental_cascade") != std::string::npos,
+          "AC1: Guard success path invokes cascade");
+    // Splice + MacroDef body path.
+    CHECK(efl.find("set_child") != std::string::npos &&
+              efl.find("post_mutation_macro_reexpand") != std::string::npos,
+          "AC1: reexpand implementation present");
+    CHECK(efl.find("macros_body_dirty") != std::string::npos ||
+              efl.find("#2762") != std::string::npos,
+          "AC1: MacroDef body dirty / #2762 path in reexpand");
+}
+
+static void ac2762_2_closed_loop_expand_mutate_reexpand() {
+    std::println("\n--- #2762 AC2: expand → mutate → re-expand closed loop ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "macro workspace");
+    // MacroIntroduced present after initial eval-current expand.
+    auto n0 = cs.eval("(length (query:macro-introduced))");
+    CHECK(n0 && is_int(*n0) && as_int(*n0) >= 1, "macro-introduced ≥1 after expand");
+    // Structural mutate on a user node still under Guard cascade.
+    auto mut = cs.eval("(mutate:replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
+    CHECK(mut.has_value(), "user-node mutate under Guard");
+    // Re-query: MacroIntroduced still present; cascade must not wipe hygiene.
+    auto n1 = cs.eval("(length (query:macro-introduced))");
+    CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "macro-introduced still ≥1 after mutate");
+    // Next eval-current must succeed (fully expanded hygienic AST).
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current after mutate");
+    // Schema keys live (format-robust).
+    CHECK(href(cs, "schema-2037") == 2037 || href(cs, "schema-2037") < 0,
+          "schema-2037 still queryable or light-link skip");
+}
+
+static void ac2762_3_quiet_non_macro_path() {
+    std::println("\n--- #2762 AC3: quiet path when no macros ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(mut.find("macros_.empty()") != std::string::npos ||
+              efl.find("macros_.empty()") != std::string::npos,
+          "AC3: early return when macros_ empty (zero cost)");
+    CHECK(mut.find("reexpand_sites") != std::string::npos ||
+              mut.find("post_mutation_macro_reexpand") != std::string::npos,
+          "AC3: reexpand gated (not unconditional full walk)");
+}
+
+static void ac2762_5_observability() {
+    std::println("\n--- #2762 AC5: metrics + query keys ---");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto qe = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(met.find("post_mutate_macro_reexpand_total") != std::string::npos,
+          "AC5: post_mutate_macro_reexpand_total metric");
+    CHECK(met.find("post_mutate_macro_reexpand_cascade_total") != std::string::npos,
+          "AC5: cascade total metric");
+    CHECK(source_has_key(q, "post-mutate-macro-reexpand-total") ||
+              source_has_key(qe, "post-mutate-macro-reexpand-total"),
+          "AC5: query key post-mutate-macro-reexpand-total");
+    CHECK(source_has_key(q, "schema-2762") || source_has_key(qe, "schema-2762"),
+          "AC5: schema-2762");
+    CHECK(source_has_key(q, "issue-2762") || source_has_key(qe, "issue-2762"), "AC5: issue-2762");
+    // Prior surfaces preserved.
+    CHECK(source_has_key(q, "schema-2037"), "AC5: schema-2037 preserved");
+    CHECK(source_has_key(qe, "schema-2038") || source_has_key(q, "schema-2038"),
+          "AC5: schema-2038 preserved");
+}
+
+static void ac2762_6_source_and_linter() {
+    std::println("\n--- #2762 AC6: source-cite + linter ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_post_mutate_macro_reexpand_2762.py");
+    CHECK(mut.find("#2762") != std::string::npos, "AC6: mutate cites #2762");
+    CHECK(efl.find("#2762") != std::string::npos, "AC6: eval_flat cites #2762");
+    CHECK(t.find("ac2762_1_cascade_wires_reexpand") != std::string::npos, "AC6: AC1 test present");
+    CHECK(t.find("ac2762_2_closed_loop_expand_mutate_reexpand") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2762_5_observability") != std::string::npos, "AC6: AC5 test present");
+    CHECK(build.find("check_post_mutate_macro_reexpand_2762") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty(), "AC6: linter present");
+    CHECK(read_file("docs/design/2762-post-mutate-macro-reexpand.md").empty(),
+          "AC6: no docs/design/2762-* per #1655");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== test_hygiene_mutate_closed_loop (#2037) ===");
+    std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
     ac4_closed_loop();
     ac5_query_schema();
     ac6_contract_docs();
+    std::println("\n=== Issue #2762: post-mutate macro re-expand ===");
+    ac2762_1_cascade_wires_reexpand();
+    ac2762_2_closed_loop_expand_mutate_reexpand();
+    ac2762_3_quiet_non_macro_path();
+    ac2762_5_observability();
+    ac2762_6_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

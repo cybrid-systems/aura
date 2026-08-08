@@ -288,6 +288,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> post_mutate_incremental_defines_total{0};
     std::atomic<std::uint64_t> post_mutate_incremental_latency_us_total{0};
     std::atomic<std::uint64_t> post_mutate_incremental_latency_samples{0};
+    // Issue #2762: post-mutate incremental macro re-expand under
+    // MutationBoundaryGuard cascade (#165/#2096 residual).
+    //   - post_mutate_macro_reexpand_total: call sites re-expanded
+    //   - post_mutate_macro_reexpand_cascade_total: cascades that re-expanded ≥1
+    std::atomic<std::uint64_t> post_mutate_macro_reexpand_total{0};
+    std::atomic<std::uint64_t> post_mutate_macro_reexpand_cascade_total{0};
     // Issue #1514: clean functions skipped by per-function re-lower.
     std::atomic<std::uint64_t> relower_partial_funcs_saved_total{0};
     // Issue #2109: instruction-level partial re-emit observability.

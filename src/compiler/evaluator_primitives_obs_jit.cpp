@@ -3256,6 +3256,19 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
                 {"mutate-hotpath-hygiene-wired", make_int(1)},
                 {"schema-2037", make_int(2037)},
                 {"issue-2037", make_int(2037)},
+                // Issue #2762: post-mutate macro re-expand under Guard cascade
+                // (Agent closed-loop fidelity). Additive to #2037 surface.
+                {"post-mutate-macro-reexpand-total",
+                 make_int(m ? static_cast<std::int64_t>(m->post_mutate_macro_reexpand_total.load(
+                                  std::memory_order_relaxed))
+                            : 0)},
+                {"post-mutate-macro-reexpand-cascade-total",
+                 make_int(m ? static_cast<std::int64_t>(m->post_mutate_macro_reexpand_cascade_total
+                                                            .load(std::memory_order_relaxed))
+                            : 0)},
+                {"post-mutate-macro-reexpand-wired", make_int(1)},
+                {"schema-2762", make_int(2762)},
+                {"issue-2762", make_int(2762)},
             };
             return build_hash(kv);
         });

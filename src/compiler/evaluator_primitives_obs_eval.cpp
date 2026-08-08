@@ -7365,6 +7365,17 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"post-mutate-push-cascade-wired", make_int(1)},
                 {"schema-2038", make_int(2038)},
                 {"issue-2038", make_int(2038)},
+                // Issue #2762: post-mutate macro re-expand under Guard cascade
+                // (refine #165/#2096). Additive — #2038 keys preserved.
+                {"post-mutate-macro-reexpand-total",
+                 make_int(m ? load(m->post_mutate_macro_reexpand_total) : 0)},
+                {"post_mutate_macro_reexpand_total",
+                 make_int(m ? load(m->post_mutate_macro_reexpand_total) : 0)},
+                {"post-mutate-macro-reexpand-cascade-total",
+                 make_int(m ? load(m->post_mutate_macro_reexpand_cascade_total) : 0)},
+                {"post-mutate-macro-reexpand-wired", make_int(1)},
+                {"schema-2762", make_int(2762)},
+                {"issue-2762", make_int(2762)},
                 // Issue #2126: instr-level impact prefer on mark_define_dirty /
                 // quote-lambda cascade (eliminate nested/quote full-relower).
                 {"instr-level-impact-prefer-total",
