@@ -689,6 +689,88 @@ static void ac2777_read_apis_guarded() {
     }
 }
 
+// ── Issue #2782: Scheduler destroyed before AgentScope (no UAF) ──────
+static void ac2782_scheduler_destroyed_before_scope() {
+    std::println("\n--- #2782 ac2782_scheduler_destroyed_before_scope ---");
+    using aura::orch::kAgentScopeSchedulerLifetimeIssue;
+    CHECK(kAgentScopeSchedulerLifetimeIssue == 2782, "ac2782: issue stamp");
+
+    const auto inv0 =
+        g_orch_module_stats.agent_scope_scheduler_invalidated_total.load(std::memory_order_relaxed);
+    const auto dang0 =
+        g_orch_module_stats.agent_scope_scheduler_dangling_total.load(std::memory_order_relaxed);
+
+    // Heap-allocate Scheduler so we can destroy it while AgentScope lives.
+    auto* sched = new Scheduler(2);
+    auto* runner = new SchedRunner(*sched);
+    AgentScope scope(*sched);
+    CHECK(scope.scheduler_alive(), "ac2782: scheduler_alive after construct");
+
+    std::atomic<bool> hold{true};
+    auto& h = scope.spawn({.name = "2782-hold", .body = [&] {
+                               while (hold.load(std::memory_order_relaxed)) {
+                                   if (aura::serve::g_current_fiber &&
+                                       aura::serve::g_current_fiber->is_cancel_requested())
+                                       break;
+                                   Fiber::yield(YieldReason::Explicit);
+                               }
+                           }});
+    CHECK(h.ok, "ac2782: spawn ok while sched alive");
+    std::this_thread::sleep_for(std::chrono::milliseconds(15));
+
+    // Tear down runner then Scheduler (observer fires → nulls sched_/fibers).
+    delete runner;
+    runner = nullptr;
+    delete sched;
+    sched = nullptr;
+
+    CHECK(!scope.scheduler_alive(), "ac2782: scheduler_alive false after sched dtor");
+    const auto inv1 =
+        g_orch_module_stats.agent_scope_scheduler_invalidated_total.load(std::memory_order_relaxed);
+    CHECK(inv1 > inv0, "ac2782: invalidated_total bumps on observer");
+
+    // Ops after Scheduler death must not crash / UAF (fail-closed).
+    scope.cancel_all();
+    auto snap = scope.directory_snapshot();
+    CHECK(snap.scopes_visited >= 1, "ac2782: directory_snapshot after dangle");
+    auto& failed = scope.spawn({.name = "2782-after", .body = [] {}});
+    CHECK(!failed.ok, "ac2782: spawn after dangle → ok=false");
+    CHECK(failed.error.find("2782") != std::string::npos ||
+              failed.error.find("Scheduler destroyed") != std::string::npos,
+          "ac2782: spawn error cites Scheduler destroyed");
+    auto jr = scope.join_all(std::optional<std::uint64_t>{100});
+    CHECK(jr.status == JoinStatus::Invalid, "ac2782: join_all after dangle → Invalid");
+    const auto dang1 =
+        g_orch_module_stats.agent_scope_scheduler_dangling_total.load(std::memory_order_relaxed);
+    CHECK(dang1 > dang0, "ac2782: dangling_total bumps on post-dangle ops");
+
+    hold.store(false, std::memory_order_relaxed);
+    // ~AgentScope at end of function — no crash.
+}
+
+static void ac2782_source_and_query() {
+    std::println("\n--- #2782 ac2782_source_and_query ---");
+    auto scope_h = read_file("src/orch/agent_scope.h");
+    auto sched_h = read_file("src/serve/scheduler.h");
+    auto sched_c = read_file("src/serve/scheduler.cpp");
+    auto spawn_h = read_file("src/orch/agent_spawn.h");
+    auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(scope_h.find("kAgentScopeSchedulerLifetimeIssue") != std::string::npos,
+          "ac2782: issue constant in agent_scope.h");
+    CHECK(scope_h.find("on_scheduler_destroyed_") != std::string::npos,
+          "ac2782: observer callback");
+    CHECK(scope_h.find("scheduler_alive") != std::string::npos, "ac2782: scheduler_alive API");
+    CHECK(sched_h.find("register_agent_scope_observer") != std::string::npos,
+          "ac2782: Scheduler register API");
+    CHECK(sched_c.find("register_agent_scope_observer") != std::string::npos,
+          "ac2782: register impl");
+    CHECK(spawn_h.find("agent_scope_scheduler_invalidated_total") != std::string::npos,
+          "ac2782: invalidated metric");
+    CHECK(prim.find("schema-2782") != std::string::npos, "ac2782: schema-2782");
+    CHECK(prim.find("agent-scope-scheduler-lifetime-wired") != std::string::npos,
+          "ac2782: wired sentinel");
+}
+
 } // namespace
 
 int run_test_agent_scope() {
@@ -703,7 +785,11 @@ int run_test_agent_scope() {
     ac2161_watch_all_batch();
     ac2399_concurrent_detect();
     ac2777_read_apis_guarded();
-    std::println("\n=== #2083/#2161/#2399/#2777: passed={} failed={} ===", g_passed, g_failed);
+    std::println("\n=== Issue #2782: AgentScope Scheduler lifetime ===");
+    ac2782_scheduler_destroyed_before_scope();
+    ac2782_source_and_query();
+    std::println("\n=== #2083/#2161/#2399/#2777/#2782: passed={} failed={} ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

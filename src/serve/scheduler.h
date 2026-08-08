@@ -194,6 +194,16 @@ public:
     // hold duration in microseconds.
     void on_long_mutation_held(std::uint64_t fiber_id, std::uint64_t duration_us);
 
+    // Issue #2782: AgentScope lifetime observers (opaque cookies — no
+    // reverse dep on orch/). Register so ~Scheduler can invalidate
+    // borrowed Scheduler* holders BEFORE owned fibers are destroyed
+    // (avoids UAF on sched_ / Fiber* after session-boundary mis-order).
+    // Cookie + fn are identity for unregister; fn(cookie) is invoked
+    // once from ~Scheduler (before owned_fibers_.clear). Not a global
+    // agent registry — per-Scheduler observer list only.
+    using ScopeLifetimeFn = void (*)(void* cookie) noexcept;
+    void register_agent_scope_observer(void* cookie, ScopeLifetimeFn fn) noexcept;
+    void unregister_agent_scope_observer(void* cookie) noexcept;
 
 private:
     int num_workers_;
@@ -272,6 +282,15 @@ private:
     // per-fiber stack storage to the bounded pool on teardown.
     std::vector<std::unique_ptr<Fiber>> owned_fibers_;
     std::mutex owned_fibers_mutex_;
+
+    // Issue #2782: AgentScope (and similar) observers notified before
+    // fiber teardown so borrowed Scheduler* / Fiber* can be nulled.
+    struct AgentScopeObserver {
+        void* cookie = nullptr;
+        ScopeLifetimeFn fn = nullptr;
+    };
+    std::vector<AgentScopeObserver> agent_scope_observers_;
+    mutable std::mutex agent_scope_observers_mutex_;
 };
 
 } // namespace aura::serve

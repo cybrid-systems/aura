@@ -878,6 +878,19 @@ def cmd_lint():
             "Issue #2781 hierarchy cancel linter failed — run python3 scripts/coverage/checks/check_agent_scope_hierarchy_cancel_2781.py"
         )
         return r
+    # Issue #2782: AgentScope Scheduler lifetime — observer invalidates
+    # borrowed Scheduler* before fiber teardown; ops fail-closed.
+    # ac2782_* in test_agent_scope per #81967.
+    assl_script = COVERAGE_CHECKS / "check_agent_scope_scheduler_lifetime_2782.py"
+    if not assl_script.exists():
+        fail(f"missing {assl_script}")
+        return 1
+    r = run([sys.executable, str(assl_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2782 AgentScope Scheduler lifetime linter failed — run python3 scripts/coverage/checks/check_agent_scope_scheduler_lifetime_2782.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
