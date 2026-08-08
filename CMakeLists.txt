@@ -1870,6 +1870,9 @@ aura_issue_test_link_light(test_unquote_splicing_hygiene)
 # Issue #2808: stamp_rest_param_hygiene sets SyntaxMarker::MacroIntroduced.
 aura_add_issue_test(test_stamp_rest_param_hygiene_marker)
 aura_issue_test_link_light(test_stamp_rest_param_hygiene_marker)
+# Issue #2809: expand_inner_macros qq-unwrap uses targeted restamp (not full O(N)).
+aura_add_issue_test(test_qq_unwrap_targeted_restamp)
+aura_issue_test_link_light(test_qq_unwrap_targeted_restamp)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

@@ -7921,6 +7921,18 @@ public:
     // Refresh node_gen_ on one subtree (narrower than restamp_all).
     void restamp_subtree_generation(NodeId root);
 
+    // Issue #2809: align a single live slot's node_gen_ to generation_
+    // without walking children. Used by expand_inner_macros qq-unwrap
+    // targeted restamp for the parent whose child edge was rewritten
+    // (full subtree walk of parent would re-introduce O(N) cost).
+    void restamp_node_generation(NodeId id) noexcept;
+
+    // Issue #2809: enable lazy gen-align on is_valid/make_ref for live
+    // slots left with prior node_gen_ after a targeted restamp (same
+    // mechanism as post-incremental wrap recovery, #2122 / #2421).
+    void enable_restamp_lazy_align() noexcept {
+        restamp_lazy_align_enabled_.store(true, std::memory_order_release);
+    }
 
     void bump_generation() noexcept post(generation_ != 0);
 

@@ -312,6 +312,10 @@ extern "C" void aura_test_reset_stamp_rest_param_marker_totals_for_test(void) no
 extern "C" void aura_test_call_stamp_rest_param_hygiene(void* target_flat, void* source_flat,
                                                         std::uint32_t src_body_id,
                                                         std::uint32_t list_root) noexcept;
+// Issue #2809: expand_inner_macros qq-unwrap targeted vs full restamp metrics.
+extern "C" std::uint64_t aura_macro_expand_targeted_restamp_total_v_read(void) noexcept;
+extern "C" std::uint64_t aura_macro_expand_full_restamp_total_v_read(void) noexcept;
+extern "C" void aura_test_reset_macro_expand_qq_restamp_totals_for_test(void) noexcept;
 
 // Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
 // Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call

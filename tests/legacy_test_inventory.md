@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 803 | Preferred destination suites |
-| **Total scanned** | **803** | |
+| `tests/core/test_*.cpp` | 804 | Preferred destination suites |
+| **Total scanned** | **804** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 234 | 234 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 100 | 100 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 50 | 50 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 51 | 51 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 50 | 50 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 128 | 128 | P2 — often thin schema probes; collapse into obs matrix |
@@ -755,6 +755,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_prompt6_linear_jit_l2_post_invalidate_arena_gc.cpp`
 - `tests/compiler/test_propagate_marker_cycle_guard.cpp`
 - `tests/compiler/test_provenance_blame_hygiene.cpp`
+- `tests/compiler/test_qq_unwrap_targeted_restamp.cpp`
 - `tests/compiler/test_query_and_replace_batch.cpp`
 - `tests/compiler/test_query_by_marker_provenance.cpp`
 - `tests/compiler/test_query_dispatch.cpp`
@@ -1493,13 +1494,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Query returns all folded keys; schema-2613 registered
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (50)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (51)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (50)
+#### domain/ (51)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1531,6 +1532,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_opcode_info_align_a3.cpp` (—) [small, domain_suite, theme_reflect] — Wave A3: IROpcode PascalCase (P2996) ↔ display kebab table alignment.
 - `tests/reflect/test_opcode_reflect.cpp` (—) [domain_suite, theme_reflect] — Issue #2289: GCC 16.1 reflection workaround cleanup.
 - `tests/compiler/test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp` (—) [domain_suite, theme_compiler] — test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp — Issue #741:
+- `tests/compiler/test_qq_unwrap_targeted_restamp.cpp` (—) [domain_suite, theme_compiler] — AC1: expand_inner_macros cites #2809; restamp_after_qq_unwrap; no full
 - `tests/compiler/test_query_hygiene_default.cpp` (—) [domain_suite, theme_compiler] — AC1: Default query:pattern / query:filter skip MacroIntroduced; include
 - `tests/compiler/test_query_pattern_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_query_pattern_batch.cpp — query_pattern pair dup-merge (R19 phase 13).
 - `tests/compiler/test_query_pattern_default_hygiene.cpp` (—) [domain_suite, theme_compiler] — MacroIntroduced linkage (production "code as memory" contract).

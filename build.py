@@ -1203,6 +1203,18 @@ def cmd_lint():
             "Issue #2808 stamp_rest_param_hygiene marker linter failed — run python3 scripts/coverage/checks/check_stamp_rest_param_hygiene_marker_2808.py"
         )
         return r
+    # Issue #2809: expand_inner_macros qq-unwrap targeted restamp (not full O(N×M)).
+    # ac2809 in test_qq_unwrap_targeted_restamp.
+    qut_script = COVERAGE_CHECKS / "check_qq_unwrap_targeted_restamp_2809.py"
+    if not qut_script.exists():
+        fail(f"missing {qut_script}")
+        return 1
+    r = run([sys.executable, str(qut_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2809 qq-unwrap targeted restamp linter failed — run python3 scripts/coverage/checks/check_qq_unwrap_targeted_restamp_2809.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

@@ -134,6 +134,9 @@ export extern std::atomic<std::uint64_t> g_unquote_splicing_hygiene_mismatch_tot
 // Issue #2808: stamp_rest_param_hygiene MacroIntroduced marker set / skipped.
 export extern std::atomic<std::uint64_t> g_stamp_rest_param_marker_set_total;
 export extern std::atomic<std::uint64_t> g_stamp_rest_param_marker_skipped_total;
+// Issue #2809: expand_inner_macros qq-unwrap targeted vs full restamp.
+export extern std::atomic<std::uint64_t> g_macro_expand_targeted_restamp_total;
+export extern std::atomic<std::uint64_t> g_macro_expand_full_restamp_total;
 
 export struct MacroExpansionDef {
     std::vector<std::string> params;
