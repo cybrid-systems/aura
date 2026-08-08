@@ -2355,6 +2355,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
 // Single-subtree wildcard match (no Kleene capture substitution
 // in batch context — outer batch can be re-issued with strict-arity
 // flag if needed).
+//
+// Issue #2800: two-phase StableNodeRef multi-match. Phase 1 collects
+// all matches with make_ref_layout (no parse_to_flat). Phase 2 applies
+// under begin_atomic_batch with is_valid_in + reverse parent-edge
+// checks so a prior iteration's parse append cannot leave a raw NodeId
+// / parent slot stale for set_child. Metric:
+// replace_pattern_stale_nodeid_prevented_total. Issue #2798 free of
+// unlinked parse orphans is retained on every post-parse skip.
 EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const types::EvalValue> a) {
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
         !workspace_pool_)
@@ -2388,38 +2396,88 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::ParseError, "batch :replace-pattern: pattern parse failed"});
     auto wildcard_sym = pat_pool->intern("...");
+
+    std::function<bool(aura::ast::NodeId, aura::ast::NodeId)> match_sub;
+    match_sub = [&](aura::ast::NodeId wid, aura::ast::NodeId pid) -> bool {
+        if (pid >= pat_flat->size() || wid >= flat.size())
+            return false;
+        auto wv = flat.get(wid);
+        auto pv = pat_flat->get(pid);
+        if (pv.tag == aura::ast::NodeTag::Variable && pv.sym_id == wildcard_sym)
+            return true;
+        if (wv.tag != pv.tag)
+            return false;
+        if (wv.tag == aura::ast::NodeTag::Variable || wv.tag == aura::ast::NodeTag::LiteralString ||
+            wv.tag == aura::ast::NodeTag::Define || wv.tag == aura::ast::NodeTag::DefineType ||
+            wv.tag == aura::ast::NodeTag::DefineModule)
+            if (wv.sym_id != pv.sym_id)
+                return false;
+        if (wv.children.size() != pv.children.size())
+            return false;
+        for (std::size_t ci = 0; ci < wv.children.size(); ++ci)
+            if (!match_sub(wv.child(ci), pv.child(ci)))
+                return false;
+        return true;
+    };
+
+    // ── Phase 1 (#2800): collect StableNodeRef before any workspace parse ──
+    // Snapshot end_id so match scan does not extend into later replacements.
+    // make_ref_layout + stamp captures gen; apply re-checks is_valid_in.
     const auto end_id = flat.size();
-    int replaced_count = 0;
-    flat.begin_atomic_batch();
+    using StableNodeRef = aura::ast::FlatAST::StableNodeRef;
+    std::vector<StableNodeRef> matches;
+    matches.reserve(static_cast<std::size_t>(end_id) / 4 + 1);
     for (aura::ast::NodeId id = 0; id < end_id; ++id) {
         if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
             flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
             continue;
-        std::function<bool(aura::ast::NodeId, aura::ast::NodeId)> match_sub;
-        match_sub = [&](aura::ast::NodeId wid, aura::ast::NodeId pid) -> bool {
-            if (pid >= pat_flat->size() || wid >= flat.size())
-                return false;
-            auto wv = flat.get(wid);
-            auto pv = pat_flat->get(pid);
-            if (pv.tag == aura::ast::NodeTag::Variable && pv.sym_id == wildcard_sym)
-                return true;
-            if (wv.tag != pv.tag)
-                return false;
-            if (wv.tag == aura::ast::NodeTag::Variable ||
-                wv.tag == aura::ast::NodeTag::LiteralString ||
-                wv.tag == aura::ast::NodeTag::Define || wv.tag == aura::ast::NodeTag::DefineType ||
-                wv.tag == aura::ast::NodeTag::DefineModule)
-                if (wv.sym_id != pv.sym_id)
-                    return false;
-            if (wv.children.size() != pv.children.size())
-                return false;
-            for (std::size_t ci = 0; ci < wv.children.size(); ++ci)
-                if (!match_sub(wv.child(ci), pv.child(ci)))
-                    return false;
-            return true;
-        };
         if (!match_sub(id, pat_pr.root))
             continue;
+        // Issue #2759 / #2800: layout + Evaluator stamp (parity with public).
+        auto mref = flat.make_ref_layout(id);
+        stamp_stable_ref(mref);
+        matches.push_back(mref);
+    }
+    if (matches.empty())
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :replace-pattern: no matches found (or all parse-failed)"});
+
+    // Reverse parent-edge helper (lockless mirror of parent_child_index_if_attached).
+    auto parent_child_index_if_attached =
+        [](const aura::ast::FlatAST& f,
+           aura::ast::NodeId match_id) -> std::optional<std::uint32_t> {
+        if (match_id == aura::ast::NULL_NODE || match_id >= f.size())
+            return std::nullopt;
+        auto parent_id = f.parent_of(match_id);
+        if (parent_id == aura::ast::NULL_NODE || parent_id >= f.size() ||
+            !f.is_live_node(parent_id))
+            return std::nullopt;
+        auto pv = f.get(parent_id);
+        for (std::uint32_t ci = 0; ci < pv.children.size(); ++ci) {
+            if (pv.child(ci) == match_id)
+                return ci;
+        }
+        return std::nullopt;
+    };
+
+    // ── Phase 2 (#2800): apply with is_valid_in + reverse parent checks ──
+    int replaced_count = 0;
+    flat.begin_atomic_batch();
+    for (auto& match_ref : matches) {
+        // Issue #2800: gen-stale or free-slot → skip (no set_child on raw id).
+        if (!match_ref.is_valid_in(flat)) {
+            flat.note_replace_pattern_stale_nodeid_prevented();
+            continue;
+        }
+        auto match_id = match_ref.id;
+        auto child_idx_opt = parent_child_index_if_attached(flat, match_id);
+        if (!child_idx_opt) {
+            // parent_of may be non-null but children_ reverse edge missing.
+            flat.note_replace_pattern_stale_nodeid_prevented();
+            continue;
+        }
+        auto parent_id = flat.parent_of(match_id);
         std::string filled_repl = repl_template;
         // Issue #1694: snapshot pre-parse size; resolve parent only in that
         // range after parse (do not treat parse-appended nodes as parents).
@@ -2437,49 +2495,38 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
             free_repl_parse_orphans(); // #2798 partial/failed parse
             continue;
         }
-        if (static_cast<std::size_t>(id) >= size_before_parse || !flat.is_live_node(id)) {
+        // Post-parse: do not use is_valid_in (parse may restamp outside batch
+        // suppression edge cases). Re-check live match + reverse parent edge
+        // among pre-parse nodes only (#1694 / #2800).
+        if (static_cast<std::size_t>(match_id) >= size_before_parse ||
+            !flat.is_live_node(match_id)) {
             free_repl_parse_orphans(); // #2798
+            flat.note_replace_pattern_stale_nodeid_prevented();
             continue;
         }
-        aura::ast::NodeId parent_id = flat.parent_of(id);
-        std::uint32_t child_idx = 0;
-        bool found = false;
-        if (parent_id != aura::ast::NULL_NODE &&
-            static_cast<std::size_t>(parent_id) < size_before_parse &&
-            flat.is_live_node(parent_id)) {
+        auto parent_ok = [&]() -> bool {
+            if (parent_id == aura::ast::NULL_NODE ||
+                static_cast<std::size_t>(parent_id) >= size_before_parse ||
+                !flat.is_live_node(parent_id))
+                return false;
             auto pv = flat.get(parent_id);
-            for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                if (pv.child(ci) == id) {
-                    child_idx = static_cast<std::uint32_t>(ci);
-                    found = true;
-                    break;
-                }
+            return *child_idx_opt < pv.children.size() && pv.child(*child_idx_opt) == match_id;
+        };
+        if (!parent_ok()) {
+            child_idx_opt = parent_child_index_if_attached(flat, match_id);
+            if (!child_idx_opt) {
+                free_repl_parse_orphans(); // #2798 unmatched slot
+                flat.note_replace_pattern_stale_nodeid_prevented();
+                continue;
+            }
+            parent_id = flat.parent_of(match_id);
+            if (!parent_ok()) {
+                free_repl_parse_orphans(); // #2798
+                flat.note_replace_pattern_stale_nodeid_prevented();
+                continue;
             }
         }
-        if (!found) [[unlikely]] {
-            // Fallback scan limited to pre-parse nodes only.
-            for (aura::ast::NodeId pid = 0; static_cast<std::size_t>(pid) < size_before_parse;
-                 ++pid) {
-                if (!flat.is_live_node(pid))
-                    continue;
-                auto pv = flat.get(pid);
-                for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
-                    if (pv.child(ci) == id) {
-                        parent_id = pid;
-                        child_idx = static_cast<std::uint32_t>(ci);
-                        found = true;
-                        break;
-                    }
-                }
-                if (found)
-                    break;
-            }
-        }
-        if (!found) [[unlikely]] {
-            free_repl_parse_orphans(); // #2798 unmatched slot
-            continue;
-        }
-        flat.set_child(parent_id, child_idx, repl_pr.root);
+        flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
         ++replaced_count;
     }
     if (replaced_count == 0) {

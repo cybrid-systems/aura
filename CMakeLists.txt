@@ -1843,6 +1843,9 @@ aura_issue_test_link_light(test_replace_pattern_no_match_no_leak)
 # Issue #2799: tweak-literal Guard/batch abort marks mutation_log RolledBack.
 aura_add_issue_test(test_tweak_literal_audit_consistency)
 aura_issue_test_link_light(test_tweak_literal_audit_consistency)
+# Issue #2800: replace-pattern multi-match StableNodeRef two-phase NodeId stability.
+aura_add_issue_test(test_replace_pattern_multi_match_nodeid_stability)
+aura_issue_test_link_light(test_replace_pattern_multi_match_nodeid_stability)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
