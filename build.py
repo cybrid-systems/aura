@@ -1119,6 +1119,18 @@ def cmd_lint():
             "Issue #2801 move-node hygiene linter failed — run python3 scripts/coverage/checks/check_move_node_hygiene_2801.py"
         )
         return r
+    # Issue #2802: replace-pattern local ASTArena isolates pattern from temp_arena_.
+    # ac2802 in test_atomic_batch_replace_pattern_sibling.
+    rps_script = COVERAGE_CHECKS / "check_atomic_batch_replace_pattern_sibling_2802.py"
+    if not rps_script.exists():
+        fail(f"missing {rps_script}")
+        return 1
+    r = run([sys.executable, str(rps_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2802 replace-pattern sibling isolation linter failed — run python3 scripts/coverage/checks/check_atomic_batch_replace_pattern_sibling_2802.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

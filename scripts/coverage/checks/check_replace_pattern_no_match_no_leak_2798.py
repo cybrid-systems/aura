@@ -42,8 +42,8 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
 
     lpos = flat.find("eval_flat_apply_mutate_replace_pattern")
-    # Body through zero-replace free (~6.5KB+)
-    lwin = flat[lpos : lpos + 9000] if lpos >= 0 else ""
+    # Body through zero-replace free; #2800/#2802 lengthened two-phase + nest-safe.
+    lwin = flat[lpos : lpos + 12000] if lpos >= 0 else ""
 
     ppos = mut.find('add_mutate("mutate:replace-pattern"')
     if ppos < 0:

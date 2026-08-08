@@ -2249,6 +2249,10 @@ public:
     // Issue #2801: move-node refused MacroIntroduced target (#142 hygiene;
     // parity with replace-subtree). Healthy non-macro moves stay 0.
     mutable std::atomic<std::uint64_t> move_node_hygiene_reject_total_{0};
+    // Issue #2802: replace-pattern used a per-call local ASTArena for
+    // pattern flat/pool instead of shared Evaluator::temp_arena_
+    // (sibling sub-op isolation). Bumped once per successful isolate.
+    mutable std::atomic<std::uint64_t> replace_pattern_temp_arena_corruption_prevented_total_{0};
     // Issue #1355: render-hotpath lightweight checkpoints (field-only side log).
     mutable std::atomic<std::uint64_t> lightweight_total_{0};
     mutable std::atomic<std::uint64_t> lightweight_commit_total_{0};
@@ -8481,6 +8485,16 @@ public:
     }
     void note_move_node_hygiene_reject() noexcept {
         move_node_hygiene_reject_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2802: replace-pattern pattern flat/pool isolated from temp_arena_.
+    [[nodiscard]] std::uint64_t
+    replace_pattern_temp_arena_corruption_prevented_total() const noexcept {
+        return replace_pattern_temp_arena_corruption_prevented_total_.load(
+            std::memory_order_relaxed);
+    }
+    void note_replace_pattern_temp_arena_corruption_prevented() noexcept {
+        replace_pattern_temp_arena_corruption_prevented_total_.fetch_add(1,
+                                                                         std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
         return mutation_log_compact_ops_.load(std::memory_order_relaxed);

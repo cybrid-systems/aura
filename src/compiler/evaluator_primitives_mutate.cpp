@@ -3733,13 +3733,26 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         // Phase 2.5.0: pat_pool stays separate from canonical_pool.
         // Same rationale as the query:pattern site above — pattern AST
-        // is parsed fresh per call (ev.temp_arena_ reclaims) and the
-        // wildcard "..." sym lives in pat_pool for in-pattern comparison.
-        // Parse pattern into separate FlatAST.
-        // Use ev.temp_arena_ so (gc-temp) reclaims it per call.
-        auto alloc = ev.temp_arena_->allocator();
-        auto* pat_pool = ev.temp_arena_->create<aura::ast::StringPool>(alloc);
-        auto* pat_flat = ev.temp_arena_->create<aura::ast::FlatAST>(alloc);
+        // is parsed fresh per call and the wildcard "..." sym lives in
+        // pat_pool for in-pattern comparison.
+        //
+        // Issue #2802: per-call local ASTArena — do NOT use
+        // ev.temp_arena_. Shared temp_arena_ is not sibling-isolated;
+        // multiple replace-pattern (or other create<>) sub-ops in one
+        // atomic-batch / sequential Guard calls must not reuse pattern
+        // memory under GeneralObjectPin alone. Lockless path uses the
+        // same local-arena contract. Metric:
+        // replace_pattern_temp_arena_corruption_prevented_total.
+        // 256 KiB is ample for a pattern AST (heap-backed buffer).
+        aura::ast::ASTArena pat_arena(/*initial_size=*/256 * 1024);
+        auto alloc = pat_arena.allocator();
+        auto* pat_pool = pat_arena.create<aura::ast::StringPool>(alloc);
+        auto* pat_flat = pat_arena.create<aura::ast::FlatAST>(alloc);
+        if (!pat_pool || !pat_flat) {
+            ok = false;
+            return mev("internal", "replace-pattern: pattern arena allocate failed");
+        }
+        flat.note_replace_pattern_temp_arena_corruption_prevented();
         // Issue #2337 / #2363: GeneralObjectPin adoption in mutate create
         // path (site 1/7). Two pins — LifetimePin::pin replaces prior ptr.
         // Wire counter bumps once per site via wire_general_object_create_pair.
