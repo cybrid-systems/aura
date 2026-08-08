@@ -1816,6 +1816,9 @@ aura_issue_test_link_light(test_workspace_delete_subtree)
 # Issue #2790: atomic-batch sub-op failure sets guard_ok (no partial commit).
 aura_add_issue_test(test_atomic_batch_partial_failure)
 aura_issue_test_link_light(test_atomic_batch_partial_failure)
+# Issue #2791: rebind parse-error frees orphan parse appends (no flat leak).
+aura_add_issue_test(test_rebind_parse_failure_no_leak)
+aura_issue_test_link_light(test_rebind_parse_failure_no_leak)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
