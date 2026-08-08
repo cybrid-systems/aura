@@ -4619,6 +4619,24 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             guard_ok = false;
         };
+        // Issue #2796 / #2559: shared abort cleanup for all batch-fail paths.
+        // Restores flat topology via rollback_since + parent rebuild.
+        // Do NOT call linear_post_mutate_enforce_all() after rollback —
+        // the mutation log is empty / pre-batch, and enforce bumps
+        // linear_invariant_fail / invariant_violations_caught as false
+        // positives (rollback noise, not real bugs). Typed-mutate /
+        // success-path three-layer wire (#2559) still uses enforce on
+        // commit paths; abort is intentionally exempt. Guard dtor still
+        // restore_children for full PCV topology (#1502 topology intent
+        // preserved without metric pollution).
+        auto abort_batch_workspace = [&]() {
+            ev.workspace_flat_->rollback_since(initial_log_size);
+            ev.workspace_flat_->rollback_atomic_batch();
+            ev.sync_atomic_batch_metadata_metrics();                  // #1893
+            ev.workspace_flat_->rebuild_parent_links_from_children(); // #1502
+            // #2796: no linear_post_mutate_enforce_all() on abort path
+            // (#2559 inventory: enforce remains on non-abort mutate paths)
+        };
         while (is_pair(op_list)) {
             EvalValue op = pair_car(op_list);
             op_list = pair_cdr(op_list);
@@ -4686,13 +4704,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // lockless helper, or mistyped EDSL names. Bump #1900
                 // AC3 metric, abort the batch, list supported names.
                 ev.bump_atomic_batch_unsupported_op();
-                ev.workspace_flat_->rollback_since(initial_log_size);
-                ev.workspace_flat_->rollback_atomic_batch();
-                ev.sync_atomic_batch_metadata_metrics(); // #1893
-                ev.workspace_flat_->rebuild_parent_links_from_children();
-                // Issue #2559: type-layer inventory — post-mutate linear enforce
-                // on typed_mutate / atomic-batch paths (three-layer wire gate).
-                (void)ev.linear_post_mutate_enforce_all();
+                abort_batch_workspace();
                 ev.atomic_batch_domain_.rollbacks++;
                 ev.bump_edsl_nested_atomic_rollback();
                 if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
@@ -4717,11 +4729,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (!guard->run_or_rollback([&] { sub_result = (ev.*op_fn)(op_args); }, &threw)) {
                     ok = false;
                     guard_ok = false;
-                    ev.workspace_flat_->rollback_since(initial_log_size);
-                    ev.workspace_flat_->rollback_atomic_batch();
-                    ev.sync_atomic_batch_metadata_metrics(); // #1893
-                    ev.workspace_flat_->rebuild_parent_links_from_children();
-                    (void)ev.linear_post_mutate_enforce_all();
+                    abort_batch_workspace();
                     ev.atomic_batch_domain_.rollbacks++;
                     ev.bump_edsl_nested_atomic_rollback();
                     if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
@@ -4754,21 +4762,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ++op_count;
         }
         if (!ok) {
-            // Issue #250: reverse MutationRecord inverses (incl.
-            // structural children_/parent_ via try_rollback_*).
-            ev.workspace_flat_->rollback_since(initial_log_size);
-            ev.workspace_flat_->rollback_atomic_batch();
-            ev.sync_atomic_batch_metadata_metrics(); // #1893
-            // Issue #1502: MutationRecord inverse is best-effort for
-            // some ops; rebuild parent_ from live children_ so
-            // parent_of / children stay consistent even when a
-            // mid-batch structural inverse partially fails. Guard
-            // dtor also restore_children (full topology) next.
-            ev.workspace_flat_->rebuild_parent_links_from_children();
-            // Issue #1502: linear ownership post-mutate enforce so
-            // dual-epoch / EnvFrame SoA state is not left half-applied
-            // after AI multi-step batch abort.
-            (void)ev.linear_post_mutate_enforce_all();
+            // Issue #250 / #1502 / #2796: reverse MutationRecord inverses +
+            // rebuild parent_; skip linear_post_mutate_enforce_all (rollback
+            // noise on invariant_fail counters — see abort_batch_workspace).
+            abort_batch_workspace();
             ev.atomic_batch_domain_.rollbacks++;
             ev.bump_edsl_nested_atomic_rollback();
             if (batch_snap_id >= 0 &&

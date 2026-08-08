@@ -1831,6 +1831,9 @@ aura_issue_test_link_light(test_atomic_batch_move_noop)
 # Issue #2795: rebind old body NodeId captured post-parse; rollback rejects free slots.
 aura_add_issue_test(test_rebind_rollback_nodeid_validity)
 aura_issue_test_link_light(test_rebind_rollback_nodeid_validity)
+# Issue #2796: atomic-batch abort skips linear_post_mutate_enforce_all (no metric noise).
+aura_add_issue_test(test_atomic_batch_rollback_metric_noise)
+aura_issue_test_link_light(test_atomic_batch_rollback_metric_noise)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

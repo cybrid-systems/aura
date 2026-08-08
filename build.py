@@ -1047,6 +1047,18 @@ def cmd_lint():
             "Issue #2795 rebind rollback NodeId validity linter failed — run python3 scripts/coverage/checks/check_rebind_rollback_nodeid_validity_2795.py"
         )
         return r
+    # Issue #2796: atomic-batch abort skips linear_post_mutate_enforce_all (no fail noise).
+    # ac2796 in test_atomic_batch_rollback_metric_noise.
+    abrn_script = COVERAGE_CHECKS / "check_atomic_batch_rollback_metric_noise_2796.py"
+    if not abrn_script.exists():
+        fail(f"missing {abrn_script}")
+        return 1
+    r = run([sys.executable, str(abrn_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2796 atomic-batch rollback metric noise linter failed — run python3 scripts/coverage/checks/check_atomic_batch_rollback_metric_noise_2796.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
