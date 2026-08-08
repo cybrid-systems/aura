@@ -336,22 +336,21 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             auto idx = static_cast<std::uint32_t>(as_int(a[0]));
             if (!wt->set_active(idx))
                 return make_bool(false);
+            // Issue #2785: single bind block (was duplicate assign — incomplete
+            // refactor). Issue #141: COW stays lazy (no ensure_local_flat on
+            // switch). Issue #738: sync COW epoch into flat for StableNodeRef.
             auto* ws = wt->active();
             if (ws) {
                 ev.workspace_flat_ = ws->flat;
                 ev.workspace_pool_ = ws->pool;
-                // Issue #141 AC: COW must be lazy (zero-cost until first mutate).
-                // Don't trigger ensure_local_flat on switch — let mutate:* do it.
-                ws = wt->active();
-                if (ws) {
-                    ev.workspace_flat_ = ws->flat;
-                    ev.workspace_pool_ = ws->pool;
-                    // Issue #738: sync COW epoch into flat for StableNodeRef capture.
-                    if (ws->flat)
-                        ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
-                }
+                if (ws->flat)
+                    ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
+                ev.workspace_read_only_ = ws->read_only;
+            } else {
+                ev.workspace_flat_ = nullptr;
+                ev.workspace_pool_ = nullptr;
+                ev.workspace_read_only_ = false;
             }
-            ev.workspace_read_only_ = ws ? ws->read_only : false;
             // (ASAN fix #107 leak) delete the old index.
             destroy_defuse_index();
             return make_bool(true);
