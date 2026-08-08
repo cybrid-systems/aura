@@ -10,8 +10,8 @@
 ;; - (stats:get "gc-stats") returns a formatted String
 ;;   "string:N/pairs:N/cells:N/err:N/hash:N/vec:N/opq:N/cls:N/root:N"
 ;;   not a pair — never (cdr stats).
-;; - std/string string-split is O(n) recursive and overflows the ASAN stack
-;;   on ~64-char inputs; parse digits with a top-level while/set! loop instead.
+;; - std/string string-split was O(n) recursive (#2770; fixed iterative while).
+;;   Digit parse still uses top-level while/set! for ASAN-safe stats scanning.
 ;; - Real leak oracle under CI is ASAN detect_leaks=1 (exitcode=42); this file
 ;;   must also print ✅ PASS so the workflow grep succeeds.
 

@@ -32,7 +32,12 @@
   (check= ("a" "b" "c") (string-split "a,b,c" ","))
   (check= "a b" (string-join '("a" "b") " "))
   (check= "HELLO" (string-upcase "hello"))
-  (check= "hello" (string-downcase "HELLO")))
+  (check= "hello" (string-downcase "HELLO"))
+  ;; Issue #2770: O(1)-stack iterative split (was recursion depth >700 ~400 chars)
+  (check= 1 (length (string-split (string-repeat "a" 5000) "|")))
+  (check= 2001 (length (string-split (string-repeat "a\n" 2000) "\n")))
+  (check= ("hi" "there" "world") (string-split-words "hi  there\tworld"))
+  (check= 500 (length (string-split-words (string-repeat "w " 500)))))
 
 (test-suite "stdlib:json"
   (require std/json)
