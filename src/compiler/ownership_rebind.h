@@ -49,6 +49,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <span>
@@ -103,11 +105,22 @@ inline std::atomic<std::uint64_t> g_ownership_rebind_validate_walk_total{0};
 // densify/steal). AC4 (single source of truth — densify + steal share
 // the same helper) + AC5 (additive observability only).
 inline std::atomic<std::uint64_t> g_ownership_rebind_nonempty_span_total{0};
+// Issue #2742: helper fell back to dirty-pin / densify-affected NodeIds
+// because linear_roots() was empty. Distinguishes linear primary path
+// from dirty/pin secondary path under densify × steal production load.
+inline std::atomic<std::uint64_t> g_ownership_rebind_dirty_fallback_total{0};
+inline constexpr int kOwnershipRebindDirtyFallbackIssue = 2742;
 // Test-injected mismatch sentinel. ~0u is the "no mismatch" sentinel —
 // chosen because NodeId 0xFFFFFFFF is reserved (NULL_NODE / out-of-range).
 // Atomic so a concurrent test injector + the walk TU don't race on plain
 // load/store (aura_test_objects are TSAN-instrumented).
 inline std::atomic<std::uint32_t> g_ownership_rebind_test_injected_root{~0u};
+// Issue #2742 test inject: densify-affected NodeIds when no linear roots.
+// Size capped (kOwnershipRebindDirtyInjectCap). n==0 means inactive.
+inline constexpr std::size_t kOwnershipRebindDirtyInjectCap = 16;
+inline std::atomic<std::uint32_t> g_ownership_rebind_dirty_inject_n{0};
+inline std::array<OwnershipRebindNodeId, kOwnershipRebindDirtyInjectCap>
+    g_ownership_rebind_dirty_inject_ids{};
 
 // Read-side accessors (C ABI stable — surfaces in `query:ownership-rebind-stats`).
 [[nodiscard]] inline std::uint64_t ownership_rebind_total_v_read() noexcept {
@@ -143,6 +156,9 @@ inline std::atomic<std::uint32_t> g_ownership_rebind_test_injected_root{~0u};
 [[nodiscard]] inline std::uint64_t ownership_rebind_nonempty_span_total_v_read() noexcept {
     return g_ownership_rebind_nonempty_span_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t ownership_rebind_dirty_fallback_total_v_read() noexcept {
+    return g_ownership_rebind_dirty_fallback_total.load(std::memory_order_relaxed);
+}
 [[nodiscard]] inline std::uint32_t ownership_rebind_test_injected_root_v_read() noexcept {
     return g_ownership_rebind_test_injected_root.load(std::memory_order_relaxed);
 }
@@ -160,7 +176,25 @@ inline void clear_ownership_rebind_for_test() noexcept {
     g_ownership_rebind_explicit_agent_fail_total.store(0, std::memory_order_relaxed);
     g_ownership_rebind_validate_walk_total.store(0, std::memory_order_relaxed);
     g_ownership_rebind_nonempty_span_total.store(0, std::memory_order_relaxed);
+    g_ownership_rebind_dirty_fallback_total.store(0, std::memory_order_relaxed);
     g_ownership_rebind_test_injected_root.store(~0u, std::memory_order_relaxed);
+    g_ownership_rebind_dirty_inject_n.store(0, std::memory_order_relaxed);
+    for (auto& id : g_ownership_rebind_dirty_inject_ids)
+        id = 0;
+}
+
+// Issue #2742: seed densify-affected / dirty-pin NodeIds for the helper
+// fallback path (when linear_roots() is empty). Production never calls this.
+inline void
+inject_ownership_rebind_dirty_roots_for_test(std::span<const OwnershipRebindNodeId> ids) noexcept {
+    const auto n = std::min(ids.size(), kOwnershipRebindDirtyInjectCap);
+    for (std::size_t i = 0; i < n; ++i)
+        g_ownership_rebind_dirty_inject_ids[i] = ids[i];
+    g_ownership_rebind_dirty_inject_n.store(static_cast<std::uint32_t>(n),
+                                            std::memory_order_relaxed);
+}
+inline void clear_ownership_rebind_dirty_roots_for_test() noexcept {
+    g_ownership_rebind_dirty_inject_n.store(0, std::memory_order_relaxed);
 }
 
 // Test injection hook — Issue #2708 AC1/AC2 production/soft mismatch.
@@ -184,14 +218,12 @@ inline void clear_ownership_rebind_mismatch_for_test() noexcept {
 bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remapped_roots,
                                   RemapReason why) noexcept;
 
-// Issue #2723: non-empty span collector for densify Phase-5 + steal resume.
-// Single source of truth (AC4): both call sites route through this helper
-// so densify and steal share the same collection logic. Returns
-// std::span<const OwnershipRebindNodeId> over a thread-local scratch
-// buffer — no per-call heap allocation (AC3 zero-cost on the quiet path).
-// Lifetime of the returned span is until the next call from the same
-// thread. When no linear roots are registered, returns an empty span
-// (preserves AC3 zero-cost short-circuit in ownership_rebind_after_remap).
+// Issue #2723 / #2742: non-empty span collector for densify Phase-5 + steal
+// resume. Single source of truth (AC4): both call sites route through this
+// helper. Primary: linear_roots(). Fallback when empty (#2742): test-inject
+// densify-affected NodeIds + live LifetimePin registry (dirty-pin). Returns
+// std::span over a thread-local scratch buffer (AC3 zero-cost when empty).
+// Lifetime: until the next call from the same thread.
 std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind() noexcept;
 
 // C ABI overload for tests / FFI bridges that pass raw ptr + size.

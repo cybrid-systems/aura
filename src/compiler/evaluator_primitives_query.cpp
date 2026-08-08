@@ -8094,6 +8094,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               aura::compiler::ownership_rebind_explicit_agent_total_v_read()));
                 insert_kv("schema-2695", 2695);
                 insert_kv("issue-2695", 2695);
+                // Issue #2742: dirty-pin / densify-affected fallback path when
+                // linear_roots() is empty (additive observability).
+                insert_kv("ownership-rebind-dirty-fallback-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::ownership_rebind_dirty_fallback_total_v_read()));
+                insert_kv("ownership-rebind-nonempty-span-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::ownership_rebind_nonempty_span_total_v_read()));
+                insert_kv("schema-2742", 2742);
+                insert_kv("issue-2742", 2742);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

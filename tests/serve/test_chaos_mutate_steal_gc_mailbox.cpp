@@ -1000,13 +1000,13 @@ static void ac2722_3_soak_parameters_documented() {
           "AC3: seed=1 documented");
     CHECK(build.find("mb_starve_max=0") != std::string::npos, "AC3: mb_starve_max=0 documented");
     // Env-setdefault contracts (overrideable but default to production).
-    CHECK(build.find('env.setdefault("AURA_CHAOS_WORKERS", "8")') != std::string::npos,
+    CHECK(build.find(R"(env.setdefault("AURA_CHAOS_WORKERS", "8"))") != std::string::npos,
           "AC3: workers env-setdefault = 8");
-    CHECK(build.find('env.setdefault("AURA_CHAOS_FIBERS", "256")') != std::string::npos,
+    CHECK(build.find(R"(env.setdefault("AURA_CHAOS_FIBERS", "256"))") != std::string::npos,
           "AC3: fibers env-setdefault = 256");
-    CHECK(build.find('env.setdefault("AURA_CHAOS_DURATION_S", "300")') != std::string::npos,
+    CHECK(build.find(R"(env.setdefault("AURA_CHAOS_DURATION_S", "300"))") != std::string::npos,
           "AC3: duration env-setdefault = 300s");
-    CHECK(build.find('env.setdefault("AURA_CHAOS_MB_STARVE_MAX", "0")') != std::string::npos,
+    CHECK(build.find(R"(env.setdefault("AURA_CHAOS_MB_STARVE_MAX", "0"))") != std::string::npos,
           "AC3: mb_starve_max env-setdefault = 0");
 }
 
@@ -1044,7 +1044,7 @@ static void ac2722_5_soft_non_gating_no_docs_design() {
           "AC5: Soft mode documented as available for local iteration");
     CHECK(build.find("EXPLICITLY non-gating") != std::string::npos,
           "AC5: Soft mode EXPLICITLY non-gating under hard gate");
-    CHECK(build.find('env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)') != std::string::npos,
+    CHECK(build.find(R"(env.pop("AURA_STEAL_SNAPSHOT_SOFT", None))") != std::string::npos,
           "AC5: Soft steal env popped under hard gate");
     // Soft mode still available via the chaos harness under non-hard-gate
     // paths (PR gate / nightly) — preserved for local iteration.

@@ -633,8 +633,8 @@ static void ac2723_3_quiet_path_zero_cost_preserved() {
     const auto hdr = read_file("src/compiler/ownership_rebind.h");
     CHECK(hdr.find("g_ownership_rebind_nonempty_span_total") != std::string::npos,
           "AC3: nonempty-span counter declared (only bumped on non-empty)");
-    CHECK(hdr.find("if (!scratch.empty())") != std::string::npos,
-          "AC3: counter only bumped on non-empty span");
+    CHECK(cpp.find("if (!scratch.empty())") != std::string::npos,
+          "AC3: counter only bumped on non-empty span (impl)");
 }
 
 // ── Issue #2723 AC4: single source of truth — densify + steal share
@@ -727,6 +727,141 @@ static void ac2723_6_source_and_linter() {
           "AC6: no docs/design/2723-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2742 AC1: production + dirty inject (no linear roots) → helper
+// returns non-empty span → validate walk runs → inject mismatch → false.
+static void ac2742_1_dirty_fallback_production_mismatch() {
+    std::println("\n--- #2742 AC1: dirty fallback + production mismatch → false ---");
+    aura::compiler::clear_ownership_rebind_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "AC1: production defaults active");
+
+    constexpr aura::compiler::OwnershipRebindNodeId sentinel = 0xBEEFu;
+    aura::compiler::inject_ownership_rebind_mismatch_for_test(sentinel);
+    std::vector<aura::compiler::OwnershipRebindNodeId> dirty = {1u, sentinel, 3u};
+    aura::compiler::inject_ownership_rebind_dirty_roots_for_test(
+        std::span<const aura::compiler::OwnershipRebindNodeId>(dirty.data(), dirty.size()));
+
+    auto span = aura::compiler::collect_linear_or_dirty_roots_for_rebind();
+    CHECK(!span.empty(), "AC1: dirty inject → helper non-empty span");
+    CHECK(aura::compiler::ownership_rebind_dirty_fallback_total_v_read() >= 1,
+          "AC1: dirty-fallback counter bumps");
+    CHECK(aura::compiler::ownership_rebind_nonempty_span_total_v_read() >= 1,
+          "AC1: nonempty-span counter bumps");
+
+    const bool res =
+        aura::compiler::ownership_rebind_after_remap(span, aura::compiler::RemapReason::Densify);
+    CHECK(!res, "AC1: production + mismatch in dirty span → false (force rollback)");
+    CHECK(aura::compiler::ownership_rebind_fail_total_v_read() >= 1, "AC1: fail counter bumps");
+
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::clear_ownership_rebind_for_test();
+}
+
+// ── Issue #2742 AC2: Soft + dirty inject → observe only (returns true).
+static void ac2742_2_soft_observe_only() {
+    std::println("\n--- #2742 AC2: Soft dirty fallback observe only ---");
+    aura::compiler::clear_ownership_rebind_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::compiler::typed_audit::production_defaults_active(), "AC2: Soft path");
+
+    constexpr aura::compiler::OwnershipRebindNodeId sentinel = 0xCAFEu;
+    aura::compiler::inject_ownership_rebind_mismatch_for_test(sentinel);
+    std::vector<aura::compiler::OwnershipRebindNodeId> dirty = {sentinel};
+    aura::compiler::inject_ownership_rebind_dirty_roots_for_test(
+        std::span<const aura::compiler::OwnershipRebindNodeId>(dirty.data(), dirty.size()));
+
+    auto span = aura::compiler::collect_linear_or_dirty_roots_for_rebind();
+    CHECK(!span.empty(), "AC2: dirty inject non-empty under Soft");
+    const bool res =
+        aura::compiler::ownership_rebind_after_remap(span, aura::compiler::RemapReason::Steal);
+    CHECK(res, "AC2: Soft mismatch → still true (observe only)");
+    CHECK(aura::compiler::ownership_rebind_fail_total_v_read() >= 1,
+          "AC2: Soft still bumps fail counter");
+    aura::compiler::clear_ownership_rebind_for_test();
+}
+
+// ── Issue #2742 AC3: quiet path (no linear + no dirty + no pins) → empty.
+static void ac2742_3_quiet_path_zero_cost() {
+    std::println("\n--- #2742 AC3: quiet path zero-cost ---");
+    aura::compiler::clear_ownership_rebind_for_test();
+    const auto fb0 = aura::compiler::ownership_rebind_dirty_fallback_total_v_read();
+    auto span = aura::compiler::collect_linear_or_dirty_roots_for_rebind();
+    // If no pins/linear/inject live in this process, span is empty.
+    // Counter must not bump on empty fallback.
+    if (span.empty()) {
+        CHECK(aura::compiler::ownership_rebind_dirty_fallback_total_v_read() == fb0,
+              "AC3: empty fallback → dirty-fallback counter flat");
+    }
+    const auto cpp = read_file("src/compiler/ownership_rebind.cpp");
+    CHECK(cpp.find("g_ownership_rebind_dirty_fallback_total") != std::string::npos,
+          "AC3: dirty-fallback counter in collect helper");
+    CHECK(cpp.find("Issue #2742") != std::string::npos, "AC3: #2742 cited in collect");
+    CHECK(cpp.find("if (scratch.empty())") != std::string::npos,
+          "AC3: fallback only when primary empty");
+}
+
+// ── Issue #2742 AC4: densify + steal still share the same helper.
+static void ac2742_4_single_source_of_truth() {
+    std::println("\n--- #2742 AC4: single source of truth preserved ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto cpp = read_file("src/compiler/ownership_rebind.cpp");
+    CHECK(mb.find("collect_linear_or_dirty_roots_for_rebind()") != std::string::npos,
+          "AC4: densify uses shared helper");
+    CHECK(fm.find("collect_linear_or_dirty_roots_for_rebind()") != std::string::npos,
+          "AC4: steal uses shared helper");
+    CHECK(cpp.find("pin_registry_shards()") != std::string::npos,
+          "AC4: dirty-pin secondary via pin_registry_shards");
+}
+
+// ── Issue #2742 AC5: additive observability + schema.
+static void ac2742_5_additive_observability() {
+    std::println("\n--- #2742 AC5: additive observability ---");
+    const auto hdr = read_file("src/compiler/ownership_rebind.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(hdr.find("g_ownership_rebind_dirty_fallback_total") != std::string::npos,
+          "AC5: dirty-fallback counter declared");
+    CHECK(hdr.find("ownership_rebind_dirty_fallback_total_v_read") != std::string::npos,
+          "AC5: dirty-fallback accessor");
+    CHECK(hdr.find("kOwnershipRebindDirtyFallbackIssue = 2742") != std::string::npos,
+          "AC5: issue stamp 2742");
+    CHECK(hdr.find("inject_ownership_rebind_dirty_roots_for_test") != std::string::npos,
+          "AC5: dirty inject hook");
+    // Prior surfaces preserved.
+    CHECK(hdr.find("g_ownership_rebind_nonempty_span_total") != std::string::npos,
+          "AC5: #2723 nonempty preserved");
+    CHECK(hdr.find("g_ownership_rebind_validate_walk_total") != std::string::npos,
+          "AC5: #2708 validate walk preserved");
+    CHECK(q.find("ownership-rebind-dirty-fallback-total") != std::string::npos,
+          "AC5: query key dirty-fallback");
+    CHECK(q.find("schema-2742") != std::string::npos, "AC5: schema-2742");
+    CHECK(q.find("issue-2742") != std::string::npos, "AC5: issue-2742");
+    CHECK(q.find("schema-2695") != std::string::npos, "AC5: schema-2695 preserved");
+}
+
+// ── Issue #2742 AC6: source-cite + no docs/design/.
+static void ac2742_6_source_and_linter() {
+    std::println("\n--- #2742 AC6: source-cite + no docs/design/ ---");
+    const auto hdr = read_file("src/compiler/ownership_rebind.h");
+    const auto cpp = read_file("src/compiler/ownership_rebind.cpp");
+    const auto t = read_file("tests/serve/test_steal_densify_linear_type_hard_and.cpp");
+    CHECK(hdr.find("Issue #2742") != std::string::npos || hdr.find("#2742") != std::string::npos,
+          "AC6: hdr cites #2742");
+    CHECK(cpp.find("#2742") != std::string::npos, "AC6: cpp cites #2742");
+    CHECK(t.find("ac2742_1_dirty_fallback_production_mismatch") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2742_2_soft_observe_only") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2742_3_quiet_path_zero_cost") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2742_4_single_source_of_truth") != std::string::npos, "AC6: AC4 test present");
+    CHECK(t.find("ac2742_5_additive_observability") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2742_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(t.find("ac2723_6_source_and_linter") != std::string::npos, "AC6: #2723 tests preserved");
+    const std::string design_path = "docs/design/2742-";
+    CHECK(read_file((design_path + "dirty-fallback.md").c_str()).empty(),
+          "AC6: no docs/design/2742-* per #1655");
+}
+
 } // namespace
 
 int run_test_steal_densify_linear_type_hard_and() {
@@ -755,6 +890,13 @@ int run_test_steal_densify_linear_type_hard_and() {
     ac2723_4_single_source_of_truth();
     ac2723_5_additive_observability();
     ac2723_6_source_and_linter();
+    std::println("\n=== Issue #2742: dirty-pin / densify-affected fallback for rebind ===");
+    ac2742_1_dirty_fallback_production_mismatch();
+    ac2742_2_soft_observe_only();
+    ac2742_3_quiet_path_zero_cost();
+    ac2742_4_single_source_of_truth();
+    ac2742_5_additive_observability();
+    ac2742_6_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
