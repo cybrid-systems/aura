@@ -7237,6 +7237,20 @@ public:
             m->tag_arity_hygiene_query_delta_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #2763: production default delta vs full rebuild attribution
+    // for query:pattern index path (Agent SLO / multi-round latency).
+    void bump_query_pattern_delta_rebuild() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->query_pattern_delta_rebuild_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_query_pattern_full_rebuild() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->query_pattern_full_rebuild_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     // Issue #596: Guard + panic checkpoint + reflect closed-loop observability.
     void bump_guard_panic_reflect_restores_on_resume() noexcept {
         if (compiler_metrics_) {

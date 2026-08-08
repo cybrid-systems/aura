@@ -1975,15 +1975,18 @@ void register_workspace_query_primitives(
     //   :exclude-macro-introduced [#t|#f] — Issue #922 explicit hygiene
     //     predicate (default #t = safe self-evolution; opposite of include)
     //
-    // Issue #2123 production default hygiene policy:
+    // Issue #2123 / #2763 production default hygiene + delta-index policy:
     //   When include is absent or #f, MacroIntroduced roots AND recursive
     //   subtrees are skipped (QueryMatcher skip_macro_introduced=true +
     //   tag_arity user-only bucket). Agents that must inspect expansion
     //   residue pass :include-macro-introduced #t / :allow-macro-introduced
     //   #t (or :exclude-macro-introduced #f). This is the "code as memory"
     //   contract: structural self-modify must not match macro residue by
-    //   default. Metrics: pattern_hygiene_filtered_total +
-    //   pattern_include_macro_opt_in_total (query:pattern-hygiene-stats).
+    //   default. Index rebuild defaults to delta under low dirty ratio
+    //   (#1503/#2763); full only on high dirty fraction or cold index.
+    //   Metrics: pattern_hygiene_filtered_total +
+    //   query-pattern-delta-rebuild-total (query:pattern-hygiene-stats /
+    //   query:pattern-index-rebuild-stats).
     add("query:pattern",
         [ws, mev, &ev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
             // Issue #2403: shared_lock spans QueryEpoch capture + match.

@@ -620,6 +620,22 @@ def cmd_lint():
             "Issue #2762 post-mutate macro reexpand linter failed — run python3 scripts/coverage/checks/check_post_mutate_macro_reexpand_2762.py"
         )
         return r
+    # Issue #2763: query:pattern index default delta rebuild under low
+    # dirty ratio + MacroIntroduced hygiene hard filter (#1503/#2123
+    # residual). Wires bump_query_pattern_delta/full_rebuild + Agent
+    # keys query-pattern-delta-rebuild-total /
+    # query-pattern-hygiene-filtered-total + schema-2763 + ac2763_*
+    # in test_query_pattern_default_hygiene.cpp per #81967.
+    qpdh_script = COVERAGE_CHECKS / "check_query_pattern_delta_hygiene_2763.py"
+    if not qpdh_script.exists():
+        fail(f"missing {qpdh_script}")
+        return 1
+    r = run([sys.executable, str(qpdh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2763 query:pattern delta+hygiene linter failed — run python3 scripts/coverage/checks/check_query_pattern_delta_hygiene_2763.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

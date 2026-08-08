@@ -1463,7 +1463,14 @@ struct CompilerMetrics {
     //   (root + recursive; mirrors pattern_hygiene_filter_hits lineage)
     // pattern_include_macro_opt_in_total: query:pattern calls that opted
     //   into :include-macro-introduced / :allow-macro-introduced #t
-    std::atomic<std::uint64_t> pattern_hygiene_filtered_total{0};     // #2123
+    std::atomic<std::uint64_t> pattern_hygiene_filtered_total{0}; // #2123
+    // Issue #2763: Agent-facing aliases / production-default delta rebuild
+    // counters for query:pattern under multi-round AI edit (refine #1503/
+    // #2123). Low dirty ratio → delta path; MacroIntroduced hard-filtered.
+    //   - query_pattern_delta_rebuild_total: index chose delta/incremental
+    //   - query_pattern_full_rebuild_total: index chose full (threshold/cold)
+    std::atomic<std::uint64_t> query_pattern_delta_rebuild_total{0};  // #2763
+    std::atomic<std::uint64_t> query_pattern_full_rebuild_total{0};   // #2763
     std::atomic<std::uint64_t> pattern_include_macro_opt_in_total{0}; // #2123
     // Issue #2525: residual unconstrained hygiene default + filter/index.
     // hygiene_skip_total: nodes skipped by filter/pattern hygiene gates

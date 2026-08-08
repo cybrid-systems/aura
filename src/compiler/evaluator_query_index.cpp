@@ -246,6 +246,7 @@ void Evaluator::tag_arity_index_sync_after_atomic_batch(bool sync_query_index) c
         bump_pattern_index_rebuild_trigger(
             static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
         atomic_batch_index_full_rebuilds_.fetch_add(1, std::memory_order_relaxed);
+        bump_query_pattern_full_rebuild(); // Issue #2763
         if (m)
             m->atomic_batch_index_full_rebuilds.fetch_add(1, std::memory_order_relaxed);
         pattern_query_after_batch_armed_.store(true, std::memory_order_release);
@@ -273,14 +274,17 @@ void Evaluator::tag_arity_index_sync_after_atomic_batch(bool sync_query_index) c
         bump_pattern_index_rebuild_trigger(
             static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
         atomic_batch_index_full_rebuilds_.fetch_add(1, std::memory_order_relaxed);
+        bump_query_pattern_full_rebuild(); // Issue #2763 AC1 high-dirty full
         if (m)
             m->atomic_batch_index_full_rebuilds.fetch_add(1, std::memory_order_relaxed);
     } else {
-        // Incremental: dirty-node rekey + append + prune (#1503 / #1913).
+        // Incremental: dirty-node rekey + append + prune (#1503 / #1913 / #2763).
+        // Production default under low dirty ratio → delta (no full walk).
         tag_arity_index_sync_after_mutation(flat);
         tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         flat.bump_tag_arity_index_delta_hits();
         bump_edsl_tag_arity_delta_patch();
+        bump_query_pattern_delta_rebuild(); // Issue #2763 AC1 low-dirty delta
         bump_pattern_index_rebuild_trigger(
             static_cast<std::uint8_t>(PatternIndexRebuildTrigger::EagerMutate));
         atomic_batch_index_sync_hits_.fetch_add(1, std::memory_order_relaxed);
@@ -344,6 +348,7 @@ void Evaluator::build_tag_arity_index_unlocked(std::uint8_t trigger) const {
         tag_arity_index_rebuild_full(flat);
         tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         bump_pattern_index_rebuild_trigger(trigger);
+        bump_query_pattern_full_rebuild(); // Issue #2763 cold/full
         // Keep FlatAST index policy knobs mirrored for ensure_tag_arity_index.
         (void)flat;
         return;
@@ -352,17 +357,20 @@ void Evaluator::build_tag_arity_index_unlocked(std::uint8_t trigger) const {
     const std::size_t cur_size = flat.size();
     const auto cur_gen = flat.generation();
     if (cur_size == tag_arity_index_synced_size_ && cur_gen == tag_arity_index_synced_gen_)
-        return;
+        return; // Issue #2763 AC4 quiet: already synced, zero rebuild work
 
     if (cur_gen == tag_arity_index_synced_gen_ && cur_size > tag_arity_index_synced_size_) {
+        // Append-only growth → delta path (#1503 / #2763).
         tag_arity_index_append_nodes(flat, tag_arity_index_synced_size_);
         tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         bump_pattern_index_rebuild_trigger(trigger);
+        bump_query_pattern_delta_rebuild();
         return;
     }
 
-    // Issue #1503: when dirty fraction is high, prefer full rebuild
+    // Issue #1503 / #2763: when dirty fraction is high, prefer full rebuild
     // over walking every dirty node for patch (same threshold as FlatAST).
+    // Production default: low dirty ratio → delta (no full walk).
     std::size_t dirty_n = 0;
     const std::size_t scan_n = std::min(cur_size, tag_arity_index_synced_size_);
     for (aura::ast::NodeId id = 0; id < static_cast<aura::ast::NodeId>(scan_n); ++id) {
@@ -380,14 +388,17 @@ void Evaluator::build_tag_arity_index_unlocked(std::uint8_t trigger) const {
         flat.ensure_tag_arity_index();
         tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
         bump_pattern_index_rebuild_trigger(trigger);
+        bump_query_pattern_full_rebuild(); // Issue #2763
         return;
     }
 
+    // Issue #2763 AC1: low dirty ratio → delta rebuild (incremental sync).
     tag_arity_index_sync_after_mutation(flat);
     tag_arity_index_epoch_.fetch_add(1, std::memory_order_release);
     flat.bump_tag_arity_index_delta_hits();
     bump_edsl_tag_arity_delta_patch();
     bump_pattern_index_rebuild_trigger(trigger);
+    bump_query_pattern_delta_rebuild();
 }
 
 void Evaluator::build_tag_arity_index(std::uint8_t trigger) const {
