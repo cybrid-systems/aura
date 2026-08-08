@@ -210,6 +210,11 @@ enum class AotReloadFail : std::uint8_t {
 // Returns AotReloadFail as uint8_t for C ABI stability.
 extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void);
 
+// Issue #2753: AotReloadConsistencyProof lives in
+// compiler/aot_reload_consistency_proof.h (thin include; stamp sites
+// in aura_jit_bridge.cpp include it). See that header for the struct
+// + build/stamp helpers + C ABI accessors.
+
 // Issue #2240: stable cross-workspace / cross-COW reject reason code
 // (refine #2178 — Agents branch on this without log scraping).
 // Stored in process atomic `g_last_cross_workspace_reject_reason` in
