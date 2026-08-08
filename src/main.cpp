@@ -2634,7 +2634,72 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ── Normal REPL / pipe mode ─────────────────────
+    // ── Normal REPL / pipe / file / -e mode ─────────────────────
+    // Issue #2767: denseness span runners (Aether/Hephaestus/Hermes)
+    // hit two footguns that look like product bugs:
+    //   1. argv / -e printed bare "usage: echo … | ./aura" and exited
+    //   2. AURA_PIPELINE_STRICT production default needs =0 for soft denseness
+    // Accept file paths and -e EXPR as sugar; keep stdin pipe default.
+    auto print_denseness_usage = [&](const char* prog) {
+        std::println(std::cerr, "usage: {} [options] [file.aura …]", prog);
+        std::println(std::cerr, "       {} -e '(+ 1 2)'", prog);
+        std::println(std::cerr, "       echo '(+ 1 2)' | {}", prog);
+        std::println(std::cerr, "       {} < file.aura", prog);
+        std::println(std::cerr, "");
+        std::println(std::cerr, "Programs are read from stdin when no file/-e is given.");
+        std::println(std::cerr, "Denseness / span host env (soft multi-module probes):");
+        std::println(std::cerr, "  AURA_PATH=…/lib[:extra]   module search path");
+        std::println(std::cerr, "  AURA_SANDBOX=off          local Soft ergonomics");
+        std::println(std::cerr, "  AURA_PIPELINE_STRICT=0    allow tree-walker fallback (#2213)");
+        std::println(std::cerr, "Special modes: --serve, --serve-async, --ir, --jit, --help");
+    };
+
+    // Issue #2767: collect program source from -e / --eval / file args
+    // before falling through to REPL or pipe mode. Leave special flags
+    // (--serve, --ir, …) to earlier branches (they return).
+    std::string all_input;
+    bool source_from_argv = false;
+    if (argc > 1) {
+        for (int i = 1; i < argc; ++i) {
+            const std::string_view a(argv[i]);
+            if (a == "-h" || a == "--help") {
+                print_denseness_usage(argv[0]);
+                return 0;
+            }
+            if (a == "-e" || a == "--eval") {
+                if (i + 1 >= argc) {
+                    std::println(std::cerr, "error: {} requires an expression argument", a);
+                    print_denseness_usage(argv[0]);
+                    return 1;
+                }
+                if (!all_input.empty())
+                    all_input += '\n';
+                all_input += argv[++i];
+                source_from_argv = true;
+                continue;
+            }
+            if (!a.empty() && a[0] == '-') {
+                std::println(std::cerr, "error: unknown option '{}'", a);
+                print_denseness_usage(argv[0]);
+                return 1;
+            }
+            // Bare path: read file contents (denseness sugar for `./aura < file`).
+            std::ifstream f(argv[i]);
+            if (!f) {
+                std::println(std::cerr, "error: cannot open program file '{}'", argv[i]);
+                std::println(std::cerr, "hint: programs default to stdin — try: {} < {}", argv[0],
+                             argv[i]);
+                print_denseness_usage(argv[0]);
+                return 1;
+            }
+            if (!all_input.empty())
+                all_input += '\n';
+            all_input +=
+                std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            source_from_argv = true;
+        }
+    }
+
     aura::compiler::CompilerService cs;
     cs.set_session_id("default");
     aura::compiler::CompilerService::register_session("default", &cs);
@@ -2666,23 +2731,26 @@ int main(int argc, char* argv[]) {
     //   - issue_135_define_sum_0_define (expected '210')
     //   - err_unbound × 4 (expected exit 1)
     // while preserving interactive TTY behavior unchanged.
-    bool interactive = (argc == 1) && ::isatty(STDIN_FILENO);
+    // Issue #2767: never enter interactive REPL when -e / file supplied.
+    bool interactive = (argc == 1) && ::isatty(STDIN_FILENO) && !source_from_argv;
     if (interactive) {
         aura::Repl repl(cs);
         repl.run();
         return 0;
     }
 
-    // ── Pipe mode: read all input, split into complete S-expressions ──
-    // Join all lines to support multi-line expressions
-    std::string all_input;
-    {
+    // ── Pipe / file / -e mode: read all input, split into S-expressions ──
+    // Join all lines to support multi-line expressions. File/-e already
+    // filled all_input above (#2767).
+    if (!source_from_argv) {
         std::ostringstream buf;
         buf << std::cin.rdbuf();
         all_input = buf.str();
     }
     if (all_input.empty()) {
-        std::println(std::cerr, "usage: echo '(+ 1 2)' | ./aura");
+        // Issue #2767: explicit stdin-only hint (was bare usage only).
+        std::println(std::cerr, "error: no program source (stdin empty and no file/-e given)");
+        print_denseness_usage(argv[0]);
         return 1;
     }
 
@@ -2798,7 +2866,9 @@ int main(int argc, char* argv[]) {
     }
 
     if (exprs.empty()) {
-        std::println(std::cerr, "usage: echo '(+ 1 2)' | ./aura");
+        // Issue #2767: no balanced S-expression after split.
+        std::println(std::cerr, "error: no complete S-expression in program source");
+        print_denseness_usage(argv[0]);
         return 1;
     }
 
