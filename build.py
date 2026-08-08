@@ -636,6 +636,22 @@ def cmd_lint():
             "Issue #2763 query:pattern delta+hygiene linter failed — run python3 scripts/coverage/checks/check_query_pattern_delta_hygiene_2763.py"
         )
         return r
+    # Issue #2764: residual IR/JIT/AOT source_marker + InlinePass
+    # respect_macro_hygiene_ hard filter + deopt restore under multi-eval
+    # denseness (#501/#1610/#2100 residual). Wires
+    # propagate_marker_from_ast ancestor walk + unified InlinePass skip
+    # + multi-eval-macro-marker-preserved-total + schema-2764 + ac2764_*
+    # in test_jit_macro_deopt_hygiene.cpp per #81967.
+    ijmme_script = COVERAGE_CHECKS / "check_ir_jit_macro_marker_enforcement_2764.py"
+    if not ijmme_script.exists():
+        fail(f"missing {ijmme_script}")
+        return 1
+    r = run([sys.executable, str(ijmme_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2764 IR/JIT MacroIntroduced enforcement linter failed — run python3 scripts/coverage/checks/check_ir_jit_macro_marker_enforcement_2764.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

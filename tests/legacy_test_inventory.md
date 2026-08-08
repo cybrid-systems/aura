@@ -1556,7 +1556,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_jit_dual_string_heap.cpp` (—) [domain_suite, theme_compiler] — AC1: (display (string-append "A" "B")) → AB under default JIT
 - `tests/compiler/test_jit_full_opcode_coverage.cpp` (—) [domain_suite, theme_compiler] — Issue #1289/#1512/#1658/#427/#532 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_jit_interpreter_equivalence_oracle.cpp` (—) [domain_suite, theme_compiler] — AC1: Oracle is zero-cost when disabled (mode 0/2).
-- `tests/compiler/test_jit_macro_deopt_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: Expand → IR attrs (source_marker/provenance/source_ast_node_id) present
+- `tests/compiler/test_jit_macro_deopt_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2764 — residual IR/JIT/AOT source_marker + respect_macro_hygiene_
 - `tests/compiler/test_jit_macro_introduced_preserve.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2022; side-table + FunctionMeta + FlatFunction fields
 - `tests/compiler/test_jit_metrics.cpp` (—) [domain_suite, theme_compiler] — test_jit_metrics.cpp — Issue #114 JIT observability + per-function cache tests
 - `tests/compiler/test_jit_metrics_stub.cpp` (—) [small, domain_suite, theme_compiler] — test_jit_metrics_stub.cpp — Stub for the JIT test.

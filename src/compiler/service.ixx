@@ -136,6 +136,7 @@ extern "C" std::int64_t aura_hash_string_convert_fn(std::int64_t);
 extern "C" void aura_jit_set_macro_deopt_restore_fn(std::uint64_t (*fn)() noexcept);
 extern "C" void aura_jit_macro_introduced_preserved_inc(std::uint64_t n);
 extern "C" void aura_jit_macro_introduced_lost_inc(std::uint64_t n);
+extern "C" void aura_multi_eval_macro_marker_preserved_inc(std::uint64_t n); // #2764
 
 // Issue #2577: JIT-idx → last eval-heap index (validated by content).
 // Avoids O(iterations) push_back when the same ConstString is re-converted
@@ -9722,8 +9723,13 @@ public:
                 }
             }
         }
-        if (restored)
+        if (restored) {
             aura_jit_macro_introduced_preserved_inc(restored);
+            // Issue #2764: multi-eval denseness / rebind — restore success
+            // means MacroIntroduced identity survived deopt (Agents sample
+            // multi-eval-macro-marker-preserved-total under #2736 loads).
+            aura_multi_eval_macro_marker_preserved_inc(restored);
+        }
         if (lost)
             aura_jit_macro_introduced_lost_inc(lost);
         return restored;

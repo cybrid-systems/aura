@@ -26,10 +26,41 @@ namespace aura::compiler {
 // that imports lowering; emit() bumps both.
 export inline std::atomic<std::uint64_t> hygiene_ir_macro_marker_total{0};
 export inline std::atomic<std::uint64_t> hygiene_ir_provenance_stamped_total{0};
+// Issue #2764: ancestor MacroIntroduced propagation hits (emit path).
+export inline std::atomic<std::uint64_t> hygiene_ir_ancestor_propagation_total{0};
 
 // C bump helpers (defined in aura_jit_runtime.cpp).
 extern "C" void aura_hygiene_ir_macro_marker_inc();
 extern "C" void aura_hygiene_ir_provenance_stamped_inc();
+extern "C" void aura_hygiene_ir_ancestor_propagation_inc();
+extern "C" std::uint64_t aura_hygiene_ir_ancestor_propagation_total();
+
+// Issue #2764: every IR emission from AST must stamp source_marker from
+// the source node OR any ancestor MacroIntroduced (hygiene envelope).
+// Caps walk depth so quiet non-macro paths stay O(1) expected (early
+// User + NULL parent). Cycle-safe via self-loop / NULL termination.
+[[nodiscard]] inline aura::ast::SyntaxMarker
+propagate_marker_from_ast(const aura::ast::FlatAST& flat, aura::ast::NodeId id) noexcept {
+    constexpr std::uint32_t kMaxAncestorWalk = 64;
+    if (id == aura::ast::NULL_NODE || id >= flat.size())
+        return aura::ast::SyntaxMarker::User;
+    auto mk = flat.marker(id);
+    if (mk == aura::ast::SyntaxMarker::MacroIntroduced)
+        return mk;
+    aura::ast::NodeId cur = id;
+    for (std::uint32_t d = 0; d < kMaxAncestorWalk; ++d) {
+        auto p = flat.parent_of(cur);
+        if (p == aura::ast::NULL_NODE || p == cur || p >= flat.size())
+            break;
+        if (flat.marker(p) == aura::ast::SyntaxMarker::MacroIntroduced) {
+            hygiene_ir_ancestor_propagation_total.fetch_add(1, std::memory_order_relaxed);
+            aura_hygiene_ir_ancestor_propagation_inc();
+            return aura::ast::SyntaxMarker::MacroIntroduced;
+        }
+        cur = p;
+    }
+    return mk;
+}
 
 // A slot binding: either a local variable (slot index) or captured (env slot)
 enum class BindingKind : std::uint8_t { Local, Captured, Cell };
@@ -204,15 +235,13 @@ export struct LoweringState {
             auto tid = current_flat->type_id(current_source_id);
             if (tid != 0)
                 blk.instructions.back().type_id = tid;
-            // Issue #455: propagate the SyntaxMarker from the
-            // source AST node to the IR instruction. The
-            // inliner consults IRInstruction::source_marker at
-            // the call-site level (in addition to the existing
-            // per-function IRFunction::marker check from #246).
+            // Issue #455 / #1244 / #1610 / #2764: propagate SyntaxMarker
+            // from the source AST node (or MacroIntroduced ancestor via
+            // propagate_marker_from_ast) to the IR instruction. InlinePass
+            // consults IRInstruction::source_marker at the call-site
+            // level; JIT/AOT/deopt restore rely on this stamp.
             // 0=User, 1=MacroIntroduced, 2=BoolLiteral.
-            // Issue #1244 / #1610: full IR hygiene propagation of
-            // SyntaxMarker::MacroIntroduced for JIT/AOT/inliner guards.
-            auto mk = current_flat->marker(current_source_id);
+            auto mk = propagate_marker_from_ast(*current_flat, current_source_id);
             blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk);
             // Issue #1644: non-User markers propagate to IR (AoS path).
             // Local hygiene counters below; Evaluator metrics via query path

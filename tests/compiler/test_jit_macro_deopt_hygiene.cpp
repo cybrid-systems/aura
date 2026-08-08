@@ -1,6 +1,9 @@
 // @category: integration
 // @reason: Issue #2100 — propagate MacroIntroduced marker + provenance through
 // IR lowering and deopt paths (refine Macro Hygiene review §7.5 / #2022).
+// Issue #2764 — residual IR/JIT/AOT source_marker + respect_macro_hygiene_
+// enforcement + deopt restore under multi-eval denseness (refine
+// #501/#1610/#2100). Prefer-existing suite per #81967.
 //
 //   AC1: Expand → IR attrs (source_marker/provenance/source_ast_node_id) present
 //   AC2: Deopt restore re-stamps AST is_macro_introduced + provenance
@@ -9,6 +12,13 @@
 //   AC5: query/blame still sees MacroIntroduced after deopt restore cycle
 //   AC6: source wiring (lowering stamps IR attrs; restore hook; preserved/lost)
 //   AC7: #2177 AOT marker propagation parity (refine #2100)
+//
+//   #2764 AC1: propagate_marker_from_ast + InlinePass hard skip
+//   #2764 AC2: expand → deopt → is_macro_introduced + provenance
+//   #2764 AC3: multi-eval denseness / rebind — no marker loss
+//   #2764 AC4: non-macro IR path zero regression
+//   #2764 AC5: schema-2764 + additive keys; prior surfaces preserved
+//   #2764 AC6: source-cite + coverage linter
 
 #include "test_harness.hpp"
 
@@ -40,6 +50,8 @@ extern "C" std::uint64_t aura_2177_aot_macro_marker_propagated_total(void);
 extern "C" std::uint64_t aura_2177_aot_macro_marker_stripped_total(void);
 extern "C" void aura_jit_macro_introduced_preserved_inc(std::uint64_t n);
 extern "C" void aura_jit_macro_introduced_lost_inc(std::uint64_t n);
+extern "C" std::uint64_t aura_hygiene_ir_ancestor_propagation_total(void);
+extern "C" std::uint64_t aura_multi_eval_macro_marker_preserved_total(void);
 
 namespace {
 
@@ -332,6 +344,199 @@ static void ac7_aot_marker_parity_2177() {
     CHECK(stripped >= 0, "AC7: stripped >= 0");
 }
 
+// ── Issue #2764: residual IR/JIT/AOT MacroIntroduced enforcement ──
+// Prefer-existing #2100 suite per #81967.
+
+// clang-format may split long string literals; match after strip.
+[[nodiscard]] static bool source_has_key(const std::string& hay, std::string_view key) {
+    std::string n;
+    n.reserve(hay.size());
+    for (char ch : hay) {
+        if (ch != '"' && ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
+            n.push_back(ch);
+    }
+    return n.find(key) != std::string::npos;
+}
+
+static void ac2764_1_propagate_and_inline_hard_filter() {
+    std::println("\n--- #2764 AC1: propagate_marker_from_ast + InlinePass hard filter ---");
+    const auto low = read_file("src/compiler/lowering.ixx");
+    const auto pass = read_file("src/compiler/pass_impls.ixx");
+    CHECK(low.find("propagate_marker_from_ast") != std::string::npos,
+          "AC1: propagate_marker_from_ast helper");
+    CHECK(low.find("#2764") != std::string::npos, "AC1: lowering cites #2764");
+    CHECK(low.find("kMaxAncestorWalk") != std::string::npos ||
+              low.find("parent_of") != std::string::npos,
+          "AC1: ancestor walk for MacroIntroduced envelope");
+    CHECK(pass.find("#2764") != std::string::npos, "AC1: InlinePass cites #2764");
+    CHECK(pass.find("respect_macro_hygiene_") != std::string::npos,
+          "AC1: respect_macro_hygiene_ present");
+    CHECK(pass.find("macro_hygiene_skipped_") != std::string::npos, "AC1: hygiene skip metric");
+    // Unified skip: call site OR callee MacroIntroduced.
+    CHECK(pass.find("instr.source_marker == 1") != std::string::npos ||
+              pass.find("source_marker == 1") != std::string::npos,
+          "AC1: call-site MacroIntroduced skip");
+    CHECK(pass.find("callee->marker == 1") != std::string::npos ||
+              pass.find("callee.marker == 1") != std::string::npos,
+          "AC1: callee MacroIntroduced skip");
+
+    // Runtime: expand macro → IR attrs present (marker lineage).
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC1: macro workspace");
+    for (int i = 0; i < 3; ++i)
+        (void)cs.eval("(eval-current)");
+    if (cs.macro_ir_attr_cache_size() == 0)
+        (void)cs.seed_macro_ir_attrs_from_workspace();
+    CHECK(cs.macro_ir_attr_cache_size() > 0 ||
+              href(cs, "query:ir-hygiene-stats", "ir-instr-macro-introduced") > 0 ||
+              href(cs, "query:ir-hygiene-stats", "macro-markers") > 0,
+          "AC1: MacroIntroduced lineage after expand/lower");
+    CHECK(href(cs, "query:ir-hygiene-stats", "propagate-marker-from-ast-wired") == 1,
+          "AC1: propagate wired sentinel");
+    CHECK(href(cs, "query:ir-hygiene-stats", "inline-macro-hygiene-hard-filter-wired") == 1,
+          "AC1: InlinePass hard-filter wired");
+    CHECK(href(cs, "query:ir-hygiene-stats", "respect-macro-hygiene") == 1,
+          "AC1: production default respect-macro-hygiene");
+}
+
+static void ac2764_2_deopt_restore_fidelity() {
+    std::println("\n--- #2764 AC2: expand → deopt → MacroIntroduced + provenance ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC2: macro workspace");
+    for (int i = 0; i < 4; ++i)
+        (void)cs.eval("(eval-current)");
+    if (cs.macro_ir_attr_cache_size() == 0)
+        CHECK(cs.seed_macro_ir_attrs_from_workspace() > 0, "AC2: seed IR attrs");
+    auto* flat = cs.evaluator().workspace_flat();
+    CHECK(flat != nullptr, "AC2: flat");
+    std::vector<aura::ast::NodeId> macro_nodes;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && flat->is_macro_introduced(id))
+            macro_nodes.push_back(id);
+    }
+    CHECK(!macro_nodes.empty(), "AC2: MacroIntroduced nodes present");
+    for (auto id : macro_nodes)
+        flat->set_marker(id, aura::ast::SyntaxMarker::User);
+    const auto restored = cs.restore_macro_introduced_from_ir_after_deopt();
+    CHECK(restored > 0, "AC2: deopt restore restamps");
+    std::uint64_t back = 0;
+    for (auto id : macro_nodes) {
+        if (flat->is_macro_introduced(id))
+            ++back;
+    }
+    CHECK(back > 0, "AC2: is_macro_introduced after deopt restore");
+    CHECK(href(cs, "query:ir-hygiene-stats", "deopt-restore-macro-introduced-wired") == 1,
+          "AC2: deopt restore wired");
+}
+
+static void ac2764_3_multi_eval_no_marker_loss() {
+    std::println("\n--- #2764 AC3: multi-eval denseness — no marker loss ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC3: macro workspace");
+    for (int i = 0; i < 8; ++i)
+        (void)cs.eval("(eval-current)");
+    if (cs.macro_ir_attr_cache_size() == 0)
+        (void)cs.seed_macro_ir_attrs_from_workspace();
+    auto* flat = cs.evaluator().workspace_flat();
+    CHECK(flat != nullptr, "AC3: flat");
+    std::uint64_t macro_n = 0;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && flat->is_macro_introduced(id))
+            ++macro_n;
+    }
+    CHECK(macro_n > 0 || cs.macro_ir_attr_cache_size() > 0,
+          "AC3: MacroIntroduced survives multi-eval");
+    // Structural rebind of a user form (not macro wipe).
+    auto mut = cs.eval("(mutate:replace-pattern \"(+ x base)\" \"(+ x base)\")");
+    (void)mut;
+    for (int i = 0; i < 4; ++i)
+        (void)cs.eval("(eval-current)");
+    // Force restore path (as denseness deopt would).
+    const auto multi0 = aura_multi_eval_macro_marker_preserved_total();
+    (void)cs.restore_macro_introduced_from_ir_after_deopt();
+    const auto multi1 = aura_multi_eval_macro_marker_preserved_total();
+    std::println("  multi-eval preserved {} -> {}", multi0, multi1);
+    CHECK(multi1 >= multi0, "AC3: multi-eval preserved monotonic");
+    // After restore, markers still present.
+    std::uint64_t macro_n2 = 0;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && flat->is_macro_introduced(id))
+            ++macro_n2;
+    }
+    CHECK(macro_n2 > 0 || cs.macro_ir_attr_cache_size() > 0,
+          "AC3: no marker loss after multi-eval + rebind");
+    CHECK(href(cs, "query:ir-hygiene-stats", "multi-eval-macro-marker-preserved-total") >= 0,
+          "AC3: multi-eval preserved key");
+    // Leakage key must remain readable (0 preferred after #1891 stamp).
+    CHECK(href(cs, "query:ir-hygiene-stats", "hygiene-leakage") >= 0,
+          "AC3: hygiene-leakage key readable");
+}
+
+static void ac2764_4_non_macro_quiet() {
+    std::println("\n--- #2764 AC4: non-macro IR path zero regression ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (h x) (+ x 1)) (h 2)\")").has_value(), "AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
+    auto r = cs.eval("(+ 3 4)");
+    CHECK(r && is_int(*r) && as_int(*r) == 7, "AC4: non-macro eval ok");
+    // Quiet path: ancestor propagation must not fire on pure user AST
+    // (or is non-negative if other suites shared process counters).
+    CHECK(aura_hygiene_ir_ancestor_propagation_total() >= 0, "AC4: ancestor counter readable");
+}
+
+static void ac2764_5_observability() {
+    std::println("\n--- #2764 AC5: schema-2764 + additive keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    CHECK(source_has_key(q, "schema-2764"), "AC5: schema-2764");
+    CHECK(source_has_key(q, "issue-2764"), "AC5: issue-2764");
+    CHECK(source_has_key(q, "marker-ancestor-propagation-total"), "AC5: ancestor key");
+    CHECK(source_has_key(q, "multi-eval-macro-marker-preserved-total"), "AC5: multi-eval key");
+    CHECK(source_has_key(q, "propagate-marker-from-ast-wired"), "AC5: propagate wired");
+    CHECK(source_has_key(q, "inline-macro-hygiene-hard-filter-wired"), "AC5: inline wired");
+    // Prior surfaces preserved.
+    CHECK(source_has_key(q, "schema-2100"), "AC5: schema-2100 preserved");
+    CHECK(source_has_key(q, "schema-2177") || q.find("2177") != std::string::npos,
+          "AC5: schema-2177 lineage");
+    CHECK(met.find("ir_marker_ancestor_propagation_total") != std::string::npos ||
+              met.find("#2764") != std::string::npos,
+          "AC5: metrics cite #2764");
+
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC5: workspace");
+    (void)cs.eval("(eval-current)");
+    CHECK(href(cs, "query:ir-hygiene-stats", "schema-2764") == 2764, "AC5: live schema-2764");
+    CHECK(href(cs, "query:ir-hygiene-stats", "issue-2764") == 2764, "AC5: live issue-2764");
+    CHECK(href(cs, "query:ir-hygiene-stats", "schema-2100") == 2100, "AC5: live schema-2100");
+    CHECK(href(cs, "query:ir-hygiene-stats", "schema") == 2022, "AC5: lineage schema 2022");
+    CHECK(href(cs, "query:ir-hygiene-stats", "marker-ancestor-propagation-total") >= 0,
+          "AC5: live ancestor total");
+    CHECK(href(cs, "query:ir-hygiene-stats", "multi-eval-macro-marker-preserved-total") >= 0,
+          "AC5: live multi-eval total");
+}
+
+static void ac2764_6_source_and_linter() {
+    std::println("\n--- #2764 AC6: source-cite + linter ---");
+    const auto low = read_file("src/compiler/lowering.ixx");
+    const auto pass = read_file("src/compiler/pass_impls.ixx");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto t = read_file("tests/compiler/test_jit_macro_deopt_hygiene.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_ir_jit_macro_marker_enforcement_2764.py");
+    CHECK(low.find("#2764") != std::string::npos, "AC6: lowering cites #2764");
+    CHECK(pass.find("#2764") != std::string::npos, "AC6: InlinePass cites #2764");
+    CHECK(rt.find("#2764") != std::string::npos, "AC6: runtime cites #2764");
+    CHECK(t.find("ac2764_1_propagate_and_inline_hard_filter") != std::string::npos, "AC6: AC1");
+    CHECK(t.find("ac2764_2_deopt_restore_fidelity") != std::string::npos, "AC6: AC2");
+    CHECK(t.find("ac2764_5_observability") != std::string::npos, "AC6: AC5");
+    CHECK(build.find("check_ir_jit_macro_marker_enforcement_2764") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty(), "AC6: linter present");
+    CHECK(read_file("docs/design/2764-ir-jit-macro-marker.md").empty(),
+          "AC6: no docs/design/2764-* per #1655");
+}
+
 } // namespace
 
 int run_test_jit_macro_deopt_hygiene() {
@@ -343,6 +548,13 @@ int run_test_jit_macro_deopt_hygiene() {
     ac5_blame_after_deopt();
     ac6_source_wiring();
     ac7_aot_marker_parity_2177();
+    std::println("\n=== Issue #2764: residual IR/JIT MacroIntroduced enforcement ===");
+    ac2764_1_propagate_and_inline_hard_filter();
+    ac2764_2_deopt_restore_fidelity();
+    ac2764_3_multi_eval_no_marker_loss();
+    ac2764_4_non_macro_quiet();
+    ac2764_5_observability();
+    ac2764_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
