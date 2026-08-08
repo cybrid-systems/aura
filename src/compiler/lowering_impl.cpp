@@ -301,12 +301,21 @@ static std::uint32_t lower_flat_expr(
                     }
                     // Record the starting func id (offset) before adding bundle functions
                     auto base_fid = static_cast<std::uint32_t>(state.module.functions.size());
-                    // Add all bundle functions to module, remapping func ids
+                    // Issue #2732: map original bundle func.id → new_fid so MakeClosure
+                    // targets stay correct even when original ids are non-dense
+                    // (self-placeholder / multi-function order). Arithmetic
+                    // `orig + base_fid - 1` mis-points sibling calls at __top__
+                    // and infinite-loops on multi-define cross-call (h→g).
+                    std::unordered_map<std::uint32_t, std::uint32_t> orig_to_new;
+                    std::vector<std::uint32_t> added_fids;
+                    added_fids.reserve(cache_it->second.size());
                     std::uint32_t lambda_fid = 0;
+                    bool found_user_lambda = false;
+                    std::uint32_t first_added = 0;
+                    bool have_first = false;
                     for (std::size_t ci = 0; ci < cache_it->second.size(); ++ci) {
                         auto& func = cache_it->second[ci];
                         auto copy = func;
-                        remap_func_ids(copy, base_fid);
                         // Remap ConstString pool indices using cached string pool
                         if (state.cache_strings) {
                             auto str_it = state.cache_strings->find(std::string(name));
@@ -320,15 +329,30 @@ static std::uint32_t lower_flat_expr(
                                                 state.module.add_string(str_pool[inst.operands[1]]);
                             }
                         }
-                        // Issue #660: find the user-defined lambda by NAME.
-                        // The cache key (the 'name' variable) is what the user
-                        // is looking up. The user-defined lambda has a name of
-                        // the form "<name>#0" (set by cache_define). Match by name.
-                        bool is_user_lambda = copy.name == std::string(name) + std::string("#0");
+                        // Issue #660 / #2732: find the user-defined lambda by NAME.
+                        // Prefer "<name>#0" (cache_define). Also accept "__lambda__",
+                        // empty, or name#N — never leave lambda_fid==0 (→ __top__).
+                        const std::string want = std::string(name) + "#0";
+                        const bool is_user_lambda =
+                            copy.name == want || copy.name == "__lambda__" || copy.name.empty() ||
+                            (copy.name.size() > name.size() &&
+                             copy.name.compare(0, name.size(), name) == 0 &&
+                             copy.name[name.size()] == '#');
+                        const auto orig_id = copy.id;
                         auto new_fid = state.module.add_function(std::move(copy));
-                        if (is_user_lambda) {
-                            lambda_fid = new_fid;
+                        orig_to_new[orig_id] = new_fid;
+                        added_fids.push_back(new_fid);
+                        if (!have_first) {
+                            first_added = new_fid;
+                            have_first = true;
                         }
+                        if (is_user_lambda && !found_user_lambda) {
+                            lambda_fid = new_fid;
+                            found_user_lambda = true;
+                        }
+                        // Keep base_fid for legacy bridge paths that still
+                        // consult arithmetic remap on single-fn bundles.
+                        (void)base_fid;
                         // Copy bridge data from cache bridge if available
                         if (state.cache_bridge) {
                             auto bridge_it = state.cache_bridge->find(std::string(name));
@@ -375,6 +399,25 @@ static std::uint32_t lower_flat_expr(
                             }
                         }
                     }
+                    // Issue #2732: rewrite MakeClosure targets via orig→new map
+                    // (handles non-dense original ids from self-placeholder).
+                    for (auto nf : added_fids) {
+                        if (nf >= state.module.functions.size())
+                            continue;
+                        for (auto& block : state.module.functions[nf].blocks) {
+                            for (auto& inst : block.instructions) {
+                                if (inst.opcode != aura::ir::IROpcode::MakeClosure)
+                                    continue;
+                                auto it = orig_to_new.find(inst.operands[1]);
+                                if (it != orig_to_new.end())
+                                    inst.operands[1] = it->second;
+                            }
+                        }
+                    }
+                    // Issue #2732: never MakeClosure(0) when the bundle was
+                    // non-empty — 0 is __top__ and causes infinite recursion.
+                    if (!found_user_lambda && have_first)
+                        lambda_fid = first_added;
                     auto closure_slot = state.alloc_local();
                     state.emit(IROpcode::MakeClosure, closure_slot, lambda_fid, 0);
                     return closure_slot;

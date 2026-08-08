@@ -1,0 +1,43 @@
+; Issue #2732 — multi-define cross-call after set-code must evaluate full chain
+(require "std/mutate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(display "cross-call g/g\n")
+(set-code "(define (g x) (+ x 42))\n(define (h x) (g (g x)))\n")
+(eval-current)
+(assert! (= (h 1) 85) "h(1)=85")
+(assert! (= (g 1) 43) "g(1)=43")
+(assert! (= (let ((f h)) (f 1)) 85) "let h=85")
+
+(display "wrap leaf\n")
+(set-code "(define (leaf x) 42)\n(define (wrap x) (leaf x))\n")
+(eval-current)
+(assert! (= (wrap 1) 42) "wrap=42")
+(assert! (= (leaf 1) 42) "leaf=42")
+
+(display "independent leaves\n")
+(set-code "(define (f0 x) (+ x 0))\n(define (f1 x) (+ x 1))\n")
+(eval-current)
+(assert! (= (f1 0) 1) "f1=1")
+
+(display "single deep nest\n")
+(set-code "(define (deep x) (+ 1 (+ 1 x)))\n")
+(eval-current)
+(assert! (= (deep 0) 2) "deep=2")
+
+(if (= *fails* 0)
+    (begin (display "OK-2732 multi-define cross-call\n"))
+    (begin
+      (display "FAIL-2732 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))

@@ -2867,6 +2867,14 @@ public:
             return EvalResult(types::make_void());
         }
 
+        // Issue #2732: top-level Call to a named cached define — apply via
+        // the env / ir_define closure (same path as let/apply) instead of
+        // re-embedding the define IR into a fresh __top__ module. Nested
+        // sibling calls re-embedded via MakeClosure remap can infinite-loop
+        // on multi-define cross-call (h → g).
+        if (auto applied = try_dispatch_toplevel_define_call_(*flat_ptr, *pool_ptr, expanded_root))
+            return *applied;
+
         // === Normal IR path (with cache awareness) ===
         auto cache_ptr_local = ir_cache_.empty() ? nullptr : &ir_cache_;
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
@@ -10067,6 +10075,57 @@ private:
             aura::ast::NodeId body = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
             return std::make_pair(std::string(name), body);
         }
+        return std::nullopt;
+    }
+
+    // Issue #2732: (f arg…) where f is a top-level define already bound in
+    // top_env / ir_define_env_bindings_ — apply without re-lowering into a
+    // fresh module (avoids MakeClosure remap hang on multi-define graphs).
+    std::optional<EvalResult> try_dispatch_toplevel_define_call_(aura::ast::FlatAST& flat,
+                                                                 aura::ast::StringPool& pool,
+                                                                 aura::ast::NodeId root) {
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return std::nullopt;
+        auto v = flat.get(root);
+        if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
+            return std::nullopt;
+        auto callee = flat.get(v.child(0));
+        if (callee.tag != aura::ast::NodeTag::Variable)
+            return std::nullopt;
+        const std::string name(pool.resolve(callee.sym_id));
+        if (name.empty())
+            return std::nullopt;
+        // Prefer env binding (string) — IR define closures live here after
+        // cache_define(bind_in_env=true) / eval-current.
+        auto env_val = evaluator_.top_env().lookup(name);
+        if (!env_val)
+            return std::nullopt;
+        types::EvalValue fn = *env_val;
+        if (types::is_cell(fn)) {
+            auto ci = types::as_cell_id(fn);
+            if (ci >= evaluator_.cells().size())
+                return std::nullopt;
+            fn = evaluator_.cells()[ci];
+        }
+        if (!types::is_closure(fn))
+            return std::nullopt;
+        // Only short-circuit when this is a known define (ir_cache or
+        // ir_define map) — leave pure TW lambdas / primitives to normal IR.
+        const bool known_define = ir_cache_.count(name) > 0 || ir_cache_v2_.count(name) > 0 ||
+                                  ir_define_env_bindings_.count(name) > 0;
+        if (!known_define)
+            return std::nullopt;
+        std::vector<types::EvalValue> args;
+        args.reserve(v.children.size() > 0 ? v.children.size() - 1 : 0);
+        for (std::size_t i = 1; i < v.children.size(); ++i) {
+            auto ar = evaluator_.eval_flat(flat, pool, v.child(i), evaluator_.top_env());
+            if (!ar)
+                return EvalResult(std::unexpected(ar.error()));
+            args.push_back(*ar);
+        }
+        auto cid = types::as_closure_id(fn);
+        if (auto r = evaluator_.apply_closure(cid, args))
+            return EvalResult(*r);
         return std::nullopt;
     }
 
