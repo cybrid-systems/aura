@@ -19,10 +19,13 @@
 ; #1553: fiber spawn paths call (mutate:safe-yield) / ast:yield-at-boundary
 ; before and after work so long mutation holds do not starve peer fibers
 ; (aligns #1504 safe yield + #1547 MutationBoundaryGuard).
-
-(require "std/list" all:)
-(require "std/string" all:)
-(require "std/mutate" all:)
+;
+; Issue #2768 / #2766: export *before* require so module-private free-vars
+; (*agents*, *registry-epoch*, agent-register, …) capture correctly on the
+; stdin denseness host. Host binder now tolerates either order (#2766), but
+; export-first is the canonical form for span multi-agent composition
+; (Aether / Hermes). Do not reintroduce require-before-export without a
+; free-var regression covering agent:spawn / agent:ask / agent:list.
 
 (export orch:define-role orch:step orch:pipeline orch:conduct
         orch:parallel orch:parallel-with-yield
@@ -30,6 +33,10 @@
         agent:status agent:stop agent:restart
         orch:role orch:step* orch:if orch:retry
         orch:registry-epoch)
+
+(require "std/list" all:)
+(require "std/string" all:)
+(require "std/mutate" all:)
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; Section 1: Agent 生命周期（乐手管理）
