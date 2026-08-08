@@ -891,6 +891,18 @@ def cmd_lint():
             "Issue #2782 AgentScope Scheduler lifetime linter failed — run python3 scripts/coverage/checks/check_agent_scope_scheduler_lifetime_2782.py"
         )
         return r
+    # Issue #2783: keepalive helper exits on body hard-reclaim; residual
+    # helpers are orphan-registered. ac2783_* in test_fiber_native_keepalive.
+    khr_script = COVERAGE_CHECKS / "check_keepalive_helper_reclaim_2783.py"
+    if not khr_script.exists():
+        fail(f"missing {khr_script}")
+        return 1
+    r = run([sys.executable, str(khr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2783 keepalive helper reclaim linter failed — run python3 scripts/coverage/checks/check_keepalive_helper_reclaim_2783.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

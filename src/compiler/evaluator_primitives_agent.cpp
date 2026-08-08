@@ -4348,6 +4348,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2159", aura::orch::kFiberNativeKeepaliveIssue);
             insert_kv("issue-2159", aura::orch::kFiberNativeKeepaliveIssue);
             insert_kv("fiber-native-keepalive-wired", 1);
+            // Issue #2783: keepalive helper vs body hard-reclaim.
+            insert_kv("keepalive-helper-reclaim-exit-total",
+                      static_cast<std::int64_t>(
+                          os.keepalive_helper_reclaim_exit_total.load(std::memory_order_relaxed)));
+            insert_kv("keepalive-helper-orphan-total",
+                      static_cast<std::int64_t>(
+                          os.keepalive_helper_orphan_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2783", aura::orch::kKeepaliveHelperReclaimIssue);
+            insert_kv("issue-2783", aura::orch::kKeepaliveHelperReclaimIssue);
+            insert_kv("keepalive-helper-reclaim-wired", 1);
             // Issue #2229: supervision policy metrics (RestartN path).
             // Bumped by AgentScope::watch_all(stall_timeout_ms,
             // AgentFailurePolicy) when on_stall == RestartN, plus

@@ -39,8 +39,10 @@ using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
 using aura::orch::is_keepalive_message;
 using aura::orch::join_agent;
+using aura::orch::JoinPolicy;
 using aura::orch::KeepaliveWatchStatus;
 using aura::orch::kFiberNativeKeepaliveIssue;
+using aura::orch::kKeepaliveHelperReclaimIssue;
 using aura::orch::note_agent_progress;
 using aura::orch::spawn_agent_with_mailbox;
 using aura::orch::stop_keepalive_helper;
@@ -399,17 +401,84 @@ int run_test_fiber_native_keepalive() {
         (void)join_agent(h, std::optional<std::uint64_t>{2000});
     }
 
-    // ── Query schema-2159 ──
+    // ── Issue #2783: Reclaimed body must not leave keepalive helper orphan ──
     {
-        std::println("\n--- query schema-2159 ---");
+        std::println("\n--- #2783 ac2783_reclaimed_body_helper_joins ---");
+        CHECK(kKeepaliveHelperReclaimIssue == 2783, "ac2783: issue stamp");
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        const auto reclaim_exit0 =
+            g_orch_module_stats.keepalive_helper_reclaim_exit_total.load(std::memory_order_relaxed);
+
+        // Yielding body held on a flag + keepalive. Body intentionally
+        // does NOT poll is_reclaimed so it stays "live" after mark_reclaimed
+        // (only hold_ stops it) — that matches non-yielding residual reclaim
+        // where body never sets body_done. Helper must exit on is_reclaimed.
+        std::atomic<bool> hold{true};
+        auto h = spawn_agent_with_mailbox(
+            sched, AgentSpec{.name = "2783-hold",
+                             .body =
+                                 [&] {
+                                     while (hold.load(std::memory_order_relaxed))
+                                         Fiber::yield(YieldReason::Explicit);
+                                 },
+                             .attach_mailbox = true,
+                             .mailbox_high_water = 64,
+                             .keepalive_interval_ms = 8});
+        CHECK(h.ok, "ac2783: spawn ok");
+        CHECK(h.keepalive_helper != nullptr, "ac2783: helper fiber live");
+        Fiber* helper = h.keepalive_helper;
+
+        // Let helper schedule and emit at least once.
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        CHECK(h.liveness && !h.liveness->body_done.load(std::memory_order_acquire),
+              "ac2783: body_done still false before reclaim");
+
+        // Simulate Scheduler hard-reclaim of the body (#2227) while helper
+        // is still parked and body has not set body_done.
+        CHECK(h.fiber != nullptr, "ac2783: body fiber live");
+        h.fiber->mark_reclaimed();
+        CHECK(h.fiber->is_reclaimed(), "ac2783: body marked reclaimed");
+
+        for (int i = 0; i < 300 && helper && !helper->is_done(); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK(helper && helper->is_done(),
+              "ac2783: helper exits after body is_reclaimed (no infinite park)");
+        const auto reclaim_exit1 =
+            g_orch_module_stats.keepalive_helper_reclaim_exit_total.load(std::memory_order_relaxed);
+        CHECK(reclaim_exit1 > reclaim_exit0, "ac2783: keepalive_helper_reclaim_exit_total bumps");
+
+        hold.store(false, std::memory_order_relaxed);
+        auto jr = join_agent(h, JoinPolicy{.primary_ms = 2000, .drain_ms = 200});
+        (void)jr;
+        CHECK(h.keepalive_helper == nullptr, "ac2783: keepalive_helper cleared after join");
+        CHECK(!h.keepalive_active, "ac2783: keepalive_active false after join");
+
+        // Source-cite
+        auto src = read_file("src/orch/agent_spawn.h");
+        CHECK(src.find("is_reclaimed") != std::string::npos,
+              "ac2783: helper watches body is_reclaimed");
+        CHECK(src.find("keepalive_helper_orphan_total") != std::string::npos,
+              "ac2783: orphan metric present");
+        CHECK(src.find("kKeepaliveHelperReclaimIssue") != std::string::npos,
+              "ac2783: issue constant");
+    }
+
+    // ── Query schema-2159 + #2783 ──
+    {
+        std::println("\n--- query schema-2159 + #2783 ---");
         CompilerService cs;
         CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
         CHECK(href(cs, "schema-2159") == 2159, "schema-2159");
         CHECK(href(cs, "fiber-native-keepalive-wired") == 1, "wired");
         CHECK(href(cs, "keepalive-helpers-joined-total") >= 0, "joined total key");
+        CHECK(href(cs, "schema-2783") == 2783, "schema-2783");
+        CHECK(href(cs, "keepalive-helper-reclaim-wired") == 1, "2783 wired");
+        CHECK(href(cs, "keepalive-helper-orphan-total") >= 0, "orphan total key");
+        CHECK(href(cs, "keepalive-helper-reclaim-exit-total") >= 0, "reclaim-exit total key");
     }
 
-    std::println("\n=== #2159 fiber-native keepalive: {} passed, {} failed ===", g_passed,
+    std::println("\n=== #2159 + #2783 fiber-native keepalive: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
