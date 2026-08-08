@@ -1287,7 +1287,13 @@ export struct WorkspaceTree {
     bool ensure_local_flat(std::uint32_t idx);
     std::uint32_t create_child(const std::string& name, std::uint32_t parent_layer_idx,
                                ast::FlatAST* parent_flat, ast::StringPool* parent_pool);
+    // Issue #1770 / #2789: tombstone node; #2789 also recursively
+    // tombstones all descendants so hierarchical delete leaves no orphans.
     bool delete_child(std::uint32_t idx);
+    // Issue #2789: true if `node` is `ancestor` or a descendant of it.
+    [[nodiscard]] bool is_under(std::uint32_t node, std::uint32_t ancestor) const noexcept;
+    // Issue #2789: tombstoned layer (resources freed; still occupies slot).
+    [[nodiscard]] bool is_tombstone(std::uint32_t idx) const noexcept;
     bool set_active(std::uint32_t idx);
     void set_read_only(std::uint32_t idx, bool ro);
     [[nodiscard]] bool can_write(std::uint32_t idx);
@@ -14516,16 +14522,60 @@ inline std::uint32_t WorkspaceTree::create_child(const std::string& name,
     return idx;
 }
 
+inline bool WorkspaceTree::is_tombstone(std::uint32_t idx) const noexcept {
+    if (idx == 0 || idx >= nodes_.size())
+        return false;
+    // Live nodes always have flat (shared parent or owned). Delete nulls both.
+    const auto& n = nodes_[idx];
+    return n.flat == nullptr && n.pool == nullptr;
+}
+
+inline bool WorkspaceTree::is_under(std::uint32_t node, std::uint32_t ancestor) const noexcept {
+    if (ancestor >= nodes_.size() || node >= nodes_.size())
+        return false;
+    if (node == ancestor)
+        return true;
+    if (node == 0)
+        return false;
+    // Walk parent_layer_idx chain with cycle/length guard.
+    std::uint32_t cur = node;
+    for (std::size_t g = 0; g < nodes_.size(); ++g) {
+        if (cur == ancestor)
+            return true;
+        if (cur == 0)
+            return false;
+        const auto p = nodes_[cur].parent_layer_idx;
+        if (p >= nodes_.size() || p == cur)
+            return false;
+        cur = p;
+    }
+    return false;
+}
+
 inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
     if (idx == 0 || idx >= nodes_.size())
         return false;
+    // Issue #2789: recursively tombstone descendants first so hierarchical
+    // (workspace:delete parent) does not leave orphan layers listed/leaked.
+    // Children first (post-order via recursion); parent indices stay stable
+    // because we tombstone in place (no vector erase — #1770 contract).
+    // Do not skip is_tombstone here — a second pass is a no-op re-null
+    // (and null-flat shared children would otherwise be skipped as "already
+    // tombstoned" while still carrying a live parent_layer_idx link).
+    for (std::uint32_t i = 1; i < static_cast<std::uint32_t>(nodes_.size()); ++i) {
+        if (i != idx && nodes_[i].parent_layer_idx == idx)
+            (void)delete_child(i);
+    }
     auto& n = nodes_[idx];
     // Issue #1770: detach owned pointers BEFORE delete so a throwing
     // FlatAST/StringPool dtor cannot leave non-null dangling fields
     // (or skip nulling of parent_/remap after a half-completed delete).
+    // Issue #2789: only free a true COW clone (has_own_flat && flat is
+    // distinct from parent_flat_). Shared evaluator flats must not be
+    // deleted even if has_own_flat was incorrectly set historically.
     ast::FlatAST* owned_flat = nullptr;
     ast::StringPool* owned_pool = nullptr;
-    if (n.has_own_flat) {
+    if (n.has_own_flat && n.flat != nullptr && n.flat != n.parent_flat_) {
         owned_flat = n.flat;
         owned_pool = n.pool;
     }

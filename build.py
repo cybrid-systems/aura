@@ -963,6 +963,18 @@ def cmd_lint():
             "Issue #2788 workspace:rollback-to linter failed — run python3 scripts/coverage/checks/check_workspace_rollback_to_2788.py"
         )
         return r
+    # Issue #2789: workspace:delete recursive subtree (no orphan layers).
+    # ac2789 in test_workspace_delete_subtree.
+    wdst_script = COVERAGE_CHECKS / "check_workspace_delete_subtree_2789.py"
+    if not wdst_script.exists():
+        fail(f"missing {wdst_script}")
+        return 1
+    r = run([sys.executable, str(wdst_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2789 workspace:delete subtree linter failed — run python3 scripts/coverage/checks/check_workspace_delete_subtree_2789.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
