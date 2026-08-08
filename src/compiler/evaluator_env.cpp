@@ -217,6 +217,11 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     }
     // 2. parent_ pointer chain — Wave2: iterative (no recursive C++ stack
     //    per hop). Same hop budget as SoA walk / env_lookup_enter.
+    // Issue #2735 / #2739: do NOT return nullopt when parent_ walk misses —
+    // fall through to SoA parent_id_ / live top_env. Let-body child Envs
+    // (parent_ = call env) after set-code may have empty free-var captures
+    // while exports still live on top_; early return hid them (unbound
+    // string-contains? inside llm:sanitize-prompt after set-code).
     if (parent_) {
         std::size_t hops = 0;
         for (const Env* p = parent_; p && hops < MAX_ENV_DEPTH; p = p->parent_, ++hops) {
@@ -239,7 +244,7 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
                 }
             }
         }
-        return std::nullopt;
+        // Fall through to SoA / top_env (do not return nullopt here).
     }
     // 2b. Issue #232 fallback: SoA walk via parent_id_ when parent_
     // is null but parent_id_ is set. This happens for env frames
@@ -247,7 +252,7 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // in a stack env (e.g., named-let → letrec → lambda capture).
     // Without this walk, the closure body can't see bindings
     // from the surrounding scope.
-    //
+    // Also reached when parent_ walk missed (#2735) — live top_ exports.    //
     // Issue #145 P0 follow-up: hold env_frames_mtx_ as a
     // shared lock for the entire walk. env_frame returns a
     // reference into env_frames_; holding the lock prevents
@@ -406,19 +411,17 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
     // Mirror into string-keyed bindings_ so Env::lookup(name) finds
     // lambda params bound via apply_closure / Path B. Only when pool_
     // can resolve SymId → name (canonical or captured pool).
+    // Issue #2739: always APPEND for shadowing (same name, new cell).
+    // Update-in-place left outer let ((i …)) values on the parent after
+    // the body exited AND made while free-captures of i see the wrong cell
+    // (pred i=8 while local display i=0 → infinite/zero sum).
     if (pool_) {
         const auto name = pool_->resolve(s);
         if (!name.empty()) {
             const auto& val = bindings_symid_.back().second;
             const std::string key(name);
-            if (auto it = binding_index_.find(key); it != binding_index_.end() &&
-                                                    it->second < bindings_.size() &&
-                                                    bindings_[it->second].first == key) {
-                bindings_[it->second].second = val;
-            } else {
-                bindings_.emplace_back(key, val);
-                binding_index_[bindings_.back().first] = bindings_.size() - 1;
-            }
+            bindings_.emplace_back(key, val);
+            binding_index_[key] = bindings_.size() - 1;
         }
     }
 }

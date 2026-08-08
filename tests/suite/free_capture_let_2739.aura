@@ -1,0 +1,38 @@
+; Issue #2739 — free capture of let* locals into define helpers after fill
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (newline))))
+
+(display "fill in let* then free-capturing define helper\n")
+(let* ((vx (make-vector 8 0))
+       (_f (begin
+             (let ((i 0))
+               (while (lambda () (< i 8))
+                 (lambda ()
+                   (vector-set! vx i (+ i 1))
+                   (set! i (+ i 1))))
+               #t))))
+  (define (map-sum)
+    (let ((i 0) (acc 0))
+      (while (lambda () (< i 8))
+        (lambda ()
+          (set! acc (+ acc (vector-ref vx i)))
+          (set! i (+ i 1))))
+      acc))
+  (assert! (= (map-sum) 36) "map-sum=36")
+  (assert! (= (vector-ref vx 0) 1) "v0=1")
+  (assert! (= (vector-ref vx 7) 8) "v7=8"))
+
+(display "pure free-capture lambda after fill\n")
+(let* ((vx (make-vector 4 0)))
+  (vector-set! vx 0 10)
+  (vector-set! vx 1 20)
+  (define (get0) (vector-ref vx 0))
+  (assert! (= (get0) 10) "get0=10"))
+
+(if (= *fails* 0)
+    (begin (display "OK-2739 free capture let*\n"))
+    (begin (display "FAIL-2739\n") (exit 1)))
