@@ -1445,7 +1445,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_synth_violation.cpp` (—) [domain_suite, theme_compiler] — AC1: Double-move / can_move fail path is first-class (note_linear_synth
 - `tests/compiler/test_linear_three_layer_wire.cpp` (—) [domain_suite, theme_compiler] — AC1: Boundary exit cites force_linear_rollback (unified linear deny)
 - `tests/core/test_pcv_unique_hotpath.cpp` (—) [domain_suite, theme_core] — AC1: cow_set unique → in-place (no new storage, use_count stays 1)
-- `tests/compiler/test_type_linear_commit_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Query returns all folded keys; schema-2613 registered
+- `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Query returns all folded keys; schema-2613 registered
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
 ### `edsl_hygiene` — EDSL / macro hygiene / reflect (43)
