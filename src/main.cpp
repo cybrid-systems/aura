@@ -357,6 +357,12 @@ int main(int argc, char* argv[]) {
     // stdin EOF before flushing, so the runner times out.
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
 
+    // Issue #2772: denseness multi-process — child (shell …) only inherits
+    // *exported* env. Span runners often set AURA_BIN as a non-exported
+    // shell variable; seed process environ from self path so getenv and
+    // child shells see the absolute binary (avoids "aura: not found" / 127).
+    aura::compiler::paths::ensure_aura_bin_environ(argc > 0 ? argv[0] : nullptr);
+
     // Issue #2076 / #2053: production security defaults before any runtime:
     //   AURA_SANDBOX → Restricted (default) | off | strict
     //   AURA_MULTI_TENANT=1 → Strict
@@ -2639,6 +2645,8 @@ int main(int argc, char* argv[]) {
     // hit two footguns that look like product bugs:
     //   1. argv / -e printed bare "usage: echo … | ./aura" and exited
     //   2. AURA_PIPELINE_STRICT production default needs =0 for soft denseness
+    // Issue #2772: multi-process child via (shell …) needs *exported*
+    // AURA_BIN (or rely on process-seed + (aura-executable-path)).
     // Accept file paths and -e EXPR as sugar; keep stdin pipe default.
     auto print_denseness_usage = [&](const char* prog) {
         std::println(std::cerr, "usage: {} [options] [file.aura …]", prog);
@@ -2648,9 +2656,17 @@ int main(int argc, char* argv[]) {
         std::println(std::cerr, "");
         std::println(std::cerr, "Programs are read from stdin when no file/-e is given.");
         std::println(std::cerr, "Denseness / span host env (soft multi-module probes):");
-        std::println(std::cerr, "  AURA_PATH=…/lib[:extra]   module search path");
-        std::println(std::cerr, "  AURA_SANDBOX=off          local Soft ergonomics");
-        std::println(std::cerr, "  AURA_PIPELINE_STRICT=0    allow tree-walker fallback (#2213)");
+        std::println(std::cerr,
+                     "  export AURA_BIN=…/build/aura   absolute path (#2772 multi-process)");
+        std::println(std::cerr, "  export AURA_PATH=…/lib[:extra] module search path");
+        std::println(std::cerr, "  export AURA_SANDBOX=off        local Soft ergonomics");
+        std::println(std::cerr,
+                     "  export AURA_PIPELINE_STRICT=0  allow tree-walker fallback (#2213)");
+        std::println(std::cerr, "Multi-process: shell children inherit only exported vars.");
+        std::println(std::cerr, "  Prefer: (shell (string-append (getenv \"AURA_BIN\") \" …\"))");
+        std::println(std::cerr, "  Or:     (shell (string-append (aura-executable-path) \" …\"))");
+        std::println(std::cerr,
+                     "  (aura seeds AURA_BIN from self when unset — still export in runners)");
         std::println(std::cerr, "Special modes: --serve, --serve-async, --ir, --jit, --help");
     };
 

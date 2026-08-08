@@ -2,14 +2,14 @@
 
 # Primitives (generated)
 
-**479** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**480** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 84 primitives (18%)
-- **core**: 354 primitives (74%)
+- **core**: 355 primitives (74%)
 - **internal-observable**: 40 primitives (8%)
 - **convenience**: 1 primitives (0%)
 
@@ -161,7 +161,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (263)
+## Core builtins (264)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -175,6 +175,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `asin` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `atan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
+- `aura-executable-path` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `auto-rollback-on-panic` *[core]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `boolean?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -709,7 +710,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (354)
+### Core builtins (must remain primitive) (355)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -742,6 +743,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `asin` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `atan` — `src/compiler/evaluator_primitives_math.cpp`
+- `aura-executable-path` — `src/compiler/evaluator_primitives_io.cpp`
 - `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `boolean?` — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` — `src/compiler/evaluator_primitives_messaging.cpp`
