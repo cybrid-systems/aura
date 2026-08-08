@@ -1131,6 +1131,18 @@ def cmd_lint():
             "Issue #2802 replace-pattern sibling isolation linter failed — run python3 scripts/coverage/checks/check_atomic_batch_replace_pattern_sibling_2802.py"
         )
         return r
+    # Issue #2803: move-node reattaches on insert failure (no dangling NULL hole).
+    # ac2803 in test_move_node_partial_failure_no_dangling.
+    mnp_script = COVERAGE_CHECKS / "check_move_node_partial_failure_no_dangling_2803.py"
+    if not mnp_script.exists():
+        fail(f"missing {mnp_script}")
+        return 1
+    r = run([sys.executable, str(mnp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2803 move-node partial-failure linter failed — run python3 scripts/coverage/checks/check_move_node_partial_failure_no_dangling_2803.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

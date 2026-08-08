@@ -2982,8 +2982,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
         return make_bool(true);
     std::string summary = (a.size() > 3 && is_string(a[3])) ? string_heap_[as_string_idx(a[3])]
                                                             : "move node " + std::to_string(node);
-    flat.set_child(cur_parent, cur_idx, aura::ast::NULL_NODE);
-    flat.insert_child(new_parent, new_pos, node);
+    // Issue #2803: try_move_child reattaches on insert failure so partial
+    // detach cannot leave a NULL_NODE hole / dangling node.
+    if (!flat.try_move_child(cur_parent, static_cast<std::uint32_t>(cur_idx), new_parent,
+                             new_pos)) {
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :move-node: insert failed; node reattached (no dangling hole)"});
+    }
     flat.add_mutation(node, "move-node", std::to_string(cur_parent), std::to_string(new_parent),
                       summary);
     flat.mark_dirty_upward_fast(new_parent);

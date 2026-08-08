@@ -2253,6 +2253,13 @@ public:
     // pattern flat/pool instead of shared Evaluator::temp_arena_
     // (sibling sub-op isolation). Bumped once per successful isolate.
     mutable std::atomic<std::uint64_t> replace_pattern_temp_arena_corruption_prevented_total_{0};
+    // Issue #2803: move-node reattached after insert_child failure so the
+    // detach→insert two-step does not leave a NULL_NODE hole / dangling node.
+    // Healthy successful moves stay 0.
+    mutable std::atomic<std::uint64_t> move_node_partial_failure_dangling_prevented_total_{0};
+    // Issue #2803 test inject: next insert_child no-ops once (simulates
+    // allocation/throw failure without requiring real OOM).
+    mutable std::atomic<bool> test_inject_insert_child_fail_once_{false};
     // Issue #1355: render-hotpath lightweight checkpoints (field-only side log).
     mutable std::atomic<std::uint64_t> lightweight_total_{0};
     mutable std::atomic<std::uint64_t> lightweight_commit_total_{0};
@@ -5043,10 +5050,60 @@ public:
     // Insert a child at position idx (0 = first, child_count = append)
     // Shifts all subsequent children and updates child_begin_ for later nodes.
     // Issue #2418: ACQUIRES(structural_mtx_) only.
+    // Issue #2803: honors test_inject_insert_child_fail_once_ (no-op once).
     void insert_child(NodeId id, std::uint32_t idx, NodeId child) {
         // Issue #222: acquire the structural mutation guard.
         StructuralMutationGuard guard(this);
+        if (test_inject_insert_child_fail_once_.exchange(false, std::memory_order_acq_rel))
+            return; // #2803 inject: leave children_ unchanged (simulates fail)
         insert_child_locked(id, idx, child);
+    }
+
+    // Issue #2803: atomic-ish move — detach from cur_parent[cur_idx] then
+    // insert under new_parent[new_pos]. If insert fails (exception or inject
+    // no-op), reattach to the original slot so no NULL_NODE hole / dangling
+    // node remains. Returns false after reattach (caller should not log
+    // success). Same-parent same-index is a true no-op (returns true).
+    [[nodiscard]] bool try_move_child(NodeId cur_parent, std::uint32_t cur_idx, NodeId new_parent,
+                                      std::uint32_t new_pos) {
+        if (cur_parent == NULL_NODE || new_parent == NULL_NODE || cur_parent >= size() ||
+            new_parent >= size() || cur_idx >= children_[cur_parent].size())
+            return false;
+        const NodeId node = children_[cur_parent][cur_idx];
+        if (node == NULL_NODE || node >= size())
+            return false;
+        if (cur_parent == new_parent && cur_idx == new_pos)
+            return true; // #2794 idempotent no-op
+        // Detach first (parent_[node] cleared by set_child).
+        set_child(cur_parent, cur_idx, NULL_NODE);
+        bool insert_ok = false;
+        try {
+            insert_child(new_parent, new_pos, node);
+            // Success: parent edge points at new_parent and reverse slot holds node.
+            if (parent_of(node) == new_parent) {
+                auto pv = get(new_parent);
+                for (std::size_t ci = 0; ci < pv.children.size(); ++ci) {
+                    if (pv.child(ci) == node) {
+                        insert_ok = true;
+                        break;
+                    }
+                }
+            }
+        } catch (...) {
+            insert_ok = false;
+        }
+        if (!insert_ok) {
+            // Reattach into the original slot (still NULL from detach).
+            set_child(cur_parent, cur_idx, node);
+            note_move_node_partial_failure_dangling_prevented();
+            return false;
+        }
+        return true;
+    }
+
+    // Issue #2803: arm next insert_child to no-op once (test / fault inject).
+    void set_test_inject_insert_child_fail_once(bool arm) noexcept {
+        test_inject_insert_child_fail_once_.store(arm, std::memory_order_release);
     }
 
     // Remove a child at position idx by replacing with NULL_NODE
@@ -8495,6 +8552,14 @@ public:
     void note_replace_pattern_temp_arena_corruption_prevented() noexcept {
         replace_pattern_temp_arena_corruption_prevented_total_.fetch_add(1,
                                                                          std::memory_order_relaxed);
+    }
+    // Issue #2803: move-node reattach after insert failure (no dangling NULL hole).
+    [[nodiscard]] std::uint64_t
+    move_node_partial_failure_dangling_prevented_total() const noexcept {
+        return move_node_partial_failure_dangling_prevented_total_.load(std::memory_order_relaxed);
+    }
+    void note_move_node_partial_failure_dangling_prevented() noexcept {
+        move_node_partial_failure_dangling_prevented_total_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
         return mutation_log_compact_ops_.load(std::memory_order_relaxed);

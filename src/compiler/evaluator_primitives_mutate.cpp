@@ -5722,12 +5722,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                   ? safe_str(a[3])
                                   : "move node " + std::to_string(node);
 
-        // Remove from current parent (set to NULL_NODE).
-        // insert_child will set parent_[node] = new_parent.
-        flat.set_child(cur_parent, cur_idx, aura::ast::NULL_NODE);
-
-        // Insert at new parent
-        flat.insert_child(new_parent, new_pos, node);
+        // Issue #2803: try_move_child — detach then insert; on insert
+        // failure reattach so cur_parent[cur_idx] is not left as NULL_NODE
+        // (dangling / hole). Metric:
+        // move_node_partial_failure_dangling_prevented_total.
+        if (!flat.try_move_child(cur_parent, static_cast<std::uint32_t>(cur_idx), new_parent,
+                                 new_pos)) {
+            ok = false;
+            return ev.make_merr("move-failed",
+                                "insert failed; node reattached (no dangling NULL hole)");
+        }
 
         flat.add_mutation(node, "move-node", std::to_string(cur_parent), std::to_string(new_parent),
                           summary);
