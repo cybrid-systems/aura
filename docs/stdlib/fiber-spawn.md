@@ -96,7 +96,7 @@ spawns → two ids under sequential / multi-define evaluation.
 Two CLI fibers calling `mutate:rebind` (+ `eval-current`) on **distinct**
 names must not crash or leave names unbound.
 
-### Product contract (#2686)
+### Product contract (#2686 / #2738)
 
 1. **`eval-current` takes exclusive workspace lock** (`WorkspaceUniqueIfNeeded`)
    for the full tree walk so concurrent fiber `mutate:rebind` cannot race
@@ -107,10 +107,24 @@ names must not crash or leave names unbound.
 3. **Same-thread nested mutate under `eval-current`** fails closed
    (`AdmissionRejected: nested-mutate-under-eval-current`) — avoids
    unique-under-unique EDEADLK.
-4. Preferred denseness multi-name pattern remains **sequential**
+4. **Lock adopt is TLS-only (#2738):** `WorkspaceUniqueIfNeeded` /
+   `WorkspaceFlatPin` skip re-lock only when **this thread** holds
+   `MutationBoundaryGuard` (`any_active_mutation_boundary()` / TLS depth
+   slot). Process-wide `mutation_boundary_held_` and CLI shared
+   `g_main_thread_stack` size must not skip locks on a concurrent fiber
+   (that race tore SoA columns mid-`FlatAST::get` → intermittent SIGABRT).
+5. Preferred denseness multi-name pattern remains **sequential**
    spawn→join per name when agents want simple success/failure; concurrent
    dual rebind is supported under the locks above (100× dual-name stress
    leaves both bindings present; no SIGABRT).
+6. **`fiber:join` WARN** (`workspace mutated during join`) is intentional
+   observability when another fiber mutates while the joiner waits — not
+   a crash. Crash must not be reachable under dual-name rebind + join.
+7. **CLI thread-fallback body serial (#2738):** concurrent `std::thread`
+   fibers share one `Evaluator`. Bodies take `s_cli_thread_fiber_body_mtx`
+   so `apply_closure` does not race `string_heap_` / env outside the
+   workspace lock. Scheduler (`fiber:spawn-backend` = 1) does not use this
+   mutex. Denseness dual-rebind still sees both names applied.
 
 ```scheme
 ;; Concurrent dual rebind (distinct names) — both should apply or one waits

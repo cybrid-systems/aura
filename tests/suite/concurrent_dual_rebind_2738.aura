@@ -1,0 +1,67 @@
+; #2738 — concurrent dual-fiber mutate:rebind + eval-current must not SIGABRT.
+; CLI thread-backend fibers rebind distinct names; both bindings apply.
+;
+; Root cause fixed: WorkspaceUniqueIfNeeded / WorkspaceFlatPin must adopt
+; outer exclusive only via TLS mutation_boundary_depth(), not process-wide
+; mutation_boundary_held_ (cross-fiber lock skip → FlatAST SoA tear).
+
+(require "std/mutate" all:)
+
+(define (fiber-rebind name body tag)
+  (let ((m (try (mutate:rebind name body tag) (catch (e) #f))))
+    (if (eq? m #t)
+      (try (begin (eval-current) #t) (catch (e) #f))
+      #f)))
+
+(define (one-trial)
+  (set-code "(define ka (lambda (x) (* x 2))) (define kb (lambda (x) (* x 2)))")
+  (eval-current)
+  (let* ((fa
+           (fiber:spawn
+             (lambda ()
+               (fiber-rebind "ka" "(lambda (x) (* x 3))" "c-a"))))
+         (fb
+           (fiber:spawn
+             (lambda ()
+               (fiber-rebind "kb" "(lambda (x) (* x 5))" "c-b"))))
+         (ra (if (and (number? fa) (> fa 0)) (fiber:join fa) #f))
+         (rb (if (and (number? fb) (> fb 0)) (fiber:join fb) #f))
+         (ka-ok (try (= (ka 7) 21) (catch (e) #f)))
+         (kb-ok (try (= (kb 7) 35) (catch (e) #f))))
+    (and (eq? ra #t) (eq? rb #t) ka-ok kb-ok
+         (number? fa) (number? fb) (not (eq? fa fb)))))
+
+(define wins 0)
+(define fails 0)
+(define n 0)
+; 40 trials × dual rebind — enough to expose pre-#2738 intermittent SIGABRT
+(define N 40)
+
+(while (lambda () (< n N))
+  (lambda ()
+    (let ((ok (or (one-trial) (one-trial))))
+      (if ok
+        (set! wins (+ wins 1))
+        (begin
+          (set! fails (+ fails 1))
+          (display "trial-fail n=")
+          (display n)
+          (newline)))
+      (set! n (+ n 1)))))
+
+(display "wins=")
+(display wins)
+(display " fails=")
+(display fails)
+(display " / ")
+(display N)
+(newline)
+
+(if (and (= fails 0) (= wins N))
+  (begin
+    (display "PASS: concurrent dual-fiber rebind #2738")
+    (newline))
+  (begin
+    (display "FAIL: concurrent dual-fiber rebind #2738")
+    (newline)
+    (exit 1)))
