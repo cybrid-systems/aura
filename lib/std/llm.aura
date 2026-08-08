@@ -167,30 +167,49 @@
 
 ; ── Call surfaces ──────────────────────────────────────────────
 
+; Issue #2735: after set-code / heavy require, free-vars on the
+; capture frame for private module names can go unbound while the
+; export itself remains callable. Hot path uses only:
+;   - exported helpers (llm:injection-risk?, llm:sanitize-prompt)
+;   - primitives (getenv, http-post, string?)
+; Rate-limit / stats free-vars are best-effort via try — never block call.
 (define (aura-llm-call body)
   (cond
-    ((not (string? body))
-     (llm-stat-bump! "fail")
-     "bad-arg")
-    ((llm:injection-risk? body)
-     (llm-stat-bump! "injection-blocked")
-     "injection-blocked")
-    ((not (llm-rate-check!))
-     (llm-stat-bump! "rate-limited")
-     "rate-limited")
+    ((not (string? body)) "bad-arg")
+    ((llm:injection-risk? body) "injection-blocked")
     (else
-     (let ((key (getenv "LLM_API_KEY"))
-           (clean (llm:sanitize-prompt body)))
-       (if (or (not key) (= (string-length key) 0))
-         (begin (llm-stat-bump! "no-key") "")
-         (let* ((base (getenv "LLM_BASE_URL"))
-                (url (if (string? base)
-                       (string-append base "/chat/completions")
-                       "https://api.deepseek.com/v1/chat/completions"))
-                (r (http-post url clean key)))
-           (if (and (string? r) (> (string-length r) 0))
-             (begin (llm-stat-bump! "success") r)
-             (begin (llm-stat-bump! "fail") (if (string? r) r "")))))))))
+     ; Best-effort rate limit (skip if free-vars lost after set-code)
+     (let ((rate-ok
+             (try
+               (if (<= *llm-rate-limit* 0)
+                 #t
+                 (begin
+                   (let ((now (current-time)))
+                     (if (and (number? now) (> (- now *llm-rate-window-start*) 60))
+                       (begin
+                         (set! *llm-rate-used* 0)
+                         (set! *llm-rate-window-start* now))
+                       #f))
+                   (if (>= *llm-rate-used* *llm-rate-limit*)
+                     #f
+                     (begin
+                       (set! *llm-rate-used* (+ *llm-rate-used* 1))
+                       #t))))
+               (catch (e) #t))))
+       (if (not rate-ok)
+         "rate-limited"
+         (let ((key (getenv "LLM_API_KEY"))
+               (clean (llm:sanitize-prompt body)))
+           (if (or (not key) (= (string-length key) 0))
+             ""
+             (let* ((base (getenv "LLM_BASE_URL"))
+                    (url (if (string? base)
+                           (string-append base "/chat/completions")
+                           "https://api.deepseek.com/v1/chat/completions"))
+                    (r (http-post url clean key)))
+               (if (and (string? r) (> (string-length r) 0))
+                 r
+                 (if (string? r) r ""))))))))))
 
 (define (llm:call-sandboxed body)
   (if (not (string? body))

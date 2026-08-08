@@ -1,0 +1,41 @@
+; Issue #2735 — aura-llm-call after heavy require + set-code must not recurse
+; Without LLM_API_KEY returns empty string (not recursion-depth / hang).
+(require "std/llm" all:)
+(require "std/list" all:)
+(require "std/hash" all:)
+(require "std/json" all:)
+(require "std/mutate" all:)
+(require "std/persist" all:)
+(require "std/ast" all:)
+(require "std/test" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (newline))))
+
+(display "heavy require surface\n")
+(assert! (procedure? aura-llm-call) "aura-llm-call bound")
+(assert! (procedure? json-encode) "json-encode bound")
+
+(display "after set-code\n")
+(set-code "(define (id x) x)")
+(eval-current)
+(assert! (= (id 7) 7) "id still works")
+(assert! (procedure? aura-llm-call) "llm still bound after set-code")
+(assert! (procedure? json-encode) "json still bound after set-code")
+
+(define body (json-encode
+               (hash "model" "x"
+                     "messages" (list (hash "role" "user" "content" "hi")))))
+(assert! (string? body) "json body string")
+; No key / no network: must return quickly with string (often "") not recursion
+(define r (aura-llm-call body))
+(assert! (string? r) "llm returns string (not error/recursion)")
+(display "  llm result len=") (display (string-length r)) (newline)
+
+(if (= *fails* 0)
+    (begin (display "OK-2735 llm after require/set-code\n"))
+    (begin (display "FAIL-2735\n") (exit 1)))
