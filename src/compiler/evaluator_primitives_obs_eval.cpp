@@ -99,6 +99,7 @@ extern "C" std::uint32_t cross_eval_epoch_bump_wired_v_read(void);
 extern "C" std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void);
 // Issue #2712: Soft fuse heal total (defs in aura_jit_bridge.cpp).
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void);
+extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read(void);
 }
 
 // Issue #2372: steal_snapshot_soft_production_locked() is declared in
@@ -14621,6 +14622,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                      aura_epoch_invariant_soft_fuse_heal_total_v_read()))},
                 {"epoch-invariant-soft-fuse-heal-wired", make_int(1)},
                 {"schema-2712", make_int(2712)},
+                // Issue #2747: multi-eval Soft heal with reemit-owner unset.
+                {"epoch-invariant-soft-fuse-heal-no-owner-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read()))},
+                {"schema-2747", make_int(2747)},
+                {"issue-2747", make_int(2747)},
                 {"issue-2712", make_int(2712)},
             {"schema-2366", make_int(2366)},
             {"issue-2366", make_int(2366)},

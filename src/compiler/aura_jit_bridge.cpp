@@ -4594,6 +4594,9 @@ static std::atomic<std::uint64_t> g_2693_soft_fuse_fallback_total{0};
 // "fuse fired" vs "heal ran" separately. Soft / K=0 / mode=Off → no
 // heal body, so this counter stays at 0.
 static std::atomic<std::uint64_t> g_2693_soft_fuse_heal_fallback_total{0};
+// Issue #2747: Soft fuse heal skipped process-wide invalidate because
+// multi-eval + reemit-owner unset (foreign slots preserved).
+static std::atomic<std::uint64_t> g_2693_soft_fuse_heal_no_owner_total{0};
 static std::atomic<int> g_2693_soft_fuse_k{3};
 
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_total_v_read(void) {
@@ -4603,6 +4606,10 @@ extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_total_v_read(void) {
 // (production + Soft + consec >= K + heal body ran).
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void) {
     return g_2693_soft_fuse_heal_fallback_total.load(std::memory_order_relaxed);
+}
+// Issue #2747: multi-eval heal with no reemit-owner (skipped process-wide clear).
+extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read(void) {
+    return g_2693_soft_fuse_heal_no_owner_total.load(std::memory_order_relaxed);
 }
 extern "C" std::uint64_t aura_epoch_invariant_consecutive_dirty_total_v_read(void) {
     return g_consecutive_dirty_count.load(std::memory_order_relaxed);
@@ -4675,12 +4682,23 @@ static void aura_2693_soft_fuse_record(std::size_t behind_after_clear) {
                 aura_epoch_invariant_mode() == 1) { // 1 = Soft (per #2541)
                 g_2693_soft_fuse_heal_fallback_total.fetch_add(1, std::memory_order_relaxed);
                 void* reemit_owner = aura_aot_get_reemit_owner_eval();
-                (void)aura_aot_invalidate_all_stale_slots_for_eval(reemit_owner);
-                (void)aura_epoch_invariant_must_deopt_stale_live_closures();
-                // Reset consec to 0 so re-entry / next walk requires
-                // K fresh stuck walks before the next heal — bounds
-                // physical-clear rate (per AC3).
-                g_consecutive_dirty_count.store(0, std::memory_order_relaxed);
+                // Issue #2747: multi-eval + reemit-owner unset → do NOT
+                // process-wide invalidate (nullptr clears ALL generation-
+                // behind slots per #2271/#2299). Still must_deopt closures
+                // visible to current context; consec still resets only
+                // when heal body runs (bounded rate).
+                if (reemit_owner == nullptr && aura_aot_state_map_size() > 1) {
+                    g_2693_soft_fuse_heal_no_owner_total.fetch_add(1, std::memory_order_relaxed);
+                    (void)aura_epoch_invariant_must_deopt_stale_live_closures();
+                    g_consecutive_dirty_count.store(0, std::memory_order_relaxed);
+                } else {
+                    (void)aura_aot_invalidate_all_stale_slots_for_eval(reemit_owner);
+                    (void)aura_epoch_invariant_must_deopt_stale_live_closures();
+                    // Reset consec to 0 so re-entry / next walk requires
+                    // K fresh stuck walks before the next heal — bounds
+                    // physical-clear rate (per AC3).
+                    g_consecutive_dirty_count.store(0, std::memory_order_relaxed);
+                }
             }
         }
     }
