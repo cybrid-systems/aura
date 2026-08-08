@@ -1855,6 +1855,9 @@ aura_issue_test_link_light(test_atomic_batch_replace_pattern_sibling)
 # Issue #2803: move-node reattaches on insert failure (no NULL_NODE dangling hole).
 aura_add_issue_test(test_move_node_partial_failure_no_dangling)
 aura_issue_test_link_light(test_move_node_partial_failure_no_dangling)
+# Issue #2804: clone-walk rename_binding gensym-map-size ceiling (parity pre-scan).
+aura_add_issue_test(test_clone_walk_gensym_ceiling)
+aura_issue_test_link_light(test_clone_walk_gensym_ceiling)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
