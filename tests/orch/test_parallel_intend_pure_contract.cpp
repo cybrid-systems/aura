@@ -734,6 +734,63 @@ int run_test_parallel_intend_pure_contract() {
               "2662 AC7: pure_unlocked_applies monotonic under 8+ fiber stress");
     }
 
+    // ── Issue #2746: parallel_intend + region concurrent mutate ──
+    {
+        std::println("\n--- #2746 AC1: TaskSpec.region_key + :region-keys surface ---");
+        const auto poh = read_file("src/serve/parallel_orch.h");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(poh.find("region_key = 0") != std::string::npos ||
+                  poh.find("region_key") != std::string::npos,
+              "AC1: TaskSpec has region_key");
+        CHECK(agent.find("region-keys") != std::string::npos, "AC1: Aura :region-keys keyword");
+        CHECK(agent.find("note_parallel_task_region_key") != std::string::npos,
+              "AC1: stamps parallel-task region TLS");
+        CHECK(agent.find(".region_key = rkey") != std::string::npos,
+              "AC1: TaskSpec.region_key wired from :region-keys");
+    }
+    {
+        std::println("\n--- #2746 AC2: try_acquire redirects to region when TLS set ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(emb.find("parallel_task_region_key()") != std::string::npos,
+              "AC2: try_acquire reads parallel_task_region_key");
+        CHECK(emb.find("try_acquire_for_region(ev, rk") != std::string::npos,
+              "AC2: redirects to try_acquire_for_region");
+        CHECK(emb.find("Issue #2746") != std::string::npos, "AC2: cites #2746");
+    }
+    {
+        std::println("\n--- #2746 AC3: pure path unchanged + region stats ---");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent.find("region-concurrent-eligible") != std::string::npos,
+              "AC3: batch hash region-concurrent-eligible");
+        CHECK(agent.find("schema-2746") != std::string::npos, "AC3: schema-2746");
+        // Pure contract still present.
+        CHECK(agent.find("pure-contract-violated") != std::string::npos,
+              "AC3: pure-contract-violated preserved");
+    }
+    {
+        std::println("\n--- #2746 AC4+AC5: counters + README ---");
+        const auto poh = read_file("src/serve/parallel_orch.h");
+        const auto readme = read_file("src/orch/README.md");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(poh.find("region_concurrent_batches_total") != std::string::npos,
+              "AC5: ParallelOrchStats region_concurrent_batches_total");
+        CHECK(agent.find("parallel-region-concurrent-batches-total") != std::string::npos,
+              "AC5: query key parallel-region-concurrent-batches-total");
+        CHECK(readme.find("Region concurrent mutate (Issue #2746") != std::string::npos,
+              "AC5: README region concurrent section");
+        CHECK(readme.find(":region-keys") != std::string::npos,
+              "AC5: README documents :region-keys");
+    }
+    {
+        std::println("\n--- #2746 AC6: source-cite + no docs/design/ + MVP ---");
+        const auto t = read_file("tests/orch/test_parallel_intend_pure_contract.cpp");
+        CHECK(t.find("#2746 AC1") != std::string::npos, "AC6: this suite cites #2746");
+        CHECK(read_file("docs/design/2746-parallel-region.md").empty(),
+              "AC6: no docs/design/2746-* per #1655");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent.find("class AgentRegistry") == std::string::npos, "AC6: no AgentRegistry type");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

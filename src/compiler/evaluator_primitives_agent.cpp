@@ -2293,6 +2293,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                         ev.primitive_error_counter_ptr());
         }
 
+        // Issue #2746: optional :region-keys vector of ints, same length as
+        // tasks (or prefix; missing → 0). Paired into TaskSpec.region_key.
+        std::vector<std::uint64_t> region_keys;
+
         // Collect 0-arg closure ids from vector or list.
         std::vector<std::uint64_t> cids;
         if (types::is_vector(a[0])) {
@@ -2387,6 +2391,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         policy.failure_policy = FP::RetryN;
                     else if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
                         policy.failure_policy = FP::CircuitBreaker;
+                } else if ((k == "region-keys" || k == "region_keys") && types::is_vector(val)) {
+                    // Issue #2746: per-task region keys for #2724 concurrent admit.
+                    auto rvidx = types::as_vector_idx(val);
+                    if (rvidx < ev.vector_heap_.size()) {
+                        region_keys.clear();
+                        for (auto& e : ev.vector_heap_[rvidx]) {
+                            if (types::is_int(e))
+                                region_keys.push_back(static_cast<std::uint64_t>(
+                                    std::max<std::int64_t>(0, types::as_int(e))));
+                            else
+                                region_keys.push_back(0);
+                        }
+                    }
                 }
                 i += 2;
                 continue;
@@ -2478,8 +2495,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         tasks.reserve(cids.size());
         for (std::size_t i = 0; i < cids.size(); ++i) {
             const auto cid = cids[i];
+            const std::uint64_t rkey = (i < region_keys.size()) ? region_keys[i] : 0;
             tasks.push_back(aura::serve::parallel_orch::TaskSpec{
-                .body = [&ev, ash, cid, i, pure_mode]() -> aura::serve::parallel_orch::TaskResult {
+                .body = [&ev, ash, cid, i, pure_mode,
+                         rkey]() -> aura::serve::parallel_orch::TaskResult {
+                    // Issue #2746: stamp parallel-task region TLS so
+                    // try_acquire → try_acquire_for_region (#2724) when
+                    // region concurrency is enabled and rkey != 0.
+                    struct RegionKeyTls {
+                        explicit RegionKeyTls(std::uint64_t k) {
+                            if (k != 0)
+                                Evaluator::note_parallel_task_region_key(k);
+                        }
+                        ~RegionKeyTls() { Evaluator::clear_parallel_task_region_key(); }
+                    } region_tls(rkey);
                     aura::serve::parallel_orch::TaskResult tr;
                     tr.task_index = i;
                     try {
@@ -2586,6 +2615,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     return tr;
                 },
                 .name = "aura-task-" + std::to_string(i),
+                .region_key = rkey,
             });
         }
 
@@ -2749,12 +2779,44 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"join-status", make_string(join_sidx)},
             {"join-status-reclaimed",
              make_bool(batch.join_status == aura::serve::JoinStatus::Reclaimed)},
+            // Issue #2746: region concurrent surface (#2724 integration).
+            {"region-keys-supplied",
+             make_int(static_cast<std::int64_t>(
+                 aura::serve::parallel_orch::g_parallel_orch_stats.region_keys_supplied_total.load(
+                     std::memory_order_relaxed)))},
+            {"region-concurrent-batches",
+             make_int(static_cast<std::int64_t>(
+                 aura::serve::parallel_orch::g_parallel_orch_stats.region_concurrent_batches_total
+                     .load(std::memory_order_relaxed)))},
+            {"region-concurrent-eligible", make_bool([&] {
+                 std::uint64_t distinct = 0;
+                 std::uint64_t seen[8] = {};
+                 std::size_t n_seen = 0;
+                 for (const auto& t : tasks) {
+                     if (t.region_key == 0)
+                         continue;
+                     bool already = false;
+                     for (std::size_t j = 0; j < n_seen; ++j) {
+                         if (seen[j] == t.region_key) {
+                             already = true;
+                             break;
+                         }
+                     }
+                     if (!already) {
+                         if (n_seen < 8)
+                             seen[n_seen++] = t.region_key;
+                         ++distinct;
+                     }
+                 }
+                 return distinct >= 2;
+             }())},
             {"schema", make_int(1587)},
             {"schema-2007", make_int(2007)},
             {"schema-2081", make_int(2081)},
             {"schema-2163", make_int(2163)},
             {"schema-2400", make_int(2400)},
             {"schema-2743", make_int(2743)},
+            {"schema-2746", make_int(2746)},
         };
         if (pure_engaged) {
             kv.push_back({"schema-pure-parallel", make_int(2163)});
@@ -3898,6 +3960,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                           os.pure_fallback_locked_total.load(std::memory_order_relaxed)));
             insert_kv("schema-2163", 2163);
             insert_kv("issue-2163", 2163);
+            // Issue #2746: parallel-intend region concurrent (#2724 integration).
+            insert_kv("parallel-region-concurrent-batches-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::parallel_orch::g_parallel_orch_stats
+                              .region_concurrent_batches_total.load(std::memory_order_relaxed)));
+            insert_kv("parallel-region-keys-supplied-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::parallel_orch::g_parallel_orch_stats
+                              .region_keys_supplied_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2746", 2746);
+            insert_kv("issue-2746", 2746);
             // Issue #2589: unify parallel_intend residual/reclaim into the
             // orch-module-stats facade so agents/dashboards query one
             // surface for cancel-storm health. Source of truth stays

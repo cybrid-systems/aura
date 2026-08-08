@@ -12734,6 +12734,13 @@ public:
     // acquire would EDEADLK under shared — fail-closed instead.
     static void note_eval_current_shared_enter() noexcept;
     static void note_eval_current_shared_exit() noexcept;
+    // Issue #2746: parallel-intend task region context for #2724 concurrent
+    // region admit. When non-zero, MutationBoundaryGuard::try_acquire
+    // redirects to try_acquire_for_region so disjoint multi-task mutates
+    // avoid dual GlobalExclusive. RAII-clear after each task body.
+    static void note_parallel_task_region_key(std::uint64_t key) noexcept;
+    static void clear_parallel_task_region_key() noexcept;
+    [[nodiscard]] static std::uint64_t parallel_task_region_key() noexcept;
     [[nodiscard]] static bool eval_current_holds_shared_pin() noexcept;
 
     // Issue #264: yield-boundary checkpoint handshake (per-fiber
