@@ -579,6 +579,20 @@ def cmd_lint():
             "Issue #2757 region mask-disjoint admit linter failed — run python3 scripts/coverage/checks/check_region_mask_disjoint_admit_2757.py"
         )
         return r
+    # Issue #2760: ImpactScope / dirty-bit mask-AND production enablement
+    # (#2724 residual after #2754/#2757). Wires effective_region_cone_mask +
+    # impact_block_to_region_mask_bit + parallel-intend :cone-masks +
+    # impact-mask-admit counter + additive query keys + test extension.
+    rima_script = COVERAGE_CHECKS / "check_region_impact_mask_admit_2760.py"
+    if not rima_script.exists():
+        fail(f"missing {rima_script}")
+        return 1
+    r = run([sys.executable, str(rima_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2760 region impact-mask admit linter failed — run python3 scripts/coverage/checks/check_region_impact_mask_admit_2760.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

@@ -1305,9 +1305,9 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
         (void)aura::core::resource_quota::process_resource_quota().check_and_consume(
             aura::core::resource_quota::Dimension::Mutations, pending_count);
     }
-    // Issue #2724 + #2754 + #2757: region/subtree-scoped concurrent admit.
-    // Check if the requested region_key (+ optional cone/ImpactScope mask)
-    // is disjoint from the most-recently-admitted key/mask on this thread
+    // Issue #2724 + #2754 + #2757 + #2760: region/subtree-scoped concurrent
+    // admit. Check if the requested region_key (+ cone/ImpactScope mask) is
+    // disjoint from the most-recently-admitted key/mask on this thread
     // (AC4: single source of truth for the disjoint predicate).
     //
     // #2724 first ship: region_key equality (a != b) — true disjointness
@@ -1320,16 +1320,20 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     // concurrent-admit (commercial multi-hypothesis often stamps mask
     // without a coarse region_key). Enter the check when key != 0 OR mask
     // != 0; pure zero-key+zero-mask admits skip the block (same as #2724).
+    // #2760 residual: effective_region_cone_mask prefers TLS proven
+    // ImpactScope/dirty-bit masks (parallel-intend :cone-masks / orch
+    // note_parallel_task_cone_mask); falls back to single-bit from
+    // region_key. impact-mask-admit counter attributes admits that used a
+    // non-zero proven/derived cone mask. Soft stays metric-only.
     //
-    // #2724 AC2 / #2754 AC2 / #2757 AC2: true overlapping masks → second
-    // admit rejects with structured reason `region-overlap`; counters advance.
-    // #2724 AC5 / #2754 AC5 / #2757 AC5: additive observability —
-    // concurrent-admit + overlap-reject + cone-admit + mask-disjoint-admit.
-    // #2724 AC3 / #2754 AC3 / #2757 AC3: Soft / sandbox=off → metric-only
-    // (no production lock regression).
+    // #2724 AC2 / #2754 AC2 / #2757 AC2 / #2760 AC1: true overlapping masks
+    // → second admit rejects with structured reason `region-overlap`.
+    // #2724 AC3 / #2754 AC3 / #2757 AC3 / #2760 AC2: Soft / sandbox=off →
+    // metric-only (no production lock regression).
     // Cone mask: TLS stamped by parallel-intend / host orch via
-    // note_parallel_task_cone_mask (#2754 / #2746 pattern).
-    const std::uint64_t cone_mask = Evaluator::parallel_task_cone_mask();
+    // note_parallel_task_cone_mask (#2754 / #2746 / #2760 pattern).
+    const std::uint64_t tls_cone = Evaluator::parallel_task_cone_mask();
+    const std::uint64_t cone_mask = effective_region_cone_mask(tls_cone, region_key);
     // Enter concurrent-admit check when we have a key and/or a proven mask.
     // Quiet zero-key + zero-mask path skips entirely (#2724 identical).
     const bool region_or_mask = (region_key != 0) || (cone_mask != 0);
@@ -1351,6 +1355,7 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
         // #2724 AC1: key-disjoint → concurrent admit.
         // #2754 AC1: equal keys + cone-/mask-disjoint → concurrent admit.
         // #2757 AC1: zero keys + proven mask-AND empty → concurrent admit.
+        // #2760 AC1: ImpactScope/dirty-bit proven path attributes impact-mask-admit.
         if (regions_cone_disjoint(region_key, g_last_admitted_region_key, cone_mask,
                                   g_last_admitted_cone_mask)) {
             g_mutation_region_concurrent_cone_admit_total.fetch_add(1, std::memory_order_relaxed);
@@ -1359,6 +1364,8 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                   g_last_admitted_cone_mask)) {
             g_mutation_region_mask_disjoint_admit_total.fetch_add(1, std::memory_order_relaxed);
         }
+        if (cone_mask != 0)
+            g_mutation_region_impact_mask_admit_total.fetch_add(1, std::memory_order_relaxed);
         g_last_admitted_region_key = region_key;
         g_last_admitted_cone_mask = cone_mask;
         g_mutation_region_concurrent_admit_total.fetch_add(1, std::memory_order_relaxed);
@@ -1383,6 +1390,8 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                       g_last_admitted_cone_mask_soft)) {
                 g_mutation_region_mask_disjoint_admit_total.fetch_add(1, std::memory_order_relaxed);
             }
+            if (cone_mask != 0)
+                g_mutation_region_impact_mask_admit_total.fetch_add(1, std::memory_order_relaxed);
         }
         g_last_admitted_region_key_soft = region_key;
         g_last_admitted_cone_mask_soft = cone_mask;

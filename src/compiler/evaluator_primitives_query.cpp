@@ -6703,6 +6703,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                           mutation_region_mask_disjoint_wired_v_read()));
                             insert_kv("schema-2757", 2757);
                             insert_kv("issue-2757", 2757);
+                            // Issue #2760: ImpactScope / dirty-bit mask
+                            // production enablement (#2724 residual). Counts
+                            // concurrent admits that used a non-zero proven
+                            // or derived cone mask. Additive — all
+                            // #2724/#2754/#2757 surfaces above preserved.
+                            insert_kv("mutation-region-impact-mask-admit-total",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_impact_mask_admit_total_v_read()));
+                            insert_kv("mutation-region-impact-mask-wired",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_impact_mask_wired_v_read()));
+                            insert_kv("schema-2760", 2760);
+                            insert_kv("issue-2760", 2760);
                             // Issue #2726: P0 cross-fiber hold-budget
                             // force-degrade real cancel (per-fiber
                             // pending-cancel map polled at safepoints) —

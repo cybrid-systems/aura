@@ -84,6 +84,11 @@ struct TaskSpec {
     // enabled allow parallel tasks targeting disjoint keys to admit
     // RegionExclusive Guards without full workspace exclusive.
     std::uint64_t region_key = 0;
+    // Issue #2760: optional ImpactScope / dirty-bit cone mask for #2754/
+    // #2757 mask-AND concurrent admit when keys collide or are zero.
+    // 0 = unknown (conservative equality-only under equal keys). Agents
+    // pack offline via impact_block_to_region_mask_bit / compute_impact_scope.
+    std::uint64_t cone_mask = 0;
 };
 
 enum class BatchStatus : std::uint8_t {
