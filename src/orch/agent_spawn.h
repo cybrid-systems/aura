@@ -197,6 +197,9 @@ inline std::unordered_map<std::string, std::shared_ptr<ScopeBpGauge>> g_scope_bp
 
 // Short drain for keepalive helper fiber after body join (#2159).
 inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
+// Issue #2783: keepalive helper must exit when body is hard-reclaimed
+// (#2227) so it does not park forever after JoinStatus::Reclaimed.
+inline constexpr int kKeepaliveHelperReclaimIssue = 2783;
 
 // Issue #2153: primary join timeout + secondary cancel-drain policy.
 // primary_ms nullopt = wait forever; drain_ms=0 = cancel only (no wait).
@@ -401,6 +404,12 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> keepalive_helper_spawn_fail{0};
     // Issue #2159: helpers that completed join (Done) after body join/scope.
     std::atomic<std::uint64_t> keepalive_helpers_joined_total{0};
+    // Issue #2783: helper self-exited because body Fiber::is_reclaimed()
+    // (hard-reclaim residual of non-yielding body + keepalive).
+    std::atomic<std::uint64_t> keepalive_helper_reclaim_exit_total{0};
+    // Issue #2783: helper still !is_done() after join drain+cancel — registered
+    // as Scheduler orphan so it cannot leak forever in owned_fibers_.
+    std::atomic<std::uint64_t> keepalive_helper_orphan_total{0};
     // Issue #2158: per-Evaluator agent_apply_mu_ acquire accounting.
     // wait_us includes uncontended lock time (usually ~0) + contention wait.
     std::atomic<std::uint64_t> agent_apply_lock_acquisitions_total{0};
@@ -1389,32 +1398,50 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // lifecycle; shared_ptr keeps MultiFiberMailbox + AgentLiveness alive across
     // steals. Helper must not assume g_current_fiber is the agent body — emit
     // uses mailbox only (no attach, no Evaluator apply). Default path zero-cost.
+    // Issue #2783: capture body Fiber* so helper exits when body is
+    // hard-reclaimed (#2227) — otherwise helper_stop-only park + non-yielding
+    // body leaves the helper alive forever after JoinStatus::Reclaimed.
     if (want_keepalive && mb && live) {
         const auto agent_id = h.id;
         const auto interval = ka_interval;
         auto mb_keep = mb; // shared ownership with handle + helper
         auto live_keep = live;
-        serve::Fiber* helper = sched.spawn([mb_keep, live_keep, agent_id, interval]() {
+        serve::Fiber* body_ptr = f; // non-owning; body outlives helper or is reclaimed
+        serve::Fiber* helper = sched.spawn([mb_keep, live_keep, agent_id, interval, body_ptr]() {
             if (!mb_keep || !live_keep)
                 return;
             // Immediate first pulse (same as host-thread path #2008).
             (void)emit_keepalive(*mb_keep, agent_id, live_keep.get());
-            // Stay alive until body_done (or cancel). helper_stop only
-            // suppresses further emits so supervisors can age the clock for
-            // stall detection without the helper fiber completing while the
-            // body is still running (Done trampoline under multi-worker steal
-            // races mailbox attachers on the body).
+            // Stay alive until body_done / body reclaimed / cancel.
+            // helper_stop only suppresses further emits so supervisors can
+            // age the clock for stall detection without the helper fiber
+            // completing while the body is still running (Done trampoline
+            // under multi-worker steal races mailbox attachers on the body).
+            // Issue #2783: body is_reclaimed() is a hard exit — body will
+            // never write again / never set body_done from the body path.
             auto next_emit = std::chrono::steady_clock::now() +
                              std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
+            bool exited_on_reclaim = false;
             while (!live_keep->body_done.load(std::memory_order_acquire)) {
                 if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
                     break;
+                // Issue #2783: hard-reclaim of body → leave helper loop.
+                if (body_ptr && body_ptr->is_reclaimed()) {
+                    exited_on_reclaim = true;
+                    break;
+                }
                 fiber_sleep_ms(1);
                 if (live_keep->body_done.load(std::memory_order_acquire))
                     break;
                 if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
                     break;
-                // helper_stop: park without emit (stall-sim / join signal).
+                if (body_ptr && body_ptr->is_reclaimed()) {
+                    exited_on_reclaim = true;
+                    break;
+                }
+                // helper_stop: park without emit (stall-sim / join signal)
+                // while body is still live. Once body_done is set (join_agent)
+                // the while condition exits; once reclaimed, branch above exits.
                 if (live_keep->helper_stop.load(std::memory_order_acquire))
                     continue;
                 const auto now = std::chrono::steady_clock::now();
@@ -1422,6 +1449,10 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                     continue;
                 (void)emit_keepalive(*mb_keep, agent_id, live_keep.get());
                 next_emit = now + std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
+            }
+            if (exited_on_reclaim) {
+                g_orch_module_stats.keepalive_helper_reclaim_exit_total.fetch_add(
+                    1, std::memory_order_relaxed);
             }
         });
         if (helper) {
@@ -1477,11 +1508,21 @@ inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
 // Soft / sandbox=off: gates unchanged; soft paths always use the
 // Ok / Timeout / Cancelled branch since joiners in unit tests
 // force Reclaimed only via non-yielding tight loops.
+// Forward decl — join_keepalive_helper defined below; Reclaimed cleanup
+// path may call it (#2783 defense in depth).
+inline void join_keepalive_helper(AgentHandle& h,
+                                  std::uint64_t drain_ms = kDefaultKeepaliveHelperDrainMs) noexcept;
+
 inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept {
     if (jr.status == serve::JoinStatus::Reclaimed) {
         // Defer path: global tables only, never body-stack.
         if (h.fiber)
             h.fiber->release_orphan_roots();
+        // Issue #2783: defense in depth — join_agent already joins the
+        // helper before this call, but if a caller routes Reclaimed
+        // cleanup without join_keepalive_helper, drain residual helper.
+        if (h.keepalive_helper)
+            join_keepalive_helper(h, kDefaultKeepaliveHelperDrainMs);
         g_orch_module_stats.join_reclaimed_deferred_cleanup_total.fetch_add(
             1, std::memory_order_relaxed);
         return;
@@ -1509,23 +1550,39 @@ inline void stop_keepalive_helper(AgentHandle& h) noexcept {
 
 // Issue #2159: join fiber-native keepalive helper after body (short drain).
 // Idempotent: null helper or already-Done is a no-op. Clears keepalive_helper.
-inline void
-join_keepalive_helper(AgentHandle& h,
-                      std::uint64_t drain_ms = kDefaultKeepaliveHelperDrainMs) noexcept {
+// Issue #2783: if helper still !is_done() after drain+cancel (e.g. body was
+// Reclaimed and helper missed the exit window), request_force_safepoint +
+// register as Scheduler orphan so the helper cannot leak in owned_fibers_
+// forever. Bumps keepalive_helper_orphan_total for dashboards.
+inline void join_keepalive_helper(AgentHandle& h, std::uint64_t drain_ms) noexcept {
     if (!h.keepalive_helper)
         return;
-    stop_keepalive_helper(h); // cooperative helper_stop first
+    // Cooperative: body_done (join_agent sets this) + helper_stop.
+    if (h.liveness)
+        h.liveness->body_done.store(true, std::memory_order_release);
+    stop_keepalive_helper(h);
     if (h.keepalive_helper && !h.keepalive_helper->is_done()) {
         auto jr = serve::Fiber::join(h.keepalive_helper, std::optional<std::uint64_t>{drain_ms});
         // Last-resort cancel only if cooperative stop did not finish.
         if (jr.status != serve::JoinStatus::Ok && h.keepalive_helper &&
             !h.keepalive_helper->is_done()) {
             h.keepalive_helper->request_cancel();
+            h.keepalive_helper->request_force_safepoint(); // #2533 / #2783
             (void)serve::Fiber::join(h.keepalive_helper, std::optional<std::uint64_t>{drain_ms});
         }
     }
-    if (h.keepalive_helper && h.keepalive_helper->is_done())
+    if (h.keepalive_helper && h.keepalive_helper->is_done()) {
         g_orch_module_stats.keepalive_helpers_joined_total.fetch_add(1, std::memory_order_relaxed);
+    } else if (h.keepalive_helper && !h.keepalive_helper->is_done()) {
+        // Issue #2783: residual helper — register orphan so Scheduler reaps it.
+        g_orch_module_stats.keepalive_helper_orphan_total.fetch_add(1, std::memory_order_relaxed);
+        if (auto* sched = h.keepalive_helper->owner_sched()) {
+            const std::uint64_t hard_ms = std::min<std::uint64_t>(
+                drain_ms > 0 ? drain_ms * 8 : kJoinDrainResidualHardMsDefault,
+                kJoinDrainResidualHardMsDefault);
+            sched->note_orphan_fiber(h.keepalive_helper, hard_ms);
+        }
+    }
     h.keepalive_helper = nullptr;
     h.keepalive_active = false;
 }
