@@ -1103,7 +1103,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_audit_wal_force_multi_tenant.cpp` (—) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
 - `tests/compiler/test_aura_sandbox_env.cpp` (—) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable
 - `tests/compiler/test_batch_dirty_cascade.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: Batch API exists; one generation bump per call regardless of N
-- `tests/compiler/test_batch_dirty_discipline.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: Multi-block production sites use batch; fence +1 for N blocks
+- `tests/compiler/test_batch_dirty_discipline.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #2773 — unified logical invalidation epoch (extend per #81967).
 - `tests/compiler/test_blame_complete_commit_gate.cpp` (—) [domain_suite, theme_compiler] — AC1: Production defaults enable reject-on-miss + require-blame-on-commit;
 - `tests/compiler/test_blame_occurrence_agent_ratios.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2030; ratio keys on self-evo-stats + fidelity-stats
 - `tests/compiler/test_blame_soft_recover.cpp` (—) [domain_suite, theme_compiler] — AC1: Sampled incomplete → recover restores dual fields OR escalate

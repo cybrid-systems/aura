@@ -113,6 +113,9 @@ inline constexpr std::uint32_t kShapeStormForceReasonThreshold = 1;
 inline constexpr std::uint32_t kShapeStormForceReasonAdaptiveSuppress = 3;
 inline constexpr int kShapeStormAdaptiveIssue = 2526;
 // Issue #2617: hard coverage — compact path must never feed deopt-storm ring.
+// Issue #2773: pure IR dirty must not force shape_version bump either;
+// compact-driven version bumps are expected pressure, not mutation churn.
+// note_logical_invalidation_epoch(kInvSrcIrSoa*) never touches Shape.
 inline constexpr int kShapeCompactStormIsolationIssue = 2617;
 inline std::atomic<std::uint64_t>& g_shape_compact_storm_isolation_wired_atomic() noexcept {
     static std::atomic<std::uint64_t> v{1};

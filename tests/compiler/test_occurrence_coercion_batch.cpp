@@ -59,6 +59,29 @@ int main() {
     int members_passed = 0;
     std::println("=== test_occurrence_coercion_batch (43 members) ===");
 
+    // #2773 early: batch dirty + unified fence (avoids later ADT members
+    // aborting the process before discipline checks run).
+    std::println("\n──── test_batch_dirty_cascade (early) ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_batch_dirty_cascade() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_batch_dirty_cascade ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_batch_dirty_cascade ({} checks)", g_passed);
+    }
+    std::println("\n──── test_batch_dirty_discipline (early) ────");
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_batch_dirty_discipline() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_batch_dirty_discipline ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_batch_dirty_discipline ({} checks)", g_passed);
+    }
+
     // #2648 early: independent Soft evidence-loss SLO (avoids ADT batch abort
     // masking later members during incremental verify).
     std::println("\n──── test_coercion_evidence_loss_slo ────");

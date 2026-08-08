@@ -894,6 +894,26 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2681", make_int(2681)},
                 {"issue-2681", make_int(2681)},
                 {"soa-batch-dirty-discipline-hardened", make_int(1)},
+                // Issue #2773: unified logical invalidation epoch (process-wide).
+                // One tick per logical cascade; multi-block IR batch → 1 fence
+                // + 1 logical advance. Single residual mark counted separately.
+                // Does not force Shape version (#2617 preserved).
+                {"schema-2773", make_int(2773)},
+                {"issue-2773", make_int(2773)},
+                {"unified-dirty-fence-advance-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_unified_dirty_fence_advance_total.load(
+                         std::memory_order_relaxed)))},
+                {"unified-dirty-last-sources",
+                 make_int(static_cast<std::int64_t>(aura::compiler::g_unified_dirty_last_sources
+                                                        .load(std::memory_order_relaxed)))},
+                {"unified-dirty-ir-batch-total",
+                 make_int(static_cast<std::int64_t>(aura::compiler::g_unified_dirty_ir_batch_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"unified-dirty-ir-single-total",
+                 make_int(static_cast<std::int64_t>(aura::compiler::g_unified_dirty_ir_single_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"unified-dirty-fence-wired", make_int(1)},
                 // Issue #2682: Moving densify unified success gate.
                 // Single predicate (pin_contract ∧ root_remap ∧ untracked==0)
                 // used by Phase-5 outermost exit, AdaptiveCompactResult
