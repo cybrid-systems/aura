@@ -2164,8 +2164,13 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
         (a.size() > 2 && is_string(a[2]))
             ? string_heap_[as_string_idx(a[2])]
             : "tweak-literal " + std::to_string(old_val) + "->" + std::to_string(new_val);
+    // Issue #2799: log as Committed at write time (inside outer atomic-batch
+    // Guard). On batch abort, abort_batch_workspace → rollback_since →
+    // rollback_record_for_boundary_abort (#2793) restores the int and forces
+    // status=RolledBack so audit never claims committed for a reverted tweak.
     flat.add_mutation_with_rollback(
-        node, "tweak-literal", "Int", "Int", summary, aura::ast::MutationStatus::Committed, 0,
+        node, "tweak-literal", "Int", "Int", summary, aura::ast::MutationStatus::Committed,
+        static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal),
         static_cast<std::uint64_t>(old_val), static_cast<std::uint64_t>(new_val), true);
     flat.set_int(node, new_val);
     flat.mark_dirty_upward_fast(node);
