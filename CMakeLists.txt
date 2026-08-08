@@ -1864,6 +1864,9 @@ aura_issue_test_link_light(test_dotted_rest_builtin_rename)
 # Issue #2806: clone_macro_body recursion depth is explicit (concurrent-safe).
 aura_add_issue_test(test_concurrent_clone_hygiene_depth)
 aura_issue_test_link_light(test_concurrent_clone_hygiene_depth)
+# Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
+aura_add_issue_test(test_unquote_splicing_hygiene)
+aura_issue_test_link_light(test_unquote_splicing_hygiene)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
