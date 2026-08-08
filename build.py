@@ -797,6 +797,19 @@ def cmd_lint():
             "Issue #2774 multi-via-single ban linter failed — run python3 scripts/coverage/checks/check_batch_dirty_multi_via_single_ban_2774.py"
         )
         return r
+    # Issue #2776: AotReloadConsistencyProof concurrent stamp — fetch_add
+    # stamp_epoch (no lost-update RMW) + seqlock multi-field snapshot
+    # (#2753 residual). ac2776_* in test_reload_recovery_query per #81967.
+    arcc_script = COVERAGE_CHECKS / "check_aot_reload_consistency_stamp_concurrent_2776.py"
+    if not arcc_script.exists():
+        fail(f"missing {arcc_script}")
+        return 1
+    r = run([sys.executable, str(arcc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2776 AOT reload stamp concurrent linter failed — run python3 scripts/coverage/checks/check_aot_reload_consistency_stamp_concurrent_2776.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

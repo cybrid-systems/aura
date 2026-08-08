@@ -1173,7 +1173,7 @@ void commit_func_table_swap() {
             p.force_jit_regions_mask = static_cast<std::uint64_t>(snap.force_jit_regions_mask);
         }
         p.would_allow_native = (p.force_jit_regions_mask == 0);
-        p.stamp_epoch = g_aot_reload_proof_stamp_epoch.load(std::memory_order_relaxed) + 1;
+        // Issue #2776: stamp_epoch assigned via fetch_add inside stamp().
         p.schema = kAotReloadConsistencyProofIssue;
         stamp_aot_reload_consistency_proof(p);
     }
@@ -1367,7 +1367,7 @@ void note_reload_rollback(AotReloadFail reason) noexcept {
             p.force_jit_regions_mask = static_cast<std::uint64_t>(snap.force_jit_regions_mask);
         }
         p.would_allow_native = false;
-        p.stamp_epoch = g_aot_reload_proof_stamp_epoch.load(std::memory_order_relaxed) + 1;
+        // Issue #2776: stamp_epoch assigned via fetch_add inside stamp().
         p.schema = kAotReloadConsistencyProofIssue;
         stamp_aot_reload_consistency_proof(p);
     }
