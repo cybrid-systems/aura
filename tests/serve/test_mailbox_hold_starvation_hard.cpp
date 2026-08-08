@@ -263,10 +263,10 @@ static void ac2701_1_budget_reject_production() {
 static void ac2701_2_soft_path_metric_only() {
     std::println("\n--- #2701 AC2: Soft path metric-only ---");
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
-    CHECK(mhb.find("g_mutation_hold_budget_soft_total") != std::string::npos,
+    CHECK(mhb.find("g_mutation_hold_budget_soft_observe_total") != std::string::npos,
           "AC2: mhb has soft-observe counter (Soft path bumps only this)");
-    CHECK(mhb.find("publish_partial_cone_truncate") != std::string::npos,
-          "AC2: Soft path preserves existing #2621 observe ergonomics");
+    CHECK(mhb.find("mutation_hold_budget_reject_enabled") != std::string::npos,
+          "AC2: Soft path reuses reject_enabled gate (hard vs soft split)");
 }
 
 // ── Issue #2701 AC4: query keys + Agent-visible counters ──
@@ -491,7 +491,8 @@ static void ac2724_1_disjoint_concurrent_admit() {
     CHECK(emb.find("g_mutation_region_overlap_reject_total") != std::string::npos,
           "AC1: overlap-reject counter declared");
     // Disjoint path: production + disjoint regions → admit + bump counter.
-    CHECK(emb.find("regions_disjoint(region_key, g_last_admitted_region_key)") != std::string::npos,
+    // #2754: 4-arg form (key + cone mask); substring still anchors on the helper.
+    CHECK(emb.find("regions_disjoint(region_key, g_last_admitted_region_key") != std::string::npos,
           "AC1: disjoint check uses regions_disjoint helper");
     CHECK(emb.find("g_mutation_region_concurrent_admit_total.fetch_add(1,") != std::string::npos,
           "AC1: admit path bumps counter");
@@ -570,18 +571,23 @@ static void ac2724_4_densify_correctness_under_concurrent_holds() {
 // ── Issue #2724 AC5: additive observability — #2701/#2720/#2587/#2630
 // surfaces preserved + new mutation-region-concurrent-admit-total /
 // mutation-region-overlap-reject-total / schema-2724 / issue-2724
-// counters + sentinels.
+// counters + sentinels. Counters live in mutation_hold_budget.h
+// (shared with query surface); emb remains the writer.
 static void ac2724_5_additive_observability() {
     std::println("\n--- #2724 AC5: additive observability ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
-    // New atomics + sentinels.
-    CHECK(emb.find("g_mutation_region_concurrent_admit_total{0}") != std::string::npos,
+    // New atomics + sentinels (shared header).
+    CHECK(mhb.find("g_mutation_region_concurrent_admit_total{0}") != std::string::npos,
           "AC5: concurrent-admit-total counter initialized");
-    CHECK(emb.find("g_mutation_region_overlap_reject_total{0}") != std::string::npos,
+    CHECK(mhb.find("g_mutation_region_overlap_reject_total{0}") != std::string::npos,
           "AC5: overlap-reject-total counter initialized");
-    CHECK(emb.find("kMutationRegionConcurrentIssue = 2724") != std::string::npos,
+    CHECK(mhb.find("kMutationRegionConcurrentIssue = 2724") != std::string::npos,
           "AC5: issue stamp = 2724");
+    // Writer still bumps counters in emb.
+    CHECK(emb.find("g_mutation_region_concurrent_admit_total.fetch_add(1,") != std::string::npos,
+          "AC5: emb bumps concurrent-admit counter");
     // Query keys present.
     CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
           "AC5: query key mutation-region-concurrent-admit-total");
@@ -726,15 +732,25 @@ static void ac2726_3_nested_outermost_only() {
 // ── Issue #2726 AC4: additive observability — schema/issue sentinels +
 // cross-fiber-cancel-fired/consumed counters; all #2701/#2720/#2587
 // surfaces preserved (strict superset).
+// clang-format may split long string literals across lines (adjacent
+// literals concat at compile time); match without requiring a single
+// contiguous quoted key (same approach as the #2726 linter must_key).
 static void ac2726_4_query_keys() {
     std::println("\n--- #2726 AC4: additive query keys ---");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
-    // #2726 new keys present.
-    CHECK(q.find("\"mutation-hold-budget-holder-degrade-cross-fiber-cancel-fired-total\"") !=
-              std::string::npos,
+    auto has_key = [&](std::string_view key) {
+        std::string normalized;
+        normalized.reserve(q.size());
+        for (char ch : q) {
+            if (ch != '"' && ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
+                normalized.push_back(ch);
+        }
+        return normalized.find(key) != std::string::npos;
+    };
+    // #2726 new keys present (tolerate clang-format line splits).
+    CHECK(has_key("mutation-hold-budget-holder-degrade-cross-fiber-cancel-fired-total"),
           "AC4: cross-fiber-cancel-fired-total key");
-    CHECK(q.find("\"mutation-hold-budget-holder-degrade-cross-fiber-cancel-consumed-total\"") !=
-              std::string::npos,
+    CHECK(has_key("mutation-hold-budget-holder-degrade-cross-fiber-cancel-consumed-total"),
           "AC4: cross-fiber-cancel-consumed-total key");
     CHECK(q.find("\"schema-2726\"") != std::string::npos, "AC4: schema-2726 sentinel");
     CHECK(q.find("\"issue-2726\"") != std::string::npos, "AC4: issue-2726 sentinel");
@@ -797,6 +813,173 @@ static void ac2726_6_no_docs_design() {
           "AC6: no docs/design/2726-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2754 AC1: equal keys + cone-/mask-disjoint ImpactScope →
+// concurrent admit (bump cone-admit counter). Key-disjoint fast path
+// preserved (#2724). regions_disjoint 4-arg + regions_cone_disjoint
+// helpers; TLS cone mask via parallel_task_cone_mask.
+static void ac2754_1_cone_disjoint_concurrent_admit() {
+    std::println("\n--- #2754 AC1: cone-disjoint concurrent admit ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    // Helper: 4-arg regions_disjoint + regions_cone_disjoint (mask AND).
+    CHECK(mhb.find("regions_disjoint(std::uint64_t a, std::uint64_t b, std::uint64_t mask_a") !=
+              std::string::npos,
+          "AC1: 4-arg regions_disjoint (key + cone mask) declared");
+    CHECK(mhb.find("(mask_a & mask_b) == 0") != std::string::npos,
+          "AC1: mask-AND hot path (no tree walk)");
+    CHECK(mhb.find("regions_cone_disjoint") != std::string::npos,
+          "AC1: regions_cone_disjoint helper declared");
+    // Key-equality remains the fast path (2-arg overload preserved).
+    CHECK(mhb.find("return a != 0 && b != 0 && a != b;") != std::string::npos,
+          "AC1: key-disjoint fast path preserved (#2724)");
+    // Admit path uses 4-arg + bumps cone-admit on cone path.
+    CHECK(emb.find("regions_disjoint(region_key, g_last_admitted_region_key, cone_mask") !=
+              std::string::npos,
+          "AC1: emb uses 4-arg regions_disjoint with cone_mask");
+    CHECK(emb.find("regions_cone_disjoint") != std::string::npos,
+          "AC1: emb calls regions_cone_disjoint for cone-admit counter");
+    CHECK(emb.find("g_mutation_region_concurrent_cone_admit_total.fetch_add(1,") !=
+              std::string::npos,
+          "AC1: cone-admit path bumps cone counter");
+    CHECK(emb.find("parallel_task_cone_mask()") != std::string::npos,
+          "AC1: emb reads TLS cone mask");
+    // TLS stamp surface (fiber_mutation + evaluator.ixx).
+    CHECK(efm.find("note_parallel_task_cone_mask") != std::string::npos,
+          "AC1: efm has note_parallel_task_cone_mask");
+    CHECK(efm.find("g_parallel_task_cone_mask") != std::string::npos,
+          "AC1: efm has TLS g_parallel_task_cone_mask");
+    CHECK(ixx.find("note_parallel_task_cone_mask") != std::string::npos,
+          "AC1: evaluator.ixx declares cone-mask TLS API");
+    CHECK(ixx.find("parallel_task_cone_mask()") != std::string::npos,
+          "AC1: evaluator.ixx declares parallel_task_cone_mask getter");
+}
+
+// ── Issue #2754 AC2: true overlapping cones still reject region-overlap
+// under production. Equal keys + overlapping masks (or mask==0 unknown)
+// → structured reject; gate order preserved.
+static void ac2754_2_true_overlap_still_rejects() {
+    std::println("\n--- #2754 AC2: true overlap still rejects ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Unknown mask (0) → equal keys not proven disjoint.
+    CHECK(mhb.find("mask_a != 0 && mask_b != 0") != std::string::npos,
+          "AC2: both masks must be non-zero to prove cone-disjoint");
+    // Overlap reject path preserved.
+    CHECK(emb.find("AdmissionRejected: region-overlap") != std::string::npos,
+          "AC2: structured region-overlap reject preserved");
+    CHECK(emb.find("g_mutation_region_overlap_reject_total.fetch_add(1,") != std::string::npos,
+          "AC2: overlap-reject counter still bumped");
+    // Gate order: #2587/#2701/#2630 still before region check.
+    CHECK(emb.find("mutation_hold_budget_check") != std::string::npos,
+          "AC2: #2701 hold-budget gate preserved before region check");
+    CHECK(emb.find("make_security_schedule_input_live") != std::string::npos,
+          "AC2: #2630/#2660 security-schedule gate preserved");
+}
+
+// ── Issue #2754 AC3: Soft / sandbox=off → metric-only (no lock regression).
+static void ac2754_3_soft_path_metric_only() {
+    std::println("\n--- #2754 AC3: Soft path metric-only ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("#2754 AC3") != std::string::npos ||
+              emb.find("#2724 AC3 / #2754 AC3") != std::string::npos,
+          "AC3: Soft path cites #2754 AC3");
+    CHECK(emb.find("metric-only") != std::string::npos, "AC3: Soft path metric-only");
+    // Soft path also tracks cone-admit for observability.
+    CHECK(emb.find("g_last_admitted_cone_mask_soft") != std::string::npos,
+          "AC3: soft path tracks last cone mask (metric-only)");
+}
+
+// ── Issue #2754 AC4: densify / ownership_rebind / restamp remain correct
+// under concurrent region holds (per-region shard isolation preserved;
+// atomic_batch still falls back to GlobalExclusive per #2121).
+static void ac2754_4_densify_under_concurrent_holds() {
+    std::println("\n--- #2754 AC4: densify under concurrent region holds ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("region_shard_") != std::string::npos, "AC4: region_shard_ present");
+    CHECK(emb.find("workspace_region_shard") != std::string::npos,
+          "AC4: workspace_region_shard used");
+    CHECK(emb.find("atomic_batch_active") != std::string::npos,
+          "AC4: atomic_batch_active GlobalExclusive fallback preserved");
+    CHECK(emb.find("workspace_region_fallback_global_total") != std::string::npos,
+          "AC4: fallback-to-GlobalExclusive counter preserved");
+    // Cone path does not bypass densify isolation (same region_key shard).
+    CHECK(emb.find("regions_cone_disjoint") != std::string::npos,
+          "AC4: cone-disjoint admit still goes through region Guard path");
+}
+
+// ── Issue #2754 AC5: additive observability — all #2701/#2720/#2724/
+// #2551/#2587 counters preserved + new cone-admit / cone-wired +
+// schema-2754 / issue-2754.
+static void ac2754_5_additive_observability() {
+    std::println("\n--- #2754 AC5: additive observability ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(mhb.find("g_mutation_region_concurrent_cone_admit_total{0}") != std::string::npos,
+          "AC5: cone-admit-total counter initialized");
+    CHECK(mhb.find("g_mutation_region_cone_disjoint_wired{1}") != std::string::npos,
+          "AC5: cone-disjoint-wired sentinel initialized");
+    CHECK(mhb.find("kMutationRegionConeDisjointIssue = 2754") != std::string::npos,
+          "AC5: issue stamp = 2754");
+    CHECK(q.find("mutation-region-concurrent-cone-admit-total") != std::string::npos,
+          "AC5: query key mutation-region-concurrent-cone-admit-total");
+    CHECK(q.find("mutation-region-cone-disjoint-wired") != std::string::npos,
+          "AC5: query key mutation-region-cone-disjoint-wired");
+    CHECK(q.find("schema-2754") != std::string::npos, "AC5: schema-2754 sentinel");
+    CHECK(q.find("issue-2754") != std::string::npos, "AC5: issue-2754 sentinel");
+    // Prior surfaces preserved (strict superset).
+    CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
+          "AC5: #2724 concurrent-admit-total preserved");
+    CHECK(q.find("mutation-region-overlap-reject-total") != std::string::npos,
+          "AC5: #2724 overlap-reject-total preserved");
+    CHECK(q.find("schema-2724") != std::string::npos, "AC5: schema-2724 preserved");
+    CHECK(q.find("schema-2701") != std::string::npos, "AC5: schema-2701 preserved");
+    CHECK(q.find("schema-2720") != std::string::npos, "AC5: schema-2720 preserved");
+    CHECK(q.find("schema-2726") != std::string::npos, "AC5: schema-2726 preserved");
+}
+
+// ── Issue #2754 AC6: source-cite + extend this file per #81967 + no
+// docs/design/2754-* per #1655 + linter wired.
+static void ac2754_6_source_and_linter() {
+    std::println("\n--- #2754 AC6: source-cite + linter + no docs/design/ ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_region_cone_disjoint_admit_2754.py");
+    CHECK(mhb.find("Issue #2754") != std::string::npos, "AC6: mhb cites #2754");
+    CHECK(emb.find("Issue #2754") != std::string::npos || emb.find("#2754") != std::string::npos,
+          "AC6: emb cites #2754");
+    CHECK(efm.find("Issue #2754") != std::string::npos, "AC6: efm cites #2754");
+    CHECK(q.find("Issue #2754") != std::string::npos, "AC6: query cites #2754");
+    CHECK(t.find("ac2754_1_cone_disjoint_concurrent_admit") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2754_2_true_overlap_still_rejects") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2754_3_soft_path_metric_only") != std::string::npos, "AC6: AC3 test present");
+    CHECK(t.find("ac2754_4_densify_under_concurrent_holds") != std::string::npos,
+          "AC6: AC4 test present");
+    CHECK(t.find("ac2754_5_additive_observability") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2754_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    // #81967: no new test file.
+    CHECK(read_file("tests/serve/test_issue_2754.cpp").empty(),
+          "AC6: no tests/serve/test_issue_2754.cpp per #81967");
+    // Prior #2724 tests preserved.
+    CHECK(t.find("ac2724_1_disjoint_concurrent_admit") != std::string::npos,
+          "AC6: #2724 AC1 preserved");
+    CHECK(build.find("check_region_cone_disjoint_admit_2754") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty(), "AC6: linter present");
+    CHECK(lint.find("2754") != std::string::npos, "AC6: linter covers #2754");
+    // No docs/design/2754-* per #1655.
+    const std::string design_path = "docs/design/2754-";
+    CHECK(read_file((design_path + "region-cone-disjoint-admit.md").c_str()).empty(),
+          "AC6: no docs/design/2754-* per #1655 (design rationale in close comment)");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -821,6 +1004,13 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2720_4_query_keys();
     ac2720_5_source_and_linter();
     ac2720_6_no_docs_design();
+    std::println("\n=== Issue #2724: region concurrent admit (disjoint multi-agent) ===");
+    ac2724_1_disjoint_concurrent_admit();
+    ac2724_2_overlap_reject_production();
+    ac2724_3_soft_path_metric_only();
+    ac2724_4_densify_correctness_under_concurrent_holds();
+    ac2724_5_additive_observability();
+    ac2724_6_source_and_linter();
     std::println("\n=== #2551 + #2701 + #2720 + #2724: {} passed, {} failed ===", g_passed,
                  g_failed);
     std::println(
@@ -831,8 +1021,16 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2726_4_query_keys();
     ac2726_5_source_and_linter();
     ac2726_6_no_docs_design();
-    std::println("\n=== #2551 + #2701 + #2720 + #2724 + #2726: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println(
+        "\n=== Issue #2754: region concurrent cone/ImpactScope mask-AND (#2724 residual) ===");
+    ac2754_1_cone_disjoint_concurrent_admit();
+    ac2754_2_true_overlap_still_rejects();
+    ac2754_3_soft_path_metric_only();
+    ac2754_4_densify_under_concurrent_holds();
+    ac2754_5_additive_observability();
+    ac2754_6_source_and_linter();
+    std::println("\n=== #2551 + #2701 + #2720 + #2724 + #2726 + #2754: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

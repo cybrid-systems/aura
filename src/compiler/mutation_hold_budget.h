@@ -341,10 +341,19 @@ inline void clear_mutation_hold_budget_holder_degrade_cross_fiber_cancel_for_tes
 // Shared header so evaluator_mutation_boundary (writers) and
 // evaluator_primitives_query (query surface) share one definition.
 // Additive — all #2701/#2720/#2587/#2630 surfaces preserved.
+// Issue #2754: cone / ImpactScope mask-AND residual — equal keys may still
+// be concurrent-admitted when both live cone masks prove no bit overlap
+// (mask AND == 0). Additive cone-admit counter distinguishes key-disjoint
+// vs cone-disjoint admits; all #2724 surfaces preserved.
 inline std::atomic<std::uint64_t> g_mutation_region_concurrent_admit_total{0};
 inline std::atomic<std::uint64_t> g_mutation_region_overlap_reject_total{0};
 inline std::atomic<std::uint32_t> g_mutation_region_concurrent_wired{1};
 inline constexpr int kMutationRegionConcurrentIssue = 2724;
+// Issue #2754: admits that passed only via cone/mask-AND (equal keys,
+// proven-disjoint ImpactScope bits). Subset of concurrent-admit-total.
+inline std::atomic<std::uint64_t> g_mutation_region_concurrent_cone_admit_total{0};
+inline std::atomic<std::uint32_t> g_mutation_region_cone_disjoint_wired{1};
+inline constexpr int kMutationRegionConeDisjointIssue = 2754;
 
 [[nodiscard]] inline std::uint64_t mutation_region_concurrent_admit_total_v_read() noexcept {
     return g_mutation_region_concurrent_admit_total.load(std::memory_order_relaxed);
@@ -355,10 +364,41 @@ inline constexpr int kMutationRegionConcurrentIssue = 2724;
 [[nodiscard]] inline std::uint32_t mutation_region_concurrent_wired_v_read() noexcept {
     return g_mutation_region_concurrent_wired.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t mutation_region_concurrent_cone_admit_total_v_read() noexcept {
+    return g_mutation_region_concurrent_cone_admit_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_region_cone_disjoint_wired_v_read() noexcept {
+    return g_mutation_region_cone_disjoint_wired.load(std::memory_order_relaxed);
+}
 
 // Issue #2724: simple disjointness check (region_key equality for first ship).
+// Fast path kept as the primary key-disjoint predicate.
 [[nodiscard]] inline bool regions_disjoint(std::uint64_t a, std::uint64_t b) noexcept {
     return a != 0 && b != 0 && a != b;
+}
+
+// Issue #2754: key-disjoint (#2724 fast path) OR equal keys with
+// cone/ImpactScope mask-AND proving no overlap. Hot path is a bit AND
+// only — no tree walk. mask==0 means "unknown cone" → equal keys are
+// NOT proven disjoint (conservative: preserve #2724 overlap reject).
+// Both masks must be non-zero (proven ImpactScope / dirty-bit bits).
+[[nodiscard]] inline bool regions_disjoint(std::uint64_t a, std::uint64_t b, std::uint64_t mask_a,
+                                           std::uint64_t mask_b) noexcept {
+    if (a == 0 || b == 0)
+        return false;
+    if (a != b)
+        return true; // #2724 key-disjoint fast path
+    // Equal keys: cone / ImpactScope mask-AND (no tree walk).
+    return mask_a != 0 && mask_b != 0 && (mask_a & mask_b) == 0;
+}
+
+// Issue #2754: true only when the admit is due to the cone path
+// (equal keys + proven mask-AND). Used to bump cone-admit counter
+// distinctly from key-disjoint concurrent admits.
+[[nodiscard]] inline bool regions_cone_disjoint(std::uint64_t a, std::uint64_t b,
+                                                std::uint64_t mask_a,
+                                                std::uint64_t mask_b) noexcept {
+    return a != 0 && b != 0 && a == b && mask_a != 0 && mask_b != 0 && (mask_a & mask_b) == 0;
 }
 
 } // namespace aura::compiler
