@@ -851,6 +851,19 @@ def cmd_lint():
             "Issue #2779 resume fence fail aggregate linter failed — run python3 scripts/coverage/checks/check_resume_fence_fail_aggregate_2779.py"
         )
         return r
+    # Issue #2780: scope BP decay vs note race (#2633 residual). note +
+    # decay serialize under g_scope_bp_map_mtx; skip active last_event_us.
+    # ac2780_* in test_mailbox_bp_admit per #81967.
+    sbdr_script = COVERAGE_CHECKS / "check_scope_bp_decay_race_2780.py"
+    if not sbdr_script.exists():
+        fail(f"missing {sbdr_script}")
+        return 1
+    r = run([sys.executable, str(sbdr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2780 scope BP decay race linter failed — run python3 scripts/coverage/checks/check_scope_bp_decay_race_2780.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
