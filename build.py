@@ -1035,6 +1035,18 @@ def cmd_lint():
             "Issue #2794 atomic-batch move-node no-op linter failed — run python3 scripts/coverage/checks/check_atomic_batch_move_noop_2794.py"
         )
         return r
+    # Issue #2795: rebind old body NodeId post-parse + rollback free-slot reject.
+    # ac2795 in test_rebind_rollback_nodeid_validity.
+    rrbv_script = COVERAGE_CHECKS / "check_rebind_rollback_nodeid_validity_2795.py"
+    if not rrbv_script.exists():
+        fail(f"missing {rrbv_script}")
+        return 1
+    r = run([sys.executable, str(rrbv_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2795 rebind rollback NodeId validity linter failed — run python3 scripts/coverage/checks/check_rebind_rollback_nodeid_validity_2795.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

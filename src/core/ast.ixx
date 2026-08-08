@@ -2237,6 +2237,10 @@ public:
     // never claims Committed for aborted work. Healthy systems stay 0
     // when try_rollback_record succeeds for every aborted-range record.
     mutable std::atomic<std::uint64_t> mutation_log_status_torn_total_{0};
+    // Issue #2795: rebind refused to log / attach a non-live body NodeId
+    // (stale capture after parse_to_flat / free-list reuse). Always 0 when
+    // old_value is captured post-resolve and stays live.
+    mutable std::atomic<std::uint64_t> rebind_rollback_stale_nodeid_prevented_total_{0};
     // Issue #1355: render-hotpath lightweight checkpoints (field-only side log).
     mutable std::atomic<std::uint64_t> lightweight_total_{0};
     mutable std::atomic<std::uint64_t> lightweight_commit_total_{0};
@@ -8283,6 +8287,8 @@ private:
     // rec.target_node = Define node; rec.old_value / rec.new_value = body NodeIds;
     // rec.field_offset = body child index (0). Restores children_[define][idx]
     // and parent_ links, marks RolledBack.
+    // Issue #2795: refuse to reattach a free/OOB old_child (stale pre-parse
+    // capture) — that would plant a freed or recycled NodeId under Define.
     [[nodiscard]] std::expected<void, MutationError> try_rollback_rebind_op(MutationRecord& rec) {
         if (!rec.has_rollback_data)
             return std::unexpected(MutationError::NoRollbackData);
@@ -8298,6 +8304,17 @@ private:
         const auto new_child = static_cast<NodeId>(rec.new_value);
         auto& list = children_[define_node];
         if (idx >= list.size())
+            return std::unexpected(MutationError::OutOfRange);
+
+        // Issue #2795: validate body NodeIds before topology write.
+        if (old_child != NULL_NODE) {
+            if (old_child >= tag_.size() || is_free_slot(old_child) || !is_live_node(old_child)) {
+                rebind_rollback_stale_nodeid_prevented_total_.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                return std::unexpected(MutationError::InvalidTarget);
+            }
+        }
+        if (new_child != NULL_NODE && new_child >= parent_.size())
             return std::unexpected(MutationError::OutOfRange);
 
         // Inverse of set_child: detach new body, reattach old body.
@@ -8435,6 +8452,13 @@ public:
     }
     [[nodiscard]] std::uint64_t mutation_log_status_torn_total() const noexcept {
         return mutation_log_status_torn_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2795: stale rebind body NodeId blocked (log or rollback path).
+    [[nodiscard]] std::uint64_t rebind_rollback_stale_nodeid_prevented_total() const noexcept {
+        return rebind_rollback_stale_nodeid_prevented_total_.load(std::memory_order_relaxed);
+    }
+    void note_rebind_rollback_stale_nodeid_prevented() noexcept {
+        rebind_rollback_stale_nodeid_prevented_total_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
         return mutation_log_compact_ops_.load(std::memory_order_relaxed);

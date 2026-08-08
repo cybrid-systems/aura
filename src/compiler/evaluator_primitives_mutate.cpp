@@ -2738,15 +2738,29 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
         }
 
-        // Issue #1441: capture old body NodeId before swap so
-        // FlatAST::try_rollback_rebind_op can restore it. field_offset=0
-        // is the Define value child index (same slot set_child mutates).
+        // Issue #1441 / #2795: capture old body NodeId for rollback ONLY
+        // AFTER parse_to_flat + resolve_define_after_parse (#1685). A
+        // pre-parse capture can go stale if free-list reuses slots or the
+        // preferred Define id drifts; Guard rollback would then
+        // set_child(define, 0, stale_id) → logical corruption / UAF.
+        // field_offset=0 is the Define value child index (same slot
+        // set_child mutates).
         std::string summary = (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "rebind " + name;
         aura::ast::NodeId old_value_node = aura::ast::NULL_NODE;
         {
             auto old_def_v = flat.get(old_define);
             if (!old_def_v.children.empty())
                 old_value_node = old_def_v.child(0);
+        }
+        // Issue #2795: refuse to log a non-live body NodeId into rollback data.
+        if (old_value_node != aura::ast::NULL_NODE &&
+            (old_value_node >= flat.size() || flat.is_free_slot(old_value_node) ||
+             !flat.is_live_node(old_value_node))) {
+            flat.note_rebind_rollback_stale_nodeid_prevented();
+            free_rebind_parse_orphans();
+            ok = false;
+            return mev("internal", "rebind: old body NodeId not live after parse (stale capture "
+                                   "prevented; #2795)");
         }
         flat.add_mutation_with_rollback(
             old_define, "rebind", name, summary, summary, aura::ast::MutationStatus::Committed,

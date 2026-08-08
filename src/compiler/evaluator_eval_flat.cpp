@@ -2037,8 +2037,18 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     }
     std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
                                                             : "batch rebind " + name;
+    // Issue #2795: capture body NodeId only after parse + resolve_define_after_parse
+    // (never before parse_to_flat — stale free-list / SoA risk on Guard rollback).
     auto old_v = flat.get(old_define);
     auto old_value_node = old_v.children.empty() ? aura::ast::NULL_NODE : old_v.child(0);
+    if (old_value_node != aura::ast::NULL_NODE &&
+        (old_value_node >= flat.size() || flat.is_free_slot(old_value_node) ||
+         !flat.is_live_node(old_value_node))) {
+        flat.note_rebind_rollback_stale_nodeid_prevented();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :rebind: old body NodeId not live after parse (#2795)"});
+    }
     auto mid = flat.add_mutation_with_rollback(
         old_define, "batch-rebind", std::string("Define:") + name, std::string("Define:") + name,
         summary, aura::ast::MutationStatus::Committed, 0,
