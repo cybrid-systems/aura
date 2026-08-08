@@ -2577,6 +2577,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("incremental-patches", static_cast<std::int64_t>(incremental_patches));
             insert_kv("threshold-pct", threshold_pct);
             insert_kv("schema", 1503);
+            // Issue #2763: Agent-facing delta/full rebuild totals for
+            // production multi-round query:pattern latency (refine #1503).
+            // Additive — schema-1503 lineage preserved; schema-2763 sentinel.
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
+                insert_kv("query-pattern-delta-rebuild-total",
+                          static_cast<std::int64_t>(m->query_pattern_delta_rebuild_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("query-pattern-full-rebuild-total",
+                          static_cast<std::int64_t>(
+                              m->query_pattern_full_rebuild_total.load(std::memory_order_relaxed)));
+                insert_kv("query-pattern-delta-rebuild-wired", 1);
+            } else {
+                insert_kv("query-pattern-delta-rebuild-total",
+                          static_cast<std::int64_t>(flat_delta_hits));
+                insert_kv("query-pattern-full-rebuild-total",
+                          static_cast<std::int64_t>(threshold_full));
+                insert_kv("query-pattern-delta-rebuild-wired", 1);
+            }
+            insert_kv("schema-2763", 2763);
+            insert_kv("issue-2763", 2763);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -2799,6 +2819,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               m->pattern_hygiene_filter_hits.load(std::memory_order_relaxed)));
                 insert_kv("pattern_hygiene_filtered_total", filt);
                 insert_kv("pattern-hygiene-filtered-total", filt);
+                // Issue #2763: Agent-facing alias (exact AC name).
+                insert_kv("query-pattern-hygiene-filtered-total", filt);
+                // Issue #2763: delta/full rebuild attribution on hygiene surface.
+                insert_kv("query-pattern-delta-rebuild-total",
+                          static_cast<std::int64_t>(m->query_pattern_delta_rebuild_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("query-pattern-full-rebuild-total",
+                          static_cast<std::int64_t>(
+                              m->query_pattern_full_rebuild_total.load(std::memory_order_relaxed)));
+                insert_kv("schema-2763", 2763);
+                insert_kv("issue-2763", 2763);
                 // Issue #2525 Agent-facing names (AC3)
                 insert_kv("hygiene_skip_total", skip_tot > 0 ? skip_tot : filt + pattern_skips);
                 insert_kv("hygiene-skip-total", skip_tot > 0 ? skip_tot : filt + pattern_skips);
@@ -2835,6 +2866,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("pattern_hygiene_filter_hits", pattern_skips);
                 insert_kv("pattern_hygiene_filtered_total", pattern_skips);
                 insert_kv("pattern-hygiene-filtered-total", pattern_skips);
+                insert_kv("query-pattern-hygiene-filtered-total", pattern_skips); // #2763
+                insert_kv("query-pattern-delta-rebuild-total", 0);
+                insert_kv("query-pattern-full-rebuild-total", 0);
+                insert_kv("schema-2763", 2763);
+                insert_kv("issue-2763", 2763);
                 insert_kv("hygiene_skip_total", pattern_skips);
                 insert_kv("hygiene-skip-total", pattern_skips);
                 insert_kv("hygiene_include_total", 0);
