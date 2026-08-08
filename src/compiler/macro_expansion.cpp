@@ -345,6 +345,9 @@ std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total{0};
 // Issue #2804: clone-walk rename_binding ceiling denials (distinct from
 // pre-scan rename_binding_pre bumps of gensym_map_size_exceeded_total).
 std::atomic<std::uint64_t> g_clone_walk_gensym_ceiling_exceeded_total{0};
+// Issue #2805: dotted-rest force-repair fallback refused to map a
+// hygiene_builtins name into name_map (would silently rename builtins).
+std::atomic<std::uint64_t> g_dotted_rest_builtin_rename_prevented_total{0};
 
 // Forward decl — body runs under MacroSelfEvo TLS depth policy set by expand entry.
 static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
@@ -678,6 +681,13 @@ extern "C" void aura_test_set_max_gensym_map_size_for_test(std::uint32_t n) noex
 }
 extern "C" void aura_test_reset_clone_walk_gensym_ceiling_exceeded_total_for_test(void) noexcept {
     g_clone_walk_gensym_ceiling_exceeded_total.store(0, std::memory_order_relaxed);
+}
+// Issue #2805: dotted-rest builtin rename prevented metric.
+extern "C" std::uint64_t aura_dotted_rest_builtin_rename_prevented_total_v_read(void) noexcept {
+    return g_dotted_rest_builtin_rename_prevented_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_dotted_rest_builtin_rename_prevented_total_for_test(void) noexcept {
+    g_dotted_rest_builtin_rename_prevented_total.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2241: check whether a fiber is allowed to expand given its
@@ -1499,26 +1509,40 @@ aura::ast::NodeId clone_macro_body(
             // Issue #2018 / #2169: preserve dotted rest flag (int_value != 0).
             // Fallback: if dotted rest param did not get a __rest_ gensym
             // while hygiene is on, force-repair + incomplete counter.
+            // Issue #2805: never map hygiene_builtins names (let, list, …)
+            // into name_map — pre-scan already skips them; overwriting would
+            // rename free Variable uses of those builtins in the body.
             if (!child_ids.empty()) {
                 const bool dotted = v.int_value != 0;
                 if (dotted && !param_syms.empty() && name_map && s_allow_rest_hygiene) {
                     auto rest_name = std::string(target_pool.resolve(param_syms.back()));
                     if (rest_name.rfind("__rest_", 0) != 0) {
-                        const auto serial =
-                            g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
-                        auto fresh =
-                            std::string("__rest_fb_") + rest_name + "_" + std::to_string(serial);
-                        param_syms.back() = target_pool.intern(fresh);
-                        // Also map original source last-param name if known.
-                        if (!v.params.empty()) {
-                            auto src_nm = std::string(source_pool.resolve(v.params.back()));
-                            (*name_map)[src_nm] = fresh;
+                        const std::string src_nm =
+                            !v.params.empty() ? std::string(source_pool.resolve(v.params.back()))
+                                              : rest_name;
+                        // Issue #2805: builtins stay unmapped (parity with
+                        // rename_rest_binding_pre / rename_binding_pre).
+                        if (detail::hygiene_builtins().count(src_nm) ||
+                            detail::hygiene_builtins().count(rest_name)) {
+                            g_dotted_rest_builtin_rename_prevented_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            // Keep param_syms.back() as the transplanted
+                            // original name — do not force __rest_fb_ gensym.
+                        } else {
+                            const auto serial =
+                                g_macro_rest_gensym_serial.fetch_add(1, std::memory_order_relaxed);
+                            auto fresh = std::string("__rest_fb_") + rest_name + "_" +
+                                         std::to_string(serial);
+                            param_syms.back() = target_pool.intern(fresh);
+                            if (!v.params.empty())
+                                (*name_map)[src_nm] = fresh;
+                            g_macro_rest_param_hygiene_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                            g_macro_rest_param_hygiene_incomplete_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            g_hygiene_violation_in_macro_expand_total.fetch_add(
+                                1, std::memory_order_relaxed);
                         }
-                        g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
-                        g_macro_rest_param_hygiene_incomplete_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        g_hygiene_violation_in_macro_expand_total.fetch_add(
-                            1, std::memory_order_relaxed);
                     }
                 }
                 new_id = target.add_lambda(param_syms, child_ids[0], /*dotted=*/dotted);

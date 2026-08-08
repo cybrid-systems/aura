@@ -1155,6 +1155,18 @@ def cmd_lint():
             "Issue #2804 clone-walk gensym ceiling linter failed — run python3 scripts/coverage/checks/check_clone_walk_gensym_ceiling_2804.py"
         )
         return r
+    # Issue #2805: dotted-rest fallback must not rename hygiene_builtins via name_map.
+    # ac2805 in test_dotted_rest_builtin_rename.
+    drb_script = COVERAGE_CHECKS / "check_dotted_rest_builtin_rename_2805.py"
+    if not drb_script.exists():
+        fail(f"missing {drb_script}")
+        return 1
+    r = run([sys.executable, str(drb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2805 dotted-rest builtin rename linter failed — run python3 scripts/coverage/checks/check_dotted_rest_builtin_rename_2805.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

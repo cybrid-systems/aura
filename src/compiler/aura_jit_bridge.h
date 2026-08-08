@@ -295,6 +295,9 @@ extern "C" std::uint64_t aura_clone_walk_gensym_ceiling_exceeded_total_v_read(vo
 // Issue #2804: test-only arm of TLS s_max_gensym_map_size for clone_macro_body.
 extern "C" void aura_test_set_max_gensym_map_size_for_test(std::uint32_t n) noexcept;
 extern "C" void aura_test_reset_clone_walk_gensym_ceiling_exceeded_total_for_test(void) noexcept;
+// Issue #2805: dotted-rest fallback refused to map a hygiene_builtin name.
+extern "C" std::uint64_t aura_dotted_rest_builtin_rename_prevented_total_v_read(void) noexcept;
+extern "C" void aura_test_reset_dotted_rest_builtin_rename_prevented_total_for_test(void) noexcept;
 
 // Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
 // Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call
