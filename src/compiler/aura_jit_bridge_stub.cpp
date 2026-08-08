@@ -1048,8 +1048,27 @@ extern "C" __attribute__((weak)) void aura_1637_note_steal_restore_fallback(void
 extern "C" __attribute__((weak)) void aura_1637_note_compact_restore_fallback(void) {}
 extern "C" __attribute__((weak)) void aura_1637_note_hot_swap_restore_fallback(void) {}
 
+// Issue #2810: light-link dual-write path. Strong aura_jit_bridge.cpp overrides
+// this when the full bridge is linked. When only the light stub is linked,
+// still dual-write per-CompilerMetrics via the fiber-mutation trampoline
+// (strong when aura_test_objects is linked; weak no-op otherwise).
+extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* ev_ptr) noexcept;
 extern "C" __attribute__((weak)) int
-aura_macro_provenance_repin_on_steal(void* /*ev_ptr*/, std::uint64_t /*cloned_marker*/) {
+aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t /*cloned_marker*/) {
+    // Light stub has no file-level fallback atomics; per-eval dual-write only.
+    // Return 2 when per-eval bumped (matches full-bridge contract), else 0.
+    return aura_evaluator_bump_macro_provenance_repin_on_steal(ev_ptr) ? 2 : 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_macro_provenance_repin_on_steal_total(void) {
+    return 0; // file-level fallback lives in full bridge only
+}
+// Issue #2810: weak no-ops when fiber-mutation TU not linked.
+// Strong definitions in evaluator_fiber_mutation.cpp override these.
+extern "C" __attribute__((weak)) void* aura_evaluator_resolve_current_for_macro(void) noexcept {
+    return nullptr;
+}
+extern "C" __attribute__((weak)) int
+aura_evaluator_bump_macro_provenance_repin_on_steal(void* /*ev_ptr*/) noexcept {
     return 0;
 }
 

@@ -1873,6 +1873,9 @@ aura_issue_test_link_light(test_stamp_rest_param_hygiene_marker)
 # Issue #2809: expand_inner_macros qq-unwrap uses targeted restamp (not full O(N)).
 aura_add_issue_test(test_qq_unwrap_targeted_restamp)
 aura_issue_test_link_light(test_qq_unwrap_targeted_restamp)
+# Issue #2810: clone_macro_body provenance repin dual-writes per-CompilerMetrics.
+aura_add_issue_test(test_clone_provenance_per_evaluator)
+aura_issue_test_link_light(test_clone_provenance_per_evaluator)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

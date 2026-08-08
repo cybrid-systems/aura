@@ -1215,6 +1215,18 @@ def cmd_lint():
             "Issue #2809 qq-unwrap targeted restamp linter failed — run python3 scripts/coverage/checks/check_qq_unwrap_targeted_restamp_2809.py"
         )
         return r
+    # Issue #2810: clone_macro_body provenance repin dual-writes per-CompilerMetrics.
+    # ac2810 in test_clone_provenance_per_evaluator.
+    cpe_script = COVERAGE_CHECKS / "check_clone_provenance_per_evaluator_2810.py"
+    if not cpe_script.exists():
+        fail(f"missing {cpe_script}")
+        return 1
+    r = run([sys.executable, str(cpe_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2810 clone provenance per-evaluator linter failed — run python3 scripts/coverage/checks/check_clone_provenance_per_evaluator_2810.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
