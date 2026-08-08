@@ -137,7 +137,7 @@ class TestBlockedPatterns(unittest.TestCase):
         self.assertEqual(self.m.domain_status("tcp-connect"), "deferred")
         self.assertEqual(self.m.domain_status("tcp-recv"), "deferred")
         self.assertIn("tcp-", self.m.COMMERCIAL_DOMAIN_BUDGETS)
-        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"], 4)
+        self.assertEqual(self.m.COMMERCIAL_DOMAIN_BUDGETS["tcp-"], 8)  # #1975+#2771
 
     def test_strategy_domain_deferred_and_budgeted(self):
         self.assertEqual(self.m.DOMAIN_STATUS.get("strategy:"), "deferred")

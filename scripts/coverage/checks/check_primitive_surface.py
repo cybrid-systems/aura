@@ -101,7 +101,7 @@ COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
     "git-": 7,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
     "strategy:": 4,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY
     "synthesize:": 4,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE
-    "tcp-": 4,  # #1975 — TCP sockets; AURA_ENABLE_TCP
+    "tcp-": 8,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4)
     "m4-": 3,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4
 }
 

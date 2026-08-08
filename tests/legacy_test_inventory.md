@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 777 | Preferred destination suites |
-| **Total scanned** | **777** | |
+| `tests/core/test_*.cpp` | 778 | Preferred destination suites |
+| **Total scanned** | **778** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 80 | 80 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 223 | 223 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 98 | 98 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 99 | 99 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 43 | 43 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
@@ -905,6 +905,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_sys_open_path_harden.cpp`
 - `tests/core/test_tag_arity_index_lock.cpp`
 - `tests/core/test_tag_arity_key_hash.cpp`
+- `tests/compiler/test_tcp_listen_accept.cpp`
 - `tests/core/test_tenant_isolation_enforcement.cpp`
 - `tests/compiler/test_tenant_scope_fiber_mandate.cpp`
 - `tests/compiler/test_test_strategy.cpp`
@@ -1311,13 +1312,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_region_concurrency.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (98)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (99)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (98)
+#### domain/ (99)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1412,6 +1413,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_stress_alloc_storage_lock.cpp` (—) [domain_suite, theme_core] — test_stress_alloc_storage_lock.cpp — Issue #1397
 - `tests/compiler/test_string_heap_corruption_guard.cpp` (—) [domain_suite, theme_compiler] — AC1: concurrent hash-set! with string keys (stats-bump class) no crash
 - `tests/core/test_structural_metadata_lock_order.cpp` (—) [domain_suite, theme_core] — AC1: documented order + CombinedStructuralMetadataWriteGuard
+- `tests/compiler/test_tcp_listen_accept.cpp` (—) [domain_suite, theme_compiler] — membership per #81967 (no test_issue_2771.cpp).
 - `tests/compiler/test_tenant_scope_fiber_mandate.cpp` (—) [domain_suite, theme_compiler] — AC1: Fiber with assigned_tenant_id=42 → body capability_tenant_id()
 - `tests/core/test_transaction_guard.cpp` (—) [domain_suite, theme_core] — AC1: Scaffold simulation removed; host try_acquire/release required
 - `tests/compiler/test_type_freshness_steal_densify.cpp` (—) [domain_suite, theme_compiler] — AC1: Steal success + old-epoch goals → stale_vs_epoch(new)==0 after fence

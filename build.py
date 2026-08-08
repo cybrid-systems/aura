@@ -741,6 +741,20 @@ def cmd_lint():
             "Issue #2770 string-split iterative linter failed — run python3 scripts/coverage/checks/check_string_split_iterative_2770.py"
         )
         return r
+    # Issue #2771: tcp-listen / tcp-accept multi-host denseness server path
+    # (#1975 residual). AURA_ENABLE_TCP prims + std/socket export + adaptive
+    # help + fiber echo smoke; commercial budget tcp- 4→8; ac in
+    # test_tcp_listen_accept (json_io_cap_batch) per #81967.
+    tla_script = COVERAGE_CHECKS / "check_tcp_listen_accept_2771.py"
+    if not tla_script.exists():
+        fail(f"missing {tla_script}")
+        return 1
+    r = run([sys.executable, str(tla_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2771 tcp-listen/accept linter failed — run python3 scripts/coverage/checks/check_tcp_listen_accept_2771.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

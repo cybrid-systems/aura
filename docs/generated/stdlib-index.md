@@ -61,7 +61,7 @@
 | `std/rule` | `rule:define` `rule:apply` `rule:apply-all` `rule:list` `rule:list-violations` `rule:remove` `rule:enable` `rule:disable` … (+3) | Aura std/rule — 代码规范系统 (P2) |
 | `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` | lib/std/safe-refactor.aura — verification-gated refactoring |
 | `std/set` | `set` `set-add` `set-remove` `set-member?` `set-empty?` `set-union` `set-intersect` `set-difference` … (+5) | set.aura — Set data structure (built on hash tables) |
-| `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` | socket.aura — TCP socket library |
+| `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |
 | `std/stats` | `get` `list` `contains?` `count` `prefix` `filter` | Aura standard observability / stats module |
 | `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+10) | Aura standard string library |
@@ -82,7 +82,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (475 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (479 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 
 Central registry orchestrates **28** `register_*_primitives` groups (see primitives-registry.md for the ordered list).

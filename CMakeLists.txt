@@ -3023,7 +3023,8 @@ if(TARGET all_test_issue_targets)
 endif()
 
 
-# Domain batch: JSON / IO / cap / regex / channel / string escape (10 members + driver). Stream A5.
+# Domain batch: JSON / IO / cap / regex / channel / string escape / TCP listen
+# (11 members + driver). Stream A5. #2771 tcp-listen/accept member.
 add_executable(test_json_io_cap_batch
     tests/compiler/test_json_io_cap_batch.cpp
     tests/compiler/test_channel_rendezvous.cpp
@@ -3036,6 +3037,7 @@ add_executable(test_json_io_cap_batch
     tests/compiler/test_regex_redos_timeout.cpp
     tests/compiler/test_sys_open_path_harden.cpp
     tests/compiler/test_write_string_escape.cpp
+    tests/compiler/test_tcp_listen_accept.cpp
 )
 set_property(TARGET test_json_io_cap_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_json_io_cap_batch PRIVATE src tests)

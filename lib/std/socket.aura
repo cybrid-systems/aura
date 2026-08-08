@@ -1,10 +1,28 @@
-; socket.aura — TCP socket library
-; (require std/socket) → tcp-connect, tcp-send, tcp-recv, tcp-close
+; socket.aura — TCP socket library (client + server)
+; (require "std/socket" all:)
 ;
-; Uses native C++ socket primitives (not FFI).
+; Uses native C++ socket primitives (not FFI). Thin OS transport E.
+;
+; Client (#1975):
+;   (tcp-connect host port) → socket-fd | ()
+;   (tcp-send sock data)    → bytes-sent | -1
+;   (tcp-recv sock maxlen)  → string | ()
+;   (tcp-close sock)        → void   (also closes listeners)
+;
+; Server (#2771 multi-host denseness):
+;   (tcp-listen port)              → listener-fd | ()  ; 127.0.0.1; port 0 = ephemeral
+;   (tcp-local-port sock)          → port | ()         ; getsockname (ephemeral)
+;   (tcp-accept listener)          → client-fd | ()    ; blocking
+;   (tcp-accept-timeout l sec)     → client-fd | ()    ; poll+accept; 0 = try once
+;
+; Ownership: caller closes both listener and accepted client fds.
+; Errors are void/() — catchable values, not process abort.
+; Loopback-only bind keeps denseness probes off the public interface.
 
-(export tcp-connect tcp-send tcp-recv tcp-close)
+(export tcp-connect tcp-send tcp-recv tcp-close
+        tcp-listen tcp-local-port tcp-accept tcp-accept-timeout)
 
+; Pass-through wrappers so exports re-bind to host primitives after require.
 (define (tcp-connect host port)
   (tcp-connect host port))
 
@@ -16,3 +34,15 @@
 
 (define (tcp-close socket)
   (tcp-close socket))
+
+(define (tcp-listen port)
+  (tcp-listen port))
+
+(define (tcp-local-port socket)
+  (tcp-local-port socket))
+
+(define (tcp-accept listener)
+  (tcp-accept listener))
+
+(define (tcp-accept-timeout listener sec)
+  (tcp-accept-timeout listener sec))
