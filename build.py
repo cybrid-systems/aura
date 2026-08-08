@@ -1095,6 +1095,18 @@ def cmd_lint():
             "Issue #2799 tweak-literal audit consistency linter failed — run python3 scripts/coverage/checks/check_tweak_literal_audit_consistency_2799.py"
         )
         return r
+    # Issue #2800: replace-pattern multi-match StableNodeRef two-phase + stale metric.
+    # ac2800 in test_replace_pattern_multi_match_nodeid_stability.
+    rpmn_script = COVERAGE_CHECKS / "check_replace_pattern_multi_match_nodeid_stability_2800.py"
+    if not rpmn_script.exists():
+        fail(f"missing {rpmn_script}")
+        return 1
+    r = run([sys.executable, str(rpmn_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2800 replace-pattern multi-match NodeId stability linter failed — run python3 scripts/coverage/checks/check_replace_pattern_multi_match_nodeid_stability_2800.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

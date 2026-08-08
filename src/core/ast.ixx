@@ -2241,6 +2241,11 @@ public:
     // (stale capture after parse_to_flat / free-list reuse). Always 0 when
     // old_value is captured post-resolve and stays live.
     mutable std::atomic<std::uint64_t> rebind_rollback_stale_nodeid_prevented_total_{0};
+    // Issue #2800: replace-pattern multi-match skipped a StableNodeRef that
+    // failed is_valid_in or reverse parent-edge (raw NodeId / parent slot
+    // would have been stale after a prior iteration's parse_to_flat).
+    // Healthy multi-match under atomic-batch stays 0 when topology holds.
+    mutable std::atomic<std::uint64_t> replace_pattern_stale_nodeid_prevented_total_{0};
     // Issue #1355: render-hotpath lightweight checkpoints (field-only side log).
     mutable std::atomic<std::uint64_t> lightweight_total_{0};
     mutable std::atomic<std::uint64_t> lightweight_commit_total_{0};
@@ -8459,6 +8464,13 @@ public:
     }
     void note_rebind_rollback_stale_nodeid_prevented() noexcept {
         rebind_rollback_stale_nodeid_prevented_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2800: replace-pattern multi-match stale NodeId / parent edge blocked.
+    [[nodiscard]] std::uint64_t replace_pattern_stale_nodeid_prevented_total() const noexcept {
+        return replace_pattern_stale_nodeid_prevented_total_.load(std::memory_order_relaxed);
+    }
+    void note_replace_pattern_stale_nodeid_prevented() noexcept {
+        replace_pattern_stale_nodeid_prevented_total_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
         return mutation_log_compact_ops_.load(std::memory_order_relaxed);

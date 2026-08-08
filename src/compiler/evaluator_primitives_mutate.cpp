@@ -3860,8 +3860,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // :strict-arity #t for pre-#1374 single-subtree wildcards.
         // Replacement still substitutes one `...` placeholder per
         // capture in order (excess Kleene captures ignored).
-        // Issue #270: capture StableNodeRef; apply validates before
-        // set_child inside an atomic batch.
+        // Issue #270 / #2800: capture StableNodeRef in phase 1; apply
+        // validates is_valid_in + reverse parent edge before set_child
+        // inside an atomic batch (same two-phase contract as lockless
+        // eval_flat_apply_mutate_replace_pattern — multi-match must not
+        // rely on raw NodeId across parse_to_flat iterations).
         struct PatternMatch {
             StableNodeRef match_ref;
             std::vector<StableNodeRef> capture_refs;
@@ -3939,8 +3942,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         int replaced_count = 0;
         flat.begin_atomic_batch();
         for (auto& match : matches) {
-            if (!stable_match_still_attached(flat, match.match_ref))
+            // Issue #2800: stale StableNodeRef or detached parent edge —
+            // skip set_child; bump prevent metric (parity with lockless).
+            if (!stable_match_still_attached(flat, match.match_ref)) {
+                flat.note_replace_pattern_stale_nodeid_prevented();
                 continue;
+            }
             // Issue #482: in strict mode, capture count must equal
             // the number of `...` wildcards in the source pattern
             // (each consumes exactly 1 child). In Kleene mode the
