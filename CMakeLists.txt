@@ -1876,6 +1876,9 @@ aura_issue_test_link_light(test_qq_unwrap_targeted_restamp)
 # Issue #2810: clone_macro_body provenance repin dual-writes per-CompilerMetrics.
 aura_add_issue_test(test_clone_provenance_per_evaluator)
 aura_issue_test_link_light(test_clone_provenance_per_evaluator)
+# Issue #2811: rename_binding_pre ceiling deny must not advance hyg_ctr (serial drift).
+aura_add_issue_test(test_gensym_ceiling_serial_drift)
+aura_issue_test_link_light(test_gensym_ceiling_serial_drift)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
