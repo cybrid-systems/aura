@@ -1852,6 +1852,9 @@ aura_issue_test_link_light(test_move_node_hygiene)
 # Issue #2802: replace-pattern local ASTArena isolates pattern from temp_arena_.
 aura_add_issue_test(test_atomic_batch_replace_pattern_sibling)
 aura_issue_test_link_light(test_atomic_batch_replace_pattern_sibling)
+# Issue #2803: move-node reattaches on insert failure (no NULL_NODE dangling hole).
+aura_add_issue_test(test_move_node_partial_failure_no_dangling)
+aura_issue_test_link_light(test_move_node_partial_failure_no_dangling)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
