@@ -1167,6 +1167,18 @@ def cmd_lint():
             "Issue #2805 dotted-rest builtin rename linter failed — run python3 scripts/coverage/checks/check_dotted_rest_builtin_rename_2805.py"
         )
         return r
+    # Issue #2806: clone_macro_body recursion depth is explicit (concurrent-safe).
+    # ac2806 in test_concurrent_clone_hygiene_depth.
+    ccd_script = COVERAGE_CHECKS / "check_concurrent_clone_hygiene_depth_2806.py"
+    if not ccd_script.exists():
+        fail(f"missing {ccd_script}")
+        return 1
+    r = run([sys.executable, str(ccd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2806 concurrent clone hygiene depth linter failed — run python3 scripts/coverage/checks/check_concurrent_clone_hygiene_depth_2806.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

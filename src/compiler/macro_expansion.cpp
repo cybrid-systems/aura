@@ -175,15 +175,14 @@ namespace detail {
 // pathological or adversarial inputs trigger the
 // graceful-degradation path.
 
-// Thread-local depth counter for clone_macro_body recursion.
-// Each top-level call starts fresh; the recursive calls bump
-// the counter. When the counter reaches MAX_HYGIENE_DEPTH, the
-// caller logs a warning + returns NULL_NODE (graceful
-// degradation — the caller treats NULL as "use original name"
-// and falls back to unhygienic behavior). thread_local is safe
-// because clone_macro_body is re-entrant only via the caller's
-// own recursion chain (no concurrent re-entry from other
-// fibers / threads on the same Evaluator).
+// Issue #2806: recursion depth is an explicit parameter on
+// clone_macro_body_at_depth (not TLS / not process-global). TLS
+// previously broke under concurrent top-level clones on different
+// OS threads only if it were file-static; fiber multiplexing on one
+// OS thread can still corrupt a TLS depth counter across yields.
+// Depth-as-parameter is correct for both threads and fibers.
+// Residual TLS mirror kept only for non-clone diagnostics that still
+// observe "last known depth on this OS thread" (not authority).
 thread_local int s_hygiene_depth = 0;
 
 // Issue #2023: MacroSelfEvo policy depth for this expand (set by
@@ -357,6 +356,10 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
 // Issue #1245 Phase 1: concurrent hygiene / dirty observability.
 std::atomic<std::uint64_t> g_macro_clone_concurrent_fiber_total{0};
 std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total{0};
+// Issue #2806: top-level clone_macro_body entered while another top-level
+// clone is already in-flight (g_macro_clone_in_flight was already > 0).
+// Counts concurrent top-level depth=0 entries (threads/fibers).
+std::atomic<std::uint64_t> g_clone_macro_body_concurrent_top_level_total{0};
 // Issue #2021: how many top-level clone_macro_body calls are live
 // across threads, and the high-water mark (peak concurrent).
 std::atomic<std::uint64_t> g_macro_clone_in_flight{0};
@@ -689,6 +692,14 @@ extern "C" std::uint64_t aura_dotted_rest_builtin_rename_prevented_total_v_read(
 extern "C" void aura_test_reset_dotted_rest_builtin_rename_prevented_total_for_test(void) noexcept {
     g_dotted_rest_builtin_rename_prevented_total.store(0, std::memory_order_relaxed);
 }
+// Issue #2806: concurrent top-level clone observability.
+extern "C" std::uint64_t aura_clone_macro_body_concurrent_top_level_total_v_read(void) noexcept {
+    return g_clone_macro_body_concurrent_top_level_total.load(std::memory_order_relaxed);
+}
+extern "C" void
+aura_test_reset_clone_macro_body_concurrent_top_level_total_for_test(void) noexcept {
+    g_clone_macro_body_concurrent_top_level_total.store(0, std::memory_order_relaxed);
+}
 
 // Issue #2241: check whether a fiber is allowed to expand given its
 // current accumulated violation count and the configured per-fiber
@@ -946,6 +957,17 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
     }
 }
 
+// Issue #2806: internal recursive entry with explicit depth (not TLS).
+// Public clone_macro_body(...) is a depth=0 wrapper.
+static aura::ast::NodeId clone_macro_body_at_depth(
+    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
+    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>* subst,
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>* name_map,
+    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth);
+
 aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
     aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
@@ -954,14 +976,31 @@ aura::ast::NodeId clone_macro_body(
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
     aura::ast::SyntaxMarker cloned_marker) {
+    // Issue #2806: public API is always top-level depth=0.
+    return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
+                                     name_map, cloned_marker, /*hygiene_depth=*/0);
+}
+
+static aura::ast::NodeId clone_macro_body_at_depth(
+    aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
+    aura::ast::StringPool& source_pool, aura::ast::NodeId body_id,
+    const std::unordered_map<std::string, aura::ast::NodeId, aura::core::TransparentStringHash,
+                             std::equal_to<>>* subst,
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                       std::equal_to<>>* name_map,
+    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth) {
     using namespace aura::ast;
+    // Issue #2806: residual TLS mirror for diagnostics only (not authority).
+    s_hygiene_depth = hygiene_depth;
     // Issue #2171: capture cross-flat status at top-level entry so the
     // success-path exit can call ensure_cross_flat_expand_consistency()
     // exactly once per top-level clone (recursive calls walk the same
     // target/source so all recursions share the cross_flat status; we
     // only need to restamp + counter-bump once for the whole subtree).
+    // Issue #2806: use explicit hygiene_depth (not TLS) so concurrent
+    // top-level clones never mis-detect cross_flat_top.
     const bool cross_flat_top =
-        (s_hygiene_depth == 0) && ((&target != &source) || (&target_pool != &source_pool));
+        (hygiene_depth == 0) && ((&target != &source) || (&target_pool != &source_pool));
     // Issue #1652: per-call success-path observability bump (fired once per
     // clone_macro_body invocation that survives the early-return hygiene
     // checks). The per-node count (clone_macro_introduced_nodes_created) is
@@ -977,14 +1016,21 @@ aura::ast::NodeId clone_macro_body(
         // enclosing function parameters (C++ local-class rule).
         const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                                  std::equal_to<>>* name_map_ptr = nullptr;
-        explicit ConcurrentCloneGuard(
+        ConcurrentCloneGuard(
             const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
-                                     std::equal_to<>>* nm) noexcept
+                                     std::equal_to<>>* nm,
+            int depth) noexcept
             : name_map_ptr(nm) {
-            if (s_hygiene_depth != 0)
+            // Issue #2806: arm only for explicit top-level depth.
+            if (depth != 0)
                 return;
             armed = true;
-            const auto n = g_macro_clone_in_flight.fetch_add(1, std::memory_order_relaxed) + 1;
+            const auto prev = g_macro_clone_in_flight.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2806: another top-level clone already in flight.
+            if (prev > 0)
+                g_clone_macro_body_concurrent_top_level_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            const auto n = prev + 1;
             auto peak = g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
             while (n > peak && !g_macro_clone_concurrent_peak.compare_exchange_weak(
                                    peak, n, std::memory_order_relaxed)) {
@@ -996,7 +1042,7 @@ aura::ast::NodeId clone_macro_body(
             // calls on different fibers get independent snapshots (AC1).
             captured_fiber_id = aura_fiber_current_id();
             if (captured_fiber_id != 0)
-                bump_fiber_hygiene_on_enter(captured_fiber_id, s_hygiene_depth);
+                bump_fiber_hygiene_on_enter(captured_fiber_id, depth);
         }
         ~ConcurrentCloneGuard() noexcept {
             if (armed) {
@@ -1013,7 +1059,7 @@ aura::ast::NodeId clone_macro_body(
         }
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
         ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
-    } concurrent_guard{name_map};
+    } concurrent_guard{name_map, hygiene_depth};
     // Issue #2023: top-level clone entry also consults MacroSelfEvo so
     // direct clone_macro_body (without macro_expand_all) cannot bypass
     // the sandbox. Nested recursion skips the check.
@@ -1021,8 +1067,8 @@ aura::ast::NodeId clone_macro_body(
         bool armed = false;
         int prev_depth = MAX_HYGIENE_DEPTH;
         bool prev_rest = true;
-        TopLevelMacroCapGuard() noexcept {
-            if (s_hygiene_depth != 0)
+        explicit TopLevelMacroCapGuard(int depth) noexcept {
+            if (depth != 0)
                 return;
             using aura::core::capability::check_macro_self_evo;
             using aura::core::capability::g_capability_registry;
@@ -1096,7 +1142,7 @@ aura::ast::NodeId clone_macro_body(
         TopLevelMacroCapGuard(const TopLevelMacroCapGuard&) = delete;
         TopLevelMacroCapGuard& operator=(const TopLevelMacroCapGuard&) = delete;
         [[nodiscard]] bool denied() const noexcept { return s_effective_max_depth < 0; }
-    } top_cap_guard;
+    } top_cap_guard{hygiene_depth};
     if (top_cap_guard.denied()) {
         if (detail::macro_self_evo_verbose()) {
             std::fprintf(stderr,
@@ -1106,24 +1152,12 @@ aura::ast::NodeId clone_macro_body(
         s_effective_max_depth = MAX_HYGIENE_DEPTH; // restore after deny sentinel
         return NULL_NODE;
     }
-    // Issue #365: depth guard. The public API starts at
-    // depth=0 (s_hygiene_depth is bumped on recursion inside
-    // the function body below). When the depth exceeds
-    // MAX_HYGIENE_DEPTH, we degrade gracefully by returning
-    // NULL_NODE — the caller treats NULL as "no substitution"
-    // and proceeds with the unhygienic fallback (original
-    // name, no gensym). The warning is emitted ONCE per
-    // top-level call (not per recursion level) to avoid
-    // log spam.
-    //
-    // On top-level entry (s_hygiene_depth == 0), reset the
-    // once-per-call warning flag so the next top-level call
-    // gets a fresh warning budget. This is needed because
-    // s_hygiene_depth is thread_local — a previous failed
-    // call (or one that aborted via exception) might leave
-    // the counter > 0, so we always reset on entry.
+    // Issue #365 / #2806: depth guard uses explicit hygiene_depth
+    // (public API starts at 0; recursion passes depth+1). When depth
+    // exceeds MAX_HYGIENE_DEPTH, degrade gracefully with NULL_NODE.
+    // Warning once per top-level call (hygiene_depth==0 resets flag).
     static thread_local bool s_warned_this_call = false;
-    if (s_hygiene_depth == 0) {
+    if (hygiene_depth == 0) {
         s_warned_this_call = false;
     }
     // Issue #2023 / #2101: honour min(hard, runtime cap, TLS/capability).
@@ -1131,7 +1165,7 @@ aura::ast::NodeId clone_macro_body(
         combine_depth_limit((s_effective_max_depth > 0 && s_effective_max_depth < MAX_HYGIENE_DEPTH)
                                 ? s_effective_max_depth
                                 : 0);
-    if (s_hygiene_depth >= depth_limit) {
+    if (hygiene_depth >= depth_limit) {
         if (!s_warned_this_call) {
             s_warned_this_call = true;
             // Issue #1247: include macro-origin provenance in the diagnostic
@@ -1149,13 +1183,13 @@ aura::ast::NodeId clone_macro_body(
                                      ? "MacroIntroduced"
                                      : "User";
             std::fprintf(stderr,
-                         "[#365/#1247/#2023/#2101 warning] clone_macro_body exceeded "
+                         "[#365/#1247/#2023/#2101/#2806 warning] clone_macro_body exceeded "
                          "depth_limit=%d (hard MAX_HYGIENE_DEPTH=%d runtime_cap=%d); "
                          "marker=%s depth=%d "
                          "[MacroIntroduced provenance path]; falling back to "
                          "unhygienic substitution (original name).\n",
                          depth_limit, MAX_HYGIENE_DEPTH, runtime_hygiene_depth_cap(), origin,
-                         s_hygiene_depth);
+                         hygiene_depth);
         }
         // Issue #2243: if force_hygienic is set, deny instead of silently
         // falling back to the unhygienic (original-name) substitution path on
@@ -1172,7 +1206,7 @@ aura::ast::NodeId clone_macro_body(
     }
     // Issue #1248: hygiene provenance tracer — track max depth + expansions.
     {
-        auto cur = static_cast<std::uint64_t>(s_hygiene_depth);
+        auto cur = static_cast<std::uint64_t>(hygiene_depth);
         auto prev = g_hygiene_tracer_depth_max.load(std::memory_order_relaxed);
         while (cur > prev && !g_hygiene_tracer_depth_max.compare_exchange_weak(
                                  prev, cur, std::memory_order_relaxed)) {
@@ -1459,15 +1493,11 @@ aura::ast::NodeId clone_macro_body(
         source_children.assign(fresh.children.begin(), fresh.children.end());
     }
     for (auto cid : source_children) {
-        // Issue #365: bump the depth counter on recursive calls
-        // so we can detect pathologically deep nesting. The
-        // counter is decremented after the recursive call returns
-        // (RAII pattern via ++/-- in the for-loop body) so each
-        // sibling sees the same depth level.
-        ++s_hygiene_depth;
-        child_ids.push_back(clone_macro_body(target, target_pool, source, source_pool, cid, subst,
-                                             name_map, cloned_marker));
-        --s_hygiene_depth;
+        // Issue #365 / #2806: pass depth+1 into the recursive frame
+        // (explicit parameter; siblings share the same depth).
+        child_ids.push_back(clone_macro_body_at_depth(target, target_pool, source, source_pool, cid,
+                                                      subst, name_map, cloned_marker,
+                                                      hygiene_depth + 1));
     }
 
     // Clone params (for Lambda nodes) — with hygienic renaming.
