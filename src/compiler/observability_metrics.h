@@ -288,6 +288,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> post_mutate_incremental_defines_total{0};
     std::atomic<std::uint64_t> post_mutate_incremental_latency_us_total{0};
     std::atomic<std::uint64_t> post_mutate_incremental_latency_samples{0};
+    // Issue #2812: post-Guard BFS invalidate_function for mutated defines
+    // (closures capturing mutated defines). Soft cascade under Guard enqueues;
+    // drain after workspace unlock runs hard BFS.
+    //   - cascade_bfs_invalidate_pending_total: names enqueued
+    //   - cascade_bfs_invalidate_total: names drained via invalidate_function
+    //   - cascade_bfs_invalidate_cleared_total: names dropped on rollback
+    std::atomic<std::uint64_t> cascade_bfs_invalidate_pending_total{0};
+    std::atomic<std::uint64_t> cascade_bfs_invalidate_total{0};
+    std::atomic<std::uint64_t> cascade_bfs_invalidate_cleared_total{0};
     // Issue #2762: post-mutate incremental macro re-expand under
     // MutationBoundaryGuard cascade (#165/#2096 residual).
     //   - post_mutate_macro_reexpand_total: call sites re-expanded

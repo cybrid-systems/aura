@@ -1239,6 +1239,18 @@ def cmd_lint():
             "Issue #2811 gensym ceiling serial drift linter failed — run python3 scripts/coverage/checks/check_gensym_ceiling_serial_drift_2811.py"
         )
         return r
+    # Issue #2812: post-mutate cascade BFS invalidate after Guard unlock.
+    # ac2812 in test_cascade_bfs_invalidate_after_guard.
+    cbi_script = COVERAGE_CHECKS / "check_cascade_bfs_invalidate_after_guard_2812.py"
+    if not cbi_script.exists():
+        fail(f"missing {cbi_script}")
+        return 1
+    r = run([sys.executable, str(cbi_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2812 cascade BFS invalidate linter failed — run python3 scripts/coverage/checks/check_cascade_bfs_invalidate_after_guard_2812.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

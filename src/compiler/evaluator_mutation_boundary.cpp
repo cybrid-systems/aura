@@ -2393,6 +2393,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             lock_.unlock();
         }
         aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+        // Issue #2812: post-Guard BFS invalidate_function drain.
+        // Soft cascade under Guard enqueued defines that need precise
+        // invalidation (lambda/closure bodies + dep_graph dependents).
+        // invalidate_function takes mutate_mtx_ — safe only after
+        // workspace_mtx_ release above. Success → drain (closures
+        // capturing mutated defines get IR/JIT BFS); failure → clear
+        // (rollback already restored AST; do not hard-invalidate).
+        if (success)
+            ev_->drain_cascade_bfs_invalidate();
+        else
+            ev_->clear_cascade_bfs_invalidate();
         ev_->outermost_mutation_success_flag_ = nullptr;
         // Issue #2347: clear TLS Guard-window reject count so multi-round
         // mutates do not accumulate a stale threshold across outermost
