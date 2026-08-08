@@ -124,6 +124,8 @@ export extern std::atomic<std::uint64_t> g_macro_self_evo_force_hygienic_denied_
 export extern std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total;
 // Issue #2804: clone-walk rename_binding ceiling denials (vs pre-scan).
 export extern std::atomic<std::uint64_t> g_clone_walk_gensym_ceiling_exceeded_total;
+// Issue #2805: dotted-rest fallback refused to rename a hygiene_builtin.
+export extern std::atomic<std::uint64_t> g_dotted_rest_builtin_rename_prevented_total;
 
 export struct MacroExpansionDef {
     std::vector<std::string> params;
