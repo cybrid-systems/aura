@@ -980,6 +980,120 @@ static void ac2754_6_source_and_linter() {
           "AC6: no docs/design/2754-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2757 AC1: zero keys + proven mask-AND empty intersection →
+// concurrent admit (mask-disjoint counter). Key-disjoint + equal-key
+// cone path preserved (#2724/#2754).
+static void ac2757_1_zero_key_mask_disjoint_admit() {
+    std::println("\n--- #2757 AC1: zero-key + mask-AND concurrent admit ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mhb.find("regions_mask_disjoint") != std::string::npos,
+          "AC1: regions_mask_disjoint helper declared");
+    CHECK(mhb.find("g_mutation_region_mask_disjoint_admit_total{0}") != std::string::npos,
+          "AC1: mask-disjoint-admit counter initialized");
+    CHECK(mhb.find("kMutationRegionMaskDisjointIssue = 2757") != std::string::npos,
+          "AC1: issue stamp = 2757");
+    // Quiet path: mask==0 → equality only (no mask-AND work).
+    CHECK(mhb.find("if (mask_a == 0 || mask_b == 0)") != std::string::npos,
+          "AC1: quiet path when either mask is 0");
+    // Enter admit check on key OR mask (zero-key + proven mask eligible).
+    CHECK(emb.find("region_or_mask") != std::string::npos,
+          "AC1: emb enters check when key or mask present");
+    CHECK(emb.find("regions_mask_disjoint") != std::string::npos,
+          "AC1: emb calls regions_mask_disjoint");
+    CHECK(emb.find("g_mutation_region_mask_disjoint_admit_total.fetch_add(1,") != std::string::npos,
+          "AC1: mask-disjoint path bumps counter");
+    // Key-disjoint fast path still first in 4-arg regions_disjoint.
+    CHECK(mhb.find("a != 0 && b != 0 && a != b") != std::string::npos,
+          "AC1: key-disjoint fast path preserved");
+}
+
+// ── Issue #2757 AC2: overlapping masks still reject region-overlap;
+// densify isolation preserved.
+static void ac2757_2_overlap_and_densify() {
+    std::println("\n--- #2757 AC2: overlap reject + densify isolation ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("AdmissionRejected: region-overlap") != std::string::npos,
+          "AC2: structured region-overlap reject preserved");
+    CHECK(emb.find("g_mutation_region_overlap_reject_total.fetch_add(1,") != std::string::npos,
+          "AC2: overlap-reject counter still bumped");
+    CHECK(emb.find("region_shard_") != std::string::npos, "AC2: region_shard_ isolation");
+    CHECK(emb.find("atomic_batch_active") != std::string::npos,
+          "AC2: atomic_batch GlobalExclusive fallback preserved");
+}
+
+// ── Issue #2757 AC3: Soft metric-only; AC4 quiet path.
+static void ac2757_3_soft_and_quiet_path() {
+    std::println("\n--- #2757 AC3/AC4: Soft metric-only + quiet path ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(emb.find("metric-only") != std::string::npos, "AC3: Soft path metric-only");
+    CHECK(emb.find("g_last_admitted_cone_mask_soft") != std::string::npos,
+          "AC3: soft path tracks cone mask");
+    // Quiet path: pure zero-key+zero-mask skips the concurrent-admit block.
+    CHECK(emb.find("region_or_mask") != std::string::npos,
+          "AC4: region_or_mask gate (quiet zero/zero skips)");
+    CHECK(mhb.find("Quiet path") != std::string::npos ||
+              mhb.find("quiet path") != std::string::npos ||
+              mhb.find("Zero extra work") != std::string::npos ||
+              mhb.find("zero extra work") != std::string::npos,
+          "AC4: quiet path documented in regions_disjoint");
+}
+
+// ── Issue #2757 AC5: additive observability; all #2724/#2754 preserved.
+static void ac2757_5_additive_observability() {
+    std::println("\n--- #2757 AC5: additive observability ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(mhb.find("g_mutation_region_mask_disjoint_admit_total{0}") != std::string::npos,
+          "AC5: mask-disjoint-admit-total initialized");
+    CHECK(mhb.find("g_mutation_region_mask_disjoint_wired{1}") != std::string::npos,
+          "AC5: mask-disjoint-wired sentinel");
+    CHECK(q.find("mutation-region-mask-disjoint-admit-total") != std::string::npos,
+          "AC5: query key mutation-region-mask-disjoint-admit-total");
+    CHECK(q.find("mutation-region-mask-disjoint-wired") != std::string::npos,
+          "AC5: query key mutation-region-mask-disjoint-wired");
+    CHECK(q.find("schema-2757") != std::string::npos, "AC5: schema-2757");
+    CHECK(q.find("issue-2757") != std::string::npos, "AC5: issue-2757");
+    // Prior surfaces preserved.
+    CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
+          "AC5: #2724 concurrent-admit preserved");
+    CHECK(q.find("mutation-region-concurrent-cone-admit-total") != std::string::npos,
+          "AC5: #2754 cone-admit preserved");
+    CHECK(q.find("schema-2724") != std::string::npos, "AC5: schema-2724 preserved");
+    CHECK(q.find("schema-2754") != std::string::npos, "AC5: schema-2754 preserved");
+}
+
+// ── Issue #2757 AC6: source-cite + linter + no docs/design/* + #81967.
+static void ac2757_6_source_and_linter() {
+    std::println("\n--- #2757 AC6: source-cite + linter ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_region_mask_disjoint_admit_2757.py");
+    CHECK(mhb.find("Issue #2757") != std::string::npos || mhb.find("#2757") != std::string::npos,
+          "AC6: mhb cites #2757");
+    CHECK(emb.find("#2757") != std::string::npos, "AC6: emb cites #2757");
+    CHECK(q.find("Issue #2757") != std::string::npos, "AC6: query cites #2757");
+    CHECK(t.find("ac2757_1_zero_key_mask_disjoint_admit") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2757_2_overlap_and_densify") != std::string::npos, "AC6: AC2 test present");
+    CHECK(t.find("ac2757_3_soft_and_quiet_path") != std::string::npos, "AC6: AC3/AC4 test present");
+    CHECK(t.find("ac2757_5_additive_observability") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2757_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(t.find("ac2754_1_cone_disjoint_concurrent_admit") != std::string::npos,
+          "AC6: #2754 tests preserved");
+    CHECK(read_file("tests/serve/test_issue_2757.cpp").empty(),
+          "AC6: no tests/serve/test_issue_2757.cpp per #81967");
+    CHECK(build.find("check_region_mask_disjoint_admit_2757") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty(), "AC6: linter present");
+    CHECK(read_file("docs/design/2757-region-mask-disjoint.md").empty(),
+          "AC6: no docs/design/2757-* per #1655");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -1029,8 +1143,16 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2754_4_densify_under_concurrent_holds();
     ac2754_5_additive_observability();
     ac2754_6_source_and_linter();
-    std::println("\n=== #2551 + #2701 + #2720 + #2724 + #2726 + #2754: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== Issue #2757: region mask-AND disjoint (zero keys + quiet path, #2724 residual) ===");
+    ac2757_1_zero_key_mask_disjoint_admit();
+    ac2757_2_overlap_and_densify();
+    ac2757_3_soft_and_quiet_path();
+    ac2757_5_additive_observability();
+    ac2757_6_source_and_linter();
+    std::println(
+        "\n=== #2551 + #2701 + #2720 + #2724 + #2726 + #2754 + #2757: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

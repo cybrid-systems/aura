@@ -564,6 +564,21 @@ def cmd_lint():
             "Issue #2754 region cone-disjoint admit linter failed — run python3 scripts/coverage/checks/check_region_cone_disjoint_admit_2754.py"
         )
         return r
+    # Issue #2757: region concurrent mask-AND disjointness (#2724 residual
+    # refine — zero keys + quiet path). Extends #2754 equal-key cone path.
+    # Wires check_region_mask_disjoint_admit_2757.py so regions_mask_disjoint
+    # + mask-disjoint-admit counter + region_or_mask gate + additive query
+    # keys + test extension stay enforced.
+    rmda_script = COVERAGE_CHECKS / "check_region_mask_disjoint_admit_2757.py"
+    if not rmda_script.exists():
+        fail(f"missing {rmda_script}")
+        return 1
+    r = run([sys.executable, str(rmda_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2757 region mask-disjoint admit linter failed — run python3 scripts/coverage/checks/check_region_mask_disjoint_admit_2757.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

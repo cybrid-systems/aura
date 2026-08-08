@@ -6673,6 +6673,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                           mutation_region_cone_disjoint_wired_v_read()));
                             insert_kv("schema-2754", 2754);
                             insert_kv("issue-2754", 2754);
+                            // Issue #2757: mask-AND disjoint admit (zero keys +
+                            // equal keys). Superset of #2754 cone path; quiet
+                            // path (no masks) never bumps. Additive — all
+                            // #2724/#2754 surfaces above preserved.
+                            insert_kv("mutation-region-mask-disjoint-admit-total",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_mask_disjoint_admit_total_v_read()));
+                            insert_kv("mutation-region-mask-disjoint-wired",
+                                      static_cast<std::int64_t>(
+                                          mutation_region_mask_disjoint_wired_v_read()));
+                            insert_kv("schema-2757", 2757);
+                            insert_kv("issue-2757", 2757);
                             // Issue #2726: P0 cross-fiber hold-budget
                             // force-degrade real cancel (per-fiber
                             // pending-cancel map polled at safepoints) —
