@@ -50,6 +50,10 @@ extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_t
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
 // Issue #2518: resume safety ticket mismatch total (sample seq ≠ current).
 extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total();
+// Issue #2677: LayoutStamp resume mismatch total (process-wide Fiber static).
+extern "C" std::uint64_t aura_fiber_static_layout_stamp_resume_mismatch_total();
+// Issue #2779: sum of the three #2677 resume fence counters (one alert).
+extern "C" std::uint64_t aura_fiber_static_resume_fence_fail_total();
 
 // Issue #451: C-linkage shim for Fiber's static GC-pause
 // counter (defined in fiber.cpp / fiber_bridge.cpp).
@@ -416,6 +420,17 @@ public:
     }
     [[nodiscard]] static std::uint64_t layout_stamp_resume_mismatch_total() noexcept {
         return layout_stamp_resume_mismatch_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2779: aggregate of the three #2677 resume fence counters
+    // (steal_snapshot_hard_fail_total + steal_safety_ticket_mismatch_total
+    // + layout_stamp_resume_mismatch_total). Three relaxed loads —
+    // near-zero cost. Production alerts use this single sum; the same
+    // operator playbook applies regardless of which fence tripped
+    // (investigate recent steal + force recompile). Per-fence keys
+    // remain for breakdown.
+    [[nodiscard]] static std::uint64_t resume_fence_fail_total() noexcept {
+        return steal_snapshot_hard_fail_total() + steal_safety_ticket_mismatch_total() +
+               layout_stamp_resume_mismatch_total();
     }
 
     // Issue #2118: set when orch agent body soft-registers mutation depth
@@ -1381,6 +1396,8 @@ inline std::atomic<std::uint64_t> g_resume_hard_fail_total{0};
 inline std::atomic<std::uint64_t> g_resume_soft_observe_total{0};
 inline std::atomic<std::uint32_t> g_resume_hard_fail_wired{1};
 inline constexpr int kResumeHardFailIssue = 2702;
+// Issue #2779: aggregate resume fence fail (#2677 triple fence).
+inline constexpr int kResumeFenceFailAggregateIssue = 2779;
 
 [[nodiscard]] inline std::uint64_t resume_hard_fail_total_v_read() noexcept {
     return g_resume_hard_fail_total.load(std::memory_order_relaxed);

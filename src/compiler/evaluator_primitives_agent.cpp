@@ -4152,6 +4152,24 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2778", aura::orch::kMailboxBpScopeMapLifecycleIssue);
             insert_kv("issue-2778", aura::orch::kMailboxBpScopeMapLifecycleIssue);
             insert_kv("scope-bp-map-lifecycle-wired", 1);
+            // Issue #2779: resume fence fail aggregate (#2677 triple fence)
+            // facade on orch-module-stats so agents query one surface for
+            // fail-closed resume signals. Source of truth is Fiber statics
+            // (live read; no OrchModuleStats mirror atomics).
+            insert_kv("resume-fence-fail-total",
+                      static_cast<std::int64_t>(aura::serve::Fiber::resume_fence_fail_total()));
+            insert_kv(
+                "steal-snapshot-hard-fail-total",
+                static_cast<std::int64_t>(aura::serve::Fiber::steal_snapshot_hard_fail_total()));
+            insert_kv("steal-safety-ticket-mismatch-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::steal_safety_ticket_mismatch_total()));
+            insert_kv("layout-stamp-resume-mismatch-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::layout_stamp_resume_mismatch_total()));
+            insert_kv("resume-fence-fail-wired", 1);
+            insert_kv("schema-2779", aura::serve::kResumeFenceFailAggregateIssue);
+            insert_kv("issue-2779", aura::serve::kResumeFenceFailAggregateIssue);
             // Issue #2228: schema lineage (preserved by #2398).
             insert_kv("schema-2228", aura::orch::kMailboxBpAdmitIssue);
             insert_kv("issue-2228", aura::orch::kMailboxBpAdmitIssue);

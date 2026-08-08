@@ -28,6 +28,7 @@ import aura.compiler.value;
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
 extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total();
 extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
+extern "C" std::uint64_t aura_fiber_static_resume_fence_fail_total();
 
 namespace {
 
@@ -308,6 +309,88 @@ static void ac2702_6_no_docs_design() {
           "AC6: no docs/design/2702-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2779: aggregate resume fence fail total (#2677 residual) ──
+// Three separate atomics (hard-fail / ticket / layout) — one sum for
+// production alerts. Per-fence keys remain for breakdown.
+
+static void ac2779_1_sum_equals_components() {
+    std::println("\n--- #2779 ac2779_1: resume_fence_fail_total == sum of three ---");
+    using aura::serve::Fiber;
+    const auto hard = Fiber::steal_snapshot_hard_fail_total();
+    const auto ticket = Fiber::steal_safety_ticket_mismatch_total();
+    const auto layout = Fiber::layout_stamp_resume_mismatch_total();
+    const auto agg = Fiber::resume_fence_fail_total();
+    CHECK(agg == hard + ticket + layout, "ac2779_1: aggregate equals hard + ticket + layout");
+    CHECK(aura_fiber_static_resume_fence_fail_total() == agg,
+          "ac2779_1: C ABI matches Fiber accessor");
+}
+
+static void ac2779_2_each_fence_bumps_aggregate() {
+    std::println("\n--- #2779 ac2779_2: each fence bump moves aggregate ---");
+    using aura::serve::Fiber;
+    const auto before = Fiber::resume_fence_fail_total();
+
+    Fiber::bump_steal_snapshot_hard_fail();
+    CHECK(Fiber::resume_fence_fail_total() == before + 1,
+          "ac2779_2: hard-fail bump → aggregate +1");
+
+    Fiber::bump_steal_safety_ticket_mismatch();
+    CHECK(Fiber::resume_fence_fail_total() == before + 2, "ac2779_2: ticket bump → aggregate +2");
+
+    Fiber::bump_layout_stamp_resume_mismatch();
+    CHECK(Fiber::resume_fence_fail_total() == before + 3, "ac2779_2: layout bump → aggregate +3");
+
+    // Re-check sum integrity after the three bumps.
+    const auto hard = Fiber::steal_snapshot_hard_fail_total();
+    const auto ticket = Fiber::steal_safety_ticket_mismatch_total();
+    const auto layout = Fiber::layout_stamp_resume_mismatch_total();
+    CHECK(Fiber::resume_fence_fail_total() == hard + ticket + layout,
+          "ac2779_2: post-bump sum still consistent");
+}
+
+static void ac2779_3_query_keys() {
+    std::println("\n--- #2779 ac2779_3: query surface keys ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2779") == 2779, "ac2779_3: schema-2779 on steal-outermost");
+    CHECK(href(cs, "issue-2779") == 2779, "ac2779_3: issue-2779");
+    CHECK(href(cs, "resume-fence-fail-wired") == 1, "ac2779_3: resume-fence-fail-wired");
+    const auto q_agg = href(cs, "resume-fence-fail-total");
+    CHECK(q_agg >= 0, "ac2779_3: resume-fence-fail-total present");
+    // Aggregate should match live Fiber sum (process-wide; other tests
+    // may have bumped components already).
+    const auto live = static_cast<std::int64_t>(aura::serve::Fiber::resume_fence_fail_total());
+    CHECK(q_agg == live, "ac2779_3: query total matches Fiber::resume_fence_fail_total");
+    // Per-fence breakdown keys still present (additive, not replaced).
+    CHECK(href(cs, "steal-snapshot-hard-fail-total") >= 0, "ac2779_3: hard-fail key retained");
+    CHECK(href(cs, "steal-safety-ticket-mismatch-total") >= 0, "ac2779_3: ticket key retained");
+    CHECK(href(cs, "layout-stamp-resume-mismatch-total") >= 0, "ac2779_3: layout key present");
+
+    // orch-module-stats facade mirrors the same aggregate.
+    auto orch = cs.eval(
+        "(hash-ref (engine:metrics \"query:orch-module-stats\") \"resume-fence-fail-total\")");
+    CHECK(orch && is_int(*orch), "ac2779_3: orch-module-stats resume-fence-fail-total");
+    if (orch && is_int(*orch))
+        CHECK(as_int(*orch) == live, "ac2779_3: orch facade matches Fiber sum");
+    auto orch_schema =
+        cs.eval("(hash-ref (engine:metrics \"query:orch-module-stats\") \"schema-2779\")");
+    CHECK(orch_schema && is_int(*orch_schema) && as_int(*orch_schema) == 2779,
+          "ac2779_3: orch-module-stats schema-2779");
+}
+
+static void ac2779_4_source_and_no_design() {
+    std::println("\n--- #2779 ac2779_4: source-cite + no docs/design ---");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    CHECK(fh.find("resume_fence_fail_total") != std::string::npos,
+          "ac2779_4: Fiber::resume_fence_fail_total");
+    CHECK(fh.find("kResumeFenceFailAggregateIssue = 2779") != std::string::npos,
+          "ac2779_4: issue stamp 2779");
+    CHECK(fc.find("aura_fiber_static_resume_fence_fail_total") != std::string::npos,
+          "ac2779_4: C ABI in fiber.cpp");
+    CHECK(read_file("docs/design/2779-resume-fence-fail.md").empty(),
+          "ac2779_4: no docs/design/2779-* per #1655");
+}
+
 } // namespace
 
 int run_test_steal_safety_ticket() {
@@ -325,10 +408,15 @@ int run_test_steal_safety_ticket() {
     ac2702_4_steal_safety_ticket_interaction();
     ac2702_5_query_keys_and_source_cite();
     ac2702_6_no_docs_design();
+    std::println("\n=== Issue #2779: resume fence fail aggregate (#2677 residual) ===");
+    ac2779_1_sum_equals_components();
+    ac2779_2_each_fence_bumps_aggregate();
+    ac2779_3_query_keys();
+    ac2779_4_source_and_no_design();
     // Leave process Soft-clean for subsequent tests in same binary (none).
     ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
     ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
-    std::println("\n=== #2518 + #2702: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2518 + #2702 + #2779: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
