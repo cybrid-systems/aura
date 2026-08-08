@@ -124,6 +124,9 @@ export extern std::atomic<std::uint64_t> g_macro_self_evo_force_hygienic_denied_
 export extern std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total;
 // Issue #2804: clone-walk rename_binding ceiling denials (vs pre-scan).
 export extern std::atomic<std::uint64_t> g_clone_walk_gensym_ceiling_exceeded_total;
+// Issue #2811: rename_binding_pre ceiling denials without hyg_ctr advance
+// (prevented serial drift).
+export extern std::atomic<std::uint64_t> g_gensym_serial_drift_total;
 // Issue #2805: dotted-rest fallback refused to rename a hygiene_builtin.
 export extern std::atomic<std::uint64_t> g_dotted_rest_builtin_rename_prevented_total;
 // Issue #2806: concurrent top-level clone_macro_body entries (depth=0 while

@@ -346,6 +346,10 @@ std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total{0};
 // Issue #2804: clone-walk rename_binding ceiling denials (distinct from
 // pre-scan rename_binding_pre bumps of gensym_map_size_exceeded_total).
 std::atomic<std::uint64_t> g_clone_walk_gensym_ceiling_exceeded_total{0};
+// Issue #2811: rename_binding_pre ceiling denials that correctly leave
+// hyg_ctr unadvanced (pre-#2811: hyg_ctr++ ran before the size check →
+// serial drift + missing name_map entry). Counts prevented-drift events.
+std::atomic<std::uint64_t> g_gensym_serial_drift_total{0};
 // Issue #2805: dotted-rest force-repair fallback refused to map a
 // hygiene_builtins name into name_map (would silently rename builtins).
 std::atomic<std::uint64_t> g_dotted_rest_builtin_rename_prevented_total{0};
@@ -736,6 +740,13 @@ extern "C" void aura_test_set_max_gensym_map_size_for_test(std::uint32_t n) noex
 }
 extern "C" void aura_test_reset_clone_walk_gensym_ceiling_exceeded_total_for_test(void) noexcept {
     g_clone_walk_gensym_ceiling_exceeded_total.store(0, std::memory_order_relaxed);
+}
+// Issue #2811: gensym serial-drift prevented (ceiling deny without hyg_ctr++).
+extern "C" std::uint64_t aura_gensym_serial_drift_total_v_read(void) noexcept {
+    return g_gensym_serial_drift_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_gensym_serial_drift_total_for_test(void) noexcept {
+    g_gensym_serial_drift_total.store(0, std::memory_order_relaxed);
 }
 // Issue #2805: dotted-rest builtin rename prevented metric.
 extern "C" std::uint64_t aura_dotted_rest_builtin_rename_prevented_total_v_read(void) noexcept {
@@ -1395,21 +1406,29 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         auto it = name_map->find(name);
         if (it != name_map->end())
             return target_pool.intern(it->second);
-        auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
         // Issue #2243: gensym-map-size ceiling enforcement. If the granted
         // policy sets a non-zero max_gensym_map_size, deny the expansion here
         // (bump counter + sentinel) instead of letting name_map balloon under
         // adversarial macros. Empty name_map (pre-scan not run yet) is
         // allowed.
         // Issue #2804: use effective_max_gensym_map_size (TLS or test override).
+        // Issue #2811: check ceiling BEFORE consuming a gensym serial.
+        // Pre-#2811 built `fresh` with a post-increment first, so a ceiling
+        // deny still advanced the serial while leaving name_map empty →
+        // serial drift + clone-walk Variable resolve to NULL_NODE for the
+        // unmapped binding.
         const auto gensym_cap = effective_max_gensym_map_size();
         if (gensym_cap > 0 && name_map && name_map->size() >= gensym_cap) {
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            // Serial-safe deny: hyg_ctr untouched → no drift vs name_map.size().
+            g_gensym_serial_drift_total.fetch_add(1, std::memory_order_relaxed);
             bump_fiber_hygiene_on_violation(aura_fiber_current_id());
             return aura::ast::NULL_NODE;
         }
+        // Only consume a serial after the ceiling check passes.
+        auto fresh = std::string("__") + name + "_" + std::to_string(hyg_ctr++);
         (*name_map)[name] = fresh;
         return target_pool.intern(fresh);
     };

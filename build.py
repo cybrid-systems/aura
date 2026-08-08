@@ -1227,6 +1227,18 @@ def cmd_lint():
             "Issue #2810 clone provenance per-evaluator linter failed — run python3 scripts/coverage/checks/check_clone_provenance_per_evaluator_2810.py"
         )
         return r
+    # Issue #2811: rename_binding_pre gensym serial drift (ceiling before hyg_ctr++).
+    # ac2811 in test_gensym_ceiling_serial_drift.
+    gsd_script = COVERAGE_CHECKS / "check_gensym_ceiling_serial_drift_2811.py"
+    if not gsd_script.exists():
+        fail(f"missing {gsd_script}")
+        return 1
+    r = run([sys.executable, str(gsd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2811 gensym ceiling serial drift linter failed — run python3 scripts/coverage/checks/check_gensym_ceiling_serial_drift_2811.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
