@@ -96,6 +96,7 @@ extern "C" std::uint64_t aura_scheduler_init_aura_result_ok_total();
 extern "C" std::uint64_t cross_eval_epoch_bump_total_v_read(void);
 extern "C" void* last_cross_eval_epoch_bump_owner_v_read(void);
 extern "C" std::uint32_t cross_eval_epoch_bump_wired_v_read(void);
+extern "C" std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void);
 // Issue #2712: Soft fuse heal total (defs in aura_jit_bridge.cpp).
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void);
 }
@@ -14860,6 +14861,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(cross_eval_epoch_bump_wired_v_read()))},
                 {"schema-2713", make_int(2713)},
                 {"issue-2713", make_int(2713)},
+                // Issue #2744: multi-eval cascade throttle action (owner-scoped).
+                {"cross-eval-epoch-action-throttled-total",
+                 make_int(
+                     static_cast<std::int64_t>(cross_eval_epoch_action_throttled_total_v_read()))},
+                {"schema-2744", make_int(2744)},
+                {"issue-2744", make_int(2744)},
                 // Issue #2602: synchronous remount walk on reemit success
                 // (named closures with stable_func_id != 0). Distinct
                 // from call-time closure_capture_remount_ok / _fail.
