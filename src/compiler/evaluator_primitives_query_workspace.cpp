@@ -269,9 +269,11 @@ void register_workspace_query_primitives(
     // Issue #2186: parent handle goes through ensure_valid_or_refresh.
     // Issue #2404 soft path: for_each_stable_child captures at live gen
     // (already-valid export); re-export of stored pairs uses query:ensure-ref.
+    // Issue #2759: stamp each child via Evaluator (sole production authority)
+    // before packing id.gen — process-global capture is Soft-only under hard-close.
     (*q_impls)["query:children-stable"] = PrimFn{[ws, mev, resolve_query_node_arg,
-                                                  begin_query_epoch,
-                                                  end_query_epoch](const auto& a) -> EvalValue {
+                                                  begin_query_epoch, end_query_epoch,
+                                                  &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || !ws.workspace_flat)
             return mev("bad-arg", "usage: (query :children-stable node-id|stable-ref)");
@@ -306,6 +308,8 @@ void register_workspace_query_primitives(
         // The list-node cdr is filled in the second loop.
         std::size_t i = 0;
         flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
+            // Issue #2759: sole production isolation stamp before Agent export pack.
+            ev.stamp_stable_ref(ref);
             const auto gen_idx = static_cast<int>(base + 3 * i);
             const auto pair_idx = static_cast<int>(base + 3 * i + 1);
             const auto list_idx = static_cast<int>(base + 3 * i + 2);

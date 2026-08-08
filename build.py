@@ -4709,6 +4709,28 @@ def cmd_hard_capture_tenant_2705_coverage():
     return 0
 
 
+def cmd_evaluator_stamp_sole_authority_2759_coverage():
+    """Issue #2759: Evaluator::stamp_stable_ref sole production StableNodeRef authority.
+
+    Refines #2705 residual: production EDSL/query/mutate returns stamp via
+    Evaluator (layout + stamp_stable_ref); hard-close suppresses non-zero
+    process-global capture writes; refresh remakes via make_safe_ref_layout
+    and preserves tenant_id. Soft / tenant=0 stay permissive. Additive
+    isolation-capture-global-write-suppressed-total + schema-2759.
+    """
+    print(f"{B}=== evaluator stamp sole authority coverage (#2759) ==={N}")
+    script = COVERAGE_CHECKS / "check_evaluator_stamp_sole_authority_2759.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("evaluator stamp sole authority (#2759) coverage contract rows failed")
+        return 1
+    ok("evaluator stamp sole authority (#2759) coverage clean")
+    return 0
+
+
 def cmd_capability_production_default_2688_coverage():
     """Issue #2688: production-default hard_fiber_isolation + grant epoch retain window.
 
@@ -9130,6 +9152,7 @@ def cmd_gate():
         or cmd_shape_storm_isolation_2683_coverage()
         or cmd_evaluator_capture_tenant_2687_coverage()
         or cmd_hard_capture_tenant_2705_coverage()
+        or cmd_evaluator_stamp_sole_authority_2759_coverage()
         or cmd_capability_production_default_2688_coverage()
         or cmd_closure_anon_captured_remount_2691_coverage()
         or cmd_aot_slot_owner_consistency_2692_coverage()
@@ -10144,6 +10167,7 @@ def main():
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,
+        "evaluator-stamp-sole-authority-2759": cmd_evaluator_stamp_sole_authority_2759_coverage,
         "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
         "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,

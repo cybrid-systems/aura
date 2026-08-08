@@ -204,30 +204,25 @@ inline void record_stable_ref_export_stale_reject(std::uint64_t n = 1) noexcept 
 // make_ref family. Written by WorkspaceIsolationPolicy::set_current_tenant
 // (and clear_for_test). Zero = isolation off / unset principal → capture
 // leaves tenant_id 0 (permissive). Hot-path atomic; no mutex.
+//
+// Issue #2687 / #2705 / #2759: production multi-tenant authority is
+// Evaluator::stamp_stable_ref (capability_tenant_id_). The global is a
+// Soft / single-tenant / harness best-effort mirror only. Under hard-close
+// (#2705 + #2759) non-zero writes are suppressed so multi-eval hosts never
+// race a foreign principal into process-global capture.
 inline std::atomic<std::uint64_t>& g_isolation_capture_tenant() noexcept {
     static std::atomic<std::uint64_t> t{0};
     return t;
 }
-inline void set_isolation_capture_tenant(std::uint64_t tid) noexcept {
-    g_isolation_capture_tenant().store(tid, std::memory_order_relaxed);
-}
-[[nodiscard]] inline std::uint64_t isolation_capture_tenant() noexcept {
-    return g_isolation_capture_tenant().load(std::memory_order_relaxed);
-}
 
-// Issue #2687: per-Evaluator capture tenant accounting. The process-global
-// g_isolation_capture_tenant stays as best-effort mirror for non-Evaluator
-// call sites (legacy / single-tenant / test harness), but production
-// multi-tenant path goes through Evaluator::stamp_stable_ref / make_stamped_ref
-// / export_ref which use Evaluator::capability_tenant_id_ directly. The three
-// counters below let Agent dashboards distinguish the paths:
+// Issue #2687: per-Evaluator capture tenant accounting. Counters let Agent
+// dashboards distinguish the paths:
 //   - local:        Evaluator::stamp_stable_ref (per-Evaluator, authority)
 //   - global_fallback: maybe_stamp_stable_ref_isolation_tenant used global
 //                      (Soft / single-tenant / harness only)
 //   - evaluator_miss:   Issue #2705 — maybe_stamp refused under hard-close
-//                      (production multi-tenant / Strict / AURA_HARD_CAPTURE_TENANT);
-//                      also diagnostic when a FlatAST factory should have used
-//                      Evaluator::stamp_stable_ref instead of the global path
+//   - global_write_suppressed: Issue #2759 — set_isolation_capture_tenant
+//                      refused a non-zero write under hard-close
 inline std::atomic<std::uint64_t>& g_isolation_capture_stamp_local_total_atomic() noexcept {
     static std::atomic<std::uint64_t> v{0};
     return v;
@@ -242,12 +237,20 @@ g_isolation_capture_stamp_evaluator_miss_total_atomic() noexcept {
     static std::atomic<std::uint64_t> v{0};
     return v;
 }
+inline std::atomic<std::uint64_t>&
+g_isolation_capture_global_write_suppressed_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
 inline constexpr int kEvaluatorCaptureTenantIssue = 2687;
 // Issue #2705: production hard-close of FlatAST global capture fallback.
 // Armed by apply_production_security_defaults under multi-tenant / Strict
 // (or AURA_HARD_CAPTURE_TENANT=1). Soft / AURA_SANDBOX=off / tenant=0 stay
 // permissive (#2687 AC4 / #2705 AC2).
 inline constexpr int kHardCaptureTenantIssue = 2705;
+// Issue #2759: Evaluator::stamp_stable_ref is sole production StableNodeRef
+// isolation authority (refine #2705 residual).
+inline constexpr int kEvaluatorStampSoleAuthorityIssue = 2759;
 inline std::atomic<bool>& g_hard_capture_tenant_pref() noexcept {
     static std::atomic<bool> v{false};
     return v;
@@ -268,6 +271,20 @@ inline void set_hard_capture_tenant(bool on) noexcept {
             return true;
     }
     return g_hard_capture_tenant_pref().load(std::memory_order_acquire);
+}
+// Issue #2759: under hard-close, refuse non-zero process-global capture
+// writes (multi-eval race). Clear-to-zero always allowed (test reset /
+// isolation off). Soft keeps full write for unit ergonomics.
+inline void set_isolation_capture_tenant(std::uint64_t tid) noexcept {
+    if (tid != 0 && hard_capture_tenant_active()) {
+        g_isolation_capture_global_write_suppressed_total_atomic().fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    g_isolation_capture_tenant().store(tid, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t isolation_capture_tenant() noexcept {
+    return g_isolation_capture_tenant().load(std::memory_order_relaxed);
 }
 
 // Issue #2037: process-wide mutate hotpath hygiene restamp / fail counters
@@ -623,11 +640,13 @@ inline void stamp_stable_ref_fields(StableRefT& ref, std::uint64_t tenant_id,
 // Shares stamp_stable_ref_fields with Evaluator::stamp_stable_ref /
 // pin_node_for_atomic_batch (defense-in-depth on the batch path).
 //
-// Issue #2705: under production multi-tenant / Strict / AURA_HARD_CAPTURE_TENANT
-// the global path is hard-closed — refuse stamp, leave tenant_id unchanged,
-// bump evaluator_miss. Soft / sandbox=off / tenant=0 stay zero-cost permissive
-// (#2687 AC4). Production multi-eval authority is Evaluator::stamp_stable_ref
-// (capability_tenant_id_ per Evaluator).
+// Issue #2705 / #2759: under production multi-tenant / Strict /
+// AURA_HARD_CAPTURE_TENANT the global path is hard-closed — refuse stamp,
+// leave tenant_id unchanged, bump evaluator_miss. Soft / sandbox=off /
+// tenant=0 stay zero-cost permissive (#2687 AC4). Production multi-eval
+// authority is Evaluator::stamp_stable_ref (capability_tenant_id_).
+// Prefer make_ref_layout + Evaluator::stamp_stable_ref for authority paths
+// so hard-close does not false-count evaluator_miss (#2759).
 template <typename StableRefT>
 inline bool maybe_stamp_stable_ref_isolation_tenant(StableRefT& ref,
                                                     std::uint32_t fiber_id = 0) noexcept {

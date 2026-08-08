@@ -7248,48 +7248,43 @@ public:
     // Issue #191: make a StableNodeRef capturing the current
     // generation. Use this in EDSL / query / mutate primitives
     // to safely hold a reference to a node across calls.
-    [[nodiscard]] StableNodeRef make_ref(NodeId id) const noexcept {
-        // Issue #291: also capture mutation_id_at_capture so
-        // downstream callers can answer "which mutations
-        // affected this node since capture" (full lookup is a
-        // follow-up; the field is captured now to make the
-        // serialization format forward-compatible). workspace_id
-        // defaults to 0 (root); callers working across
-        // WorkspaceTree layers can set it explicitly via
-        // make_ref_in_layer(id, workspace_id).
-        // Issue #368: also capture wrap_epoch_ so is_valid()
-        // can detect false positives from a second generation_
-        // wrap returning to the original numeric value.
-        // Issue #392: also capture subtree_gen_at_capture
-        // (the subtree_gen_ counter for the top-level Define
-        // ancestor of `id`) so is_valid_subtree() can skip
-        // invalidating refs in untouched subtrees.
-        //
-        // Backward-compat (Issue #303 Scenario 1): fiber_id and
-        // last_validated_generation both default to 0 here.
-        // last_validated_generation == 0 means "no validation
-        // history" — make_ref() captures don't imply validation.
-        // Callers that want provenance should use make_safe_ref().
-        // Issue #2122: lazy-align node_gen_ after incremental wrap so
+    // Issue #2759: layout-only capture (gen/wrap/cow/mutation/subtree) with
+    // tenant_id left 0. Evaluator::make_stamped_ref / export_ref stamp after;
+    // refresh_if_stale remakes layout then restores preserved tenant.
+    // Does NOT consult process-global isolation capture (no Soft stamp, no
+    // hard-close evaluator_miss bump). Quiet single-tenant: zero extra cost
+    // beyond the field fill already done by make_ref.
+    [[nodiscard]] StableNodeRef make_ref_layout(NodeId id) const noexcept {
+        // Issue #2122 / #2421: lazy-align node_gen_ after incremental wrap so
         // ref.gen == node_gen_[id] == generation_ for live slots.
-        // Issue #2421: acquire load pairs with wrap-path release store.
         if (restamp_lazy_align_enabled_.load(std::memory_order_acquire) && id != NULL_NODE &&
             id < node_gen_.size() && node_gen_[id] != 0 && node_gen_[id] != generation_ &&
             !is_free_slot(id)) {
             const_cast<FlatAST*>(this)->node_gen_[id] = generation_;
             restamp_lazy_align_total_.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #2125: stamp isolation principal when active so all
-        // capture paths (including children_stable) carry tenant provenance.
-        StableNodeRef ref{id,
-                          generation_,
-                          next_mutation_id_,
-                          0,
-                          0,
-                          0,
-                          wrap_epoch_.load(std::memory_order_relaxed),
-                          subtree_generation(id),
-                          workspace_cow_epoch_};
+        return StableNodeRef{id,
+                             generation_,
+                             next_mutation_id_,
+                             0,
+                             0,
+                             0,
+                             wrap_epoch_.load(std::memory_order_relaxed),
+                             subtree_generation(id),
+                             workspace_cow_epoch_};
+    }
+
+    // Issue #191: make a StableNodeRef capturing the current
+    // generation. Use this in EDSL / query / mutate primitives
+    // to safely hold a reference to a node across calls.
+    // Issue #2125 Soft path stamps isolation principal when active;
+    // #2759 production authority is Evaluator::stamp_stable_ref via
+    // make_ref_layout + stamp (no false evaluator_miss under hard-close).
+    [[nodiscard]] StableNodeRef make_ref(NodeId id) const noexcept {
+        // Issue #291/#368/#392: mutation_id / wrap_epoch / subtree_gen
+        // captured in make_ref_layout. workspace_id defaults to 0 (root).
+        // fiber_id + last_validated_generation default 0 (Issue #303).
+        auto ref = make_ref_layout(id);
         ::aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref);
         return ref;
     }
@@ -7304,17 +7299,22 @@ public:
         // Backward-compat: fiber_id and last_validated_generation
         // both default to 0 (no fiber context, no validation
         // history). Same convention as make_ref().
-        // Issue #2125: isolation tenant stamp (shared with make_ref).
-        StableNodeRef ref{id,
-                          generation_,
-                          next_mutation_id_,
-                          workspace_id,
-                          0,
-                          0,
-                          wrap_epoch_.load(std::memory_order_relaxed),
-                          subtree_generation(id),
-                          workspace_cow_epoch_};
+        // Issue #2125 / #2759: Soft global stamp via maybe_stamp; layout
+        // fields from make_ref_layout + workspace_id overlay.
+        auto ref = make_ref_layout(id);
+        ref.workspace_id = workspace_id;
         ::aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref);
+        return ref;
+    }
+
+    // Issue #303 / #2759: layout-only safe capture (workspace + fiber +
+    // last_validated_generation). No isolation stamp — Evaluator stamps.
+    [[nodiscard]] StableNodeRef make_safe_ref_layout(NodeId id, std::uint32_t workspace_id = 0,
+                                                     std::uint32_t fiber_id = 0) const noexcept {
+        auto ref = make_ref_layout(id);
+        ref.workspace_id = workspace_id;
+        ref.fiber_id = fiber_id;
+        ref.last_validated_generation.store(generation_, std::memory_order_relaxed);
         return ref;
     }
 
@@ -7329,15 +7329,9 @@ public:
                                               std::uint32_t fiber_id = 0) const noexcept {
         // Issue #392: capture subtree_gen_at_capture too.
         // Issue #2125: isolation tenant stamp (shared helper with make_ref).
-        StableNodeRef ref{id,
-                          generation_,
-                          next_mutation_id_,
-                          workspace_id,
-                          fiber_id,
-                          generation_,
-                          wrap_epoch_.load(std::memory_order_relaxed),
-                          subtree_generation(id),
-                          workspace_cow_epoch_};
+        // Issue #2759: Soft path only; production uses make_safe_ref_layout
+        // + Evaluator::stamp_stable_ref.
+        auto ref = make_safe_ref_layout(id, workspace_id, fiber_id);
         ::aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref, fiber_id);
         return ref;
     }
@@ -7367,7 +7361,7 @@ public:
     // already knows the generation (e.g. a checkpoint file
     // from a prior session, or a cross-workspace handoff).
     [[nodiscard]] StableNodeRef make_ref_from_gen(NodeId id, std::uint16_t gen) const noexcept {
-        // Issue #2125: isolation tenant stamp (shared with make_ref).
+        // Issue #2125 / #2759: Soft global stamp; layout fields fill first.
         StableNodeRef ref{id,
                           gen,
                           next_mutation_id_,

@@ -129,12 +129,13 @@ struct WorkspaceIsolationPolicy {
             current.name = {};
         }
         isolation_enabled = (id != 0);
-        // Issue #2125 / #2687: hot-path capture principal for FlatAST make_ref
-        // family (best-effort process-global mirror for legacy single-tenant /
-        // Soft). Zero when isolation off so raw make_ref stays unstamped
-        // (AC5 / #2056). Production multi-tenant authority is per-Evaluator
-        // (Evaluator::stamp_stable_ref / capability_tenant_id_ — #2687);
-        // under #2705 hard-close maybe_stamp refuses this global stamp path.
+        // Issue #2125 / #2687 / #2759: hot-path capture principal for FlatAST
+        // make_ref family (best-effort process-global mirror for legacy
+        // single-tenant / Soft). Zero when isolation off so raw make_ref stays
+        // unstamped (AC5 / #2056). Production multi-tenant authority is
+        // per-Evaluator (Evaluator::stamp_stable_ref / capability_tenant_id_).
+        // Under #2705/#2759 hard-close: set_isolation_capture_tenant suppresses
+        // non-zero writes + maybe_stamp refuses residual global stamp.
         ::aura::core::provenance::set_isolation_capture_tenant(id);
     }
 

@@ -224,9 +224,11 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
     }
 
     // Preserve cross-fiber / cross-layer / pin / tenant provenance across
-    // refresh. Issue #2056: tenant_id must survive remake so cross-tenant
-    // isolation still denies after gen restamp (FailOnStale refuses silent
-    // tenant restamp; AutoRefresh only remakes gen/cow/wrap).
+    // refresh. Issue #2056 / #2759: tenant_id must survive remake so
+    // cross-tenant isolation still denies after gen restamp. Remake via
+    // make_safe_ref_layout (no process-global isolation stamp) so production
+    // hard-close never re-stamps from g_isolation_capture_tenant and Soft
+    // global capture cannot overwrite a preserved foreign/local tenant.
     const auto preserved_fiber = fiber_id;
     const auto preserved_ws = workspace_id;
     const auto preserved_pin = boundary_pinned;
@@ -234,7 +236,7 @@ bool FlatAST::StableNodeRef::refresh_if_stale(FlatAST& ast) noexcept {
 
     // Align slot gen with current FlatAST generation before remake.
     ast.restamp_subtree_generation(id);
-    const auto fresh = ast.make_safe_ref(id, preserved_ws, preserved_fiber);
+    const auto fresh = ast.make_safe_ref_layout(id, preserved_ws, preserved_fiber);
     id = fresh.id;
     gen = fresh.gen;
     mutation_id_at_capture = fresh.mutation_id_at_capture;

@@ -2684,9 +2684,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     if (cid < ev.closures_.size()) {
                         const auto& cl = ev.closures_[cid];
                         if (cl.body_id != aura::ast::NULL_NODE) {
-                            auto ref = ev.workspace_flat_->make_ref(cl.body_id);
-                            ref.tenant_id = ev.capability_tenant_id_;
-                            ref.fiber_id = static_cast<std::uint32_t>(aura_fiber_current_id());
+                            // Issue #2759: layout + Evaluator stamp (sole production
+                            // authority) — do not write tenant/fiber by hand or rely
+                            // on process-global capture under multi-tenant hard-close.
+                            auto ref = ev.workspace_flat_->make_ref_layout(cl.body_id);
+                            ev.stamp_stable_ref(ref);
                             (void)ev.handoff_ref(std::move(ref));
                         }
                     }
