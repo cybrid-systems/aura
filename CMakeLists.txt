@@ -1834,6 +1834,9 @@ aura_issue_test_link_light(test_rebind_rollback_nodeid_validity)
 # Issue #2796: atomic-batch abort skips linear_post_mutate_enforce_all (no metric noise).
 aura_add_issue_test(test_atomic_batch_rollback_metric_noise)
 aura_issue_test_link_light(test_atomic_batch_rollback_metric_noise)
+# Issue #2797: replace-subtree new-body MacroIntroduced hygiene (not only target).
+aura_add_issue_test(test_replace_subtree_new_body_hygiene)
+aura_issue_test_link_light(test_replace_subtree_new_body_hygiene)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

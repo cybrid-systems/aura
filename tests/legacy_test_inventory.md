@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 791 | Preferred destination suites |
-| **Total scanned** | **791** | |
+| `tests/core/test_*.cpp` | 792 | Preferred destination suites |
+| **Total scanned** | **792** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 230 | 230 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 99 | 99 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 44 | 44 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 45 | 45 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 50 | 50 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 128 | 128 | P2 — often thin schema probes; collapse into obs matrix |
@@ -783,6 +783,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_relower_fallback_reason.cpp`
 - `tests/compiler/test_relower_strategy_cache_lock.cpp`
 - `tests/compiler/test_remount_force_deopt.cpp`
+- `tests/compiler/test_replace_subtree_new_body_hygiene.cpp`
 - `tests/compiler/test_replace_value_audit_consistency.cpp`
 - `tests/compiler/test_require_effect_auto_isolation.cpp`
 - `tests/compiler/test_require_effect_live_mid.cpp`
@@ -1474,13 +1475,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Query returns all folded keys; schema-2613 registered
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (44)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (45)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (44)
+#### domain/ (45)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1520,6 +1521,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_reflect_isolation.cpp` (—) [small, domain_suite, theme_reflect] — Issue #2290: P2996 placement smoke (g++ 16.1.0).
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_macro_hygiene_batch.cpp — consolidated edsl hygiene drivers
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` (—) [large, batch_driver, domain_suite, theme_reflect] — test_edsl_pattern_hygiene_batch.cpp — consolidated edsl hygiene drivers
+- `tests/compiler/test_replace_subtree_new_body_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: public + lockless cite #2797; walk_subtree(pr.root) + is_macro_introduced
 - `tests/compiler/test_rest_param_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2169; always gensym rest; process serial
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2018; rest pre-scan + dotted preserve + metric
 - `tests/compiler/test_rest_param_nested_qq_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2239; counters + v_read accessors + helper +

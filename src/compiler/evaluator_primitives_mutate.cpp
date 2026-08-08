@@ -4066,11 +4066,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   replacement) and returns them in the result so the LLM caller
     //   can decide whether to hoist them or accept the capture.
     //
-    //   Hygiene (Issue #142): the target node MUST NOT carry
-    //   SyntaxMarker::MacroIntroduced. Mutating macro-introduced code
-    //   would let user code reach into macro internals and break
-    //   hygiene invariants. The primitive returns a "hygiene" error
-    //   pair on rejection.
+    //   Hygiene (Issue #142 / #2797): (1) the target node MUST NOT carry
+    //   SyntaxMarker::MacroIntroduced; (2) the parsed *new* subtree must
+    //   not contain MacroIntroduced nodes either (same two-sided gate as
+    //   #2792 rebind). Either side would break macro expansion safety.
+    //   Returns hygiene / hygiene-protected on rejection.
     //
     //   Rollback (Issue #142): records parent_id, child_idx, and
     //   old_subtree_source in the mutation log so the (rollback ...)
@@ -4238,8 +4238,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Do not use StableNodeRef::is_valid_in post-parse: parse_to_flat
         // restamps all node generations (#273 / #1699).
         const auto size_before_parse = static_cast<std::size_t>(flat.size());
+        auto free_replace_parse_orphans = [&flat, size_before_parse]() {
+            if (size_before_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+        };
         auto pr = aura::parser::parse_to_flat(new_code, flat, *ev.workspace_pool_);
         if (!pr.success || pr.root == NULL_NODE) {
+            free_replace_parse_orphans(); // Issue #2791 parity / #2797 cleanup
             ok = false;
             return mev("parse-error", "new code could not be parsed");
         }
@@ -4247,6 +4253,32 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // subtree is attached at the original slot via set_child
         // below. Overwriting root would lose the parent linkage
         // and break eval / current-source.
+
+        // Issue #2797: hygiene on the *new* subtree (not only target).
+        // Target MacroIntroduced is blocked above; installing a
+        // macro-introduced body under a normal parent defeats #142
+        // (same gap as #2792 rebind new_value). :allow-macro? / global
+        // allow-macro-mutate opt out.
+        {
+            const bool allow_macro =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            if (!allow_macro) {
+                aura::ast::NodeId hit = aura::ast::NULL_NODE;
+                flat.walk_subtree(pr.root, [&](aura::ast::NodeId id) {
+                    if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                        hit = id;
+                });
+                if (hit != aura::ast::NULL_NODE) {
+                    aura::ast::NodeId probe_arr[1] = {hit};
+                    if (auto err =
+                            hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
+                        free_replace_parse_orphans();
+                        ok = false;
+                        return *err;
+                    }
+                }
+            }
+        }
 
         // Issue #1697: parent/slot may be stale after parse_to_flat.
         auto parent_slot_ok = [&]() -> bool {
