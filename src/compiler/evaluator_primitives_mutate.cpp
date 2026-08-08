@@ -156,6 +156,10 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t reemit_deferred_seen_on_steal_last_fiber_id;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
+// Issue #2748: deferred reemit age (C ABI).
+extern "C" std::uint64_t aura_hot_update_deferred_reemit_age_ms(void);
+extern "C" std::uint64_t aura_hot_update_deferred_reemit_age_max_observed_ms(void);
+extern "C" std::uint64_t aura_hot_update_deferred_reemit_deadline_hit_total(void);
 
 // Issue #2367: ReloadRecovery agent snapshot (C ABI; no HotUpdateRegistry
 // class attach on module partitions — #1956 link discipline).
@@ -7435,6 +7439,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                       snap.reemit_deferred_for_boundary_total);
             insert_kv("reemit-boundary-policy", snap.reemit_boundary_policy);
             insert_kv("reemit-deferred-pending", snap.reemit_deferred_pending);
+            // Issue #2748: deferred reemit age + deadline observability (C ABI).
+            insert_kv("reemit-deferred-age-ms",
+                      static_cast<std::int64_t>(aura_hot_update_deferred_reemit_age_ms()));
+            insert_kv(
+                "reemit-deferred-age-max-observed-ms",
+                static_cast<std::int64_t>(aura_hot_update_deferred_reemit_age_max_observed_ms()));
+            insert_kv(
+                "reemit-deferred-deadline-hit-total",
+                static_cast<std::int64_t>(aura_hot_update_deferred_reemit_deadline_hit_total()));
+            insert_kv("schema-2748", 2748);
+            insert_kv("issue-2748", 2748);
             // Issue #2273: steal-path observability fields (Agents
             // correlate "pending" with "stuck on a stolen fiber").
             insert_kv("reemit-deferred-seen-on-steal-total",

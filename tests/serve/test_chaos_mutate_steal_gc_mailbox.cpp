@@ -924,6 +924,61 @@ static void ac2715_6_source_and_linter() {
           "AC6: no docs/design/2715-* per #1655");
 }
 
+// ── Issue #2748: deferred reemit pending age + deadline observability ──
+static void ac2748_1_age_stamp_on_defer() {
+    std::println("\n--- #2748 AC1: deferred_since stamp on defer ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    CHECK(hh.find("reemit_deferred_since_ms_") != std::string::npos,
+          "AC1: deferred_since_ms field");
+    CHECK(hh.find("deferred_reemit_age_ms()") != std::string::npos, "AC1: age_ms API");
+    CHECK(cpp.find("reemit_deferred_since_ms_.store") != std::string::npos,
+          "AC1: stamps since on defer");
+    CHECK(cpp.find("Issue #2748") != std::string::npos, "AC1: cites #2748");
+}
+
+static void ac2748_2_take_clears_age_keeps_max() {
+    std::println("\n--- #2748 AC2: take clears since; max_observed retains peak ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("reemit_deferred_age_max_observed_ms_") != std::string::npos,
+          "AC2: max_observed field used on take");
+    CHECK(cpp.find("reemit_deferred_since_ms_.store(0") != std::string::npos,
+          "AC2: since cleared on take");
+}
+
+static void ac2748_3_deadline_metric_only() {
+    std::println("\n--- #2748 AC3: deadline env metric-only ---");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(cpp.find("AURA_DEFERRED_REEMIT_DEADLINE_MS") != std::string::npos, "AC3: deadline env");
+    CHECK(cpp.find("reemit_deferred_deadline_hit_total_") != std::string::npos,
+          "AC3: deadline hit counter");
+}
+
+static void ac2748_4_query_keys() {
+    std::println("\n--- #2748 AC4: query keys additive ---");
+    const auto m = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(m.find("reemit-deferred-age-ms") != std::string::npos, "AC4: age-ms key");
+    CHECK(m.find("reemit-deferred-age-max-observed-ms") != std::string::npos,
+          "AC4: max-observed key");
+    CHECK(m.find("reemit-deferred-deadline-hit-total") != std::string::npos,
+          "AC4: deadline-hit key");
+    CHECK(m.find("schema-2748") != std::string::npos, "AC4: schema-2748");
+    CHECK(m.find("reemit-deferred-seen-on-steal-total") != std::string::npos,
+          "AC4: #2273/#2715 surfaces preserved");
+}
+
+static void ac2748_5_source_and_no_design() {
+    std::println("\n--- #2748 AC5: source-cite + no docs/design/ ---");
+    const auto t = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    CHECK(t.find("ac2748_1_age_stamp_on_defer") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2748_2_take_clears_age_keeps_max") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2748_3_deadline_metric_only") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2748_4_query_keys") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2748_5_source_and_no_design") != std::string::npos, "AC5: self-test");
+    CHECK(!std::filesystem::exists("docs/design/2748-deferred-reemit-age.md"),
+          "AC5: no docs/design/2748-* per #1655");
+}
+
 // ── Issue #2722 AC1: RELEASE chaos SOAK hard deploy gate exists in
 // build.py + registered in command table + wired into main gate chain.
 // Closes #2679 residual: chaos SOAK was optional / best-effort — the
@@ -1116,6 +1171,11 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2715_4_soft_drain_still_available();
         ac2715_5_additive_no_regression();
         ac2715_6_source_and_linter();
+        ac2748_1_age_stamp_on_defer();
+        ac2748_2_take_clears_age_keeps_max();
+        ac2748_3_deadline_metric_only();
+        ac2748_4_query_keys();
+        ac2748_5_source_and_no_design();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
