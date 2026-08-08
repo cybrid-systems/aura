@@ -131,6 +131,9 @@ export extern std::atomic<std::uint64_t> g_dotted_rest_builtin_rename_prevented_
 export extern std::atomic<std::uint64_t> g_clone_macro_body_concurrent_top_level_total;
 // Issue #2807: pre_scan stopped at unquote-splicing (caller-scope boundary).
 export extern std::atomic<std::uint64_t> g_unquote_splicing_hygiene_mismatch_total;
+// Issue #2808: stamp_rest_param_hygiene MacroIntroduced marker set / skipped.
+export extern std::atomic<std::uint64_t> g_stamp_rest_param_marker_set_total;
+export extern std::atomic<std::uint64_t> g_stamp_rest_param_marker_skipped_total;
 
 export struct MacroExpansionDef {
     std::vector<std::string> params;
