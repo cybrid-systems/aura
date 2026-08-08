@@ -283,19 +283,31 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
 
         // set-code manages its own workspace lock — call outside our lock.
         if (!blob.source.empty()) {
-            // Issue #1397: string_heap_ push_back atomic — hoist the
-            // size() + push_back() out of an inner block so `sidx` is
-            // visible to the `make_string(sidx)` call below.
-            std::lock_guard lock(ev.alloc_storage_lock_);
-            const auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(blob.source);
+            // Issue #1397: string_heap_ push_back atomic — only the heap
+            // mutation is under alloc_storage_lock_; set-code / eval-current
+            // take their own workspace locks and must not nest under it.
+            std::uint32_t sidx = 0;
+            {
+                std::lock_guard lock(ev.alloc_storage_lock_);
+                sidx = static_cast<std::uint32_t>(ev.string_heap_.size());
+                ev.string_heap_.push_back(blob.source);
+            }
             auto set_fn = ev.primitives_.lookup("set-code");
             if (!set_fn)
                 return make_bool(false);
-            auto r = (*set_fn)({make_string(static_cast<std::uint32_t>(sidx))});
+            auto r = (*set_fn)({make_string(sidx)});
             // set-code returns merr pair on parse failure
             if (is_pair(r) || is_error(r))
                 return make_bool(false);
+            // Issue #2731: set-code restores FlatAST + IR dirty/pre-cache but
+            // leaves top_env cells pointing at pre-load rebind closures.
+            // Re-eval so string + SymId bindings match the restored source
+            // (aligns file-soul with ast:snapshot/restore live semantics).
+            if (auto eval_fn = ev.primitives_.lookup("eval-current")) {
+                auto er = (*eval_fn)({});
+                if (is_pair(er) || is_error(er))
+                    return make_bool(false);
+            }
         }
 
         // Restore mutation log (audit trail) onto workspace flat.
