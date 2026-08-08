@@ -5,7 +5,8 @@ Contract (one row per AC):
   AC1 AgentSpec::bp_scope_id field exists in src/orch/agent_spawn.h
   AC2 note_mailbox_bp_recent_event(scope_id) overload (default empty)
   AC3 spawn_agent_with_mailbox prefers scope-local gauge when bp_scope_id set
-  AC4 maybe_decay_mailbox_bp_recent decays per-bucket (snapshot+release)
+  AC4 maybe_decay_mailbox_bp_recent decays per-bucket under map mutex
+      (#2780: no snapshot-then-zero race; skip active last_event_us)
   AC5 spawn_bp_admit_reject_scope_total counter in OrchModuleStats
   AC6 spawn_bp_scope_overflow_total counter in OrchModuleStats
   AC7 ScopeBpGauge struct + g_scope_bp_map bounded (cap kMailboxBpScopeMapCap)
@@ -56,9 +57,13 @@ def main() -> int:
     must("scope_active", "AC3", spawn)
     must("Issue #2633", "AC3", spawn)
 
-    # AC4
-    must("snapshot.reserve", "AC4", spawn)
+    # AC4 — per-bucket decay under map mutex (#2780 race fix replaces
+    # the prior snapshot.reserve + unlock + zero pattern).
+    must("maybe_decay_mailbox_bp_recent", "AC4", spawn)
     must("Issue #2633", "AC4", spawn)
+    must("g_scope_bp_map_mtx", "AC4", spawn)
+    # #2780: skip active scopes by last_event_us (not snapshot-then-zero).
+    must("last_event_us", "AC4", spawn)
 
     # AC5
     must("spawn_bp_admit_reject_scope_total", "AC5", spawn)

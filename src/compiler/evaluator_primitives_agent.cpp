@@ -4170,6 +4170,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("resume-fence-fail-wired", 1);
             insert_kv("schema-2779", aura::serve::kResumeFenceFailAggregateIssue);
             insert_kv("issue-2779", aura::serve::kResumeFenceFailAggregateIssue);
+            // Issue #2780: scope BP decay race fix wired sentinel (note +
+            // decay serialize under g_scope_bp_map_mtx; skip active last_event).
+            insert_kv("schema-2780", aura::orch::kMailboxBpScopeDecayRaceIssue);
+            insert_kv("issue-2780", aura::orch::kMailboxBpScopeDecayRaceIssue);
+            insert_kv("scope-bp-decay-race-wired", 1);
             // Issue #2228: schema lineage (preserved by #2398).
             insert_kv("schema-2228", aura::orch::kMailboxBpAdmitIssue);
             insert_kv("issue-2228", aura::orch::kMailboxBpAdmitIssue);

@@ -103,9 +103,13 @@ inline constexpr int kAgentScopeConcurrentMisuseIssue = 2399;
 // Issue #2778: gauges are no longer immortal — erase_scope_bp_gauge /
 // reset_scope_bp_map_for_test free entries; at-cap insert LRU-evicts
 // the coldest last_event_us slot (still bumps overflow for dashboards).
+// Issue #2780: decay zeros under the same map mutex as note's
+// fetch_add / last_event_us (no snapshot-then-zero race); skips
+// scopes whose last_event_us is still inside the quiet window.
 inline constexpr std::size_t kMailboxBpScopeMapCap = 256;
 inline constexpr int kMailboxBpScopeGaugeIssue = 2633;
 inline constexpr int kMailboxBpScopeMapLifecycleIssue = 2778;
+inline constexpr int kMailboxBpScopeDecayRaceIssue = 2780;
 
 // Issue #2228 / #2535: env resolution for the BP admit threshold.
 // Returns the configured threshold (0 = admit control off). Parses
@@ -610,10 +614,13 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcep
         g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
         return;
     }
-    std::shared_ptr<ScopeBpGauge> gauge;
+    // Issue #2780: fetch_add + last_event_us under the map mutex so
+    // concurrent maybe_decay cannot snapshot-then-zero past a live
+    // increment (silent BP event loss → under-admit).
     {
         std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
         auto it = g_scope_bp_map.find(std::string{scope_id});
+        ScopeBpGauge* gauge = nullptr;
         if (it == g_scope_bp_map.end()) {
             if (g_scope_bp_map.size() >= kMailboxBpScopeMapCap) {
                 // Issue #2778: LRU-evict coldest last_event_us (quiet /
@@ -638,16 +645,19 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcep
                     1, std::memory_order_relaxed);
             }
             auto g = std::make_shared<ScopeBpGauge>();
-            gauge = g;
+            gauge = g.get();
             g_scope_bp_map.emplace(std::string{scope_id}, std::move(g));
         } else {
-            gauge = it->second;
+            gauge = it->second.get();
         }
+        if (!gauge)
+            return;
+        // last_event_us before recent so a concurrent decay that races
+        // the lock still sees "active" if it re-checks last_event under
+        // the same mutex (#2780 skip-active path).
+        gauge->last_event_us.store(now_us, std::memory_order_release);
+        gauge->recent.fetch_add(1, std::memory_order_relaxed);
     }
-    if (!gauge)
-        return;
-    gauge->recent.fetch_add(1, std::memory_order_relaxed);
-    gauge->last_event_us.store(now_us, std::memory_order_release);
     g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
 }
 
@@ -698,13 +708,19 @@ inline std::size_t scope_bp_map_size_for_test() noexcept {
 // Zero-cost when window_ms==0. Admit preflight calls this only when
 // threshold>0 (zero cost when admit control is off). One CAS winner zeros.
 // Issue #2633: also decays every per-scope gauge in g_scope_bp_map under
-// the same shared window clock. Per-bucket zero preserves scope isolation
-// (a quiet scope self-heals independently of stormy peers). The shared
-// window check uses g_mailbox_bp_last_event_us — same last-event clock
-// as the process bucket — so the per-scope + process decay fire on the
-// same admit preflight tick (no extra clock work).
-// Issue #2778: snapshot holds shared_ptr so concurrent erase/LRU cannot
-// UAF the gauge mid-zero.
+// the same shared window clock. The shared window check uses
+// g_mailbox_bp_last_event_us — same last-event clock as the process
+// bucket — so the per-scope + process decay fire on the same admit
+// preflight tick (no extra clock work).
+// Issue #2778: map holds shared_ptr so erase/LRU cannot UAF gauges.
+// Issue #2780: per-scope zero runs UNDER g_scope_bp_map_mtx (same lock
+// as note_mailbox_bp_recent_event's fetch_add / last_event_us). No
+// snapshot-then-zero race that silently dropped concurrent BP events.
+// Additionally, skip gauges whose last_event_us is still inside the
+// quiet window — preserves stormy peers when a concurrent note lands
+// after the global CAS but before this lock (and true independent
+// quiet-scope self-heal vs still-active peers). Process-bucket
+// store(0) still has the #2465 one-off race (acceptable).
 inline void maybe_decay_mailbox_bp_recent() noexcept {
     const auto window_ms = resolve_mailbox_bp_window_ms();
     if (window_ms == 0)
@@ -720,20 +736,22 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
                                                             std::memory_order_acq_rel)) {
         return; // another thread won the CAS this tick
     }
+    // Process bucket: store(0) may race a concurrent empty-scope note
+    // (#2465 — one-off admit-when-should-deny preferred over permanent
+    // denial). Scope path below is race-free under the map mutex.
     g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
-    // Issue #2633 / #2778: per-scope decay — zero every bucket under the
-    // same shared window. Snapshot shared_ptrs under lock so erase/LRU
-    // cannot free a gauge mid-store.
-    std::vector<std::shared_ptr<ScopeBpGauge>> snapshot;
-    {
-        std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
-        snapshot.reserve(g_scope_bp_map.size());
-        for (const auto& [_, g] : g_scope_bp_map)
-            snapshot.push_back(g);
-    }
-    for (const auto& g : snapshot) {
-        if (g)
-            g->recent.store(0, std::memory_order_release);
+    const auto window_us = window_ms * 1000ULL;
+    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    for (const auto& [_, g] : g_scope_bp_map) {
+        if (!g)
+            continue;
+        const auto last = g->last_event_us.load(std::memory_order_acquire);
+        // Issue #2780: skip active scopes (last_event still inside the
+        // quiet window). Serializes with note under the same lock so a
+        // concurrent fetch_add cannot be wiped by store(0).
+        if (last != 0 && now_us - last <= window_us)
+            continue;
+        g->recent.store(0, std::memory_order_release);
     }
 }
 
