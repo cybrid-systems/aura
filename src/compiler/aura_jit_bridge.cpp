@@ -1675,6 +1675,13 @@ static std::atomic<std::uint64_t> g_cross_eval_epoch_bump_total{0};
 // this to attribute the most recent cross-eval bump to a specific
 // eval. Relaxed order — observability only, no control flow.
 static std::atomic<void*> g_last_cross_eval_epoch_bump_owner{nullptr};
+// Issue #2744: multi-eval cascade bumps that were owner-scoped throttled
+// (skipped process-global table epoch) under production or
+// AURA_CROSS_EVAL_EPOCH_THROTTLE=1. Additive — #2713 counters preserved.
+static std::atomic<std::uint64_t> g_cross_eval_epoch_action_throttled_total{0};
+// Force flag: hard invalidate / Agent fence paths set this TLS so the
+// next bump always advances the process-global epoch (AC hard path).
+static thread_local int g_cross_eval_epoch_force_bump = 0;
 // Read accessors (mirror the #2693 / #2668 / #2640 file-scope counter
 // style — queryable in light-link test bundles without the production
 // CompilerMetrics TU).
@@ -1687,8 +1694,57 @@ extern "C" void* last_cross_eval_epoch_bump_owner_v_read(void) {
 extern "C" std::uint32_t cross_eval_epoch_bump_wired_v_read(void) {
     return 1;
 }
+extern "C" std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void) {
+    return g_cross_eval_epoch_action_throttled_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_aot_note_cross_eval_epoch_force_bump(void) {
+    g_cross_eval_epoch_force_bump = 1;
+}
+
+namespace {
+[[nodiscard]] bool cross_eval_epoch_throttle_armed() noexcept {
+    // Soft / sandbox=off: only when env explicitly armed (issue AC Soft).
+    // Production multi-eval: throttle on by default.
+    if (const char* e = std::getenv("AURA_CROSS_EVAL_EPOCH_THROTTLE"); e && *e) {
+        if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
+            return true;
+        if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
+            return false;
+    }
+    return aura::compiler::typed_audit::production_defaults_active();
+}
+} // namespace
 
 extern "C" void aura_aot_bump_func_table_epoch(void) {
+    // Issue #2744: multi-eval cascade tax action. When >1 live AotState
+    // and throttle is armed, prefer owner-scoped stale-slot invalidate
+    // over a process-global table epoch advance so foreign evals are not
+    // force-staled by peer cascade. Hard invalidate / explicit fence
+    // paths call aura_aot_note_cross_eval_epoch_force_bump() first.
+    // Per-eval epoch domain split is a follow-up (non-goal for #2713/#2744);
+    // joint table epoch writers stay aura_aot_bump_func_table_epoch.
+    const bool multi = aura_aot_state_map_size() > 1;
+    const bool force = g_cross_eval_epoch_force_bump != 0;
+    g_cross_eval_epoch_force_bump = 0;
+    if (multi && !force && cross_eval_epoch_throttle_armed()) {
+        void* owner = aura_aot_get_reemit_owner_eval();
+        if (!owner)
+            owner = aura_aot_get_register_owner_eval();
+        if (owner) {
+            // Owner-scoped residual: clear this eval's generation-behind
+            // slots without advancing g_aot_table_epoch (foreign slots
+            // stay non-stale). #2713 observability still stamps the tax.
+            g_cross_eval_epoch_bump_total.fetch_add(1, std::memory_order_relaxed);
+            g_last_cross_eval_epoch_bump_owner.store(owner, std::memory_order_relaxed);
+            g_cross_eval_epoch_action_throttled_total.fetch_add(1, std::memory_order_relaxed);
+            (void)aura_aot_invalidate_all_stale_slots_for_eval(owner);
+            // Do not notify_epoch_bump / event walk — no global epoch change.
+            return;
+        }
+        // No owner TLS: fall through to global bump (single-owner residual
+        // or misconfigured multi-eval — preserve prior behavior).
+    }
+
     const std::uint64_t new_epoch = g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (auto* m = aot_metrics()) {
         m->aot_joint_epoch_bump_total.fetch_add(1, std::memory_order_relaxed);
@@ -1710,9 +1766,7 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
     // default short-circuits to zero work beyond the relaxed load).
     // Current owner sourced from the per-eval reemit register
     // (per #2606 lineage). Stamp owner for dashboard attribution.
-    // Epoch advance itself is unchanged — observability first; per-eval
-    // epoch domain split is a follow-up (per AC4 stretch).
-    if (aura_aot_state_map_size() > 1) {
+    if (multi) {
         g_cross_eval_epoch_bump_total.fetch_add(1, std::memory_order_relaxed);
         g_last_cross_eval_epoch_bump_owner.store(aura_aot_get_register_owner_eval(),
                                                  std::memory_order_relaxed);
@@ -2907,6 +2961,9 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         // bumped inside the helper. eval_ptr is the affected eval
         // (nullptr = process-default AotState).
         (void)aura_aot_invalidate_all_stale_slots_for_eval(eval_ptr);
+        // Issue #2744: hard invalidate / auto-retry must still advance the
+        // process-global table epoch (throttle soft path must not apply).
+        aura_aot_note_cross_eval_epoch_force_bump();
         aura_aot_bump_func_table_epoch();
 
         // Issue #2544: queue a minimal dirty set from the fail reason

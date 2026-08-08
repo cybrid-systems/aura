@@ -581,6 +581,15 @@ void aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept;
 [[nodiscard]] std::uint64_t aura_cross_cow_soft_migrate_max_drift(void) noexcept;
 // Force-bump table epoch (test / hot-swap seam).
 void aura_aot_bump_func_table_epoch(void);
+// Issue #2713 / #2744 observability (file-scope counters in aura_jit_bridge.cpp).
+std::uint64_t cross_eval_epoch_bump_total_v_read(void);
+void* last_cross_eval_epoch_bump_owner_v_read(void);
+std::uint32_t cross_eval_epoch_bump_wired_v_read(void);
+// Issue #2744: next aura_aot_bump_func_table_epoch() always advances the
+// process-global table epoch (skip multi-eval cascade throttle).
+void aura_aot_note_cross_eval_epoch_force_bump(void);
+// Issue #2744: multi-eval cascade bumps that were owner-scoped throttled.
+std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void);
 
 // Issue #2304 / #2366: epoch invariant mode (process-level).
 //   0 = off (production default; single relaxed load, zero walk cost)

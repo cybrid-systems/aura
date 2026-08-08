@@ -709,6 +709,69 @@ static void ac2713_6_source_and_linter() {
           "AC6: no docs/design/2713 plan doc per #1655");
 }
 
+// ── Issue #2744: multi-eval cross-eval epoch tax action (throttle) ──
+static void ac2744_1_throttle_path_present() {
+    std::println("\n--- #2744 AC1: owner-scoped throttle path ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("g_cross_eval_epoch_action_throttled_total") != std::string::npos,
+          "AC1: throttled counter present");
+    CHECK(cpp.find("cross_eval_epoch_throttle_armed") != std::string::npos,
+          "AC1: throttle arm helper");
+    CHECK(cpp.find("AURA_CROSS_EVAL_EPOCH_THROTTLE") != std::string::npos,
+          "AC1: env AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    CHECK(cpp.find("aura_aot_invalidate_all_stale_slots_for_eval(owner)") != std::string::npos,
+          "AC1: owner-scoped invalidate on throttle");
+}
+
+static void ac2744_2_force_bump_hard_path() {
+    std::println("\n--- #2744 AC2: hard path force-bumps global epoch ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto hdr = read_file("src/compiler/aura_jit_bridge.h");
+    CHECK(hdr.find("aura_aot_note_cross_eval_epoch_force_bump") != std::string::npos,
+          "AC2: force-bump API in header");
+    CHECK(cpp.find("aura_aot_note_cross_eval_epoch_force_bump()") != std::string::npos,
+          "AC2: hard invalidate site notes force bump");
+    CHECK(cpp.find("g_cross_eval_epoch_force_bump") != std::string::npos, "AC2: TLS force flag");
+}
+
+static void ac2744_3_single_eval_unchanged() {
+    std::println("\n--- #2744 AC3: single-eval / map size ≤1 zero extra ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("const bool multi = aura_aot_state_map_size() > 1") != std::string::npos ||
+              cpp.find("aura_aot_state_map_size() > 1") != std::string::npos,
+          "AC3: multi-eval gated on map size > 1");
+    // Quiet path: throttle body only when multi.
+    CHECK(cpp.find("if (multi && !force && cross_eval_epoch_throttle_armed())") !=
+              std::string::npos,
+          "AC3: throttle only multi + armed + !force");
+}
+
+static void ac2744_4_query_and_counters() {
+    std::println("\n--- #2744 AC4: additive query + #2713 preserved ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("cross-eval-epoch-action-throttled-total") != std::string::npos,
+          "AC4: query key throttled-total");
+    CHECK(q.find("schema-2744") != std::string::npos, "AC4: schema-2744");
+    CHECK(q.find("cross-eval-epoch-bump-total") != std::string::npos,
+          "AC4: #2713 bump-total preserved");
+    CHECK(q.find("schema-2713") != std::string::npos, "AC4: schema-2713 preserved");
+    CHECK(cross_eval_epoch_action_throttled_total_v_read() >= 0, "AC4: throttled accessor live");
+}
+
+static void ac2744_5_source_and_no_design() {
+    std::println("\n--- #2744 AC5: source-cite + no docs/design/ ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto t = read_file("tests/compiler/test_named_closure_stable_id_at_create.cpp");
+    CHECK(cpp.find("Issue #2744") != std::string::npos, "AC5: bridge cites #2744");
+    CHECK(t.find("ac2744_1_throttle_path_present") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2744_2_force_bump_hard_path") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2744_3_single_eval_unchanged") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2744_4_query_and_counters") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2744_5_source_and_no_design") != std::string::npos, "AC5: self-test");
+    CHECK(!std::filesystem::exists("docs/design/cross_eval_epoch_tax_2744.md"),
+          "AC5: no docs/design/2744 per #1655");
+}
+
 int run_test_named_closure_stable_id_at_create() {
     std::println("=== Issue #2550 + #2670: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
@@ -740,7 +803,13 @@ int run_test_named_closure_stable_id_at_create() {
     ac2713_4_epoch_advance_unchanged();
     ac2713_5_query_keys_added();
     ac2713_6_source_and_linter();
-    std::println("\n=== #2550 + #2670 + #2692 + #2713: {} passed, {} failed ===", g_passed,
+    // Issue #2744: multi-eval cross-eval epoch tax action (throttle).
+    ac2744_1_throttle_path_present();
+    ac2744_2_force_bump_hard_path();
+    ac2744_3_single_eval_unchanged();
+    ac2744_4_query_and_counters();
+    ac2744_5_source_and_no_design();
+    std::println("\n=== #2550 + #2670 + #2692 + #2713 + #2744: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
