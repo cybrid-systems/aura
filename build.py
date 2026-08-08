@@ -1011,6 +1011,18 @@ def cmd_lint():
             "Issue #2792 rebind new-body hygiene linter failed — run python3 scripts/coverage/checks/check_rebind_new_body_hygiene_2792.py"
         )
         return r
+    # Issue #2793: replace-value Guard abort → status=RolledBack (no torn audit).
+    # ac2793 in test_replace_value_audit_consistency.
+    rvac_script = COVERAGE_CHECKS / "check_replace_value_audit_consistency_2793.py"
+    if not rvac_script.exists():
+        fail(f"missing {rvac_script}")
+        return 1
+    r = run([sys.executable, str(rvac_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2793 replace-value audit consistency linter failed — run python3 scripts/coverage/checks/check_replace_value_audit_consistency_2793.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

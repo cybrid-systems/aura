@@ -2232,6 +2232,11 @@ public:
     // Issue #1301: mutation_log_ suffix records dropped after rollback.
     mutable std::atomic<std::uint64_t> mutation_log_compacted_records_{0};
     mutable std::atomic<std::uint64_t> mutation_log_compact_ops_{0};
+    // Issue #2793: boundary-abort records whose field inverse failed (or
+    // was skipped) but whose status was force-marked RolledBack so audit
+    // never claims Committed for aborted work. Healthy systems stay 0
+    // when try_rollback_record succeeds for every aborted-range record.
+    mutable std::atomic<std::uint64_t> mutation_log_status_torn_total_{0};
     // Issue #1355: render-hotpath lightweight checkpoints (field-only side log).
     mutable std::atomic<std::uint64_t> lightweight_total_{0};
     mutable std::atomic<std::uint64_t> lightweight_commit_total_{0};
@@ -8309,6 +8314,25 @@ private:
     }
 
 public:
+    // Issue #2793: apply field inverse on an already-detached log entry
+    // and guarantee status=RolledBack for boundary-aborted records.
+    // Prefer this over rollback(mutation_id) re-search: the re-search
+    // re-enters mut() and can miss the in-hand record under COW share
+    // races (#2457 incomplete). When try_rollback_record fails (no
+    // inverse / invalid field), still force RolledBack so audit never
+    // claims Committed for aborted work (values may be restored by
+    // children/sym column snapshots on the Guard path).
+    bool rollback_record_for_boundary_abort(MutationRecord& rec) {
+        if (rec.status != MutationStatus::Committed)
+            return false;
+        if (try_rollback_record(rec).has_value())
+            return true;
+        // Inverse failed — force audit consistency (#2793).
+        rec.status = MutationStatus::RolledBack;
+        mutation_log_status_torn_total_.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+
     // Rollback all mutations since (and including) the given ID.
     // Defers restamp_all_node_generations to a single pass after the
     // reverse walk (Issue #1441 + jit_late1/late3 timeout fix).
@@ -8316,13 +8340,12 @@ public:
         std::size_t count = 0;
         const bool prev_defer = defer_rollback_restamp_;
         defer_rollback_restamp_ = true;
-        // Issue #2457: detach once so status checks + rollback see the
-        // same unique storage (const rbegin would walk a shared snapshot
-        // while mut() detaches underfoot).
+        // Issue #2457 / #2793: detach once; apply inverse on in-hand refs
+        // (no rollback(id) re-search that re-enters mut()).
         auto& log = mutation_log_.mut();
         for (auto it = log.rbegin(); it != log.rend(); ++it) {
             if (it->mutation_id >= since_id && it->status == MutationStatus::Committed) {
-                if (rollback(it->mutation_id))
+                if (rollback_record_for_boundary_abort(*it))
                     ++count;
             }
         }
@@ -8335,9 +8358,9 @@ public:
     // Issue #213 Cycle 1: rollback all mutations appended to
     // the log after `checkpoint_size` (i.e. the log size at
     // boundary entry). Walks the log in reverse from the end
-    // down to the checkpoint, calling `rollback` on each
+    // down to the checkpoint, calling try_rollback_record on each
     // committed record. Returns the number of records that
-    // were successfully rolled back.
+    // were rolled back (or force-marked RolledBack — #2793).
     //
     // Why size-based and not id-based: the log is append-only,
     // so the log size at boundary entry is a stable handle.
@@ -8370,21 +8393,30 @@ public:
         // Same restamp deferral as rollback_since (jit_late timeout fix).
         const bool prev_defer = defer_rollback_restamp_;
         defer_rollback_restamp_ = true;
-        // Issue #2457: detach once; index + rollback share unique storage.
+        // Issue #2457 / #2793: detach once; inverse on in-hand refs.
         auto& log = mutation_log_.mut();
         for (std::size_t i = log.size(); i > checkpoint_size; --i) {
             auto& rec = log[i - 1];
             if (rec.status == MutationStatus::Committed) {
-                if (rollback(rec.mutation_id))
+                if (rollback_record_for_boundary_abort(rec))
                     ++count;
+            }
+        }
+        // Issue #2793 defense: no Committed records may remain in the
+        // aborted suffix (audit invariant). Force any residual.
+        for (std::size_t i = checkpoint_size; i < log.size(); ++i) {
+            if (log[i].status == MutationStatus::Committed) {
+                log[i].status = MutationStatus::RolledBack;
+                mutation_log_status_torn_total_.fetch_add(1, std::memory_order_relaxed);
+                ++count;
             }
         }
         defer_rollback_restamp_ = prev_defer;
         if (count > 0)
             restamp_all_node_generations();
         // Issue #1301 (P1) + #213: keep RolledBack records for audit
-        // by default (status already set by rollback()). Only truncate
-        // the rolled-back suffix when the log is huge so long AI
+        // by default (status already set by rollback_record_for_boundary_abort).
+        // Only truncate the rolled-back suffix when the log is huge so long AI
         // sessions cannot OOM. Small rollbacks must retain entries —
         // test_issue_213 and tooling inspect RolledBack status in-place.
         static constexpr std::size_t kMutationLogTruncateThreshold = 10'000;
@@ -8400,6 +8432,9 @@ public:
 
     [[nodiscard]] std::uint64_t mutation_log_compacted_records() const noexcept {
         return mutation_log_compacted_records_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t mutation_log_status_torn_total() const noexcept {
+        return mutation_log_status_torn_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
         return mutation_log_compact_ops_.load(std::memory_order_relaxed);
