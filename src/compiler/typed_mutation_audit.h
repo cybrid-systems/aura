@@ -966,6 +966,26 @@ build_type_linear_commit_proof_from_live(std::uint64_t current_epoch_or_defuse) 
     return 0;      // ok
 }
 
+// Issue #2716 / #2750: occurrence hard-face recover state (must be declared
+// before commit_readiness uses them — inline header ODR-safe).
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_full_solve_recover_total{0};
+// Issue #2750: true recover success/fail (distinct from #2716 reject-arm bump).
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_success_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_fail_total{0};
+// Optional full-solve recover hook (wired by TypeChecker / Evaluator).
+// Returns true when SOLVED + occurrence roots restored. nullptr = no recover.
+using OccurrenceFullSolveRecoverFn = bool (*)(void* ctx) noexcept;
+inline OccurrenceFullSolveRecoverFn g_occurrence_full_solve_recover_fn = nullptr;
+inline void* g_occurrence_full_solve_recover_ctx = nullptr;
+inline void install_occurrence_full_solve_recover(OccurrenceFullSolveRecoverFn fn,
+                                                  void* ctx) noexcept {
+    g_occurrence_full_solve_recover_fn = fn;
+    g_occurrence_full_solve_recover_ctx = ctx;
+}
+// Forward decls — defined later with face counter clear helpers (#2703/#2704).
+inline void clear_cone_outside_goal_drop_for_test() noexcept;
+inline void clear_occurrence_empty_after_fence_for_test() noexcept;
+
 // Pure decision table (AC5: identical inputs → identical output; no atomics).
 [[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept {
     CommitReadiness r;
@@ -1058,35 +1078,10 @@ build_type_linear_commit_proof_from_live(std::uint64_t current_epoch_or_defuse) 
     return (set("ok", true, 10000), r);
 }
 
-// Issue #2716 occurrence hard-face active-branch counter. Defined here
-// (before commit_readiness_live_policy below) so the helper can bump it
-// without a forward declaration — the prior extern/inline split tripped
-// gcc 16.1's parser in typed_mutation_audit_hooks.cpp (cp_parser_namespace_body
-// ICE). Single inline definition (module-scoped atomic, ODR-safe across
-// TUs); the accessor below uses it by name. The `extern` declaration
-// of this atomic at the top of the file (Issue #2728 forward block) pairs
-// with this inline definition (ODR-safe across TUs).
-inline std::atomic<std::uint64_t> g_occurrence_hard_face_full_solve_recover_total{0};
-// Issue #2750: true recover success/fail (distinct from #2716 reject-arm bump).
-inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_success_total{0};
-inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_fail_total{0};
-// Optional full-solve recover hook (wired by TypeChecker / Evaluator).
-// Returns true when SOLVED + occurrence roots restored. nullptr = no recover.
-using OccurrenceFullSolveRecoverFn = bool (*)(void* ctx) noexcept;
-inline OccurrenceFullSolveRecoverFn g_occurrence_full_solve_recover_fn = nullptr;
-inline void* g_occurrence_full_solve_recover_ctx = nullptr;
-inline void install_occurrence_full_solve_recover(OccurrenceFullSolveRecoverFn fn,
-                                                  void* ctx) noexcept {
-    g_occurrence_full_solve_recover_fn = fn;
-    g_occurrence_full_solve_recover_ctx = ctx;
-}
-// Forward decls — defined later with face counter clear helpers (#2703/#2704).
-inline void clear_cone_outside_goal_drop_for_test() noexcept;
-inline void clear_occurrence_empty_after_fence_for_test() noexcept;
-
 // Fill hard flags from live audit process state (still pure w.r.t. inputs
 // once copied; callers that want hermetic tests pass CommitReadinessInput
 // directly without this helper).
+// Issue #2716 / #2750 recover counters + hook live above commit_readiness.
 [[nodiscard]] inline CommitReadinessInput commit_readiness_live_policy() noexcept {
     CommitReadinessInput in;
     const bool prod = production_defaults_active();

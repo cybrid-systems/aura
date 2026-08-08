@@ -887,6 +887,11 @@ extern "C" __attribute__((weak)) std::uint64_t
 aura_epoch_invariant_soft_fuse_heal_total_v_read(void) {
     return 0;
 }
+// Issue #2747: Soft fuse heal no-owner residual (production in aura_jit_bridge.cpp).
+extern "C" __attribute__((weak)) std::uint64_t
+aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_soft_fuse_total_v_read(void) {
     return g_2693_soft_fuse_fallback_total_stub.load(std::memory_order_relaxed);
 }

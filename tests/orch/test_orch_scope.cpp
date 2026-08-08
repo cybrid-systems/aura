@@ -278,6 +278,123 @@ int run_test_orch_scope() {
         CHECK(true, "AC5: source-cite listed above (no docs/design/)");
     }
 
+    // ── Issue #2751: session-level Agent directory surface ────────────
+    {
+        std::println("\n--- #2751: orch:agent-directory session surface ---");
+        reset_all();
+        g_orch_module_stats.agent_directory_total.store(0, std::memory_order_relaxed);
+        g_orch_module_stats.agent_directory_entries_total.store(0, std::memory_order_relaxed);
+
+        // Source-cite + linter: no AgentRegistry / global_agent_registry.
+        const auto scope_h = read_file("src/orch/agent_scope.h");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto readme_src = read_file("src/orch/README.md");
+        CHECK(scope_h.find("directory_snapshot") != std::string::npos,
+              "AC3: AgentScope::directory_snapshot C++ helper present");
+        CHECK(scope_h.find("AgentDirectoryEntry") != std::string::npos,
+              "AC3: AgentDirectoryEntry struct present");
+        CHECK(scope_h.find("kAgentDirectoryIssue") != std::string::npos,
+              "AC3: kAgentDirectoryIssue = 2751 present");
+        CHECK(prim_src.find("add(\"orch:agent-directory\"") != std::string::npos,
+              "AC3: orch:agent-directory prim registered");
+        CHECK(prim_src.find("AgentRegistry{") == std::string::npos,
+              "AC4: prim file does not define AgentRegistry");
+        CHECK(readme_src.find("orch:agent-directory") != std::string::npos,
+              "AC6: README documents orch:agent-directory");
+        CHECK(readme_src.find("schema-2751") != std::string::npos,
+              "AC6: README surfaces schema-2751");
+        CHECK(readme_src.find("no process-global registry") != std::string::npos,
+              "AC4/AC6: README keeps no process-global registry wording");
+
+        CompilerService cs;
+
+        // AC1 empty session: no scope yet → count=0, ok=#t.
+        {
+            const auto empty_ok =
+                cs.eval(R"((let ((r (orch:agent-directory))) (hash-ref r "ok")))");
+            CHECK(empty_ok && is_bool(*empty_ok) && as_bool(*empty_ok),
+                  "AC1: empty session directory ok=#t");
+            const auto empty_count =
+                cs.eval(R"((let ((r (orch:agent-directory))) (hash-ref r "count")))");
+            CHECK(empty_count && is_int(*empty_count) && as_int(*empty_count) == 0,
+                  "AC1: empty session directory count=0");
+        }
+
+        // Spawn 3 agents; directory lists them under this Evaluator only.
+        cs.eval(R"((orch:scope-spawn "dir-agent-a"))");
+        cs.eval(R"((orch:scope-spawn "dir-agent-b"))");
+        cs.eval(R"((orch:scope-spawn "dir-worker-c"))");
+
+        const auto dir_count =
+            cs.eval(R"((let ((r (orch:agent-directory))) (hash-ref r "count")))");
+        CHECK(dir_count && is_int(*dir_count) && as_int(*dir_count) == 3,
+              "AC1/AC2: directory count=3 after 3 scope-spawn");
+
+        const auto schema_ev =
+            cs.eval(R"((let ((r (orch:agent-directory))) (hash-ref r "schema")))");
+        CHECK(schema_ev && is_int(*schema_ev) && as_int(*schema_ev) == 2751,
+              "AC3: directory hash carries schema=2751");
+
+        // Name prefix filter.
+        const auto pref_count = cs.eval(
+            R"((let ((r (orch:agent-directory :name-prefix "dir-worker"))) (hash-ref r "count")))");
+        CHECK(pref_count && is_int(*pref_count) && as_int(*pref_count) == 1,
+              "AC1: name-prefix filter returns 1 agent");
+
+        // Hierarchy: C++ directory_snapshot walks child scopes.
+        {
+            aura::serve::Scheduler sched(2);
+            aura::orch::AgentScope root(sched);
+            aura::orch::AgentSpec sa;
+            sa.name = "root-a";
+            sa.body = [] {};
+            sa.attach_mailbox = false;
+            (void)root.spawn(std::move(sa));
+            auto& child = root.spawn_child();
+            aura::orch::AgentSpec sb;
+            sb.name = "child-b";
+            sb.body = [] {};
+            sb.attach_mailbox = false;
+            (void)child.spawn(std::move(sb));
+            const auto full = root.directory_snapshot();
+            CHECK(full.entries.size() == 2, "AC1/AC5: hierarchy snapshot has 2 agents");
+            CHECK(full.scopes_visited >= 2, "AC5: hierarchy scopes_visited >= 2");
+            bool saw_root = false, saw_child = false;
+            for (const auto& e : full.entries) {
+                if (e.name == "root-a" && e.scope_path == "root")
+                    saw_root = true;
+                if (e.name == "child-b" && e.scope_path == "0")
+                    saw_child = true;
+            }
+            CHECK(saw_root, "AC1: root agent scope-path=root");
+            CHECK(saw_child, "AC1: child agent scope-path=0");
+            aura::orch::AgentDirectoryFilter root_only;
+            root_only.include_descendants = false;
+            const auto local = root.directory_snapshot(root_only);
+            CHECK(local.entries.size() == 1, "AC1: include_descendants=false → root only");
+            // Cancel + join to release (no-leak).
+            root.cancel_all();
+            (void)root.join_all(aura::orch::JoinPolicy{.primary_ms = 2000, .drain_ms = 2000});
+        }
+
+        // Metrics wired.
+        CHECK(href(cs, "agent-directory-total") >= 1,
+              "AC3: agent-directory-total bumps on prim call");
+        CHECK(href(cs, "agent-directory-wired") == 1, "AC3: agent-directory-wired sentinel == 1");
+        CHECK(href(cs, "schema-2751") == 2751, "AC3: schema-2751 == 2751");
+
+        // Concurrent-safe read while another spawn happens on same thread
+        // (serial model #2399) — no crash / no global leak.
+        cs.eval(R"((orch:scope-spawn "dir-agent-d"))");
+        const auto after = cs.eval(R"((let ((r (orch:agent-directory))) (hash-ref r "count")))");
+        CHECK(after && is_int(*after) && as_int(*after) >= 4,
+              "AC5: directory after concurrent-serial spawn still consistent");
+
+        // Cleanup.
+        cs.eval(R"((orch:scope-cancel-all))");
+        cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
+    }
+
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
