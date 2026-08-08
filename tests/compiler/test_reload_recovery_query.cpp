@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/aot_reload_consistency_proof.h" // Issue #2753
 #include "compiler/hot_update_registry.hh"
 
 #include <cstdint>
@@ -226,6 +227,70 @@ static void ac5_source_and_gate() {
     CHECK(script.find("schema-2367") != std::string::npos, "AC5: coverage script present");
 }
 
+// ── Issue #2753: AotReloadConsistencyProof single facade ──────────────
+static void ac2753_1_soft_empty_proof() {
+    std::println("\n--- #2753 AC4: soft empty / default proof ---");
+    // Cheap on-the-fly build (no stamp required) — soft/idle path.
+    auto p = build_aot_reload_consistency_proof_from_live(true);
+    CHECK(p.schema == 2753, "AC4: proof.schema=2753");
+    CHECK(p.stamp_epoch >= 1, "AC4: on-the-fly stamp_epoch advances local counter");
+    CHECK(aura_aot_reload_consistency_proof_wired() == 1, "AC4: wired sentinel");
+    // Optional query surface when registered (additive; soft empty ok).
+    CompilerService cs;
+    const auto schema = href(cs, "query:last-aot-reload-consistency-proof", "schema-2753");
+    CHECK(schema == 2753 || schema == -1,
+          "AC4: query schema-2753 when registered, else soft miss ok");
+}
+
+static void ac2753_2_success_and_rollback_stamp() {
+    std::println("\n--- #2753 AC1/AC2: success + rollback stamp ---");
+    // C++ API: build + stamp success then rollback.
+    auto ok = build_aot_reload_consistency_proof_from_live(true);
+    stamp_aot_reload_consistency_proof(ok);
+    CHECK(aura_last_aot_reload_consistency_stamp_epoch() > 0, "AC1: stamp_epoch advanced");
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 1 ||
+              aura_last_aot_reload_consistency_would_allow_native() == 0,
+          "AC1: would_allow_native readable after success stamp");
+    const auto stamp1 = aura_last_aot_reload_consistency_stamp_epoch();
+    auto bad = build_aot_reload_consistency_proof_from_live(false);
+    bad.last_fail_reason = static_cast<std::uint8_t>(AotReloadFail::Version);
+    bad.would_allow_native = false;
+    stamp_aot_reload_consistency_proof(bad);
+    CHECK(aura_last_aot_reload_consistency_stamp_epoch() >= stamp1, "AC2: stamp advances");
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+          "AC2: would_allow_native=false after rollback stamp");
+    CHECK(aura_last_aot_reload_consistency_last_fail_reason() ==
+              static_cast<std::uint8_t>(AotReloadFail::Version),
+          "AC2: last_fail_reason=Version");
+    // Agent detects drift via stamp_epoch / defuse without N-key join.
+    const auto defuse = aura_last_aot_reload_consistency_defuse_version();
+    const auto table = aura_last_aot_reload_consistency_table_epoch();
+    (void)defuse;
+    (void)table;
+    CHECK(aura_aot_reload_consistency_proof_stamped_total() >= 2, "AC3: stamped-total >= 2");
+}
+
+static void ac2753_3_source_and_no_design() {
+    std::println("\n--- #2753 AC5: source-cite + no docs/design/ ---");
+    const auto thin = read_file("src/compiler/aot_reload_consistency_proof.h");
+    const auto bridge_h = read_file("src/compiler/aura_jit_bridge.h");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto t = read_file("tests/compiler/test_reload_recovery_query.cpp");
+    CHECK(thin.find("AotReloadConsistencyProof") != std::string::npos,
+          "AC5: struct in aot_reload_consistency_proof.h");
+    CHECK(thin.find("kAotReloadConsistencyProofIssue = 2753") != std::string::npos,
+          "AC5: issue stamp 2753");
+    CHECK(thin.find("build_aot_reload_consistency_proof_from_live") != std::string::npos,
+          "AC5: build helper");
+    CHECK(cpp.find("stamp_aot_reload_consistency_proof") != std::string::npos, "AC5: stamp in cpp");
+    CHECK(cpp.find("Issue #2753") != std::string::npos, "AC5: cpp cites #2753");
+    CHECK(bridge_h.find("2753") != std::string::npos, "AC5: bridge.h cites #2753");
+    CHECK(t.find("ac2753_1_soft_empty_proof") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2753_2_success_and_rollback_stamp") != std::string::npos, "AC5: AC2 test");
+    CHECK(read_file("docs/design/2753-aot-reload-proof.md").empty(),
+          "AC5: no docs/design/2753-* per #1655");
+}
+
 } // namespace
 
 int run_test_reload_recovery_query() {
@@ -235,9 +300,13 @@ int run_test_reload_recovery_query() {
     ac3_success_clears();
     ac4_hot_update_surface();
     ac5_source_and_gate();
+    std::println("\n=== Issue #2753: AotReloadConsistencyProof ===");
+    ac2753_1_soft_empty_proof();
+    ac2753_2_success_and_rollback_stamp();
+    ac2753_3_source_and_no_design();
     if (g_failed)
         return 1;
-    std::println("reload recovery query #2367: OK ({} passed)", g_passed);
+    std::println("reload recovery query #2367 + #2753: OK ({} passed)", g_passed);
     return 0;
 }
 

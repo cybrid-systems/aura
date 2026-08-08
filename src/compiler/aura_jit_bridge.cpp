@@ -9,12 +9,13 @@
 
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
-#include "aot_mangle.h"            // mangle_aot_name (Issue #136)
-#include "hot_update_registry.hh"  // Issue #1956: unified hot-update coordination
-#include "observability_metrics.h" // Issue #452: CompilerMetrics for AOT counter hooks
-#include "runtime_shared.h"        // Issue #2013: aura_remap_live_closures_after_reemit
-#include "typed_mutation_audit.h"  // Issue #1882: TypedMutationAudit on hot-update
-#include "core/workspace_epoch.hh" // Issue #2039: dual-write WorkspaceEpoch::Bridge
+#include "aot_mangle.h"                   // mangle_aot_name (Issue #136)
+#include "aot_reload_consistency_proof.h" // Issue #2753: AotReloadConsistencyProof
+#include "hot_update_registry.hh"         // Issue #1956: unified hot-update coordination
+#include "observability_metrics.h"        // Issue #452: CompilerMetrics for AOT counter hooks
+#include "runtime_shared.h"               // Issue #2013: aura_remap_live_closures_after_reemit
+#include "typed_mutation_audit.h"         // Issue #1882: TypedMutationAudit on hot-update
+#include "core/workspace_epoch.hh"        // Issue #2039: dual-write WorkspaceEpoch::Bridge
 
 #include <atomic>
 #include <cstdarg>
@@ -109,6 +110,10 @@ static std::atomic<std::uint8_t> g_last_reload_fail_reason{0};
 extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void) {
     return g_last_reload_fail_reason.load(std::memory_order_acquire);
 }
+
+// Issue #2753: proof accessors are header-inline in
+// aot_reload_consistency_proof.h. Stamp sites below call
+// stamp_aot_reload_consistency_proof after success/rollback.
 
 static std::atomic<std::uint64_t> g_current_bridge_epoch{0};
 
@@ -1151,6 +1156,27 @@ void commit_func_table_swap() {
     // Closes the burst-mutation window that pure periodic Soft leaves
     // open under reemit storms. Production + Soft only.
     aura_event_driven_epoch_invariant_walk_if_due();
+    // Issue #2753: stamp success proof (would_allow_native=true) after
+    // commit so Agents can re-check without N-key join.
+    {
+        g_last_reload_fail_reason.store(static_cast<std::uint8_t>(AotReloadFail::Ok),
+                                        std::memory_order_release);
+        AotReloadConsistencyProof p{};
+        p.table_epoch = new_epoch;
+        p.bridge_epoch = aura_get_current_bridge_epoch();
+        p.defuse_version = aura_get_aot_defuse_version();
+        p.region_mask = aura_get_aot_region_mask();
+        p.last_fail_reason = static_cast<std::uint8_t>(AotReloadFail::Ok);
+        {
+            aura_reload_recovery_snapshot snap{};
+            aura_hot_update_reload_recovery_get_snapshot(&snap);
+            p.force_jit_regions_mask = static_cast<std::uint64_t>(snap.force_jit_regions_mask);
+        }
+        p.would_allow_native = (p.force_jit_regions_mask == 0);
+        p.stamp_epoch = g_aot_reload_proof_stamp_epoch.load(std::memory_order_relaxed) + 1;
+        p.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(p);
+    }
 }
 
 // Issue #1271: last successfully committed AOT module identity
@@ -1327,6 +1353,24 @@ void note_reload_rollback(AotReloadFail reason) noexcept {
     }
     g_last_reload_fail_reason.store(static_cast<std::uint8_t>(reason), std::memory_order_release);
     aura::compiler::hot_update_registry().on_reload_rollback(reason);
+    // Issue #2753: stamp rollback proof (would_allow_native=false + reason).
+    {
+        AotReloadConsistencyProof p{};
+        p.table_epoch = aura_aot_func_table_epoch();
+        p.bridge_epoch = aura_get_current_bridge_epoch();
+        p.defuse_version = aura_get_aot_defuse_version();
+        p.region_mask = aura_get_aot_region_mask();
+        p.last_fail_reason = static_cast<std::uint8_t>(reason);
+        {
+            aura_reload_recovery_snapshot snap{};
+            aura_hot_update_reload_recovery_get_snapshot(&snap);
+            p.force_jit_regions_mask = static_cast<std::uint64_t>(snap.force_jit_regions_mask);
+        }
+        p.would_allow_native = false;
+        p.stamp_epoch = g_aot_reload_proof_stamp_epoch.load(std::memory_order_relaxed) + 1;
+        p.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(p);
+    }
 }
 
 // Issue #2093: thin wrapper for callers that don't have a specific
