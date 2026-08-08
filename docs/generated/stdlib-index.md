@@ -12,7 +12,7 @@
 | `std/algorithm` | `sort-stable` `sort-by` `binary-search` `merge-sorted` `merge` `sorted?` `unique` `min-by` … (+3) | Aura standard algorithm library |
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `colony:search` | lib/std/ant.aura -- ant colony pheromone system + colony:search |
 | `std/ast-viz` | `ast:to-dot` `ast:to-dot-node` `mutation:trace` `mutation:trace-node` | — |
-| `std/ast` | `ast:summary-formatted` `ast:diff-formatted` `ast:validate-summary` `ast:version-summary` `ast:ref-stats` `ast:memory-pressure` `;` `thin` … (+12) | lib/std/ast.aura — High-level AST helpers (Issue #563 / #2734) |
+| `std/ast` | `ast:summary-formatted` `ast:diff-formatted` `ast:validate-summary` `ast:version-summary` `ast:ref-stats` `ast:memory-pressure` `;` `thin` … (+14) | lib/std/ast.aura — High-level AST helpers (Issue #563 / #2734) |
 | `std/atomic-swap` | `make-binding` `binding-id` `binding-target-version` `binding-artifact-id` `binding-pending-target-version` `binding-pending-artifact-id` `binding-dirty?` `binding-target` … (+15) | lib/std/atomic-swap.aura — Issue #1380 |
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/capability` | `capability-stack` `capability?` `check-capability` | std/capability.aura — Capability 标准库 |

@@ -396,6 +396,31 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return result;
     });
+    // (ast:node-count) — Issue #2737 denseness metrology
+    //   → integer FlatAST size without allocating an O(N) id list.
+    //   Prefer over (length (stats:get "ast:nodes")) at large N.
+    ObservabilityPrims::register_stats_impl("ast:node-count", [&ev](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+        if (!ev.workspace_flat_)
+            return make_int(0);
+        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->size()));
+    });
+    // (ast:def-count) — Issue #2737 companion: top-level define count O(N) walk
+    // but no pair-list allocation (returns a single int).
+    ObservabilityPrims::register_stats_impl("ast:def-count", [&ev](const auto&) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+        if (!ev.workspace_flat_ || !ev.workspace_pool_)
+            return make_int(0);
+        auto& flat = *ev.workspace_flat_;
+        std::int64_t n = 0;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.is_free_slot(id))
+                continue;
+            if (flat.get(id).tag == aura::ast::NodeTag::Define)
+                ++n;
+        }
+        return make_int(n);
+    });
     // (ast:list-snapshots)
     //   → ((id "name") ...)  list of (snapshot-id . name) pairs
     ObservabilityPrims::register_stats_impl("ast:list-snapshots", [&ev](const auto&) -> EvalValue {

@@ -13,6 +13,7 @@
 ;
 ;   B. Stats catalog only (register_stats_impl → stats:get "…"):
 ;        ast:nodes, ast:defs, ast:generation, ast:version, ast:summary
+;        ast:node-count (#2737 O(1) size), ast:def-count (#2737)
 ;        Direct (ast:nodes) is unbound; use (stats:get "ast:nodes") or the
 ;        thin aliases exported below after (require "std/ast" all:).
 ;
@@ -25,14 +26,17 @@
         ast:validate-summary ast:version-summary
         ast:ref-stats ast:memory-pressure
         ; thin aliases for stats-only keys (callable after require)
-        ast:nodes ast:defs ast:generation ast:version ast:summary)
+        ast:nodes ast:defs ast:generation ast:version ast:summary
+        ast:node-count ast:def-count)
 
-; ── Thin aliases for stats:get-only names (#2734) ───────────────
+; ── Thin aliases for stats:get-only names (#2734 / #2737) ───────
 (define (ast:nodes) (stats:get "ast:nodes"))
 (define (ast:defs) (stats:get "ast:defs"))
 (define (ast:generation) (stats:get "ast:generation"))
 (define (ast:version) (stats:get "ast:version"))
 (define (ast:summary) (stats:get "ast:summary"))
+(define (ast:node-count) (stats:get "ast:node-count"))
+(define (ast:def-count) (stats:get "ast:def-count"))
 
 ; ── (ast:summary-formatted) ──
 ; Wrap (ast:summary) with a formatted multi-line string for
