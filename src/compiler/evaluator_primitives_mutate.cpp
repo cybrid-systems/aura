@@ -1044,6 +1044,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // add_mutation_with_rollback for int_val_/float_val_/sym_id_
     // — so the rollback path actually restores the original
     // value on exit(success=false).
+    //
+    // Issue #2793: records are logged as Committed at write time (inside
+    // the Guard, before commit). On Guard failure, exit_mutation_boundary
+    // → rollback_to_size → rollback_record_for_boundary_abort restores the
+    // scalar via has_rollback_data AND forces status=RolledBack so the
+    // audit log cannot claim "committed" for a reverted value.
     add_mutate(
         "mutate:replace-value",
         [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
@@ -1096,9 +1102,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                     auto new_val = static_cast<std::int64_t>(as_int(a[1]));
                     old_val = static_cast<std::uint64_t>(nv.int_value);
+                    // Issue #2793: log + write under Guard; abort marks RolledBack.
                     auto mid = flat.add_mutation_with_rollback(
                         node, "replace-value", "Int", "Int", ev.string_heap_[sum_idx],
-                        aura::ast::MutationStatus::Committed, 0, old_val,
+                        aura::ast::MutationStatus::Committed,
+                        static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal), old_val,
                         static_cast<std::uint64_t>(new_val), true);
                     flat.set_int(node, new_val);
                     ev.workspace_flat_->mark_dirty_upward(node, aura::ast::FlatAST::kGeneralDirty,
