@@ -592,6 +592,65 @@ int run_test_join_drain_reclaim() {
     }
 
 
+    // ── Issue #2743: Aura language surface for JoinStatus::Reclaimed ──
+    {
+        std::println("\n--- #2743 AC1: orch:agent-join maps Reclaimed → status=reclaimed ---");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent.find("case aura::serve::JoinStatus::Reclaimed:") != std::string::npos,
+              "AC1: agent-join switch has Reclaimed arm");
+        CHECK(agent.find("\"reclaimed\"") != std::string::npos, "AC1: status string reclaimed");
+        CHECK(agent.find("schema-2743") != std::string::npos, "AC1: schema-2743 on agent-join");
+        CHECK(agent.find("agent_join_reclaimed_total") != std::string::npos,
+              "AC1: Aura-side reclaimed counter bump");
+    }
+    {
+        std::println("\n--- #2743 AC2: parallel-intend surfaces join-status ---");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent.find("join-status") != std::string::npos,
+              "AC2: parallel-intend exposes join-status");
+        CHECK(agent.find("join-status-reclaimed") != std::string::npos,
+              "AC2: join-status-reclaimed bool");
+        CHECK(agent.find("batch.join_status") != std::string::npos,
+              "AC2: batch.join_status plumbed");
+    }
+    {
+        std::println("\n--- #2743 AC3: README language contract ---");
+        const auto readme = read_file("src/orch/README.md");
+        CHECK(readme.find("Aura language surface (Issue #2743)") != std::string::npos,
+              "AC3: README language surface section");
+        CHECK(readme.find("status=\"reclaimed\"") != std::string::npos ||
+                  readme.find("status=reclaimed") != std::string::npos ||
+                  readme.find("**reclaimed**") != std::string::npos,
+              "AC3: README lists reclaimed status");
+        CHECK(readme.find("agent-join-reclaimed-total") != std::string::npos ||
+                  readme.find("agent_join_reclaimed_total") != std::string::npos,
+              "AC3: README mentions agent-join-reclaimed counter");
+    }
+    {
+        std::println("\n--- #2743 AC4: metrics additive ---");
+        const auto hdr = read_file("src/orch/agent_spawn.h");
+        CHECK(hdr.find("agent_join_reclaimed_total") != std::string::npos,
+              "AC4: OrchModuleStats agent_join_reclaimed_total");
+        CHECK(hdr.find("join_reclaimed_deferred_cleanup_total") != std::string::npos,
+              "AC4: deferred cleanup counter preserved");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent.find("agent-join-reclaimed-total") != std::string::npos,
+              "AC4: query key agent-join-reclaimed-total");
+    }
+    {
+        std::println("\n--- #2743 AC5+AC6: source-cite + no docs/design/ + MVP ---");
+        const auto t = read_file("tests/orch/test_join_drain_reclaim.cpp");
+        CHECK(t.find("#2743 AC1") != std::string::npos, "AC5: this suite cites #2743");
+        CHECK(read_file("docs/design/2743-reclaimed-surface.md").empty(),
+              "AC6: no docs/design/2743-* per #1655");
+        // MVP: no AgentRegistry / global_agent_registry symbol introduced
+        // (comments that mention the forbidden name for linter docs are OK).
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(agent.find("class AgentRegistry") == std::string::npos &&
+                  agent.find("g_global_agent_registry") == std::string::npos,
+              "AC6: no AgentRegistry type / g_global_agent_registry");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
