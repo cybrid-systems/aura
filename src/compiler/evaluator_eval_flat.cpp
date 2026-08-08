@@ -4815,11 +4815,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     if (count == 0)
                         return EvalResult(make_void());
 
-                    // Check if there are multiple define nodes → use letrec semantics
-                    // Phase 1: pre-allocate cells for all defines
+                    // Multiple defines at the *head* of a body → letrec semantics
+                    // (mutual recursion + private free-var capture). Issue #2740 /
+                    // #2739: if any define appears *after* a non-define expression
+                    // (vector-set! / fill / side effects), do NOT lift those defines
+                    // — Agent denseness writes "mutate then define flag" and letrec
+                    // init sees pre-mutation zeros while later reads look correct
+                    // (silent false denseness). Sequential eval when define-after-expr.
                     std::vector<std::pair<std::string, aura::ast::NodeId>> letrec_defs;
                     bool has_multiple_defs = false;
+                    bool define_after_expr = false;
                     int define_count = 0;
+                    bool saw_non_define = false;
                     // Find last non-NULL child (NULL_NODE holes may exist from mutate:move-node)
                     aura::ast::NodeId last_expr = aura::ast::NULL_NODE;
                     for (std::size_t si = count; si > 0; --si) {
@@ -4840,10 +4847,14 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             define_count++;
                             if (define_count > 1)
                                 has_multiple_defs = true;
+                            if (saw_non_define)
+                                define_after_expr = true;
                             letrec_defs.push_back({std::string(p->resolve(child_node.sym_id)),
                                                    child_node.children.empty()
                                                        ? aura::ast::NULL_NODE
                                                        : child_node.child(0)});
+                        } else {
+                            saw_non_define = true;
                         }
                     }
 
@@ -4854,10 +4865,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             effective_count++;
                     }
                     if (effective_count < count) {
-                        // Count again for the main loop using only original children
-                        // We'll check each child in the loop below
+                        // Recount defines / define-after-expr on live children only.
                         has_multiple_defs = false;
+                        define_after_expr = false;
                         define_count = 0;
+                        saw_non_define = false;
                         for (std::size_t ci = 0; ci < count; ++ci) {
                             auto cid = v.child(ci);
                             if (cid == aura::ast::NULL_NODE)
@@ -4867,11 +4879,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 define_count++;
                                 if (define_count > 1)
                                     has_multiple_defs = true;
+                                if (saw_non_define)
+                                    define_after_expr = true;
+                            } else {
+                                saw_non_define = true;
                             }
                         }
                     }
 
-                    if (has_multiple_defs) {
+                    if (has_multiple_defs && !define_after_expr) {
                         // Phase 1: pre-allocate cells for all defines
                         // This ensures all function names are visible to each other
                         // (and module private free-vars survive export filtering:
