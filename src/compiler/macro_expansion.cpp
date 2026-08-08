@@ -360,6 +360,10 @@ std::atomic<std::uint64_t> g_macro_clone_hygiene_dirty_total{0};
 // clone is already in-flight (g_macro_clone_in_flight was already > 0).
 // Counts concurrent top-level depth=0 entries (threads/fibers).
 std::atomic<std::uint64_t> g_clone_macro_body_concurrent_top_level_total{0};
+// Issue #2807: pre_scan treated unquote-splicing as template scope (would
+// gensym caller-scope bindings). Bumped when the boundary is recognized
+// and recursion stops (parity with unquote).
+std::atomic<std::uint64_t> g_unquote_splicing_hygiene_mismatch_total{0};
 // Issue #2021: how many top-level clone_macro_body calls are live
 // across threads, and the high-water mark (peak concurrent).
 std::atomic<std::uint64_t> g_macro_clone_in_flight{0};
@@ -699,6 +703,13 @@ extern "C" std::uint64_t aura_clone_macro_body_concurrent_top_level_total_v_read
 extern "C" void
 aura_test_reset_clone_macro_body_concurrent_top_level_total_for_test(void) noexcept {
     g_clone_macro_body_concurrent_top_level_total.store(0, std::memory_order_relaxed);
+}
+// Issue #2807: unquote-splicing boundary recognition metric.
+extern "C" std::uint64_t aura_unquote_splicing_hygiene_mismatch_total_v_read(void) noexcept {
+    return g_unquote_splicing_hygiene_mismatch_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_unquote_splicing_hygiene_mismatch_total_for_test(void) noexcept {
+    g_unquote_splicing_hygiene_mismatch_total.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2241: check whether a fiber is allowed to expand given its
@@ -1371,37 +1382,30 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // Issue #2018: Lambda / MacroDef with dotted rest — last param is a
     // rest binding; gensym via rename_rest_binding_pre (`__rest_` prefix).
     if (name_map) {
-        // Issue #2239: qq-aware pre_scan. Tracks `(quasiquote ...)` /
-        // `(unquote ...)` boundaries so rest-param bindings nested
-        // inside qq templates get gensym'd (template scope = gensym),
-        // while unquote inner expressions are NOT gensym'd (caller
-        // scope). Also bumps g_macro_rest_param_nested_qq_hits_total
-        // whenever a dotted Lambda/MacroDef is discovered inside qq
-        // (qq_depth > 0) — gives Agents visibility into the
-        // rest-param + nested-qq path separately from the flat
-        // rest_param_hygiene_total counter.
+        // Issue #2239 / #2807: qq-aware pre_scan. Tracks `(quasiquote ...)`,
+        // `(unquote ...)`, and `(unquote-splicing ...)` boundaries so
+        // rest-param bindings nested inside qq templates get gensym'd
+        // (template scope), while unquote / unquote-splicing inner
+        // expressions are NOT gensym'd (caller scope). Also bumps
+        // g_macro_rest_param_nested_qq_hits_total whenever a dotted
+        // Lambda/MacroDef is discovered inside qq (qq_depth > 0).
         std::function<void(NodeId, int)> pre_scan = [&](NodeId nid, int qq_depth) {
             if (nid == NULL_NODE || nid >= source.size())
                 return;
             auto nv = source.get(nid);
-            // Quasiquote / unquote boundary detection. Both are encoded
-            // as Call nodes whose head is a Variable named 'quasiquote'
-            // or 'unquote' (matches the data_to_flat pattern at
-            // evaluator_eval_flat.cpp:948-960 — there's no dedicated
-            // NodeTag::Quasiquote). Quasiquote → recurse into first arg
-            // with deeper qq_depth; unquote → stop recursion (caller
-            // scope, no gensym). Only matches when the head variable
-            // resolves to the exact symbol name; arbitrary Call nodes
-            // fall through to the existing Let/Lambda/MacroDef logic.
+            // Quasiquote / unquote / unquote-splicing boundary detection.
+            // Encoded as Call nodes with Variable heads (no dedicated
+            // NodeTag). Quasiquote → recurse into first arg with deeper
+            // qq_depth; unquote / unquote-splicing → stop recursion
+            // (caller scope, no gensym). Issue #2807: `,@x` must match
+            // unquote, not fall through to generic child walk.
             if (nv.tag == NodeTag::Call && !nv.children.empty()) {
                 auto callee_n = source.get(nv.child(0));
                 if (callee_n.tag == NodeTag::Variable) {
                     auto cname = std::string(source_pool.resolve(callee_n.sym_id));
                     if (cname == "quasiquote" && nv.children.size() >= 2) {
                         // Entering qq body: bump depth + recurse ONLY
-                        // into the qq template (first arg). Other args
-                        // (rare, but `,@x` unquote-splice variants) are
-                        // unquote-handled below.
+                        // into the qq template (first arg).
                         pre_scan(nv.child(1), qq_depth + 1);
                         return;
                     }
@@ -1409,6 +1413,15 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                         // Boundary: do NOT recurse into unquote inner.
                         // Bindings inside unquote live in the caller's
                         // scope and must NOT be gensym'd by the macro.
+                        return;
+                    }
+                    // Issue #2807: unquote-splicing (`,@x`) is also caller
+                    // scope — same stop as unquote. Without this, pre_scan
+                    // walks the splice body at template qq_depth and
+                    // gensyms bindings that should evaluate in the caller.
+                    if (cname == "unquote-splicing") {
+                        g_unquote_splicing_hygiene_mismatch_total.fetch_add(
+                            1, std::memory_order_relaxed);
                         return;
                     }
                 }

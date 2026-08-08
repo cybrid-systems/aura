@@ -1179,6 +1179,18 @@ def cmd_lint():
             "Issue #2806 concurrent clone hygiene depth linter failed — run python3 scripts/coverage/checks/check_concurrent_clone_hygiene_depth_2806.py"
         )
         return r
+    # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
+    # ac2807 in test_unquote_splicing_hygiene.
+    ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
+    if not ush_script.exists():
+        fail(f"missing {ush_script}")
+        return 1
+    r = run([sys.executable, str(ush_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2807 unquote-splicing hygiene linter failed — run python3 scripts/coverage/checks/check_unquote_splicing_hygiene_2807.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

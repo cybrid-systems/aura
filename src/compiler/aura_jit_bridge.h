@@ -301,6 +301,9 @@ extern "C" void aura_test_reset_dotted_rest_builtin_rename_prevented_total_for_t
 // Issue #2806: concurrent top-level clone_macro_body (depth=0 overlap).
 extern "C" std::uint64_t aura_clone_macro_body_concurrent_top_level_total_v_read(void) noexcept;
 extern "C" void aura_test_reset_clone_macro_body_concurrent_top_level_total_for_test(void) noexcept;
+// Issue #2807: unquote-splicing treated as caller-scope boundary in pre_scan.
+extern "C" std::uint64_t aura_unquote_splicing_hygiene_mismatch_total_v_read(void) noexcept;
+extern "C" void aura_test_reset_unquote_splicing_hygiene_mismatch_total_for_test(void) noexcept;
 
 // Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
 // Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call
