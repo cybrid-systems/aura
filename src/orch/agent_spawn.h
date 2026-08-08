@@ -307,6 +307,10 @@ struct OrchModuleStats {
     // Mirrors the #2498 orphan-roots metric so dashboards can
     // distinguish "still draining" from "deferred".
     std::atomic<std::uint64_t> join_reclaimed_deferred_cleanup_total{0};
+    // Issue #2743: Aura orch:agent-join outcomes with status="reclaimed"
+    // (language surface). Distinct from join_reclaimed_deferred_cleanup_total
+    // which counts C++ complete_agent_join_cleanup Reclaimed path.
+    std::atomic<std::uint64_t> agent_join_reclaimed_total{0};
     // Issue #2636: residual reclaim observability — body-age tracking
     // (steady_clock ns at mark_reclaimed → body exit / Fiber dtor).
     // gauge on max/sum (CAS on max under contention); counter on samples.

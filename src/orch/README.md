@@ -8,7 +8,7 @@ Agent orchestration facade — `orch.h` · `agent_spawn.h` · `orch.ixx` (#1588)
 |-----------|-------------------|--------|
 | `(orch:spawn-agent name [thunk] [:attach-mailbox bool] [:high-water n] [:keepalive-interval-ms n] [:max-no-yield-ms n])` | `name` string; optional 0-arg thunk; optional keywords | hash `{ok, id, name, schema=1588, schema-2011, quota-exceeded[, error]}`; **quota reject → typed Aura error** |
 | `(orch:agent-poll name)` | Issue #2540 coop yield edge | hash `{ok, yielded, schema-2540}` — forces `Fiber::yield` when `max_no_yield_ms` window elapsed |
-| `(orch:agent-join name [:timeout-ms n])` | name as registered at spawn | hash `{ok, status, wait-us, schema}` (`status` = ok/timeout/cancelled/invalid) |
+| `(orch:agent-join name [:timeout-ms n])` | name as registered at spawn | hash `{ok, status, wait-us, schema}` (`status` = ok/timeout/cancelled/invalid/**reclaimed** — Issue #2743) |
 | `(orch:agent-send name payload)` | payload string/int/bool | hash `{ok, status, schema}` (`status` = ok/backpressure/closed); unknown agent → error |
 | `(orch:agent-recv name [:wait bool] [:timeout-ms n])` | default wait `#t` | hash `{ok, empty, payload, schema}` |
 | `(orch:parallel-intend tasks …)` | alias of `(parallel-intend …)` | same as parallel-intend batch hash |
@@ -597,14 +597,29 @@ surface + README source-cite). No docs/design/ per #1655.
 
 ## JoinStatus contract (Issue #2661)
 
+<!-- Language surface extension: Issue #2743 (status=reclaimed on Aura hash). -->
+
 `Fiber::join` and `parallel_orch::parallel_run` return `serve::JoinResult`
-with one of four statuses. The joiner MUST consult this table before
+with one of five statuses. The joiner MUST consult this table before
 freeing any shared resource — Reclaimed is the one path where the body
 may still be running under a non-yielding tight loop. Single post-join
 cleanup protocol lives in `Evaluator::complete_agent_join_cleanup`
 (`src/orch/agent_spawn.h`); orch `join_agent` / `join_agents` route
 through it. The parallel Timeout residual path uses the same
 `note_orphan_fiber` + Fiber dtor pair (no divergent cleanup).
+
+### Aura language surface (Issue #2743)
+
+`(orch:agent-join …)` and `(orch:scope-join-all …)` map
+`JoinStatus::Reclaimed` → `status="reclaimed"` (hash field). Agents
+**must** treat reclaimed as “body may still run; defer reservation /
+mailbox / name-table free” — same contract as the C++ table below.
+`(parallel-intend …)` exposes `join-status` (and `join-status-reclaimed`
+when applicable) from the underlying `JoinResult` so residual-reclaimed
+batches are distinguishable from ordinary `timeout` / `fail-fast`.
+Metrics: `join_reclaimed_deferred_cleanup_total` remains authoritative;
+additive `agent-join-reclaimed-total` counts Aura-side agent-join
+reclaimed outcomes.
 
 | `JoinStatus` | Body Done? | What joiner may free | Counter bumps |
 |--------------|-----------|---------------------|----------------|

@@ -2701,6 +2701,29 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         const auto iso_sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(isolation_level);
 
+        // Issue #2743: surface underlying Fiber join status (incl. reclaimed)
+        // on the batch hash so residual-reclaimed is not collapsed into timeout.
+        const char* join_st = "ok";
+        switch (batch.join_status) {
+            case aura::serve::JoinStatus::Ok:
+                join_st = "ok";
+                break;
+            case aura::serve::JoinStatus::Timeout:
+                join_st = "timeout";
+                break;
+            case aura::serve::JoinStatus::Cancelled:
+                join_st = "cancelled";
+                break;
+            case aura::serve::JoinStatus::Invalid:
+                join_st = "invalid";
+                break;
+            case aura::serve::JoinStatus::Reclaimed:
+                join_st = "reclaimed";
+                break;
+        }
+        const auto join_sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(join_st);
+
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"status", make_string(sidx)},
             {"ok-count", make_int(static_cast<std::int64_t>(batch.ok_count))},
@@ -2722,11 +2745,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #2400: explicit isolation-level enum (additive).
             {"isolation-level", make_string(iso_sidx)},
             {"isolation-level-wired", make_int(1)},
+            // Issue #2743: Fiber join status (reclaimed residual visible).
+            {"join-status", make_string(join_sidx)},
+            {"join-status-reclaimed",
+             make_bool(batch.join_status == aura::serve::JoinStatus::Reclaimed)},
             {"schema", make_int(1587)},
             {"schema-2007", make_int(2007)},
             {"schema-2081", make_int(2081)},
             {"schema-2163", make_int(2163)},
             {"schema-2400", make_int(2400)},
+            {"schema-2743", make_int(2743)},
         };
         if (pure_engaged) {
             kv.push_back({"schema-pure-parallel", make_int(2163)});
@@ -3082,13 +3110,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 case aura::serve::JoinStatus::Invalid:
                     st = "invalid";
                     break;
-                // Issue #2467: target force-reclaimed but body still
+                // Issue #2467 / #2743: target force-reclaimed but body still
                 // executing. Joiner deferred cleanup (no UAF). Map to
                 // "reclaimed" status string so orch hash surfaces the
                 // new path for dashboards + operator queries.
                 case aura::serve::JoinStatus::Reclaimed:
                     st = "reclaimed";
                     break;
+            }
+            if (jr.status == aura::serve::JoinStatus::Reclaimed) {
+                // Issue #2743 AC4: Aura-side agent-join reclaimed counter
+                // (join_reclaimed_deferred_cleanup_total remains authoritative
+                // for C++ cleanup path).
+                aura::orch::g_orch_module_stats.agent_join_reclaimed_total.fetch_add(
+                    1, std::memory_order_relaxed);
             }
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(st);
@@ -3099,6 +3134,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema", make_int(1588)},
                 {"schema-2011", make_int(2011)},
                 {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
+                {"schema-2743", make_int(2743)},
+                {"issue-2743", make_int(2743)},
                 {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
             };
             return build_orch_hash(kv);
@@ -4138,6 +4175,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("join-drain-residual-reclaim-total",
                       static_cast<std::int64_t>(
                           os.join_drain_residual_reclaim_total.load(std::memory_order_relaxed)));
+            // Issue #2743: Aura orch:agent-join status="reclaimed" outcomes.
+            insert_kv("agent-join-reclaimed-total",
+                      static_cast<std::int64_t>(
+                          os.agent_join_reclaimed_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2743", 2743);
+            insert_kv("issue-2743", 2743);
             // Issue #2397: reclaimed vs body-still-running (additive; #2227 keys preserved).
             // Prefer Fiber process-truth gauges when available so serve-only and
             // orch-linked binaries agree; orch mirrors track the same transitions.
