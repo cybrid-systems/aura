@@ -23,6 +23,19 @@
 (expect "split" (string-split "a,b,c" ",") (list "a" "b" "c"))
 (expect "join" (string-join (list "a" "b" "c") "-") "a-b-c")
 
+;; Issue #2770: iterative string-split must not blow recursion depth
+;; on multi-hundred / multi-line inputs (Hermes Phase 5 mailbox).
+(expect "split-5k-oneshot" (length (string-split (string-repeat "a" 5000) "|")) 1)
+(expect "split-2k-lines"
+        (length (string-split (string-repeat "a\n" 2000) "\n"))
+        2001)
+(expect "split-words-basic"
+        (string-split-words "hi  there\tworld")
+        (list "hi" "there" "world"))
+(expect "split-words-long"
+        (length (string-split-words (string-repeat "w " 500)))
+        500)
+
 (if (= *e2e-fails* 0)
     (begin (display "E2E-PASS") (newline))
     (begin (display "E2E-FAIL count=") (display *e2e-fails*) (newline)))

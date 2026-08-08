@@ -727,6 +727,20 @@ def cmd_lint():
             "Issue #2769 stdlib require/export audit linter failed — run python3 scripts/coverage/checks/check_stdlib_require_export_audit_2769.py"
         )
         return r
+    # Issue #2770: std/string string-split O(1)-stack iterative rewrite
+    # (Hermes Phase 5 mailbox / multi-line denseness). while + substring
+    # ranges; string-split-words / string-repeat siblings; suite +
+    # commercial_readiness regressions; live smoke when build/aura exists.
+    ssi_script = COVERAGE_CHECKS / "check_string_split_iterative_2770.py"
+    if not ssi_script.exists():
+        fail(f"missing {ssi_script}")
+        return 1
+    r = run([sys.executable, str(ssi_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2770 string-split iterative linter failed — run python3 scripts/coverage/checks/check_string_split_iterative_2770.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
