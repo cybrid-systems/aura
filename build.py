@@ -1107,6 +1107,18 @@ def cmd_lint():
             "Issue #2800 replace-pattern multi-match NodeId stability linter failed — run python3 scripts/coverage/checks/check_replace_pattern_multi_match_nodeid_stability_2800.py"
         )
         return r
+    # Issue #2801: move-node MacroIntroduced hygiene (#142 parity with replace-subtree).
+    # ac2801 in test_move_node_hygiene.
+    mnh_script = COVERAGE_CHECKS / "check_move_node_hygiene_2801.py"
+    if not mnh_script.exists():
+        fail(f"missing {mnh_script}")
+        return 1
+    r = run([sys.executable, str(mnh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2801 move-node hygiene linter failed — run python3 scripts/coverage/checks/check_move_node_hygiene_2801.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

@@ -2893,6 +2893,9 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
 }
 
 // Issue #1900: lockless variant of (mutate:move-node).
+// Issue #2801 / #142: MacroIntroduced target rejected (parity with
+// replace-subtree). Moving a macro-internal node into a non-macro
+// parent would hoist macro scope bindings — hygiene contract leak.
 EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::EvalValue> a) {
     if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !workspace_flat_)
         return std::unexpected(aura::diag::Diagnostic{
@@ -2906,6 +2909,13 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
         new_parent == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :move-node: node or parent out of range"});
+    // Issue #2801: hygiene gate before cycle / detach (cannot move MacroIntroduced).
+    if (flat.is_macro_introduced(node)) {
+        flat.note_move_node_hygiene_reject();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :move-node: cannot move macro-introduced node"});
+    }
     if (node == new_parent)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :move-node: cannot move node to itself"});

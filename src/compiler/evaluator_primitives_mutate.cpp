@@ -5617,6 +5617,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // switch), so the rollback path is "bump version +
     // invalidate ev.defuse_index_" — the actual move is not
     // reversed, but readers know the workspace state changed.
+    //
+    // Hygiene (Issue #142 / #2801): MacroIntroduced nodes must not be
+    // moved (hoist into non-macro scope). Same hard gate as
+    // replace-subtree target; lockless batch path rejects too.
     add_mutate("mutate:move-node", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
@@ -5646,6 +5650,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             new_parent == NULL_NODE) {
             ok = false;
             return ev.make_merr("out-of-range", "node or parent ID out of range");
+        }
+
+        // Issue #2801 / #142: MacroIntroduced target — hard reject (parity
+        // with replace-subtree). Metric: move_node_hygiene_reject_total.
+        if (flat.is_macro_introduced(node)) {
+            ok = false;
+            flat.note_move_node_hygiene_reject();
+            ev.record_hygiene_violation_attempt();
+            return ev.make_merr("hygiene", "cannot move macro-introduced node");
         }
 
         if (node == new_parent) {
