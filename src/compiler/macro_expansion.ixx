@@ -126,6 +126,9 @@ export extern std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceed
 export extern std::atomic<std::uint64_t> g_clone_walk_gensym_ceiling_exceeded_total;
 // Issue #2805: dotted-rest fallback refused to rename a hygiene_builtin.
 export extern std::atomic<std::uint64_t> g_dotted_rest_builtin_rename_prevented_total;
+// Issue #2806: concurrent top-level clone_macro_body entries (depth=0 while
+// another top-level clone is already in-flight).
+export extern std::atomic<std::uint64_t> g_clone_macro_body_concurrent_top_level_total;
 
 export struct MacroExpansionDef {
     std::vector<std::string> params;
