@@ -697,6 +697,20 @@ def cmd_lint():
             "Issue #2767 denseness CLI DX linter failed — run python3 scripts/coverage/checks/check_cli_denseness_dx_2767.py"
         )
         return r
+    # Issue #2768: std/orchestrator multi-agent surface on stdin denseness
+    # host (#2766 free-var residual). Export-before-require in
+    # orchestrator.aura + ac2768_* lifecycle e2e (spawn/ask/status/stop/
+    # restart/epoch/parallel-with-yield) in test_module_require_freevar.
+    oas_script = COVERAGE_CHECKS / "check_orchestrator_agent_stdin_2768.py"
+    if not oas_script.exists():
+        fail(f"missing {oas_script}")
+        return 1
+    r = run([sys.executable, str(oas_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2768 orchestrator agent stdin linter failed — run python3 scripts/coverage/checks/check_orchestrator_agent_stdin_2768.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
