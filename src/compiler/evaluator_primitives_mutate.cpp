@@ -2577,6 +2577,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // consistent with the rest of the rebind path.
         if (old_define == aura::ast::NULL_NODE) {
             // Parse the new code first so we know what to bind.
+            // Issue #2791: snapshot size; free orphan nodes on parse failure
+            // so append-mode parse_to_flat does not leak into free_list / size.
+            const auto size_before_add_parse = static_cast<std::size_t>(flat.size());
             auto pr_add =
                 aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
             if (!pr_add.success || pr_add.root == aura::ast::NULL_NODE) {
@@ -2592,6 +2595,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 } else {
                     parse_err = "rebind code could not be parsed";
                 }
+                // Issue #2791: free partial parse appends (Guard only rolls mutation log).
+                if (size_before_add_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_add_parse));
                 ok = false;
                 return mev("parse-error", parse_err);
             }
@@ -2599,6 +2606,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             auto root_v = flat.get(pr_add.root);
             if (root_v.tag == aura::ast::NodeTag::Define) {
                 if (root_v.children.empty()) {
+                    // Issue #2791: parsed Define is unlinked — free orphans.
+                    if (size_before_add_parse < flat.size())
+                        (void)flat.free_orphan_nodes_from(
+                            static_cast<aura::ast::NodeId>(size_before_add_parse));
                     ok = false;
                     return mev("parse-error", "define form in rebind code has no body");
                 }
@@ -2621,7 +2632,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // are valid in the same FlatAST and can be cross-referenced.
         // Issue #1685: snapshot size so we re-resolve old_define only in the
         // pre-parse range (ignore a Define form appended by this parse).
+        // Issue #2791: same snapshot bounds free_orphan_nodes_from on failure
+        // so Guard mutation-log rollback does not leave parse append orphans.
         const auto size_before_parse = static_cast<std::size_t>(flat.size());
+        auto free_rebind_parse_orphans = [&flat, size_before_parse]() {
+            if (size_before_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+        };
         auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat, *ev.workspace_pool_);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             std::string parse_err;
@@ -2636,6 +2654,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             } else {
                 parse_err = "rebind code could not be parsed";
             }
+            free_rebind_parse_orphans(); // Issue #2791
             ok = false;
             return mev("parse-error", parse_err);
         }
@@ -2643,6 +2662,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #1685: re-resolve target Define after SoA growth / append.
         old_define = resolve_define_after_parse(flat, sym, old_define, size_before_parse);
         if (old_define == aura::ast::NULL_NODE) {
+            free_rebind_parse_orphans(); // Issue #2791: unlinked parse appends
             ok = false;
             return mev("not-found", "rebind: define not found after parse");
         }
@@ -2654,6 +2674,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (root_v.tag == aura::ast::NodeTag::Define) {
             // New code is a full define — extract its value child
             if (root_v.children.empty()) {
+                free_rebind_parse_orphans(); // Issue #2791
                 ok = false;
                 return mev("parse-error", "define form in rebind code has no body");
             }
@@ -2998,7 +3019,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // Parse new body INTO workspace flat (all IDs stay valid).
                 // Issue #1685 / #1687: snapshot size; re-resolve BOTH Define
                 // id and lambda_id after parse_to_flat (double-stale risk).
+                // Issue #2791: free orphan appends on parse / post-parse fail.
                 const auto size_before_parse = static_cast<std::size_t>(flat.size());
+                auto free_set_body_parse_orphans = [&flat, size_before_parse]() {
+                    if (size_before_parse < flat.size())
+                        (void)flat.free_orphan_nodes_from(
+                            static_cast<aura::ast::NodeId>(size_before_parse));
+                };
                 auto pr = aura::parser::parse_to_flat(ev.string_heap_[code_idx], flat,
                                                       *ev.workspace_pool_);
                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
@@ -3014,6 +3041,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     } else {
                         parse_err = "new body code could not be parsed";
                     }
+                    free_set_body_parse_orphans(); // Issue #2791
                     ok = false;
                     return mev("parse-error", parse_err);
                 }
@@ -3022,11 +3050,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // so neither pre-capture NodeId is used blindly for set_child.
                 id = resolve_define_after_parse(flat, sym, id, size_before_parse);
                 if (id == aura::ast::NULL_NODE) {
+                    free_set_body_parse_orphans(); // Issue #2791
                     ok = false;
                     return mev("not-found", "set-body: define not found after parse");
                 }
                 lambda_id = flat.resolve_lambda_child_of_define(id);
                 if (lambda_id == aura::ast::NULL_NODE) {
+                    free_set_body_parse_orphans(); // Issue #2791
                     ok = false;
                     return mev("type-error", std::string("function \"") + name +
                                                  "\" body is not a Lambda after parse");
@@ -3076,6 +3106,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     aura::ast::NodeId body_to_set = pr.root;
                     if (pr_root_v.tag == aura::ast::NodeTag::Define) {
                         if (pr_root_v.children.empty()) {
+                            free_set_body_parse_orphans(); // Issue #2791
                             ok = false;
                             return mev("parse-error", "define form in set-body code has no body");
                         }

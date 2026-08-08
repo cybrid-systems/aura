@@ -987,6 +987,18 @@ def cmd_lint():
             "Issue #2790 atomic-batch partial-failure linter failed — run python3 scripts/coverage/checks/check_atomic_batch_partial_failure_2790.py"
         )
         return r
+    # Issue #2791: rebind parse-error free_orphan_nodes_from (no flat leak).
+    # ac2791 in test_rebind_parse_failure_no_leak.
+    rpnl_script = COVERAGE_CHECKS / "check_rebind_parse_failure_no_leak_2791.py"
+    if not rpnl_script.exists():
+        fail(f"missing {rpnl_script}")
+        return 1
+    r = run([sys.executable, str(rpnl_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2791 rebind parse-failure no-leak linter failed — run python3 scripts/coverage/checks/check_rebind_parse_failure_no_leak_2791.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
