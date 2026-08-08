@@ -78,40 +78,110 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return (*snap_fn)(a);
     });
 
-    // Issue #737: (workspace:rollback-to name-or-epoch) → #t/#f.
-    // Restores a named snapshot or numeric snapshot ID.
+    // Issue #737 / #2788: (workspace:rollback-to name-or-id) → #t on
+    // success; typed make_merr on failure:
+    //   "not-found"         — name/id does not resolve
+    //   "concurrent-delete" — name hit but sources_ shorter / pair drift
+    //   "bad-arg" / "no-restore"
+    // Name→id resolve + sources_ size check share one exclusive
+    // workspace lock (Issue #2788); restore runs after the lock is
+    // released so ast:restore's MutationBoundaryGuard cannot deadlock.
     add("workspace:rollback-to", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
-            return make_bool(false);
+            return ev.make_merr("bad-arg", "workspace:rollback-to: missing name-or-id");
         auto restore_fn = ev.primitives_.lookup("ast:restore");
         if (!restore_fn)
-            return make_bool(false);
-        if (is_int(a[0]))
-            return (*restore_fn)(a);
-        if (!is_string(a[0]))
-            return make_bool(false);
-        auto name_idx = as_string_idx(a[0]);
-        if (name_idx >= ev.string_heap_.size())
-            return make_bool(false);
-        const auto& target = ev.string_heap_[name_idx];
-        for (std::size_t i = 0; i < ev.snapshot_names_.size(); ++i) {
-            if (ev.snapshot_names_[i] == target)
-                return (*restore_fn)({make_int(static_cast<std::int64_t>(i))});
-        }
-        // Fallback: match auto-generated "snapshot-N" names.
-        constexpr std::string_view prefix = "snapshot-";
-        if (target.size() > prefix.size() && target.substr(0, prefix.size()) == prefix) {
-            try {
-                auto id = static_cast<std::size_t>(std::stoull(target.substr(prefix.size())));
-                if (id < ev.snapshot_sources_.size())
-                    return (*restore_fn)({make_int(static_cast<std::int64_t>(id))});
-            } catch (...) {
-                // [SILENCE-PRIM-#615] snapshot-N name parse failure → #f
-                // (documented error→value pattern; #1669 class A).
-                return make_bool(false);
+            return ev.make_merr("no-restore", "workspace:rollback-to: ast:restore unavailable");
+
+        // Issue #2788: resolve under exclusive lock so snapshot_names_ and
+        // snapshot_sources_ are observed as one consistent pair, then
+        // release before calling restore (Guard takes exclusive itself).
+        std::optional<std::size_t> resolved;
+        std::string err_kind;
+        std::string err_msg;
+        {
+            Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
+            if (is_int(a[0])) {
+                const auto id = static_cast<std::size_t>(as_int(a[0]));
+                if (id >= ev.snapshot_sources_.size()) {
+                    err_kind = "not-found";
+                    err_msg = "workspace:rollback-to: snapshot id out of range";
+                } else {
+                    resolved = id;
+                }
+            } else if (!is_string(a[0])) {
+                err_kind = "bad-arg";
+                err_msg = "workspace:rollback-to: expected string name or int id";
+            } else {
+                const auto name_idx = as_string_idx(a[0]);
+                if (name_idx >= ev.string_heap_.size()) {
+                    err_kind = "bad-arg";
+                    err_msg = "workspace:rollback-to: name string index out of range";
+                } else {
+                    // Copy name under lock (stable identity for match).
+                    const std::string target = ev.string_heap_[name_idx];
+                    const auto names_n = ev.snapshot_names_.size();
+                    const auto sources_n = ev.snapshot_sources_.size();
+                    const bool diverged = names_n != sources_n;
+
+                    bool found = false;
+                    for (std::size_t i = 0; i < names_n; ++i) {
+                        if (ev.snapshot_names_[i] != target)
+                            continue;
+                        found = true;
+                        // Name match must also be valid in sources_ —
+                        // otherwise vectors drifted (concurrent delete
+                        // or incomplete pair update).
+                        if (i >= sources_n) {
+                            err_kind = "concurrent-delete";
+                            err_msg = "workspace:rollback-to: name matched but "
+                                      "snapshot_sources_ shorter (vector pair drift)";
+                        } else {
+                            resolved = i;
+                        }
+                        break;
+                    }
+                    if (!found && err_kind.empty()) {
+                        // Fallback: auto-generated "snapshot-N" names.
+                        constexpr std::string_view prefix = "snapshot-";
+                        if (target.size() > prefix.size() &&
+                            target.substr(0, prefix.size()) == prefix) {
+                            try {
+                                const auto id = static_cast<std::size_t>(
+                                    std::stoull(target.substr(prefix.size())));
+                                if (id < sources_n) {
+                                    resolved = id;
+                                } else if (diverged && id < names_n) {
+                                    err_kind = "concurrent-delete";
+                                    err_msg = "workspace:rollback-to: snapshot-N "
+                                              "beyond sources_ size (vector pair drift)";
+                                } else {
+                                    err_kind = "not-found";
+                                    err_msg = "workspace:rollback-to: snapshot-N id "
+                                              "out of range";
+                                }
+                            } catch (...) {
+                                // [SILENCE-PRIM-#615] snapshot-N name parse
+                                // failure → typed bad-arg (not silent #f;
+                                // Issue #2788). Documented error→value
+                                // pattern (#1669 class A).
+                                err_kind = "bad-arg";
+                                err_msg = "workspace:rollback-to: invalid snapshot-N form";
+                            }
+                        } else {
+                            err_kind = "not-found";
+                            err_msg = "workspace:rollback-to: snapshot name not found";
+                        }
+                    }
+                }
             }
-        }
-        return make_bool(false);
+        } // release workspace exclusive before restore
+
+        if (!err_kind.empty())
+            return ev.make_merr(err_kind, err_msg);
+        if (!resolved)
+            return ev.make_merr("not-found", "workspace:rollback-to: snapshot not resolved");
+        return (*restore_fn)({make_int(static_cast<std::int64_t>(*resolved))});
     });
 
     // (workspace:rollback-latest) → mutation-id of the most recent

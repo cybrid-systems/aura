@@ -951,6 +951,18 @@ def cmd_lint():
             "Issue #2787 workspace:rollback-latest linter failed — run python3 scripts/coverage/checks/check_workspace_rollback_latest_2787.py"
         )
         return r
+    # Issue #2788: workspace:rollback-to locked name→id resolve + typed merr
+    # (not-found vs concurrent-delete). ac2788 in test_workspace_rollback_to.
+    wrto_script = COVERAGE_CHECKS / "check_workspace_rollback_to_2788.py"
+    if not wrto_script.exists():
+        fail(f"missing {wrto_script}")
+        return 1
+    r = run([sys.executable, str(wrto_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2788 workspace:rollback-to linter failed — run python3 scripts/coverage/checks/check_workspace_rollback_to_2788.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
