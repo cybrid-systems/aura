@@ -569,8 +569,11 @@ void Evaluator::update_shared_tree_root() {
         if (active < wt->size()) {
             wt->nodes_[active].flat = workspace_flat_;
             wt->nodes_[active].pool = workspace_pool_;
-            if (active > 0)
-                wt->nodes_[active].has_own_flat = true;
+            // Issue #2789: do NOT set has_own_flat=true here. That flag means
+            // "this layer owns a COW clone and must delete flat/pool" (#1770 /
+            // ensure_local_flat). Forcing it on every active non-root made
+            // workspace:delete free the shared evaluator workspace_flat_
+            // (invalid free / double-free). Only ensure_local_flat may set it.
         }
     }
     // Issue #1405 Option 1: bump workspace_flat_->generation so any

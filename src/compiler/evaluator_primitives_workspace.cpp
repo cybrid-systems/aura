@@ -450,14 +450,19 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     }};
 
     // (workspace :list) → ((id name [flags]) ...)
+    // Issue #2789: skip tombstoned layers (deleted via delete_child /
+    // recursive subtree delete) so orphans/leaks do not appear in list.
     (*w_impls)["workspace:list"] = PrimFn{[&ev](const auto&) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_void();
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         EvalValue result = make_void();
         for (int i = static_cast<int>(wt->size()) - 1; i >= 0; --i) {
+            const auto u = static_cast<std::uint32_t>(i);
+            if (wt->is_tombstone(u))
+                continue;
             auto& n = (*wt).nodes_[static_cast<std::size_t>(i)];
-            auto active_flag = (static_cast<std::uint32_t>(i) == wt->active_idx());
+            auto active_flag = (u == wt->active_idx());
             auto name_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(n.name);
             auto name_pair = ev.pairs_.size();
@@ -523,6 +528,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_int(static_cast<std::int64_t>(n->cow_refused_count));
         });
     // (workspace:delete id) → #t
+    // Issue #2789: delete_child recursively tombstones the whole subtree
+    // (descendants before parent). Rebind evaluator if active is under idx.
     add("workspace:delete", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
@@ -536,13 +543,13 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         }
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-        // Issue #1292 (P0): if we delete the active workspace, free of
-        // owned flat/pool would leave ev.workspace_flat_ dangling.
-        // Capture was-active before delete, then refresh like workspace:switch.
-        const bool was_active = (wt->active_idx() == idx);
+        // Issue #1292 (P0) / #2789: if we delete the active workspace OR any
+        // ancestor of the active workspace, free of owned flat/pool would
+        // leave ev.workspace_flat_ dangling. Capture before recursive delete.
+        const bool need_rebind = wt->is_under(wt->active_idx(), idx);
         if (!wt->delete_child(idx))
             return make_bool(false);
-        if (was_active) {
+        if (need_rebind) {
             wt->set_active(0);
             auto* ws = wt->active();
             if (ws) {
