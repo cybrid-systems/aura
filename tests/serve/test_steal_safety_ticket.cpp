@@ -155,9 +155,14 @@ static void ac3_coexist_2510() {
     CHECK(fh.find("Issue #2518") != std::string::npos, "AC3: fiber.h #2518");
     CHECK(fh.find("2510") != std::string::npos || wc.find("2510") != std::string::npos,
           "AC3: #2510 lineage cited");
-    CHECK(wc.find("set_resume_safety_ticket") != std::string::npos, "AC3: steal stamps ticket");
-    CHECK(wc.find("LayoutStamp") != std::string::npos ||
-              wc.find("call_steal_complete") != std::string::npos,
+    // Issue #2752: ticket stamp lives in steal_safety.cpp Ok branch;
+    // worker routes through steal_safety_transaction only.
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("set_resume_safety_ticket") != std::string::npos ||
+              wc.find("steal_safety_transaction") != std::string::npos,
+          "AC3: steal stamps ticket (via steal_safety_transaction)");
+    CHECK(wc.find("steal_safety_transaction") != std::string::npos ||
+              ss.find("aura_evaluator_on_steal_complete") != std::string::npos,
           "AC3: steal-complete restamp path retained");
     CHECK(fc.find("ticket_miss") != std::string::npos ||
               fc.find("has_resume_safety_ticket_") != std::string::npos,
@@ -197,9 +202,11 @@ static void ac5_source_wiring() {
     CHECK(fh.find("ticket") != std::string::npos, "AC5: snapshot.ticket");
     CHECK(fh.find("set_resume_safety_ticket") != std::string::npos, "AC5: set API");
     CHECK(fc.find("bump_steal_safety_ticket_mismatch") != std::string::npos, "AC5: bump");
-    CHECK(wc.find("set_resume_safety_ticket(snap.ticket)") != std::string::npos ||
-              wc.find("set_resume_safety_ticket") != std::string::npos,
-          "AC5: worker stamps");
+    // Issue #2752: stamp is in steal_safety.cpp; worker only calls transaction.
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("set_resume_safety_ticket(snap.ticket)") != std::string::npos ||
+              wc.find("steal_safety_transaction(stolen)") != std::string::npos,
+          "AC5: ticket stamped on Ok path (steal_safety_transaction)");
     CHECK(q.find("schema-2518") != std::string::npos, "AC5: query schema");
     CHECK(q.find("steal-safety-ticket-mismatch-total") != std::string::npos, "AC5: query key");
 }

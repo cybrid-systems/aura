@@ -58,8 +58,16 @@
       "ac": "AC3",
       "path": "src/serve/worker.cpp",
       "contains": [
+        "steal_safety_transaction",
+        "StealSafetyDecision::Ok"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/steal_safety.cpp",
+      "contains": [
         "set_resume_safety_ticket",
-        "call_steal_complete"
+        "aura_evaluator_on_steal_complete"
       ]
     },
     {
@@ -95,9 +103,16 @@
     },
     {
       "ac": "AC5",
-      "path": "src/serve/worker.cpp",
+      "path": "src/serve/steal_safety.cpp",
       "contains": [
         "set_resume_safety_ticket(snap.ticket)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/serve/worker.cpp",
+      "contains": [
+        "steal_safety_transaction(stolen)"
       ]
     },
     {

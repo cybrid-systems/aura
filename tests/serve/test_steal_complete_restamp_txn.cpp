@@ -75,11 +75,13 @@ static void ac1_sole_restamp_entry() {
     CHECK(fm.find("StableRefRefreshSite::Steal") != std::string::npos ||
               fm.find("auto_restamp_pinned_stable_refs_at") != std::string::npos,
           "AC1: provenance restamp in transaction");
-    CHECK(wc.find("call_steal_complete(stolen)") != std::string::npos,
-          "AC1: worker sole call site");
-    CHECK(wc.find("FiberState::Done") != std::string::npos ||
-              wc.find("is_cancel_requested") != std::string::npos,
-          "AC1: worker skips Ready after hard-fail");
+    // Issue #2752: worker success path routes through steal_safety_transaction
+    // (transaction owns on_steal_complete + ticket stamp; no direct
+    // call_steal_complete / set_resume_safety_ticket on the Ok path).
+    CHECK(wc.find("steal_safety_transaction(stolen)") != std::string::npos,
+          "AC1: worker sole success-path entry is steal_safety_transaction");
+    CHECK(wc.find("StealSafetyDecision::Ok") != std::string::npos,
+          "AC1: worker gates enqueue on StealSafetyDecision::Ok");
     // Does NOT clear stamp (resume dual-check).
     CHECK(fm.find("Does NOT clear") != std::string::npos ||
               fm.find("Does NOT clear the stamp") != std::string::npos ||
@@ -320,14 +322,18 @@ static void ac2699_2_reject_hard_skips_enqueue() {
 // ── Issue #2699 AC3: Soft / sandbox / test-override path metric-only ──
 static void ac2699_3_soft_path_metric_only() {
     std::println("\n--- #2699 AC3: soft path metric-only ---");
-    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    // Soft / production-lock live on the force-deopt pre-check in worker
+    // and the strong on_steal_complete ABI; the thin transaction wrapper
+    // (#2752 sole entry) delegates steps 3–6 there without re-reading soft.
     const auto worker = read_file("src/serve/worker.cpp");
-    CHECK(cpp.find("steal_snapshot_soft_production_locked") != std::string::npos,
-          "AC3: transaction respects production lock");
-    CHECK(cpp.find("aura_fiber_is_steal_snapshot_soft_mode") != std::string::npos,
-          "AC3: transaction respects soft-mode flag");
-    CHECK(worker.find("steal_snapshot_soft_production_locked") != std::string::npos,
-          "AC3: worker.cpp production-lock honored");
+    const auto fiber = read_file("src/serve/fiber.cpp");
+    CHECK(worker.find("steal_snapshot_soft_production_locked") != std::string::npos ||
+              worker.find("is_steal_snapshot_soft_mode") != std::string::npos,
+          "AC3: worker.cpp production-lock / soft-mode honored on force-deopt path");
+    CHECK(fiber.find("steal_snapshot_soft_production_locked") != std::string::npos,
+          "AC3: fiber.cpp owns production-lock helper");
+    CHECK(fiber.find("is_steal_snapshot_soft_mode") != std::string::npos,
+          "AC3: fiber.cpp owns soft-mode helper");
 }
 
 // ── Issue #2699 AC4: existing counters remain additive / non-regressing ──
@@ -336,13 +342,16 @@ static void ac2699_4_existing_counters_preserved() {
     const auto worker = read_file("src/serve/worker.cpp");
     const auto fiber = read_file("src/serve/fiber.cpp");
     const auto cpp = read_file("src/serve/steal_safety.cpp");
-    CHECK(worker.find("steal_snapshot_mismatch_force_deopt_total") != std::string::npos,
+    const auto hooks = read_file("src/core/gc_hooks.h");
+    // Snapshot mismatch force-deopt counter lives on Fiber (bumped from worker path).
+    CHECK(fiber.find("steal_snapshot_mismatch_force_deopt_total") != std::string::npos ||
+              worker.find("bump_mutation_steal_snapshot_mismatch") != std::string::npos,
           "AC4: snapshot-mismatch counter preserved");
-    CHECK(fiber.find("residual_defer_steal_hard_fail_total") != std::string::npos ||
-              worker.find("residual_defer_steal_hard_fail_total") != std::string::npos,
+    CHECK(hooks.find("residual_defer_steal_hard_fail_total") != std::string::npos ||
+              fiber.find("residual_defer_steal_hard_fail_total") != std::string::npos,
           "AC4: residual-defer hard-fail counter preserved");
-    CHECK(fiber.find("panic_checkpoint_cleared_on_steal_total") != std::string::npos ||
-              worker.find("panic_checkpoint_cleared_on_steal_total") != std::string::npos,
+    CHECK(hooks.find("panic_checkpoint_cleared_on_steal_total") != std::string::npos ||
+              fiber.find("panic_checkpoint_cleared_on_steal_total") != std::string::npos,
           "AC4: panic-checkpoint counter preserved");
     CHECK(fiber.find("steal_safety_ticket_mismatch_total") != std::string::npos ||
               worker.find("steal_safety_ticket_mismatch_total") != std::string::npos,
@@ -580,6 +589,80 @@ static void ac2745_4_source_and_no_design() {
           "AC4: no docs/design/2745-* per #1655");
 }
 
+// ── Issue #2752: try_steal_from only uses steal_safety_transaction ─────
+// AC1: success path calls only steal_safety_transaction; Ok → enqueue.
+// AC2: no set_resume_safety_ticket in worker.cpp (stamp only in steal_safety.cpp).
+// AC3: existing transaction counters additive / non-regressing.
+// AC4: residual hard-AND + restamp txn surfaces still green (source-cite).
+// AC5: source-cite + coverage linter + no docs/design/.
+
+static void ac2752_1_try_steal_from_only_transaction() {
+    std::println("\n--- #2752 AC1: try_steal_from only steal_safety_transaction ---");
+    const auto wc = read_file("src/serve/worker.cpp");
+    CHECK(wc.find("steal_safety_transaction(stolen)") != std::string::npos,
+          "AC1: worker calls steal_safety_transaction(stolen)");
+    CHECK(wc.find("StealSafetyDecision::Ok") != std::string::npos,
+          "AC1: worker checks StealSafetyDecision::Ok before enqueue");
+    CHECK(wc.find("local_queue_.push(stolen)") != std::string::npos,
+          "AC1: Ok path enqueues via local_queue_.push");
+    // RejectHard must not reach local_queue_.push — decision gate precedes push.
+    const auto txn_pos = wc.find("steal_safety_transaction(stolen)");
+    const auto ok_pos = wc.find("StealSafetyDecision::Ok");
+    const auto push_pos = wc.find("local_queue_.push(stolen)");
+    CHECK(txn_pos != std::string::npos && ok_pos != std::string::npos &&
+              push_pos != std::string::npos && txn_pos < ok_pos && ok_pos < push_pos,
+          "AC1: transaction → Ok gate → push order");
+    CHECK(wc.find("try_steal_from_only_uses_steal_safety_transaction") != std::string::npos,
+          "AC1: wire-in marker present");
+}
+
+static void ac2752_2_no_ticket_stamp_in_worker() {
+    std::println("\n--- #2752 AC2: no set_resume_safety_ticket outside steal_safety.cpp ---");
+    const auto wc = read_file("src/serve/worker.cpp");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    // Worker must not stamp the ticket (sole stamp is steal_safety.cpp Ok).
+    // Comments may mention the name; forbid call-shaped uses only.
+    CHECK(wc.find("set_resume_safety_ticket(") == std::string::npos &&
+              wc.find("->set_resume_safety_ticket") == std::string::npos,
+          "AC2: worker.cpp does not call set_resume_safety_ticket");
+    CHECK(ss.find("stolen->set_resume_safety_ticket(snap.ticket)") != std::string::npos,
+          "AC2: steal_safety.cpp Ok branch stamps ticket");
+    // Worker success path must not call call_steal_complete(stolen) either
+    // (transaction owns on_steal_complete).
+    CHECK(wc.find("call_steal_complete(stolen)") == std::string::npos,
+          "AC2: worker success path does not call call_steal_complete(stolen)");
+}
+
+static void ac2752_3_counters_additive() {
+    std::println("\n--- #2752 AC3: transaction counters preserved ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(hdr.find("g_steal_safety_transaction_calls_total") != std::string::npos,
+          "AC3: calls counter");
+    CHECK(hdr.find("g_steal_safety_transaction_reject_hard_total") != std::string::npos,
+          "AC3: reject_hard counter");
+    CHECK(hdr.find("g_steal_safety_transaction_ok_total") != std::string::npos, "AC3: ok counter");
+    CHECK(hdr.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC3: residual hard-AND counters still present");
+}
+
+static void ac2752_4_source_and_linter() {
+    std::println("\n--- #2752 AC5: source-cite + linter + no docs/design/ ---");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_try_steal_from_txn_2752.py");
+    CHECK(t.find("ac2752_1_try_steal_from_only_transaction") != std::string::npos,
+          "AC5: AC1 test present");
+    CHECK(t.find("ac2752_2_no_ticket_stamp_in_worker") != std::string::npos,
+          "AC5: AC2 test present");
+    CHECK(t.find("ac2752_3_counters_additive") != std::string::npos, "AC5: AC3 test present");
+    CHECK(t.find("ac2752_4_source_and_linter") != std::string::npos, "AC5: self-test");
+    CHECK(!lint.empty(), "AC5: coverage linter check_try_steal_from_txn_2752.py present");
+    CHECK(build.find("check_try_steal_from_txn_2752") != std::string::npos,
+          "AC5: build.py wires #2752 linter");
+    CHECK(read_file("docs/design/2752-try-steal-from-txn.md").empty(),
+          "AC5: no docs/design/2752-* per #1655");
+}
+
 // ── Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ───────
 // AC1: durable per-Fiber evaluator_id set on Guard enter.
 // AC2: cleared on Guard exit / cancel so stale steals cannot see a previous evaluator.
@@ -731,6 +814,11 @@ int run_test_steal_complete_restamp_txn() {
     ac2745_2_quiet_path_skips();
     ac2745_3_prior_arms_preserved();
     ac2745_4_source_and_no_design();
+    std::println("\n=== Issue #2752: try_steal_from only steal_safety_transaction ===");
+    ac2752_1_try_steal_from_only_transaction();
+    ac2752_2_no_ticket_stamp_in_worker();
+    ac2752_3_counters_additive();
+    ac2752_4_source_and_linter();
     std::println("\n=== Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ===");
     ac2727_1_evaluator_id_set_on_guard_enter();
     ac2727_2_evaluator_id_cleared_on_guard_exit();
@@ -739,8 +827,9 @@ int run_test_steal_complete_restamp_txn() {
     ac2727_5_source_and_linter();
     if (g_failed)
         return 1;
-    std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2727: OK ({} passed)",
-                 g_passed);
+    std::println(
+        "steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2727: OK ({} passed)",
+        g_passed);
     return 0;
 }
 
