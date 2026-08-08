@@ -1,0 +1,26 @@
+; Issue #2737 — count-only FlatAST node metric (no O(N) list)
+(require "std/ast" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (newline))))
+
+(set-code "(define (f x) x)\n")
+(eval-current)
+(assert! (= (stats:get "ast:node-count") (length (stats:get "ast:nodes")))
+         "node-count == length nodes")
+(assert! (= (stats:get "ast:def-count") 1) "def-count=1")
+(assert! (= (ast:node-count) (stats:get "ast:node-count")) "alias node-count")
+(assert! (= (ast:def-count) 1) "alias def-count")
+
+(set-code "(define a 1) (define b 2) (define c 3)")
+(eval-current)
+(assert! (= (stats:get "ast:def-count") 3) "def-count=3 multi")
+(assert! (> (stats:get "ast:node-count") 3) "node-count > defs")
+
+(if (= *fails* 0)
+    (begin (display "OK-2737 ast:node-count\n"))
+    (begin (display "FAIL-2737\n") (exit 1)))
