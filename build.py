@@ -1023,6 +1023,18 @@ def cmd_lint():
             "Issue #2793 replace-value audit consistency linter failed — run python3 scripts/coverage/checks/check_replace_value_audit_consistency_2793.py"
         )
         return r
+    # Issue #2794: atomic-batch move-node same-pos / #f soft no-op (not batch fail).
+    # ac2794 in test_atomic_batch_move_noop.
+    abmn_script = COVERAGE_CHECKS / "check_atomic_batch_move_noop_2794.py"
+    if not abmn_script.exists():
+        fail(f"missing {abmn_script}")
+        return 1
+    r = run([sys.executable, str(abmn_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2794 atomic-batch move-node no-op linter failed — run python3 scripts/coverage/checks/check_atomic_batch_move_noop_2794.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

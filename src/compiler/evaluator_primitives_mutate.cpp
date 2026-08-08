@@ -4724,11 +4724,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 mark_sub_op_failed();
                 break;
             }
-            // Heuristic: bool-false result from the helper is a failure
+            // Issue #2794: bool-false is a soft no-op signal, NOT a hard failure.
+            // Lockless helpers report real errors via EvalResult unexpected
+            // (!sub_result above). Historically mutate:move-node (and other
+            // idempotent ops) returned #f for "already at destination" —
+            // treating that as batch failure rolled back successful prefix
+            // ops and over-counted atomic_batch rollbacks. Accept #f as a
+            // completed no-op and continue the batch.
             if (types::is_bool(*sub_result) && !types::as_bool(*sub_result)) {
-                // Issue #2790: was ok-only — Guard would commit the prefix.
-                mark_sub_op_failed();
-                break;
+                ev.atomic_batch_domain_.sub_op_noop_total.fetch_add(1, std::memory_order_relaxed);
+                ++op_count;
+                continue;
             }
             ev.pin_dirty_nodes_for_atomic_batch();
             ++op_count;
@@ -5606,6 +5612,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return ev.make_merr("inconsistency", "node not found in parent's children list");
         }
+
+        // Issue #2794: already at destination → idempotent no-op success
+        // (#t). Avoid detach+insert (NULL hole) and keep atomic-batch happy.
+        if (cur_parent == new_parent && static_cast<std::uint32_t>(cur_idx) == new_pos)
+            return make_bool(true);
 
         std::string summary = (a.size() > 3 && is_string(a[3]))
                                   ? safe_str(a[3])
