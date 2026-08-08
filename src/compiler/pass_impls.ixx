@@ -3152,21 +3152,17 @@ private:
             const auto* callee = func_index_[callee_fid];
             if (!callee)
                 continue;
-            // Issue #388: caller-side cross-marker hygiene check.
-            // If respect_macro_hygiene_ is on (the default) and
-            // EITHER the call site OR the callee is macro-
-            // introduced, skip inlining. The callee.marker
-            // check is already done in is_trivial_inlinable /
-            // is_inlinable_branch_aware (callee side). The
-            // call-site check is the new piece: don't bring
-            // user code into a macro-introduced caller context.
-            if (respect_macro_hygiene_ && instr.source_marker == 1 /*MacroIntroduced*/ &&
-                callee->marker != 1) {
+            // Issue #388 / #1644 / #2764: unified MacroIntroduced hard
+            // filter on ALL Call sites. When respect_macro_hygiene_ is
+            // on (production default) and EITHER the call site OR the
+            // callee is MacroIntroduced, skip inlining + bump the
+            // hygiene-skip metric (no silent aggressive inline across
+            // hygiene boundary). Covers trivial + branch-aware paths.
+            if (respect_macro_hygiene_ && (instr.source_marker == 1 /*MacroIntroduced*/ ||
+                                           callee->marker == 1 /*MacroIntroduced*/)) {
                 macro_hygiene_skipped_.fetch_add(1, std::memory_order_relaxed);
-                // Issue #1644 / #1891: local InlinePass counter only
-                // (pass_manager must not name Evaluator — module boundary).
-                // Host metrics aggregate via get_macro_hygiene_skipped_fn_
-                // + query:ir-hygiene-stats / query:ir-marker-stats.
+                // Host metrics aggregate via total_macro_hygiene_skipped()
+                // + query:ir-hygiene-stats (inline-hygiene-skipped).
                 continue;
             }
             // Check trivial-inlinable (pre-#197 fast path:
@@ -3363,27 +3359,14 @@ private:
     bool try_inline_branch_aware(aura::ir::IRFunction& caller, aura::ir::BasicBlock& block,
                                  std::size_t call_pos, const aura::ir::IRFunction& callee,
                                  const aura::ir::IRInstruction& call_instr) {
-        // Issue #455: per-call-site hygiene check. The existing
-        // `respect_macro_hygiene_` check (in is_inlinable_*) looks
-        // at `callee.marker`. This adds a *cross-marker* guard:
-        // when respect_macro_hygiene_ is on (the default), do
-        // not inline across a macro-introduced boundary in
-        // EITHER direction:
-        //   1. call site is MacroIntroduced, callee is User
-        //      → don't bring user code into macro context
-        //   2. callee is MacroIntroduced, call site is User
-        //      → already covered by callee.marker check
-        //      (defense in depth: also re-check here)
-        // The instruction marker is 0=User, 1=MacroIntroduced.
-        if (respect_macro_hygiene_) {
-            if (call_instr.source_marker == 1 /*MacroIntroduced*/ && callee.marker != 1) {
-                // Issue #1644 case 1: macro-introduced caller, user callee.
-                return false;
-            }
-            if (callee.marker == 1 && call_instr.source_marker != 1) {
-                // Issue #1644 case 2: user caller, macro-introduced callee.
-                return false;
-            }
+        // Issue #455 / #1644 / #2764: defense-in-depth hygiene hard
+        // filter (run_on_block already skips + bumps; keep here for
+        // public test wrappers that call try_inline_branch_aware
+        // directly). Any MacroIntroduced on call site OR callee →
+        // refuse inline when respect_macro_hygiene_ is on.
+        if (respect_macro_hygiene_ && (call_instr.source_marker == 1 /*MacroIntroduced*/ ||
+                                       callee.marker == 1 /*MacroIntroduced*/)) {
+            return false;
         }
         // arg_count must match callee.arg_count.
         std::uint32_t arg_count = call_instr.operands[2];

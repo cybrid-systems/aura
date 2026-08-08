@@ -273,11 +273,16 @@ static std::atomic<uint64_t> g_jit_macro_introduced_deopt{0};
 // Issue #1610: IR lowering stamp counters (shared with query:ir-hygiene-stats).
 static std::atomic<uint64_t> g_hygiene_ir_macro_marker_total{0};
 static std::atomic<uint64_t> g_hygiene_ir_provenance_stamped_total{0};
+// Issue #2764: ancestor MacroIntroduced propagation during emit().
+static std::atomic<uint64_t> g_hygiene_ir_ancestor_propagation_total{0};
 // Issue #2100: deopt round-trip MacroIntroduced coverage.
 // preserved = deopt/restore kept marker+provenance (side-table or AST restamp);
 // lost = expected MacroIntroduced but metadata missing after deopt.
 static std::atomic<uint64_t> g_jit_macro_introduced_preserved_total{0};
 static std::atomic<uint64_t> g_jit_macro_introduced_lost_total{0};
+// Issue #2764: multi-eval denseness / rebind loops — marker still
+// present after repeated eval-current (complements #2736).
+static std::atomic<uint64_t> g_multi_eval_macro_marker_preserved_total{0};
 // Optional service hook: re-apply IR MacroIntroduced attrs onto workspace AST
 // after deopt (registered by CompilerService). Returns nodes restored.
 using MacroDeoptRestoreFn = std::uint64_t (*)() noexcept;
@@ -441,6 +446,21 @@ extern "C" uint64_t aura_jit_macro_introduced_lost_total() {
 // Issue #1610: IR lowering MacroIntroduced / provenance stamp counters.
 extern "C" void aura_hygiene_ir_macro_marker_inc() {
     g_hygiene_ir_macro_marker_total.fetch_add(1, std::memory_order_relaxed);
+}
+// Issue #2764: ancestor walk stamped MacroIntroduced onto a User child.
+extern "C" void aura_hygiene_ir_ancestor_propagation_inc() {
+    g_hygiene_ir_ancestor_propagation_total.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" uint64_t aura_hygiene_ir_ancestor_propagation_total() {
+    return g_hygiene_ir_ancestor_propagation_total.load(std::memory_order_relaxed);
+}
+// Issue #2764: multi-eval denseness sample — Agent monitors that
+// MacroIntroduced survives rebind / multi-eval loops.
+extern "C" void aura_multi_eval_macro_marker_preserved_inc(uint64_t n) {
+    g_multi_eval_macro_marker_preserved_total.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" uint64_t aura_multi_eval_macro_marker_preserved_total() {
+    return g_multi_eval_macro_marker_preserved_total.load(std::memory_order_relaxed);
 }
 extern "C" void aura_hygiene_ir_provenance_stamped_inc() {
     g_hygiene_ir_provenance_stamped_total.fetch_add(1, std::memory_order_relaxed);
@@ -612,6 +632,8 @@ extern "C" void aura_counters_reset() {
     g_jit_macro_introduced_deopt.store(0, std::memory_order_relaxed);
     g_hygiene_ir_macro_marker_total.store(0, std::memory_order_relaxed);
     g_hygiene_ir_provenance_stamped_total.store(0, std::memory_order_relaxed);
+    g_hygiene_ir_ancestor_propagation_total.store(0, std::memory_order_relaxed);   // #2764
+    g_multi_eval_macro_marker_preserved_total.store(0, std::memory_order_relaxed); // #2764
     g_jit_macro_introduced_preserved_total.store(0, std::memory_order_relaxed);
     g_jit_macro_introduced_lost_total.store(0, std::memory_order_relaxed);
     g_jit_native_marker_preserved_total.store(0, std::memory_order_relaxed);

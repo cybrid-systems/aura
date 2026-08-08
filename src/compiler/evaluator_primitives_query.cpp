@@ -65,6 +65,8 @@ import aura.core.arena;             // Issue #2500: g_force_compact_blocked_* + 
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
 extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
 extern "C" std::uint64_t aura_hygiene_ir_provenance_stamped_total();
+extern "C" std::uint64_t aura_hygiene_ir_ancestor_propagation_total();   // #2764
+extern "C" std::uint64_t aura_multi_eval_macro_marker_preserved_total(); // #2764
 extern "C" std::uint64_t aura_jit_macro_introduced_deopt();
 extern "C" std::uint64_t aura_jit_macro_hygiene_consults();
 // Issue #2022: native MacroIntroduced side-table observability after JIT/AOT.
@@ -12731,8 +12733,22 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         insert_kv("issue-2167", 2167);
         insert_kv("hygiene-diagnostic-wired", 1);
         insert_kv("macro-provenance-chain-wired", 1);
+        // Issue #2764: residual IR/JIT/AOT source_marker + InlinePass hard
+        // filter + multi-eval denseness preserve (refine #501/#1610/#2100).
+        // Additive — schema 2022/2100/2177 lineage preserved.
+        const auto ancestor_prop =
+            static_cast<std::int64_t>(aura_hygiene_ir_ancestor_propagation_total());
+        const auto multi_eval_preserved =
+            static_cast<std::int64_t>(aura_multi_eval_macro_marker_preserved_total());
+        insert_kv("marker-ancestor-propagation-total", ancestor_prop);
+        insert_kv("propagate-marker-from-ast-wired", 1);
+        insert_kv("inline-macro-hygiene-hard-filter-wired", 1);
+        insert_kv("multi-eval-macro-marker-preserved-total", multi_eval_preserved);
+        insert_kv("deopt-restore-macro-introduced-wired", 1);
+        insert_kv("schema-2764", 2764);
+        insert_kv("issue-2764", 2764);
         insert_kv("issue", 2022);
-        insert_kv("schema", 2022); // lineage 2100 / 2022 / 1891 / 1610
+        insert_kv("schema", 2022); // lineage 2764 / 2100 / 2022 / 1891 / 1610
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

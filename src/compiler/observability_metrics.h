@@ -7276,6 +7276,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ir_marker_loss_events_total{0};
     std::atomic<std::uint64_t> ir_hygiene_jit_violations_prevented_total{0};
     std::atomic<std::uint64_t> ir_hygiene_marker_propagation_hits_total{0};
+    // Issue #2764: residual IR/JIT/AOT MacroIntroduced enforcement
+    // (propagate_marker_from_ast ancestor walk + InlinePass hard filter
+    // + multi-eval denseness preserve). C totals are primary; these
+    // Agent-facing mirrors stay zero unless a host path bumps them.
+    std::atomic<std::uint64_t> ir_marker_ancestor_propagation_total{0};    // #2764
+    std::atomic<std::uint64_t> multi_eval_macro_marker_preserved_total{0}; // #2764
 
     // Issue #735: MacroIntroduced provenance in StableNodeRef +
     // targeted dirty/rollback for macro subtrees observability
