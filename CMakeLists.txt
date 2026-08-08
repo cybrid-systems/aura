@@ -1807,6 +1807,9 @@ aura_issue_test_link_light(test_workspace_lock_unlock)
 # Issue #2787: workspace:rollback-latest single walk (no O(N) mutation_id re-search).
 aura_add_issue_test(test_workspace_rollback_latest)
 aura_issue_test_link_light(test_workspace_rollback_latest)
+# Issue #2788: workspace:rollback-to typed resolve (locked names_/sources_ pair).
+aura_add_issue_test(test_workspace_rollback_to)
+aura_issue_test_link_light(test_workspace_rollback_to)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
