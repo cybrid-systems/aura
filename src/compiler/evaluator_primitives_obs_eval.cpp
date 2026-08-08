@@ -87,6 +87,8 @@ extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_tota
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
 extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total();
+extern "C" std::uint64_t aura_fiber_static_layout_stamp_resume_mismatch_total();
+extern "C" std::uint64_t aura_fiber_static_resume_fence_fail_total();
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
 extern "C" std::uint64_t aura_jit_guest_exception_bridge_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
@@ -10836,6 +10838,14 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                                   aura::serve::Fiber::layout_stamp_resume_mismatch_total()));
                     insert_kv("schema-2677", 2677);
                     insert_kv("issue-2677", 2677);
+                    // Issue #2779: aggregate of the three resume fence
+                    // counters (one alert for the shared playbook).
+                    insert_kv(
+                        "resume-fence-fail-total",
+                        static_cast<std::int64_t>(aura::serve::Fiber::resume_fence_fail_total()));
+                    insert_kv("resume-fence-fail-wired", 1);
+                    insert_kv("schema-2779", aura::serve::kResumeFenceFailAggregateIssue);
+                    insert_kv("issue-2779", aura::serve::kResumeFenceFailAggregateIssue);
                 }
                 insert_kv("issue-2222", 2222);
             }
@@ -13262,6 +13272,17 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2518", 2518);
             insert_kv("issue-2518", 2518);
             insert_kv("schema-2510", 2510); // coexist / lineage with restamp txn
+            // Issue #2779: aggregate of the three #2677 resume fence
+            // counters (hard-fail + ticket + layout). Single alert key;
+            // per-fence breakdown keys above remain for diagnosis.
+            insert_kv("resume-fence-fail-total",
+                      static_cast<std::int64_t>(aura_fiber_static_resume_fence_fail_total()));
+            insert_kv(
+                "layout-stamp-resume-mismatch-total",
+                static_cast<std::int64_t>(aura_fiber_static_layout_stamp_resume_mismatch_total()));
+            insert_kv("resume-fence-fail-wired", 1);
+            insert_kv("schema-2779", aura::serve::kResumeFenceFailAggregateIssue);
+            insert_kv("issue-2779", aura::serve::kResumeFenceFailAggregateIssue);
             // Issue #2372: production hard-forbid Soft steal-snapshot +
             // require force-deopt ABI. soft-forbidden-wired=1 is a compile-
             // time sentinel that the production lock path exists;

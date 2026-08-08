@@ -372,6 +372,12 @@ extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total() 
 extern "C" std::uint64_t aura_fiber_static_layout_stamp_resume_mismatch_total() {
     return Fiber::layout_stamp_resume_mismatch_total();
 }
+// Issue #2779: C ABI for the sum of the three #2677 resume fence
+// counters (hard-fail + ticket mismatch + layout stamp). One alert
+// key for the shared operator playbook.
+extern "C" std::uint64_t aura_fiber_static_resume_fence_fail_total() {
+    return Fiber::resume_fence_fail_total();
+}
 
 // Issue #2346 production canary: strong def in typed_mutation_audit_hooks.cpp
 // overrides this weak no-op when the audit TU is linked.

@@ -838,6 +838,19 @@ def cmd_lint():
             "Issue #2778 scope BP map lifecycle linter failed — run python3 scripts/coverage/checks/check_scope_bp_map_lifecycle_2778.py"
         )
         return r
+    # Issue #2779: resume fence fail aggregate (#2677 residual). Sum of
+    # hard-fail + ticket + layout stamp counters for one production alert.
+    # ac2779_* in test_steal_safety_ticket per #81967.
+    rffa_script = COVERAGE_CHECKS / "check_resume_fence_fail_aggregate_2779.py"
+    if not rffa_script.exists():
+        fail(f"missing {rffa_script}")
+        return 1
+    r = run([sys.executable, str(rffa_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2779 resume fence fail aggregate linter failed — run python3 scripts/coverage/checks/check_resume_fence_fail_aggregate_2779.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
