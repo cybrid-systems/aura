@@ -5,7 +5,6 @@
 ;
 ; Import: (import "std/vector-math")
 ;
-(require std/list std/math all:)
 
 (export vec:map vec:zip vec:fold vec:sum vec:prod vec:mean vec:dot vec:norm vec:normalize
         vec:scale vec:add vec:sub vec:mul vec:div
@@ -15,6 +14,9 @@
         mat:ref mat:shape mat:rows mat:cols
         mat:transpose mat:mul mat:map
         vec->list list->vec)
+
+(require std/list std/math all:)
+
 
 ; ── Construction ──────────────────────────────────────────────
 

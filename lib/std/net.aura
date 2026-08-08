@@ -10,9 +10,11 @@
 ;   (url-join base path) → combined URL string
 ;   (fetch-try url n) → body string | ""  (retry n times)
 
-(require std/json all:)
 
 (export http-get-json http-post-json url-encode url-decode url-join fetch-try)
+
+(require std/json all:)
+
 
 ;; GET JSON
 (define (http-get-json url)

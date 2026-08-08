@@ -1,6 +1,5 @@
 ; Aura standard math library
 ; Import with: (import "std/math")
-(require std/list)
 
 (export
   ; Constants
@@ -27,6 +26,9 @@
 
   ; Statistics
   sum product range variance stddev percentile normalize)
+
+(require std/list)
+
 
 ; ═══════════════════════════════════════════════════════════
 ; Constants

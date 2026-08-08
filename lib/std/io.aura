@@ -6,11 +6,13 @@
 ; are available globally without import; this module provides
 ; convenience aliases and structured readers.
 
-(require std/string)
 
 (export file-exists? file-size file-copy file-delete
         file-read file-write file->string string->file
         file->lines file->words)
+
+(require std/string)
+
 
 ; ── Raw primitives (re-exported) ────────────────────
 ; These are already available at global scope as C++ primitives.

@@ -22,6 +22,12 @@
 //   #2768 AC3: agent:status/stop/restart lifecycle
 //   #2768 AC4: orch:parallel-with-yield callable (no unbound private free-vars)
 //   #2768 AC5: coverage linter; no docs/design/*
+//
+//   #2769 AC1: stdlib inventory (order + module cells) via audit script
+//   #2769 AC2: denseness paths green (llm/hot-strategy/agent/orch/mutate/query)
+//   #2769 AC3: host #2766 canary still shared
+//   #2769 AC4: zero require-before-export in lib/std (export-first policy)
+//   #2769 AC5: linter + INDEX authoring note; no docs/design/*
 
 #include "test_harness.hpp"
 
@@ -399,6 +405,164 @@ static void ac2768_5_linter() {
           "AC5: no docs/design/2768-* per #1655");
 }
 
+// ── Issue #2769: stdlib-wide require/export form-order audit ──
+
+static bool export_before_require_or_export_only(const std::string& src) {
+    // First col-0 (export / (require — export-first or export-only.
+    // Match "(export" / "(require" with word boundary (space, newline, or
+    // end) — some modules use multi-line "(export\n  sym …)".
+    auto first_toplevel_form = [&](std::string_view head) -> std::size_t {
+        std::size_t pos = 0;
+        while (pos < src.size()) {
+            auto i = src.find(head, pos);
+            if (i == std::string::npos)
+                return std::string::npos;
+            auto line_start = src.rfind('\n', i);
+            line_start = (line_start == std::string::npos) ? 0 : line_start + 1;
+            if (i == line_start) {
+                const auto after = i + head.size();
+                if (after >= src.size() || src[after] == ' ' || src[after] == '\n' ||
+                    src[after] == '\t' || src[after] == '\r')
+                    return i;
+            }
+            pos = i + 1;
+        }
+        return std::string::npos;
+    };
+    const auto exp = first_toplevel_form("(export");
+    const auto req = first_toplevel_form("(require");
+    if (exp == std::string::npos)
+        return false;
+    if (req == std::string::npos)
+        return true; // export-only
+    return exp < req;
+}
+
+static void ac2769_1_inventory() {
+    std::println("\n--- #2769 AC1: stdlib inventory + audit script ---");
+    const auto audit =
+        read_file("scripts/coverage/checks/check_stdlib_require_export_audit_2769.py");
+    CHECK(!audit.empty(), "AC1: audit script present");
+    CHECK(audit.find("ModuleInfo") != std::string::npos, "AC1: ModuleInfo inventory");
+    CHECK(audit.find("require-first") != std::string::npos, "AC1: classifies require-first");
+    CHECK(audit.find("--print-table") != std::string::npos, "AC1: --print-table");
+    CHECK(audit.find("--fix") != std::string::npos, "AC1: --fix autofix");
+    // Denseness modules present in lib/std.
+    CHECK(!read_file("lib/std/llm.aura").empty(), "AC1: llm.aura");
+    CHECK(!read_file("lib/std/hot-strategy.aura").empty(), "AC1: hot-strategy.aura");
+    CHECK(!read_file("lib/std/net.aura").empty(), "AC1: net.aura");
+    CHECK(!read_file("lib/std/orchestrator.aura").empty(), "AC1: orchestrator.aura");
+    CHECK(!read_file("lib/std/agent.aura").empty(), "AC1: agent.aura");
+}
+
+static void ac2769_2_denseness_paths_green() {
+    std::println("\n--- #2769 AC2: denseness paths green (llm/hs/agent/orch/mutate/query) ---");
+    const auto lib = find_lib_std();
+    CHECK(!lib.empty(), "AC2: lib found");
+    if (lib.empty())
+        return;
+    setenv("AURA_PATH", lib.string().c_str(), 1);
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+
+    CompilerService cs;
+    // llm rate-limit cell free-vars
+    CHECK(cs.eval("(require \"std/llm\" all:)").has_value(), "AC2: require llm");
+    auto lim = cs.eval("(llm:rate-limit-set! 4)");
+    CHECK(lim && is_int(*lim) && as_int(*lim) == 4, "AC2: llm:rate-limit-set!");
+    auto rem = cs.eval("(llm:rate-limit-remaining)");
+    CHECK(rem && is_int(*rem) && as_int(*rem) == 4, "AC2: llm:rate-limit-remaining cell");
+
+    CompilerService cs2;
+    CHECK(cs2.eval("(require \"std/hot-strategy\" all:)").has_value(), "AC2: require hot-strategy");
+    auto ver = cs2.eval("(hot-strategy:version)");
+    CHECK(ver && is_int(*ver), "AC2: hot-strategy:version cell");
+
+    CompilerService cs3;
+    CHECK(cs3.eval("(require \"std/orchestrator\" all:)").has_value(), "AC2: require orchestrator");
+    CHECK(cs3.eval("(agent:spawn \"d9\" (lambda (x) (* x 2)))").has_value(), "AC2: agent:spawn");
+    auto ask = cs3.eval("(agent:ask \"d9\" 21)");
+    CHECK(ask && is_int(*ask) && as_int(*ask) == 42, "AC2: agent:ask denseness");
+
+    CompilerService cs4;
+    CHECK(cs4.eval("(require \"std/agent\" all:)").has_value(), "AC2: require agent");
+    CHECK(cs4.eval("(agent:loop-stats)").has_value(), "AC2: agent:loop-stats");
+
+    CompilerService cs5;
+    CHECK(eval_bool(cs5, "(begin (require \"std/mutate\" all:) (mutate:boundary-safe?))"),
+          "AC2: mutate:boundary-safe?");
+
+    CompilerService cs6;
+    CHECK(cs6.eval("(require \"std/query\" all:)").has_value(), "AC2: require query");
+    CHECK(cs6.eval("(query:list-categories)").has_value(), "AC2: query:list-categories");
+
+    CompilerService cs7;
+    CHECK(cs7.eval("(require \"std/net\" all:)").has_value(), "AC2: require net");
+    CHECK(cs7.eval("(url-encode \"a b\")").has_value(), "AC2: net url-encode");
+}
+
+static void ac2769_3_host_canary_2766() {
+    std::println("\n--- #2769 AC3: host #2766 free-var canary still present ---");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(efl.find("#2766") != std::string::npos, "AC3: eval_flat cites #2766");
+    CHECK(efl.find("is_module_prologue") != std::string::npos, "AC3: is_module_prologue");
+    CHECK(efl.find("Phase 0") != std::string::npos, "AC3: Phase 0 prologue");
+    const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
+    CHECK(loader.find("#2766") != std::string::npos, "AC3: loader cites #2766");
+    CHECK(loader.find("set_pool") != std::string::npos, "AC3: mod_env set_pool");
+    // Shared ac2766 residual tests still in this suite.
+    const auto t = read_file("tests/compiler/test_module_require_freevar.cpp");
+    CHECK(t.find("ac2766_1_require_before_export_private_cell") != std::string::npos,
+          "AC3: ac2766_1 still present (shared canary)");
+}
+
+static void ac2769_4_form_order_policy() {
+    std::println("\n--- #2769 AC4: denseness modules export-first policy ---");
+    const char* modules[] = {
+        "lib/std/llm.aura",
+        "lib/std/hot-strategy.aura",
+        "lib/std/net.aura",
+        "lib/std/io.aura",
+        "lib/std/agent.aura",
+        "lib/std/orchestrator.aura",
+        "lib/std/ast-viz.aura",
+        "lib/std/hash.aura",
+        "lib/std/heal.aura",
+        "lib/std/hot-update-monitor.aura",
+        "lib/std/hot-update-reload.aura",
+    };
+    for (const char* m : modules) {
+        const auto src = read_file(m);
+        CHECK(!src.empty(), std::string("AC4: read ") + m);
+        CHECK(export_before_require_or_export_only(src),
+              std::string("AC4: export-before-require (or export-only) in ") + m);
+    }
+    // llm / hot-strategy cite #2769 form-order note.
+    CHECK(read_file("lib/std/llm.aura").find("#2769") != std::string::npos, "AC4: llm cites #2769");
+    CHECK(read_file("lib/std/hot-strategy.aura").find("#2769") != std::string::npos,
+          "AC4: hot-strategy cites #2769");
+}
+
+static void ac2769_5_linter() {
+    std::println("\n--- #2769 AC5: linter + INDEX authoring note ---");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_stdlib_require_export_audit_2769.py");
+    const auto t = read_file("tests/compiler/test_module_require_freevar.cpp");
+    const auto index = read_file("lib/std/INDEX.aura");
+    CHECK(build.find("check_stdlib_require_export_audit_2769") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty(), "AC5: linter present");
+    CHECK(t.find("ac2769_1_inventory") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2769_2_denseness_paths_green") != std::string::npos, "AC5: AC2 test");
+    CHECK(index.find("#2769") != std::string::npos, "AC5: INDEX authoring note #2769");
+    CHECK(index.find("#2766") != std::string::npos, "AC5: INDEX cites host #2766");
+    CHECK(index.find("export") != std::string::npos && index.find("require") != std::string::npos,
+          "AC5: INDEX mentions export/require order");
+    CHECK(read_file("docs/design/2769-stdlib-require-export-audit.md").empty(),
+          "AC5: no docs/design/2769-* per #1655");
+}
+
 } // namespace
 
 int run_test_module_require_freevar() {
@@ -420,7 +584,13 @@ int run_test_module_require_freevar() {
     ac2768_3_status_stop_restart();
     ac2768_4_parallel_with_yield_smoke();
     ac2768_5_linter();
-    std::println("\n=== #2566+#2766+#2768: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2769: stdlib require/export form-order audit ===");
+    ac2769_1_inventory();
+    ac2769_2_denseness_paths_green();
+    ac2769_3_host_canary_2766();
+    ac2769_4_form_order_policy();
+    ac2769_5_linter();
+    std::println("\n=== #2566+#2766+#2768+#2769: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

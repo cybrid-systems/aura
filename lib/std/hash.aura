@@ -1,10 +1,12 @@
 ; hash.aura -- Hash table operations
-(require std/list)
 (export
   hash-set hash-ref hash-get hash-remove
   hash-keys hash-values hash-length hash->list
   hash-for-each hash-fold
   hash-merge hash-empty? alist->hash frequencies)
+
+(require std/list)
+
 
 (define (for-each f lst)
   (if (null? lst) #t

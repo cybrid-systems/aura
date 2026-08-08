@@ -7,6 +7,9 @@
 ;   - Requires std/adaptive for string-index/string-trim/pid:analyze
 ;   - 135 tasks load correctly from bench-tasks.json
 ;
+
+(export all-tasks task-count run-rounds aggregate)
+
 (require "std/synthesize-v2" all:)
 (require "std/list" all:)
 (require "std/json" all:)
@@ -15,7 +18,6 @@
 (require "std/extract" all:)
 (require "std/adaptive" all:)
 
-(export all-tasks task-count run-rounds aggregate)
 (export print-report run-one run-parallel)
 
 ; ── Load tasks from JSON ──
