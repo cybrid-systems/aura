@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 784 | Preferred destination suites |
-| **Total scanned** | **784** | |
+| `tests/core/test_*.cpp` | 785 | Preferred destination suites |
+| **Total scanned** | **785** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 224 | 224 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 225 | 225 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 99 | 99 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 43 | 43 | P1 — domain hygiene suite exists |
@@ -71,7 +71,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - Issue numbers with **multiple** `tests/issues/` files: **0**
 - Phase-slice files (`*_phase*`): **0**
 - Small files (< 4 KiB, possible thin probes): **0**
-- Existing `*_batch` drivers (migration milestones): **96**
+- Existing `*_batch` drivers (migration milestones): **97**
 
 ### Multi-file issue groups (consolidate first)
 
@@ -85,6 +85,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_arena_batch.cpp` → theme `arena_compaction`
 - `tests/core/test_arena_compact_hooks_batch.cpp` → theme `arena_compaction`
 - `tests/compiler/test_atomic_batch_core_batch.cpp` → theme `mutation_dirty`
+- `tests/compiler/test_atomic_batch_partial_failure.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_atomic_batch_rollback_closed_loop.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` → theme `mutation_dirty`
@@ -232,6 +233,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/reflect/test_ast_pod_reflect_b3.cpp`
 - `tests/compiler/test_ast_workspace_modules.cpp`
 - `tests/compiler/test_atomic_batch_core_batch.cpp`
+- `tests/compiler/test_atomic_batch_partial_failure.cpp`
 - `tests/compiler/test_atomic_batch_rollback_closed_loop.cpp`
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp`
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp`
@@ -1087,13 +1089,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (224)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (225)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (224)
+#### domain/ (225)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1101,6 +1103,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_adt_match_goal_table.cpp` (—) [domain_suite, theme_compiler] — reverify roots for Soft delta fidelity.
 - `tests/compiler/test_aether_denseness_residual.cpp` (—) [domain_suite, theme_compiler] — AC1: orch:parallel 2-arg typechecks (dotted-rest + namespaced .aura-type)
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
+- `tests/compiler/test_atomic_batch_partial_failure.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: source has mark_sub_op_failed / guard_ok with ok on failure path
 - `tests/compiler/test_atomic_batch_rollback_closed_loop.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #192/#459/#529/#553 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_atomic_batch_rollback_fiber_task1.cpp —
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` (—) [batch_driver, domain_suite, theme_compiler] — - AC1: workspace:snapshot + workspace:rollback-to primitives
