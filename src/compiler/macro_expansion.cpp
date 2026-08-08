@@ -22,6 +22,8 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save();
 extern "C" std::uint64_t aura_fiber_current_id();
 extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker);
+// Issue #2810: resolve active Evaluator* for dual-write (fiber mutation TU).
+extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept;
 
 namespace aura::compiler::macro_exp {
 
@@ -488,6 +490,11 @@ std::atomic<std::uint64_t> g_stamp_rest_param_marker_skipped_total{0};
 // migration tracking; should stay ~0 in production after #2809).
 std::atomic<std::uint64_t> g_macro_expand_targeted_restamp_total{0};
 std::atomic<std::uint64_t> g_macro_expand_full_restamp_total{0};
+// Issue #2810: clone_macro_body MacroIntroduced repin dual-wrote into
+// per-CompilerMetrics (Evaluator wired). Complements the always-on
+// file-level g_1908_repin_fallback_total so multi-tenant dashboards
+// can see per-Evaluator clone rate.
+std::atomic<std::uint64_t> g_clone_macro_provenance_per_evaluator_total{0};
 // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
 // experimental rollback path). Bumped per successful unstamp via the
 // C-linkage helper aura_unstamp_macro_introduced_with_counter below.
@@ -666,6 +673,13 @@ extern "C" std::uint64_t aura_macro_expand_full_restamp_total_v_read(void) noexc
 extern "C" void aura_test_reset_macro_expand_qq_restamp_totals_for_test(void) noexcept {
     g_macro_expand_targeted_restamp_total.store(0, std::memory_order_relaxed);
     g_macro_expand_full_restamp_total.store(0, std::memory_order_relaxed);
+}
+// Issue #2810: per-Evaluator clone provenance dual-write metric.
+extern "C" std::uint64_t aura_clone_macro_provenance_per_evaluator_total_v_read(void) noexcept {
+    return g_clone_macro_provenance_per_evaluator_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_clone_macro_provenance_per_evaluator_total_for_test(void) noexcept {
+    g_clone_macro_provenance_per_evaluator_total.store(0, std::memory_order_relaxed);
 }
 std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept {
     return g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
@@ -1709,15 +1723,23 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // marker on each child node, so this is just the outer
         // wrapper node.
 
-        // Issue #1908: force repin on MacroIntroduced clone (per #1908 AC).
-        // The bridge hook routes through the active Evaluator (ev_ptr fallback
-        // for module-aware call sites) and bumps both per-CompilerMetrics counters
-        // + the file-level atomic fallback (covers module-unaware call sites
-        // like clone_macro_body). This is the "强制 repin 在 MacroIntroduced 路径"
-        // half of the #1908 improvement pseudocode.
+        // Issue #1908 / #2810: force repin on MacroIntroduced clone.
+        // Bridge contract (aura_jit_bridge.h / aura_macro_provenance_repin_on_steal):
+        //   - always bumps file-level g_1908_repin_fallback_total
+        //   - when ev_ptr non-null (or TLS resolves an Evaluator), dual-writes
+        //     CompilerMetrics::macro_provenance_repin_on_steal_total
+        // Pre-#2810 always passed nullptr → production compiler_metrics stayed 0
+        // even with Evaluator wired via CompilerService::set_query_evaluator.
+        // Resolve active Evaluator (yield hook / query TLS / scheduler) so
+        // multi-tenant dashboards can attribute clones per-Evaluator.
         if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
-            (void)aura_macro_provenance_repin_on_steal(nullptr,
-                                                       static_cast<std::uint64_t>(cloned_marker));
+            void* ev_ptr = aura_evaluator_resolve_current_for_macro();
+            const int r = aura_macro_provenance_repin_on_steal(
+                ev_ptr, static_cast<std::uint64_t>(cloned_marker));
+            // r == 2 → per-eval dual-write succeeded (bridge return contract #2810).
+            if (r >= 2)
+                g_clone_macro_provenance_per_evaluator_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
         }
         target.set_marker(new_id, cloned_marker);
         target.set_loc(new_id, v.line, v.col);

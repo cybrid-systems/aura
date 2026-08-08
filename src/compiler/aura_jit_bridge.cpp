@@ -2102,17 +2102,28 @@ static std::atomic<std::uint64_t> g_1908_hygiene_prevented_fallback_total{0};
 //     Operators can monitor this for "silent marker loss" regressions.
 static std::atomic<std::uint64_t> g_2177_aot_macro_marker_propagated_total{0};
 static std::atomic<std::uint64_t> g_2177_aot_macro_marker_stripped_total{0};
+// Issue #2810: per-eval dual-write trampoline (defined in
+// evaluator_fiber_mutation.cpp — has Evaluator module). Weak no-op
+// in light stubs that do not link fiber mutation.
+extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* ev_ptr) noexcept;
+
 extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker) {
-    (void)ev_ptr;        // per-eval path uses Evaluator::bump_* directly
-                         // (see wire-up sites in evaluator_fiber_mutation.cpp
-                         // which has the Evaluator C++20 module imported)
     (void)cloned_marker; // reserved for future marker-specific routing
-    // File-level atomic fallback. Covers module-unaware call sites
-    // (clone_macro_body in macro_expansion.cpp) + provides a unified
-    // observability surface for external API consumers (accessors below).
+    // File-level atomic fallback always bumps (unified process-wide surface
+    // for external API consumers + module-unaware call sites).
     g_1908_repin_fallback_total.fetch_add(1, std::memory_order_relaxed);
     g_1908_hygiene_prevented_fallback_total.fetch_add(1, std::memory_order_relaxed);
-    return 1;
+    // Issue #2810: dual-write per-CompilerMetrics when Evaluator is wired.
+    // Contract:
+    //   ev_ptr != nullptr → bump that Evaluator's
+    //     macro_provenance_repin_on_steal_total via Evaluator::bump_*.
+    //   ev_ptr == nullptr → resolve yield-hook / query TLS / scheduler;
+    //     if still null, file-level only (true module-unaware path).
+    // Return 2 when per-eval path bumped, 1 when file-level only.
+    // (Pre-#2810 always returned 1 and ignored ev_ptr — production
+    // compiler_metrics stayed at 0 for every clone_macro_body call.)
+    const int per_eval = aura_evaluator_bump_macro_provenance_repin_on_steal(ev_ptr);
+    return per_eval ? 2 : 1;
 }
 
 // Issue #1908: accessor for macro provenance repin-on-steal counter.

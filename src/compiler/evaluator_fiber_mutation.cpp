@@ -1689,6 +1689,34 @@ extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save() {
         ev->bump_macro_expand_checkpoint_save();
 }
 
+// Issue #2810: resolve active Evaluator* for module-aware macro_expansion
+// dual-write (yield hook → query TLS → scheduler process-wide). Returns
+// nullptr when no Evaluator is wired (true module-unaware / early boot).
+extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept {
+    if (auto* ev = Evaluator::yield_hook_evaluator())
+        return ev;
+    return evaluator_for_scheduler_hooks();
+}
+
+// Issue #2810: dual-write per-CompilerMetrics macro_provenance_repin_on_steal
+// when an Evaluator is available. `ev_ptr` may be null — then resolve TLS /
+// scheduler. Returns 1 if per-eval counter was bumped, 0 otherwise.
+// Called from aura_macro_provenance_repin_on_steal (bridge) so clone_macro_body
+// + any other bridge callers get per-Evaluator observability without importing
+// the Evaluator C++20 module into aura_jit_bridge.cpp.
+extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* ev_ptr) noexcept {
+    auto* ev = static_cast<Evaluator*>(ev_ptr);
+    if (!ev) {
+        ev = Evaluator::yield_hook_evaluator();
+        if (!ev)
+            ev = evaluator_for_scheduler_hooks();
+    }
+    if (!ev)
+        return 0;
+    ev->bump_macro_provenance_repin_on_steal_total();
+    return 1;
+}
+
 extern "C" void aura_evaluator_test_push_mutation_checkpoint() {
     Evaluator::active_mutation_stack_static().push_back({0, 0});
     // Issue #2184: publish fiber-local held/depth mirrors for steal snapshot.
