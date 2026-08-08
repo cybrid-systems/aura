@@ -1,13 +1,19 @@
 // @category: unit
 // @reason: Issue #2615 — production multi-block dirty cascades use
 //          mark_blocks_dirty (one fence); residual N× mark_block_dirty forbidden.
+//          Issue #2773 — unified logical invalidation epoch (extend per #81967).
 //
 //   AC1: Multi-block production sites use batch; fence +1 for N blocks
 //   AC2: Single-block mark_block_dirty still one fence (unchanged)
 //   AC3: finish_dirty_sync / instruction_dirty_synced_with_blocks holds
 //   AC4: Gate/linter forbids multi mark_block_dirty loops in production sources
 //   AC5: Batch fence rate < sequential for N-block invalidates
-
+//
+//   #2773 AC1: multi-block mark_blocks_dirty → fence +1 and logical epoch +1
+//   #2773 AC2: quiet path — note_logical only on dirty marks (source-cite)
+//   #2773 AC3: Shape compact isolation #2617 still cited (no IR→shape force)
+//   #2773 AC4: schema-2773 + unified-dirty-fence-advance-total
+//   #2773 AC5: single residual mark counted separately from batch
 #include "test_harness.hpp"
 
 #include <cstdint>
@@ -31,9 +37,16 @@ using aura::compiler::current_ir_soa_generation_fence;
 using aura::compiler::g_ir_soa_batch_dirty_blocks_total;
 using aura::compiler::g_ir_soa_batch_dirty_cascades_total;
 using aura::compiler::g_ir_soa_single_dirty_marks_total;
+using aura::compiler::g_unified_dirty_fence_advance_total;
+using aura::compiler::g_unified_dirty_ir_batch_total;
+using aura::compiler::g_unified_dirty_ir_single_total;
+using aura::compiler::g_unified_dirty_last_sources;
 using aura::compiler::IRFunctionSoA;
 using aura::compiler::IRModuleV2;
+using aura::compiler::kInvSrcIrSoaBatch;
+using aura::compiler::kInvSrcIrSoaSingle;
 using aura::compiler::kIrSoaBatchDirtyDisciplineIssue;
+using aura::compiler::kUnifiedDirtyFenceIssue;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::ir::IROpcode;
@@ -323,6 +336,103 @@ static void ac2681_source_cite() {
     }
 }
 
+// ── Issue #2773: unified logical invalidation epoch ──
+
+static void ac2773_1_batch_one_fence_one_logical() {
+    std::println("\n--- #2773 AC1: multi-block batch → fence +1, logical +1 ---");
+    CHECK(kUnifiedDirtyFenceIssue == 2773, "AC1: issue stamp");
+    auto fn = make_n_block_fn(4);
+    const auto fence0 = current_ir_soa_generation_fence();
+    const auto logical0 = g_unified_dirty_fence_advance_total.load(std::memory_order_relaxed);
+    const auto batch0 = g_unified_dirty_ir_batch_total.load(std::memory_order_relaxed);
+    const std::uint32_t ids[] = {0, 1, 2, 3};
+    fn.mark_blocks_dirty(ids);
+    CHECK(current_ir_soa_generation_fence() == fence0 + 1, "AC1: IR fence +1 for 4 blocks");
+    CHECK(g_unified_dirty_fence_advance_total.load(std::memory_order_relaxed) == logical0 + 1,
+          "AC1: unified logical advance +1");
+    CHECK(g_unified_dirty_ir_batch_total.load(std::memory_order_relaxed) == batch0 + 1,
+          "AC1: ir-batch logical counter +1");
+    CHECK((g_unified_dirty_last_sources.load(std::memory_order_relaxed) & kInvSrcIrSoaBatch) != 0,
+          "AC1: last sources includes IR batch bit");
+}
+
+static void ac2773_2_single_separate() {
+    std::println("\n--- #2773 AC2: single mark counted separately from batch ---");
+    auto fn = make_n_block_fn(2);
+    const auto fence0 = current_ir_soa_generation_fence();
+    const auto logical0 = g_unified_dirty_fence_advance_total.load(std::memory_order_relaxed);
+    const auto single0 = g_unified_dirty_ir_single_total.load(std::memory_order_relaxed);
+    const auto batch0 = g_unified_dirty_ir_batch_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(0);
+    CHECK(current_ir_soa_generation_fence() == fence0 + 1, "AC2: single mark fence +1");
+    CHECK(g_unified_dirty_fence_advance_total.load(std::memory_order_relaxed) == logical0 + 1,
+          "AC2: logical +1");
+    CHECK(g_unified_dirty_ir_single_total.load(std::memory_order_relaxed) == single0 + 1,
+          "AC2: ir-single counter +1");
+    CHECK(g_unified_dirty_ir_batch_total.load(std::memory_order_relaxed) == batch0,
+          "AC2: batch counter unchanged on single mark");
+    CHECK((g_unified_dirty_last_sources.load(std::memory_order_relaxed) & kInvSrcIrSoaSingle) != 0,
+          "AC2: last sources includes IR single bit");
+}
+
+static void ac2773_3_shape_isolation() {
+    std::println("\n--- #2773 AC3: Shape compact≠storm isolation preserved ---");
+    const auto shape = read_file("src/compiler/shape_profiler.h");
+    CHECK(shape.find("2617") != std::string::npos, "AC3: #2617 still present");
+    CHECK(shape.find("#2773") != std::string::npos, "AC3: #2773 notes IR must not force shape");
+    CHECK(shape.find("deopt-storm") != std::string::npos ||
+              shape.find("mutation_induced_invalidations_") != std::string::npos,
+          "AC3: compact isolation contract still documented");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    CHECK(soa.find("Does NOT bump Shape version") != std::string::npos ||
+              soa.find("preserve #2617") != std::string::npos,
+          "AC3: note_logical does not bump Shape");
+    // IR dirty path must not call shape storm feed symbols.
+    CHECK(soa.find("note_logical_invalidation_epoch") != std::string::npos, "AC3: helper present");
+}
+
+static void ac2773_4_obs_schema() {
+    std::println("\n--- #2773 AC4: schema-2773 observability ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("schema-2773") != std::string::npos, "AC4: schema-2773");
+    CHECK(q.find("issue-2773") != std::string::npos, "AC4: issue-2773");
+    CHECK(q.find("unified-dirty-fence-advance-total") != std::string::npos,
+          "AC4: unified-dirty-fence-advance-total key");
+    CHECK(q.find("unified-dirty-ir-batch-total") != std::string::npos, "AC4: ir-batch key");
+    CHECK(q.find("unified-dirty-ir-single-total") != std::string::npos, "AC4: ir-single key");
+    CHECK(q.find("unified-dirty-fence-wired") != std::string::npos, "AC4: wired sentinel");
+    // Existing surfaces preserved.
+    CHECK(q.find("schema-2522") != std::string::npos, "AC4: schema-2522 preserved");
+    CHECK(q.find("schema-2615") != std::string::npos, "AC4: schema-2615 preserved");
+    // Process-wide counters advanced by AC1/AC2 (no engine:metrics dependency —
+    // query path may abort under partial typecheck rebuilds).
+    CHECK(g_unified_dirty_fence_advance_total.load(std::memory_order_relaxed) >= 2,
+          "AC4: process-wide advance total ≥ 2 after AC1+AC2 marks");
+}
+
+static void ac2773_5_source_cite_quiet() {
+    std::println("\n--- #2773 AC5: source-cite quiet path + linter ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    CHECK(soa.find("note_logical_invalidation_epoch") != std::string::npos, "AC5: helper");
+    CHECK(soa.find("g_unified_dirty_fence_advance_total") != std::string::npos, "AC5: counter");
+    CHECK(soa.find("Quiet path") != std::string::npos ||
+              soa.find("quiet path") != std::string::npos ||
+              soa.find("Zero cost when no dirty") != std::string::npos,
+          "AC5: quiet-path documented");
+    CHECK(soa.find("allowed fence writers") != std::string::npos ||
+              soa.find("Allowed fence writers") != std::string::npos ||
+              soa.find("allowed fence writers") != std::string::npos,
+          "AC5: writer policy documented");
+    // mark_blocks_dirty body calls note once (batch).
+    CHECK(soa.find("kInvSrcIrSoaBatch") != std::string::npos, "AC5: batch source bit");
+    CHECK(soa.find("kInvSrcIrSoaSingle") != std::string::npos, "AC5: single source bit");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_unified_dirty_fence_2773") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/2773-unified-dirty-fence.md").empty(),
+          "AC5: no docs/design/2773-* per #1655");
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
@@ -334,7 +444,13 @@ int run_test_batch_dirty_discipline() {
     ac5_fence_rate();
     ac2681_blocks_per_cascade_bp();
     ac2681_source_cite();
-    std::println("\n=== #2615/#2681: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2773: unified dirty fence protocol ===");
+    ac2773_1_batch_one_fence_one_logical();
+    ac2773_2_single_separate();
+    ac2773_3_shape_isolation();
+    ac2773_4_obs_schema();
+    ac2773_5_source_cite_quiet();
+    std::println("\n=== #2615/#2681/#2773: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

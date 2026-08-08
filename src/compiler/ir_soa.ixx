@@ -124,6 +124,14 @@ export [[nodiscard]] inline std::uint64_t soa_residual_production_smoke_wired() 
 // Advanced on every IRFunctionSoA / IRModuleV2 generation bump so Fiber
 // resume / steal can hard-compare against the stamp captured at Phase-5
 // boundary exit. Zero cost when no dirty marks (fence idle).
+//
+// Issue #2773 — allowed fence writers (production discipline):
+//   g_ir_soa_generation_fence  → ONLY IRFunctionSoA::bump_generation()
+//   LayoutStamp.shape_version  → ShapeProfiler only (NOT from IR dirty;
+//                                compact path must not feed deopt-storm #2617)
+//   ASTArena generation_       → arena live_compact / alloc restamp only
+// Prefer mark_blocks_dirty for multi-block cascades (one fence + one
+// note_logical_invalidation_epoch). Quiet path: no atomics until dirty.
 export inline std::atomic<std::uint64_t>& g_ir_soa_generation_fence() noexcept {
     static std::atomic<std::uint64_t> v{0};
     return v;
@@ -136,6 +144,9 @@ export [[nodiscard]] inline std::uint64_t current_ir_soa_generation_fence() noex
 export inline constexpr int kIrSoaBatchDirtyIssue = 2522;
 // Issue #2615: production multi-block cascades must use batch (fence metric).
 export inline constexpr int kIrSoaBatchDirtyDisciplineIssue = 2615;
+// Issue #2773: unified logical invalidation epoch across IR/FlatAST/Shape/Arena
+// bookkeeping (write-path discipline + Agent-readable cascade counter).
+export inline constexpr int kUnifiedDirtyFenceIssue = 2773;
 
 // Issue #2615: observability — fence advances vs logical cascade / block counts.
 // Target: batch_cascades ≈ fence advances from multi-block invalidates;
@@ -144,6 +155,36 @@ export inline std::atomic<std::uint64_t> g_ir_soa_batch_dirty_cascades_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_batch_dirty_blocks_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_single_dirty_marks_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_batch_bit_only_cascades_total{0};
+
+// ── Issue #2773: logical invalidation epoch (process-wide) ──────────
+// One tick per *logical* cascade so Agents can answer "how many fence
+// advances did one mutation cause?" without joining N layer counters.
+// Does NOT advance g_ir_soa_generation_fence (callers already bump once
+// via mark_blocks_dirty / mark_block_dirty). Does NOT bump Shape version
+// (preserve #2617 compact≠storm isolation — pure IR dirty must not trip
+// deopt-storm ring).
+export inline constexpr std::uint32_t kInvSrcIrSoaBatch = 1u << 0;
+export inline constexpr std::uint32_t kInvSrcIrSoaSingle = 1u << 1;
+export inline constexpr std::uint32_t kInvSrcFlatAst = 1u << 2;
+export inline constexpr std::uint32_t kInvSrcShape = 1u << 3; // note-only; never auto from IR
+export inline constexpr std::uint32_t kInvSrcArena = 1u << 4; // note-only; compact pressure
+
+export inline std::atomic<std::uint64_t> g_unified_dirty_fence_advance_total{0};
+export inline std::atomic<std::uint32_t> g_unified_dirty_last_sources{0};
+export inline std::atomic<std::uint64_t> g_unified_dirty_ir_batch_total{0};
+export inline std::atomic<std::uint64_t> g_unified_dirty_ir_single_total{0};
+
+// Quiet path: never called. Dirty path only — relaxed atomics.
+export inline void note_logical_invalidation_epoch(std::uint32_t sources) noexcept {
+    if (sources == 0)
+        return;
+    g_unified_dirty_fence_advance_total.fetch_add(1, std::memory_order_relaxed);
+    g_unified_dirty_last_sources.store(sources, std::memory_order_relaxed);
+    if ((sources & kInvSrcIrSoaBatch) != 0)
+        g_unified_dirty_ir_batch_total.fetch_add(1, std::memory_order_relaxed);
+    if ((sources & kInvSrcIrSoaSingle) != 0)
+        g_unified_dirty_ir_single_total.fetch_add(1, std::memory_order_relaxed);
+}
 
 // Compile-time SoA-only default (macro lives in this TU + consumers that
 // #include the GMF define block or set -DAURA_IR_SOA_ONLY). Exported for
@@ -325,6 +366,8 @@ export struct IRFunctionSoA {
         std::fill(instruction_dirty_.begin(), instruction_dirty_.end(), std::uint8_t{1});
         // Issue #2111: generation fence on full-function dirty (once).
         bump_generation();
+        // Issue #2773: full-function dirty is one logical cascade (batch class).
+        note_logical_invalidation_epoch(kInvSrcIrSoaBatch);
     }
 
     // Clear a single block's dirty flag (called by the
@@ -530,6 +573,8 @@ inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
     bump_generation();
     // Issue #2615: single-block mark accounting (AC2 path).
     g_ir_soa_single_dirty_marks_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2773: logical cascade (single residual path counted separately).
+    note_logical_invalidation_epoch(kInvSrcIrSoaSingle);
 }
 
 // Issue #2522 / #2615: batch API — N blocks, one fence.
@@ -541,6 +586,8 @@ inline void IRFunctionSoA::mark_blocks_dirty(std::span<const std::uint32_t> bloc
     bump_generation(); // once regardless of block count
     g_ir_soa_batch_dirty_cascades_total.fetch_add(1, std::memory_order_relaxed);
     g_ir_soa_batch_dirty_blocks_total.fetch_add(block_ids.size(), std::memory_order_relaxed);
+    // Issue #2773: one logical epoch per multi-block cascade (AC1).
+    note_logical_invalidation_epoch(kInvSrcIrSoaBatch);
 }
 
 // Issue #2615: multi-block bit-only + one fence (precise ImpactScope path).
@@ -552,6 +599,8 @@ inline void IRFunctionSoA::mark_blocks_dirty_bits_only(std::span<const std::uint
     bump_generation(); // once
     g_ir_soa_batch_bit_only_cascades_total.fetch_add(1, std::memory_order_relaxed);
     g_ir_soa_batch_dirty_blocks_total.fetch_add(block_ids.size(), std::memory_order_relaxed);
+    // Issue #2773: bit-only multi-block is still one logical cascade.
+    note_logical_invalidation_epoch(kInvSrcIrSoaBatch);
 }
 
 // Issue #2522: optional range API + one fence.
@@ -561,6 +610,8 @@ inline void IRFunctionSoA::mark_instruction_range_dirty(std::uint32_t start_idx,
         return;
     detail::fill_instruction_dirty_range(*this, start_idx, end_idx);
     bump_generation();
+    // Issue #2773: range invalidate = single logical cascade (not multi-block batch).
+    note_logical_invalidation_epoch(kInvSrcIrSoaSingle);
 }
 
 // Issue #1920: invoke Fn(block_id, BasicBlockSoA&) for each dirty

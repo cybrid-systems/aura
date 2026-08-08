@@ -769,6 +769,21 @@ def cmd_lint():
             "Issue #2772 denseness multi-process env linter failed — run python3 scripts/coverage/checks/check_denseness_multiprocess_env_2772.py"
         )
         return r
+    # Issue #2773: unify dirty-bit + generation fence write protocol
+    # (#2522/#2615/#2617 residual). note_logical_invalidation_epoch +
+    # unified-dirty-fence-advance-total + schema-2773; multi-block IR
+    # one fence; Shape compact isolation preserved. ac2773_* in
+    # test_batch_dirty_discipline per #81967.
+    udf_script = COVERAGE_CHECKS / "check_unified_dirty_fence_2773.py"
+    if not udf_script.exists():
+        fail(f"missing {udf_script}")
+        return 1
+    r = run([sys.executable, str(udf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2773 unified dirty fence linter failed — run python3 scripts/coverage/checks/check_unified_dirty_fence_2773.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
