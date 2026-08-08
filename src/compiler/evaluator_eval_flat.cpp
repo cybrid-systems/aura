@@ -2840,6 +2840,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :move-node: node not found in parent's children list"});
+    // Issue #2794: already at the requested parent+index → idempotent no-op
+    // success. Must NOT detach/reinsert (that would leave a NULL_NODE hole)
+    // and must NOT signal failure to mutate:atomic-batch. Return #t (same as
+    // a real move) so the bool-false heuristic never mis-classifies this.
+    if (cur_parent == new_parent && static_cast<std::uint32_t>(cur_idx) == new_pos)
+        return make_bool(true);
     std::string summary = (a.size() > 3 && is_string(a[3])) ? string_heap_[as_string_idx(a[3])]
                                                             : "move node " + std::to_string(node);
     flat.set_child(cur_parent, cur_idx, aura::ast::NULL_NODE);

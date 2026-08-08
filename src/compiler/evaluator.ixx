@@ -5061,6 +5061,8 @@ private:
         std::atomic<std::uint64_t> pinned_refs_total{0};
         std::atomic<std::uint64_t> snapshot_rollbacks{0};
         std::atomic<std::uint64_t> snapshot_captures{0};
+        // Issue #2794: sub-op returned #f treated as soft no-op (not batch failure).
+        std::atomic<std::uint64_t> sub_op_noop_total{0};
     };
     AtomicBatchDomain atomic_batch_domain_{};
     // Back-compat field names → domain members (reference aliases not
@@ -13088,6 +13090,11 @@ public:
     }
     [[nodiscard]] std::uint64_t atomic_batch_rollbacks() const noexcept {
         return atomic_batch_domain_.rollbacks.load(std::memory_order_relaxed);
+    }
+    // Issue #2794: lifetime count of atomic-batch sub-ops that returned
+    // #f and were accepted as soft no-op (not batch failure).
+    [[nodiscard]] std::uint64_t atomic_batch_sub_op_noop_total() const noexcept {
+        return atomic_batch_domain_.sub_op_noop_total.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t atomic_batch_bumps_saved_total() const noexcept {
         return atomic_batch_domain_.bumps_saved_total.load(std::memory_order_relaxed);

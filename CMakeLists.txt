@@ -1825,6 +1825,9 @@ aura_issue_test_link_light(test_rebind_new_body_hygiene)
 # Issue #2793: replace-value Guard abort marks mutation_log RolledBack (no torn audit).
 aura_add_issue_test(test_replace_value_audit_consistency)
 aura_issue_test_link_light(test_replace_value_audit_consistency)
+# Issue #2794: atomic-batch treats move-node same-pos / #f as soft no-op (not fail).
+aura_add_issue_test(test_atomic_batch_move_noop)
+aura_issue_test_link_light(test_atomic_batch_move_noop)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
