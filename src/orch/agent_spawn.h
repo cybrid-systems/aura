@@ -349,6 +349,13 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> scope_join_all_total{0};
     std::atomic<std::uint64_t> scope_cancel_all_total{0};
     std::atomic<std::uint64_t> scope_dropped_total{0};
+    // Issue #2751: session-level Agent directory surface
+    // (orch:agent-directory). Per-Evaluator / per-AgentScope snapshot;
+    // NOT a process-global registry. agent_directory_total = prim
+    // invocations; agent_directory_entries_total = sum of entry counts
+    // returned (observability for dashboard fan-out).
+    std::atomic<std::uint64_t> agent_directory_total{0};
+    std::atomic<std::uint64_t> agent_directory_entries_total{0};
     // Issue #2231: agent-ask request/response channel metrics.
     // Bumped by the C++ helper agent_ask(...) and the Aura
     // primitive (orch:agent-ask name payload [:timeout-ms n]).

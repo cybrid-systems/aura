@@ -2399,7 +2399,7 @@ export struct TypeChecker {
     // Returns true when SOLVED (occurrence narrowing restored enough to commit).
     [[nodiscard]] bool try_occurrence_hard_face_full_solve_recover() noexcept {
         try {
-            std::vector<TypeId> unresolved;
+            std::vector<Constraint> unresolved;
             const auto full = solve_delta_cs_.solve(&unresolved);
             if (full == SolveResult::SOLVED) {
                 solve_delta_cs_.note_full_solve_cleared_truncation();

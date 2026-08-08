@@ -50,6 +50,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -58,6 +59,34 @@ namespace aura::orch {
 
 // Issue #2537: hierarchical AgentScope (parent/children cancel tree).
 inline constexpr int kAgentScopeHierarchyIssue = 2537;
+
+// Issue #2751: session-level Agent directory surface (per-Evaluator /
+// per-AgentScope snapshot; NOT a process-global registry).
+inline constexpr int kAgentDirectoryIssue = 2751;
+
+// Issue #2751: one row in a session-scoped agent directory snapshot.
+// Best-effort at call time (not transactional with concurrent spawn).
+struct AgentDirectoryEntry {
+    std::string name;
+    std::uint64_t id = 0;
+    std::string status;     // "alive" | "done" | "cancelled" | "spawn-failed" | "unknown"
+    std::string scope_path; // "" / "root" for root; "0", "0/1" for child indices
+    bool ok = false;
+};
+
+// Issue #2751: read-only directory filter options.
+struct AgentDirectoryFilter {
+    bool include_descendants = true; // walk child scopes (#2537)
+    bool alive_only = false;         // drop done / cancelled / spawn-failed
+    std::string name_prefix;         // empty = no name filter
+};
+
+// Issue #2751: full snapshot returned by AgentScope::directory_snapshot.
+struct AgentDirectorySnapshot {
+    std::vector<AgentDirectoryEntry> entries;
+    std::size_t scopes_visited = 0; // root + descendants walked
+    int schema = kAgentDirectoryIssue;
+};
 
 // Issue #2399: optional hard abort on concurrent AgentScope enter.
 // Default OFF (metric-only). Env AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 enables.
@@ -344,6 +373,21 @@ public:
         return std::span<AgentHandle>(handles_);
     }
 
+    // Issue #2751: session-scoped agent directory snapshot (read-only,
+    // best-effort at call time). Walks this scope's handles_ and,
+    // when filter.include_descendants, child scopes (#2537). Never
+    // process-wide — only agents owned by this scope tree. Not a
+    // transaction with concurrent spawn (document + AC2).
+    // Soft / empty scope → empty entries, scopes_visited >= 1 when this
+    // scope exists.
+    [[nodiscard]] AgentDirectorySnapshot
+    directory_snapshot(const AgentDirectoryFilter& filter = {}) const {
+        AgentDirectorySnapshot snap;
+        snap.schema = kAgentDirectoryIssue;
+        collect_directory_(snap, filter, /*path=*/"");
+        return snap;
+    }
+
     // Supervision root: cancel + best-effort drain + release before
     // destruction. join_agents handles cancel+drain on non-Ok internally
     // (#2082), and per-handle release_agent_memory_reservation is
@@ -425,6 +469,50 @@ private:
         const auto d = enter_depth_.fetch_sub(1, std::memory_order_relaxed);
         if (d == 1) {
             owner_tid_.store(std::thread::id{}, std::memory_order_release);
+        }
+    }
+
+    // Issue #2751: recursive collect into snap (path = "" for root of
+    // this walk, "0" / "0/1" for child indices under the walk root).
+    void collect_directory_(AgentDirectorySnapshot& snap, const AgentDirectoryFilter& filter,
+                            const std::string& path) const {
+        ++snap.scopes_visited;
+        for (const auto& h : handles_) {
+            AgentDirectoryEntry e;
+            e.name = h.name;
+            e.id = h.id;
+            e.ok = h.ok;
+            e.scope_path = path.empty() ? std::string("root") : path;
+            if (!h.ok) {
+                e.status = "spawn-failed";
+            } else if (!h.fiber) {
+                e.status = "unknown";
+            } else if (h.fiber->is_done()) {
+                e.status = "done";
+            } else if (h.fiber->is_cancel_requested()) {
+                e.status = "cancelled";
+            } else {
+                e.status = "alive";
+            }
+            if (filter.alive_only && e.status != "alive")
+                continue;
+            if (!filter.name_prefix.empty()) {
+                if (e.name.size() < filter.name_prefix.size() ||
+                    e.name.compare(0, filter.name_prefix.size(), filter.name_prefix) != 0)
+                    continue;
+            }
+            snap.entries.push_back(std::move(e));
+        }
+        if (!filter.include_descendants)
+            return;
+        for (std::size_t i = 0; i < children_.size(); ++i) {
+            if (!children_[i])
+                continue;
+            // Child path under walk root: "0", "0/1", … (root agents use "root").
+            const std::string child_path = path.empty() || path == "root"
+                                               ? std::to_string(i)
+                                               : (path + "/" + std::to_string(i));
+            children_[i]->collect_directory_(snap, filter, child_path);
         }
     }
 

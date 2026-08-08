@@ -3570,6 +3570,77 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return build_orch_hash(kv);
     });
 
+    // Issue #2751: orch:agent-directory — session-level Agent directory
+    // surface (per-Evaluator AgentScope snapshot; NOT a process-global
+    // registry). Optional filters:
+    //   [:alive-only #t|#f]           (default #f)
+    //   [:name-prefix "prefix"]       (default "")
+    //   [:include-descendants #t|#f]  (default #t; hierarchy #2537)
+    // Empty session (no scope-spawn yet) → ok=#t, agents=#(), count=0.
+    // Soft / sandbox never denies. Snapshot is best-effort (AC2).
+    // Returns hash {ok, agents, count, scopes-visited, schema=2751, …}.
+    add("orch:agent-directory",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            aura::orch::AgentDirectoryFilter filter{};
+            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if ((k == "alive-only" || k == "alive_only") && types::is_bool(val)) {
+                    filter.alive_only = types::as_bool(val);
+                } else if ((k == "include-descendants" || k == "include_descendants") &&
+                           types::is_bool(val)) {
+                    filter.include_descendants = types::as_bool(val);
+                } else if ((k == "name-prefix" || k == "name_prefix") && types::is_string(val)) {
+                    filter.name_prefix = heap_str_from(ev.string_heap_, val);
+                }
+            }
+            aura::orch::AgentDirectorySnapshot snap;
+            snap.schema = aura::orch::kAgentDirectoryIssue;
+            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            if (scope) {
+                snap = scope->directory_snapshot(filter);
+            }
+            // Build agents vector of per-entry hashes.
+            std::vector<EvalValue> agent_elems;
+            agent_elems.reserve(snap.entries.size());
+            for (const auto& e : snap.entries) {
+                const auto nidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(e.name);
+                const auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(e.status);
+                const auto pidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(e.scope_path);
+                std::vector<std::pair<std::string, EvalValue>> ekv = {
+                    {"name", make_string(nidx)},
+                    {"id", make_int(static_cast<std::int64_t>(e.id))},
+                    {"status", make_string(sidx)},
+                    {"scope-path", make_string(pidx)},
+                    {"ok", make_bool(e.ok)},
+                    {"schema", make_int(aura::orch::kAgentDirectoryIssue)},
+                };
+                agent_elems.push_back(build_orch_hash(ekv));
+            }
+            const auto vidx = ev.vector_heap_.size();
+            ev.vector_heap_.push_back(std::move(agent_elems));
+            aura::orch::g_orch_module_stats.agent_directory_total.fetch_add(
+                1, std::memory_order_relaxed);
+            aura::orch::g_orch_module_stats.agent_directory_entries_total.fetch_add(
+                static_cast<std::uint64_t>(snap.entries.size()), std::memory_order_relaxed);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},
+                {"agents", make_vector(vidx)},
+                {"count", make_int(static_cast<std::int64_t>(snap.entries.size()))},
+                {"scopes-visited", make_int(static_cast<std::int64_t>(snap.scopes_visited))},
+                {"schema", make_int(aura::orch::kAgentDirectoryIssue)},
+                {"schema-2751", make_int(aura::orch::kAgentDirectoryIssue)},
+                {"schema-2588", make_int(2588)},
+                {"schema-2537", make_int(aura::orch::kAgentScopeHierarchyIssue)},
+                {"schema-2083", make_int(2083)},
+                {"issue-2751", make_int(aura::orch::kAgentDirectoryIssue)},
+            };
+            return build_orch_hash(kv);
+        });
+
     // Issue #2231 / #2538: orch:agent-ask name payload [:timeout-ms n] → hash
     // {ok, status, payload, correlation-id, schema-2231, schema-2538}.
     // Standard cross-agent request/response without a global registry
@@ -3869,8 +3940,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                   : 0;
             const auto cm_lin =
                 m ? m->orch_linear_violation_prevented_total.load(std::memory_order_relaxed) : 0;
-            // Capacity 128: #1588 + #1879/#1880/#1881 health fields (FNV headroom).
-            auto* ht = FlatHashTable::create(128);
+            // Capacity 256: #1588 + #1879/#1880/#1881 health fields + subsequent
+            // scope/directory/obs keys (#2588/#2631/#2751/…); 128 overflowed
+            // (~191 insert_kv) so later schema/wired sentinels were dropped.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -4236,6 +4309,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("scope-child-wired", 1);
             insert_kv("schema-2631", 2631);
             insert_kv("issue-2631", 2631);
+            // Issue #2751: session-level Agent directory
+            // (orch:agent-directory). Per-Evaluator AgentScope snapshot —
+            // not a process-global registry (MVP linter stays green).
+            insert_kv("agent-directory-total",
+                      static_cast<std::int64_t>(
+                          os.agent_directory_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-directory-entries-total",
+                      static_cast<std::int64_t>(
+                          os.agent_directory_entries_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-directory-wired", 1);
+            insert_kv("schema-2751", aura::orch::kAgentDirectoryIssue);
+            insert_kv("issue-2751", aura::orch::kAgentDirectoryIssue);
             // Issue #2153: secondary drain residual / wait after non-Ok cancel.
             insert_kv("join-drain-residual-total",
                       static_cast<std::int64_t>(

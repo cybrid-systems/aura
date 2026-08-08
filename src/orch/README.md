@@ -466,6 +466,50 @@ but the new surface introduces no removed-identifier symbols.
 
 See [`docs/architecture.md`](../../docs/architecture.md) § multi-agent.
 
+### `orch:agent-directory` session directory (Issue #2751)
+
+Session-scoped **read-only** directory of agents currently owned by the
+calling Evaluator's `AgentScope` (and optional descendants under hierarchy
+#2537). Commercial multi-agent hosts use this for dashboards / ask routing /
+supervision without reintroducing a process-global registry.
+
+```aura
+(orch:agent-directory)                              ; all agents, incl. descendants
+(orch:agent-directory :alive-only #t)                ; drop done/cancelled
+(orch:agent-directory :name-prefix "worker-")        ; name prefix filter
+(orch:agent-directory :include-descendants #f)       ; root scope only
+```
+
+Semantics:
+1. **Per-Evaluator only** — walks `g_evaluator_agent_scopes()[Evaluator*]`
+   handles (and child scopes when `:include-descendants #t`, default). Never
+   process-wide. Empty session (no prior `orch:scope-spawn`) →
+   `{ok=#t, agents=#(), count=0, scopes-visited=0}`.
+2. **Best-effort snapshot** — consistent with `handles()` at call time; **not**
+   transactional with concurrent spawn (document + AC2). Soft / sandbox never
+   denies.
+3. **C++ helper** — `AgentScope::directory_snapshot(AgentDirectoryFilter)`
+   returns `AgentDirectorySnapshot` (`name` / `id` / `status` / `scope-path`).
+   Root agents use `scope-path="root"`; child indices use `"0"`, `"0/1"`, …
+4. **Not a global registry** — MVP linter still forbids `AgentRegistry` /
+   `global_agent_registry` / `conduct_parallel`. No new process-static agent
+   map; storage stays the existing per-Evaluator scope slot.
+
+Hash result (AC3):
+- `{ok, agents, count, scopes-visited, schema=2751, schema-2751, schema-2588,
+   schema-2537, schema-2083, issue-2751}`
+- each `agents[i]` → `{name, id, status, scope-path, ok, schema=2751}`
+  (`status` ∈ `alive` | `done` | `cancelled` | `spawn-failed` | `unknown`)
+
+Metrics (`query:orch-module-stats`):
+- `agent-directory-total` — prim invocations.
+- `agent-directory-entries-total` — sum of entry counts returned.
+- `agent-directory-wired` — sentinel 1.
+- `schema-2751` / `issue-2751` — 2751.
+
+Regression: `tests/orch/test_orch_scope` (#2751 AC block) + C++ hierarchy
+coverage via `AgentScope::directory_snapshot` in the same suite.
+
 ## Mailbox BP admission (default on, #2228 / #2535)
 
 Production default: `kMailboxBpAdmitThresholdDefault = 32` — spawn with
