@@ -728,8 +728,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // reject path. Agents can hold the proof across
                     // densify / steal / remap and re-check
                     // defuse_or_epoch_stamp without re-joining N
-                    // query surfaces. Cheap (no extra heavy walks).
-                    (void)typed_audit::build_type_linear_commit_proof_from_live(cp.version);
+                    // query surfaces. #2758: fill live_goal_count from
+                    // commit TypeChecker CS when present (0 quiet).
+                    {
+                        std::uint64_t goals = 0;
+                        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
+                                commit_type_checker_handle()))
+                            goals = static_cast<std::uint64_t>(
+                                tc->constraint_system().occurrence_goals_size());
+                        (void)typed_audit::build_type_linear_commit_proof_from_live(cp.version,
+                                                                                    goals);
+                    }
                     return cp;
                 }
                 // Composite paths never under-sample (self-evo multi-step safety).
@@ -3297,7 +3306,13 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
     // Issue #2717: stamp TypeLinearCommitProof on hygiene save (Agent-
     // visible dual-epoch proof). Use saved_defuse_version (HygieneCheckpoint
     // has no .version field — that is MutationCheckpoint).
-    (void)typed_audit::build_type_linear_commit_proof_from_live(cp.saved_defuse_version);
+    // #2758: fill live_goal_count from commit TypeChecker CS when present.
+    {
+        std::uint64_t goals = 0;
+        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle()))
+            goals = static_cast<std::uint64_t>(tc->constraint_system().occurrence_goals_size());
+        (void)typed_audit::build_type_linear_commit_proof_from_live(cp.saved_defuse_version, goals);
+    }
     return cp;
 }
 

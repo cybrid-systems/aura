@@ -225,6 +225,9 @@ bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remappe
 // std::span over a thread-local scratch buffer (AC3 zero-cost when empty).
 // Lifetime: until the next call from the same thread.
 std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind() noexcept;
+// Issue #2758: size-only wrapper for TypeLinearCommitProof stamp (avoids
+// typed_mutation_audit.h including this header; quiet path empty → 0).
+[[nodiscard]] std::size_t linear_or_dirty_roots_count_for_rebind() noexcept;
 
 // C ABI overload for tests / FFI bridges that pass raw ptr + size.
 // std::span(ptr, count) is well-formed once the element type is complete

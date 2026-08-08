@@ -86,27 +86,21 @@ def main() -> int:
     must("Issue #2717", "AC1", tma)
     must("build_type_linear_commit_proof_from_live", "AC1", tma)
     must("g_type_linear_commit_proof_stamped_total", "AC1", tma)
-    must("build_type_linear_commit_proof_from_live(cp.version)", "AC1", efm)
-    # The two stamp sites: linear-synth-hard-fail early return + final
-    # return at end of exit_mutation_boundary.
+    must("build_type_linear_commit_proof_from_live(cp.version", "AC1", efm)
+    # The two stamp sites: linear-synth-hard-fail early return + hygiene save.
     must("build_type_linear_commit_proof_from_live", "AC1", efm)
 
     # AC2 — composite_txn_commit stamps on both ok and reject.
     # The stamp is at the END of exit_mutation_boundary — covers
     # composite ok + reject (both fall through to the final stamp).
     must("build_type_linear_commit_proof_from_live", "AC2", efm)
-    must("(void)typed_audit::build_type_linear_commit_proof_from_live(cp.version)", "AC2", efm)
+    must("build_type_linear_commit_proof_from_live(cp.version", "AC2", efm)
 
-    # AC3 — Soft + quiet path → stamp cheap (counter reads only).
-    # The build helper reads existing typed_audit counters + calls
-    # commit_readiness_live_policy() — no extra heavy walks solely
-    # for the stamp.
-    # The source has "p.live_goal_count = 0; // #2708 future wire" after
-    # clang-format — check for the unique comment suffix and the
-    # assignment prefix (whitespace-independent).
-    must("p.live_goal_count = 0;", "AC3", tma)
-    must("p.linear_root_count = 0;", "AC3", tma)
-    must("// #2708 future wire", "AC3", tma)
+    # AC3 — Soft + quiet path → stamp cheap. #2758 fills counts from
+    # linear_or_dirty_roots_count_for_rebind (empty → 0) + goal gauge/hint.
+    must("linear_or_dirty_roots_count_for_rebind", "AC3", tma)
+    must("p.live_goal_count =", "AC3", tma)
+    must("p.linear_root_count =", "AC3", tma)
     must("g_type_linear_commit_proof_stamped_total.fetch_add(1", "AC3", tma)
 
     # AC4 — Agent comparing defuse_or_epoch_stamp detects drift.

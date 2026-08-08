@@ -3773,6 +3773,21 @@ def cmd_occurrence_hard_face_commit_2716_coverage():
     return 0
 
 
+def cmd_type_linear_commit_proof_counts_2758_coverage():
+    """Issue #2758: fill TypeLinearCommitProof root/goal counts from real walks."""
+    print(f"{B}=== type linear commit proof counts (#2758) ==={N}")
+    script = COVERAGE_CHECKS / "check_type_linear_commit_proof_counts_2758.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type linear commit proof counts (#2758) contract rows failed")
+        return 1
+    ok("type linear commit proof counts (#2758) clean")
+    return 0
+
+
 def cmd_type_linear_commit_proof_stamp_2717_coverage():
     """Issue #2717: stamp TypeLinearCommitProof on boundary + composite commit.
 
@@ -9037,6 +9052,7 @@ def cmd_gate():
         or cmd_deferred_reemit_steal_sticky_2715_coverage()
         or cmd_occurrence_hard_face_commit_2716_coverage()
         or cmd_type_linear_commit_proof_stamp_2717_coverage()
+        or cmd_type_linear_commit_proof_counts_2758_coverage()
         or cmd_panic_residual_densify_hard_2598_coverage()
         or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
         or cmd_mutation_boundary_shared_exit_2600_coverage()

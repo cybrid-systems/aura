@@ -293,26 +293,21 @@ static void ac2717_2_composite_txn_commit_stamps() {
     const auto efm = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(efm.find("build_type_linear_commit_proof_from_live") != std::string::npos,
           "AC2: build call present in evaluator_mutation_boundary.cpp");
-    CHECK(efm.find("(void)typed_audit::build_type_linear_commit_proof_from_live(cp.version)") !=
-              std::string::npos,
+    CHECK(efm.find("build_type_linear_commit_proof_from_live(cp.version") != std::string::npos,
           "AC2: stamp call uses cp.version as the defuse_or_epoch source");
 }
 
 // ── Issue #2717 AC3: Soft + quiet path → stamp cheap (zeros / vacuous healthy) ──
+// #2758 fills counts from real walks; quiet path still zeros when empty.
 static void ac2717_3_soft_quiet_path_cheap() {
     std::println("\n--- #2717 AC3: Soft + quiet path → stamp cheap ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     CHECK(tma.find("build_type_linear_commit_proof_from_live") != std::string::npos,
-          "AC3: build helper present (read-only — counter reads only)");
-    // The source has "p.live_goal_count = 0; // #2708 future wire" after
-    // clang-format — check for the unique comment suffix and the
-    // assignment prefix (whitespace-independent).
-    CHECK(tma.find("p.live_goal_count = 0;") != std::string::npos,
-          "AC3: live_goal_count defaults to 0 (cheap on quiet path)");
-    CHECK(tma.find("p.linear_root_count = 0;") != std::string::npos,
-          "AC3: linear_root_count defaults to 0 (cheap on quiet path)");
-    CHECK(tma.find("// #2708 future wire") != std::string::npos,
-          "AC3: #2708 future wire comment present");
+          "AC3: build helper present");
+    // #2758: counts filled from collect / CS; quiet → 0 via empty span / gauge.
+    CHECK(tma.find("linear_or_dirty_roots_count_for_rebind") != std::string::npos,
+          "AC3: linear_root_count from count wrapper (quiet empty → 0)");
+    CHECK(tma.find("live_goal_count") != std::string::npos, "AC3: live_goal_count field used");
     CHECK(tma.find("g_type_linear_commit_proof_stamped_total.fetch_add(1") != std::string::npos,
           "AC3: stamped_total bumps (1 atomic add per call)");
 }
@@ -385,6 +380,115 @@ static void ac2717_6_source_and_linter() {
           "AC6: no docs/design/2717-* per #1655");
 }
 
+// ── Issue #2758 AC1: stamped proof fills linear_root_count / live_goal_count
+// from collect_linear_or_dirty_roots + CS goals (not hard-coded 0).
+static void ac2758_1_counts_from_real_walks() {
+    std::println("\n--- #2758 AC1: counts from real walks ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(tma.find("linear_or_dirty_roots_count_for_rebind") != std::string::npos,
+          "AC1: build uses linear_or_dirty_roots_count_for_rebind");
+    CHECK(tma.find("p.linear_root_count =") != std::string::npos,
+          "AC1: linear_root_count assigned from real count");
+    CHECK(tma.find("p.live_goal_count =") != std::string::npos, "AC1: live_goal_count assigned");
+    CHECK(tma.find("#2708 future wire") == std::string::npos,
+          "AC1: #2708 future-wire hard-code removed");
+    // Stamp sites pass CS goal count when TypeChecker present.
+    CHECK(emb.find("occurrence_goals_size()") != std::string::npos,
+          "AC1: stamp site reads occurrence_goals_size");
+    CHECK(emb.find("build_type_linear_commit_proof_from_live(cp.version") != std::string::npos,
+          "AC1: stamp still on boundary path");
+    // count wrapper defined next to collect.
+    const auto orb = read_file("src/compiler/ownership_rebind.h");
+    const auto orc = read_file("src/compiler/ownership_rebind.cpp");
+    CHECK(orb.find("linear_or_dirty_roots_count_for_rebind") != std::string::npos,
+          "AC1: count API declared in ownership_rebind.h");
+    CHECK(orc.find("linear_or_dirty_roots_count_for_rebind") != std::string::npos,
+          "AC1: count API defined via collect in ownership_rebind.cpp");
+}
+
+// ── Issue #2758 AC2: quiet path zeros (empty collect + no goals).
+static void ac2758_2_quiet_path_zeros() {
+    std::println("\n--- #2758 AC2: quiet path zeros ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("empty collect short-circuit") != std::string::npos ||
+              tma.find("Quiet path") != std::string::npos ||
+              tma.find("quiet path") != std::string::npos ||
+              tma.find("empty span") != std::string::npos,
+          "AC2: quiet path documented");
+    // count wrapper reuses collect short-circuit (empty → 0).
+    CHECK(tma.find("linear_or_dirty_roots_count_for_rebind") != std::string::npos,
+          "AC2: reuses existing collect short-circuit via count wrapper");
+}
+
+// ── Issue #2758 AC3: last counts queryable for densify/steal drift.
+static void ac2758_3_last_counts_queryable() {
+    std::println("\n--- #2758 AC3: last counts queryable ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(tma.find("g_last_proof_live_goal_count") != std::string::npos,
+          "AC3: last live_goal_count atomic");
+    CHECK(tma.find("g_last_proof_linear_root_count") != std::string::npos,
+          "AC3: last linear_root_count atomic");
+    CHECK(q.find("type-linear-commit-proof-live-goal-count") != std::string::npos,
+          "AC3: query exposes live-goal-count");
+    CHECK(q.find("type-linear-commit-proof-linear-root-count") != std::string::npos,
+          "AC3: query exposes linear-root-count");
+    CHECK(q.find("last_proof_live_goal_count_v_read") != std::string::npos ||
+              q.find("last_proof_linear_root_count_v_read") != std::string::npos,
+          "AC3: query reads last stamped counts");
+}
+
+// ── Issue #2758 AC4: additive — #2613/#2697/#2717 preserved + counts-filled.
+static void ac2758_4_additive_no_regression() {
+    std::println("\n--- #2758 AC4: additive no regression ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(q.find("schema-2613") != std::string::npos ||
+              q.find("type-linear-commit-health") != std::string::npos,
+          "AC4: #2613 health preserved");
+    CHECK(q.find("schema-2697") != std::string::npos, "AC4: schema-2697 preserved");
+    CHECK(q.find("schema-2717") != std::string::npos, "AC4: schema-2717 preserved");
+    CHECK(q.find("type-linear-commit-proof-stamped-total") != std::string::npos,
+          "AC4: #2717 stamped-total preserved");
+    CHECK(q.find("type-linear-commit-proof-counts-filled-total") != std::string::npos,
+          "AC4: counts-filled-total present");
+    CHECK(q.find("schema-2758") != std::string::npos, "AC4: schema-2758");
+    CHECK(q.find("issue-2758") != std::string::npos, "AC4: issue-2758");
+    CHECK(tma.find("g_type_linear_commit_proof_counts_filled_total") != std::string::npos,
+          "AC4: counts-filled counter in tma");
+}
+
+// ── Issue #2758 AC5/AC6: source-cite + linter + extend this file; no docs/design.
+static void ac2758_5_source_and_linter() {
+    std::println("\n--- #2758 AC5/AC6: source-cite + linter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_type_linear_commit_proof_counts_2758.py");
+    CHECK(tma.find("Issue #2758") != std::string::npos || tma.find("#2758") != std::string::npos,
+          "AC5: tma cites #2758");
+    CHECK(emb.find("#2758") != std::string::npos, "AC5: emb cites #2758");
+    CHECK(q.find("Issue #2758") != std::string::npos, "AC5: query cites #2758");
+    CHECK(t.find("ac2758_1_counts_from_real_walks") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2758_2_quiet_path_zeros") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2758_3_last_counts_queryable") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2758_4_additive_no_regression") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2758_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+    CHECK(t.find("ac2717_1_boundary_success_and_reject_stamp") != std::string::npos,
+          "AC5: #2717 tests preserved");
+    CHECK(build.find("check_type_linear_commit_proof_counts_2758") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty(), "AC5: linter present");
+    CHECK(read_file("docs/design/2758-type-linear-commit-proof-counts.md").empty(),
+          "AC6: no docs/design/2758-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2758.cpp").empty(),
+          "AC6: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -413,7 +517,15 @@ int run_test_type_linear_commit_health() {
     ac2717_4_drift_detection_via_defuse_or_epoch_stamp();
     ac2717_5_additive_no_regression();
     ac2717_6_source_and_linter();
-    std::println("\n=== #2613 + #2697 + #2717: {} passed, {} failed ===", g_passed, g_failed);
+    // Issue #2758: fill live_goal_count + linear_root_count from real walks.
+    std::println("\n=== Issue #2758: proof counts from real walks (#2717 residual) ===");
+    ac2758_1_counts_from_real_walks();
+    ac2758_2_quiet_path_zeros();
+    ac2758_3_last_counts_queryable();
+    ac2758_4_additive_no_regression();
+    ac2758_5_source_and_linter();
+    std::println("\n=== #2613 + #2697 + #2717 + #2758: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -11,8 +11,15 @@
 #include "core/workspace_epoch.hh" // current_mutation_epoch (#2493 mid resolve)
 #include "audit_mid_fallback_slo.h" // MidFallbackSloInput + decide_audit_mid_fallback_slo (#2635 hard-deny)
 
+// Issue #2758: thin count API (defined in ownership_rebind.cpp) so this
+// header does not include ownership_rebind.h (avoid include-order cascade).
+namespace aura::compiler {
+[[nodiscard]] std::size_t linear_or_dirty_roots_count_for_rebind() noexcept;
+}
+
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -899,24 +906,47 @@ inline void reset_type_linear_commit_proof_stamped_total_for_test() noexcept {
     g_type_linear_commit_proof_stamped_total.store(0, std::memory_order_relaxed);
 }
 
-// Build a TypeLinearCommitProof from live state. Pure read — no
-// bumps, no atomics beyond the existing typed_audit counters. Cheap
-// on the quiet path (per AC3): no extra heavy walks solely for the
-// stamp. Fields:
+// Issue #2758: last stamped root/goal counts (Agent drift detect without
+// N-key join). Updated every build_type_linear_commit_proof_from_live.
+inline std::atomic<std::uint64_t> g_last_proof_live_goal_count{0};
+inline std::atomic<std::uint64_t> g_last_proof_linear_root_count{0};
+// Optional dashboard: how often at least one count was non-zero.
+inline std::atomic<std::uint64_t> g_type_linear_commit_proof_counts_filled_total{0};
+// Process gauge published by stamp sites / query when CS goals known.
+// Quiet default 0 (no CS / empty goals).
+inline std::atomic<std::uint64_t> g_proof_live_goal_count_gauge{0};
+inline constexpr std::uint64_t kProofLiveGoalCountHintAuto =
+    static_cast<std::uint64_t>(~std::uint64_t{0});
+
+[[nodiscard]] inline std::uint64_t last_proof_live_goal_count_v_read() noexcept {
+    return g_last_proof_live_goal_count.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t last_proof_linear_root_count_v_read() noexcept {
+    return g_last_proof_linear_root_count.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t type_linear_commit_proof_counts_filled_total_v_read() noexcept {
+    return g_type_linear_commit_proof_counts_filled_total.load(std::memory_order_relaxed);
+}
+inline void publish_proof_live_goal_count(std::uint64_t n) noexcept {
+    g_proof_live_goal_count_gauge.store(n, std::memory_order_relaxed);
+}
+
+// Build a TypeLinearCommitProof from live state. Pure read of existing
+// surfaces + collect_linear_or_dirty_roots_for_rebind (#2723/#2742) for
+// linear_root_count. live_goal_count from optional hint (stamp site with
+// TypeChecker CS) or process gauge (default 0). Cheap on quiet path:
+// empty collect short-circuit + zero goals → both counts 0 (AC2 #2758).
+// Fields:
 //   - readiness_bp / force_reason_code / would_allow_commit: from
-//     commit_readiness_live_policy() (which already reads the live
-//     typed_audit counters).
-//   - linear_ok: from the live linear OK counter (typed_audit).
-//   - occurrence_consistent: from the live occurrence consistency
-//     counter (typed_audit).
-//   - defuse_or_epoch_stamp: from the caller's current_epoch_or_defuse
-//     (caller picks the source — cp.version / current_mutation_epoch
-//     / commit_epoch).
-//   - live_goal_count + linear_root_count: from live counters (0 if
-//     not available — matches the existing #2697 on-the-fly path;
-//     per #2708, real per-root walk wires through the same call site).
-inline TypeLinearCommitProof
-build_type_linear_commit_proof_from_live(std::uint64_t current_epoch_or_defuse) noexcept {
+//     commit_readiness_live_policy().
+//   - linear_ok / occurrence_consistent: from live readiness input.
+//   - defuse_or_epoch_stamp: caller current_epoch_or_defuse.
+//   - live_goal_count + linear_root_count: real walks (#2758; was zero
+//     hard-code under #2717 / #2708 residual).
+// live_goal_count_hint: UINT64_MAX = use process gauge; else use hint.
+inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
+    std::uint64_t current_epoch_or_defuse,
+    std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto) noexcept {
     TypeLinearCommitProof p{};
     const auto ready = commit_readiness_live_policy();
     const auto live_r = commit_readiness(ready);
@@ -926,9 +956,26 @@ build_type_linear_commit_proof_from_live(std::uint64_t current_epoch_or_defuse) 
     p.linear_ok = ready.linear_ok;
     p.occurrence_consistent = ready.cs_has_work || !ready.expected_partial;
     p.defuse_or_epoch_stamp = current_epoch_or_defuse;
-    p.live_goal_count = 0;   // #2708 future wire — real per-root walk
-    p.linear_root_count = 0; // #2708 future wire — real per-root walk
+    // Issue #2758: real linear_root_count via collect_linear_or_dirty_roots
+    // (#2723 nonempty span + #2742 dirty-pin fallback). Quiet path:
+    // empty span → 0, no extra alloc beyond existing short-circuit.
+    p.linear_root_count =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    // Issue #2758: live_goal_count from stamp-site CS size (hint) or
+    // process gauge (query / prior publish). Quiet: no CS → 0.
+    if (live_goal_count_hint != kProofLiveGoalCountHintAuto) {
+        p.live_goal_count = live_goal_count_hint;
+        g_proof_live_goal_count_gauge.store(live_goal_count_hint, std::memory_order_relaxed);
+    } else {
+        p.live_goal_count = g_proof_live_goal_count_gauge.load(std::memory_order_relaxed);
+    }
     p.schema = kTypeLinearCommitProofIssue;
+    // Last stamped counts for query / Agent drift detect (AC3).
+    g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
+    g_last_proof_live_goal_count.store(p.live_goal_count, std::memory_order_relaxed);
+    if (p.linear_root_count > 0 || p.live_goal_count > 0) {
+        g_type_linear_commit_proof_counts_filled_total.fetch_add(1, std::memory_order_relaxed);
+    }
     // Bump the stamped total (additive — surface for Agent
     // dashboards to attribute "active stamp fired" vs "face fired
     // but Soft path observed only").
