@@ -166,7 +166,11 @@ def main() -> int:
     # + ONE bump_generation() call. No second bump. The body has inline
     # brace init (`std::uint8_t{1}`) which the naive [^{}]* regex skips, so
     # we use a manual brace-depth walker.
-    sig = re.search(r"void\s+mark_all_blocks_dirty\s*\(\s*\)\s*\{", soa)
+    # Match class-inline or out-of-line IRFunctionSoA::mark_all_blocks_dirty (#2774).
+    sig = re.search(
+        r"(?:inline\s+)?void\s+(?:IRFunctionSoA::)?mark_all_blocks_dirty\s*\(\s*\)\s*\{",
+        soa,
+    )
     if not sig:
         fails.append("AC4 (#2681): mark_all_blocks_dirty impl missing in ir_soa.ixx")
     else:

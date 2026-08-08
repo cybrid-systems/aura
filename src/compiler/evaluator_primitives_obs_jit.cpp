@@ -914,6 +914,19 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(aura::compiler::g_unified_dirty_ir_single_total
                                                         .load(std::memory_order_relaxed)))},
                 {"unified-dirty-fence-wired", make_int(1)},
+                // Issue #2774: residual multi-block cascade via N× mark_block_dirty
+                // (Soft production metric; CI smoke expects residual==0).
+                {"schema-2774", make_int(2774)},
+                {"issue-2774", make_int(2774)},
+                {"soa-residual-multi-via-single-cascades-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_ir_soa_residual_multi_via_single_cascades_total.load(
+                         std::memory_order_relaxed)))},
+                {"soa-residual-multi-via-single-marks-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_ir_soa_residual_multi_via_single_marks_total.load(
+                         std::memory_order_relaxed)))},
+                {"soa-residual-multi-via-single-ban-wired", make_int(1)},
                 // Issue #2682: Moving densify unified success gate.
                 // Single predicate (pin_contract ∧ root_remap ∧ untracked==0)
                 // used by Phase-5 outermost exit, AdaptiveCompactResult
