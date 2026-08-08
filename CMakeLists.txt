@@ -1840,6 +1840,9 @@ aura_issue_test_link_light(test_replace_subtree_new_body_hygiene)
 # Issue #2798: replace-pattern frees parse orphans on skip / zero-replace.
 aura_add_issue_test(test_replace_pattern_no_match_no_leak)
 aura_issue_test_link_light(test_replace_pattern_no_match_no_leak)
+# Issue #2799: tweak-literal Guard/batch abort marks mutation_log RolledBack.
+aura_add_issue_test(test_tweak_literal_audit_consistency)
+aura_issue_test_link_light(test_tweak_literal_audit_consistency)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

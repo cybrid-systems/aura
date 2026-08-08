@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 793 | Preferred destination suites |
-| **Total scanned** | **793** | |
+| `tests/core/test_*.cpp` | 794 | Preferred destination suites |
+| **Total scanned** | **794** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 231 | 231 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 232 | 232 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 99 | 99 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 45 | 45 | P1 — domain hygiene suite exists |
@@ -928,6 +928,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_truncate_commit_gate.cpp`
 - `tests/compiler/test_try_catch_bind.cpp`
 - `tests/core/test_try_lock_workspace_lock_order.cpp`
+- `tests/compiler/test_tweak_literal_audit_consistency.cpp`
 - `tests/core/test_type_cache_stats_snapshot.cpp`
 - `tests/compiler/test_type_dep_epoch_prune.cpp`
 - `tests/compiler/test_type_dep_partial_merge.cpp`
@@ -1099,13 +1100,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (231)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (232)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (231)
+#### domain/ (232)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1320,6 +1321,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_subtree_dirty_bounds.cpp` (—) [domain_suite, theme_core] — AC1: no OOB on dirty_ (bounds use dirty_.size() only)
 - `tests/core/test_summary_recompute_sym.cpp` (—) [domain_suite, theme_core] — AC1: recompute(pool) sets keyword + query:/mutate: bits
 - `tests/core/test_tenant_isolation_enforcement.cpp` (—) [large, domain_suite, theme_core] — capability cross-tenant grant, provenance deny, Strict sandbox link,
+- `tests/compiler/test_tweak_literal_audit_consistency.cpp` (—) [domain_suite, theme_compiler] — AC1: lockless + public cite #2799; MutationSoAField::IntVal
 - `tests/compiler/test_type_dirty_cone_dep_graph.cpp` (—) [domain_suite, theme_compiler] — AC1: Mutate callee B → type cone of callers + IR cascade share
 - `tests/compiler/test_type_dirty_txn_order.cpp` (—) [domain_suite, theme_compiler] — AC1: Source-cite single ordered sequence on all production partial paths
 - `tests/compiler/test_type_system_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Score definition (header + pure compute)

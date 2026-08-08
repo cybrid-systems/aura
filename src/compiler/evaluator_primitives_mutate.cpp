@@ -3501,7 +3501,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Issue #213 Cycle 2: migrate mutate:tweak-literal to
     // use the MutationBoundaryGuard. This primitive already
     // uses add_mutation_with_rollback with the right field
-    // (int_val_/0) — so the rollback path (when triggered by
+    // (IntVal) — so the rollback path (when triggered by
     // the guard with success=false) actually restores the
     // original int value. The other simple primitives
     // (remove-node, insert-child) don't have the data to
@@ -3510,6 +3510,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // rollback path bumps the version and invalidates the
     // defuse index, which is enough to surface "the workspace
     // state changed" to readers.
+    //
+    // Issue #2799: status is logged Committed at write time. On
+    // Guard / atomic-batch abort, rollback_since →
+    // rollback_record_for_boundary_abort (#2793) restores the
+    // scalar AND forces status=RolledBack (no torn audit).
     add_mutate(
         "mutate:tweak-literal",
         [resolve_mutate_node_arg, &ev, mev, safe_str](const auto& a) -> EvalValue {
@@ -3566,7 +3571,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     : "tweak-literal " + std::to_string(old_val) + "->" + std::to_string(new_val);
             flat.add_mutation_with_rollback(
                 node, "tweak-literal", "Int", "Int", summary, aura::ast::MutationStatus::Committed,
-                0, static_cast<std::uint64_t>(old_val), static_cast<std::uint64_t>(new_val), true);
+                static_cast<std::uint32_t>(aura::ast::MutationSoAField::IntVal),
+                static_cast<std::uint64_t>(old_val), static_cast<std::uint64_t>(new_val), true);
             flat.set_int(node, new_val);
             ev.workspace_flat_->mark_dirty_upward(node);
             return make_int(static_cast<std::int64_t>(new_val));

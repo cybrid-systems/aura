@@ -1083,6 +1083,18 @@ def cmd_lint():
             "Issue #2798 replace-pattern no-match no-leak linter failed — run python3 scripts/coverage/checks/check_replace_pattern_no_match_no_leak_2798.py"
         )
         return r
+    # Issue #2799: tweak-literal Guard/batch abort → status=RolledBack (no torn audit).
+    # ac2799 in test_tweak_literal_audit_consistency.
+    tlac_script = COVERAGE_CHECKS / "check_tweak_literal_audit_consistency_2799.py"
+    if not tlac_script.exists():
+        fail(f"missing {tlac_script}")
+        return 1
+    r = run([sys.executable, str(tlac_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2799 tweak-literal audit consistency linter failed — run python3 scripts/coverage/checks/check_tweak_literal_audit_consistency_2799.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
