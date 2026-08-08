@@ -755,6 +755,20 @@ def cmd_lint():
             "Issue #2771 tcp-listen/accept linter failed — run python3 scripts/coverage/checks/check_tcp_listen_accept_2771.py"
         )
         return r
+    # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
+    # residual). Seed process environ from self path when AURA_BIN unset;
+    # (aura-executable-path) prim; denseness usage lists export AURA_BIN +
+    # multi-process child contract.
+    dme_script = COVERAGE_CHECKS / "check_denseness_multiprocess_env_2772.py"
+    if not dme_script.exists():
+        fail(f"missing {dme_script}")
+        return 1
+    r = run([sys.executable, str(dme_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2772 denseness multi-process env linter failed — run python3 scripts/coverage/checks/check_denseness_multiprocess_env_2772.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

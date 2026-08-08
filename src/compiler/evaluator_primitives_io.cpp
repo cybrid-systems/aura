@@ -33,6 +33,7 @@ module;
 #include "core/lifetime_pin.hh" // g_lifetime_pin_stats() for owner-transition counts
 #include "git_ctx.h"
 #include "hash_meta.h"
+#include "runtime_paths.h" // #2772 resolve_self_executable
 
 // Default ON when the TU is compiled outside the CMake graph (tools/IDE).
 #ifndef AURA_ENABLE_GIT
@@ -481,6 +482,18 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         auto sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(std::string(val));
+        return types::make_string(sidx);
+    });
+
+    // Issue #2772: absolute path of this process image so denseness
+    // multi-process probes can re-exec without relying on a non-exported
+    // AURA_BIN shell variable. Prefer /proc/self/exe; fall back to env.
+    add("aura-executable-path", [&ev](std::span<const EvalValue>) -> EvalValue {
+        auto path = aura::compiler::paths::resolve_self_executable();
+        if (path.empty())
+            return make_void();
+        auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(std::move(path));
         return types::make_string(sidx);
     });
 

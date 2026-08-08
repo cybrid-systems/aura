@@ -3,6 +3,7 @@
 #define AURA_COMPILER_RUNTIME_PATHS_H
 
 #include <cstdlib>
+#include <cstddef>
 #include <string>
 #include <unistd.h>
 
@@ -51,6 +52,49 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
     if (readable("../lib/std") || readable("../lib/std/INDEX.aura"))
         return "../lib/std/";
     return kStdlibRel;
+}
+
+// Issue #2772: absolute path of the running aura (or host) binary for
+// denseness multi-process re-exec. Prefer /proc/self/exe (Linux), then
+// realpath(argv0), then argv0 / AURA_BIN as last resorts.
+[[nodiscard]] inline std::string resolve_self_executable(const char* argv0 = nullptr) {
+#if defined(__linux__)
+    {
+        char buf[4096];
+        const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[static_cast<std::size_t>(n)] = '\0';
+            return std::string(buf);
+        }
+    }
+#endif
+    if (argv0 && argv0[0] != '\0') {
+        if (char* rp = ::realpath(argv0, nullptr)) {
+            std::string out(rp);
+            std::free(rp);
+            return out;
+        }
+        return std::string(argv0);
+    }
+    if (const char* e = std::getenv("AURA_BIN"); e && e[0] != '\0')
+        return std::string(e);
+    return {};
+}
+
+// Issue #2772: seed process environ AURA_BIN when unset so (getenv
+// "AURA_BIN") and child (shell …) inherit the absolute binary path.
+// Non-exported shell vars never reach getenv; runners that only assign
+// AURA_BIN=… without export hit exit 127 on multi-process denseness.
+// Returns the value now in the environment (empty if unresolved).
+inline std::string ensure_aura_bin_environ(const char* argv0 = nullptr) {
+    if (const char* e = std::getenv("AURA_BIN"); e && e[0] != '\0')
+        return std::string(e);
+    const std::string self = resolve_self_executable(argv0);
+    if (!self.empty())
+        ::setenv("AURA_BIN", self.c_str(), /*overwrite=*/0);
+    if (const char* e = std::getenv("AURA_BIN"); e && e[0] != '\0')
+        return std::string(e);
+    return self;
 }
 
 } // namespace aura::compiler::paths
