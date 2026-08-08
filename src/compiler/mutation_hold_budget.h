@@ -354,6 +354,12 @@ inline constexpr int kMutationRegionConcurrentIssue = 2724;
 inline std::atomic<std::uint64_t> g_mutation_region_concurrent_cone_admit_total{0};
 inline std::atomic<std::uint32_t> g_mutation_region_cone_disjoint_wired{1};
 inline constexpr int kMutationRegionConeDisjointIssue = 2754;
+// Issue #2757: mask-AND admits including zero keys (superset of #2754 cone
+// path). Bumped when admit is due to proven ImpactScope/dirty mask-AND
+// rather than key-disjoint. Quiet path (no masks) never bumps this.
+inline std::atomic<std::uint64_t> g_mutation_region_mask_disjoint_admit_total{0};
+inline std::atomic<std::uint32_t> g_mutation_region_mask_disjoint_wired{1};
+inline constexpr int kMutationRegionMaskDisjointIssue = 2757;
 
 [[nodiscard]] inline std::uint64_t mutation_region_concurrent_admit_total_v_read() noexcept {
     return g_mutation_region_concurrent_admit_total.load(std::memory_order_relaxed);
@@ -370,6 +376,12 @@ inline constexpr int kMutationRegionConeDisjointIssue = 2754;
 [[nodiscard]] inline std::uint32_t mutation_region_cone_disjoint_wired_v_read() noexcept {
     return g_mutation_region_cone_disjoint_wired.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t mutation_region_mask_disjoint_admit_total_v_read() noexcept {
+    return g_mutation_region_mask_disjoint_admit_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_region_mask_disjoint_wired_v_read() noexcept {
+    return g_mutation_region_mask_disjoint_wired.load(std::memory_order_relaxed);
+}
 
 // Issue #2724: simple disjointness check (region_key equality for first ship).
 // Fast path kept as the primary key-disjoint predicate.
@@ -377,28 +389,46 @@ inline constexpr int kMutationRegionConeDisjointIssue = 2754;
     return a != 0 && b != 0 && a != b;
 }
 
-// Issue #2754: key-disjoint (#2724 fast path) OR equal keys with
-// cone/ImpactScope mask-AND proving no overlap. Hot path is a bit AND
-// only — no tree walk. mask==0 means "unknown cone" → equal keys are
-// NOT proven disjoint (conservative: preserve #2724 overlap reject).
-// Both masks must be non-zero (proven ImpactScope / dirty-bit bits).
+// Issue #2754 / #2757: key-disjoint (#2724 fast path) OR proven
+// ImpactScope / dirty-bit mask-AND with empty intersection.
+// Hot path is a bit AND only — no tree walk.
+//
+// Quiet path (either mask == 0): identical to #2724 equality only
+// (AC4 #2757 — zero extra work; no mask-AND).
+// Proven masks (both non-zero): empty intersection → disjoint even when
+// keys collide or are zero (#2757 AC1). Key-disjoint still wins when
+// both keys non-zero and unequal (even if masks overlap).
 [[nodiscard]] inline bool regions_disjoint(std::uint64_t a, std::uint64_t b, std::uint64_t mask_a,
                                            std::uint64_t mask_b) noexcept {
-    if (a == 0 || b == 0)
+    // #2724 key-disjoint fast path (quiet when keys alone prove it).
+    if (a != 0 && b != 0 && a != b)
+        return true;
+    // Quiet path: no proven masks → equality only (already failed above
+    // for zero/equal keys). Zero extra work beyond the key compare.
+    if (mask_a == 0 || mask_b == 0)
         return false;
-    if (a != b)
-        return true; // #2724 key-disjoint fast path
-    // Equal keys: cone / ImpactScope mask-AND (no tree walk).
-    return mask_a != 0 && mask_b != 0 && (mask_a & mask_b) == 0;
+    // #2757: proven ImpactScope / dirty mask-AND (covers equal keys and
+    // zero keys). Empty intersection → concurrent-admissible.
+    return (mask_a & mask_b) == 0;
 }
 
-// Issue #2754: true only when the admit is due to the cone path
-// (equal keys + proven mask-AND). Used to bump cone-admit counter
-// distinctly from key-disjoint concurrent admits.
+// Issue #2754: true only when the admit is due to the equal-key cone path
+// (both keys non-zero and equal + proven mask-AND). Used to bump cone-admit.
 [[nodiscard]] inline bool regions_cone_disjoint(std::uint64_t a, std::uint64_t b,
                                                 std::uint64_t mask_a,
                                                 std::uint64_t mask_b) noexcept {
     return a != 0 && b != 0 && a == b && mask_a != 0 && mask_b != 0 && (mask_a & mask_b) == 0;
+}
+
+// Issue #2757: true when admit is due to mask-AND (not key-disjoint).
+// Covers equal keys (#2754) and zero keys with proven disjoint masks.
+[[nodiscard]] inline bool regions_mask_disjoint(std::uint64_t a, std::uint64_t b,
+                                                std::uint64_t mask_a,
+                                                std::uint64_t mask_b) noexcept {
+    // Key-disjoint path does not count as mask-disjoint.
+    if (a != 0 && b != 0 && a != b)
+        return false;
+    return mask_a != 0 && mask_b != 0 && (mask_a & mask_b) == 0;
 }
 
 } // namespace aura::compiler
