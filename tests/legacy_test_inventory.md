@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 795 | Preferred destination suites |
-| **Total scanned** | **795** | |
+| `tests/core/test_*.cpp` | 796 | Preferred destination suites |
+| **Total scanned** | **796** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 233 | 233 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 99 | 99 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 45 | 45 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 46 | 46 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 50 | 50 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 128 | 128 | P2 — often thin schema probes; collapse into obs matrix |
@@ -611,6 +611,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_module_query_batch.cpp`
 - `tests/compiler/test_module_rebind_residual.cpp`
 - `tests/compiler/test_module_require_freevar.cpp`
+- `tests/compiler/test_move_node_hygiene.cpp`
 - `tests/core/test_moving_compact.cpp`
 - `tests/core/test_moving_densify_fail_closed.cpp`
 - `tests/compiler/test_must_deopt_before_next_call.cpp`
@@ -1481,13 +1482,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Query returns all folded keys; schema-2613 registered
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (45)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (46)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (45)
+#### domain/ (46)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1511,6 +1512,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_restamp_after_flat.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2019 + restamp_macro_introduced_generations
 - `tests/compiler/test_macro_self_evo_capability.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2023; MacroSelfEvoPolicy + check_macro_self_evo
 - `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — thematic multi-TU batch
+- `tests/compiler/test_move_node_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: public + lockless cite #2801; is_macro_introduced + note metric
 - `tests/core/test_node_meta_gap.cpp` (—) [domain_suite, theme_core] — AC1: gap entry tag is 0x0C sentinel and is_gap == true
 - `tests/reflect/test_node_tag_align_b1.cpp` (—) [small, domain_suite, theme_reflect] — Wave B1: NodeTag P2996 identifiers ↔ kNodeTagNames alignment.
 - `tests/reflect/test_opcode_info_align_a3.cpp` (—) [small, domain_suite, theme_reflect] — Wave A3: IROpcode PascalCase (P2996) ↔ display kebab table alignment.

@@ -2246,6 +2246,9 @@ public:
     // would have been stale after a prior iteration's parse_to_flat).
     // Healthy multi-match under atomic-batch stays 0 when topology holds.
     mutable std::atomic<std::uint64_t> replace_pattern_stale_nodeid_prevented_total_{0};
+    // Issue #2801: move-node refused MacroIntroduced target (#142 hygiene;
+    // parity with replace-subtree). Healthy non-macro moves stay 0.
+    mutable std::atomic<std::uint64_t> move_node_hygiene_reject_total_{0};
     // Issue #1355: render-hotpath lightweight checkpoints (field-only side log).
     mutable std::atomic<std::uint64_t> lightweight_total_{0};
     mutable std::atomic<std::uint64_t> lightweight_commit_total_{0};
@@ -8471,6 +8474,13 @@ public:
     }
     void note_replace_pattern_stale_nodeid_prevented() noexcept {
         replace_pattern_stale_nodeid_prevented_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2801: move-node MacroIntroduced hygiene reject.
+    [[nodiscard]] std::uint64_t move_node_hygiene_reject_total() const noexcept {
+        return move_node_hygiene_reject_total_.load(std::memory_order_relaxed);
+    }
+    void note_move_node_hygiene_reject() noexcept {
+        move_node_hygiene_reject_total_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t mutation_log_compact_ops() const noexcept {
         return mutation_log_compact_ops_.load(std::memory_order_relaxed);
