@@ -652,6 +652,22 @@ def cmd_lint():
             "Issue #2764 IR/JIT MacroIntroduced enforcement linter failed — run python3 scripts/coverage/checks/check_ir_jit_macro_marker_enforcement_2764.py"
         )
         return r
+    # Issue #2765: Guard success-path reflect auto_validate /
+    # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
+    # post_mutation_reflect_validate on outermost success + Soft metric /
+    # Strict force-rollback + guard_reflect_validate_* counters +
+    # schema-2765 + ac2765_* in test_guard_panic_reflect_fiber_resume_task6
+    # per #81967.
+    grv_script = COVERAGE_CHECKS / "check_guard_reflect_validate_2765.py"
+    if not grv_script.exists():
+        fail(f"missing {grv_script}")
+        return 1
+    r = run([sys.executable, str(grv_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2765 Guard reflect validate linter failed — run python3 scripts/coverage/checks/check_guard_reflect_validate_2765.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

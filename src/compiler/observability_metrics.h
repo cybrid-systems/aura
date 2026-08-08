@@ -5162,6 +5162,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> guard_panic_reflect_restores_on_resume_total{0};
     std::atomic<std::uint64_t> guard_panic_reflect_validate_hook_total{0};
     std::atomic<std::uint64_t> guard_panic_reflect_boundary_violation_prevented_total{0};
+    // Issue #2765: Guard success-path reflect auto_validate / hygiene_validate
+    // closed-loop (refine #488/#596/#1611). Agent-facing counters:
+    //   - guard_reflect_validate_total: outermost success invokes validate
+    //   - guard_reflect_validate_fail_total: validate returned false
+    //   - guard_reflect_validate_strict_rollback_total: Strict forced undo
+    //   - guard_reflect_validate_skipped_total: flag off / RenderFastExit
+    std::atomic<std::uint64_t> guard_reflect_validate_total{0};                 // #2765
+    std::atomic<std::uint64_t> guard_reflect_validate_fail_total{0};            // #2765
+    std::atomic<std::uint64_t> guard_reflect_validate_strict_rollback_total{0}; // #2765
+    std::atomic<std::uint64_t> guard_reflect_validate_skipped_total{0};         // #2765
 
     // Issue #599: compiler-managed root epoch/version protocol for live
     // IRClosure/EnvFrame post-invalidate_function (non-duplicative with

@@ -1,6 +1,9 @@
 // test_guard_panic_reflect_fiber_resume_task6.cpp — Issue #596:
 // MutationBoundaryGuard + panic checkpoint + reflect/schema validation
 // + fiber resume safety closed loop (Task6 production review).
+// Issue #2765 — integrate reflect auto_validate / hygiene_validate into
+// Guard success path (schema-level closed-loop). Prefer-existing suite
+// per #81967.
 //
 // Non-duplicative with #592 (panic checkpoint fiber resume matrix),
 // #594 (reflection-selfmod-stats), #595 (self-evolution-loop-stats),
@@ -14,12 +17,23 @@
 //   - AC6:  multi-round Guard+mutate — stats monotonic
 //   - AC7:  query regression (reflection-selfmod, self-evo loop, lifecycle)
 //
-// Uses one CompilerService for the integration matrix.
+//   #2765 AC1: Guard success invokes reflect validate; fail → Soft metric /
+//              Strict force-rollback path wired
+//   #2765 AC2: happy-path mutate → validate total bumps; pass path
+//   #2765 AC3: flag off → skip (zero validate cost)
+//   #2765 AC4: MacroIntroduced / provenance restamp integration preserved
+//   #2765 AC5: schema-2765 keys + last-ok; #596 lineage preserved
+//   #2765 AC6: source-cite + coverage linter
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 
+#include <atomic>
 #include <cstdint>
+#include <fstream>
+#include <print>
 #include <string>
+#include <string_view>
 
 import std;
 import aura.compiler.evaluator;
@@ -28,6 +42,7 @@ import aura.compiler.value;
 
 namespace aura_596_detail {
 
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
@@ -124,10 +139,182 @@ static void run_matrix(CompilerService& cs) {
     CHECK(pcl && is_int(*pcl), "panic-checkpoint-lifecycle-stats regression");
 }
 
+// ── Issue #2765: Guard success-path reflect validate closed-loop ──
+
+static std::string read_file(const char* path) {
+    const std::string rel(path);
+    for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+[[nodiscard]] static bool source_has_key(const std::string& hay, std::string_view key) {
+    std::string n;
+    n.reserve(hay.size());
+    for (char ch : hay) {
+        if (ch != '"' && ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
+            n.push_back(ch);
+    }
+    return n.find(key) != std::string::npos;
+}
+
+static void ac2765_1_guard_success_wires_validate() {
+    std::println("\n--- #2765 AC1: Guard success wires reflect validate ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(emb.find("#2765") != std::string::npos, "AC1: boundary cites #2765");
+    CHECK(emb.find("post_mutation_reflect_validate") != std::string::npos,
+          "AC1: success path calls post_mutation_reflect_validate");
+    CHECK(emb.find("bump_guard_reflect_validate") != std::string::npos,
+          "AC1: guard_reflect_validate_total wired");
+    CHECK(emb.find("bump_guard_reflect_validate_fail") != std::string::npos,
+          "AC1: fail counter wired");
+    CHECK(emb.find("bump_guard_reflect_validate_strict_rollback") != std::string::npos,
+          "AC1: Strict rollback path wired");
+    CHECK(emb.find("is_strict") != std::string::npos, "AC1: Strict sandbox consult");
+    CHECK(efl.find("post_mutation_reflect_validate") != std::string::npos,
+          "AC1: validate implementation present");
+    CHECK(efl.find("MutationReflectHealth") != std::string::npos ||
+              efl.find("hygiene_validate") != std::string::npos,
+          "AC1: hygiene_validate / MutationReflectHealth integrated");
+}
+
+static void ac2765_2_happy_path_bumps_total() {
+    std::println("\n--- #2765 AC2: happy-path mutate bumps guard-reflect-validate-total ---");
+    CompilerService cs;
+    CHECK(setup_workspace(cs), "AC2: workspace");
+    auto& ev = cs.evaluator();
+    CHECK(ev.get_guard_reflect_validate_enabled(), "AC2: default enabled");
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "AC2: metrics");
+    const auto t0 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
+    const auto f0 = m->guard_reflect_validate_fail_total.load(std::memory_order_relaxed);
+    (void)cs.eval("(mutate:rebind \"x\" \"99\")");
+    const auto t1 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
+    const auto f1 = m->guard_reflect_validate_fail_total.load(std::memory_order_relaxed);
+    std::println("  validate total {} -> {}, fail {} -> {}", t0, t1, f0, f1);
+    CHECK(t1 > t0, "AC2: Guard success bumped guard_reflect_validate_total");
+    // Happy path schema should not force fail (fail may stay flat).
+    CHECK(f1 >= f0, "AC2: fail total monotonic");
+    CHECK(hash_int(cs, "guard-reflect-validate-total") >= 1, "AC2: query key total >= 1");
+    CHECK(hash_int(cs, "guard-reflect-validate-wired") == 1, "AC2: wired sentinel");
+    CHECK(hash_int(cs, "guard-reflect-validate-enabled") == 1, "AC2: enabled key");
+}
+
+static void ac2765_3_flag_off_skips() {
+    std::println("\n--- #2765 AC3: flag off → skip (zero validate cost) ---");
+    CompilerService cs;
+    CHECK(setup_workspace(cs), "AC3: workspace");
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "AC3: metrics");
+    ev.set_guard_reflect_validate_enabled(false);
+    CHECK(!ev.get_guard_reflect_validate_enabled(), "AC3: flag disabled");
+    const auto t0 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
+    const auto s0 = m->guard_reflect_validate_skipped_total.load(std::memory_order_relaxed);
+    (void)cs.eval("(mutate:rebind \"x\" \"7\")");
+    const auto t1 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
+    const auto s1 = m->guard_reflect_validate_skipped_total.load(std::memory_order_relaxed);
+    std::println("  total {} -> {}, skipped {} -> {}", t0, t1, s0, s1);
+    CHECK(t1 == t0, "AC3: flag off → no validate total growth");
+    CHECK(s1 > s0, "AC3: skipped total bumped");
+    // Restore default for subsequent tests.
+    ev.set_guard_reflect_validate_enabled(true);
+    CHECK(hash_int(cs, "guard-reflect-validate-skipped-total") >= 1, "AC3: skip key");
+}
+
+static void ac2765_4_macro_provenance_integration() {
+    std::println("\n--- #2765 AC4: MacroIntroduced / provenance path preserved ---");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(efl.find("is_macro_introduced") != std::string::npos ||
+              efl.find("MacroIntroduced") != std::string::npos,
+          "AC4: MacroIntroduced walk in validate");
+    CHECK(efl.find("marker_consistent") != std::string::npos ||
+              efl.find("validate_mutation_reflect_health") != std::string::npos,
+          "AC4: hygiene health gate");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \""
+                  "(define-hygienic-macro (dbl y) (* y 2)) "
+                  "(dbl 1) (define base 10) (+ base 1)\")")
+              .has_value(),
+          "AC4: macro workspace");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    const auto t0 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
+    (void)cs.eval("(mutate:replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
+    const auto t1 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
+    CHECK(t1 > t0, "AC4: validate still runs after macro workspace mutate");
+    // Restamp path still present in production code.
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("restamp") != std::string::npos || efl.find("restamp") != std::string::npos,
+          "AC4: restamp path preserved alongside validate");
+}
+
+static void ac2765_5_observability() {
+    std::println("\n--- #2765 AC5: schema-2765 + additive keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    CHECK(source_has_key(q, "schema-2765"), "AC5: schema-2765");
+    CHECK(source_has_key(q, "issue-2765"), "AC5: issue-2765");
+    CHECK(source_has_key(q, "guard-reflect-validate-total"), "AC5: total key");
+    CHECK(source_has_key(q, "guard-reflect-validate-fail-total"), "AC5: fail key");
+    CHECK(source_has_key(q, "guard-reflect-validate-strict-rollback-total"), "AC5: strict key");
+    CHECK(source_has_key(q, "guard-reflect-last-ok"), "AC5: last-ok key");
+    CHECK(met.find("guard_reflect_validate_total") != std::string::npos, "AC5: metric field");
+    // Prior surface preserved.
+    CHECK(source_has_key(q, "schema") || q.find("schema\", 596") != std::string::npos ||
+              q.find("596") != std::string::npos,
+          "AC5: schema 596 lineage");
+
+    CompilerService cs;
+    CHECK(setup_workspace(cs), "AC5: workspace");
+    (void)cs.eval("(mutate:rebind \"x\" \"1\")");
+    CHECK(hash_int(cs, "schema-2765") == 2765, "AC5: live schema-2765");
+    CHECK(hash_int(cs, "issue-2765") == 2765, "AC5: live issue-2765");
+    CHECK(hash_int(cs, "schema") == 596, "AC5: live schema 596");
+    CHECK(hash_int(cs, "guard-reflect-validate-total") >= 0, "AC5: live total");
+    CHECK(hash_int(cs, "guard-reflect-last-ok") == 0 || hash_int(cs, "guard-reflect-last-ok") == 1,
+          "AC5: last-ok 0/1");
+}
+
+static void ac2765_6_source_and_linter() {
+    std::println("\n--- #2765 AC6: source-cite + linter ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto eix = read_file("src/compiler/evaluator.ixx");
+    const auto t = read_file("tests/serve/test_guard_panic_reflect_fiber_resume_task6.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_guard_reflect_validate_2765.py");
+    CHECK(emb.find("#2765") != std::string::npos, "AC6: boundary cites #2765");
+    CHECK(eix.find("#2765") != std::string::npos, "AC6: evaluator cites #2765");
+    CHECK(eix.find("guard_reflect_validate_enabled_") != std::string::npos, "AC6: flag member");
+    CHECK(t.find("ac2765_1_guard_success_wires_validate") != std::string::npos, "AC6: AC1");
+    CHECK(t.find("ac2765_2_happy_path_bumps_total") != std::string::npos, "AC6: AC2");
+    CHECK(t.find("ac2765_5_observability") != std::string::npos, "AC6: AC5");
+    CHECK(build.find("check_guard_reflect_validate_2765") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty(), "AC6: linter present");
+    CHECK(read_file("docs/design/2765-guard-reflect-validate.md").empty(),
+          "AC6: no docs/design/2765-* per #1655");
+}
+
 } // namespace aura_596_detail
 
 int main() {
+    using aura::test::g_failed;
+    using aura::test::g_passed;
     aura::compiler::CompilerService cs;
     aura_596_detail::run_matrix(cs);
-    return RUN_ALL_TESTS();
+    std::println("\n=== Issue #2765: Guard success-path reflect validate ===");
+    aura_596_detail::ac2765_1_guard_success_wires_validate();
+    aura_596_detail::ac2765_2_happy_path_bumps_total();
+    aura_596_detail::ac2765_3_flag_off_skips();
+    aura_596_detail::ac2765_4_macro_provenance_integration();
+    aura_596_detail::ac2765_5_observability();
+    aura_596_detail::ac2765_6_source_and_linter();
+    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
 }

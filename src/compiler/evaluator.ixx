@@ -4787,6 +4787,10 @@ private:
     // Atomic so concurrent fibers on the same Evaluator do not
     // data-race the bool; process-wide InlinePass static removed.
     std::atomic<bool> inline_respect_macro_hygiene_{true};
+    // Issue #2765: Guard success-path reflect auto_validate /
+    // hygiene_validate closed-loop. Default ON (self-evo safety net);
+    // Agents / pure-perf paths may set false for zero validate cost.
+    std::atomic<bool> guard_reflect_validate_enabled_{true};
     // ── CompilerService pointer (for messaging) ─────────────────
     void* compiler_service_ = nullptr; // CompilerService*
     // Issue #1898: generation stamps for raw non-owning back-pointers.
@@ -7270,6 +7274,39 @@ public:
             m->guard_panic_reflect_boundary_violation_prevented_total.fetch_add(
                 1, std::memory_order_relaxed);
         }
+    }
+    // Issue #2765: Guard success-path reflect validate closed-loop metrics.
+    void bump_guard_reflect_validate() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->guard_reflect_validate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_guard_reflect_validate_fail() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->guard_reflect_validate_fail_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_guard_reflect_validate_strict_rollback() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->guard_reflect_validate_strict_rollback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    void bump_guard_reflect_validate_skipped() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->guard_reflect_validate_skipped_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #2765: optional Guard→reflect auto_validate / hygiene_validate.
+    // Default ON (self-evo closed-loop). Agents / perf paths may disable.
+    [[nodiscard]] bool get_guard_reflect_validate_enabled() const noexcept {
+        return guard_reflect_validate_enabled_.load(std::memory_order_acquire);
+    }
+    void set_guard_reflect_validate_enabled(bool v) noexcept {
+        guard_reflect_validate_enabled_.store(v, std::memory_order_release);
     }
     // Issue #599: compiler root epoch/version protocol observability.
     void bump_compiler_root_stale_closure_detected() const noexcept {

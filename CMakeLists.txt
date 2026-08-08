@@ -2096,6 +2096,12 @@ aura_add_issue_test(test_hygiene_mutate_closed_loop)
 aura_issue_test_link_light(test_hygiene_mutate_closed_loop)
 add_dependencies(all_test_issue_targets test_hygiene_mutate_closed_loop)
 
+# Issue #596 / #2765: Guard + panic + reflect closed-loop + Guard success-path
+# auto_validate / hygiene_validate (#2765 residual). Prefer-existing suite.
+aura_add_issue_test(test_guard_panic_reflect_fiber_resume_task6)
+aura_issue_test_link_light(test_guard_panic_reflect_fiber_resume_task6)
+add_dependencies(all_test_issue_targets test_guard_panic_reflect_fiber_resume_task6)
+
 # Issue #2038: push-automatic post-mutate DefUse/IR/JIT cascade + latency.
 aura_add_issue_test(test_post_mutate_push_cascade)
 aura_issue_test_link_light(test_post_mutate_push_cascade)
