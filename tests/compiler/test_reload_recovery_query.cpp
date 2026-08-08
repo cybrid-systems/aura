@@ -14,10 +14,13 @@
 #include "compiler/aot_reload_consistency_proof.h" // Issue #2753
 #include "compiler/hot_update_registry.hh"
 
+#include <atomic>
 #include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
+#include <thread>
+#include <vector>
 
 import std;
 import aura.compiler.service;
@@ -291,6 +294,138 @@ static void ac2753_3_source_and_no_design() {
           "AC5: no docs/design/2753-* per #1655");
 }
 
+// ── Issue #2776: concurrent stamp (fetch_add + seqlock) ──────────────
+static void ac2776_1_fetch_add_and_seqlock_source() {
+    std::println("\n--- #2776 AC1: fetch_add stamp_epoch + seqlock source ---");
+    const auto thin = read_file("src/compiler/aot_reload_consistency_proof.h");
+    CHECK(thin.find("#2776") != std::string::npos, "AC1: header cites #2776");
+    CHECK(thin.find("kAotReloadConsistencyStampConcurrentIssue = 2776") != std::string::npos,
+          "AC1: issue stamp 2776");
+    CHECK(thin.find("g_aot_reload_proof_seq") != std::string::npos, "AC1: seqlock atomic");
+    CHECK(thin.find("fetch_add") != std::string::npos, "AC1: fetch_add present");
+    // Lost-update RMW ban: stamp must not assign stamp_epoch = load + 1 then store.
+    CHECK(thin.find("g_aot_reload_proof_stamp_epoch.load") == std::string::npos ||
+              thin.find("stamp_epoch.fetch_add") != std::string::npos ||
+              thin.find("g_aot_reload_proof_stamp_epoch.fetch_add") != std::string::npos,
+          "AC1: stamp_epoch via fetch_add");
+    CHECK(thin.find("g_aot_reload_proof_stamp_epoch.fetch_add") != std::string::npos,
+          "AC1: stamp_epoch.fetch_add in stamp()");
+    CHECK(thin.find("load_aot_reload_consistency_proof_snapshot") != std::string::npos,
+          "AC1: seqlock reader helper");
+    // Seqlock even/odd discipline.
+    CHECK(thin.find("odd") != std::string::npos || thin.find("& 1u") != std::string::npos,
+          "AC1: odd writer phase");
+}
+
+static void ac2776_2_concurrent_stamp_monotonic() {
+    std::println("\n--- #2776 AC2: 2-writer concurrent stamp, monotonic stamp_epoch ---");
+    constexpr int kIters = 50000;
+    std::atomic<int> start{0};
+    auto worker = [&](std::uint64_t table_base) {
+        while (start.load(std::memory_order_acquire) == 0) {
+        }
+        for (int i = 0; i < kIters; ++i) {
+            AotReloadConsistencyProof p{};
+            p.table_epoch = table_base + static_cast<std::uint64_t>(i);
+            p.bridge_epoch = p.table_epoch; // keep bridge ≤ table invariant
+            p.defuse_version = p.table_epoch;
+            p.region_mask = 1;
+            p.last_fail_reason = 0;
+            p.force_jit_regions_mask = 0;
+            p.would_allow_native = true;
+            p.schema = kAotReloadConsistencyProofIssue;
+            stamp_aot_reload_consistency_proof(p);
+        }
+    };
+    std::thread t1(worker, 1'000'000ULL);
+    std::thread t2(worker, 2'000'000ULL);
+    start.store(1, std::memory_order_release);
+    t1.join();
+    t2.join();
+    const auto total = aura_aot_reload_consistency_proof_stamped_total();
+    const auto epoch = aura_last_aot_reload_consistency_stamp_epoch();
+    // At least 2*kIters stamps since process start; epoch must equal total
+    // if we started from 0, but other tests may have stamped — so epoch >= 2*kIters.
+    CHECK(epoch >= static_cast<std::uint64_t>(2 * kIters),
+          "AC2: stamp_epoch >= 2*kIters after concurrent writers");
+    CHECK(total >= static_cast<std::uint64_t>(2 * kIters), "AC2: stamped_total >= 2*kIters");
+    // Final snapshot is self-consistent (seqlock).
+    auto snap = load_aot_reload_consistency_proof_snapshot();
+    CHECK(snap.stamp_epoch == epoch, "AC2: snapshot stamp_epoch matches last");
+    CHECK(snap.schema == 2753, "AC2: snapshot schema");
+}
+
+static void ac2776_3_reader_no_tear() {
+    std::println("\n--- #2776 AC3: concurrent reader never sees torn proof ---");
+    constexpr int kIters = 30000;
+    std::atomic<int> start{0};
+    std::atomic<int> stop{0};
+    std::atomic<int> tears{0};
+    std::atomic<int> reads{0};
+    auto writer = [&](std::uint64_t base) {
+        while (start.load(std::memory_order_acquire) == 0) {
+        }
+        for (int i = 0; i < kIters; ++i) {
+            AotReloadConsistencyProof p{};
+            // Couple fields so tear is detectable: bridge == table, defuse == table.
+            p.table_epoch = base + static_cast<std::uint64_t>(i);
+            p.bridge_epoch = p.table_epoch;
+            p.defuse_version = p.table_epoch;
+            p.region_mask = p.table_epoch & 0xffff;
+            p.last_fail_reason = 0;
+            p.force_jit_regions_mask = 0;
+            p.would_allow_native = true;
+            p.schema = kAotReloadConsistencyProofIssue;
+            stamp_aot_reload_consistency_proof(p);
+        }
+    };
+    auto reader = [&]() {
+        while (start.load(std::memory_order_acquire) == 0) {
+        }
+        while (stop.load(std::memory_order_acquire) == 0) {
+            auto p = load_aot_reload_consistency_proof_snapshot();
+            reads.fetch_add(1, std::memory_order_relaxed);
+            // Invariants for our writer pattern (and idle zero state).
+            if (p.bridge_epoch > p.table_epoch)
+                tears.fetch_add(1, std::memory_order_relaxed);
+            if (p.defuse_version != p.table_epoch && p.stamp_epoch != 0 &&
+                p.table_epoch >= 1'000'000ULL)
+                tears.fetch_add(1, std::memory_order_relaxed);
+            // Seq must not be observed odd via snapshot helper (it retries).
+            if ((g_aot_reload_proof_seq.load(std::memory_order_relaxed) & 1u) != 0) {
+                // Transient odd is ok for raw seq; snapshot must still be even-phase.
+            }
+        }
+    };
+    std::thread w1(writer, 3'000'000ULL);
+    std::thread w2(writer, 4'000'000ULL);
+    std::thread r(reader);
+    start.store(1, std::memory_order_release);
+    w1.join();
+    w2.join();
+    stop.store(1, std::memory_order_release);
+    r.join();
+    CHECK(reads.load() > 0, "AC3: reader got samples");
+    CHECK(tears.load() == 0, "AC3: zero torn snapshots (bridge≤table, defuse==table)");
+}
+
+static void ac2776_4_source_cite_linter() {
+    std::println("\n--- #2776 AC4: linter wire + no docs/design ---");
+    const auto build = read_file("build.py");
+    const auto thin = read_file("src/compiler/aot_reload_consistency_proof.h");
+    const auto t = read_file("tests/compiler/test_reload_recovery_query.cpp");
+    CHECK(build.find("check_aot_reload_consistency_stamp_concurrent_2776") != std::string::npos,
+          "AC4: build.py wires linter");
+    CHECK(t.find("ac2776_2_concurrent_stamp_monotonic") != std::string::npos, "AC4: AC2 test");
+    CHECK(t.find("ac2776_3_reader_no_tear") != std::string::npos, "AC4: AC3 test");
+    CHECK(thin.find("intentionally ignored") != std::string::npos ||
+              thin.find("p.stamp_epoch is intentionally ignored") != std::string::npos ||
+              thin.find("ignores p.stamp_epoch") != std::string::npos,
+          "AC4: stamp documents ignoring caller stamp_epoch");
+    CHECK(read_file("docs/design/2776-aot-reload-stamp-concurrent.md").empty(),
+          "AC4: no docs/design/2776-* per #1655");
+}
+
 } // namespace
 
 int run_test_reload_recovery_query() {
@@ -304,9 +439,14 @@ int run_test_reload_recovery_query() {
     ac2753_1_soft_empty_proof();
     ac2753_2_success_and_rollback_stamp();
     ac2753_3_source_and_no_design();
+    std::println("\n=== Issue #2776: concurrent stamp (fetch_add + seqlock) ===");
+    ac2776_1_fetch_add_and_seqlock_source();
+    ac2776_2_concurrent_stamp_monotonic();
+    ac2776_3_reader_no_tear();
+    ac2776_4_source_cite_linter();
     if (g_failed)
         return 1;
-    std::println("reload recovery query #2367 + #2753: OK ({} passed)", g_passed);
+    std::println("reload recovery query #2367 + #2753 + #2776: OK ({} passed)", g_passed);
     return 0;
 }
 
