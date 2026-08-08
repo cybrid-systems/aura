@@ -144,18 +144,18 @@ bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remappe
     return true;
 }
 
-// Issue #2723: non-empty span collector for densify Phase-5 + steal resume.
-// Single source of truth (AC4): both call sites route through this helper
-// so densify and steal share the same collection logic. Thread-local
+// Issue #2723 / #2742: non-empty span collector for densify Phase-5 + steal
+// resume. Single source of truth (AC4): both call sites route through this
+// helper so densify and steal share the same collection logic. Thread-local
 // scratch buffer avoids per-call heap allocation (AC3 zero-cost on the
-// quiet path — fresh allocation only when linear_roots() is non-empty).
+// quiet path — fresh allocation only when candidates exist).
 //
-// Hierarchy: prefer live linear roots (the densified-away addresses #2708
-// is trying to catch). Falls back to dirty-pin / let-poly roots if
-// linear_roots() is empty (e.g., mid-cycle where a single mutating fiber
-// holds live pins but no registered linear registry entry yet). Returns
-// std::span<const OwnershipRebindNodeId> over the scratch buffer. Lifetime
-// of the span is the call (or until the next call from the same thread).
+// Hierarchy (#2742):
+//   1. Primary: live linear_roots() (canonical densify-survived identity).
+//   2. Fallback when primary empty:
+//      a. test-injected densify-affected NodeIds (#2742 AC1 harness)
+//      b. live LifetimePin registry (dirty-pin / GeneralObjectPin secondary)
+//   Empty primary AND empty fallback → empty span → AC3 short-circuit.
 std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind() noexcept {
     // Thread-local scratch — one buffer per thread, reused across calls.
     // Capacity grows on first non-empty collection; never shrinks (avoid
@@ -184,15 +184,43 @@ std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind(
         }
     }
 
-    // Future: dirty-pin / let-poly roots fallback. #2673/#2642 scans already
-    // consult these — when their helpers expose a span accessor, append
-    // here (single source of truth, no divergent soft-copy). For #2723
-    // first ship, linear_roots() is sufficient (preferred per issue body);
-    // dirty-pin fallback is a follow-up when #2673/#2642 expose the API.
+    // Issue #2742: dirty-pin / densify-affected fallback when linear_roots
+    // is empty (common Soft / early mutate / non-linear workloads).
+    if (scratch.empty()) {
+        // (a) Test inject densify-affected NodeIds (AC1 production mismatch
+        // path without requiring a live densify arena).
+        const auto inj_n = g_ownership_rebind_dirty_inject_n.load(std::memory_order_relaxed);
+        if (inj_n > 0) {
+            const auto n = std::min<std::size_t>(inj_n, kOwnershipRebindDirtyInjectCap);
+            for (std::size_t i = 0; i < n; ++i)
+                scratch.push_back(g_ownership_rebind_dirty_inject_ids[i]);
+        }
+        // (b) Live LifetimePin registry — secondary dirty-pin probe when
+        // no inject and no linear roots. Cheap shard walk; AC3 still
+        // zero-cost when registry empty (no alloc beyond empty scratch).
+        if (scratch.empty()) {
+            auto& shards = aura::core::lifetime::pin_registry_shards();
+            for (std::size_t si = 0; si < aura::core::lifetime::kPinRegistryShardCount; ++si) {
+                auto& shard = shards[si];
+                std::lock_guard<std::mutex> lock(shard.mtx);
+                for (auto* p : shard.pins) {
+                    if (!p || !p->pinned() || !p->ptr())
+                        continue;
+                    const auto h = static_cast<OwnershipRebindNodeId>(
+                        (reinterpret_cast<std::uintptr_t>(p->ptr()) >> 4) & 0xFFFFFFFFu);
+                    scratch.push_back(h);
+                }
+            }
+        }
+        if (!scratch.empty()) {
+            g_ownership_rebind_dirty_fallback_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 
     if (!scratch.empty()) {
         g_ownership_rebind_nonempty_span_total.fetch_add(1, std::memory_order_relaxed);
     }
     return std::span<const OwnershipRebindNodeId>(scratch.data(), scratch.size());
-} // namespace aura::compiler
+}
+
 } // namespace aura::compiler
