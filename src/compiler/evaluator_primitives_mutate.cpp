@@ -4508,16 +4508,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // rollback (hygiene self-evo audit) without requiring :snapshot? #t.
         ev.workspace_flat_->begin_atomic_batch();
         ev.sync_atomic_batch_metadata_metrics();
+        // Issue #2790: sub-op failure must flip BOTH ok (batch control flow)
+        // and guard_ok (MutationBoundaryGuard RAII commit/rollback). Setting
+        // only ok and deferring guard_ok to the post-loop path is fragile —
+        // the throw path already sets both; the bool/#f / unexpected paths
+        // must match. One helper keeps them in lockstep.
+        auto mark_sub_op_failed = [&]() {
+            ok = false;
+            guard_ok = false;
+        };
         while (is_pair(op_list)) {
             EvalValue op = pair_car(op_list);
             op_list = pair_cdr(op_list);
             if (!is_pair(op)) {
-                ok = false;
+                mark_sub_op_failed(); // Issue #2790
                 break;
             }
             EvalValue op_name_ev = pair_car(op);
             if (!is_string(op_name_ev)) {
-                ok = false;
+                mark_sub_op_failed(); // Issue #2790
                 break;
             }
             std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
@@ -4622,12 +4631,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
             }
             if (!sub_result) {
-                ok = false;
+                // Issue #2790: unexpected / EvalResult error — flip both flags
+                // immediately (do not rely solely on post-loop guard_ok assign).
+                mark_sub_op_failed();
                 break;
             }
             // Heuristic: bool-false result from the helper is a failure
             if (types::is_bool(*sub_result) && !types::as_bool(*sub_result)) {
-                ok = false;
+                // Issue #2790: was ok-only — Guard would commit the prefix.
+                mark_sub_op_failed();
                 break;
             }
             ev.pin_dirty_nodes_for_atomic_batch();
@@ -4655,6 +4667,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.restore_workspace_snapshot_under_lock(static_cast<std::size_t>(batch_snap_id)))
                 ev.bump_atomic_batch_snapshot_rollback();
             ev.rollback_atomic_batch_pinning();
+            // Issue #2790: belt-and-suspenders — mark_sub_op_failed already
+            // cleared guard_ok at the break site; re-assert here so any
+            // future break path that only sets ok still cannot commit.
             guard_ok = false;
             // Issue #250 / regression fix: the previous
             // `make_bool(false)` return made the failure
