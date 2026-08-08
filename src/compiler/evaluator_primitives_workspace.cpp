@@ -492,8 +492,12 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         else if (a.size() >= 2 && is_int(a[1]))
             ro = (as_int(a[1]) != 0);
         wt->set_read_only(idx, ro);
-        // Update quick flag for P6 mutations (can't see WorkspaceTree)
-        ev.workspace_read_only_ = ro;
+        // Issue #2786: only update the active quick flag when the
+        // locked workspace is active. Mirrors workspace:unlock
+        // (idx == active_idx). Locking a non-active workspace must
+        // not flip mutate:* P6 permission checks for the active one.
+        if (idx == wt->active_idx())
+            ev.workspace_read_only_ = ro;
         return make_bool(true);
     }};
 

@@ -1801,6 +1801,9 @@ aura_issue_test_link_light(test_workspace_sync_from)
 # Issue #2785: workspace:switch single bind + COW epoch (no duplicate assign).
 aura_add_issue_test(test_workspace_switch)
 aura_issue_test_link_light(test_workspace_switch)
+# Issue #2786: workspace:lock only updates active quick flag (symmetric unlock).
+aura_add_issue_test(test_workspace_lock_unlock)
+aura_issue_test_link_light(test_workspace_lock_unlock)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
