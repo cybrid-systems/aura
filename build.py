@@ -8262,6 +8262,25 @@ def cmd_chaos_soak_hard_gate_2722():
     ("chaos soak is optional / best-effort — does not gate production
     builds or release artifacts").
 
+    Issue #2755 (additive residual-zero extension of #2722): at end-of-run
+    under AURA_PRODUCTION_CONCURRENCY_GATE=1 + Hard the chaos harness
+    hard-fails if any steal-safety residual hard-AND counter grew:
+
+      residual hard-AND (#2721 four arms — must be hard-zero):
+        g_steal_safety_residual_boundary_unsafe_total
+        g_steal_safety_residual_layout_stamp_mismatch_total
+        g_steal_safety_residual_ticket_mismatch_total
+        g_steal_safety_residual_gc_defer_armed_total
+      related surfaces hard-zero under this gate:
+        steal_snapshot_mismatch_force_deopt_total
+        resume_hard_fail_total
+      related observe-only (printed; residual_layout_stamp covers silent
+      corruption for LayoutStamp races):
+        layout_stamp_resume_mismatch_total
+
+    Soft / local iteration (no SOAK hard gate / no production concurrency
+    gate) remains non-gating for residual counters (metric-only print).
+
     AC1: full SOAK with production_defaults_active=true + Hard
         fail-closed. Runs cmd_production_concurrency under
         AURA_CHAOS_SOAK_HARD_GATE=1 (distinct env so PR CI smoke +
@@ -8272,6 +8291,7 @@ def cmd_chaos_soak_hard_gate_2722():
         The chaos binary already bumps hard-fail counters for these
         4 invariants under AURA_CHAOS_FULL=1 (production / SOAK modes);
         the binary's CHECK(delta==0, "silent corruption") gates the exit.
+        #2755: residual hard-AND deltas also gate exit (see counter list).
     AC3: SOAK duration / fiber count / GC frequency parameterized
         (documented production envelope numbers below).
     AC4: required for any tag / release candidate. Wired into
@@ -8297,9 +8317,13 @@ def cmd_chaos_soak_hard_gate_2722():
     fails, the release workflow exits non-zero and no release assets
     are uploaded.
     """
-    print(f"{B}=== chaos SOAK hard deploy gate (#2722) ==={N}")
+    print(f"{B}=== chaos SOAK hard deploy gate (#2722 + #2755 residual-zero) ==={N}")
     # Static contract first — fast fail on missing wire-up.
     rc = cmd_chaos_soak_hard_gate_2722_coverage()
+    if rc != 0:
+        return rc
+    # Issue #2755: residual hard-AND zero contract (additive over #2722).
+    rc = cmd_chaos_soak_residual_zero_2755_coverage()
     if rc != 0:
         return rc
 
@@ -8372,14 +8396,17 @@ def cmd_chaos_soak_hard_gate_2722():
         fail(
             f"RELEASE chaos SOAK hard gate FAILED exit={r.returncode} "
             f"in {elapsed:.1f}s — release blocked (residual panic / "
-            "LayoutStamp mismatch / live MutationHold / steal-after-degrade "
+            "LayoutStamp mismatch / live MutationHold / steal-after-degrade / "
+            "steal-safety residual hard-AND (#2755: boundary/layout/ticket/"
+            "gc_defer + layout_resume/force_deopt/resume_hard_fail) "
             "must be 0 under production_defaults_active + Hard)"
         )
         return r.returncode
     ok(
         f"RELEASE chaos SOAK hard gate GREEN under production_defaults_active "
         f"+ Hard in {elapsed:.1f}s (workers={env['AURA_CHAOS_WORKERS']} "
-        f"fibers={env['AURA_CHAOS_FIBERS']} duration={env['AURA_CHAOS_DURATION_S']}s)"
+        f"fibers={env['AURA_CHAOS_FIBERS']} duration={env['AURA_CHAOS_DURATION_S']}s; "
+        "residual hard-AND + related surfaces hard-zero per #2755)"
     )
     return 0
 
@@ -8407,6 +8434,24 @@ def cmd_chaos_soak_hard_gate_2722_coverage():
         fail("chaos SOAK hard gate (#2722) coverage contract rows failed")
         return 1
     ok("chaos SOAK hard gate (#2722) coverage clean")
+    return 0
+
+
+def cmd_chaos_soak_residual_zero_2755_coverage():
+    """Issue #2755: residual steal-safety hard-AND counters hard-zero under
+    SOAK hard gate (extend #2722). Static contract only — full SOAK runtime
+    is still owned by cmd_chaos_soak_hard_gate_2722.
+    """
+    print(f"{B}=== chaos SOAK residual-zero (#2755) coverage ==={N}")
+    script = COVERAGE_CHECKS / "check_chaos_soak_residual_zero_2755.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("chaos SOAK residual-zero (#2755) coverage contract rows failed")
+        return 1
+    ok("chaos SOAK residual-zero (#2755) coverage clean")
     return 0
 
 
@@ -9159,6 +9204,7 @@ def cmd_gate():
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()
         or cmd_chaos_soak_hard_gate_2722_coverage()
+        or cmd_chaos_soak_residual_zero_2755_coverage()
         or cmd_post_densify_linear_type_revalidate_coverage()
         or cmd_lock_order_audit_2354_coverage()
         or cmd_type_dep_epoch_prune_coverage()
@@ -10037,6 +10083,7 @@ def main():
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
         "chaos-soak-hard-gate-2722": cmd_chaos_soak_hard_gate_2722,
         "chaos-soak-hard-gate-2722-coverage": cmd_chaos_soak_hard_gate_2722_coverage,
+        "chaos-soak-residual-zero-2755-coverage": cmd_chaos_soak_residual_zero_2755_coverage,
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
