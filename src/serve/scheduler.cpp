@@ -111,6 +111,20 @@ Scheduler::~Scheduler() {
         w->join();
     }
     workers_.clear();
+    // Issue #2782: invalidate AgentScope (etc.) observers BEFORE fibers
+    // are destroyed so holders can null Scheduler* + Fiber* and avoid UAF
+    // on session-boundary mis-order (Scheduler dtor before scope dtor).
+    {
+        std::vector<AgentScopeObserver> observers;
+        {
+            std::lock_guard<std::mutex> lock(agent_scope_observers_mutex_);
+            observers.swap(agent_scope_observers_);
+        }
+        for (const auto& o : observers) {
+            if (o.fn && o.cookie)
+                o.fn(o.cookie);
+        }
+    }
     // Issue #707: destroy owned fibers so per-fiber stack vectors
     // return to the bounded pool instead of leaking until process exit.
     {
@@ -120,6 +134,31 @@ Scheduler::~Scheduler() {
     }
     if (epoll_fd_ >= 0)
         ::close(epoll_fd_);
+}
+
+void Scheduler::register_agent_scope_observer(void* cookie,
+                                              Scheduler::ScopeLifetimeFn fn) noexcept {
+    if (!cookie || !fn)
+        return;
+    std::lock_guard<std::mutex> lock(agent_scope_observers_mutex_);
+    // Replace if already registered (idempotent re-bind).
+    for (auto& o : agent_scope_observers_) {
+        if (o.cookie == cookie) {
+            o.fn = fn;
+            return;
+        }
+    }
+    agent_scope_observers_.push_back(AgentScopeObserver{cookie, fn});
+}
+
+void Scheduler::unregister_agent_scope_observer(void* cookie) noexcept {
+    if (!cookie)
+        return;
+    std::lock_guard<std::mutex> lock(agent_scope_observers_mutex_);
+    agent_scope_observers_.erase(
+        std::remove_if(agent_scope_observers_.begin(), agent_scope_observers_.end(),
+                       [cookie](const AgentScopeObserver& o) { return o.cookie == cookie; }),
+        agent_scope_observers_.end());
 }
 
 // ── spawn — create a new fiber ────────────────────────

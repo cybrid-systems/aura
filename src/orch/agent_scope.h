@@ -69,6 +69,9 @@ inline constexpr int kAgentScopeReadGuardIssue = 2777;
 // Issue #2781: hierarchy cancel_all must not false-positive #2399 misuse
 // when parent recursion walks children (no per-child ScopeEnterGuard).
 inline constexpr int kAgentScopeHierarchyCancelIssue = 2781;
+// Issue #2782: AgentScope borrowed Scheduler* lifetime — Scheduler
+// notifies observers before fiber teardown; ops fail-closed if dangling.
+inline constexpr int kAgentScopeSchedulerLifetimeIssue = 2782;
 
 // Issue #2751: one row in a session-scoped agent directory snapshot.
 // Best-effort at call time (not transactional with concurrent spawn).
@@ -147,13 +150,22 @@ struct ScopeWatchResult {
 // are not silent.
 class AgentScope {
 public:
+    // Issue #2782: stores Scheduler* (not a raw reference) and registers
+    // as a lifetime observer. If Scheduler is destroyed first, the
+    // observer nulls sched_ + fiber pointers so later ops fail-closed
+    // instead of UAF. API still takes Scheduler& at construction.
     explicit AgentScope(serve::Scheduler& sched) noexcept
-        : sched_(sched) {}
+        : sched_(&sched) {
+        sched.register_agent_scope_observer(this, &AgentScope::on_scheduler_destroyed_trampoline_);
+    }
 
     AgentScope(const AgentScope&) = delete;
     AgentScope& operator=(const AgentScope&) = delete;
     AgentScope(AgentScope&&) = delete;
     AgentScope& operator=(AgentScope&&) = delete;
+
+    // Issue #2782: true while the bound Scheduler is still alive.
+    [[nodiscard]] bool scheduler_alive() const noexcept { return sched_ != nullptr; }
 
     // Spawn a new agent under this scope. Pushes the handle to the back;
     // reference remains valid until the scope is destroyed.
@@ -163,9 +175,24 @@ public:
     // on_stall == RestartN can re-spawn the body under the same
     // AgentSpec / name rules. restart_counts_ / consecutive_stall_counts_
     // are parallel vectors for per-handle supervision state.
+    // Issue #2782: if Scheduler was destroyed, pushes a failed handle
+    // (ok=false, error set) and bumps agent_scope_scheduler_dangling_total.
     AgentHandle& spawn(AgentSpec spec) {
         ScopeEnterGuard g(this, "spawn");
-        handles_.emplace_back(spawn_agent_with_mailbox(sched_, spec));
+        if (!sched_) {
+            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
+                1, std::memory_order_relaxed);
+            AgentHandle failed;
+            failed.ok = false;
+            failed.error = "AgentScope: Scheduler destroyed (#2782)";
+            failed.name = spec.name;
+            handles_.push_back(std::move(failed));
+            specs_.push_back(std::move(spec));
+            restart_counts_.push_back(0);
+            consecutive_stall_counts_.push_back(0);
+            return handles_.back();
+        }
+        handles_.emplace_back(spawn_agent_with_mailbox(*sched_, spec));
         // Copy the spec for re-spawn. AgentSpec's body is a
         // std::function (cheap to copy; the body closure is shared
         // by handle, so the new spawn reuses the same closure
@@ -181,9 +208,22 @@ public:
     // Shares the parent Scheduler. Child's parent() returns this.
     // Cancel/destroy on the parent propagates to all descendants.
     // Caller must serialize access (same single-owner model as spawn).
+    // Issue #2782: if parent Scheduler is dead, still creates a child
+    // bound to a null scheduler (fail-closed ops); bumps dangling total.
     AgentScope& spawn_child() {
         ScopeEnterGuard g(this, "spawn_child");
-        auto child = std::make_unique<AgentScope>(sched_);
+        if (!sched_) {
+            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
+                1, std::memory_order_relaxed);
+            // Child without a live Scheduler — construct via a temporary
+            // path is impossible without a reference; use a detaching
+            // ctor that leaves sched_ null (no observer register).
+            auto child = std::unique_ptr<AgentScope>(new AgentScope(nullptr));
+            child->parent_ = this;
+            children_.push_back(std::move(child));
+            return *children_.back();
+        }
+        auto child = std::make_unique<AgentScope>(*sched_);
         child->parent_ = this;
         children_.push_back(std::move(child));
         return *children_.back();
@@ -217,9 +257,18 @@ public:
     // Join all live handles. Mirrors join_agents (#2082/#2153): on non-Ok,
     // cancel + secondary drain (default 2s, JoinPolicy.drain_ms) before
     // per-handle reservation release. Release is idempotent (#2009).
+    // Issue #2782: Scheduler dead → release reservations only (no fiber join).
     [[nodiscard]] serve::JoinResult join_all(std::optional<std::uint64_t> timeout_ms = {}) {
         ScopeEnterGuard g(this, "join_all");
         if (handles_.empty()) {
+            serve::JoinResult r;
+            r.status = serve::JoinStatus::Invalid;
+            return r;
+        }
+        if (!sched_) {
+            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
+                1, std::memory_order_relaxed);
+            release_handles_no_join_();
             serve::JoinResult r;
             r.status = serve::JoinStatus::Invalid;
             return r;
@@ -231,6 +280,14 @@ public:
     [[nodiscard]] serve::JoinResult join_all(JoinPolicy policy) {
         ScopeEnterGuard g(this, "join_all(policy)");
         if (handles_.empty()) {
+            serve::JoinResult r;
+            r.status = serve::JoinStatus::Invalid;
+            return r;
+        }
+        if (!sched_) {
+            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
+                1, std::memory_order_relaxed);
+            release_handles_no_join_();
             serve::JoinResult r;
             r.status = serve::JoinStatus::Invalid;
             return r;
@@ -356,12 +413,18 @@ public:
                         if (policy.restart_backoff_ms > 0)
                             fiber_sleep_ms(policy.restart_backoff_ms);
                         // Spawn replacement under the same spec.
-                        handles_[i] = spawn_agent_with_mailbox(sched_, specs_[i]);
-                        // Reset per-handle supervision state.
-                        consecutive_stall_counts_[i] = 0;
-                        ++restart_counts_[i];
-                        g_orch_module_stats.agent_restart_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        // Issue #2782: skip re-spawn if Scheduler is gone.
+                        if (sched_) {
+                            handles_[i] = spawn_agent_with_mailbox(*sched_, specs_[i]);
+                            // Reset per-handle supervision state.
+                            consecutive_stall_counts_[i] = 0;
+                            ++restart_counts_[i];
+                            g_orch_module_stats.agent_restart_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        } else {
+                            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
                     } else if ((policy.on_stall == AgentFailureAction::RestartN) &&
                                (!within_max_restarts || circuit_open)) {
                         // Cancel path: request_cancel already invoked
@@ -443,13 +506,25 @@ public:
     //   1. cancel_all — top-down (children, then local handles)
     //   2. children_.clear() — each child dtor drains its tree bottom-up
     //   3. join local handles (default drain_ms, #2153)
+    // Issue #2782: unregister observer if Scheduler still alive; if
+    // Scheduler already destroyed (sched_ null), skip fiber join and
+    // only release reservations (fiber* already nulled by observer).
     ~AgentScope() {
         ScopeEnterGuard g(this, "~AgentScope");
+        if (sched_) {
+            sched_->unregister_agent_scope_observer(this);
+            // Leave sched_ non-null for cancel/join below; observer
+            // unregistered so ~Scheduler will not re-notify this scope.
+        }
         cancel_all();
         // Drain descendants before this scope's handles (bottom-up).
         children_.clear();
         if (handles_.empty())
             return;
+        if (!sched_) {
+            release_handles_no_join_();
+            return;
+        }
         // Issue #2153: destructor uses default drain_ms (kDefaultJoinDrainMs).
         (void)join_agents(
             std::span<AgentHandle>(handles_),
@@ -457,6 +532,39 @@ public:
     }
 
 private:
+    // Issue #2782: construct with null Scheduler (parent already dead).
+    // No observer registration.
+    explicit AgentScope(std::nullptr_t) noexcept
+        : sched_(nullptr) {}
+
+    // Issue #2782: Scheduler dtor callback — null sched_ + fiber pointers
+    // before owned fibers are destroyed (prevents UAF).
+    static void on_scheduler_destroyed_trampoline_(void* cookie) noexcept {
+        if (auto* self = static_cast<AgentScope*>(cookie))
+            self->on_scheduler_destroyed_();
+    }
+
+    void on_scheduler_destroyed_() noexcept {
+        // Called from ~Scheduler under no AgentScope enter guard. Null
+        // pointers first; metric bump for dashboards / ASan-free tests.
+        sched_ = nullptr;
+        g_orch_module_stats.agent_scope_scheduler_invalidated_total.fetch_add(
+            1, std::memory_order_relaxed);
+        for (auto& h : handles_) {
+            h.fiber = nullptr;
+            h.keepalive_helper = nullptr;
+            // Keep mailbox / liveness shared_ptrs (heap-owned, safe).
+        }
+        // Children registered independently; ~Scheduler notifies each.
+    }
+
+    void release_handles_no_join_() noexcept {
+        for (auto& h : handles_) {
+            h.fiber = nullptr;
+            h.keepalive_helper = nullptr;
+            release_agent_memory_reservation(h);
+        }
+    }
     // Issue #2537 / #2781: cancel body without ScopeEnterGuard.
     // from_hierarchy=true when entered via a parent's unlocked walk
     // (bumps agent_scope_hierarchy_cancel_total for dashboards).
@@ -471,6 +579,7 @@ private:
             if (c)
                 c->cancel_all_unlocked_(/*from_hierarchy=*/true);
         }
+        // Issue #2782: null fiber after Scheduler destroy — skip cancel.
         for (auto& h : handles_) {
             if (h.fiber && !h.fiber->is_done())
                 h.fiber->request_cancel();
@@ -608,7 +717,8 @@ private:
         collect_directory_(snap, filter, path);
     }
 
-    serve::Scheduler& sched_;
+    // Issue #2782: nullable; nulled by Scheduler observer before fiber teardown.
+    serve::Scheduler* sched_ = nullptr;
     std::vector<AgentHandle> handles_;
     // Issue #2229: parallel vectors for the RestartN supervision
     // policy. All three stay aligned with handles_ via push_back in
@@ -645,12 +755,11 @@ inline std::unordered_map<void*, std::unique_ptr<AgentScope>>& g_evaluator_agent
     return m;
 }
 
-// Issue #2588: get or create the scope for the given Evaluator (key).
+// Issue #2588 / #2782: get or create the scope for the given Evaluator.
 // Lazy allocation on first scope-spawn; subsequent calls return the
-// existing scope. Scheduler reference is borrowed — caller must keep
-// `sched` alive for the lifetime of the scope (process-local Scheduler
-// satisfies this for the MVP; production hosts bind a per-session
-// Scheduler to Evaluator).
+// existing scope. Scheduler is observed (not owned): if Scheduler is
+// destroyed first, AgentScope ops fail-closed (no UAF). Prefer
+// destroying AgentScope before Scheduler at session boundaries.
 inline AgentScope& get_or_create_agent_scope(void* ev_key, serve::Scheduler& sched) {
     auto& m = g_evaluator_agent_scopes();
     auto it = m.find(ev_key);

@@ -4220,6 +4220,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2781", aura::orch::kAgentScopeHierarchyCancelIssue);
             insert_kv("issue-2781", aura::orch::kAgentScopeHierarchyCancelIssue);
             insert_kv("agent-scope-hierarchy-cancel-wired", 1);
+            // Issue #2782: AgentScope Scheduler lifetime (observer + fail-closed).
+            insert_kv("agent-scope-scheduler-invalidated-total",
+                      static_cast<std::int64_t>(os.agent_scope_scheduler_invalidated_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("agent-scope-scheduler-dangling-total",
+                      static_cast<std::int64_t>(
+                          os.agent_scope_scheduler_dangling_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2782", aura::orch::kAgentScopeSchedulerLifetimeIssue);
+            insert_kv("issue-2782", aura::orch::kAgentScopeSchedulerLifetimeIssue);
+            insert_kv("agent-scope-scheduler-lifetime-wired", 1);
             // Issue #2231 / #2401 / #2538: agent-ask + agent-reply metrics (additive).
             insert_kv("agent-ask-total", static_cast<std::int64_t>(
                                              os.agent_ask_total.load(std::memory_order_relaxed)));

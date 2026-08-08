@@ -437,6 +437,11 @@ struct OrchModuleStats {
     // received cancel without a per-child ScopeEnterGuard — so dashboards
     // can distinguish hierarchy churn from real concurrent misuse.
     std::atomic<std::uint64_t> agent_scope_hierarchy_cancel_total{0};
+    // Issue #2782: Scheduler destroyed while AgentScope still live
+    // (observer path) / ops after dangling. invalidated = observer
+    // fired; dangling = subsequent fail-closed op saw null sched_.
+    std::atomic<std::uint64_t> agent_scope_scheduler_invalidated_total{0};
+    std::atomic<std::uint64_t> agent_scope_scheduler_dangling_total{0};
     // Issue #2540: cooperative yield contract (AgentSpec.max_no_yield_ms).
     // Bumped when agent_poll forces Fiber::yield after the no-yield window.
     // Zero cost when max_no_yield_ms==0 (no coop state, poll is no-op).
