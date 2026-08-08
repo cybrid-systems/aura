@@ -3998,10 +3998,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // (loop may parse many times — each append can stress topology).
             // Re-validate parent+slot after parse; re-derive from StableNodeRef
             // if the pre-parse edge is no longer attached.
+            // Issue #2798: free unlinked parse appends on every skip after parse
+            // (rollback_atomic_batch does not free SoA nodes).
             const auto size_before_parse = static_cast<std::size_t>(flat.size());
+            auto free_repl_parse_orphans = [&flat, size_before_parse]() {
+                if (size_before_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_parse));
+            };
             auto repl_pr = aura::parser::parse_to_flat(filled_repl, flat, *ev.workspace_pool_);
-            if (!repl_pr.success || repl_pr.root == NULL_NODE)
+            if (!repl_pr.success || repl_pr.root == NULL_NODE) {
+                free_repl_parse_orphans(); // #2798
                 continue;
+            }
             auto parent_ok = [&]() -> bool {
                 if (parent_id == NULL_NODE ||
                     static_cast<std::size_t>(parent_id) >= size_before_parse ||
@@ -4014,14 +4023,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // Re-derive edge after parse (match may still be live).
                 match_id = match.match_ref.id;
                 if (!flat.is_live_node(match_id) ||
-                    static_cast<std::size_t>(match_id) >= size_before_parse)
+                    static_cast<std::size_t>(match_id) >= size_before_parse) {
+                    free_repl_parse_orphans(); // #2798
                     continue;
+                }
                 child_idx_opt = parent_child_index_if_attached(flat, match_id);
-                if (!child_idx_opt)
+                if (!child_idx_opt) {
+                    free_repl_parse_orphans(); // #2798
                     continue;
+                }
                 parent_id = flat.parent_of(match_id);
-                if (!parent_ok())
+                if (!parent_ok()) {
+                    free_repl_parse_orphans(); // #2798
                     continue;
+                }
             }
 
             // Replace the matched node
@@ -4034,6 +4049,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         if (replaced_count == 0) {
             flat.rollback_atomic_batch();
+            // Issue #2798: free any parse appends that skip paths left behind.
+            if (static_cast<std::size_t>(end_id) < flat.size())
+                (void)flat.free_orphan_nodes_from(static_cast<aura::ast::NodeId>(end_id));
             ok = false;
             return mev("pattern-error",
                        "no replacements were applied (capture mismatch or parse failure)");

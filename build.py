@@ -1071,6 +1071,18 @@ def cmd_lint():
             "Issue #2797 replace-subtree new-body hygiene linter failed — run python3 scripts/coverage/checks/check_replace_subtree_new_body_hygiene_2797.py"
         )
         return r
+    # Issue #2798: replace-pattern frees parse orphans on skip / zero-replace.
+    # ac2798 in test_replace_pattern_no_match_no_leak.
+    rpnl_script = COVERAGE_CHECKS / "check_replace_pattern_no_match_no_leak_2798.py"
+    if not rpnl_script.exists():
+        fail(f"missing {rpnl_script}")
+        return 1
+    r = run([sys.executable, str(rpnl_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2798 replace-pattern no-match no-leak linter failed — run python3 scripts/coverage/checks/check_replace_pattern_no_match_no_leak_2798.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
