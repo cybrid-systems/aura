@@ -4,6 +4,7 @@
 #include "aura_platform.h"
 #include "compiler/lock_order_audit.h" // Issue #2354: FiberRegistry rank
 #include "core/gc_hooks.h"             // Issue #2377: steal-complete missing counter
+#include "serve/steal_safety.h"        // Issue #2752: steal_safety_transaction sole Ok path
 
 #include <cstdio>
 #include <unistd.h>
@@ -65,10 +66,16 @@ static inline void call_probe_linear_on_steal() noexcept {
 // Weak no-op / null ABI under production → fail-closed (never legacy-only
 // path that skips residual + stamp). Light/sandbox (production Soft lock
 // off) may use weak no-op or legacy N-call fallback with metric bump.
+// Issue #2752: call_steal_complete is no longer on the try_steal_from
+// success path — steal_safety_transaction owns steps 3–7 (including
+// aura_evaluator_on_steal_complete + ticket stamp). Kept as a named
+// helper only for the historical #2699 wire-in marker string (linter
+// AC2) and any light diagnostic paths that still need a direct
+// complete entry without the full transaction gate.
 static inline void call_steal_complete(Fiber* stolen) noexcept {
     // Issue #2699: call_steal_complete_now_uses_unified_transaction
-    // (wire-in marker — ensures the call graph is the single #2699
-    // transaction entry point).
+    // Issue #2752: try_steal_from_only_uses_steal_safety_transaction
+    // (wire-in markers — single #2699/#2752 transaction entry point).
     if (aura_evaluator_on_steal_complete) {
         // Strong wins over weak when linked. Weak no-op under production
         // aborts inside fiber_bridge (#2377); under sandbox it bumps
@@ -368,23 +375,30 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 else
                     ads_score.steal_score_bucket_200p.fetch_add(1, std::memory_order_relaxed);
             }
+            // Issue #2752 (closes #2699/#2721 residual): sole authoritative
+            // Ok / RejectHard path is steal_safety_transaction(stolen).
+            // Transaction owns sample→inconsistency→residual hard-AND
+            // (#2546 GcDefer hard-AND / #2203 steal-complete residual clear)→
+            // PanicCheckpoint→LayoutStamp→provenance→ticket stamp (step 7
+            // only on Ok; never set_resume_safety_ticket from worker).
+            // Pre-transaction inconsistency force-deopt path above stays.
+            // On LayoutStamp hard-fail (#2510) or residual hard-fail (#2546)
+            // the fiber is Cancel+Done — must not enqueue Ready.
+            const auto decision = steal_safety_transaction(stolen);
+            if (decision != StealSafetyDecision::Ok) {
+                // RejectHard: fiber Cancel+Done / force-deopt / residual
+                // hard-AND (#2546) — do not enqueue Ready
+                // (sample→enqueue→resume window closed).
+                return false;
+            }
             stolen->bump_steal_success();
             // Issue #1492: one-shot boost consumed on successful steal.
             stolen->clear_steal_priority_boost();
-            // Issue #2518: stamp resume safety ticket from this steal sample.
-            // Resume must see the same even safety_seq_ (ticket); Guard
-            // enter/exit mid-window advances seq → hard-fail under production.
-            // Independent of LayoutStamp restamp (#2510) — no dual-compute.
-            stolen->set_resume_safety_ticket(snap.ticket);
-            // Issue #783: refined split. Successful
-            // steal at a MutationBoundary point with
-            // depth==0 == "outermost safe steal" —
-            // record separately for the
-            // (query:orchestration-steal-outermost-
-            // stats) primitive + bump the cross-fiber
-            // safe steal counter (always bumped on
-            // successful cross-fiber steal at a
-            // mutation boundary).
+            // Issue #783: refined split. Successful steal at a
+            // MutationBoundary point with depth==0 == "outermost safe
+            // steal" — record separately for the
+            // (query:orchestration-steal-outermost-stats) primitive +
+            // bump the cross-fiber safe steal counter.
             if (snap.last_yield == YieldReason::MutationBoundary) {
                 stolen->bump_steal_outermost_mutation_boundary();
                 stolen->bump_cross_fiber_mutation_safe_steal();
@@ -395,19 +409,6 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 // level aggregate).
                 if (aura_evaluator_bump_boundary_held_steal_safe)
                     aura_evaluator_bump_boundary_held_steal_safe();
-            }
-            // Issue #2203 / #2377 / #2510 / #2546: single mandatory steal-
-            // complete entry (full transaction under strong ABI: residual
-            // clear + stamp dual-check + forced restamp + hard-AND residual
-            // GcDeferReason == 0 under Hard/production). Production forbids
-            // weak-null legacy residual-less path. On LayoutStamp hard-fail
-            // (#2510) or residual hard-fail (#2546) the fiber is Cancel+Done
-            // — must not enqueue Ready.
-            call_steal_complete(stolen);
-            if (stolen->state() == FiberState::Done || stolen->is_cancel_requested()) {
-                // Hard-fail path: generation-behind or residual-nonzero fiber
-                // rejected. Steal attempt counts as unsuccessful for enqueue.
-                return false;
             }
             local_queue_.push(stolen);
             return true;

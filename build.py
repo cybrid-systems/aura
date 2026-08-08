@@ -469,6 +469,19 @@ def cmd_lint():
             "Issue #2699 unified steal safety transaction coverage linter failed — run python3 scripts/coverage/checks/check_steal_safety_transaction_2699.py"
         )
         return r
+    # Issue #2752: try_steal_from success path must call only
+    # steal_safety_transaction (no direct set_resume_safety_ticket /
+    # call_steal_complete). Closes the #2699/#2721 residual call-graph gap.
+    tsf_script = COVERAGE_CHECKS / "check_try_steal_from_txn_2752.py"
+    if not tsf_script.exists():
+        fail(f"missing {tsf_script}")
+        return 1
+    r = run([sys.executable, str(tsf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2752 try_steal_from only steal_safety_transaction coverage linter failed — run python3 scripts/coverage/checks/check_try_steal_from_txn_2752.py"
+        )
+        return r
     # Issue #2700: mailbox + long-hold MutationBoundary interleaving —
     # happens-before contract: outermost MutationBoundaryGuard held ⇒
     # mailbox StableNodeRef payloads require handoff_completed; otherwise

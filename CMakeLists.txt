@@ -626,6 +626,8 @@ add_library(aura_test_objects SHARED
     src/parser/parser_impl.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
+    # Issue #2699 / #2752: unified steal safety transaction (worker Ok path).
+    src/serve/steal_safety.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/serve/http_health.cpp

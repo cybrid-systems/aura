@@ -80,13 +80,19 @@ static void ac1_ac5_ac6_source() {
     auto hooks = read_file("src/core/gc_hooks.h");
     auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
 
-    // AC1: worker success path invokes on_steal_complete via call_steal_complete
+    // AC1: worker success path routes through steal_safety_transaction
+    // (#2752); transaction owns aura_evaluator_on_steal_complete
+    // (residual clear + stamp dual-check). Worker still declares the
+    // weak ABI for the historical call_steal_complete helper marker.
     CHECK(worker.find("aura_evaluator_on_steal_complete") != std::string::npos,
           "AC1: worker declares on_steal_complete");
-    CHECK(worker.find("call_steal_complete") != std::string::npos,
-          "AC1: worker has call_steal_complete helper");
-    CHECK(worker.find("call_steal_complete(stolen)") != std::string::npos,
-          "AC1: try_steal_from success invokes call_steal_complete");
+    CHECK(worker.find("steal_safety_transaction(stolen)") != std::string::npos,
+          "AC1: try_steal_from success invokes steal_safety_transaction");
+    CHECK(worker.find("StealSafetyDecision::Ok") != std::string::npos,
+          "AC1: Ok gate before enqueue");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(ss.find("aura_evaluator_on_steal_complete") != std::string::npos,
+          "AC1: transaction invokes on_steal_complete");
     CHECK(efm.find("aura_evaluator_on_steal_complete") != std::string::npos,
           "AC1: strong def in evaluator_fiber_mutation");
     CHECK(efm.find("clear_gc_defer_for_evaluator") != std::string::npos &&

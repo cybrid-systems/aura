@@ -49,8 +49,11 @@ def main() -> int:
     must("Issue #2510", "AC1", fm)
     must("refresh_stale_frames_after_steal", "AC1", fm)
     must("steal_complete_restamp_total", "AC1", fm)
-    must("call_steal_complete(stolen)", "AC1", wc)
-    must("is_cancel_requested", "AC1", wc)
+    # Issue #2752: worker Ok path is steal_safety_transaction (owns
+    # on_steal_complete + ticket stamp); RejectHard skips Ready enqueue.
+    must("steal_safety_transaction(stolen)", "AC1", wc)
+    must("StealSafetyDecision::Ok", "AC1", wc)
+    must("aura_evaluator_on_steal_complete", "AC1", _read("src/serve/steal_safety.cpp"))
     must("AC1", "AC1", test)
 
     # AC2 hard-fail on mismatch
