@@ -2523,7 +2523,19 @@ public:
     // post_mutation_macro_reexpand (call-site splice + MacroIntroduced
     // restamp). Scoped, not a global flush. Records post_mutate_incremental_*
     // and post_mutate_macro_reexpand_* metrics. Zero cost when macros_ empty.
+    //
+    // Issue #2812: soft finalize (run_full=false) under Guard; defines that
+    // need precise BFS invalidate_function are enqueued and drained by
+    // drain_cascade_bfs_invalidate() after outermost unlock (mutate_mtx_
+    // safe once workspace_mtx_ is released).
     void push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin) noexcept;
+    // Issue #2812: enqueue define name for post-Guard BFS invalidate.
+    void enqueue_cascade_bfs_invalidate(std::string name) noexcept;
+    // Issue #2812: drain pending BFS invalidates (after workspace unlock).
+    // Calls invalidate_function_fn_ for each enqueued name. Idempotent clear.
+    void drain_cascade_bfs_invalidate() noexcept;
+    // Issue #2812: drop pending without calling invalidate (rollback path).
+    void clear_cascade_bfs_invalidate() noexcept;
     // Issue #262: precise def-use dirty propagation. Marks entry
     // nodes + ancestors with kDefUseDirty, records the sym for
     // incremental DefUseIndex refresh, and touches per-sym staleness.
@@ -5597,6 +5609,12 @@ private:
     std::function<void(const std::string&, const std::string&)> update_function_source_fn_ =
         nullptr;
     std::atomic<std::uint64_t> precise_define_inval_hits_{0};
+    // Issue #2812: define names pending BFS invalidate_function after
+    // outermost MutationBoundaryGuard unlocks workspace_mtx_ (avoid
+    // mutate_mtx_ under workspace hold — lock-order inversion).
+    // Filled by push_post_mutate_incremental_cascade; drained or cleared
+    // only from outermost Guard Phase-5 post-unlock.
+    std::vector<std::string> pending_cascade_bfs_invalidate_;
 
     // ── 模块类型签名（#8 跨模块类型检查） ──────────────────────
     // (declare-type "name" "param-types" "ret-type") 存储的签名，

@@ -7397,6 +7397,21 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"post-mutate-push-cascade-wired", make_int(1)},
                 {"schema-2038", make_int(2038)},
                 {"issue-2038", make_int(2038)},
+                // Issue #2812: post-Guard BFS invalidate (closures of mutated defines).
+                // Additive — #2038 keys preserved.
+                {"cascade-bfs-invalidate-pending-total",
+                 make_int(m ? load(m->cascade_bfs_invalidate_pending_total) : 0)},
+                {"cascade_bfs_invalidate_pending_total",
+                 make_int(m ? load(m->cascade_bfs_invalidate_pending_total) : 0)},
+                {"cascade-bfs-invalidate-total",
+                 make_int(m ? load(m->cascade_bfs_invalidate_total) : 0)},
+                {"cascade_bfs_invalidate_total",
+                 make_int(m ? load(m->cascade_bfs_invalidate_total) : 0)},
+                {"cascade-bfs-invalidate-cleared-total",
+                 make_int(m ? load(m->cascade_bfs_invalidate_cleared_total) : 0)},
+                {"cascade-bfs-invalidate-wired", make_int(1)},
+                {"schema-2812", make_int(2812)},
+                {"issue-2812", make_int(2812)},
                 // Issue #2762: post-mutate macro re-expand under Guard cascade
                 // (refine #165/#2096). Additive — #2038 keys preserved.
                 {"post-mutate-macro-reexpand-total",

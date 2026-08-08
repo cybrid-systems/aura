@@ -8072,6 +8072,52 @@ void Evaluator::finalize_define_mutate_invalidation(const aura::ast::FlatAST& fl
     }
 }
 
+// Issue #2812: queue define name for post-Guard BFS invalidate.
+void Evaluator::enqueue_cascade_bfs_invalidate(std::string name) noexcept {
+    if (name.empty())
+        return;
+    // Dedup: O(n) small — cascade typically marks few defines per boundary.
+    for (const auto& existing : pending_cascade_bfs_invalidate_) {
+        if (existing == name)
+            return;
+    }
+    pending_cascade_bfs_invalidate_.push_back(std::move(name));
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->cascade_bfs_invalidate_pending_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+void Evaluator::drain_cascade_bfs_invalidate() noexcept {
+    if (pending_cascade_bfs_invalidate_.empty())
+        return;
+    // Snapshot + clear first so re-entrant cascade during invalidate
+    // cannot re-process the same batch (and cannot UAF the vector).
+    std::vector<std::string> batch;
+    batch.swap(pending_cascade_bfs_invalidate_);
+    std::uint64_t drained = 0;
+    for (const auto& name : batch) {
+        if (name.empty())
+            continue;
+        if (invalidate_function_fn_) {
+            invalidate_function_fn_(name);
+            bump_precise_define_inval_hit();
+            ++drained;
+        }
+    }
+    if (drained > 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->cascade_bfs_invalidate_total.fetch_add(drained, std::memory_order_relaxed);
+    }
+}
+
+void Evaluator::clear_cascade_bfs_invalidate() noexcept {
+    if (pending_cascade_bfs_invalidate_.empty())
+        return;
+    const auto n = static_cast<std::uint64_t>(pending_cascade_bfs_invalidate_.size());
+    pending_cascade_bfs_invalidate_.clear();
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->cascade_bfs_invalidate_cleared_total.fetch_add(n, std::memory_order_relaxed);
+}
+
 // Issue #2038: single choke-point cascade for all successful mutate:*
 // under MutationBoundaryGuard. Ensures DefUse / IR cache dirty / JIT
 // soft paths see the mutation without a manual invalidate.
@@ -8145,10 +8191,15 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         if (defuse_touch_fn_ && sid != aura::ast::INVALID_SYM)
             defuse_touch_fn_(defuse_index_, sid);
         if (def_id != aura::ast::NULL_NODE) {
-            // Soft path only: mark_dirty_upward + impact_scope.
-            // Hard invalidate_function (BFS) is deferred — it would try
-            // to take Mutate while Workspace is still held by Guard.
+            // Soft path under Guard: mark_dirty_upward + impact_scope.
+            // Issue #2812: hard invalidate_function (BFS over dep_graph /
+            // called_by) takes mutate_mtx_ and must not run while
+            // workspace_mtx_ is held (lock-order inversion). Enqueue for
+            // drain_cascade_bfs_invalidate after outermost unlock when the
+            // define needs precise invalidation (lambda / closure body).
             finalize_define_mutate_invalidation(flat, name, def_id, /*run_full=*/false);
+            if (define_needs_precise_invalidation_for_inval(flat, def_id))
+                enqueue_cascade_bfs_invalidate(name);
         }
     }
 

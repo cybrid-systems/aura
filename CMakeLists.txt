@@ -1879,6 +1879,9 @@ aura_issue_test_link_light(test_clone_provenance_per_evaluator)
 # Issue #2811: rename_binding_pre ceiling deny must not advance hyg_ctr (serial drift).
 aura_add_issue_test(test_gensym_ceiling_serial_drift)
 aura_issue_test_link_light(test_gensym_ceiling_serial_drift)
+# Issue #2812: post-mutate cascade BFS invalidate after Guard unlock (closure capture).
+aura_add_issue_test(test_cascade_bfs_invalidate_after_guard)
+aura_issue_test_link_light(test_cascade_bfs_invalidate_after_guard)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
