@@ -66,6 +66,9 @@ inline constexpr int kAgentScopeHierarchyIssue = 2537;
 inline constexpr int kAgentDirectoryIssue = 2751;
 // Issue #2777: read APIs take ScopeEnterGuard (#2399 incomplete sweep).
 inline constexpr int kAgentScopeReadGuardIssue = 2777;
+// Issue #2781: hierarchy cancel_all must not false-positive #2399 misuse
+// when parent recursion walks children (no per-child ScopeEnterGuard).
+inline constexpr int kAgentScopeHierarchyCancelIssue = 2781;
 
 // Issue #2751: one row in a session-scoped agent directory snapshot.
 // Best-effort at call time (not transactional with concurrent spawn).
@@ -241,16 +244,17 @@ public:
     //
     // Issue #2537: cancels child scopes first (top-down), then local
     // handles. Does not join/drain — callers (or ~AgentScope) drain.
+    //
+    // Issue #2781: hierarchy walk uses cancel_all_unlocked_ on children
+    // so recursive cancel does NOT re-enter ScopeEnterGuard per child.
+    // Calling public cancel_all on each child re-took the guard and could
+    // false-positive agent_scope_concurrent_misuse_total (and abort under
+    // AURA_AGENT_SCOPE_CONCURRENT_ABORT=1) even on a single-thread tree
+    // walk. Caller of the root cancel_all still serializes via this
+    // scope's enter; children inherit that serial contract.
     void cancel_all() noexcept {
         ScopeEnterGuard g(this, "cancel_all");
-        for (auto& c : children_) {
-            if (c)
-                c->cancel_all();
-        }
-        for (auto& h : handles_) {
-            if (h.fiber && !h.fiber->is_done())
-                h.fiber->request_cancel();
-        }
+        cancel_all_unlocked_(/*from_hierarchy=*/false);
     }
 
     // Issue #2161: batch liveness watch over scope handles.
@@ -453,12 +457,36 @@ public:
     }
 
 private:
+    // Issue #2537 / #2781: cancel body without ScopeEnterGuard.
+    // from_hierarchy=true when entered via a parent's unlocked walk
+    // (bumps agent_scope_hierarchy_cancel_total for dashboards).
+    // Recurses into children unlocked — parent cancel_all already holds
+    // the root enter; per-child enter was the #2781 false-positive source.
+    void cancel_all_unlocked_(bool from_hierarchy) noexcept {
+        if (from_hierarchy) {
+            g_orch_module_stats.agent_scope_hierarchy_cancel_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        for (auto& c : children_) {
+            if (c)
+                c->cancel_all_unlocked_(/*from_hierarchy=*/true);
+        }
+        for (auto& h : handles_) {
+            if (h.fiber && !h.fiber->is_done())
+                h.fiber->request_cancel();
+        }
+    }
+
     // Issue #2399 / #2777: RAII enter/leave for concurrent misuse detection.
     // Same-thread re-entry increments depth (no metric). Concurrent enter
     // from another thread bumps agent_scope_concurrent_misuse_total and
     // optionally aborts. Metric path still runs the method body (detect,
     // don't invent locks). Zero cost beyond one atomic CAS when free.
     // const-friendly: owner_tid_/enter_depth_ are mutable (#2777 reads).
+    //
+    // Issue #2781: hierarchy cancel does NOT use this guard on children
+    // (see cancel_all_unlocked_). Direct cancel_all / ~AgentScope still
+    // enter once on the scope being cancelled.
     struct ScopeEnterGuard {
         const AgentScope* self = nullptr;
         bool holds = false;
