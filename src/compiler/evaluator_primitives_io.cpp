@@ -4,7 +4,9 @@
 // Issue #1970: git-* is a deferred integration vertical (DOMAIN_STATUS deferred).
 // Registration of the 7 git-* names is gated by AURA_ENABLE_GIT (CMake option,
 // default ON). Independent of AURA_HAVE_LIBGIT2 (in-process backend vs popen).
-// Issue #1975: tcp-* (4 names) gated by AURA_ENABLE_TCP in register_network_primitives.
+// Issue #1975: tcp-* client names gated by AURA_ENABLE_TCP in
+// register_network_primitives. Issue #2771: +tcp-listen / tcp-accept /
+// tcp-accept-timeout / tcp-local-port (server path for multi-host denseness).
 // getenv/http/sys stay always on. See docs/git-integration.md + docs/tcp.md.
 
 module;
@@ -14,9 +16,13 @@ module;
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <poll.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <cerrno>
+#include <cstring>
 #include "runtime_shared.h"
 #include "observability_metrics.h"
 #include "primitives_detail.h"
@@ -672,7 +678,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
 #if AURA_ENABLE_TCP
     // ── TCP socket primitives ────────────────────────────────
-    // Issue #1975: integration vertical (AURA_ENABLE_TCP).
+    // Issue #1975: client path (connect/send/recv/close).
+    // Issue #2771: server path (listen/accept/accept-timeout/local-port)
+    // for multi-host denseness (Hermes Phase 5 residual). Thin OS E —
+    // errors return void/() not process abort. FDs are plain ints;
+    // caller owns close for both listener and accepted sockets.
     add("tcp-connect", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_int(a[1]))
             return make_void();
@@ -724,6 +734,97 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         ::fcntl(fd, F_SETFL, flags); // restore blocking
         ::freeaddrinfo(res);
         return types::make_int(static_cast<std::int64_t>(fd));
+    });
+
+    // (tcp-listen port) → listener-fd | ()
+    // Binds 127.0.0.1 (loopback denseness host). port 0 = ephemeral;
+    // use (tcp-local-port listener) to discover the assigned port.
+    add("tcp-listen", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)ev;
+        if (a.empty() || !types::is_int(a[0]))
+            return make_void();
+        const auto port = types::as_int(a[0]);
+        if (port < 0 || port > 65535)
+            return make_void();
+        int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0)
+            return make_void();
+        int yes = 1;
+        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<std::uint16_t>(port));
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1 denseness
+        if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+            ::close(fd);
+            return make_void();
+        }
+        if (::listen(fd, 16) < 0) {
+            ::close(fd);
+            return make_void();
+        }
+        return types::make_int(static_cast<std::int64_t>(fd));
+    });
+
+    // (tcp-local-port sock) → port | ()  — getsockname for ephemeral listeners.
+    add("tcp-local-port", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)ev;
+        if (a.empty() || !types::is_int(a[0]))
+            return make_void();
+        auto fd = static_cast<int>(types::as_int(a[0]));
+        sockaddr_in addr{};
+        socklen_t len = sizeof(addr);
+        if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) < 0)
+            return make_void();
+        return types::make_int(static_cast<std::int64_t>(ntohs(addr.sin_port)));
+    });
+
+    // (tcp-accept listener) → client-fd | ()  — blocking accept.
+    add("tcp-accept", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)ev;
+        if (a.empty() || !types::is_int(a[0]))
+            return make_void();
+        auto lfd = static_cast<int>(types::as_int(a[0]));
+        sockaddr_in peer{};
+        socklen_t plen = sizeof(peer);
+        int cfd = ::accept(lfd, reinterpret_cast<sockaddr*>(&peer), &plen);
+        if (cfd < 0)
+            return make_void();
+        struct timeval tv;
+        tv.tv_sec = 10;
+        tv.tv_usec = 0;
+        ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        return types::make_int(static_cast<std::int64_t>(cfd));
+    });
+
+    // (tcp-accept-timeout listener sec) → client-fd | ()
+    // sec is integer seconds (0 = poll once). Uses poll then accept.
+    add("tcp-accept-timeout", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)ev;
+        if (a.size() < 2 || !types::is_int(a[0]) || !types::is_int(a[1]))
+            return make_void();
+        auto lfd = static_cast<int>(types::as_int(a[0]));
+        auto sec = types::as_int(a[1]);
+        if (sec < 0)
+            sec = 0;
+        if (sec > 3600)
+            sec = 3600;
+        struct pollfd pfd = {lfd, POLLIN, 0};
+        int pr = ::poll(&pfd, 1, static_cast<int>(sec * 1000));
+        if (pr <= 0)
+            return make_void(); // timeout or error
+        sockaddr_in peer{};
+        socklen_t plen = sizeof(peer);
+        int cfd = ::accept(lfd, reinterpret_cast<sockaddr*>(&peer), &plen);
+        if (cfd < 0)
+            return make_void();
+        struct timeval tv;
+        tv.tv_sec = 10;
+        tv.tv_usec = 0;
+        ::setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        ::setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        return types::make_int(static_cast<std::int64_t>(cfd));
     });
 
     add("tcp-send", [&ev](std::span<const EvalValue> a) -> EvalValue {

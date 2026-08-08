@@ -3155,8 +3155,12 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     register_primitive("json-arr-items", {Dyn, reg_.register_func({Dyn}, Dyn)}, Dyn);
     register_primitive("json-obj-items", {Dyn, Dyn, reg_.register_func({Dyn}, Dyn)}, Dyn);
 
-    // std/socket
+    // std/socket (#1975 client; #2771 server listen/accept)
     register_primitive("tcp-connect", {String, Int}, Dyn);
+    register_primitive("tcp-listen", {Int}, Dyn);
+    register_primitive("tcp-local-port", {Dyn}, Dyn);
+    register_primitive("tcp-accept", {Dyn}, Dyn);
+    register_primitive("tcp-accept-timeout", {Dyn, Int}, Dyn);
     register_primitive("tcp-send", {Dyn, String}, Void);
     register_primitive("tcp-recv", {Dyn}, String);
     register_primitive("tcp-close", {Dyn}, Void);

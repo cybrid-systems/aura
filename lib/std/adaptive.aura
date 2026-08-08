@@ -135,7 +135,7 @@
       ((string=? mod "std/llm")
        "=== std/llm ===\n(aura-llm-call json-body) -> string  Call LLM and return response\n")
       ((string=? mod "std/socket")
-       "=== std/socket ===\n(tcp-connect host port)   -> socket | error  Open TCP connection\n(tcp-send socket data)    -> bool  Send data\n(tcp-recv socket maxlen)  -> string  Receive data\n(tcp-close socket)        -> void  Close connection\n")
+       "=== std/socket ===\n(tcp-connect host port)   -> socket | ()  Open TCP connection\n(tcp-listen port)         -> listener | ()  Bind 127.0.0.1 (port 0=ephemeral)  #2771\n(tcp-local-port sock)     -> port | ()  getsockname for ephemeral listen\n(tcp-accept listener)     -> socket | ()  Blocking accept\n(tcp-accept-timeout l s)  -> socket | ()  Accept with timeout seconds\n(tcp-send socket data)    -> int  Send data (bytes or -1)\n(tcp-recv socket maxlen)  -> string | ()  Receive data\n(tcp-close socket)        -> void  Close connection or listener\n")
       ((string=? mod "std/string")
        "=== std/string (require \"std/string\" all:) ===\n(string-split str delim)  -> list  Split string\n(string-join lst sep)     -> string  Join strings\n(string-pad str len)      -> string  Pad with spaces\n(string-reverse str)      -> string\n(string-downcase str)     -> string\n(string-upcase str)       -> string\n(string-trim str)         -> string  Strip whitespace\n(string-contains? str sub) -> bool  Check substring\n")
       ((string=? mod "std/math")
