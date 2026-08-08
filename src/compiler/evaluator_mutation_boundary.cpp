@@ -978,12 +978,56 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 }
             } // !render_fast_exit_this_boundary_
         }
-        // Issue #488: post-mutate reflect validation + snapshot fields.
+        // Issue #488 / #1611 / #2765: post-mutate reflect auto_validate /
+        // hygiene_validate on Guard success path (schema-level closed loop).
+        // Default ON (guard_reflect_validate_enabled_); Soft → metric-only
+        // on fail; Strict → structural force-rollback. RenderFastExit and
+        // flag-off → zero validate cost (skip counter only).
         // (Also covered as provenance leg of #1614 invariant audit when sampled.)
-        // Issue #2215: skip post_mutation_reflect_validate under RenderFastExit
-        // (provenance restamp still runs in dtor pin phase).
-        if (!render_fast_exit_this_boundary_)
-            (void)post_mutation_reflect_validate();
+        if (render_fast_exit_this_boundary_ || !get_guard_reflect_validate_enabled()) {
+            bump_guard_reflect_validate_skipped(); // #2765 AC4 quiet / opt-out
+        } else {
+            bump_guard_reflect_validate(); // #2765 Agent counter
+            const bool reflect_ok = post_mutation_reflect_validate();
+            if (!reflect_ok) {
+                bump_guard_reflect_validate_fail(); // #2765
+                const bool strict_sandbox = aura::core::sandbox::is_strict();
+                if (strict_sandbox && workspace_flat_) {
+                    // #2765 AC1 Strict: schema/hygiene fail → force structural undo
+                    // (mirrors invariant hard-gate force-rollback shape).
+                    bump_guard_reflect_validate_strict_rollback();
+                    BoundaryRollbackStats stats;
+                    stats.field_records_rolled =
+                        workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                    if (stats.field_records_rolled > 0) {
+                        bump_mutation_log_rollback_count();
+                        if (nested_boundary)
+                            bump_edsl_nested_atomic_rollback();
+                    }
+                    workspace_flat_->restore_children(std::move(cp.children_snapshot));
+                    stats.children_column_restored = true;
+                    if (cp.fine_rollback) {
+                        workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                        workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
+                        stats.sym_id_column_restored = true;
+                        stats.param_columns_restored = true;
+                    }
+                    last_boundary_rollback_stats_ = stats;
+                    defuse_index_ = nullptr;
+                    if (!nested_boundary)
+                        clear_txn_dirty();
+                    last_mutate_error_ = "guard-reflect-validate-fail-strict-rollback";
+                    const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+                    const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                    typed_audit::record_boundary_outcome(
+                        mid, "guard-reflect-validate-force-rollback", cp.version,
+                        defuse_version_.load(std::memory_order_acquire), /*success=*/false, 0, 0,
+                        fid);
+                    return cp;
+                }
+                // Soft / non-Strict: metric-only; mutation stays committed.
+            }
+        }
     } else if (!success) {
         // Issue #1589: TypedMutationAudit rollback trail.
         const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);

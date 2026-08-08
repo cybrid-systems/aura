@@ -4662,18 +4662,20 @@ void ObservabilityPrims::register_eval_p30(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 31 (orig lines 4468-4536)
 void ObservabilityPrims::register_eval_p31(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #596: query:guard-panic-reflect-stats — Guard + panic checkpoint +
-    // reflect/schema validation + fiber resume closed-loop companion
-    // (non-duplicative with #548 panic-checkpoint-lifecycle-stats,
+    // Issue #596 / #2765: query:guard-panic-reflect-stats — Guard + panic
+    // checkpoint + reflect/schema validation + fiber resume closed-loop
+    // companion (non-duplicative with #548 panic-checkpoint-lifecycle-stats,
     // #594 reflection-selfmod-stats, #592 fiber resume safety matrix).
     //
-    // Fields (5 + sentinel):
+    // Fields (5 + #2765 Guard-reflect keys + sentinel):
     //   - checkpoints-committed   panic_checkpoint_commit_count_
     //   - restores-on-resume      guard_panic_reflect_restores_on_resume_total
     //   - validation-pass         schema_validation_pass_count_
     //   - validation-fail         schema_validation_fail_count_
     //   - boundary-violation-prevented
     //                             guard_panic_reflect_boundary_violation_prevented_total
+    //   - guard-reflect-validate-total / -fail-total / -strict-rollback-total
+    //     / -skipped-total / -enabled / schema-2765  (#2765)
     //   - schema == 596
     ObservabilityPrims::register_stats_impl(
         "query:guard-panic-reflect-stats", [&ev](const auto&) -> EvalValue {
@@ -4695,7 +4697,24 @@ void ObservabilityPrims::register_eval_p31(PrimRegistrar add, Evaluator& ev) {
                         m->guard_panic_reflect_boundary_violation_prevented_total.load(
                             std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            // Issue #2765 Agent-facing Guard→reflect closed-loop counters.
+            const std::int64_t guard_reflect_total =
+                m ? static_cast<std::int64_t>(
+                        m->guard_reflect_validate_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_reflect_fail =
+                m ? static_cast<std::int64_t>(
+                        m->guard_reflect_validate_fail_total.load(std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_reflect_strict_rb =
+                m ? static_cast<std::int64_t>(m->guard_reflect_validate_strict_rollback_total.load(
+                        std::memory_order_relaxed))
+                  : 0;
+            const std::int64_t guard_reflect_skipped =
+                m ? static_cast<std::int64_t>(
+                        m->guard_reflect_validate_skipped_total.load(std::memory_order_relaxed))
+                  : 0;
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -4728,6 +4747,17 @@ void ObservabilityPrims::register_eval_p31(PrimRegistrar add, Evaluator& ev) {
             insert_kv("validation-fail", validation_fail);
             insert_kv("boundary-violation-prevented", boundary_prevented);
             insert_kv("schema", 596);
+            // Issue #2765: Guard success-path reflect validate closed-loop.
+            insert_kv("guard-reflect-validate-total", guard_reflect_total);
+            insert_kv("guard-reflect-validate-fail-total", guard_reflect_fail);
+            insert_kv("guard-reflect-validate-strict-rollback-total", guard_reflect_strict_rb);
+            insert_kv("guard-reflect-validate-skipped-total", guard_reflect_skipped);
+            insert_kv("guard-reflect-validate-enabled",
+                      ev.get_guard_reflect_validate_enabled() ? 1 : 0);
+            insert_kv("guard-reflect-last-ok", ev.get_last_schema_validation_ok() ? 1 : 0);
+            insert_kv("guard-reflect-validate-wired", 1);
+            insert_kv("schema-2765", 2765);
+            insert_kv("issue-2765", 2765);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
