@@ -123,41 +123,56 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     //   re-parse and re-attach happens here, since the AST layer's
     //   rollback only marks the record as rolled back and bumps
     //   generation (it doesn't have access to the parser).
+    //
+    // Issue #2787: single reverse walk; mutate the found record in
+    // place (no second O(N) search by mutation_id). Field-level path
+    // uses try_rollback_record(rec) instead of rollback(mid). Exclusive
+    // WorkspaceUniqueIfNeeded already serializes concurrent log appends.
     add("workspace:rollback-latest", [&ev](const auto&) -> EvalValue {
         // Issue #1994 (F-004) / Wave1 B-09: unique workspace lock, but
         // adopt outer MutationBoundaryGuard exclusive hold (no re-lock).
         Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_int(0);
-        // Walk the log in reverse; the latest Committed record wins.
-        const auto& log = ev.workspace_flat_->all_mutations();
-        for (auto it = log.rbegin(); it != log.rend(); ++it) {
-            if (it->status != aura::ast::MutationStatus::Committed)
+        // Non-const: COW-detaches via all_mutations() write conversion (#2457).
+        auto& log = ev.workspace_flat_->all_mutations();
+        for (std::size_t ri = log.size(); ri > 0; --ri) {
+            const std::size_t idx = ri - 1;
+            auto& rec = log[idx];
+            if (rec.status != aura::ast::MutationStatus::Committed)
                 continue;
-            // For subtree records, do the re-parse + re-attach here
-            if (it->has_subtree_rollback && it->parent_id != aura::ast::NULL_NODE &&
-                !it->old_subtree_source.empty()) {
-                auto pr = aura::parser::parse_to_flat(it->old_subtree_source, *ev.workspace_flat_,
-                                                      *ev.workspace_pool_);
+            // For subtree records, re-parse + re-attach, then mark via index
+            // (stable under parse: parse_to_flat does not push mutation_log).
+            if (rec.has_subtree_rollback && rec.parent_id != aura::ast::NULL_NODE &&
+                !rec.old_subtree_source.empty()) {
+                // Snapshot fields before parse (defensive; exclusive lock
+                // already prevents concurrent log mutation).
+                const auto parent_id = rec.parent_id;
+                const auto child_idx = rec.child_idx;
+                const auto mid = rec.mutation_id;
+                const std::string old_src = rec.old_subtree_source;
+                auto pr =
+                    aura::parser::parse_to_flat(old_src, *ev.workspace_flat_, *ev.workspace_pool_);
                 if (pr.success && pr.root != aura::ast::NULL_NODE) {
-                    ev.workspace_flat_->set_child(it->parent_id, it->child_idx, pr.root);
-                    ev.workspace_flat_->mark_dirty_upward(it->parent_id);
-                    // Mark the record as rolled back (bump generation
-                    // so any cached NodeIds become stale).
-                    for (auto& r : ev.workspace_flat_->all_mutations()) {
-                        if (r.mutation_id == it->mutation_id) {
-                            r.status = aura::ast::MutationStatus::RolledBack;
-                            break;
-                        }
+                    ev.workspace_flat_->set_child(parent_id, child_idx, pr.root);
+                    // try_rollback_record: status + generation bump + dirty
+                    // (SubtreeMark path). Re-resolve by index after parse
+                    // (log vector itself is not reallocated by parse_to_flat).
+                    auto& log2 = ev.workspace_flat_->all_mutations();
+                    if (idx < log2.size() && log2[idx].mutation_id == mid) {
+                        (void)ev.workspace_flat_->try_rollback_record(log2[idx]);
+                    } else {
+                        // Index identity broken (should not happen under lock).
+                        return make_int(0);
                     }
-                    return make_int(static_cast<std::int64_t>(it->mutation_id));
+                    return make_int(static_cast<std::int64_t>(mid));
                 }
                 // Parse failed — leave record committed, report failure
                 return make_int(0);
             }
-            // Field-level rollback: delegate to the AST layer
-            auto mid = it->mutation_id;
-            if (ev.workspace_flat_->rollback(mid))
+            // Field-level: O(1) via record ref — no second mutation_id walk.
+            const auto mid = rec.mutation_id;
+            if (ev.workspace_flat_->try_rollback_record(rec).has_value())
                 return make_int(static_cast<std::int64_t>(mid));
             return make_int(0);
         }
