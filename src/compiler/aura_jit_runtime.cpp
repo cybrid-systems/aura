@@ -95,7 +95,8 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 
 // ── TL Arena (thread-local bump allocator) ────────────────────
 // Issue #1359: 1MB default (was 64MB), graceful OOM, env override.
-__thread TLarena g_tl_arena;
+// g_tl_arena SSOT definition: tl_arena_tls.cpp (libaura_tl_arena.so).
+// Do not re-define here — multi-SO issue tests would get split TLS.
 
 static std::atomic<uint64_t> g_tl_arena_oom_total{0};
 
