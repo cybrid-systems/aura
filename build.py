@@ -824,6 +824,20 @@ def cmd_lint():
             "Issue #2777 AgentScope read guard linter failed — run python3 scripts/coverage/checks/check_agent_scope_read_guard_2777.py"
         )
         return r
+    # Issue #2778: g_scope_bp_map lifecycle (#2633 residual). erase /
+    # reset_scope_bp_map_for_test + LRU at cap + shared_ptr so concurrent
+    # lookup/decay cannot UAF. reset_all_agent_scopes_for_test clears
+    # the BP map. ac2778_* in test_mailbox_bp_admit per #81967.
+    sbml_script = COVERAGE_CHECKS / "check_scope_bp_map_lifecycle_2778.py"
+    if not sbml_script.exists():
+        fail(f"missing {sbml_script}")
+        return 1
+    r = run([sys.executable, str(sbml_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2778 scope BP map lifecycle linter failed — run python3 scripts/coverage/checks/check_scope_bp_map_lifecycle_2778.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

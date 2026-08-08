@@ -100,8 +100,12 @@ inline constexpr int kAgentScopeConcurrentMisuseIssue = 2399;
 // spawn_bp_scope_overflow_total metric. 256 covers typical multi-tenant
 // hosts without per-scope allocation storms (each entry = ~24 bytes
 // atomic + string copy on insert).
+// Issue #2778: gauges are no longer immortal — erase_scope_bp_gauge /
+// reset_scope_bp_map_for_test free entries; at-cap insert LRU-evicts
+// the coldest last_event_us slot (still bumps overflow for dashboards).
 inline constexpr std::size_t kMailboxBpScopeMapCap = 256;
 inline constexpr int kMailboxBpScopeGaugeIssue = 2633;
+inline constexpr int kMailboxBpScopeMapLifecycleIssue = 2778;
 
 // Issue #2228 / #2535: env resolution for the BP admit threshold.
 // Returns the configured threshold (0 = admit control off). Parses
@@ -176,14 +180,16 @@ struct ScopeBpGauge {
     std::atomic<std::uint64_t> last_event_us{0};
 };
 
-// Issue #2633: bounded map of scope-local BP gauges. Insert-only on
-// first touch (idempotent), mutex-protected since insertions are
+// Issue #2633 / #2778: bounded map of scope-local BP gauges. First
+// touch inserts (idempotent), mutex-protected since insertions are
 // rare but lookups can race with fiber push/fanout under load. Cap
-// = kMailboxBpScopeMapCap (256); overflow falls back to process
-// bucket + spawn_bp_scope_overflow_total metric (so dashboards can
-// alert when a multi-tenant host crosses the cap).
+// = kMailboxBpScopeMapCap (256). shared_ptr so erase/LRU/reset can
+// drop map entries without UAF against concurrent lookup / decay
+// snapshot holders (raw unique_ptr + immortal was the #2633 leak).
+// Overflow at cap: LRU-evict coldest last_event_us + bump
+// spawn_bp_scope_overflow_total (dashboards still see pressure).
 inline std::mutex g_scope_bp_map_mtx{};
-inline std::unordered_map<std::string, std::unique_ptr<ScopeBpGauge>> g_scope_bp_map{};
+inline std::unordered_map<std::string, std::shared_ptr<ScopeBpGauge>> g_scope_bp_map{};
 
 // Short drain for keepalive helper fiber after body join (#2159).
 inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
@@ -592,8 +598,11 @@ inline void fiber_sleep_ms(std::uint32_t ms) noexcept {
 // orch agent_send / emit_keepalive when those paths already counted BP.
 // Issue #2633: optional scope_id routes the bump to a per-scope gauge
 // (bounded map, cap kMailboxBpScopeMapCap). empty scope_id = process
-// bucket (legacy / backward-compat with #2591). Overflow falls back
-// to process bucket + spawn_bp_scope_overflow_total metric.
+// bucket (legacy / backward-compat with #2591).
+// Issue #2778: at-cap insert LRU-evicts the coldest last_event_us entry
+// (keeps isolation for the new scope) and bumps
+// spawn_bp_scope_overflow_total so dashboards still see pressure.
+// Hosts can also call erase_scope_bp_gauge on tenant teardown.
 inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcept {
     const auto now_us = orch_now_us();
     if (scope_id.empty()) {
@@ -601,47 +610,88 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcep
         g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
         return;
     }
-    ScopeBpGauge* gauge = nullptr;
+    std::shared_ptr<ScopeBpGauge> gauge;
     {
         std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
         auto it = g_scope_bp_map.find(std::string{scope_id});
         if (it == g_scope_bp_map.end()) {
             if (g_scope_bp_map.size() >= kMailboxBpScopeMapCap) {
+                // Issue #2778: LRU-evict coldest last_event_us (quiet /
+                // never-touched scopes first). Prefer free path over
+                // permanent process-bucket fallback so multi-tenant
+                // isolation does not die after 256 distinct ids.
+                auto coldest = g_scope_bp_map.begin();
+                auto coldest_us =
+                    coldest->second ? coldest->second->last_event_us.load(std::memory_order_relaxed)
+                                    : std::uint64_t{0};
+                for (auto jt = g_scope_bp_map.begin(); jt != g_scope_bp_map.end(); ++jt) {
+                    const auto us = jt->second
+                                        ? jt->second->last_event_us.load(std::memory_order_relaxed)
+                                        : std::uint64_t{0};
+                    if (us < coldest_us) {
+                        coldest = jt;
+                        coldest_us = us;
+                    }
+                }
+                g_scope_bp_map.erase(coldest);
                 g_orch_module_stats.spawn_bp_scope_overflow_total.fetch_add(
                     1, std::memory_order_relaxed);
-                // Fall back to process bucket (graceful degradation:
-                // storm still bumps the global gauge so production
-                // dashboards see it; new scope id is dropped to keep
-                // the map bounded under adversarial / misconfigured
-                // tenants).
-                g_orch_module_stats.mailbox_bp_recent_total.fetch_add(1, std::memory_order_relaxed);
-                g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
-                return;
             }
-            auto g = std::make_unique<ScopeBpGauge>();
-            gauge = g.get();
+            auto g = std::make_shared<ScopeBpGauge>();
+            gauge = g;
             g_scope_bp_map.emplace(std::string{scope_id}, std::move(g));
         } else {
-            gauge = it->second.get();
+            gauge = it->second;
         }
     }
+    if (!gauge)
+        return;
     gauge->recent.fetch_add(1, std::memory_order_relaxed);
     gauge->last_event_us.store(now_us, std::memory_order_release);
     g_mailbox_bp_last_event_us.store(now_us, std::memory_order_release);
 }
 
-// Issue #2633: lookup helper for scope-local gauge. Returns the gauge
-// pointer (heap-owned by g_scope_bp_map) or nullptr if not yet inserted.
-// Caller is responsible for atomic reads. Empty scope_id → nullptr
-// (caller should fall back to process bucket).
-inline ScopeBpGauge* lookup_scope_bp_gauge(std::string_view scope_id) noexcept {
+// Issue #2633 / #2778: lookup helper for scope-local gauge. Returns a
+// shared_ptr (null if not yet inserted / empty scope_id). shared_ptr
+// keeps the gauge alive across concurrent erase/LRU/reset so the
+// caller can safely read atomics after the map lock is released.
+// Empty scope_id → nullptr (caller should fall back to process bucket).
+inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scope_id) noexcept {
     if (scope_id.empty())
         return nullptr;
     std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
     auto it = g_scope_bp_map.find(std::string{scope_id});
     if (it == g_scope_bp_map.end())
         return nullptr;
-    return it->second.get();
+    return it->second;
+}
+
+// Issue #2778: explicit free of one scope gauge (tenant / session
+// teardown). Returns true if an entry was erased. Concurrent
+// lookup/decay holders keep the gauge alive via shared_ptr until
+// they drop their refs.
+inline bool erase_scope_bp_gauge(std::string_view scope_id) noexcept {
+    if (scope_id.empty())
+        return false;
+    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    return g_scope_bp_map.erase(std::string{scope_id}) > 0;
+}
+
+// Issue #2778: process-wide clear of the scope BP map (tests + session
+// boundary). Returns the number of gauges dropped. Wired from
+// reset_all_agent_scopes_for_test so scope lifecycle reset also frees
+// the #2633 residual leak.
+inline std::size_t reset_scope_bp_map_for_test() noexcept {
+    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    const auto n = g_scope_bp_map.size();
+    g_scope_bp_map.clear();
+    return n;
+}
+
+// Issue #2778: test / observability — current map occupancy under lock.
+inline std::size_t scope_bp_map_size_for_test() noexcept {
+    std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
+    return g_scope_bp_map.size();
 }
 
 // Issue #2398: quiet-period decay of mailbox_bp_recent_total.
@@ -653,6 +703,8 @@ inline ScopeBpGauge* lookup_scope_bp_gauge(std::string_view scope_id) noexcept {
 // window check uses g_mailbox_bp_last_event_us — same last-event clock
 // as the process bucket — so the per-scope + process decay fire on the
 // same admit preflight tick (no extra clock work).
+// Issue #2778: snapshot holds shared_ptr so concurrent erase/LRU cannot
+// UAF the gauge mid-zero.
 inline void maybe_decay_mailbox_bp_recent() noexcept {
     const auto window_ms = resolve_mailbox_bp_window_ms();
     if (window_ms == 0)
@@ -669,18 +721,20 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
         return; // another thread won the CAS this tick
     }
     g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_release);
-    // Issue #2633: per-scope decay — zero every bucket under the same
-    // shared window. Snapshot the map under lock to avoid holding the
-    // mutex across N atomic stores (which would block scope-bp inserts).
-    std::vector<ScopeBpGauge*> snapshot;
+    // Issue #2633 / #2778: per-scope decay — zero every bucket under the
+    // same shared window. Snapshot shared_ptrs under lock so erase/LRU
+    // cannot free a gauge mid-store.
+    std::vector<std::shared_ptr<ScopeBpGauge>> snapshot;
     {
         std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
         snapshot.reserve(g_scope_bp_map.size());
         for (const auto& [_, g] : g_scope_bp_map)
-            snapshot.push_back(g.get());
+            snapshot.push_back(g);
     }
-    for (ScopeBpGauge* g : snapshot)
-        g->recent.store(0, std::memory_order_release);
+    for (const auto& g : snapshot) {
+        if (g)
+            g->recent.store(0, std::memory_order_release);
+    }
 }
 
 inline void snapshot_orch_stats(std::uint64_t& spawned, std::uint64_t& joined, std::uint64_t& sends,
@@ -1128,7 +1182,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                 // #2633: scope-local gauge. If the scope hasn't seen
                 // any BP events yet (lookup returns nullptr), recent=0
                 // (silent admit — the scope is "clean" by default).
-                if (auto* gauge = lookup_scope_bp_gauge(spec.bp_scope_id))
+                if (auto gauge = lookup_scope_bp_gauge(spec.bp_scope_id))
                     bp_recent = gauge->recent.load(std::memory_order_relaxed);
             } else {
                 bp_recent =
