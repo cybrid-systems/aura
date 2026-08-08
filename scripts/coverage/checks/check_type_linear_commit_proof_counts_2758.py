@@ -37,6 +37,12 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        # clang-format may split adjacent string literals; strip quotes/whitespace.
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     def must_not(n: str, label: str, hay: str) -> None:
         if n in hay:
             fails.append(f"{label}: forbidden {n!r}")
@@ -71,12 +77,12 @@ def main() -> int:
     must("last_proof_linear_root_count_v_read", "AC3", q)
 
     # AC4 — additive.
-    must("schema-2697", "AC4", q)
-    must("schema-2717", "AC4", q)
-    must("type-linear-commit-proof-stamped-total", "AC4", q)
-    must("type-linear-commit-proof-counts-filled-total", "AC4", q)
-    must('"schema-2758"', "AC4", q)
-    must('"issue-2758"', "AC4", q)
+    must_key("schema-2697", "AC4", q)
+    must_key("schema-2717", "AC4", q)
+    must_key("type-linear-commit-proof-stamped-total", "AC4", q)
+    must_key("type-linear-commit-proof-counts-filled-total", "AC4", q)
+    must_key("schema-2758", "AC4", q)
+    must_key("issue-2758", "AC4", q)
     must("g_type_linear_commit_proof_counts_filled_total", "AC4", tma)
 
     # AC5/AC6 — tests + linter + no docs.

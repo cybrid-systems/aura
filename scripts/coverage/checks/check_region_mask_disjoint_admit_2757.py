@@ -61,15 +61,19 @@ def main() -> int:
     must("regions_mask_disjoint", "AC1", emb)
     must("g_mutation_region_mask_disjoint_admit_total.fetch_add(1,", "AC1", emb)
     must("return a != 0 && b != 0 && a != b;", "AC1 key fast path", mhb)
+    # #2761: when both masks proven, mask-AND is sole authority.
+    must("(mask_a & mask_b) == 0", "AC1 mask-AND", mhb)
 
     # AC2 — overlap + densify.
     must("AdmissionRejected: region-overlap", "AC2", emb)
     must("atomic_batch_active", "AC2", emb)
     must("region_shard_", "AC2", emb)
 
-    # AC3/AC4 — soft + quiet.
+    # AC3/AC4 — soft + quiet (missing mask → #2724 key fallback; #2761).
     must("metric-only", "AC3", emb)
-    must("if (mask_a == 0 || mask_b == 0)", "AC4 quiet", mhb)
+    # Quiet: either mask missing falls through to key-equality return.
+    if "mask_a != 0 && mask_b != 0" not in mhb and "mask_a == 0 || mask_b == 0" not in mhb:
+        fails.append("AC4 quiet: regions_disjoint must gate on missing masks")
     must("region_or_mask", "AC4", emb)
 
     # AC5 — query keys + prior surfaces.

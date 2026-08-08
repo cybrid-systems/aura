@@ -12,6 +12,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def _source_has_key(hay: str, key: str) -> bool:
+    n = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+    return key in n
+
+
 RUNNER = ROOT / "scripts" / "coverage" / "runner.py"
 
 

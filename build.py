@@ -593,6 +593,20 @@ def cmd_lint():
             "Issue #2760 region impact-mask admit linter failed — run python3 scripts/coverage/checks/check_region_impact_mask_admit_2760.py"
         )
         return r
+    # Issue #2761: mask-AND sole authority when both masks proven — unequal
+    # keys with overlapping cones reject (#2724 residual race). Wires
+    # regions_mask_overlap + mask-overlap-reject counter + mask-first
+    # regions_disjoint + additive query keys + test extension.
+    rmoa_script = COVERAGE_CHECKS / "check_region_mask_overlap_admit_2761.py"
+    if not rmoa_script.exists():
+        fail(f"missing {rmoa_script}")
+        return 1
+    r = run([sys.executable, str(rmoa_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2761 region mask-overlap admit linter failed — run python3 scripts/coverage/checks/check_region_mask_overlap_admit_2761.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

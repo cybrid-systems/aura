@@ -10,6 +10,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_hold_budget.h" // #2761 live regions_disjoint unit checks
 #include "serve/multi_fiber_mailbox.h"
 
 #include <cstdint>
@@ -47,6 +48,19 @@ static std::string read_file(const char* path) {
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+// clang-format may split long string literals in evaluator_primitives_query.cpp
+// (adjacent literals concat at compile time). Match keys after stripping
+// quotes + whitespace — same approach as coverage linter must_key.
+[[nodiscard]] static bool source_has_key(const std::string& hay, std::string_view key) {
+    std::string n;
+    n.reserve(hay.size());
+    for (char ch : hay) {
+        if (ch != '"' && ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
+            n.push_back(ch);
+    }
+    return n.find(key) != std::string::npos;
 }
 
 static std::int64_t href(CompilerService& cs, std::string_view key) {
@@ -273,16 +287,15 @@ static void ac2701_2_soft_path_metric_only() {
 static void ac2701_4_query_keys_added() {
     std::println("\n--- #2701 AC4: query keys + counters ---");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
-    CHECK(q.find("query:mutation-hold-budget-gate") != std::string::npos ||
-              q.find("mutation-hold-budget-reject-total") != std::string::npos,
+    CHECK(source_has_key(q, "query:mutation-hold-budget-gate") ||
+              source_has_key(q, "mutation-hold-budget-reject-total"),
           "AC4: query primitive / reject-total surfaced");
-    CHECK(q.find("mutation-hold-budget-soft-observe-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-hold-budget-soft-observe-total"),
           "AC4: soft-observe-total surfaced");
-    CHECK(q.find("mutation-hold-budget-wired") != std::string::npos,
-          "AC4: wired sentinel surfaced");
-    CHECK(q.find("schema-2701") != std::string::npos, "AC4: schema-2701");
-    CHECK(q.find("issue-2701") != std::string::npos, "AC4: issue-2701");
-    CHECK(q.find("schema-2551") != std::string::npos, "AC4: schema-2551 preserved");
+    CHECK(source_has_key(q, "mutation-hold-budget-wired"), "AC4: wired sentinel surfaced");
+    CHECK(source_has_key(q, "schema-2701"), "AC4: schema-2701");
+    CHECK(source_has_key(q, "issue-2701"), "AC4: issue-2701");
+    CHECK(source_has_key(q, "schema-2551"), "AC4: schema-2551 preserved");
 }
 
 // ── Issue #2701 AC5: source-cite + linter ──
@@ -299,7 +312,7 @@ static void ac2701_5_source_and_linter() {
     CHECK(mhb.find("kMutationHoldBudgetRejectIssue = 2701") != std::string::npos,
           "AC5: mhb stamps issue = 2701");
     CHECK(emb.find("Issue #2701") != std::string::npos, "AC5: emb cites #2701");
-    CHECK(q.find("issue-2701") != std::string::npos, "AC5: q issue-2701");
+    CHECK(source_has_key(q, "issue-2701"), "AC5: q issue-2701");
     CHECK(t.find("ac2701_1_budget_reject_production") != std::string::npos,
           "AC5: AC1 test present");
     CHECK(t.find("ac2701_2_query_keys_added") != std::string::npos, "AC5: AC3 test present");
@@ -421,28 +434,27 @@ static void ac2720_3_nested_outermost_only() {
 static void ac2720_4_query_keys() {
     std::println("\n--- #2720 AC4: additive query keys + sentinels ---");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
-    // #2720 new keys present.
-    CHECK(q.find("\"mutation-hold-budget-holder-degrade-total\"") != std::string::npos,
+    // #2720 new keys present (format-robust vs clang-format splits).
+    CHECK(source_has_key(q, "mutation-hold-budget-holder-degrade-total"),
           "AC4: holder-degrade-total key");
-    CHECK(q.find("\"mutation-hold-budget-holder-degrade-same-fiber-total\"") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-hold-budget-holder-degrade-same-fiber-total"),
           "AC4: holder-degrade-same-fiber-total key");
-    CHECK(q.find("\"mutation-hold-budget-holder-degrade-cross-fiber-total\"") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-hold-budget-holder-degrade-cross-fiber-total"),
           "AC4: holder-degrade-cross-fiber-total key");
-    CHECK(q.find("\"mutation-hold-budget-holder-degrade-wired\"") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-hold-budget-holder-degrade-wired"),
           "AC4: holder-degrade-wired sentinel");
-    CHECK(q.find("\"schema-2720\"") != std::string::npos, "AC4: schema-2720 sentinel");
-    CHECK(q.find("\"issue-2720\"") != std::string::npos, "AC4: issue-2720 sentinel");
+    CHECK(source_has_key(q, "schema-2720"), "AC4: schema-2720 sentinel");
+    CHECK(source_has_key(q, "issue-2720"), "AC4: issue-2720 sentinel");
     // #2701 keys preserved (strict superset).
-    CHECK(q.find("\"mutation-hold-budget-reject-total\"") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-hold-budget-reject-total"),
           "AC4: #2701 reject-total preserved");
-    CHECK(q.find("\"mutation-hold-budget-soft-observe-total\"") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-hold-budget-soft-observe-total"),
           "AC4: #2701 soft-observe-total preserved");
-    CHECK(q.find("\"mutation-hold-budget-wired\"") != std::string::npos,
-          "AC4: #2701 wired preserved");
-    CHECK(q.find("\"schema-2701\"") != std::string::npos, "AC4: #2701 schema-2701 preserved");
-    CHECK(q.find("\"issue-2701\"") != std::string::npos, "AC4: #2701 issue-2701 preserved");
+    CHECK(source_has_key(q, "mutation-hold-budget-wired"), "AC4: #2701 wired preserved");
+    CHECK(source_has_key(q, "schema-2701"), "AC4: #2701 schema-2701 preserved");
+    CHECK(source_has_key(q, "issue-2701"), "AC4: #2701 issue-2701 preserved");
     // #2587 / #2551 preserved (mailbox-hold-starvation baseline).
-    CHECK(q.find("schema-2587") != std::string::npos || q.find("schema-2551") != std::string::npos,
+    CHECK(source_has_key(q, "schema-2587") || source_has_key(q, "schema-2551"),
           "AC4: #2587/#2551 baseline preserved");
 }
 
@@ -589,18 +601,18 @@ static void ac2724_5_additive_observability() {
     CHECK(emb.find("g_mutation_region_concurrent_admit_total.fetch_add(1,") != std::string::npos,
           "AC5: emb bumps concurrent-admit counter");
     // Query keys present.
-    CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-concurrent-admit-total"),
           "AC5: query key mutation-region-concurrent-admit-total");
-    CHECK(q.find("mutation-region-overlap-reject-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-overlap-reject-total"),
           "AC5: query key mutation-region-overlap-reject-total");
-    CHECK(q.find("mutation-region-concurrent-wired") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-concurrent-wired"),
           "AC5: query key mutation-region-concurrent-wired");
-    CHECK(q.find("schema-2724") != std::string::npos, "AC5: schema-2724 sentinel");
-    CHECK(q.find("issue-2724") != std::string::npos, "AC5: issue-2724 sentinel");
+    CHECK(source_has_key(q, "schema-2724"), "AC5: schema-2724 sentinel");
+    CHECK(source_has_key(q, "issue-2724"), "AC5: issue-2724 sentinel");
     // All #2701/#2720/#2587/#2630 surfaces preserved.
-    CHECK(q.find("schema-2701") != std::string::npos, "AC5: #2701 schema-2701 preserved");
-    CHECK(q.find("schema-2720") != std::string::npos, "AC5: #2720 schema-2720 preserved");
-    CHECK(q.find("schema-2551") != std::string::npos || q.find("schema-2587") != std::string::npos,
+    CHECK(source_has_key(q, "schema-2701"), "AC5: #2701 schema-2701 preserved");
+    CHECK(source_has_key(q, "schema-2720"), "AC5: #2720 schema-2720 preserved");
+    CHECK(source_has_key(q, "schema-2551") || source_has_key(q, "schema-2587"),
           "AC5: #2551/#2587 schema preserved");
 }
 
@@ -738,31 +750,23 @@ static void ac2726_3_nested_outermost_only() {
 static void ac2726_4_query_keys() {
     std::println("\n--- #2726 AC4: additive query keys ---");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
-    auto has_key = [&](std::string_view key) {
-        std::string normalized;
-        normalized.reserve(q.size());
-        for (char ch : q) {
-            if (ch != '"' && ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t')
-                normalized.push_back(ch);
-        }
-        return normalized.find(key) != std::string::npos;
-    };
     // #2726 new keys present (tolerate clang-format line splits).
-    CHECK(has_key("mutation-hold-budget-holder-degrade-cross-fiber-cancel-fired-total"),
+    CHECK(source_has_key(q, "mutation-hold-budget-holder-degrade-cross-fiber-cancel-fired-total"),
           "AC4: cross-fiber-cancel-fired-total key");
-    CHECK(has_key("mutation-hold-budget-holder-degrade-cross-fiber-cancel-consumed-total"),
-          "AC4: cross-fiber-cancel-consumed-total key");
-    CHECK(q.find("\"schema-2726\"") != std::string::npos, "AC4: schema-2726 sentinel");
-    CHECK(q.find("\"issue-2726\"") != std::string::npos, "AC4: issue-2726 sentinel");
+    CHECK(
+        source_has_key(q, "mutation-hold-budget-holder-degrade-cross-fiber-cancel-consumed-total"),
+        "AC4: cross-fiber-cancel-consumed-total key");
+    CHECK(source_has_key(q, "schema-2726"), "AC4: schema-2726 sentinel");
+    CHECK(source_has_key(q, "issue-2726"), "AC4: issue-2726 sentinel");
     // #2701 / #2720 / #2724 / #2551 surfaces preserved (strict superset).
-    CHECK(q.find("\"mutation-hold-budget-reject-total\"") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-hold-budget-reject-total"),
           "AC4: #2701 reject-total preserved");
-    CHECK(q.find("\"mutation-hold-budget-soft-observe-total\"") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-hold-budget-soft-observe-total"),
           "AC4: #2701 soft-observe-total preserved");
-    CHECK(q.find("\"schema-2701\"") != std::string::npos, "AC4: #2701 schema-2701 preserved");
-    CHECK(q.find("\"schema-2720\"") != std::string::npos, "AC4: #2720 schema-2720 preserved");
-    CHECK(q.find("\"schema-2724\"") != std::string::npos, "AC4: #2724 schema-2724 preserved");
-    CHECK(q.find("schema-2551") != std::string::npos || q.find("schema-2587") != std::string::npos,
+    CHECK(source_has_key(q, "schema-2701"), "AC4: #2701 schema-2701 preserved");
+    CHECK(source_has_key(q, "schema-2720"), "AC4: #2720 schema-2720 preserved");
+    CHECK(source_has_key(q, "schema-2724"), "AC4: #2724 schema-2724 preserved");
+    CHECK(source_has_key(q, "schema-2551") || source_has_key(q, "schema-2587"),
           "AC4: #2551/#2587 baseline preserved");
 }
 
@@ -922,21 +926,21 @@ static void ac2754_5_additive_observability() {
           "AC5: cone-disjoint-wired sentinel initialized");
     CHECK(mhb.find("kMutationRegionConeDisjointIssue = 2754") != std::string::npos,
           "AC5: issue stamp = 2754");
-    CHECK(q.find("mutation-region-concurrent-cone-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-concurrent-cone-admit-total"),
           "AC5: query key mutation-region-concurrent-cone-admit-total");
-    CHECK(q.find("mutation-region-cone-disjoint-wired") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-cone-disjoint-wired"),
           "AC5: query key mutation-region-cone-disjoint-wired");
-    CHECK(q.find("schema-2754") != std::string::npos, "AC5: schema-2754 sentinel");
-    CHECK(q.find("issue-2754") != std::string::npos, "AC5: issue-2754 sentinel");
+    CHECK(source_has_key(q, "schema-2754"), "AC5: schema-2754 sentinel");
+    CHECK(source_has_key(q, "issue-2754"), "AC5: issue-2754 sentinel");
     // Prior surfaces preserved (strict superset).
-    CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-concurrent-admit-total"),
           "AC5: #2724 concurrent-admit-total preserved");
-    CHECK(q.find("mutation-region-overlap-reject-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-overlap-reject-total"),
           "AC5: #2724 overlap-reject-total preserved");
-    CHECK(q.find("schema-2724") != std::string::npos, "AC5: schema-2724 preserved");
-    CHECK(q.find("schema-2701") != std::string::npos, "AC5: schema-2701 preserved");
-    CHECK(q.find("schema-2720") != std::string::npos, "AC5: schema-2720 preserved");
-    CHECK(q.find("schema-2726") != std::string::npos, "AC5: schema-2726 preserved");
+    CHECK(source_has_key(q, "schema-2724"), "AC5: schema-2724 preserved");
+    CHECK(source_has_key(q, "schema-2701"), "AC5: schema-2701 preserved");
+    CHECK(source_has_key(q, "schema-2720"), "AC5: schema-2720 preserved");
+    CHECK(source_has_key(q, "schema-2726"), "AC5: schema-2726 preserved");
 }
 
 // ── Issue #2754 AC6: source-cite + extend this file per #81967 + no
@@ -993,9 +997,11 @@ static void ac2757_1_zero_key_mask_disjoint_admit() {
           "AC1: mask-disjoint-admit counter initialized");
     CHECK(mhb.find("kMutationRegionMaskDisjointIssue = 2757") != std::string::npos,
           "AC1: issue stamp = 2757");
-    // Quiet path: mask==0 → equality only (no mask-AND work).
-    CHECK(mhb.find("if (mask_a == 0 || mask_b == 0)") != std::string::npos,
-          "AC1: quiet path when either mask is 0");
+    // Quiet path (#2761): missing mask → #2724 key-equality fallback
+    // (mask-AND only when both masks proven).
+    CHECK(mhb.find("mask_a != 0 && mask_b != 0") != std::string::npos ||
+              mhb.find("mask_a == 0 || mask_b == 0") != std::string::npos,
+          "AC1: quiet path when either mask is 0 (missing-mask gate)");
     // Enter admit check on key OR mask (zero-key + proven mask eligible).
     CHECK(emb.find("region_or_mask") != std::string::npos,
           "AC1: emb enters check when key or mask present");
@@ -1003,9 +1009,11 @@ static void ac2757_1_zero_key_mask_disjoint_admit() {
           "AC1: emb calls regions_mask_disjoint");
     CHECK(emb.find("g_mutation_region_mask_disjoint_admit_total.fetch_add(1,") != std::string::npos,
           "AC1: mask-disjoint path bumps counter");
-    // Key-disjoint fast path still first in 4-arg regions_disjoint.
+    // Key-equality fallback preserved when masks absent.
     CHECK(mhb.find("a != 0 && b != 0 && a != b") != std::string::npos,
-          "AC1: key-disjoint fast path preserved");
+          "AC1: key-disjoint fallback preserved");
+    // Mask-AND hot path present.
+    CHECK(mhb.find("(mask_a & mask_b) == 0") != std::string::npos, "AC1: mask-AND hot path");
 }
 
 // ── Issue #2757 AC2: overlapping masks still reject region-overlap;
@@ -1049,19 +1057,19 @@ static void ac2757_5_additive_observability() {
           "AC5: mask-disjoint-admit-total initialized");
     CHECK(mhb.find("g_mutation_region_mask_disjoint_wired{1}") != std::string::npos,
           "AC5: mask-disjoint-wired sentinel");
-    CHECK(q.find("mutation-region-mask-disjoint-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-mask-disjoint-admit-total"),
           "AC5: query key mutation-region-mask-disjoint-admit-total");
-    CHECK(q.find("mutation-region-mask-disjoint-wired") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-mask-disjoint-wired"),
           "AC5: query key mutation-region-mask-disjoint-wired");
-    CHECK(q.find("schema-2757") != std::string::npos, "AC5: schema-2757");
-    CHECK(q.find("issue-2757") != std::string::npos, "AC5: issue-2757");
+    CHECK(source_has_key(q, "schema-2757"), "AC5: schema-2757");
+    CHECK(source_has_key(q, "issue-2757"), "AC5: issue-2757");
     // Prior surfaces preserved.
-    CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-concurrent-admit-total"),
           "AC5: #2724 concurrent-admit preserved");
-    CHECK(q.find("mutation-region-concurrent-cone-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-concurrent-cone-admit-total"),
           "AC5: #2754 cone-admit preserved");
-    CHECK(q.find("schema-2724") != std::string::npos, "AC5: schema-2724 preserved");
-    CHECK(q.find("schema-2754") != std::string::npos, "AC5: schema-2754 preserved");
+    CHECK(source_has_key(q, "schema-2724"), "AC5: schema-2724 preserved");
+    CHECK(source_has_key(q, "schema-2754"), "AC5: schema-2754 preserved");
 }
 
 // ── Issue #2757 AC6: source-cite + linter + no docs/design/* + #81967.
@@ -1169,23 +1177,23 @@ static void ac2760_5_additive_observability() {
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     CHECK(mhb.find("g_mutation_region_impact_mask_wired{1}") != std::string::npos,
           "AC5: impact-mask-wired sentinel");
-    CHECK(q.find("mutation-region-impact-mask-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-impact-mask-admit-total"),
           "AC5: query key mutation-region-impact-mask-admit-total");
-    CHECK(q.find("mutation-region-impact-mask-wired") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-impact-mask-wired"),
           "AC5: query key mutation-region-impact-mask-wired");
-    CHECK(q.find("schema-2760") != std::string::npos, "AC5: schema-2760");
-    CHECK(q.find("issue-2760") != std::string::npos, "AC5: issue-2760");
+    CHECK(source_has_key(q, "schema-2760"), "AC5: schema-2760");
+    CHECK(source_has_key(q, "issue-2760"), "AC5: issue-2760");
     // Prior surfaces preserved.
-    CHECK(q.find("mutation-region-concurrent-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-concurrent-admit-total"),
           "AC5: #2724 concurrent-admit preserved");
-    CHECK(q.find("mutation-region-concurrent-cone-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-concurrent-cone-admit-total"),
           "AC5: #2754 cone-admit preserved");
-    CHECK(q.find("mutation-region-mask-disjoint-admit-total") != std::string::npos,
+    CHECK(source_has_key(q, "mutation-region-mask-disjoint-admit-total"),
           "AC5: #2757 mask-disjoint preserved");
-    CHECK(q.find("schema-2724") != std::string::npos, "AC5: schema-2724 preserved");
-    CHECK(q.find("schema-2754") != std::string::npos, "AC5: schema-2754 preserved");
-    CHECK(q.find("schema-2757") != std::string::npos, "AC5: schema-2757 preserved");
-    CHECK(q.find("schema-2701") != std::string::npos, "AC5: schema-2701 preserved");
+    CHECK(source_has_key(q, "schema-2724"), "AC5: schema-2724 preserved");
+    CHECK(source_has_key(q, "schema-2754"), "AC5: schema-2754 preserved");
+    CHECK(source_has_key(q, "schema-2757"), "AC5: schema-2757 preserved");
+    CHECK(source_has_key(q, "schema-2701"), "AC5: schema-2701 preserved");
 }
 
 // ── Issue #2760 AC6: source-cite + linter + no docs/design ──
@@ -1220,6 +1228,133 @@ static void ac2760_6_source_and_linter() {
     CHECK(!lint.empty(), "AC6: linter present");
     CHECK(read_file("docs/design/2760-region-impact-mask.md").empty(),
           "AC6: no docs/design/2760-* per #1655");
+}
+
+// ── Issue #2761 AC1: unequal keys + overlapping proven cones → reject ──
+static void ac2761_1_unequal_key_mask_overlap_reject() {
+    std::println("\n--- #2761 AC1: unequal keys + overlapping cones reject ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Predicate: both masks proven → mask-AND sole authority (not key-first).
+    CHECK(mhb.find("kMutationRegionMaskOverlapIssue = 2761") != std::string::npos,
+          "AC1: issue stamp = 2761");
+    CHECK(mhb.find("regions_mask_overlap") != std::string::npos,
+          "AC1: regions_mask_overlap helper");
+    CHECK(mhb.find("g_mutation_region_mask_overlap_reject_total{0}") != std::string::npos,
+          "AC1: mask-overlap-reject counter");
+    // regions_disjoint 4-arg: masks first, then key fallback.
+    CHECK(mhb.find("if (mask_a != 0 && mask_b != 0)") != std::string::npos,
+          "AC1: proven masks gate first in regions_disjoint");
+    CHECK(mhb.find("(mask_a & mask_b) == 0") != std::string::npos, "AC1: mask-AND hot path");
+    // Live predicate: unequal + overlapping → not disjoint.
+    using aura::compiler::regions_disjoint;
+    CHECK(!regions_disjoint(/*a=*/1, /*b=*/2, /*mask_a=*/0b0011, /*mask_b=*/0b0110),
+          "AC1: unequal keys + overlapping masks → NOT disjoint (reject)");
+    CHECK(emb.find("regions_mask_overlap") != std::string::npos,
+          "AC1: emb attributes mask-overlap rejects");
+    CHECK(emb.find("g_mutation_region_mask_overlap_reject_total.fetch_add(1,") != std::string::npos,
+          "AC1: emb bumps mask-overlap-reject");
+    CHECK(emb.find("AdmissionRejected: region-overlap") != std::string::npos,
+          "AC1: structured region-overlap reject preserved");
+}
+
+// ── Issue #2761 AC2: unequal keys + proven-disjoint masks → admit ──
+static void ac2761_2_unequal_key_mask_disjoint_admit() {
+    std::println("\n--- #2761 AC2: unequal keys + disjoint masks concurrent admit ---");
+    using aura::compiler::regions_disjoint;
+    using aura::compiler::regions_mask_disjoint;
+    CHECK(regions_disjoint(/*a=*/1, /*b=*/2, /*mask_a=*/0b0001, /*mask_b=*/0b0010),
+          "AC2: unequal keys + disjoint masks → concurrent-admissible");
+    CHECK(regions_mask_disjoint(/*a=*/1, /*b=*/2, /*mask_a=*/0b0001, /*mask_b=*/0b0010),
+          "AC2: mask-disjoint attributes unequal-key proven-disjoint path");
+    // Missing masks → key inequality still admits (#2724 preserve).
+    CHECK(regions_disjoint(/*a=*/1, /*b=*/2, /*mask_a=*/0, /*mask_b=*/0),
+          "AC2: unequal keys + no masks → key-equality admit (#2724)");
+    // Equal keys + disjoint masks still admit (#2754).
+    CHECK(regions_disjoint(/*a=*/5, /*b=*/5, /*mask_a=*/0b0001, /*mask_b=*/0b0010),
+          "AC2: equal keys + disjoint masks still admit (#2754)");
+}
+
+// ── Issue #2761 AC3/AC4: Soft metric-only + no tree walk / quiet fallback ──
+static void ac2761_3_soft_and_hot_path() {
+    std::println("\n--- #2761 AC3/AC4: Soft metric-only + hot path mask-AND only ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(emb.find("metric-only") != std::string::npos, "AC3: Soft path metric-only");
+    CHECK(emb.find("g_last_admitted_cone_mask_soft") != std::string::npos,
+          "AC3: soft tracks last cone mask");
+    // Hot path: only bit AND, no tree walk markers in regions_disjoint body.
+    CHECK(mhb.find("(mask_a & mask_b) == 0") != std::string::npos, "AC4: mask-AND only");
+    CHECK(mhb.find("no tree walk") != std::string::npos ||
+              mhb.find("bit AND only") != std::string::npos ||
+              mhb.find("Hot path is a bit AND") != std::string::npos,
+          "AC4: documents no tree walk / bit AND hot path");
+    // Missing mask → key fallback.
+    CHECK(mhb.find("return a != 0 && b != 0 && a != b;") != std::string::npos,
+          "AC4: missing-mask falls back to key-equality");
+}
+
+// ── Issue #2761 AC5: additive observability ──
+static void ac2761_5_additive_observability() {
+    std::println("\n--- #2761 AC5: additive observability ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(mhb.find("g_mutation_region_mask_overlap_wired{1}") != std::string::npos,
+          "AC5: mask-overlap-wired sentinel");
+    CHECK(source_has_key(q, "mutation-region-mask-overlap-reject-total"),
+          "AC5: query key mutation-region-mask-overlap-reject-total");
+    CHECK(source_has_key(q, "mutation-region-mask-overlap-wired"),
+          "AC5: query key mutation-region-mask-overlap-wired");
+    CHECK(source_has_key(q, "schema-2761"), "AC5: schema-2761");
+    CHECK(source_has_key(q, "issue-2761"), "AC5: issue-2761");
+    // Prior surfaces preserved.
+    CHECK(source_has_key(q, "mutation-region-concurrent-admit-total"),
+          "AC5: #2724 concurrent-admit preserved");
+    CHECK(source_has_key(q, "mutation-region-overlap-reject-total"),
+          "AC5: #2724 overlap-reject preserved");
+    CHECK(source_has_key(q, "mutation-region-concurrent-cone-admit-total"),
+          "AC5: #2754 cone-admit preserved");
+    CHECK(source_has_key(q, "mutation-region-mask-disjoint-admit-total"),
+          "AC5: #2757 mask-disjoint preserved");
+    CHECK(source_has_key(q, "mutation-region-impact-mask-admit-total"),
+          "AC5: #2760 impact-mask-admit preserved");
+    CHECK(source_has_key(q, "schema-2724"), "AC5: schema-2724 preserved");
+    CHECK(source_has_key(q, "schema-2754"), "AC5: schema-2754 preserved");
+    CHECK(source_has_key(q, "schema-2757"), "AC5: schema-2757 preserved");
+    CHECK(source_has_key(q, "schema-2760"), "AC5: schema-2760 preserved");
+    CHECK(source_has_key(q, "schema-2701"), "AC5: schema-2701 preserved");
+}
+
+// ── Issue #2761 AC6: source-cite + linter + no docs/design ──
+static void ac2761_6_source_and_linter() {
+    std::println("\n--- #2761 AC6: source-cite + linter ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_region_mask_overlap_admit_2761.py");
+    CHECK(mhb.find("#2761") != std::string::npos, "AC6: mhb cites #2761");
+    CHECK(emb.find("#2761") != std::string::npos, "AC6: emb cites #2761");
+    CHECK(q.find("#2761") != std::string::npos, "AC6: query cites #2761");
+    CHECK(t.find("ac2761_1_unequal_key_mask_overlap_reject") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2761_2_unequal_key_mask_disjoint_admit") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2761_3_soft_and_hot_path") != std::string::npos, "AC6: AC3/AC4 test present");
+    CHECK(t.find("ac2761_5_additive_observability") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2761_6_source_and_linter") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(t.find("ac2760_1_impact_mask_concurrent_admit") != std::string::npos,
+          "AC6: #2760 tests preserved");
+    CHECK(t.find("ac2757_1_zero_key_mask_disjoint_admit") != std::string::npos,
+          "AC6: #2757 tests preserved");
+    CHECK(read_file("tests/serve/test_issue_2761.cpp").empty(),
+          "AC6: no tests/serve/test_issue_2761.cpp per #81967");
+    CHECK(build.find("check_region_mask_overlap_admit_2761") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty(), "AC6: linter present");
+    CHECK(read_file("docs/design/2761-region-mask-overlap.md").empty(),
+          "AC6: no docs/design/2761-* per #1655");
 }
 
 } // namespace
@@ -1284,7 +1419,14 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2760_4_densify_isolation();
     ac2760_5_additive_observability();
     ac2760_6_source_and_linter();
-    std::println("\n=== #2551 + #2701 + #2720 + #2724 + #2726 + #2754 + #2757 + #2760: {} "
+    std::println(
+        "\n=== Issue #2761: mask-AND sole authority (unequal-key cone overlap reject) ===");
+    ac2761_1_unequal_key_mask_overlap_reject();
+    ac2761_2_unequal_key_mask_disjoint_admit();
+    ac2761_3_soft_and_hot_path();
+    ac2761_5_additive_observability();
+    ac2761_6_source_and_linter();
+    std::println("\n=== #2551 + #2701 + #2720 + #2724 + #2726 + #2754 + #2757 + #2760 + #2761: {} "
                  "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;

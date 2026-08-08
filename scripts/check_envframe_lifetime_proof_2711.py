@@ -70,6 +70,12 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        # clang-format may split adjacent string literals; strip quotes/ws.
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     efl = _read("src/core/envframe_lifetime.ixx")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     t = _read("tests/compiler/test_densify_ownership_scan_fail_gate.cpp")
@@ -103,17 +109,17 @@ def main() -> int:
     must("class EnvFrameLifetimeGuard", "AC4", efl)
     must("no extra atomics on the quiet path", "AC4", efl)
 
-    # AC5 — additive query keys + schema sentinels.
-    must("envframe-lifetime-proof-hold-gen", "AC5", q)
-    must("envframe-lifetime-proof-compact-gen", "AC5", q)
-    must("envframe-lifetime-proof-mutation-epoch", "AC5", q)
-    must("envframe-lifetime-proof-densify-scan-fail", "AC5", q)
-    must("envframe-lifetime-proof-would-allow-commit", "AC5", q)
-    must("envframe-lifetime-proof-force-reason-code", "AC5", q)
-    must("schema-2711", "AC5", q)
-    must("issue-2711", "AC5", q)
+    # AC5 — additive query keys + schema sentinels (format-robust).
+    must_key("envframe-lifetime-proof-hold-gen", "AC5", q)
+    must_key("envframe-lifetime-proof-compact-gen", "AC5", q)
+    must_key("envframe-lifetime-proof-mutation-epoch", "AC5", q)
+    must_key("envframe-lifetime-proof-densify-scan-fail", "AC5", q)
+    must_key("envframe-lifetime-proof-would-allow-commit", "AC5", q)
+    must_key("envframe-lifetime-proof-force-reason-code", "AC5", q)
+    must_key("schema-2711", "AC5", q)
+    must_key("issue-2711", "AC5", q)
     # Prior surface preserved (regression).
-    must("schema-2697", "AC5", q)
+    must_key("schema-2697", "AC5", q)
 
     # AC6 — source-cite + linter + build.py + no docs/design/.
     must("Issue #2711", "AC6", efl)

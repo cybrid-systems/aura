@@ -76,6 +76,11 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     tma = _read("src/compiler/typed_mutation_audit.h")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     t = _read("tests/compiler/test_partial_cone_commit_gate.cpp")
@@ -112,15 +117,15 @@ def main() -> int:
     must("g_occurrence_hard_face_full_solve_recover_total", "AC4", tma)
 
     # AC5 — Additive query keys (kebab + schema/issue sentinels).
-    must("occurrence-hard-face-full-solve-recover-total", "AC5", q)
-    must("occurrence-hard-face-full-solve-recover-wired", "AC5", q)
-    must("schema-2716", "AC5", q)
-    must("issue-2716", "AC5", q)
+    must_key("occurrence-hard-face-full-solve-recover-total", "AC5", q)
+    must_key("occurrence-hard-face-full-solve-recover-wired", "AC5", q)
+    must_key("schema-2716", "AC5", q)
+    must_key("issue-2716", "AC5", q)
     # Regression on prior surfaces.
-    must("cone-outside-goal-drop-total", "AC5", q)
-    must("occurrence-empty-after-fence-total", "AC5", q)
-    must("schema-2703", "AC5", q)
-    must("schema-2704", "AC5", q)
+    must_key("cone-outside-goal-drop-total", "AC5", q)
+    must_key("occurrence-empty-after-fence-total", "AC5", q)
+    must_key("schema-2703", "AC5", q)
+    must_key("schema-2704", "AC5", q)
 
     # AC6 — source-cite + linter + build.py + no docs/design/.
     must("ac2716_1_production_hard_reject_on_face_hit", "AC6", t)
