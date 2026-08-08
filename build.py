@@ -683,6 +683,20 @@ def cmd_lint():
             "Issue #2766 require-before-export free-var linter failed — run python3 scripts/coverage/checks/check_module_require_export_order_2766.py"
         )
         return r
+    # Issue #2767: denseness CLI DX — file path + -e EXPR + usage that
+    # documents AURA_PATH / AURA_SANDBOX / AURA_PIPELINE_STRICT footguns
+    # for span runners (Hermes/Aether/Hephaestus). Optional smoke when
+    # build/aura exists.
+    cddx_script = COVERAGE_CHECKS / "check_cli_denseness_dx_2767.py"
+    if not cddx_script.exists():
+        fail(f"missing {cddx_script}")
+        return 1
+    r = run([sys.executable, str(cddx_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2767 denseness CLI DX linter failed — run python3 scripts/coverage/checks/check_cli_denseness_dx_2767.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
