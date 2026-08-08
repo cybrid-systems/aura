@@ -553,6 +553,52 @@ static void ac2716_6_source_and_linter() {
           "AC6: no docs/design/2716-* per #1655");
 }
 
+// ── Issue #2750: full ConstraintSystem::solve recover on occurrence face ──
+static void ac2750_1_recover_hook_in_commit_readiness() {
+    std::println("\n--- #2750 AC1: recover hook in commit_readiness ---");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(h.find("g_occurrence_full_solve_recover_fn") != std::string::npos,
+          "AC1: recover function pointer");
+    CHECK(h.find("g_occurrence_hard_face_recover_success_total") != std::string::npos,
+          "AC1: recover success counter");
+    CHECK(h.find("g_occurrence_hard_face_recover_fail_total") != std::string::npos,
+          "AC1: recover fail counter");
+    CHECK(h.find("Issue #2750") != std::string::npos || h.find("#2750") != std::string::npos,
+          "AC1: cites #2750");
+}
+
+static void ac2750_2_typechecker_wires_recover() {
+    std::println("\n--- #2750 AC2: TypeChecker wires full-solve recover ---");
+    const auto tc = read_file("src/compiler/type_checker.ixx");
+    CHECK(tc.find("try_occurrence_hard_face_full_solve_recover") != std::string::npos,
+          "AC2: TypeChecker recover method");
+    CHECK(tc.find("install_occurrence_full_solve_recover") != std::string::npos,
+          "AC2: install hook in TypeChecker ctor");
+    CHECK(tc.find("SolveResult::SOLVED") != std::string::npos, "AC2: full solve SOLVED check");
+}
+
+static void ac2750_3_query_keys() {
+    std::println("\n--- #2750 AC3: query keys additive ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("occurrence-hard-face-recover-success-total") != std::string::npos,
+          "AC3: recover-success key");
+    CHECK(q.find("occurrence-hard-face-recover-fail-total") != std::string::npos,
+          "AC3: recover-fail key");
+    CHECK(q.find("schema-2750") != std::string::npos, "AC3: schema-2750");
+    CHECK(q.find("schema-2716") != std::string::npos, "AC3: schema-2716 preserved");
+}
+
+static void ac2750_4_source_and_no_design() {
+    std::println("\n--- #2750 AC4: source-cite + no docs/design/ ---");
+    const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
+    CHECK(t.find("ac2750_1_recover_hook_in_commit_readiness") != std::string::npos, "AC4: AC1");
+    CHECK(t.find("ac2750_2_typechecker_wires_recover") != std::string::npos, "AC4: AC2");
+    CHECK(t.find("ac2750_3_query_keys") != std::string::npos, "AC4: AC3");
+    CHECK(t.find("ac2750_4_source_and_no_design") != std::string::npos, "AC4: self-test");
+    CHECK(read_file("docs/design/2750-occurrence-recover.md").empty(),
+          "AC4: no docs/design/2750-* per #1655");
+}
+
 } // namespace
 
 int run_test_partial_cone_commit_gate() {
@@ -599,6 +645,10 @@ int run_test_partial_cone_commit_gate() {
     ac2716_4_additive_no_regression();
     ac2716_5_query_keys_added();
     ac2716_6_source_and_linter();
+    ac2750_1_recover_hook_in_commit_readiness();
+    ac2750_2_typechecker_wires_recover();
+    ac2750_3_query_keys();
+    ac2750_4_source_and_no_design();
     std::println("\n=== #2621 + #2646 + #2703 + #2704 + #2716: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;

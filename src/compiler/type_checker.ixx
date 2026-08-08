@@ -2388,7 +2388,34 @@ export struct TypeChecker {
 
     explicit TypeChecker(aura::core::TypeRegistry& reg)
         : types(reg)
-        , solve_delta_cs_(reg) {}
+        , solve_delta_cs_(reg) {
+        // Issue #2750: wire occurrence hard-face full-solve recover into
+        // commit_readiness (production face hit → one full solve attempt).
+        aura::compiler::typed_audit::install_occurrence_full_solve_recover(
+            &TypeChecker::occurrence_full_solve_recover_trampoline, this);
+    }
+
+    // Issue #2750: full ConstraintSystem::solve recover for occurrence faces.
+    // Returns true when SOLVED (occurrence narrowing restored enough to commit).
+    [[nodiscard]] bool try_occurrence_hard_face_full_solve_recover() noexcept {
+        try {
+            std::vector<TypeId> unresolved;
+            const auto full = solve_delta_cs_.solve(&unresolved);
+            if (full == SolveResult::SOLVED) {
+                solve_delta_cs_.note_full_solve_cleared_truncation();
+                return true;
+            }
+        } catch (...) {
+            // [SILENCE-PRIM-#1669] Issue #2750: recover path must not throw past
+            // commit_readiness — fail closed by returning false (class A).
+        }
+        return false;
+    }
+    static bool occurrence_full_solve_recover_trampoline(void* ctx) noexcept {
+        if (!ctx)
+            return false;
+        return static_cast<TypeChecker*>(ctx)->try_occurrence_hard_face_full_solve_recover();
+    }
 
     // Issue #1414: expose a persistent ConstraintSystem so
     // CompilerService::solve_delta_cached can key its cache by

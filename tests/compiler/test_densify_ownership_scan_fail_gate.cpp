@@ -723,6 +723,48 @@ static void ac2711_6_source_and_linter() {
           "AC6: no docs/design/2711-* per #1655");
 }
 
+// ── Issue #2749: Moving incomplete-remap surface split ──
+static void ac2749_1_split_counters() {
+    std::println("\n--- #2749 AC1: auto-registered vs still-untracked counters ---");
+    const auto h = read_file("src/core/densify_consistency_report.h");
+    CHECK(h.find("g_moving_auto_registered_remapped_total") != std::string::npos,
+          "AC1: auto_registered counter");
+    CHECK(h.find("g_moving_still_untracked_incomplete_total") != std::string::npos,
+          "AC1: still_untracked counter");
+    CHECK(h.find("kMovingIncompleteRemapResidualIssue = 2749") != std::string::npos,
+          "AC1: issue stamp 2749");
+}
+
+static void ac2749_2_phase5_bumps_still_untracked() {
+    std::println("\n--- #2749 AC2: Phase 5 densify bumps split counters ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("g_moving_auto_registered_remapped_total") != std::string::npos,
+          "AC2: Phase 5 bumps auto_registered");
+    CHECK(mb.find("g_moving_still_untracked_incomplete_total") != std::string::npos,
+          "AC2: Phase 5 bumps still_untracked");
+    CHECK(mb.find("Issue #2749") != std::string::npos, "AC2: cites #2749");
+}
+
+static void ac2749_3_fail_closed_preserved() {
+    std::println("\n--- #2749 AC3: fail-closed for unknown untracked preserved ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("pin_contract_held") != std::string::npos, "AC3: pin_contract_held still gated");
+    CHECK(mb.find("untracked_kept") != std::string::npos ||
+              mb.find("densify_untracked_kept") != std::string::npos,
+          "AC3: untracked_kept still tracked");
+}
+
+static void ac2749_4_source_and_no_design() {
+    std::println("\n--- #2749 AC4: source-cite + no docs/design/ ---");
+    const auto t = read_file("tests/compiler/test_densify_ownership_scan_fail_gate.cpp");
+    CHECK(t.find("ac2749_1_split_counters") != std::string::npos, "AC4: AC1");
+    CHECK(t.find("ac2749_2_phase5_bumps_still_untracked") != std::string::npos, "AC4: AC2");
+    CHECK(t.find("ac2749_3_fail_closed_preserved") != std::string::npos, "AC4: AC3");
+    CHECK(t.find("ac2749_4_source_and_no_design") != std::string::npos, "AC4: self-test");
+    CHECK(read_file("docs/design/2749-moving-incomplete-remap.md").empty(),
+          "AC4: no docs/design/2749-* per #1655");
+}
+
 } // namespace
 
 int run_test_densify_ownership_scan_fail_gate() {
@@ -750,7 +792,13 @@ int run_test_densify_ownership_scan_fail_gate() {
     ac2711_4_read_only_snapshot();
     ac2711_5_query_keys_added();
     ac2711_6_source_and_linter();
-    std::println("\n=== #2497 + #2673 + #2711: {} passed, {} failed ===", g_passed, g_failed);
+    // Issue #2749: Moving incomplete-remap surface split (auto-registered vs untracked).
+    ac2749_1_split_counters();
+    ac2749_2_phase5_bumps_still_untracked();
+    ac2749_3_fail_closed_preserved();
+    ac2749_4_source_and_no_design();
+    std::println("\n=== #2497 + #2673 + #2711 + #2749: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

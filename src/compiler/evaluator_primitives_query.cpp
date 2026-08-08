@@ -6758,6 +6758,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                   1);
                                         insert_kv("schema-2716", 2716);
                                         insert_kv("issue-2716", 2716);
+                                        // Issue #2750: true recover success/fail.
+                                        insert_kv(
+                                            "occurrence-hard-face-recover-success-total",
+                                            static_cast<std::int64_t>(
+                                                occurrence_hard_face_recover_success_total_v_read()));
+                                        insert_kv(
+                                            "occurrence-hard-face-recover-fail-total",
+                                            static_cast<std::int64_t>(
+                                                occurrence_hard_face_recover_fail_total_v_read()));
+                                        insert_kv("schema-2750", 2750);
+                                        insert_kv("issue-2750", 2750);
                                     }
                                 }
                             }

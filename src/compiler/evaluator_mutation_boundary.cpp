@@ -2415,6 +2415,23 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             densify_objects_moved = compact_r.objects_moved_total;
             densify_untracked_kept = compact_r.untracked_kept_total;
             densify_incomplete_remap = compact_r.moving_incomplete_remap_any;
+            // Issue #2749: split incomplete-remap observability.
+            // Objects that participated in pin registry / linear roots /
+            // RootRemap (auto-registered intermediates via GeneralObjectPin
+            // wire paths #2709) remapped successfully → auto_registered.
+            // Truly unknown external roots remain untracked_kept → still
+            // force incomplete_remap / pin_contract fail-closed.
+            if (compact_r.objects_moved_total > densify_untracked_kept) {
+                aura::core::densify_consistency::g_moving_auto_registered_remapped_total.fetch_add(
+                    static_cast<std::uint64_t>(compact_r.objects_moved_total -
+                                               densify_untracked_kept),
+                    std::memory_order_relaxed);
+            }
+            if (densify_untracked_kept > 0) {
+                aura::core::densify_consistency::g_moving_still_untracked_incomplete_total
+                    .fetch_add(static_cast<std::uint64_t>(densify_untracked_kept),
+                               std::memory_order_relaxed);
+            }
             densify_root_remap_stable_ref_fail =
                 static_cast<std::uint64_t>(compact_r.root_remap_stable_ref_fail_total);
             densify_root_remap_closure_capture_fail =
