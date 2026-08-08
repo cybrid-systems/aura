@@ -2363,6 +2363,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
 // / parent slot stale for set_child. Metric:
 // replace_pattern_stale_nodeid_prevented_total. Issue #2798 free of
 // unlinked parse orphans is retained on every post-parse skip.
+//
+// Issue #2802: pattern StringPool/FlatAST are allocated on a *per-call*
+// local ASTArena — never Evaluator::temp_arena_. Sibling replace-pattern
+// sub-ops in mutate:atomic-batch must not share/reuse pattern memory;
+// GeneralObjectPin only wires create-pair lifetime, not sibling isolation.
+// Metric: replace_pattern_temp_arena_corruption_prevented_total.
 EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const types::EvalValue> a) {
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
         !workspace_pool_)
@@ -2383,9 +2389,18 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         if (is_string(a[ai]))
             summary = string_heap_[as_string_idx(a[ai])];
     }
-    auto alloc = temp_arena_->allocator();
-    auto* pat_pool = temp_arena_->create<aura::ast::StringPool>(alloc);
-    auto* pat_flat = temp_arena_->create<aura::ast::FlatAST>(alloc);
+    // Issue #2802: local arena isolates pattern flat/pool from shared
+    // temp_arena_ (and from sibling sub-ops in the same atomic-batch).
+    // 256 KiB is ample for a pattern AST; heap-backed, not stack.
+    aura::ast::ASTArena pat_arena(/*initial_size=*/256 * 1024);
+    auto alloc = pat_arena.allocator();
+    auto* pat_pool = pat_arena.create<aura::ast::StringPool>(alloc);
+    auto* pat_flat = pat_arena.create<aura::ast::FlatAST>(alloc);
+    if (!pat_pool || !pat_flat)
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :replace-pattern: pattern arena allocate failed"});
+    flat.note_replace_pattern_temp_arena_corruption_prevented();
     // Issue #2363: GeneralObjectPin adopt (site 2/7) — batch :replace-pattern.
     aura::core::lifetime::GeneralObjectPin pat_pool_pin;
     aura::core::lifetime::GeneralObjectPin pat_flat_pin;
@@ -2462,8 +2477,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     };
 
     // ── Phase 2 (#2800): apply with is_valid_in + reverse parent checks ──
+    // Issue #2802: when already under mutate:atomic-batch, outer owns
+    // begin/commit/rollback. Nested begin+commit would clear the outer
+    // metadata snapshot and bump generation mid-batch, breaking sibling
+    // sub-ops (second replace-pattern then fails closed).
     int replaced_count = 0;
-    flat.begin_atomic_batch();
+    const bool nested_outer_batch = flat.atomic_batch_active();
+    if (!nested_outer_batch)
+        flat.begin_atomic_batch();
     for (auto& match_ref : matches) {
         // Issue #2800: gen-stale or free-slot → skip (no set_child on raw id).
         if (!match_ref.is_valid_in(flat)) {
@@ -2530,7 +2551,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         ++replaced_count;
     }
     if (replaced_count == 0) {
-        flat.rollback_atomic_batch();
+        // Do not rollback_atomic_batch when nested — outer batch owns the
+        // batch lifetime (#2802 sibling isolation / outer commit contract).
+        if (!nested_outer_batch)
+            flat.rollback_atomic_batch();
         // Issue #2798: free any remaining parse appends from skip paths
         // (belt-and-suspenders if a continue missed free).
         if (static_cast<std::size_t>(end_id) < flat.size())
@@ -2539,7 +2563,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
             aura::diag::ErrorKind::InternalError,
             "batch :replace-pattern: no matches found (or all parse-failed)"});
     }
-    flat.commit_atomic_batch();
+    if (!nested_outer_batch)
+        flat.commit_atomic_batch();
     invalidate_tag_arity_index();
     // Issue #1696: multi-node op — NULL_NODE sentinel, not NodeId 0.
     flat.add_mutation(aura::ast::NULL_NODE, "replace-pattern", pattern_str, repl_template, summary);

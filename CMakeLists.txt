@@ -1849,6 +1849,9 @@ aura_issue_test_link_light(test_replace_pattern_multi_match_nodeid_stability)
 # Issue #2801: move-node MacroIntroduced hygiene (#142 parity with replace-subtree).
 aura_add_issue_test(test_move_node_hygiene)
 aura_issue_test_link_light(test_move_node_hygiene)
+# Issue #2802: replace-pattern local ASTArena isolates pattern from temp_arena_.
+aura_add_issue_test(test_atomic_batch_replace_pattern_sibling)
+aura_issue_test_link_light(test_atomic_batch_replace_pattern_sibling)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

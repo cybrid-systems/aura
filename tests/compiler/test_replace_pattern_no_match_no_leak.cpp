@@ -62,7 +62,8 @@ int run_test_replace_pattern_no_match_no_leak() {
         CHECK(!mut.empty() && !flat.empty(), "AC1: sources readable");
         auto lpos = flat.find("eval_flat_apply_mutate_replace_pattern");
         CHECK(lpos != std::string::npos, "AC1: lockless helper");
-        auto lwin = flat.substr(lpos, 9000);
+        // #2800/#2802 lengthened the body (two-phase + local arena + nest-safe).
+        auto lwin = flat.substr(lpos, 12000);
         CHECK(lwin.find("Issue #2798") != std::string::npos, "AC1: lockless cites #2798");
         CHECK(lwin.find("free_orphan_nodes_from") != std::string::npos,
               "AC1: lockless free_orphan_nodes_from");
