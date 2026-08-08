@@ -607,6 +607,19 @@ def cmd_lint():
             "Issue #2761 region mask-overlap admit linter failed — run python3 scripts/coverage/checks/check_region_mask_overlap_admit_2761.py"
         )
         return r
+    # Issue #2762: post-mutate incremental macro re-expand under Guard
+    # cascade (#165/#2096 residual). Wires post_mutation_macro_reexpand
+    # into push_post_mutate_incremental_cascade + metrics + schema-2762.
+    pmmr_script = COVERAGE_CHECKS / "check_post_mutate_macro_reexpand_2762.py"
+    if not pmmr_script.exists():
+        fail(f"missing {pmmr_script}")
+        return 1
+    r = run([sys.executable, str(pmmr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2762 post-mutate macro reexpand linter failed — run python3 scripts/coverage/checks/check_post_mutate_macro_reexpand_2762.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
