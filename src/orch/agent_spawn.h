@@ -414,10 +414,14 @@ struct OrchModuleStats {
     std::atomic<bool> parallel_intend_force_lock_on_violation{false};
     // Issue #2399: AgentScope concurrent misuse detection (metric path).
     // Bumped when a second thread enters spawn/join_all/watch_all/cancel_all
-    // while another thread already holds the scope. Default metric-only;
-    // AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard-aborts. Not a lock —
-    // ownership model stays single-owner serialize (no internal mutex).
+    // (and read APIs after #2777) while another thread already holds the scope.
+    // Default metric-only; AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard-aborts.
+    // Not a lock — ownership model stays single-owner serialize (no mutex).
     std::atomic<std::uint64_t> agent_scope_concurrent_misuse_total{0};
+    // Issue #2777: concurrent enter specifically on directory_snapshot /
+    // orch:agent-directory read path (subset of misuse_total). Agents can
+    // alert on multi-tenant directory races without joining all sites.
+    std::atomic<std::uint64_t> directory_snapshot_concurrent_total{0};
     // Issue #2540: cooperative yield contract (AgentSpec.max_no_yield_ms).
     // Bumped when agent_poll forces Fiber::yield after the no-yield window.
     // Zero cost when max_no_yield_ms==0 (no coop state, poll is no-op).

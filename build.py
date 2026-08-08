@@ -810,6 +810,20 @@ def cmd_lint():
             "Issue #2776 AOT reload stamp concurrent linter failed — run python3 scripts/coverage/checks/check_aot_reload_consistency_stamp_concurrent_2776.py"
         )
         return r
+    # Issue #2777: AgentScope read APIs ScopeEnterGuard (#2399 residual).
+    # directory_snapshot / handles / child_at / size concurrent with
+    # ~AgentScope no longer silent; directory_snapshot_concurrent_total
+    # + schema-2777. ac2777_* in test_agent_scope per #81967.
+    asrg_script = COVERAGE_CHECKS / "check_agent_scope_read_guard_2777.py"
+    if not asrg_script.exists():
+        fail(f"missing {asrg_script}")
+        return 1
+    r = run([sys.executable, str(asrg_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2777 AgentScope read guard linter failed — run python3 scripts/coverage/checks/check_agent_scope_read_guard_2777.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

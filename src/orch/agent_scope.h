@@ -47,6 +47,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <span>
@@ -63,6 +64,8 @@ inline constexpr int kAgentScopeHierarchyIssue = 2537;
 // Issue #2751: session-level Agent directory surface (per-Evaluator /
 // per-AgentScope snapshot; NOT a process-global registry).
 inline constexpr int kAgentDirectoryIssue = 2751;
+// Issue #2777: read APIs take ScopeEnterGuard (#2399 incomplete sweep).
+inline constexpr int kAgentScopeReadGuardIssue = 2777;
 
 // Issue #2751: one row in a session-scoped agent directory snapshot.
 // Best-effort at call time (not transactional with concurrent spawn).
@@ -128,13 +131,17 @@ struct ScopeWatchResult {
 // RestartN / watch_all remain scope-local (no cross-scope restart map).
 //
 // Thread-safety: spawn / spawn_child / join_all / cancel_all / watch_all /
-// handles are NOT safe to call concurrently from multiple threads. The
-// owner must serialize access (matches the underlying Scheduler
-// single-owner model). Child scopes inherit the same serial model (#2399).
+// handles / directory_snapshot / child_at / size are NOT safe to call
+// concurrently from multiple threads. The owner must serialize access
+// (matches the underlying Scheduler single-owner model). Child scopes
+// inherit the same serial model (#2399 / #2777).
 //
-// Issue #2399: concurrent enter is *detected* (metric + optional hard abort)
-// but not locked — no internal mutex, no global registry. Same-thread
-// re-entry (e.g. ~AgentScope → cancel_all → join_all) is allowed via depth.
+// Issue #2399 / #2777: concurrent enter is *detected* (metric + optional
+// hard abort) but not locked — no internal mutex, no global registry.
+// Same-thread re-entry (e.g. ~AgentScope → cancel_all → join_all) is
+// allowed via depth. Read APIs (#2777) also take ScopeEnterGuard so
+// directory_snapshot / handles / child_at concurrent with ~AgentScope
+// are not silent.
 class AgentScope {
 public:
     explicit AgentScope(serve::Scheduler& sched) noexcept
@@ -179,13 +186,30 @@ public:
         return *children_.back();
     }
 
-    [[nodiscard]] AgentScope* parent() const noexcept { return parent_; }
-    [[nodiscard]] bool is_root() const noexcept { return parent_ == nullptr; }
-    [[nodiscard]] std::size_t child_count() const noexcept { return children_.size(); }
+    // Issue #2777: parent/is_root/child_count/child_at take ScopeEnterGuard
+    // so concurrent ~AgentScope / spawn_child is detected (not silent).
+    [[nodiscard]] AgentScope* parent() const noexcept {
+        ScopeEnterGuard g(this, "parent");
+        return parent_;
+    }
+    [[nodiscard]] bool is_root() const noexcept {
+        ScopeEnterGuard g(this, "is_root");
+        return parent_ == nullptr;
+    }
+    [[nodiscard]] std::size_t child_count() const noexcept {
+        ScopeEnterGuard g(this, "child_count");
+        return children_.size();
+    }
 
     // Indexed child access (throws std::out_of_range if i >= child_count()).
-    [[nodiscard]] AgentScope& child_at(std::size_t i) { return *children_.at(i); }
-    [[nodiscard]] const AgentScope& child_at(std::size_t i) const { return *children_.at(i); }
+    [[nodiscard]] AgentScope& child_at(std::size_t i) {
+        ScopeEnterGuard g(this, "child_at");
+        return *children_.at(i);
+    }
+    [[nodiscard]] const AgentScope& child_at(std::size_t i) const {
+        ScopeEnterGuard g(this, "child_at");
+        return *children_.at(i);
+    }
 
     // Join all live handles. Mirrors join_agents (#2082/#2153): on non-Ok,
     // cancel + secondary drain (default 2s, JoinPolicy.drain_ms) before
@@ -360,28 +384,43 @@ public:
         return r;
     }
 
-    [[nodiscard]] std::size_t size() const noexcept { return handles_.size(); }
-    [[nodiscard]] bool empty() const noexcept { return handles_.empty(); }
+    // Issue #2777: size/empty/handles take ScopeEnterGuard (#2399 incomplete
+    // on read path). spans are only valid while the owner serializes further
+    // mutate — concurrent spawn may reallocate after return (detect via guard
+    // on the call, not a transactional lock).
+    [[nodiscard]] std::size_t size() const noexcept {
+        ScopeEnterGuard g(this, "size");
+        return handles_.size();
+    }
+    [[nodiscard]] bool empty() const noexcept {
+        ScopeEnterGuard g(this, "empty");
+        return handles_.empty();
+    }
 
     // Read-only access (for advanced supervisor logic + tests).
     [[nodiscard]] std::span<const AgentHandle> handles() const noexcept {
+        ScopeEnterGuard g(this, "handles");
         return std::span<const AgentHandle>(handles_);
     }
 
     // Mutable access for tests / advanced supervisors (watch_agent_liveness).
     [[nodiscard]] std::span<AgentHandle> handles_mut() noexcept {
+        ScopeEnterGuard g(this, "handles_mut");
         return std::span<AgentHandle>(handles_);
     }
 
     // Issue #2751: session-scoped agent directory snapshot (read-only,
     // best-effort at call time). Walks this scope's handles_ and,
     // when filter.include_descendants, child scopes (#2537). Never
-    // process-wide — only agents owned by this scope tree. Not a
-    // transaction with concurrent spawn (document + AC2).
+    // process-wide — only agents owned by this scope tree.
+    // Issue #2777: ScopeEnterGuard + copy-local handles under guard so
+    // concurrent ~AgentScope / spawn is detected and vector walk is not
+    // silent UB. Not a full transaction with concurrent spawn (AC2).
     // Soft / empty scope → empty entries, scopes_visited >= 1 when this
     // scope exists.
     [[nodiscard]] AgentDirectorySnapshot
     directory_snapshot(const AgentDirectoryFilter& filter = {}) const {
+        ScopeEnterGuard g(this, "directory_snapshot");
         AgentDirectorySnapshot snap;
         snap.schema = kAgentDirectoryIssue;
         collect_directory_(snap, filter, /*path=*/"");
@@ -414,15 +453,16 @@ public:
     }
 
 private:
-    // Issue #2399: RAII enter/leave for concurrent misuse detection.
+    // Issue #2399 / #2777: RAII enter/leave for concurrent misuse detection.
     // Same-thread re-entry increments depth (no metric). Concurrent enter
     // from another thread bumps agent_scope_concurrent_misuse_total and
     // optionally aborts. Metric path still runs the method body (detect,
     // don't invent locks). Zero cost beyond one atomic CAS when free.
+    // const-friendly: owner_tid_/enter_depth_ are mutable (#2777 reads).
     struct ScopeEnterGuard {
-        AgentScope* self = nullptr;
+        const AgentScope* self = nullptr;
         bool holds = false;
-        ScopeEnterGuard(AgentScope* s, const char* site) noexcept
+        ScopeEnterGuard(const AgentScope* s, const char* site) noexcept
             : self(s) {
             if (!self)
                 return;
@@ -439,7 +479,7 @@ private:
     // Returns true if this thread holds ownership (caller must leave).
     // Returns false on concurrent misuse after metric/abort path (caller
     // still runs the method body without tracking ownership).
-    bool try_enter(const char* site) noexcept {
+    bool try_enter(const char* site) const noexcept {
         const auto tid = std::this_thread::get_id();
         std::thread::id expected{}; // default-constructed = unowned
         if (owner_tid_.compare_exchange_strong(expected, tid, std::memory_order_acq_rel,
@@ -455,29 +495,42 @@ private:
         // Another thread owns the scope — concurrent misuse.
         g_orch_module_stats.agent_scope_concurrent_misuse_total.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #2777: directory_snapshot-specific concurrent metric.
+        if (site && std::strcmp(site, "directory_snapshot") == 0) {
+            g_orch_module_stats.directory_snapshot_concurrent_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         if (agent_scope_concurrent_abort_enabled()) {
             std::fprintf(stderr,
                          "FATAL: AgentScope concurrent misuse at %s "
-                         "(AURA_AGENT_SCOPE_CONCURRENT_ABORT=1, #2399)\n",
+                         "(AURA_AGENT_SCOPE_CONCURRENT_ABORT=1, #2399/#2777)\n",
                          site ? site : "?");
             std::abort();
         }
         return false;
     }
 
-    void leave() noexcept {
+    void leave() const noexcept {
         const auto d = enter_depth_.fetch_sub(1, std::memory_order_relaxed);
         if (d == 1) {
             owner_tid_.store(std::thread::id{}, std::memory_order_release);
         }
     }
 
-    // Issue #2751: recursive collect into snap (path = "" for root of
-    // this walk, "0" / "0/1" for child indices under the walk root).
+    // Issue #2751 / #2777: collect into snap. Caller must hold ScopeEnterGuard
+    // on *this*. Local handles are copied to entry rows under the guard
+    // (string copies of name/status — not a live span into handles_).
+    // Child scopes are walked under their own enter (recursive snapshot).
     void collect_directory_(AgentDirectorySnapshot& snap, const AgentDirectoryFilter& filter,
                             const std::string& path) const {
         ++snap.scopes_visited;
-        for (const auto& h : handles_) {
+        // Snapshot handle count once; iterate by index (stable under serial
+        // owner; concurrent misuse already metered if another thread entered).
+        const std::size_t n = handles_.size();
+        for (std::size_t hi = 0; hi < n; ++hi) {
+            if (hi >= handles_.size())
+                break; // concurrent shrink (misuse path) — best-effort stop
+            const auto& h = handles_[hi];
             AgentDirectoryEntry e;
             e.name = h.name;
             e.id = h.id;
@@ -505,15 +558,26 @@ private:
         }
         if (!filter.include_descendants)
             return;
-        for (std::size_t i = 0; i < children_.size(); ++i) {
-            if (!children_[i])
+        // Snapshot child count; each child directory_snapshot takes its own
+        // ScopeEnterGuard (detect concurrent child teardown).
+        const std::size_t cn = children_.size();
+        for (std::size_t i = 0; i < cn; ++i) {
+            if (i >= children_.size() || !children_[i])
                 continue;
-            // Child path under walk root: "0", "0/1", … (root agents use "root").
             const std::string child_path = path.empty() || path == "root"
                                                ? std::to_string(i)
                                                : (path + "/" + std::to_string(i));
-            children_[i]->collect_directory_(snap, filter, child_path);
+            // Child walk under child's enter: merge into same snap.
+            children_[i]->merge_directory_under_guard_(snap, filter, child_path);
         }
+    }
+
+    // Issue #2777: child subtree collect with ScopeEnterGuard on the child.
+    void merge_directory_under_guard_(AgentDirectorySnapshot& snap,
+                                      const AgentDirectoryFilter& filter,
+                                      const std::string& path) const {
+        ScopeEnterGuard g(this, "directory_snapshot");
+        collect_directory_(snap, filter, path);
     }
 
     serve::Scheduler& sched_;

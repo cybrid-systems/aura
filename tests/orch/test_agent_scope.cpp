@@ -553,6 +553,142 @@ static void ac2399_concurrent_detect() {
     }
 }
 
+// ── Issue #2777: read APIs take ScopeEnterGuard (#2399 residual) ─────
+static void ac2777_read_apis_guarded() {
+    std::println("\n--- #2777 AC1–AC5: directory_snapshot / handles ScopeEnterGuard ---");
+    CHECK(aura::orch::kAgentScopeReadGuardIssue == 2777, "issue stamp #2777");
+
+    // AC1: single-thread directory_snapshot + handles — misuse stays 0.
+    {
+        const auto mis0 =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        const auto dir0 =
+            g_orch_module_stats.directory_snapshot_concurrent_total.load(std::memory_order_relaxed);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        AgentSpec spec;
+        spec.name = "2777-st";
+        spec.body = [] {};
+        spec.attach_mailbox = false;
+        spec.keepalive_interval_ms = 0;
+        (void)scope.spawn(std::move(spec));
+        auto snap = scope.directory_snapshot();
+        CHECK(snap.entries.size() >= 1, "AC1: directory has entry");
+        CHECK(scope.size() >= 1, "AC1: size under guard");
+        CHECK(!scope.empty(), "AC1: empty under guard");
+        auto hs = scope.handles();
+        CHECK(!hs.empty(), "AC1: handles under guard");
+        CHECK(scope.child_count() == 0, "AC1: child_count under guard");
+        const auto mis1 =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        const auto dir1 =
+            g_orch_module_stats.directory_snapshot_concurrent_total.load(std::memory_order_relaxed);
+        CHECK(mis1 == mis0, "AC1: single-thread read path — misuse stays 0");
+        CHECK(dir1 == dir0, "AC1: single-thread directory — concurrent total stays 0");
+    }
+
+    // AC2: concurrent directory_snapshot during join_all → misuse + directory metric.
+    {
+        const auto mis0 =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        const auto dir0 =
+            g_orch_module_stats.directory_snapshot_concurrent_total.load(std::memory_order_relaxed);
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+
+        std::atomic<bool> stop_body{false};
+        AgentSpec hang;
+        hang.name = "2777-hang";
+        hang.body = [&] {
+            while (!stop_body.load(std::memory_order_acquire)) {
+                if (aura::serve::g_current_fiber &&
+                    aura::serve::g_current_fiber->is_cancel_requested())
+                    return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        };
+        hang.attach_mailbox = false;
+        hang.keepalive_interval_ms = 0;
+        (void)scope.spawn(std::move(hang));
+
+        std::atomic<int> ready{0};
+        std::atomic<bool> go{false};
+        std::atomic<bool> join_entered{false};
+        std::atomic<bool> snap_done{false};
+
+        std::thread t_join([&] {
+            ready.fetch_add(1, std::memory_order_acq_rel);
+            while (!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            join_entered.store(true, std::memory_order_release);
+            (void)scope.join_all(std::optional<std::uint64_t>{800});
+        });
+        std::thread t_snap([&] {
+            ready.fetch_add(1, std::memory_order_acq_rel);
+            while (!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            while (!join_entered.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            (void)scope.directory_snapshot();
+            snap_done.store(true, std::memory_order_release);
+        });
+
+        while (ready.load(std::memory_order_acquire) < 2)
+            std::this_thread::yield();
+        go.store(true, std::memory_order_release);
+        t_snap.join();
+        stop_body.store(true, std::memory_order_release);
+        scope.cancel_all();
+        t_join.join();
+
+        const auto mis1 =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        const auto dir1 =
+            g_orch_module_stats.directory_snapshot_concurrent_total.load(std::memory_order_relaxed);
+        std::println("  concurrent directory misuse delta={} dir_snap concurrent delta={}",
+                     mis1 - mis0, dir1 - dir0);
+        CHECK(mis1 > mis0, "AC2: concurrent join + directory_snapshot → misuse ≥ 1");
+        CHECK(dir1 > dir0, "AC2: directory_snapshot_concurrent_total ≥ 1");
+        CHECK(snap_done.load(), "AC2: directory_snapshot completed (detect path continues)");
+    }
+
+    // AC3: source-cite read sites use ScopeEnterGuard.
+    {
+        auto scope_src = read_file("src/orch/agent_scope.h");
+        CHECK(scope_src.find("#2777") != std::string::npos, "AC3: agent_scope cites #2777");
+        CHECK(scope_src.find("ScopeEnterGuard g(this, \"directory_snapshot\")") !=
+                      std::string::npos ||
+                  scope_src.find("\"directory_snapshot\"") != std::string::npos,
+              "AC3: directory_snapshot guarded");
+        CHECK(scope_src.find("\"handles\"") != std::string::npos, "AC3: handles site");
+        CHECK(scope_src.find("\"child_at\"") != std::string::npos, "AC3: child_at site");
+        CHECK(scope_src.find("directory_snapshot_concurrent_total") != std::string::npos,
+              "AC3: concurrent total bump");
+        CHECK(scope_src.find("merge_directory_under_guard_") != std::string::npos,
+              "AC3: child walk under guard");
+    }
+
+    // AC4 / AC5: query keys + linter wire.
+    {
+        auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        auto spawn_src = read_file("src/orch/agent_spawn.h");
+        auto build = read_file("build.py");
+        CHECK(prim_src.find("directory-snapshot-concurrent-total") != std::string::npos,
+              "AC4: query key");
+        CHECK(prim_src.find("schema-2777") != std::string::npos, "AC4: schema-2777");
+        CHECK(prim_src.find("agent-scope-read-guard-wired") != std::string::npos, "AC4: wired");
+        CHECK(spawn_src.find("directory_snapshot_concurrent_total") != std::string::npos,
+              "AC4: OrchModuleStats field");
+        CHECK(build.find("check_agent_scope_read_guard_2777") != std::string::npos,
+              "AC5: build.py wires linter");
+        CHECK(read_file("docs/design/2777-agent-scope-read-guard.md").empty(),
+              "AC5: no docs/design/2777-* per #1655");
+    }
+}
+
 } // namespace
 
 int run_test_agent_scope() {
@@ -566,7 +702,8 @@ int run_test_agent_scope() {
     ac6_readme_section();
     ac2161_watch_all_batch();
     ac2399_concurrent_detect();
-    std::println("\n=== #2083/#2161/#2399: passed={} failed={} ===", g_passed, g_failed);
+    ac2777_read_apis_guarded();
+    std::println("\n=== #2083/#2161/#2399/#2777: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
