@@ -1794,6 +1794,10 @@ aura_issue_test_link_light(test_core_builtins_review)
 # #558-#562.
 aura_add_issue_test(test_ast_workspace_modules)
 aura_issue_test_link_light(test_ast_workspace_modules)
+# Issue #2784: workspace:sync-from must rebind actual source body
+# (never hardcoded identity lambda). tests/compiler/test_workspace_sync_from.cpp
+aura_add_issue_test(test_workspace_sync_from)
+aura_issue_test_link_light(test_workspace_sync_from)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
