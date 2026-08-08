@@ -796,6 +796,11 @@ public:
         evaluator_.set_mark_define_dirty_fn(
             [this](const std::string& name) { this->mark_define_dirty(name); });
         evaluator_.set_mark_all_defines_dirty_fn([this]() { this->mark_all_defines_dirty(); });
+        // Issue #2730: rebind/set-body publish new source before dirty cascade.
+        evaluator_.set_update_function_source_fn(
+            [this](const std::string& name, const std::string& src) {
+                this->function_sources_[name] = src;
+            });
         // Issue #680: precise IR/JIT/bridge invalidation for closure-heavy Defines.
         evaluator_.set_invalidate_function_fn(
             [this](const std::string& name) { this->invalidate_function(name); });
@@ -6001,9 +6006,47 @@ public:
         auto cache_strings_ptr = ir_cache_strings_.empty() ? nullptr : &ir_cache_strings_;
         std::vector<std::string> cache_hits;
         const auto full_t0 = std::chrono::steady_clock::now();
-        auto ir_mod = lower_to_ir_with_cache_tracked(
-            flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), cache_bridge_ptr,
-            cache_strings_ptr, &name, &type_registry_, value_cells_for_lowering());
+        // Issue #2730: full re-lower must NOT lower a multi-define workspace
+        // root under this name. That bundles sibling lambdas (score, …) into
+        // `name`'s IR so the primary #0 body becomes the first sibling — mute
+        // rebind success with wrong body on eval_ir direct calls. Prefer the
+        // single-define `source` string (canonical from unparse / rebind);
+        // fall back to scoping flat.root to expanded_root when source empty.
+        aura::ast::FlatAST* lower_flat = &flat;
+        aura::ast::StringPool* lower_pool = &pool;
+        const aura::ast::NodeId saved_root = flat.root;
+        bool restore_root = false;
+        if (!source.empty()) {
+            auto alloc = arena_.allocator();
+            auto* tmp_pool = arena_.create<aura::ast::StringPool>(alloc);
+            auto* tmp_flat = arena_.create<aura::ast::FlatAST>(alloc);
+            auto pr = aura::parser::parse_to_flat(source, *tmp_flat, *tmp_pool);
+            if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                tmp_flat->root = pr.root;
+                // Multi-define source strings (legacy set-code): pick named define.
+                const auto defs =
+                    aura::compiler::find_top_level_defines(*tmp_flat, *tmp_pool, pr.root);
+                for (const auto& [n, id] : defs) {
+                    if (n == name) {
+                        tmp_flat->root = id;
+                        break;
+                    }
+                }
+                lower_flat = tmp_flat;
+                lower_pool = tmp_pool;
+            }
+        }
+        if (lower_flat == &flat && expanded_root != aura::ast::NULL_NODE &&
+            expanded_root < flat.size()) {
+            flat.root = expanded_root;
+            restore_root = true;
+        }
+        auto ir_mod = lower_to_ir_with_cache_tracked(*lower_flat, *lower_pool, arena_, cache_ptr,
+                                                     &cache_hits, &evaluator_.primitives(),
+                                                     cache_bridge_ptr, cache_strings_ptr, &name,
+                                                     &type_registry_, value_cells_for_lowering());
+        if (restore_root)
+            flat.root = saved_root;
         // Issue #2112: feed adaptive threshold history for full path.
         {
             const auto full_ns =
@@ -6558,9 +6601,12 @@ public:
             if (!it->second.dirty && it->second.dirty_block_count() == 0)
                 continue;
             // Locate the Define node + Lambda body in the workspace.
+            // Issue #2730: skip free-list ghosts (same as mutate:rebind find).
             aura::ast::NodeId def_id = aura::ast::NULL_NODE;
             aura::ast::NodeId lambda_id = aura::ast::NULL_NODE;
             for (aura::ast::NodeId id = 0; id < ws_flat->size(); ++id) {
+                if (ws_flat->is_free_slot(id))
+                    continue;
                 auto v = ws_flat->get(id);
                 if (v.tag != aura::ast::NodeTag::Define)
                     continue;

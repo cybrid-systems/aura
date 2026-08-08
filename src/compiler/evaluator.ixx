@@ -2465,6 +2465,11 @@ public:
     void set_mark_all_defines_dirty_fn(std::function<void()> fn) {
         mark_all_defines_dirty_fn_ = std::move(fn);
     }
+    // Issue #2730: keep function_sources_ in sync with rebind/set-body.
+    void
+    set_update_function_source_fn(std::function<void(const std::string&, const std::string&)> fn) {
+        update_function_source_fn_ = std::move(fn);
+    }
     // Issue #680: full invalidate_function BFS for closure-heavy Define
     // mutations (mutate:rebind / mutate:query-and-replace success path).
     void set_invalidate_function_fn(std::function<void(const std::string&)> fn) {
@@ -5550,10 +5555,13 @@ private:
     // mark_all_defines_dirty_fn_()       → mark all cached defines dirty
     // invalidate_function_fn_(name)        → BFS re-lower + JIT eviction (#680)
     // define_impact_scope_fn_(node)      → ir_cache_pure impact_scope (#680)
+    // update_function_source_fn_(name,src) → function_sources_ SSOT (#2730)
     std::function<void(const std::string&)> mark_define_dirty_fn_ = nullptr;
     std::function<void()> mark_all_defines_dirty_fn_ = nullptr;
     std::function<void(const std::string&)> invalidate_function_fn_ = nullptr;
     std::function<void(aura::ast::NodeId)> define_impact_scope_fn_ = nullptr;
+    std::function<void(const std::string&, const std::string&)> update_function_source_fn_ =
+        nullptr;
     std::atomic<std::uint64_t> precise_define_inval_hits_{0};
 
     // ── 模块类型签名（#8 跨模块类型检查） ──────────────────────
