@@ -761,6 +761,49 @@ static void ac2712_6_source_and_linter() {
           "AC6: no docs/design/2712-* per #1655");
 }
 
+// ── Issue #2747: Soft fuse heal must not process-wide invalidate when
+// reemit-owner unset under multi-eval.
+static void ac2747_1_no_owner_multi_eval_skip_process_wide() {
+    std::println("\n--- #2747 AC1: multi-eval no reemit-owner → skip process-wide clear ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("g_2693_soft_fuse_heal_no_owner_total") != std::string::npos,
+          "AC1: no-owner counter present");
+    CHECK(cpp.find("reemit_owner == nullptr && aura_aot_state_map_size() > 1") != std::string::npos,
+          "AC1: multi-eval + nullptr owner gate");
+    CHECK(cpp.find("Issue #2747") != std::string::npos, "AC1: cites #2747");
+}
+
+static void ac2747_2_owner_set_still_invalidates() {
+    std::println("\n--- #2747 AC2: owner set → existing #2712 heal path ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("aura_aot_invalidate_all_stale_slots_for_eval(reemit_owner)") !=
+              std::string::npos,
+          "AC2: owner path still invalidates for reemit_owner");
+}
+
+static void ac2747_3_query_keys() {
+    std::println("\n--- #2747 AC3: query keys additive ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("epoch-invariant-soft-fuse-heal-no-owner-total") != std::string::npos,
+          "AC3: no-owner query key");
+    CHECK(q.find("schema-2747") != std::string::npos, "AC3: schema-2747");
+    CHECK(q.find("epoch-invariant-soft-fuse-heal-total") != std::string::npos,
+          "AC3: #2712 heal-total preserved");
+    CHECK(q.find("schema-2712") != std::string::npos, "AC3: schema-2712 preserved");
+}
+
+static void ac2747_4_source_and_no_design() {
+    std::println("\n--- #2747 AC4: source-cite + no docs/design/ ---");
+    const auto t = read_file("tests/compiler/test_epoch_invariant_walk.cpp");
+    CHECK(t.find("ac2747_1_no_owner_multi_eval_skip_process_wide") != std::string::npos,
+          "AC4: AC1 test");
+    CHECK(t.find("ac2747_2_owner_set_still_invalidates") != std::string::npos, "AC4: AC2 test");
+    CHECK(t.find("ac2747_3_query_keys") != std::string::npos, "AC4: AC3 test");
+    CHECK(t.find("ac2747_4_source_and_no_design") != std::string::npos, "AC4: self-test");
+    CHECK(read_file("docs/design/2747-soft-fuse-no-owner.md").empty(),
+          "AC4: no docs/design/2747-* per #1655");
+}
+
 } // namespace
 
 int run_test_epoch_invariant_walk() {
@@ -802,6 +845,10 @@ int run_test_epoch_invariant_walk() {
     ac2712_4_reemit_owner_tls();
     ac2712_5_query_keys_added();
     ac2712_6_source_and_linter();
+    ac2747_1_no_owner_multi_eval_skip_process_wide();
+    ac2747_2_owner_set_still_invalidates();
+    ac2747_3_query_keys();
+    ac2747_4_source_and_no_design();
     std::println("\n=== #2366 + #2640 + #2668 + #2693 + #2712: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
