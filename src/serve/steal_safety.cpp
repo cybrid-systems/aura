@@ -30,8 +30,9 @@
 
 #include "serve/steal_safety.h"
 
-#include "serve/fiber.h"   // Fiber, MutationSafetySnapshot, set_resume_safety_ticket,
-                           // mutation_safety_snapshot, mutation_safety_snapshot_inconsistent
+#include "serve/fiber.h" // Fiber, MutationSafetySnapshot, set_resume_safety_ticket,
+                         // mutation_safety_snapshot, mutation_safety_snapshot_inconsistent
+#include "core/densify_consistency_report.h" // #2745 last densify envframe/dual_epoch residual
 #include "core/gc_hooks.h" // aura::gc_hooks::force_clear_residual_defer_for_evaluator
 
 // Forward declaration: aura_evaluator_on_steal_complete is declared
@@ -146,6 +147,17 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
         if (victim_eval_id != nullptr &&
             aura::gc_hooks::gc_deferred_for_evaluator(victim_eval_id)) {
             g_steal_safety_residual_gc_defer_armed_total.fetch_add(1, std::memory_order_relaxed);
+            residual_ok = false;
+        }
+    }
+    // (e) Issue #2745: EnvFrame residual after densify — last densify left
+    // envframe_ok=false or dual_epoch lag. Quiet path (no densify yet,
+    // call_seq==0) skips. Counters always bump; RejectHard path matches
+    // arms (a–d) (production fail-closed / Soft metric via existing matrix).
+    if (aura::core::densify_consistency::last_densify_call_seq() > 0) {
+        if (!aura::core::densify_consistency::last_densify_envframe_ok() ||
+            !aura::core::densify_consistency::last_densify_dual_epoch_ok()) {
+            g_steal_safety_residual_envframe_lag_total.fetch_add(1, std::memory_order_relaxed);
             residual_ok = false;
         }
     }

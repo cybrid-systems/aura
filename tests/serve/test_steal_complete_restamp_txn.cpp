@@ -532,6 +532,54 @@ static void ac2721_6_source_and_linter() {
           "AC6: no docs/design/2721-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2745: EnvFrame residual hard-AND arm (e) ────────────────────
+static void ac2745_1_envframe_arm_in_transaction() {
+    std::println("\n--- #2745 AC1: EnvFrame residual arm in steal_safety_transaction ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(cpp.find("Issue #2745") != std::string::npos, "AC1: cpp cites #2745");
+    CHECK(cpp.find("last_densify_envframe_ok") != std::string::npos,
+          "AC1: checks last densify envframe_ok");
+    CHECK(cpp.find("last_densify_dual_epoch_ok") != std::string::npos, "AC1: checks dual_epoch_ok");
+    CHECK(cpp.find("g_steal_safety_residual_envframe_lag_total") != std::string::npos,
+          "AC1: envframe lag counter bump");
+    CHECK(hdr.find("g_steal_safety_residual_envframe_lag_total") != std::string::npos,
+          "AC1: counter in header");
+    CHECK(hdr.find("kStealSafetyEnvFrameResidualIssue = 2745") != std::string::npos,
+          "AC1: issue stamp 2745");
+}
+
+static void ac2745_2_quiet_path_skips() {
+    std::println("\n--- #2745 AC2: quiet path (no densify) skips arm ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    CHECK(cpp.find("last_densify_call_seq() > 0") != std::string::npos,
+          "AC2: gated on densify call_seq > 0");
+}
+
+static void ac2745_3_prior_arms_preserved() {
+    std::println("\n--- #2745 AC3: prior residual arms a–d preserved ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    CHECK(cpp.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC3: arm (a) boundary preserved");
+    CHECK(cpp.find("g_steal_safety_residual_layout_stamp_mismatch_total") != std::string::npos,
+          "AC3: arm (b) layout preserved");
+    CHECK(cpp.find("g_steal_safety_residual_ticket_mismatch_total") != std::string::npos,
+          "AC3: arm (c) ticket preserved");
+    CHECK(cpp.find("g_steal_safety_residual_gc_defer_armed_total") != std::string::npos,
+          "AC3: arm (d) gc-defer preserved");
+}
+
+static void ac2745_4_source_and_no_design() {
+    std::println("\n--- #2745 AC4: source-cite + no docs/design/ ---");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    CHECK(t.find("ac2745_1_envframe_arm_in_transaction") != std::string::npos, "AC4: AC1 test");
+    CHECK(t.find("ac2745_2_quiet_path_skips") != std::string::npos, "AC4: AC2 test");
+    CHECK(t.find("ac2745_3_prior_arms_preserved") != std::string::npos, "AC4: AC3 test");
+    CHECK(t.find("ac2745_4_source_and_no_design") != std::string::npos, "AC4: self-test");
+    CHECK(read_file("docs/design/2745-envframe-residual.md").empty(),
+          "AC4: no docs/design/2745-* per #1655");
+}
+
 // ── Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ───────
 // AC1: durable per-Fiber evaluator_id set on Guard enter.
 // AC2: cleared on Guard exit / cancel so stale steals cannot see a previous evaluator.
@@ -679,6 +727,10 @@ int run_test_steal_complete_restamp_txn() {
     ac2721_3_ticket_consistency();
     ac2721_5_production_fail_closed();
     ac2721_6_source_and_linter();
+    ac2745_1_envframe_arm_in_transaction();
+    ac2745_2_quiet_path_skips();
+    ac2745_3_prior_arms_preserved();
+    ac2745_4_source_and_no_design();
     std::println("\n=== Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ===");
     ac2727_1_evaluator_id_set_on_guard_enter();
     ac2727_2_evaluator_id_cleared_on_guard_exit();
