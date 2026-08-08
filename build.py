@@ -903,6 +903,18 @@ def cmd_lint():
             "Issue #2783 keepalive helper reclaim linter failed — run python3 scripts/coverage/checks/check_keepalive_helper_reclaim_2783.py"
         )
         return r
+    # Issue #2784: workspace:sync-from actual body (no identity lambda stub).
+    # ac2784 in tests/compiler/test_workspace_sync_from.cpp per #81967.
+    wsfb_script = COVERAGE_CHECKS / "check_workspace_sync_from_body_2784.py"
+    if not wsfb_script.exists():
+        fail(f"missing {wsfb_script}")
+        return 1
+    r = run([sys.executable, str(wsfb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2784 workspace:sync-from body linter failed — run python3 scripts/coverage/checks/check_workspace_sync_from_body_2784.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

@@ -11,6 +11,7 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 import aura.compiler.value;
+import aura.compiler.lowering; // Issue #2784: unparse_node for sync-from body
 import aura.parser.parser;
 
 namespace aura::compiler::primitives_detail {
@@ -574,7 +575,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // (workspace:sync-from source-id symbol-name)
     //   → #t on success, #f if symbol not found or source workspace invalid
     //   Pulls a symbol's definition from another workspace into the current one.
-    //   Uses mutate:rebind to replace the symbol's definition.
+    //   Uses mutate:rebind with the *actual* source body (Issue #2784 —
+    //   never hardcode identity lambda).
+    // Issue #2784 lineage stamp for query/linter surfaces.
+    constexpr int kWorkspaceSyncFromBodyIssue = 2784;
+    (void)kWorkspaceSyncFromBodyIssue;
     add("workspace:sync-from", [&ev, get_ws_source](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_tree_)
             return make_bool(false);
@@ -584,18 +589,14 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         auto sym_name = ev.string_heap_[sym_idx];
 
-        // Get source from the target workspace
+        // Get source from the source workspace
         auto source = get_ws_source(src_id);
         if (source.empty())
             return make_bool(false);
 
-        // Phase 2.5.0: tmp_pool stays separate from canonical_pool.
-        // Source is parsed fresh for a one-off conflict-detection walk
-        // and discarded. The sym used to find the define node is intern'd
-        // in tmp_pool because the lookup is local to tmp_flat — we don't
-        // want conflict-detection intern'd names polluting the long-lived
-        // workspace pool (which already has 39+ intentional interns).
-        // Parse the source into a temp flat, find the define for sym_name
+        // Parse source into a temp flat, find the define for sym_name.
+        // tmp_pool stays separate from the long-lived workspace pool so
+        // one-off intern of conflict-detection names does not pollute it.
         aura::ast::StringPool tmp_pool;
         aura::ast::FlatAST tmp_flat;
         auto pr = aura::parser::parse_to_flat(source, tmp_flat, tmp_pool);
@@ -603,7 +604,6 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         tmp_flat.root = pr.root;
 
-        // Find the define node for the requested symbol
         auto sym = tmp_pool.intern(sym_name);
         aura::ast::NodeId def_node = aura::ast::NULL_NODE;
         for (aura::ast::NodeId id = 0; id < tmp_flat.size(); ++id) {
@@ -616,17 +616,25 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         if (def_node == aura::ast::NULL_NODE)
             return make_bool(false);
 
-        // Reconstruct the define source to be parsed into current workspace
-        // Use mutate:rebind which takes source code as a string
-        // The rebind function signature is: (mutate:rebind name code-string summary)
-        // We need (define name code) as a string for the function body
+        // Issue #2784: unparse the *actual* define form (or its value body)
+        // from the source workspace. Never substitute a hardcoded identity
+        // lambda — that silently corrupted AI cross-workspace sync.
+        auto def_v = tmp_flat.get(def_node);
+        std::string code;
+        if (!def_v.children.empty()) {
+            // Prefer the value child (lambda / expr); rebind also accepts a
+            // full (define ...) form via unparse of def_node as fallback.
+            code = unparse_node(tmp_flat, tmp_pool, def_v.child(0), 0);
+        }
+        if (code.empty())
+            code = unparse_node(tmp_flat, tmp_pool, def_node, 0);
+        if (code.empty())
+            return make_bool(false);
 
-        // Simplified P0: re-parse the whole source into current workspace flat,
-        // find the define node, and set up for rebind
         auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         auto current_idx = tree->active_idx();
 
-        // Ensure current workspace has its own flat
+        // Ensure current workspace has its own flat (COW materialize).
         if (current_idx > 0) {
             tree->ensure_local_flat(current_idx);
             auto* ws = tree->active();
@@ -635,55 +643,32 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 ev.workspace_pool_ = ws->pool;
             }
         }
-
-        // Use mutate:rebind to replace the function
-        // We need to find if this name already exists in current workspace
-        auto rebind_fn = ev.primitives_.lookup("mutate:rebind");
-        if (rebind_fn && sym_name != "display" && sym_name != "cons" && sym_name != "car") {
-            // Try to rebind using the existing mutator
-            auto code = std::string("(lambda (x) x)");
-            auto ci = ev.string_heap_.size();
-            ev.string_heap_.push_back(code);
-            auto si = ev.string_heap_.size();
-            ev.string_heap_.push_back(sym_name);
-            auto result =
-                (*rebind_fn)({make_string(si), make_string(ci),
-                              make_string(sym_idx + 1 < ev.string_heap_.size() ? sym_idx : si)});
-            if (is_bool(result) && as_bool(result)) {
-                // Issue #1904: removed redundant bump — mutate:rebind
-                // already bumped defuse_version_ via its own Guard dtor.
-                return make_bool(true);
-            }
-        }
-
-        // Fallback: parse the whole source into current workspace
-        auto saved_root = ev.workspace_flat_->root;
-        auto pr2 = aura::parser::parse_to_flat(source, *ev.workspace_flat_, *ev.workspace_pool_);
-        if (!pr2.success || pr2.root == aura::ast::NULL_NODE) {
-            // Restore original root
-            ev.workspace_flat_->root = saved_root;
+        if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_bool(false);
-        }
-        ev.workspace_flat_->root = saved_root; // Keep original root
 
-        // Now use mutate:rebind with the parsed body
-        // Find the parsed define in current workspace and rebind
-        auto current_sym = ev.workspace_pool_->intern(sym_name);
-        aura::ast::NodeId new_def = aura::ast::NULL_NODE;
-        for (aura::ast::NodeId id = 0; id < ev.workspace_flat_->size(); ++id) {
-            auto v = ev.workspace_flat_->get(id);
-            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == current_sym) {
-                if (id > saved_root || (id == saved_root && new_def == aura::ast::NULL_NODE))
-                    new_def = id; // find the one that was just parsed (highest ID)
-            }
-        }
+        auto rebind_fn = ev.primitives_.lookup("mutate:rebind");
+        if (!rebind_fn)
+            return make_bool(false);
+        // Refuse to clobber a few core primitives by name (legacy guard).
+        if (sym_name == "display" || sym_name == "cons" || sym_name == "car")
+            return make_bool(false);
 
-        if (new_def != aura::ast::NULL_NODE) {
-            // Issue #1904: removed redundant bump — the parse_to_flat
-            // path uses MutationBoundaryGuard under the hood.
+        auto ci = ev.string_heap_.size();
+        ev.string_heap_.push_back(code);
+        auto ni = ev.string_heap_.size();
+        ev.string_heap_.push_back(sym_name);
+        auto summary = std::string("workspace:sync-from #") + std::to_string(src_id) + " " +
+                       sym_name + " (#2784)";
+        auto si = ev.string_heap_.size();
+        ev.string_heap_.push_back(summary);
+        // (mutate:rebind name code-string summary)
+        auto result = (*rebind_fn)({make_string(ni), make_string(ci), make_string(si)});
+        if (is_bool(result) && as_bool(result)) {
+            // mutate:rebind already bumped defuse via Guard dtor (#1904).
             return make_bool(true);
         }
-        return make_bool(true); // Parsed into workspace flat
+        // Fail closed: do not claim success when rebind rejected / errored.
+        return make_bool(false);
     });
 
     // (workspace:discard id)
