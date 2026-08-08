@@ -1867,6 +1867,9 @@ aura_issue_test_link_light(test_concurrent_clone_hygiene_depth)
 # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
 aura_add_issue_test(test_unquote_splicing_hygiene)
 aura_issue_test_link_light(test_unquote_splicing_hygiene)
+# Issue #2808: stamp_rest_param_hygiene sets SyntaxMarker::MacroIntroduced.
+aura_add_issue_test(test_stamp_rest_param_hygiene_marker)
+aura_issue_test_link_light(test_stamp_rest_param_hygiene_marker)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

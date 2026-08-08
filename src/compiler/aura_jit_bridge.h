@@ -304,6 +304,14 @@ extern "C" void aura_test_reset_clone_macro_body_concurrent_top_level_total_for_
 // Issue #2807: unquote-splicing treated as caller-scope boundary in pre_scan.
 extern "C" std::uint64_t aura_unquote_splicing_hygiene_mismatch_total_v_read(void) noexcept;
 extern "C" void aura_test_reset_unquote_splicing_hygiene_mismatch_total_for_test(void) noexcept;
+// Issue #2808: stamp_rest_param_hygiene MacroIntroduced marker set / skipped.
+extern "C" std::uint64_t aura_stamp_rest_param_marker_set_total_v_read(void) noexcept;
+extern "C" std::uint64_t aura_stamp_rest_param_marker_skipped_total_v_read(void) noexcept;
+extern "C" void aura_test_reset_stamp_rest_param_marker_totals_for_test(void) noexcept;
+// Issue #2808: invoke stamp_rest_param_hygiene from tests (void* = FlatAST*).
+extern "C" void aura_test_call_stamp_rest_param_hygiene(void* target_flat, void* source_flat,
+                                                        std::uint32_t src_body_id,
+                                                        std::uint32_t list_root) noexcept;
 
 // Issue #2165: auto reemit+retry on Version/Env/Linear/Defuse reload fails.
 // Default ON (production). Set AURA_AOT_RELOAD_AUTO_RETRY=0 or call

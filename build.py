@@ -1191,6 +1191,18 @@ def cmd_lint():
             "Issue #2807 unquote-splicing hygiene linter failed — run python3 scripts/coverage/checks/check_unquote_splicing_hygiene_2807.py"
         )
         return r
+    # Issue #2808: stamp_rest_param_hygiene sets SyntaxMarker::MacroIntroduced.
+    # ac2808 in test_stamp_rest_param_hygiene_marker.
+    srp_script = COVERAGE_CHECKS / "check_stamp_rest_param_hygiene_marker_2808.py"
+    if not srp_script.exists():
+        fail(f"missing {srp_script}")
+        return 1
+    r = run([sys.executable, str(srp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2808 stamp_rest_param_hygiene marker linter failed — run python3 scripts/coverage/checks/check_stamp_rest_param_hygiene_marker_2808.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

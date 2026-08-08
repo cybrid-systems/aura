@@ -476,6 +476,12 @@ std::atomic<std::uint64_t> g_macro_rest_param_nested_qq_hits_total{0};
 // (query:macro-schema-cache-dirty-stamp-stats) under
 // `schema-cache-rest-stamped-total`.
 std::atomic<std::uint64_t> g_macro_schema_cache_rest_stamped_total{0};
+// Issue #2808: stamp_rest_param_hygiene also sets SyntaxMarker::MacroIntroduced
+// so is_macro_introduced() gates (replace-subtree / rebind) see rest lists.
+// set_total = nodes newly marked MacroIntroduced; skipped_total = already
+// MacroIntroduced (or out-of-range skip before stamp).
+std::atomic<std::uint64_t> g_stamp_rest_param_marker_set_total{0};
+std::atomic<std::uint64_t> g_stamp_rest_param_marker_skipped_total{0};
 // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
 // experimental rollback path). Bumped per successful unstamp via the
 // C-linkage helper aura_unstamp_macro_introduced_with_counter below.
@@ -632,6 +638,17 @@ std::uint64_t aura_macro_rest_param_nested_qq_hits_total_v_read() noexcept {
 // copy. Pairs with g_macro_schema_cache_rest_stamped_total atomic.
 std::uint64_t aura_macro_schema_cache_rest_stamped_total_v_read() noexcept {
     return g_macro_schema_cache_rest_stamped_total.load(std::memory_order_relaxed);
+}
+// Issue #2808: rest-list MacroIntroduced marker stamp metrics.
+extern "C" std::uint64_t aura_stamp_rest_param_marker_set_total_v_read(void) noexcept {
+    return g_stamp_rest_param_marker_set_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_stamp_rest_param_marker_skipped_total_v_read(void) noexcept {
+    return g_stamp_rest_param_marker_skipped_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_stamp_rest_param_marker_totals_for_test(void) noexcept {
+    g_stamp_rest_param_marker_set_total.store(0, std::memory_order_relaxed);
+    g_stamp_rest_param_marker_skipped_total.store(0, std::memory_order_relaxed);
 }
 std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept {
     return g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
@@ -1839,6 +1856,15 @@ static inline void stamp_rest_param_hygiene(aura::ast::FlatAST& target,
             target.set_provenance(cur, origin);
         if (src_schema != 0)
             target.set_schema_cache(cur, src_schema);
+        // Issue #2808 / #142: rest-list spine is macro-introduced. Without
+        // set_marker, is_macro_introduced() stays false and mutate gates
+        // (replace-subtree / rebind) cannot reject rest-stamped nodes.
+        if (target.is_macro_introduced(cur)) {
+            g_stamp_rest_param_marker_skipped_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            target.set_marker(cur, SyntaxMarker::MacroIntroduced);
+            g_stamp_rest_param_marker_set_total.fetch_add(1, std::memory_order_relaxed);
+        }
         g_macro_schema_cache_rest_stamped_total.fetch_add(1, std::memory_order_relaxed);
         auto cv = target.get(cur);
         std::vector<NodeId> walk_children(cv.children.begin(), cv.children.end());
@@ -1847,6 +1873,18 @@ static inline void stamp_rest_param_hygiene(aura::ast::FlatAST& target,
                 stack.push_back(child);
         }
     }
+}
+
+// Issue #2808: test entry for static stamp_rest_param_hygiene (opaque FlatAST*).
+extern "C" void aura_test_call_stamp_rest_param_hygiene(void* target_flat, void* source_flat,
+                                                        std::uint32_t src_body_id,
+                                                        std::uint32_t list_root) noexcept {
+    if (!target_flat || !source_flat)
+        return;
+    stamp_rest_param_hygiene(*static_cast<aura::ast::FlatAST*>(target_flat),
+                             *static_cast<const aura::ast::FlatAST*>(source_flat),
+                             static_cast<aura::ast::NodeId>(src_body_id),
+                             static_cast<aura::ast::NodeId>(list_root));
 }
 
 aura::ast::NodeId expand_inner_macros(
