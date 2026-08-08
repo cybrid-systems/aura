@@ -1006,6 +1006,15 @@ void FlatAST::restamp_subtree_generation(NodeId root) {
     }
 }
 
+// --- FlatAST::restamp_node_generation (#2809) ---
+void FlatAST::restamp_node_generation(NodeId id) noexcept {
+    if (id == NULL_NODE || id >= size() || id >= node_gen_.size())
+        return;
+    if (node_gen_[id] == 0)
+        return; // free-list tombstone — leave invalid
+    node_gen_[id] = generation_;
+}
+
 // --- FlatAST::bump_generation ---
 void FlatAST::bump_generation() noexcept {
     if (bump_generation_suppressed_) {

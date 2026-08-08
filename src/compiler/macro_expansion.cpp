@@ -482,6 +482,12 @@ std::atomic<std::uint64_t> g_macro_schema_cache_rest_stamped_total{0};
 // MacroIntroduced (or out-of-range skip before stamp).
 std::atomic<std::uint64_t> g_stamp_rest_param_marker_set_total{0};
 std::atomic<std::uint64_t> g_stamp_rest_param_marker_skipped_total{0};
+// Issue #2809: expand_inner_macros qq-unwrap restamp migration metrics.
+// targeted = parent+unwrapped subgraph restamp (default hot path);
+// full = residual restamp_all_node_generations fallback (threshold /
+// migration tracking; should stay ~0 in production after #2809).
+std::atomic<std::uint64_t> g_macro_expand_targeted_restamp_total{0};
+std::atomic<std::uint64_t> g_macro_expand_full_restamp_total{0};
 // Issue #2176: selective unstamp for MacroIntroduced subtrees (Agent
 // experimental rollback path). Bumped per successful unstamp via the
 // C-linkage helper aura_unstamp_macro_introduced_with_counter below.
@@ -649,6 +655,17 @@ extern "C" std::uint64_t aura_stamp_rest_param_marker_skipped_total_v_read(void)
 extern "C" void aura_test_reset_stamp_rest_param_marker_totals_for_test(void) noexcept {
     g_stamp_rest_param_marker_set_total.store(0, std::memory_order_relaxed);
     g_stamp_rest_param_marker_skipped_total.store(0, std::memory_order_relaxed);
+}
+// Issue #2809: qq-unwrap targeted vs full restamp metrics.
+extern "C" std::uint64_t aura_macro_expand_targeted_restamp_total_v_read(void) noexcept {
+    return g_macro_expand_targeted_restamp_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_macro_expand_full_restamp_total_v_read(void) noexcept {
+    return g_macro_expand_full_restamp_total.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_macro_expand_qq_restamp_totals_for_test(void) noexcept {
+    g_macro_expand_targeted_restamp_total.store(0, std::memory_order_relaxed);
+    g_macro_expand_full_restamp_total.store(0, std::memory_order_relaxed);
 }
 std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept {
     return g_macro_clone_concurrent_peak.load(std::memory_order_relaxed);
@@ -905,6 +922,39 @@ static void restamp_after_expand(aura::ast::FlatAST& flat,
         if (m > 0)
             g_macro_expand_mutate_restamp_total.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// Issue #2809: targeted restamp after expand_inner_macros qq-cons unwrap.
+//
+// Contract — which slots need restamp after
+//   flat->set_child(parent_id, child_idx, unwrapped)
+// (StructuralMutationGuard bumps generation_):
+//   1. parent_id — child edge rewritten; single-slot restamp only
+//      (walking parent subtree would re-introduce O(N) cost).
+//   2. unwrapped Call + descendants — newly allocated / wired spine;
+//      restamp_subtree_generation + MacroIntroduced dirty/parent repair.
+// Non-affected live nodes keep prior node_gen_; lazy-align is enabled so
+// is_valid/make_ref auto-repairs them on access (#2122) without an eager
+// O(N) full restamp per unwrap. Full restamp remains available as a
+// migration fallback (bumps g_macro_expand_full_restamp_total) when a
+// caller forces it — production default is targeted only.
+//
+// Complexity: O(|unwrapped|) per unwrap vs O(N) full restamp → O(N×M)
+// under multi-pass expand with M unwraps.
+static void restamp_after_qq_unwrap(aura::ast::FlatAST& flat, aura::ast::NodeId parent_id,
+                                    std::uint32_t /*child_idx*/, aura::ast::NodeId unwrapped) {
+    using namespace aura::ast;
+    if (parent_id != NULL_NODE)
+        flat.restamp_node_generation(parent_id);
+    if (unwrapped != NULL_NODE) {
+        flat.restamp_subtree_generation(unwrapped);
+        // MacroIntroduced dirty/parent repair on the unwrapped Call
+        // (unwrap_cons_chain_to_call marks the macro head MacroIntroduced).
+        (void)flat.restamp_macro_introduced_subtree(unwrapped);
+    }
+    // Residual live slots: lazy gen-align on is_valid / make_ref.
+    flat.enable_restamp_lazy_align();
+    g_macro_expand_targeted_restamp_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2171: when a clone_macro_body invocation crosses FlatAST +
@@ -1912,7 +1962,10 @@ aura::ast::NodeId expand_inner_macros(
             for (std::uint32_t ci = 0; ci < parent_children.size(); ++ci) {
                 if (parent_children[ci] == root) {
                     flat->set_child(parent_id, ci, unwrapped);
-                    flat->restamp_all_node_generations();
+                    // Issue #2809: targeted restamp of (parent_id, ci,
+                    // unwrapped) — not restamp_all_node_generations
+                    // (O(N) per unwrap → O(N×M) under multi-pass expand).
+                    restamp_after_qq_unwrap(*flat, parent_id, ci, unwrapped);
                     break;
                 }
             }
