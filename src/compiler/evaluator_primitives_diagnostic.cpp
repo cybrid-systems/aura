@@ -302,7 +302,9 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         auto& flat = *ev.workspace_flat_;
         if (node >= flat.size())
             return make_bool(false);
-        const auto pref = flat.make_ref(node);
+        // Issue #2759: layout + Evaluator stamp (sole production authority).
+        auto pref = flat.make_ref_layout(node);
+        ev.stamp_stable_ref(pref);
         if (!pref.is_valid_in(flat))
             return make_bool(false);
         ev.bump_verify_tool_stable_ref_hit();

@@ -1402,8 +1402,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                    std::string("unknown where field: \"") + p.field + "\"");
                     }
                 }
-                if (match)
-                    matches.push_back(flat.make_ref(id));
+                if (match) {
+                    // Issue #2759: Evaluator stamp on match handles (sole
+                    // production isolation authority; Soft global is residual).
+                    auto mref = flat.make_ref_layout(id);
+                    ev.stamp_stable_ref(mref);
+                    matches.push_back(mref);
+                }
             }
 
             if (matches.empty())
@@ -1901,8 +1906,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                    std::string("unknown where field: \"") + p.field + "\"");
                     }
                 }
-                if (match)
-                    matches.push_back(flat.make_ref(id));
+                if (match) {
+                    // Issue #2759: Evaluator stamp on match handles.
+                    auto mref = flat.make_ref_layout(id);
+                    ev.stamp_stable_ref(mref);
+                    matches.push_back(mref);
+                }
             }
 
             // No-op fast path: no matches → return {:success #t, 0/0, []}.
@@ -3779,13 +3788,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 continue;
             }
             PatternMatch pm;
-            pm.match_ref = flat.make_ref(id);
+            // Issue #2759: layout + Evaluator stamp (sole production authority).
+            pm.match_ref = flat.make_ref_layout(id);
+            ev.stamp_stable_ref(pm.match_ref);
             // Issue #1695: matcher already stores StableNodeRef captures
             // (gen-tagged at match time); copy through, do not re-make_ref
             // from a raw NodeId after later parse_to_flat iterations.
+            // Issue #2759: re-stamp captures so tenant provenance is Evaluator-owned.
             pm.capture_refs.reserve(matcher.state.captures.size());
-            for (auto& kv : matcher.state.captures)
-                pm.capture_refs.push_back(kv.second);
+            for (auto& kv : matcher.state.captures) {
+                auto cap = kv.second;
+                ev.stamp_stable_ref(cap);
+                pm.capture_refs.push_back(cap);
+            }
             matches.push_back(std::move(pm));
         }
 
@@ -6008,7 +6023,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return make_bool(false);
         }
-        StableNodeRef cref = ws->make_ref(cg_id);
+        // Issue #2759: layout + Evaluator stamp for SV mutate target handle.
+        StableNodeRef cref = ws->make_ref_layout(cg_id);
+        ev.stamp_stable_ref(cref);
         cg_id = cref.id;
 
         std::string threw;
@@ -6077,7 +6094,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return make_bool(false);
         }
-        StableNodeRef pref = ws->make_ref(pid);
+        // Issue #2759: layout + Evaluator stamp for SV mutate target handle.
+        StableNodeRef pref = ws->make_ref_layout(pid);
+        ev.stamp_stable_ref(pref);
         pid = pref.id;
 
         std::string threw;

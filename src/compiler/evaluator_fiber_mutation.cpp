@@ -499,7 +499,10 @@ void aura::compiler::Evaluator::pin_stable_refs_for_cow_boundary(
     }
 }
 
-// Issue #1912: children as StableNodeRef + registry pin for COW survival.
+// Issue #1912 / #2759: children as StableNodeRef + registry pin for COW
+// survival. Each ref is stamped via Evaluator::stamp_stable_ref (sole
+// production isolation authority) before pin — never relies on FlatAST
+// process-global capture under multi-tenant / hard-close.
 std::vector<aura::ast::FlatAST::StableNodeRef>
 aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept {
     std::vector<aura::ast::FlatAST::StableNodeRef> out;
@@ -509,6 +512,8 @@ aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept 
     out = ws->children_stable(id);
     if (out.empty())
         return out;
+    for (auto& r : out)
+        stamp_stable_ref(r);
     pin_stable_refs_for_cow_boundary(out);
     for (auto& r : out)
         r.pin_for_cow();

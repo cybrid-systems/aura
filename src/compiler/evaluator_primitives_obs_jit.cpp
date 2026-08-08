@@ -956,6 +956,18 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                  make_int(aura::core::provenance::hard_capture_tenant_active() ? 1 : 0)},
                 {"schema-2705", make_int(2705)},
                 {"issue-2705", make_int(2705)},
+                // Issue #2759: Evaluator::stamp_stable_ref sole production
+                // StableNodeRef isolation authority (refine #2705 residual).
+                // global-write-suppressed advances when set_isolation_capture_tenant
+                // refuses a non-zero write under hard-close. #2687/#2705 keys
+                // preserved above.
+                {"isolation-capture-global-write-suppressed-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::provenance::
+                         g_isolation_capture_global_write_suppressed_total_atomic()
+                             .load(std::memory_order_relaxed)))},
+                {"schema-2759", make_int(2759)},
+                {"issue-2759", make_int(2759)},
                 // Issue #2706: sole public side-effect gate =
                 // require_effect / require_effect_on_ref. Armed sentinel so
                 // Agent dashboards verify check_and_record_effect is private

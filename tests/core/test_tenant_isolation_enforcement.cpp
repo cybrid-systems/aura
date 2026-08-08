@@ -723,6 +723,143 @@ int main() {
         }
     }
 
+    // ── #2759 AC1: Evaluator stamp sole production authority ──
+    {
+        std::println("\n--- #2759 AC1: Evaluator stamp sole authority under hard-close ---");
+        reset_all();
+        aura::core::provenance::set_hard_capture_tenant(true);
+        CHECK(aura::core::provenance::hard_capture_tenant_active(), "AC1: hard-close armed");
+        // Non-zero global write suppressed under hard-close.
+        const auto supp_before =
+            aura::core::provenance::g_isolation_capture_global_write_suppressed_total_atomic().load(
+                std::memory_order_relaxed);
+        aura::core::provenance::set_isolation_capture_tenant(99);
+        CHECK(aura::core::provenance::isolation_capture_tenant() == 0,
+              "AC1: non-zero global write suppressed under hard-close");
+        const auto supp_after =
+            aura::core::provenance::g_isolation_capture_global_write_suppressed_total_atomic().load(
+                std::memory_order_relaxed);
+        CHECK(supp_after >= supp_before + 1, "AC1: global-write-suppressed advances");
+        // Dual Evaluator: make_stamped_ref is local-only (no miss/fallback).
+        const auto miss_before =
+            aura::core::provenance::g_isolation_capture_stamp_evaluator_miss_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto fallback_before =
+            aura::core::provenance::g_isolation_capture_stamp_global_fallback_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto local_before =
+            aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
+                std::memory_order_relaxed);
+        CompilerService cs_a;
+        CompilerService cs_b;
+        cs_a.evaluator().set_capability_tenant_id(7);
+        cs_b.evaluator().set_capability_tenant_id(42);
+        auto ra = cs_a.evaluator().make_stamped_ref(static_cast<NodeId>(1));
+        auto rb = cs_b.evaluator().make_stamped_ref(static_cast<NodeId>(2));
+        CHECK(ra.tenant_id == 7, "AC1: Evaluator A stamps tenant 7 only");
+        CHECK(rb.tenant_id == 42, "AC1: Evaluator B stamps tenant 42 only");
+        const auto miss_after =
+            aura::core::provenance::g_isolation_capture_stamp_evaluator_miss_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto fallback_after =
+            aura::core::provenance::g_isolation_capture_stamp_global_fallback_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto local_after =
+            aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
+                std::memory_order_relaxed);
+        CHECK(local_after >= local_before + 2, "AC1: local counter advances on stamp");
+        CHECK(miss_after == miss_before,
+              "AC1: make_stamped_ref (layout+stamp) does NOT bump evaluator_miss");
+        CHECK(fallback_after == fallback_before,
+              "AC1: make_stamped_ref does NOT bump global_fallback");
+        aura::core::provenance::set_hard_capture_tenant(false);
+    }
+
+    // ── #2759 AC2: Soft / tenant=0 stays permissive ──
+    {
+        std::println("\n--- #2759 AC2: Soft global write + stamp still permissive ---");
+        reset_all();
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_isolation_capture_tenant(11);
+        CHECK(aura::core::provenance::isolation_capture_tenant() == 11,
+              "AC2: Soft allows non-zero global write");
+        FlatAST::StableNodeRef ref{};
+        const bool stamped = aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref);
+        CHECK(stamped, "AC2: Soft maybe_stamp still stamps");
+        CHECK(ref.tenant_id == 11, "AC2: Soft stamps tenant from global");
+        aura::core::provenance::set_isolation_capture_tenant(0);
+        FlatAST::StableNodeRef ref0{};
+        CHECK(!aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(ref0),
+              "AC2: tenant=0 still no-op");
+    }
+
+    // ── #2759 AC3: refresh preserves tenant; no global re-stamp ──
+    {
+        std::println("\n--- #2759 AC3: refresh preserves tenant under hard-close ---");
+        reset_all();
+        // Soft write global first, then arm hard-close with global already set
+        // (legacy residual pollution). refresh must preserve tenant and must
+        // not stamp from global (layout remake).
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_isolation_capture_tenant(77);
+        aura::core::provenance::set_hard_capture_tenant(true);
+        CHECK(aura::core::provenance::isolation_capture_tenant() == 77,
+              "AC3: pre-arm global still visible (suppress only blocks new writes)");
+        FlatAST::StableNodeRef ref{};
+        ref.id = static_cast<NodeId>(1);
+        ref.tenant_id = 7;
+        // refresh_if_stale needs a live FlatAST — use make_safe_ref_layout path
+        // via direct field restore semantics already unit-tested in
+        // test_stable_ref_tenant_mandate. Here we assert source contract:
+        // remake uses make_safe_ref_layout (no maybe_stamp).
+        const auto stab = read_file("src/core/ast_stability.cpp");
+        CHECK(stab.find("make_safe_ref_layout") != std::string::npos,
+              "AC3: refresh_if_stale remakes via make_safe_ref_layout");
+        CHECK(stab.find("preserved_tenant") != std::string::npos,
+              "AC3: refresh preserves tenant_id");
+        // maybe_stamp under hard-close with residual global refuses.
+        FlatAST::StableNodeRef r2{};
+        r2.tenant_id = 0;
+        const bool stamped = aura::core::provenance::maybe_stamp_stable_ref_isolation_tenant(r2);
+        CHECK(!stamped, "AC3: hard-close refuses global re-stamp");
+        CHECK(r2.tenant_id == 0, "AC3: tenant_id unchanged by refused stamp");
+        aura::core::provenance::set_hard_capture_tenant(false);
+        aura::core::provenance::set_isolation_capture_tenant(0);
+    }
+
+    // ── #2759 AC5/AC6: query + source-cite ──
+    {
+        std::println("\n--- #2759 AC5/AC6: query + source-cite ---");
+        reset_all();
+        CHECK(aura::core::provenance::kEvaluatorStampSoleAuthorityIssue == 2759,
+              "AC5: kEvaluatorStampSoleAuthorityIssue == 2759");
+        const auto prov = read_file("src/core/provenance_tracker.hh");
+        const auto eval_sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto ast = read_file("src/core/ast.ixx");
+        const auto q_src = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        CHECK(prov.find("#2759") != std::string::npos, "AC6: provenance_tracker.hh cites #2759");
+        CHECK(prov.find("g_isolation_capture_global_write_suppressed_total_atomic") !=
+                  std::string::npos,
+              "AC5: global-write-suppressed counter declared");
+        CHECK(eval_sec.find("make_ref_layout") != std::string::npos,
+              "AC1: make_stamped_ref uses make_ref_layout");
+        CHECK(ast.find("make_ref_layout") != std::string::npos, "AC1: make_ref_layout in FlatAST");
+        CHECK(ast.find("make_safe_ref_layout") != std::string::npos,
+              "AC3: make_safe_ref_layout in FlatAST");
+        CHECK(q_src.find("schema-2759") != std::string::npos, "AC5: schema-2759 query key");
+        CHECK(q_src.find("issue-2759") != std::string::npos, "AC5: issue-2759 query key");
+        CHECK(q_src.find("isolation-capture-global-write-suppressed-total") != std::string::npos,
+              "AC5: global-write-suppressed query key");
+        // #2705 / #2687 keys preserved.
+        CHECK(q_src.find("schema-2705") != std::string::npos, "AC5: schema-2705 preserved");
+        CHECK(q_src.find("schema-2687") != std::string::npos, "AC5: schema-2687 preserved");
+        for (const auto& p : {"docs/design/evaluator_stamp_sole_authority_2759.md",
+                              "docs/evaluator_stamp_sole_authority_2759.md", "design/2759.md"}) {
+            std::ifstream f(p);
+            CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+        }
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

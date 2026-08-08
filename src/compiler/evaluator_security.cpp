@@ -750,20 +750,24 @@ void Evaluator::stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcep
 // handed to Agent / user code. Central create/rebind helper.
 void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcept {
     const auto fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-    // Issue #2687: bump local capture counter — this is the production
+    // Issue #2687 / #2759: bump local capture counter — sole production
     // multi-tenant path (per-Evaluator authority via capability_tenant_id_).
     // Distinct from maybe_stamp_stable_ref_isolation_tenant which bumps
     // g_isolation_capture_stamp_global_fallback_total_atomic when it uses
-    // the process-global g_isolation_capture_tenant atomic.
+    // the process-global g_isolation_capture_tenant atomic (Soft only under
+    // hard-close; #2705 refuses that write path).
     ::aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().fetch_add(
         1, std::memory_order_relaxed);
     ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
 }
 
 ast::FlatAST::StableNodeRef Evaluator::make_stamped_ref(ast::NodeId id) const noexcept {
+    // Issue #2759: layout-only capture then Evaluator stamp (sole production
+    // authority). Avoid make_ref → maybe_stamp under hard-close, which would
+    // false-count evaluator_miss while still overwriting via stamp_stable_ref.
     ast::FlatAST::StableNodeRef ref{};
     if (workspace_flat_)
-        ref = workspace_flat_->make_ref(id);
+        ref = workspace_flat_->make_ref_layout(id);
     else
         ref.id = id;
     stamp_stable_ref(ref);
@@ -773,11 +777,12 @@ ast::FlatAST::StableNodeRef Evaluator::make_stamped_ref(ast::NodeId id) const no
 ast::FlatAST::StableNodeRef
 Evaluator::make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id,
                                  std::uint32_t fiber_id) const noexcept {
+    // Issue #2759: same layout-only + stamp path as make_stamped_ref.
     ast::FlatAST::StableNodeRef ref{};
     const auto fiber =
         fiber_id != 0 ? fiber_id : static_cast<std::uint32_t>(aura_fiber_current_id());
     if (workspace_flat_)
-        ref = workspace_flat_->make_safe_ref(id, workspace_id, fiber);
+        ref = workspace_flat_->make_safe_ref_layout(id, workspace_id, fiber);
     else {
         ref.id = id;
         ref.fiber_id = fiber;
