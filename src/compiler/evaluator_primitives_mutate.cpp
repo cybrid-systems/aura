@@ -2615,6 +2615,30 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
                 new_value = root_v.child(0);
             }
+            // Issue #2792: hygiene on new body (add path) — walk new_value
+            // for MacroIntroduced; old_define-only probe is insufficient.
+            {
+                const bool allow_macro =
+                    ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+                if (!allow_macro) {
+                    aura::ast::NodeId hit = aura::ast::NULL_NODE;
+                    flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+                        if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                            hit = id;
+                    });
+                    if (hit != aura::ast::NULL_NODE) {
+                        aura::ast::NodeId probe_arr[1] = {hit};
+                        if (auto err =
+                                hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
+                            if (size_before_add_parse < flat.size())
+                                (void)flat.free_orphan_nodes_from(
+                                    static_cast<aura::ast::NodeId>(size_before_add_parse));
+                            ok = false;
+                            return *err;
+                        }
+                    }
+                }
+            }
             std::string summary =
                 (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "add " + name;
             auto new_define = flat.add_define(sym, new_value);
@@ -2679,6 +2703,31 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return mev("parse-error", "define form in rebind code has no body");
             }
             new_value = root_v.child(0);
+        }
+
+        // Issue #2792: hygiene on new body — walk the parsed new_value subtree
+        // for MacroIntroduced. The pre-parse check only probes old_define
+        // (destination); a macro-introduced body can still be rebound onto a
+        // normal Define, defeating #373. Same :allow-macro? / global opt-out.
+        {
+            const bool allow_macro =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            if (!allow_macro) {
+                aura::ast::NodeId hit = aura::ast::NULL_NODE;
+                flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+                    if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                        hit = id;
+                });
+                if (hit != aura::ast::NULL_NODE) {
+                    aura::ast::NodeId probe_arr[1] = {hit};
+                    if (auto err =
+                            hygiene_protected_error(ev, flat, probe_arr, false, false, mev)) {
+                        free_rebind_parse_orphans(); // Issue #2791: unlinked body
+                        ok = false;
+                        return *err;
+                    }
+                }
+            }
         }
 
         // Issue #1441: capture old body NodeId before swap so
