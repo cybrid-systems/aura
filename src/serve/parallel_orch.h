@@ -78,6 +78,12 @@ struct TaskResult {
 struct TaskSpec {
     std::function<TaskResult()> body; // required
     std::string name;                 // optional label
+    // Issue #2746: optional mutation region key for disjoint multi-agent
+    // concurrent mutate under #2724 try_acquire_for_region. 0 = none
+    // (GlobalExclusive default). Non-zero keys with region concurrency
+    // enabled allow parallel tasks targeting disjoint keys to admit
+    // RegionExclusive Guards without full workspace exclusive.
+    std::uint64_t region_key = 0;
 };
 
 enum class BatchStatus : std::uint8_t {
@@ -134,6 +140,10 @@ struct ParallelOrchStats {
     // timeout shares the same reclaim protocol).
     std::atomic<std::uint64_t> join_drain_residual_reclaim_total{0};
     std::atomic<std::uint64_t> join_drain_us_total{0};
+    // Issue #2746: batches that supplied ≥2 distinct non-zero region_keys
+    // (region-concurrent eligible under #2724).
+    std::atomic<std::uint64_t> region_concurrent_batches_total{0};
+    std::atomic<std::uint64_t> region_keys_supplied_total{0};
 };
 
 inline ParallelOrchStats g_parallel_orch_stats{};
@@ -217,6 +227,38 @@ inline void snapshot_global_ext(std::uint64_t& batches, std::uint64_t& spawned,
 
     const auto t0 = std::chrono::steady_clock::now();
     g_parallel_orch_stats.intend_batches.fetch_add(1, std::memory_order_relaxed);
+
+    // Issue #2746: count region-key supply + region-concurrent-eligible batches
+    // (≥2 distinct non-zero keys). Actual admit still goes through #2724
+    // try_acquire_for_region when task bodies mutate under TLS region context.
+    {
+        std::uint64_t supplied = 0;
+        std::uint64_t distinct = 0;
+        std::uint64_t seen[8] = {};
+        std::size_t n_seen = 0;
+        for (const auto& t : tasks) {
+            if (t.region_key == 0)
+                continue;
+            ++supplied;
+            bool already = false;
+            for (std::size_t i = 0; i < n_seen; ++i) {
+                if (seen[i] == t.region_key) {
+                    already = true;
+                    break;
+                }
+            }
+            if (!already && n_seen < 8)
+                seen[n_seen++] = t.region_key;
+            if (!already)
+                ++distinct;
+        }
+        if (supplied > 0)
+            g_parallel_orch_stats.region_keys_supplied_total.fetch_add(supplied,
+                                                                       std::memory_order_relaxed);
+        if (distinct >= 2)
+            g_parallel_orch_stats.region_concurrent_batches_total.fetch_add(
+                1, std::memory_order_relaxed);
+    }
 
     // Issue #1600: preflight when process fiber quota cannot admit any more work.
     // Full-batch precheck: if remaining < 1, refuse whole batch with typed quota error.

@@ -1139,6 +1139,21 @@ bool Evaluator::eval_current_holds_shared_pin() noexcept {
     return g_eval_current_shared_pin_depth > 0;
 }
 
+// Issue #2746: TLS region key while a parallel-intend task body runs.
+namespace {
+    thread_local std::uint64_t g_parallel_task_region_key = 0;
+} // namespace
+
+void Evaluator::note_parallel_task_region_key(std::uint64_t key) noexcept {
+    g_parallel_task_region_key = key;
+}
+void Evaluator::clear_parallel_task_region_key() noexcept {
+    g_parallel_task_region_key = 0;
+}
+std::uint64_t Evaluator::parallel_task_region_key() noexcept {
+    return g_parallel_task_region_key;
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // Issue #157 Phase 1: yield_mutation_boundary implementation.
 //

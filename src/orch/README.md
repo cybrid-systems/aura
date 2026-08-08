@@ -14,12 +14,31 @@ Agent orchestration facade — `orch.h` · `agent_spawn.h` · `orch.ixx` (#1588)
 | `(orch:parallel-intend tasks …)` | alias of `(parallel-intend …)` | same as parallel-intend batch hash |
 | `(engine:metrics \"query:orch-module-stats\")` | stats facade | live `OrchModuleStats` (+ mailbox/parallel mirrors) |
 
-### `parallel-intend` semantics (Issue #2081 / #2163)
+### `parallel-intend` semantics (Issue #2081 / #2163 / #2746)
 
 `(parallel-intend tasks ...)` runs tasks on a real fiber pool under `parallel_orch::parallel_intend`.
 By default **Evaluator `apply_closure` is serialized** by a shared `std::mutex eval_mu` so
 AST/mutate safety is preserved across fibers. The batch hash carries `eval-serialized=#t`
 (and `schema-2081`) so Agents can introspect the contract.
+
+#### Region concurrent mutate (Issue #2746 / #2724)
+
+```scheme
+(parallel-intend
+  (vector (lambda () …mutate A…) (lambda () …mutate B…))
+  :region-keys (vector 1 2)   ; distinct non-zero keys
+  :timeout-ms 5000)
+```
+
+- Per-task `region_key` is stamped into TLS for the task body.
+- When region concurrency is enabled, `MutationBoundaryGuard::try_acquire`
+  redirects to `try_acquire_for_region` so **disjoint** keys admit concurrent
+  RegionExclusive Guards (#2724). Overlap / zero keys fall back to
+  GlobalExclusive or structured reject (production).
+- Pure path (`:pure #t`) is unchanged — pure-contract probe still fires;
+  region admit does not claim transactional isolation.
+- Batch hash: `region-concurrent-eligible`, `region-keys-supplied`,
+  `region-concurrent-batches`, `schema-2746`.
 
 | Aspect | Default (`:pure #f`) | `:pure #t` (Issue #2163) |
 |--------|----------------------|---------------------------|

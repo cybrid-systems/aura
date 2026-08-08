@@ -1190,6 +1190,16 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
             aura::core::AuraErrorKind::ResourceQuotaExceeded,
             std::string("AdmissionRejected: nested-mutate-under-eval-current")));
     }
+    // Issue #2746: parallel-intend task body may have stamped a region_key
+    // TLS. When region concurrency is enabled, redirect to try_acquire_for_region
+    // so disjoint multi-task mutates take RegionExclusive (not dual GlobalExclusive).
+    // Zero key / policy OFF → fall through to GlobalExclusive (unchanged).
+    {
+        const auto rk = Evaluator::parallel_task_region_key();
+        if (rk != 0 && ev.workspace_region_concurrency_enabled()) {
+            return try_acquire_for_region(ev, rk, pending_count, success_flag, fine_rollback);
+        }
+    }
     // Construct via private AcquireTag path (quota already checked).
     // GlobalExclusive — no region_key.
     return std::unique_ptr<MutationBoundaryGuard>(
