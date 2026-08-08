@@ -12,11 +12,13 @@
 ; Returns: (status code-orig output)
 ;   status = "healed" | "failed"
 
+
+(export heal)
+
 (require "std/string" all:)
 (require "std/list" all:)
 (require "std/adaptive" all:)
 
-(export heal)
 
 ; ── Known stdlib function → module mapping ──
 ; Format: (fn-name . "module-name")

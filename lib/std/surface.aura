@@ -10,9 +10,6 @@
 ;
 ; See docs/design/primitives-surface-refactor.md Phase 3.
 
-(require "std/string" all:)
-(require "std/json" all:)
-(require "std/math" all:)
 
 (export
   ; ── string (stdlib composition) ──
@@ -38,3 +35,8 @@
   gcd lcm prime? factors fibonacci
   factorial expt nCr nPr
   sum product range variance stddev percentile normalize)
+
+(require "std/string" all:)
+(require "std/json" all:)
+(require "std/math" all:)
+

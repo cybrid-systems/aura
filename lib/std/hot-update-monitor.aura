@@ -7,7 +7,6 @@
 ; directive wave 15 (aura philosophy: flat directory structure, no
 ; multi-file subdirs).
 
-(require "std/hot-update" all:)
 
 (export make-hot-update-monitor
         monitor:poll
@@ -15,6 +14,9 @@
         monitor:stop
         monitor:running?
         monitor:last-stats)
+
+(require "std/hot-update" all:)
+
 
 ; Monitor as list: (callback running? last-stats poll-count)
 ; callback: (lambda (stats) ...) called each poll with query:aot-stats

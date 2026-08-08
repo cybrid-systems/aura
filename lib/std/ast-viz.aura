@@ -9,10 +9,12 @@
 ;   (mutation:trace)     → mutation 历史文本摘要
 ;   (mutation:trace-node id) → 单个节点的 mutation 历史
 
+
+(export ast:to-dot ast:to-dot-node mutation:trace mutation:trace-node)
+
 (require "std/list" all:)
 (require "std/string" all:)
 
-(export ast:to-dot ast:to-dot-node mutation:trace mutation:trace-node)
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; Section 1: AST → DOT graph

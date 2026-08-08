@@ -1,9 +1,11 @@
 ; Aura standard data structures library
 ; Import with: (import "std/data")
+
+(export make-trie trie-insert trie-search trie-prefix? trie-keys)
+
 (require std/list)
 (require std/hash)
 
-(export make-trie trie-insert trie-search trie-prefix? trie-keys)
 
 ; ═══════════════════════════════════════════════════════════
 ; Trie (prefix tree)

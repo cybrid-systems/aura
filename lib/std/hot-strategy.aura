@@ -11,8 +11,9 @@
 ;
 ; Version counter is process-local (not persisted). Last-good body is a
 ; code string; last-good snapshot is an ast:snapshot id (-1 = none).
-
-(require "std/mutate" all:)
+;
+; Form order (#2769): export before require — *hs-version* / *hs-name*
+; free-vars. Host tolerates either order (#2766); export-first is canonical.
 
 (export hot-strategy:version
         hot-strategy:last-good-body
@@ -25,6 +26,9 @@
         hot-strategy:call
         hot-strategy:aot?
         hot-strategy:help)
+
+(require "std/mutate" all:)
+
 
 ; ── Process-local strategy registry (single active name for denseness) ──
 (define *hs-version* 0)

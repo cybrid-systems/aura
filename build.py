@@ -711,6 +711,22 @@ def cmd_lint():
             "Issue #2768 orchestrator agent stdin linter failed — run python3 scripts/coverage/checks/check_orchestrator_agent_stdin_2768.py"
         )
         return r
+    # Issue #2769: stdlib-wide require-before-export audit + form-order
+    # lint (#2766 host residual, #2768 orchestrator). Inventory of
+    # lib/std form order + denseness smokes (llm/hot-strategy/agent/
+    # orchestrator/mutate/query/net) + zero require-first policy +
+    # INDEX.aura authoring note. ac2769_* in test_module_require_freevar
+    # per #81967.
+    srea_script = COVERAGE_CHECKS / "check_stdlib_require_export_audit_2769.py"
+    if not srea_script.exists():
+        fail(f"missing {srea_script}")
+        return 1
+    r = run([sys.executable, str(srea_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2769 stdlib require/export audit linter failed — run python3 scripts/coverage/checks/check_stdlib_require_export_audit_2769.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

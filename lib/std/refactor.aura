@@ -8,11 +8,13 @@
 ;   (refactor:extract-function ids fn)  — 提取为新函数
 ;   (refactor:inline-function name)     — 内联函数
 
+
+(export refactor:rename-var refactor:extract-function refactor:inline-function)
+
 (require "std/list" all:)
 (require "std/string" all:)
 (require "std/query" all:)
 
-(export refactor:rename-var refactor:extract-function refactor:inline-function)
 
 ; ── refactor:rename-var — 重命名变量 ──
 ;

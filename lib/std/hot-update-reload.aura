@@ -7,12 +7,14 @@
 ; directive wave 15 (aura philosophy: flat directory structure, no
 ; multi-file subdirs).
 
-(require "std/hot-update" all:)
 
 (export make-manual-reload
         make-threshold-reload
         make-composite-reload
         make-once-reload)
+
+(require "std/hot-update" all:)
+
 
 ; Strategy 1: Manual — caller triggers via returned thunk
 (define (make-manual-reload path)

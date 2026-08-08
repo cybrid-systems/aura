@@ -5,8 +5,9 @@
 ; - #1551: template 注册、响应解析、prompt sanitization、调用统计
 ;
 ; Import: (import "std/llm")  or  (require "std/llm" all:)
-
-(require "std/string" all:)
+;
+; Form order (#2769): export before require — *llm-rate-limit* / templates
+; free-vars. Host tolerates either order (#2766); export-first is canonical.
 
 (export aura-llm-call aura-verify
         llm:rate-limit-set! llm:rate-limit-remaining
@@ -16,6 +17,9 @@
         llm:sanitize-prompt llm:injection-risk?
         llm:call-stats llm:call-stats-reset!
         llm:chat)
+
+(require "std/string" all:)
+
 
 ; ── Rate limit (#929) ──────────────────────────────────────────
 

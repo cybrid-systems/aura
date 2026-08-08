@@ -1200,7 +1200,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_module_boundary.cpp` (—) [domain_suite, theme_core] — Issue #1885 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_module_query_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_module_query_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_module_rebind_residual.cpp` (—) [domain_suite, theme_compiler] — AC1: set-code multi-define (define g (f)) binds call result, not procedure
-- `tests/compiler/test_module_require_freevar.cpp` (—) [domain_suite, theme_compiler] — Issue #2766 — require-before-export free-var capture of module-private
+- `tests/compiler/test_module_require_freevar.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2766 — require-before-export free-var capture of module-private
 - `tests/compiler/test_mutate_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutate_batch.cpp
 - `tests/compiler/test_mutate_capability_force.cpp` (—) [domain_suite, theme_compiler] — AC1: Source: add_mutate calls check_and_record_effect + check_workspace_isolation
 - `tests/compiler/test_mutate_cross_thread_migration.cpp` (—) [domain_suite, theme_compiler] — test_mutate_cross_thread_migration.cpp — Issue #1373:

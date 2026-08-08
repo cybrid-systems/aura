@@ -1,12 +1,14 @@
 ; lib/std/synthesize-v2.aura -- Synthesize Pipeline v2
 ;
+
+(export synthesize:test-driven synthesize:debug synthesize:project
+        synthesize:compose synthesize:run-tests synthesize:eval-test)
+
 (require std/list all:)
 (require std/json all:)
 (require std/llm all:)
 (require std/adaptive all:)
 
-(export synthesize:test-driven synthesize:debug synthesize:project
-        synthesize:compose synthesize:run-tests synthesize:eval-test)
 
 ; ── string-trim ──
 (define (string-trim str)
