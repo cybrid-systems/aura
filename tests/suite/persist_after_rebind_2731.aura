@@ -1,0 +1,59 @@
+; Issue #2731 — persist:save after mutate:rebind must capture live bodies
+; (H13; depends on #2730 live AST rebind). Parent tracker: #2729.
+(require "std/mutate" all:)
+(require "std/persist" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define path-a "/tmp/aura-suite-2731-a.aura-soul")
+(define path-b "/tmp/aura-suite-2731-b.aura-soul")
+(define path-m "/tmp/aura-suite-2731-m.aura-soul")
+
+(display "Scenario A: save baseline, rebind, load → baseline\n")
+(set-code "(define score (lambda (x) (* x 2)))")
+(eval-current)
+(assert! (persist:save path-a) "A save")
+(assert! (mutate:rebind "score" "(lambda (x) (* x 3))" "t") "A rebind")
+(assert! (= (score 7) 21) "A after-mut")
+(assert! (persist:load path-a) "A load")
+(assert! (= (score 7) 14) "A after-load baseline")
+
+(display "Scenario B: rebind, save, poison, load → saved triple\n")
+(set-code "(define score (lambda (x) (* x 2)))")
+(eval-current)
+(assert! (mutate:rebind "score" "(lambda (x) (* x 3))" "t") "B rebind")
+(assert! (= (score 7) 21) "B after-mut")
+(assert! (persist:save path-b) "B save post-rebind")
+(assert! (mutate:rebind "score" "(lambda (x) (* x 100))" "p") "B poison")
+(assert! (= (score 7) 700) "B after-poison")
+(assert! (persist:load path-b) "B load")
+(assert! (= (score 7) 21) "B after-load triple")
+
+(display "Scenario multi-define: rebind 2nd, save, poison, load\n")
+(set-code "(define score (lambda (x) (* x 2))) (define verify-policy (lambda (v) (= v 14)))")
+(eval-current)
+(assert! (mutate:rebind "verify-policy" "(lambda (v) (= v 21))" "x") "M rebind")
+(assert! (verify-policy 21) "M vfy after rebind")
+(assert! (persist:save path-m) "M save")
+(mutate:rebind "verify-policy" "(lambda (v) (= v 99))" "p")
+(mutate:rebind "score" "(lambda (x) (* x 100))" "p")
+(assert! (persist:load path-m) "M load")
+(assert! (verify-policy 21) "M after-load vfy21")
+(assert! (not (verify-policy 14)) "M after-load vfy14")
+(assert! (= (score 7) 14) "M after-load score")
+
+(if (= *fails* 0)
+    (begin (display "OK-2731 persist after rebind\n"))
+    (begin
+      (display "FAIL-2731 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))
