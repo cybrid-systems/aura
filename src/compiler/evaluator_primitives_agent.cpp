@@ -4274,6 +4274,27 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2229", 2229);
             insert_kv("issue-2229", 2229);
             insert_kv("agent-failure-policy-wired", 1);
+            // Issue #2756: workflow-level FailurePolicy composition
+            // (batch + AgentScope + residual preference). Additive —
+            // #2007/#2229/#2539 surfaces above preserved.
+            insert_kv("workflow-compose-total",
+                      static_cast<std::int64_t>(
+                          os.workflow_compose_total.load(std::memory_order_relaxed)));
+            insert_kv(
+                "workflow-retry-total",
+                static_cast<std::int64_t>(os.workflow_retry_total.load(std::memory_order_relaxed)));
+            insert_kv("workflow-circuit-open-total",
+                      static_cast<std::int64_t>(
+                          os.workflow_circuit_open_total.load(std::memory_order_relaxed)));
+            insert_kv(
+                "workflow-residual-reclaim-under-policy-total",
+                static_cast<std::int64_t>(os.workflow_residual_reclaim_under_policy_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("workflow-failure-policy-wired",
+                      static_cast<std::int64_t>(
+                          os.workflow_failure_policy_wired.load(std::memory_order_relaxed)));
+            insert_kv("schema-2756", 2756);
+            insert_kv("issue-2756", 2756);
             // Issue #2588: Aura language surface for AgentScope supervision
             // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
             // orch:scope-cancel-all). Per-Evaluator scope map

@@ -342,6 +342,56 @@ Semantic boundary:
 Regression: `tests/orch/test_failure_policy_bridge` (mapping table);
 `tests/orch/test_agent_failure_policy` (#2229 unchanged).
 
+### WorkflowFailurePolicy composition (Issue #2756)
+
+Host-facing composition of **batch** `FailurePolicy` (#2007) + **supervision**
+`AgentFailurePolicy` (#2229) + residual/reclaim preference into one contract
+for the common production shape:
+
+```text
+parallel_intend (fan-out) → AgentScope (long-lived) → residual / reclaim
+```
+
+```cpp
+#include "orch/orch.h"
+
+// FailFast batch → Cancel on stall; residual Report (default).
+auto w = aura::orch::compose_workflow_policy(
+    aura::orch::FailurePolicy::FailFast);
+
+// RetryN → RestartN with max_restarts=3; residual Cancel preference.
+auto w2 = aura::orch::compose_workflow_policy(
+    aura::orch::FailurePolicy::RetryN,
+    aura::orch::ResidualReclaimPreference::Cancel,
+    /*max_retries=*/3);
+
+// Project onto existing surfaces (defaults unchanged when unused):
+auto pp = aura::orch::to_parallel_policy(w2);   // parallel_intend
+auto ap = aura::orch::to_agent_policy(w2);      // AgentScope::watch_all
+// residual preference is advisory — does not change #2661 hard-reclaim:
+if (aura::orch::residual_prefers_cancel(w2)) { /* host cancel path */ }
+aura::orch::note_workflow_residual_reclaim_under_policy(w2); // observe only
+```
+
+| Compose input | Batch (`to_parallel_policy`) | Agent (`to_agent_policy`) |
+|---------------|------------------------------|---------------------------|
+| `FailFast` | `FailurePolicy::FailFast` | `on_stall = Cancel` |
+| `CollectAll` | `CollectAll` | `on_stall = ReportOnly` |
+| `RetryN` | `RetryN` + `max_retries` | `on_stall = RestartN` |
+| `CircuitBreaker` | `CircuitBreaker` + limit | `on_stall = Cancel` + consecutive limit |
+
+Rules:
+1. **Not calling compose leaves #2007 / #2229 / #2539 defaults unchanged** (AC1).
+2. Residual preference is **advisory** — #2661 reclaim / deferred cleanup
+   mechanics are not altered; hosts observe via
+   `workflow-residual-reclaim-under-policy-total` (AC2).
+3. Counters on `query:orch-module-stats`: `workflow-compose-total`,
+   `workflow-retry-total`, `workflow-circuit-open-total`,
+   `workflow-residual-reclaim-under-policy-total`, `schema-2756` (AC3).
+4. **No** process-global registry; MVP scope linter still green (AC6).
+
+Regression: `tests/orch/test_failure_policy_bridge` (`ac2756_*`).
+
 ### `agent-ask` / `agent-reply` (Issue #2231 / #2401 / #2538, cross-agent request/response)
 
 Standardized request/response channel between agents without a process-global
