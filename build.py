@@ -939,6 +939,18 @@ def cmd_lint():
             "Issue #2786 workspace:lock active-flag linter failed — run python3 scripts/coverage/checks/check_workspace_lock_active_flag_2786.py"
         )
         return r
+    # Issue #2787: workspace:rollback-latest single reverse walk (no O(N)
+    # mutation_id re-search). ac2787 in test_workspace_rollback_latest.
+    wrb_script = COVERAGE_CHECKS / "check_workspace_rollback_latest_2787.py"
+    if not wrb_script.exists():
+        fail(f"missing {wrb_script}")
+        return 1
+    r = run([sys.executable, str(wrb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2787 workspace:rollback-latest linter failed — run python3 scripts/coverage/checks/check_workspace_rollback_latest_2787.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
