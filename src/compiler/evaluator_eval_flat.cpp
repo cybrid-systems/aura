@@ -2526,6 +2526,25 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
     if (!pr.success || pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::ParseError,
                                                       "batch :replace-subtree: parse failed"});
+    // Issue #2797: hygiene on the *new* subtree (not only the target).
+    // Target MacroIntroduced is blocked above; a macro-provenance body
+    // installed under a normal parent would still defeat #142. Same gap
+    // as #2792 rebind new_value. Free parse orphans on reject.
+    {
+        aura::ast::NodeId hit = aura::ast::NULL_NODE;
+        flat.walk_subtree(pr.root, [&](aura::ast::NodeId id) {
+            if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                hit = id;
+        });
+        if (hit != aura::ast::NULL_NODE) {
+            if (size_before_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :replace-subtree: cannot install macro-introduced body"});
+        }
+    }
     auto parent_slot_ok = [&]() -> bool {
         if (parent_id == aura::ast::NULL_NODE ||
             static_cast<std::size_t>(parent_id) >= size_before_parse ||
