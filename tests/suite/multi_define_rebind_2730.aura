@@ -1,0 +1,55 @@
+; Issue #2730 — multi-define workspace: mutate:rebind must apply body for any name
+; (eval_ir direct call + env/let/apply). Parent tracker: #2729 (H14).
+(require "std/mutate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(display "ORDER-A rebind second\n")
+(set-code "(define score (lambda (x) (* x 2))) (define verify-policy (lambda (v) (= v 14)))")
+(eval-current)
+(assert! (not (verify-policy 21)) "pre vfy21=#f")
+(assert! (verify-policy 14) "pre vfy14=#t")
+(assert! (mutate:rebind "verify-policy" "(lambda (v) (= v 21))" "2730-a") "rebind second #t")
+(assert! (verify-policy 21) "post vfy21=#t")
+(assert! (not (verify-policy 14)) "post vfy14=#f")
+(assert! (= (score 7) 14) "score untouched")
+
+(display "ORDER-B rebind first\n")
+(set-code "(define verify-policy (lambda (v) (= v 14))) (define score (lambda (x) (* x 2)))")
+(eval-current)
+(assert! (mutate:rebind "verify-policy" "(lambda (v) (= v 21))" "2730-b") "rebind first #t")
+(assert! (verify-policy 21) "B vfy21=#t")
+(assert! (not (verify-policy 14)) "B vfy14=#f")
+(assert! (= (score 7) 14) "B score untouched")
+(assert! (= (let ((f score)) (f 7)) 14) "B score let untouched")
+
+(display "ORDER-C sole define\n")
+(set-code "(define score (lambda (x) (* x 2)))")
+(eval-current)
+(assert! (mutate:rebind "score" "(lambda (x) (* x 3))" "2730-c") "rebind sole #t")
+(assert! (= (score 7) 21) "C score=21")
+
+(display "direct matches let/apply\n")
+(set-code "(define score (lambda (x) (* x 2))) (define verify-policy (lambda (v) (= v 14)))")
+(eval-current)
+(assert! (mutate:rebind "verify-policy" "(lambda (v) (= v 21))" "2730-d") "rebind d")
+(assert! (verify-policy 21) "direct #t")
+(assert! (apply verify-policy (list 21)) "apply #t")
+(assert! (let ((f verify-policy)) (f 21)) "let #t")
+
+(if (= *fails* 0)
+    (begin (display "OK-2730 multi-define rebind\n"))
+    (begin
+      (display "FAIL-2730 fails=")
+      (display *fails*)
+      (newline)
+      ; Force non-zero process exit for suite runner (error alone is exit 0).
+      (exit 1)))

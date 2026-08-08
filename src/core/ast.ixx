@@ -7565,6 +7565,18 @@ public:
     [[nodiscard]] bool restamp_lazy_align_enabled() const noexcept {
         return restamp_lazy_align_enabled_.load(std::memory_order_acquire);
     }
+    // Issue #2730: after set_child (generation bump), re-align a subtree so
+    // parse-appended NodeIds remain is_valid for immediate eval / env refresh.
+    void force_align_subtree_gen(NodeId root) noexcept {
+        if (root == NULL_NODE || root >= size() || is_free_slot(root))
+            return;
+        if (root < node_gen_.size() && node_gen_[root] != 0)
+            node_gen_[root] = generation_;
+        if (root >= children_.size())
+            return;
+        for (auto c : children_[root])
+            force_align_subtree_gen(c);
+    }
     void set_restamp_incremental_density_threshold_bp(std::uint32_t bp) noexcept {
         restamp_incremental_density_threshold_bp_ = bp > 10000 ? 10000 : bp;
     }

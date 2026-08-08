@@ -35,8 +35,40 @@ module;
 module aura.compiler.service;
 
 import std;
+import aura.compiler.ast_walkers;
 
 namespace aura::compiler {
+
+// Issue #2730: function_sources_ for multi-define set-code often holds the
+// *full* multi-define text for every name. Re-lower must select the define
+// named `fname`, not pr.root (first form).
+[[nodiscard]] static aura::ast::NodeId resolve_named_define_expand_root(aura::ast::FlatAST& flat,
+                                                                        aura::ast::StringPool& pool,
+                                                                        aura::ast::NodeId root,
+                                                                        const std::string& fname) {
+    if (root == aura::ast::NULL_NODE || root >= flat.size())
+        return root;
+    const auto defs = find_top_level_defines(flat, pool, root);
+    for (const auto& [n, id] : defs) {
+        if (n != fname || id >= flat.size())
+            continue;
+        auto dv = flat.get(id);
+        if (dv.tag == aura::ast::NodeTag::Define && !dv.children.empty()) {
+            const auto body = dv.child(0);
+            if (body < flat.size() && flat.get(body).tag == aura::ast::NodeTag::Lambda)
+                return body;
+            return id;
+        }
+        return id;
+    }
+    auto dv = flat.get(root);
+    if (dv.tag == aura::ast::NodeTag::Define && !dv.children.empty()) {
+        const auto body = dv.child(0);
+        if (body < flat.size() && flat.get(body).tag == aura::ast::NodeTag::Lambda)
+            return body;
+    }
+    return root;
+}
 
 // Issue #2244: source_to_ir Strict-mode toggle (file-scope; mirrors
 // g_macro_expand_sandbox_strict pattern from #2235). Default Off
@@ -1149,16 +1181,9 @@ void CompilerService::invalidate_function(const std::string& name) {
             return false;
         }
         flat.root = pr.root;
-        // Prefer Lambda body node for per-function re-lower.
-        aura::ast::NodeId expanded = pr.root;
-        if (expanded < flat.size()) {
-            auto dv = flat.get(expanded);
-            if (dv.tag == aura::ast::NodeTag::Define && !dv.children.empty()) {
-                auto body = dv.child(0);
-                if (body < flat.size() && flat.get(body).tag == aura::ast::NodeTag::Lambda)
-                    expanded = body;
-            }
-        }
+        // Issue #2730: multi-define sources — expand the named define, not first root.
+        const aura::ast::NodeId expanded =
+            resolve_named_define_expand_root(flat, pool, pr.root, fname);
         const auto per_before =
             metrics_.relower_per_function_called_count.load(std::memory_order_relaxed);
         const auto blocks_before =
@@ -1243,6 +1268,16 @@ void CompilerService::invalidate_function(const std::string& name) {
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             continue;
         flat.root = pr.root;
+        // Issue #2730: scope full re-lower to the named define.
+        {
+            const auto defs = find_top_level_defines(flat, pool, pr.root);
+            for (const auto& [n, id] : defs) {
+                if (n == dep_name) {
+                    flat.root = id;
+                    break;
+                }
+            }
+        }
 
         // Issue #2044: snapshot dirty masks BEFORE lower so the incremental
         // pass suite can skip clean blocks (preserve shape/linear/fold state).
@@ -1282,7 +1317,7 @@ void CompilerService::invalidate_function(const std::string& name) {
         aura::compiler::set_current_escape_key(evaluator_.compiler_metrics(), _esc_gen);
         auto ir_mod = lower_to_ir_with_cache_tracked(
             flat, pool, arena_, cache_ptr, &cache_hits, &evaluator_.primitives(), nullptr,
-            cache_strings_ptr, nullptr, &type_registry_, value_cells_for_lowering());
+            cache_strings_ptr, &dep_name, &type_registry_, value_cells_for_lowering());
         aura::compiler::clear_current_escape_key();
 
         // Issue #2044: full incremental dirty suite (CK/CF/TypeProp/Shape/

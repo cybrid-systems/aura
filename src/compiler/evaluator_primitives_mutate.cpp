@@ -2529,9 +2529,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // total_mutations_ bump — MutationBoundaryGuard owns the bump
         // (introduced at the function entry; lock site TBD).
 
-        // Find old Define node by name
+        // Find old Define node by name (skip free-list ghosts — #1685 / #2730).
         aura::ast::NodeId old_define = aura::ast::NULL_NODE;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.is_free_slot(id))
+                continue;
             auto v = flat.get(id);
             if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sym) {
                 old_define = id;
@@ -2665,6 +2667,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // set_child also logs structural-set-child (redundant with rebind
         // rollback data but keeps children_ mutation audit complete).
         flat.set_child(old_define, 0, new_value);
+        // Issue #2730: set_child bumps generation_; re-align new body so
+        // post-cascade env refresh can eval_flat the new NodeIds.
+        flat.force_align_subtree_gen(new_value);
+        flat.force_align_subtree_gen(old_define);
 
         // Issue #348: auto-wire kOccurrenceDirty on
         // every (if pred then else) in the new
@@ -2699,6 +2705,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ev.propagate_defuse_dirty(sym, name, dep_callers,
                                   aura::ast::FlatAST::kGeneralDirty |
                                       aura::ast::FlatAST::kConstraintDirty);
+
+        // Issue #2730: publish single-define canonical source BEFORE dirty
+        // cascade so full re-lower / cascade never parses multi-define install
+        // text under this name (sibling lambdas would steal the #0 body).
+        if (ev.update_function_source_fn_) {
+            std::string body_src = ev.string_heap_[code_idx];
+            // Bare lambda / expr → wrap as (define name …). Full define form kept.
+            if (body_src.find("(define ") != 0 && body_src.find("(define\t") != 0 &&
+                body_src.find("(define\n") != 0) {
+                body_src = "(define " + name + " " + body_src + ")";
+            }
+            ev.update_function_source_fn_(name, body_src);
+        }
 
         // Phase 2: mark this define's IR cache entry dirty so the next
         // (eval-current) re-lowers it.
@@ -2859,6 +2878,34 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (aura_is_render_evolution_name(name)) {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->render_evolution_rebind_total.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // Issue #2730: after dirty cascade, force top_env for `name` from the
+        // live new value. Dual-write string + current-pool SymId.
+        // Find the existing cell ONLY via string name — SymId is pool-local;
+        // after set-code (fresh pool) intern("verify-policy") may equal an
+        // OLD pool's intern("score"), so lookup_by_symid would steal score's
+        // cell and silent-corrupt the sibling binding (ORDER-B after ORDER-A).
+        if (ev.workspace_pool_ && new_value != aura::ast::NULL_NODE && new_value < flat.size()) {
+            flat.force_align_subtree_gen(new_value);
+            auto refreshed = ev.eval_flat(flat, *ev.workspace_pool_, new_value, ev.top_env());
+            if (refreshed) {
+                auto& tenv = ev.top_env();
+                std::size_t ci = 0;
+                bool have = false;
+                if (auto existing = tenv.lookup_binding(name);
+                    existing && types::is_cell(*existing)) {
+                    ci = types::as_cell_id(*existing);
+                    have = true;
+                }
+                if (!have)
+                    ci = ev.alloc_cell(*refreshed);
+                else if (ci < ev.cells().size())
+                    ev.cells()[ci] = *refreshed;
+                tenv.bind(name, types::make_cell(ci));
+                if (sym != aura::ast::INVALID_SYM)
+                    tenv.bind_symid(sym, types::make_cell(ci));
+            }
         }
 
         return make_bool(true);
