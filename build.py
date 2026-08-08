@@ -864,6 +864,20 @@ def cmd_lint():
             "Issue #2780 scope BP decay race linter failed — run python3 scripts/coverage/checks/check_scope_bp_decay_race_2780.py"
         )
         return r
+    # Issue #2781: hierarchy cancel_all unlocked child walk (#2399
+    # false-positive residual). No per-child ScopeEnterGuard on
+    # parent→child cancel; hierarchy_cancel_total + schema-2781.
+    # ac2781_* in test_agent_scope_hierarchy per #81967.
+    ashc_script = COVERAGE_CHECKS / "check_agent_scope_hierarchy_cancel_2781.py"
+    if not ashc_script.exists():
+        fail(f"missing {ashc_script}")
+        return 1
+    r = run([sys.executable, str(ashc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2781 hierarchy cancel linter failed — run python3 scripts/coverage/checks/check_agent_scope_hierarchy_cancel_2781.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

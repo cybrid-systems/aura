@@ -288,6 +288,125 @@ static void ac6_readme() {
     CHECK(readme.find("AgentScope") != std::string::npos, "AC6: AgentScope still documented");
 }
 
+// ── Issue #2781: hierarchy cancel must not false-positive #2399 misuse ──
+static void ac2781_hierarchy_cancel_no_misuse() {
+    std::println("\n--- #2781 ac2781_hierarchy_cancel_no_misuse ---");
+    using aura::orch::g_orch_module_stats;
+    using aura::orch::kAgentScopeHierarchyCancelIssue;
+
+    CHECK(kAgentScopeHierarchyCancelIssue == 2781, "ac2781: issue stamp == 2781");
+
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    std::atomic<bool> hold{true};
+
+    const auto mis0 =
+        g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+    const auto hier0 =
+        g_orch_module_stats.agent_scope_hierarchy_cancel_total.load(std::memory_order_relaxed);
+
+    {
+        // 3-level tree: root → child → grand (issue verification design).
+        AgentScope root(sched);
+        auto& child = root.spawn_child();
+        auto& grand = child.spawn_child();
+        root.spawn(hold_body(hold));
+        child.spawn(hold_body(hold));
+        grand.spawn(hold_body(hold));
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+
+        // Parent cancel walks children unlocked (#2781) — misuse stays 0.
+        root.cancel_all();
+        const auto mis_after_root =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        CHECK(mis_after_root == mis0, "ac2781: root.cancel_all hierarchy walk → misuse stays 0");
+
+        // Direct child cancel_all still takes its own ScopeEnterGuard.
+        child.cancel_all();
+        const auto mis_after_child =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        CHECK(mis_after_child == mis0,
+              "ac2781: direct child.cancel_all single-thread → misuse stays 0");
+
+        // Hierarchy cancel counter should have bumped for each child walk
+        // from root.cancel_all (child + grand at least).
+        const auto hier1 =
+            g_orch_module_stats.agent_scope_hierarchy_cancel_total.load(std::memory_order_relaxed);
+        CHECK(hier1 >= hier0 + 2, "ac2781: hierarchy_cancel_total bumps for child+grand walk");
+
+        hold.store(false, std::memory_order_relaxed);
+        (void)root.join_all(std::optional<std::uint64_t>{2000});
+        (void)child.join_all(std::optional<std::uint64_t>{2000});
+        (void)grand.join_all(std::optional<std::uint64_t>{2000});
+        // ~AgentScope at block end: cancel_all + children clear — still
+        // single-thread; misuse must stay flat.
+    }
+
+    const auto mis_end =
+        g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+    CHECK(mis_end == mis0, "ac2781: post-dtor hierarchy teardown → misuse stays 0");
+}
+
+static void ac2781_stress_deep_cancel() {
+    std::println("\n--- #2781 ac2781_stress_deep_cancel ---");
+    using aura::orch::g_orch_module_stats;
+
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    std::atomic<bool> hold{true};
+
+    const auto mis0 =
+        g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+
+    {
+        AgentScope root(sched);
+        AgentScope* cur = &root;
+        // Depth-8 chain + a sibling branch.
+        for (int d = 0; d < 8; ++d) {
+            auto& next = cur->spawn_child();
+            next.spawn(hold_body(hold));
+            cur = &next;
+        }
+        auto& branch = root.spawn_child();
+        for (int i = 0; i < 4; ++i)
+            branch.spawn(hold_body(hold));
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        for (int n = 0; n < 50; ++n)
+            root.cancel_all(); // idempotent; hierarchy unlocked walk
+
+        hold.store(false, std::memory_order_relaxed);
+        (void)root.join_all(std::optional<std::uint64_t>{3000});
+    }
+
+    const auto mis1 =
+        g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+    CHECK(mis1 == mis0, "ac2781: 50× deep cancel_all → misuse stays 0");
+}
+
+static void ac2781_source_and_query() {
+    std::println("\n--- #2781 ac2781_source_and_query ---");
+    auto header = read_file("src/orch/agent_scope.h");
+    auto spawn = read_file("src/orch/agent_spawn.h");
+    auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(header.find("cancel_all_unlocked_") != std::string::npos,
+          "ac2781: cancel_all_unlocked_ present");
+    CHECK(header.find("Issue #2781") != std::string::npos, "ac2781: agent_scope.h cites #2781");
+    CHECK(header.find("kAgentScopeHierarchyCancelIssue") != std::string::npos,
+          "ac2781: issue constant");
+    CHECK(spawn.find("agent_scope_hierarchy_cancel_total") != std::string::npos,
+          "ac2781: OrchModuleStats counter");
+    CHECK(prim.find("schema-2781") != std::string::npos, "ac2781: schema-2781 query key");
+    CHECK(prim.find("agent-scope-hierarchy-cancel-total") != std::string::npos,
+          "ac2781: hierarchy-cancel-total query key");
+    CHECK(prim.find("agent-scope-hierarchy-cancel-wired") != std::string::npos,
+          "ac2781: wired sentinel");
+    // Must NOT re-call public cancel_all on children (that was the bug).
+    // The unlocked path recurses cancel_all_unlocked_ only.
+    CHECK(header.find("c->cancel_all()") == std::string::npos,
+          "ac2781: no c->cancel_all() recursion (use unlocked)");
+}
+
 } // namespace
 
 int run_test_agent_scope_hierarchy() {
@@ -300,8 +419,12 @@ int run_test_agent_scope_hierarchy() {
     ac4_no_global_registry();
     ac5_tree_cancel_reclaim();
     ac6_readme();
+    std::println("\n=== Issue #2781: hierarchy cancel no #2399 false-positive ===");
+    ac2781_hierarchy_cancel_no_misuse();
+    ac2781_stress_deep_cancel();
+    ac2781_source_and_query();
 
-    std::println("\n=== #2537 results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2537 + #2781 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

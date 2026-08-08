@@ -432,6 +432,11 @@ struct OrchModuleStats {
     // orch:agent-directory read path (subset of misuse_total). Agents can
     // alert on multi-tenant directory races without joining all sites.
     std::atomic<std::uint64_t> directory_snapshot_concurrent_total{0};
+    // Issue #2781: hierarchy cancel_all walked a child via unlocked
+    // propagation (parent already serializes). Counts child scopes that
+    // received cancel without a per-child ScopeEnterGuard — so dashboards
+    // can distinguish hierarchy churn from real concurrent misuse.
+    std::atomic<std::uint64_t> agent_scope_hierarchy_cancel_total{0};
     // Issue #2540: cooperative yield contract (AgentSpec.max_no_yield_ms).
     // Bumped when agent_poll forces Fiber::yield after the no-yield window.
     // Zero cost when max_no_yield_ms==0 (no coop state, poll is no-op).

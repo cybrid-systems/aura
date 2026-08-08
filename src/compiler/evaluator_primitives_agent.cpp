@@ -4212,6 +4212,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2777", aura::orch::kAgentScopeReadGuardIssue);
             insert_kv("issue-2777", aura::orch::kAgentScopeReadGuardIssue);
             insert_kv("agent-scope-read-guard-wired", 1);
+            // Issue #2781: hierarchy cancel_all unlocked child walk
+            // (no per-child ScopeEnterGuard false-positive misuse).
+            insert_kv("agent-scope-hierarchy-cancel-total",
+                      static_cast<std::int64_t>(
+                          os.agent_scope_hierarchy_cancel_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2781", aura::orch::kAgentScopeHierarchyCancelIssue);
+            insert_kv("issue-2781", aura::orch::kAgentScopeHierarchyCancelIssue);
+            insert_kv("agent-scope-hierarchy-cancel-wired", 1);
             // Issue #2231 / #2401 / #2538: agent-ask + agent-reply metrics (additive).
             insert_kv("agent-ask-total", static_cast<std::int64_t>(
                                              os.agent_ask_total.load(std::memory_order_relaxed)));
