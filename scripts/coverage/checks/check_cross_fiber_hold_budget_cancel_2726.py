@@ -127,18 +127,18 @@ def main() -> int:
     must("is_outermost_ && aura::serve::g_current_fiber", "AC3", emb)
     must("AC3", "AC3", emb)
 
-    # AC4 — additive query keys.
+    # AC4 — additive query keys (must_key: clang-format may split literals).
     must("Issue #2726", "AC4", q)
     must_key("mutation-hold-budget-holder-degrade-cross-fiber-cancel-fired-total", "AC4", q)
     must_key("mutation-hold-budget-holder-degrade-cross-fiber-cancel-consumed-total", "AC4", q)
-    must('"schema-2726"', "AC4", q)
-    must('"issue-2726"', "AC4", q)
+    must_key("schema-2726", "AC4", q)
+    must_key("issue-2726", "AC4", q)
     # #2701 / #2720 / #2724 / #2551 surfaces preserved (strict superset).
-    must('"mutation-hold-budget-reject-total"', "AC4", q)
-    must('"mutation-hold-budget-soft-observe-total"', "AC4", q)
-    must('"schema-2701"', "AC4", q)
-    must('"schema-2720"', "AC4", q)
-    must('"schema-2724"', "AC4", q)
+    must_key("mutation-hold-budget-reject-total", "AC4", q)
+    must_key("mutation-hold-budget-soft-observe-total", "AC4", q)
+    must_key("schema-2701", "AC4", q)
+    must_key("schema-2720", "AC4", q)
+    must_key("schema-2724", "AC4", q)
 
     # AC5 — source-cite + test extension per #81967 (no new test file) +
     # build.py wires linter.

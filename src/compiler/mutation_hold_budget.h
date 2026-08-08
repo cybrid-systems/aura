@@ -384,32 +384,33 @@ inline constexpr int kMutationRegionMaskDisjointIssue = 2757;
 }
 
 // Issue #2724: simple disjointness check (region_key equality for first ship).
-// Fast path kept as the primary key-disjoint predicate.
+// Fast path kept as the key-only predicate when no cone masks are available.
 [[nodiscard]] inline bool regions_disjoint(std::uint64_t a, std::uint64_t b) noexcept {
     return a != 0 && b != 0 && a != b;
 }
 
-// Issue #2754 / #2757: key-disjoint (#2724 fast path) OR proven
-// ImpactScope / dirty-bit mask-AND with empty intersection.
-// Hot path is a bit AND only — no tree walk.
+// Issue #2754 / #2757 / #2761: proven ImpactScope / dirty-bit mask-AND is
+// sole authority when both masks are non-zero; otherwise fall back to
+// #2724 key-equality. Hot path is a bit AND only — no tree walk.
 //
-// Quiet path (either mask == 0): identical to #2724 equality only
-// (AC4 #2757 — zero extra work; no mask-AND).
-// Proven masks (both non-zero): empty intersection → disjoint even when
-// keys collide or are zero (#2757 AC1). Key-disjoint still wins when
-// both keys non-zero and unequal (even if masks overlap).
+// Decision table (#2761 AC1/AC2/AC4):
+//   both masks != 0 → (mask_a & mask_b) == 0
+//     (unequal keys with overlapping cones REJECT — #2761 AC1)
+//     (unequal keys with disjoint cones ADMIT — #2761 AC2)
+//     (equal/zero keys with disjoint cones ADMIT — #2754/#2757)
+//   either mask == 0 → #2724 key inequality only (safe fallback;
+//     zero extra work beyond key compare — #2757 AC4 / #2761 AC4)
+//
+// Quiet path (either mask == 0): identical to #2724 equality only.
 [[nodiscard]] inline bool regions_disjoint(std::uint64_t a, std::uint64_t b, std::uint64_t mask_a,
                                            std::uint64_t mask_b) noexcept {
-    // #2724 key-disjoint fast path (quiet when keys alone prove it).
-    if (a != 0 && b != 0 && a != b)
-        return true;
-    // Quiet path: no proven masks → equality only (already failed above
-    // for zero/equal keys). Zero extra work beyond the key compare.
-    if (mask_a == 0 || mask_b == 0)
-        return false;
-    // #2757: proven ImpactScope / dirty mask-AND (covers equal keys and
-    // zero keys). Empty intersection → concurrent-admissible.
-    return (mask_a & mask_b) == 0;
+    // Issue #2761: when both cone/ImpactScope masks are proven, mask-AND
+    // is sole authority — catches unequal-key + overlapping-cone races
+    // that #2724 key-inequality would incorrectly concurrent-admit.
+    if (mask_a != 0 && mask_b != 0)
+        return (mask_a & mask_b) == 0;
+    // Quiet / missing-mask fallback: #2724 key-equality only.
+    return a != 0 && b != 0 && a != b;
 }
 
 // Issue #2754: true only when the admit is due to the equal-key cone path
@@ -420,15 +421,25 @@ inline constexpr int kMutationRegionMaskDisjointIssue = 2757;
     return a != 0 && b != 0 && a == b && mask_a != 0 && mask_b != 0 && (mask_a & mask_b) == 0;
 }
 
-// Issue #2757: true when admit is due to mask-AND (not key-disjoint).
-// Covers equal keys (#2754) and zero keys with proven disjoint masks.
+// Issue #2757 / #2761: true when admit is due to proven mask-AND (both
+// masks non-zero, empty intersection). Includes equal keys (#2754), zero
+// keys (#2757), and unequal keys with proven-disjoint cones (#2761 AC2).
+// Key-only admits (missing mask) do not count as mask-disjoint.
 [[nodiscard]] inline bool regions_mask_disjoint(std::uint64_t a, std::uint64_t b,
                                                 std::uint64_t mask_a,
                                                 std::uint64_t mask_b) noexcept {
-    // Key-disjoint path does not count as mask-disjoint.
-    if (a != 0 && b != 0 && a != b)
-        return false;
+    (void)a;
+    (void)b;
     return mask_a != 0 && mask_b != 0 && (mask_a & mask_b) == 0;
+}
+
+// Issue #2761: true when reject is due to proven mask overlap (both masks
+// non-zero and intersection non-empty) — including unequal keys that
+// share a cone. Distinguishes mask-strength rejects from key-equality
+// rejects for Agent dashboards (AC5).
+[[nodiscard]] inline bool regions_mask_overlap(std::uint64_t mask_a,
+                                               std::uint64_t mask_b) noexcept {
+    return mask_a != 0 && mask_b != 0 && (mask_a & mask_b) != 0;
 }
 
 // ── Issue #2760: ImpactScope / dirty-bit mask production enablement ──
@@ -438,14 +449,28 @@ inline constexpr int kMutationRegionMaskDisjointIssue = 2757;
 //   - impact_block_to_region_mask_bit: offline pack (func, block) → bit
 //     (no tree walk at admit — ImpactScope computed earlier)
 //   - effective_region_cone_mask: prefer TLS proven mask; fall back to
-//     single-bit from region_key only when key != 0 (safe equal-key
-//     still overlaps; different keys still take #2724 key-disjoint first)
+//     single-bit from region_key only when key != 0
 //   - impact-mask-admit counter: concurrent admits that used a non-zero
 //     proven ImpactScope/dirty-style cone mask (TLS or derived)
 // Quiet path (tls==0 && key==0): still zero extra cost (#2757 AC4).
+// Issue #2761: mask-AND is sole authority when both masks proven (unequal
+// keys with overlapping cones reject — closes #2724 residual race).
 inline std::atomic<std::uint64_t> g_mutation_region_impact_mask_admit_total{0};
 inline std::atomic<std::uint32_t> g_mutation_region_impact_mask_wired{1};
 inline constexpr int kMutationRegionImpactMaskIssue = 2760;
+// Issue #2761: rejects where proven masks overlap (including unequal keys).
+// Subset of g_mutation_region_overlap_reject_total; dashboards split
+// key-only overlap vs mask-strength overlap.
+inline std::atomic<std::uint64_t> g_mutation_region_mask_overlap_reject_total{0};
+inline std::atomic<std::uint32_t> g_mutation_region_mask_overlap_wired{1};
+inline constexpr int kMutationRegionMaskOverlapIssue = 2761;
+
+[[nodiscard]] inline std::uint64_t mutation_region_mask_overlap_reject_total_v_read() noexcept {
+    return g_mutation_region_mask_overlap_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_region_mask_overlap_wired_v_read() noexcept {
+    return g_mutation_region_mask_overlap_wired.load(std::memory_order_relaxed);
+}
 
 [[nodiscard]] inline std::uint64_t mutation_region_impact_mask_admit_total_v_read() noexcept {
     return g_mutation_region_impact_mask_admit_total.load(std::memory_order_relaxed);
@@ -468,18 +493,20 @@ impact_block_to_region_mask_bit(std::size_t function_index, std::uint32_t block_
 }
 
 // Issue #2760: single-bit fallback from region_key when no TLS cone mask
-// was stamped. Equal keys → same bit → still overlap-reject (safe).
-// Different keys → key-disjoint fast path still wins first in
-// regions_disjoint (this bit is only consulted when keys collide/zero).
+// was stamped. Equal keys → same bit → overlap-reject (safe). Different
+// keys → different bits → admit under #2761 mask-first (or key fallback
+// if only one side has a derived mask).
 [[nodiscard]] inline std::uint64_t region_key_as_impact_mask(std::uint64_t region_key) noexcept {
     if (region_key == 0)
         return 0;
     return 1ULL << (region_key % 63ull);
 }
 
-// Issue #2760: effective cone / ImpactScope mask for concurrent admit.
-// Prefer producer-stamped TLS (proven ImpactScope / dirty-bit mask);
-// else soft single-bit from region_key. Zero when both unset (quiet).
+// Issue #2760 / #2761: effective cone / ImpactScope mask for concurrent
+// admit. Prefer producer-stamped TLS (proven ImpactScope / dirty-bit
+// mask); else soft single-bit from region_key. Zero when both unset
+// (quiet). When both sides have non-zero effective masks, #2761
+// mask-AND is sole authority (including unequal keys).
 [[nodiscard]] inline std::uint64_t effective_region_cone_mask(std::uint64_t tls_cone_mask,
                                                               std::uint64_t region_key) noexcept {
     if (tls_cone_mask != 0)

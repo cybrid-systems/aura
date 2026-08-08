@@ -77,12 +77,17 @@ def run_manifest(data: dict) -> list[str]:
             fails.append(f"{prefix}: empty or missing source {label!r}")
             continue
 
+        # clang-format may split adjacent string literals across lines
+        # (e.g. "mutation-hold-budget-" "reject-total"). Normalize by
+        # stripping quotes + whitespace so agent-key needles still match.
+        normalized = "".join(ch for ch in text if not ch.isspace() and ch != '"')
+
         for needle in check.get("contains", []):
-            if needle not in text:
+            if needle not in text and needle not in normalized:
                 fails.append(f"{prefix}: missing {needle!r} in {label}")
 
         any_needles = check.get("contains_any", [])
-        if any_needles and not any(n in text for n in any_needles):
+        if any_needles and not any(n in text or n in normalized for n in any_needles):
             fails.append(f"{prefix}: none of {any_needles!r} in {label}")
 
     return fails

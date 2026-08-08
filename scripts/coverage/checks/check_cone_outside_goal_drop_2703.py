@@ -53,6 +53,12 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        # clang-format may split adjacent string literals; strip quotes/whitespace.
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     tma = _read("src/compiler/typed_mutation_audit.h")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
     t = _read("tests/compiler/test_partial_cone_commit_gate.cpp")
@@ -82,16 +88,16 @@ def main() -> int:
     must("Issue #2703", "AC3", tma)
 
     # AC5 — query surface
-    must("query:cone-outside-goal-drop", "AC5", q)
-    must("cone-outside-goal-drop-total", "AC5", q)
-    must("cone-outside-goal-drop-soft-total", "AC5", q)
-    must("cone-outside-goal-drop-wired", "AC5", q)
-    must("schema-2703", "AC5", q)
-    must("issue-2703", "AC5", q)
+    must_key("query:cone-outside-goal-drop", "AC5", q)
+    must_key("cone-outside-goal-drop-total", "AC5", q)
+    must_key("cone-outside-goal-drop-soft-total", "AC5", q)
+    must_key("cone-outside-goal-drop-wired", "AC5", q)
+    must_key("schema-2703", "AC5", q)
+    must_key("issue-2703", "AC5", q)
     # Prior #2621 / #2560 / #2672 surfaces preserved.
-    must("schema-2621", "AC5", q)
-    must("schema-2560", "AC5", q)
-    must("schema-2672", "AC5", q)
+    must_key("schema-2621", "AC5", q)
+    must_key("schema-2560", "AC5", q)
+    must_key("schema-2672", "AC5", q)
 
     # AC6 — test extension per #81967
     must("ac2703_1_production_hard_face", "AC6", t)

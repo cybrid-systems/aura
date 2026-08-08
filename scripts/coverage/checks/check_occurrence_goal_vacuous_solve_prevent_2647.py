@@ -20,6 +20,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def _source_has_key(hay: str, key: str) -> bool:
+    n = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+    return key in n
+
+
 def _read(rel: str) -> str:
     p = ROOT / rel
     if not p.is_file():
@@ -66,13 +71,13 @@ def main() -> int:
         "AC2: fields.inc vacuous_prevented",
     )
 
-    must("schema-2647" in q, "AC3: query schema-2647")
-    must("occurrence-goal-forced-reverify-total" in q, "AC3: query forced-reverify key")
+    must(_source_has_key(q, "schema-2647"), "AC3: query schema-2647")
+    must(_source_has_key(q, "occurrence-goal-forced-reverify-total"), "AC3: query forced-reverify key")
     must(
-        "occurrence-goal-vacuous-solve-prevented-total" in q,
+        _source_has_key(q, "occurrence-goal-vacuous-solve-prevented-total"),
         "AC3: query vacuous-prevented key",
     )
-    must("issue-2647" in q, "AC3: issue-2647 query key")
+    must(_source_has_key(q, "issue-2647"), "AC3: issue-2647 query key")
 
     must("AC1" in test and "AC4" in test and "AC6" in test, "AC4: unit test ACs present")
     must(

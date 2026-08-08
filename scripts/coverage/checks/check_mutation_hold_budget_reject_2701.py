@@ -46,6 +46,13 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        # clang-format may split adjacent string literals; strip quotes +
+        # whitespace so "mutation-hold-budget-" "reject-total" still matches.
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     mhb = _read("src/compiler/mutation_hold_budget.h")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
@@ -69,13 +76,13 @@ def main() -> int:
     must("mutation_hold_budget_hard_env", "AC2", mhb)
     must("Soft path", "AC2", emb)
 
-    # AC3 — additive query keys
-    must("query:mutation-hold-budget-gate", "AC3", q)
-    must("mutation-hold-budget-reject-total", "AC3", q)
-    must("mutation-hold-budget-soft-observe-total", "AC3", q)
-    must("mutation-hold-budget-wired", "AC3", q)
-    must("schema-2701", "AC3", q)
-    must("issue-2701", "AC3", q)
+    # AC3 — additive query keys (format-robust: clang-format may split keys)
+    must_key("query:mutation-hold-budget-gate", "AC3", q)
+    must_key("mutation-hold-budget-reject-total", "AC3", q)
+    must_key("mutation-hold-budget-soft-observe-total", "AC3", q)
+    must_key("mutation-hold-budget-wired", "AC3", q)
+    must_key("schema-2701", "AC3", q)
+    must_key("issue-2701", "AC3", q)
 
     # AC4 — order with #2660 security-schedule (budget BEFORE schedule)
     must("#2587 mailbox-hold-starvation", "AC4", emb)

@@ -76,6 +76,11 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     tma = _read("src/compiler/typed_mutation_audit.h")
     efm = _read("src/compiler/evaluator_mutation_boundary.cpp")
     q = _read("src/compiler/evaluator_primitives_query.cpp")
@@ -115,13 +120,13 @@ def main() -> int:
     # fragment + the query surface in evaluator_primitives_query.cpp).
     must("#2613", "AC5", tma)
     must("kTypeLinearCommitProofIssue = 2697", "AC5", tma)
-    must("type-linear-commit-health", "AC5", q)
-    must("type-linear-commit-proof-readiness-bp", "AC5", q)
-    must("schema-2697", "AC5", q)
+    must_key("type-linear-commit-health", "AC5", q)
+    must_key("type-linear-commit-proof-readiness-bp", "AC5", q)
+    must_key("schema-2697", "AC5", q)
     must("g_type_linear_commit_proof_stamped_total", "AC5", tma)
-    must("type-linear-commit-proof-stamped-total", "AC5", q)
-    must("schema-2717", "AC5", q)
-    must("issue-2717", "AC5", q)
+    must_key("type-linear-commit-proof-stamped-total", "AC5", q)
+    must_key("schema-2717", "AC5", q)
+    must_key("issue-2717", "AC5", q)
 
     # AC6 — source-cite + linter + build.py + no docs/design/.
     must("ac2717_1_boundary_success_and_reject_stamp", "AC6", t)
