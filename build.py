@@ -668,6 +668,21 @@ def cmd_lint():
             "Issue #2765 Guard reflect validate linter failed — run python3 scripts/coverage/checks/check_guard_reflect_validate_2765.py"
         )
         return r
+    # Issue #2766: require-before-export free-var capture of module-private
+    # cells (#2566/#2570/#2579 residual). Treats export/require/import as
+    # module prologue + Phase 0 inject before letrec multi-define so
+    # std/orchestrator agent:spawn works. ac2766_* in
+    # test_module_require_freevar.cpp per #81967.
+    mreo_script = COVERAGE_CHECKS / "check_module_require_export_order_2766.py"
+    if not mreo_script.exists():
+        fail(f"missing {mreo_script}")
+        return 1
+    r = run([sys.executable, str(mreo_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2766 require-before-export free-var linter failed — run python3 scripts/coverage/checks/check_module_require_export_order_2766.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

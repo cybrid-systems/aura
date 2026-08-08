@@ -293,6 +293,12 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // module eval stay valid for the module's lifetime.
     auto* mod_env = mod_arena.create<Env>(&top_);
     mod_env->set_primitives(&primitives_);
+    // Issue #2766: attach the module StringPool so Env::bind dual-writes
+    // bindings_ + bindings_symid_ during (require …) inject and define.
+    // Without pool, require-only string binds leave bindings_symid_ short;
+    // later set_pool+define (letrec multi-define) or materialize dual-path
+    // hard-fail empties capture env → unbound private free-vars (*cell*).
+    mod_env->set_pool(pool_ptr);
     // Explicit owner: Env(&top_) copies top_.owner_, but some call sites
     // later re-parent or default-construct Envs that lose it. Primitive
     // dispatch uses owner()->invoke_prim_with_telemetry; null owner is a

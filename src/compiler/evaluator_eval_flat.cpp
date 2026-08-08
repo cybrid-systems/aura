@@ -4822,6 +4822,25 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     // — Agent denseness writes "mutate then define flag" and letrec
                     // init sees pre-mutation zeros while later reads look correct
                     // (silent false denseness). Sequential eval when define-after-expr.
+                    //
+                    // Issue #2766: module prologue forms — (export …) and
+                    // (require …)/(import …) — must NOT count as "body expr"
+                    // for define_after_expr. require-before-export previously
+                    // forced sequential multi-define; export filtering then
+                    // stripped private cells (*cell*, agent-register) that
+                    // closures free-ref, yielding unbound-at-call. Prologue
+                    // is declarative load order, not Agent denseness mutate.
+                    auto is_module_prologue = [&](const aura::ast::NodeView& nv) -> bool {
+                        if (nv.tag == aura::ast::NodeTag::Export)
+                            return true;
+                        if (nv.tag != aura::ast::NodeTag::Call || nv.children.empty())
+                            return false;
+                        auto head = f->get(nv.child(0));
+                        if (head.tag != aura::ast::NodeTag::Variable)
+                            return false;
+                        auto hn = p->resolve(head.sym_id);
+                        return hn == "require" || hn == "import";
+                    };
                     std::vector<std::pair<std::string, aura::ast::NodeId>> letrec_defs;
                     bool has_multiple_defs = false;
                     bool define_after_expr = false;
@@ -4853,7 +4872,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                                    child_node.children.empty()
                                                        ? aura::ast::NULL_NODE
                                                        : child_node.child(0)});
-                        } else {
+                        } else if (!is_module_prologue(child_node)) {
+                            // Real body expr (not export/require/import).
                             saw_non_define = true;
                         }
                     }
@@ -4866,10 +4886,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     }
                     if (effective_count < count) {
                         // Recount defines / define-after-expr on live children only.
+                        // Issue #2766: same prologue skip as the primary scan.
                         has_multiple_defs = false;
                         define_after_expr = false;
                         define_count = 0;
                         saw_non_define = false;
+                        letrec_defs.clear();
                         for (std::size_t ci = 0; ci < count; ++ci) {
                             auto cid = v.child(ci);
                             if (cid == aura::ast::NULL_NODE)
@@ -4881,13 +4903,35 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     has_multiple_defs = true;
                                 if (saw_non_define)
                                     define_after_expr = true;
-                            } else {
+                                letrec_defs.push_back({std::string(p->resolve(child_node.sym_id)),
+                                                       child_node.children.empty()
+                                                           ? aura::ast::NULL_NODE
+                                                           : child_node.child(0)});
+                            } else if (!is_module_prologue(child_node)) {
                                 saw_non_define = true;
                             }
                         }
                     }
 
                     if (has_multiple_defs && !define_after_expr) {
+                        // Issue #2766 Phase 0: module prologue first so
+                        // (require …)/(import …) inject bindings before
+                        // lambda free-var capture, and (export …) records
+                        // the API set. Independent of textual order among
+                        // prologue forms and defines.
+                        for (std::size_t i = 0; i < count; ++i) {
+                            auto cid = v.child(i);
+                            if (cid == aura::ast::NULL_NODE)
+                                continue;
+                            auto child_node = f->get(cid);
+                            if (!is_module_prologue(child_node))
+                                continue;
+                            auto r = eval_flat(*f, *p, cid, eval_env);
+                            if (!r)
+                                return r;
+                            if (r && is_error(*r) && !is_string(*r))
+                                return r;
+                        }
                         // Phase 1: pre-allocate cells for all defines
                         // This ensures all function names are visible to each other
                         // (and module private free-vars survive export filtering:
@@ -4947,7 +4991,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 return val;
                             cells_[cell_ids[i]] = *val;
                         }
-                        // Phase 3: evaluate remaining (non-define) expressions
+                        // Phase 3: remaining non-define / non-prologue exprs
+                        // (require/export already ran in Phase 0).
                         for (std::size_t i = 0; i < count - 1; ++i) {
                             auto cid = v.child(i);
                             if (cid == aura::ast::NULL_NODE)
@@ -4955,6 +5000,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             auto child_node = f->get(cid);
                             if (child_node.tag == aura::ast::NodeTag::Define)
                                 continue;
+                            if (is_module_prologue(child_node))
+                                continue; // #2766 Phase 0 already ran
                             auto r = eval_flat(*f, *p, cid, eval_env);
                             if (!r)
                                 return r;
@@ -4965,7 +5012,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             if (r && is_error(*r) && !is_string(*r))
                                 return r;
                         }
-                        // TCO: last expression
+                        // TCO: last expression (if last is prologue, re-run is
+                        // idempotent for export; require cache-hits).
                         current_id = last_expr;
                         continue;
                     }
