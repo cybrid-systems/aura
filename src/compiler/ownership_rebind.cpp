@@ -223,4 +223,10 @@ std::span<const OwnershipRebindNodeId> collect_linear_or_dirty_roots_for_rebind(
     return std::span<const OwnershipRebindNodeId>(scratch.data(), scratch.size());
 }
 
+// Issue #2758: size-only wrapper for TypeLinearCommitProof stamp (header-
+// safe; no span lifetime for callers that only need the count).
+std::size_t linear_or_dirty_roots_count_for_rebind() noexcept {
+    return collect_linear_or_dirty_roots_for_rebind().size();
+}
+
 } // namespace aura::compiler

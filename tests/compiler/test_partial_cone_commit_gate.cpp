@@ -42,6 +42,12 @@ using aura::compiler::typed_audit::last_partial_cone_dropped;
 using aura::compiler::typed_audit::last_partial_cone_truncated;
 using aura::compiler::typed_audit::partial_cone_commit_hard_enabled;
 using aura::compiler::typed_audit::publish_partial_cone_truncate;
+// Issue #2694: soft-truncated silent-dep escalate surface.
+using aura::compiler::typed_audit::clear_soft_truncated_silent_dep_escalate_for_test;
+using aura::compiler::typed_audit::kSoftTruncatedSilentDepIssue;
+using aura::compiler::typed_audit::last_soft_truncated_silent_dep_count;
+using aura::compiler::typed_audit::publish_soft_truncated_silent_dep_escalate;
+using aura::compiler::typed_audit::soft_truncated_silent_dep_escalate_total_v_read;
 // Issue #2672/#2673: allow qualified `typed_audit::name` references inside the
 // existing AC1–AC6 source-cite bodies without re-prefixing every call.
 // `using namespace X` only exposes X's members; for `typed_audit::foo` qualified
@@ -600,6 +606,15 @@ static void ac2750_4_source_and_no_design() {
 }
 
 } // namespace
+
+// File-scope forward decls for #2694 helpers defined after run_test (pre-existing
+// layout). Must be outside anonymous namespace to match definitions below.
+static void ac2694_1_silent_dep_escalate_fires();
+static void ac2694_2_no_silent_dep_no_escalate();
+static void ac2694_3_production_full_unchanged();
+static void ac2694_4_empty_no_extra_work();
+static void ac2694_5_query_keys_added();
+static void ac2694_6_source_and_linter();
 
 int run_test_partial_cone_commit_gate() {
     std::println("=== Issue #2621: partial cone truncate commit gate ===");

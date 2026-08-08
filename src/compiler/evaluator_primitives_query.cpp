@@ -6388,6 +6388,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         live = ctc_h->constraint_system().occurrence_goals_size();
                     }
                 }
+                // Issue #2758: publish live goals gauge so proof stamp can
+                // use last-known CS size when no stamp-site hint.
+                aura::compiler::typed_audit::publish_proof_live_goal_count(
+                    static_cast<std::uint64_t>(live));
                 g_occurrence_goals_live_total.fetch_add(live, std::memory_order_relaxed);
                 const bool truncated = (cap > 0 && live > cap);
                 if (truncated)
@@ -6481,9 +6485,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("type-linear-commit-proof-defuse-or-epoch-stamp",
                           static_cast<std::int64_t>(g_last_type_linear_commit_proof_stamp.load(
                               std::memory_order_relaxed)));
-                insert_kv("type-linear-commit-proof-live-goal-count", static_cast<std::int64_t>(0));
+                // Issue #2758: last stamped real counts (no longer hard-coded 0).
+                insert_kv("type-linear-commit-proof-live-goal-count",
+                          static_cast<std::int64_t>(last_proof_live_goal_count_v_read()));
                 insert_kv("type-linear-commit-proof-linear-root-count",
-                          static_cast<std::int64_t>(0));
+                          static_cast<std::int64_t>(last_proof_linear_root_count_v_read()));
                 insert_kv("type-linear-commit-proof-last-stamp",
                           static_cast<std::int64_t>(g_last_type_linear_commit_proof_stamp.load(
                               std::memory_order_relaxed)));
@@ -6516,6 +6522,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     insert_kv("type-linear-commit-proof-stamped-wired", 1);
                     insert_kv("schema-2717", 2717);
                     insert_kv("issue-2717", 2717);
+                }
+                // Issue #2758: fill live_goal_count + linear_root_count from
+                // real collect / CS goals (close #2717 residual zeros).
+                // Additive counts-filled total + last counts already on
+                // the #2697 keys above.
+                {
+                    insert_kv("type-linear-commit-proof-counts-filled-total",
+                              static_cast<std::int64_t>(
+                                  type_linear_commit_proof_counts_filled_total_v_read()));
+                    insert_kv("type-linear-commit-proof-counts-filled-wired", 1);
+                    insert_kv("schema-2758", 2758);
+                    insert_kv("issue-2758", 2758);
                 }
                 // Issue #2711: EnvFrame dual-epoch Agent-visible lifetime
                 // proof (symmetric to TypeLinearCommitProof #2697 for
