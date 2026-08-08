@@ -1,0 +1,33 @@
+; Issue #2736 — post-rebind top-level sample must match in-loop sample
+(require "std/mutate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin (set! *fails* (+ *fails* 1))
+             (display "  FAIL: ") (display msg) (newline))))
+
+(display "top-level sample after rebind\n")
+(set-code "(define subject (lambda (x) (* x 2)))\n(define (f0 x) (+ x 0))\n")
+(eval-current)
+(assert! (= (subject 7) 14) "pre subject=14")
+(try (mutate:safe-yield) (catch (e) #f))
+(assert! (mutate:rebind "subject" "(lambda (x) (* x 3))" "r1") "rebind")
+(eval-current)
+; Separate top-level forms after rebind (stdin multi-expression shape)
+(assert! (= (subject 7) 21) "top-level sample 21")
+(assert! (= (let ((f subject)) (f 7)) 21) "let sample 21")
+(assert! (= (f0 1) 1) "sibling untouched")
+
+(display "multi-define rebind second then top sample\n")
+(set-code "(define sc2736 (lambda (x) (* x 2))) (define su2736 (lambda (x) (* x 2)))")
+(eval-current)
+(mutate:rebind "su2736" "(lambda (x) (* x 5))" "r2")
+(eval-current)
+(assert! (= (su2736 3) 15) "second name top sample")
+(assert! (= (sc2736 3) 6) "sibling still *2")
+
+(if (= *fails* 0)
+    (begin (display "OK-2736 post-rebind top-level sample\n"))
+    (begin (display "FAIL-2736\n") (exit 1)))
