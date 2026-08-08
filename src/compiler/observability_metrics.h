@@ -297,6 +297,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> cascade_bfs_invalidate_pending_total{0};
     std::atomic<std::uint64_t> cascade_bfs_invalidate_total{0};
     std::atomic<std::uint64_t> cascade_bfs_invalidate_cleared_total{0};
+    // Issue #2813: cascade eager re-lower of dirty ir_cache_v2.
+    //   - cascade_relower_ran_total: relower_dirty_defines_fn_ invoked
+    //   - cascade_relower_skipped_total: defines_n>0 but fn_ null (misconfig)
+    std::atomic<std::uint64_t> cascade_relower_ran_total{0};
+    std::atomic<std::uint64_t> cascade_relower_skipped_total{0};
     // Issue #2762: post-mutate incremental macro re-expand under
     // MutationBoundaryGuard cascade (#165/#2096 residual).
     //   - post_mutate_macro_reexpand_total: call sites re-expanded

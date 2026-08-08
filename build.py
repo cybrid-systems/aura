@@ -1251,6 +1251,18 @@ def cmd_lint():
             "Issue #2812 cascade BFS invalidate linter failed — run python3 scripts/coverage/checks/check_cascade_bfs_invalidate_after_guard_2812.py"
         )
         return r
+    # Issue #2813: cascade relower silent skip observability (fn null).
+    # ac2813 in test_cascade_relower_silent_skip.
+    crs_script = COVERAGE_CHECKS / "check_cascade_relower_silent_skip_2813.py"
+    if not crs_script.exists():
+        fail(f"missing {crs_script}")
+        return 1
+    r = run([sys.executable, str(crs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2813 cascade relower silent skip linter failed — run python3 scripts/coverage/checks/check_cascade_relower_silent_skip_2813.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

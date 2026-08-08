@@ -7412,6 +7412,17 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"cascade-bfs-invalidate-wired", make_int(1)},
                 {"schema-2812", make_int(2812)},
                 {"issue-2812", make_int(2812)},
+                // Issue #2813: cascade eager re-lower ran vs silent skip (fn null).
+                // Additive — #2038/#2812 keys preserved.
+                {"cascade-relower-ran-total", make_int(m ? load(m->cascade_relower_ran_total) : 0)},
+                {"cascade_relower_ran_total", make_int(m ? load(m->cascade_relower_ran_total) : 0)},
+                {"cascade-relower-skipped-total",
+                 make_int(m ? load(m->cascade_relower_skipped_total) : 0)},
+                {"cascade_relower_skipped_total",
+                 make_int(m ? load(m->cascade_relower_skipped_total) : 0)},
+                {"cascade-relower-wired", make_int(1)},
+                {"schema-2813", make_int(2813)},
+                {"issue-2813", make_int(2813)},
                 // Issue #2762: post-mutate macro re-expand under Guard cascade
                 // (refine #165/#2096). Additive — #2038 keys preserved.
                 {"post-mutate-macro-reexpand-total",

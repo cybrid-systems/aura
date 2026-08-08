@@ -851,9 +851,13 @@ public:
         // storms.
         evaluator_.set_repopulate_workspace_dep_graph_fn(
             [this]() { this->populate_dep_graph_from_workspace(); });
-        // Issue #1495: lazy partial re-lower of dirty defines on
-        // (eval-current) — consumes body-only dirty bitmask from
-        // mark_define_dirty without requiring a set-code pre-cache.
+        // Issue #1495 / #2813: lazy partial re-lower of dirty defines on
+        // (eval-current) + push_post_mutate_incremental_cascade under Guard.
+        // Production requirement: this MUST be wired. Leaving it null
+        // causes cascade_relower_skipped_total + one-shot stderr (#2813)
+        // when mutate:* marks defines dirty (stale ir_cache_v2 risk).
+        // Consumes body-only dirty bitmask from mark_define_dirty without
+        // requiring a set-code pre-cache.
         evaluator_.set_relower_dirty_defines_fn(
             [this]() { (void)this->relower_dirty_defines_from_workspace(); });
         // Phase 3 debugging: expose is_define_dirty + get_dependents.
