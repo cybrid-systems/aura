@@ -53,6 +53,7 @@
 #include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
+#include "orch/agent_scope.h" // Issue #2778: reset_all_agent_scopes_for_test clears BP map
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
@@ -509,14 +510,15 @@ int run_test_mailbox_bp_admit() {
             aura::orch::note_mailbox_bp_recent_event("tenant-a");
 
         // AC1: scope "tenant-a" has a non-null gauge with recent >= 50.
-        const auto* gauge_a = aura::orch::lookup_scope_bp_gauge("tenant-a");
+        // Issue #2778: lookup returns shared_ptr (safe across erase).
+        const auto gauge_a = aura::orch::lookup_scope_bp_gauge("tenant-a");
         CHECK(gauge_a != nullptr, "2633 AC1: scope 'tenant-a' has a gauge");
         CHECK(gauge_a && gauge_a->recent.load(std::memory_order_relaxed) >= 50,
               "2633 AC1: scope 'tenant-a' recent >= 50 after storm");
 
         // AC1: scope "tenant-b" has no gauge (never touched, silent
         // admit — the admit preflight reads 0 for untouched scopes).
-        const auto* gauge_b = aura::orch::lookup_scope_bp_gauge("tenant-b");
+        const auto gauge_b = aura::orch::lookup_scope_bp_gauge("tenant-b");
         CHECK(gauge_b == nullptr, "2633 AC1: scope 'tenant-b' has no gauge (untouched, isolated)");
 
         // AC2: empty scope_id preserves process-global behavior.
@@ -563,28 +565,31 @@ int run_test_mailbox_bp_admit() {
     // ── #2633 AC4: per-bucket quiet-period decay ────────────────────────
     {
         std::println("\n--- #2633 AC4: per-bucket decay ---");
+        // Ensure the scope can land even if prior AC3 saturated the map
+        // (#2778 LRU would also free a cold slot; explicit erase is
+        // clearer for this unit check).
+        (void)aura::orch::erase_scope_bp_gauge("decay-test");
         setenv("AURA_ORCH_BP_WINDOW_MS", "50", 1);
         // Storm on a fresh scope.
         for (int i = 0; i < 10; ++i)
             aura::orch::note_mailbox_bp_recent_event("decay-test");
-        const auto* g_decay = aura::orch::lookup_scope_bp_gauge("decay-test");
+        const auto g_decay = aura::orch::lookup_scope_bp_gauge("decay-test");
         CHECK(g_decay != nullptr && g_decay->recent.load(std::memory_order_relaxed) >= 10,
               "2633 AC4: scope gauge > 0 before decay window");
-        // Wait past the quiet period.
+        // Wait past the quiet period, then drive maybe_decay directly
+        // (inline public helper; same path admit preflight uses when
+        // threshold>0). Without this call, note() alone never zeros.
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
-        // Single new event after window expiry. The shared decay CAS
-        // fires once per window; per-bucket zero is part of the same
-        // CAS winner path (see maybe_decay_mailbox_bp_recent). After
-        // the new event lands, gauge should be ~1 (not ~11).
+        aura::orch::maybe_decay_mailbox_bp_recent();
+        const auto recent_after_decay =
+            g_decay ? g_decay->recent.load(std::memory_order_relaxed) : 999;
+        CHECK(recent_after_decay == 0,
+              "2633 AC4: per-bucket decay zeros scope gauge on window expiry");
+        // New event after decay starts a fresh window at 1.
         aura::orch::note_mailbox_bp_recent_event("decay-test");
-        // Trigger the decay by spinning the shared window via the
-        // admit preflight path. We can't call maybe_decay directly
-        // (it's internal), but the preflight calls it under threshold>0.
-        // Simpler: a second no-op event after another wait confirms
-        // the bucket was zeroed in between (recent should be <=2 here,
-        // not 11+).
-        const auto recent_after = g_decay ? g_decay->recent.load(std::memory_order_relaxed) : 0;
-        CHECK(recent_after <= 2, "2633 AC4: per-bucket decay zeros scope gauge on window expiry");
+        const auto recent_after_note =
+            g_decay ? g_decay->recent.load(std::memory_order_relaxed) : 0;
+        CHECK(recent_after_note == 1, "2633 AC4: post-decay note leaves recent == 1");
 
         setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
     }
@@ -609,6 +614,79 @@ int run_test_mailbox_bp_admit() {
               "2633 AC6: scope overflow key present");
         CHECK(href(cs, "spawn-bp-admit-reject-scope-total") >= 0,
               "2633 AC6: scope reject key present");
+    }
+
+    // ── #2778: scope BP map lifecycle (erase / reset / LRU) ────────────
+    // Residual of #2633: insert-only map leaked gauges until process
+    // restart; after 256 distinct bp_scope_ids isolation silently failed.
+    {
+        std::println("\n--- #2778 ac2778_reset_clears_map: reset frees gauges ---");
+        // Start from a known empty map (prior AC blocks left many entries).
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        CHECK(aura::orch::scope_bp_map_size_for_test() == 0,
+              "ac2778_reset_clears_map: map empty after reset");
+
+        // Fill past the old immortal-insert leak surface (257 > cap).
+        for (int i = 0; i < 257; ++i) {
+            const auto scope_id = "life-" + std::to_string(i);
+            aura::orch::note_mailbox_bp_recent_event(scope_id);
+        }
+        // Cap still holds occupancy ≤ 256 (LRU may have evicted).
+        CHECK(aura::orch::scope_bp_map_size_for_test() <= aura::orch::kMailboxBpScopeMapCap,
+              "ac2778_reset_clears_map: occupancy bounded by kMailboxBpScopeMapCap");
+        CHECK(aura::orch::scope_bp_map_size_for_test() > 0,
+              "ac2778_reset_clears_map: map non-empty after inserts");
+
+        // Issue verification: reset_all_agent_scopes_for_test clears BP map.
+        (void)aura::orch::reset_all_agent_scopes_for_test();
+        CHECK(aura::orch::scope_bp_map_size_for_test() == 0,
+              "ac2778_reset_clears_map: reset_all_agent_scopes_for_test → size 0");
+    }
+
+    {
+        std::println("\n--- #2778 ac2778_erase_one: explicit free ---");
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        aura::orch::note_mailbox_bp_recent_event("tenant-erase");
+        aura::orch::note_mailbox_bp_recent_event("tenant-keep");
+        CHECK(aura::orch::scope_bp_map_size_for_test() == 2,
+              "ac2778_erase_one: two gauges after note");
+        CHECK(aura::orch::erase_scope_bp_gauge("tenant-erase"),
+              "ac2778_erase_one: erase returns true for present id");
+        CHECK(aura::orch::lookup_scope_bp_gauge("tenant-erase") == nullptr,
+              "ac2778_erase_one: erased id no longer lookupable");
+        CHECK(aura::orch::lookup_scope_bp_gauge("tenant-keep") != nullptr,
+              "ac2778_erase_one: peer gauge preserved");
+        CHECK(aura::orch::scope_bp_map_size_for_test() == 1,
+              "ac2778_erase_one: size 1 after single erase");
+        CHECK(!aura::orch::erase_scope_bp_gauge("tenant-erase"),
+              "ac2778_erase_one: second erase is false (idempotent miss)");
+        CHECK(!aura::orch::erase_scope_bp_gauge(""),
+              "ac2778_erase_one: empty scope_id erase is false");
+    }
+
+    {
+        std::println("\n--- #2778 ac2778_lru_at_cap: isolation survives saturation ---");
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        // Fill to cap with distinct cold scopes.
+        for (std::size_t i = 0; i < aura::orch::kMailboxBpScopeMapCap; ++i) {
+            aura::orch::note_mailbox_bp_recent_event("cold-" + std::to_string(i));
+        }
+        CHECK(aura::orch::scope_bp_map_size_for_test() == aura::orch::kMailboxBpScopeMapCap,
+              "ac2778_lru_at_cap: map full at cap");
+        const auto overflow_before =
+            g_orch_module_stats.spawn_bp_scope_overflow_total.load(std::memory_order_relaxed);
+        // New hot scope at cap: LRU-evicts a cold entry, inserts, keeps
+        // isolation (gauge present) instead of silent process-bucket fallthrough.
+        aura::orch::note_mailbox_bp_recent_event("hot-new");
+        const auto overflow_after =
+            g_orch_module_stats.spawn_bp_scope_overflow_total.load(std::memory_order_relaxed);
+        CHECK(overflow_after > overflow_before,
+              "ac2778_lru_at_cap: overflow counter bumps on LRU evict");
+        CHECK(aura::orch::lookup_scope_bp_gauge("hot-new") != nullptr,
+              "ac2778_lru_at_cap: new scope has gauge (isolation not silently lost)");
+        CHECK(aura::orch::scope_bp_map_size_for_test() == aura::orch::kMailboxBpScopeMapCap,
+              "ac2778_lru_at_cap: occupancy still at cap after LRU insert");
+        (void)aura::orch::reset_scope_bp_map_for_test();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,

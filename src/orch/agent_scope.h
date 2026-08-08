@@ -651,12 +651,20 @@ inline bool drop_agent_scope(void* ev_key) noexcept {
     return m.erase(ev_key) > 0;
 }
 
-// Issue #2588: process-wide reset for tests / session boundary (cancels + drains
-// every scope, then clears the map). Returns the count of scopes dropped.
+// Issue #2588 / #2778: process-wide reset for tests / session boundary
+// (cancels + drains every scope, then clears the evaluator scope map).
+// Also clears g_scope_bp_map (#2633 residual: gauges were insert-only
+// and never freed — long-running multi-tenant hosts hit the 256 cap
+// and silently lost scope isolation). Returns the count of AgentScopes
+// dropped (BP map clear is side-effect; size available via
+// scope_bp_map_size_for_test).
 inline std::size_t reset_all_agent_scopes_for_test() noexcept {
     auto& m = g_evaluator_agent_scopes();
     const auto n = m.size();
     m.clear();
+    // Issue #2778: free scope-local BP gauges so reset is a true
+    // session boundary (not just AgentScope tree).
+    (void)reset_scope_bp_map_for_test();
     return n;
 }
 

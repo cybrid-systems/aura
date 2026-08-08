@@ -4136,6 +4136,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("spawn-bp-admit-reject-total",
                       static_cast<std::int64_t>(
                           os.spawn_bp_admit_reject_total.load(std::memory_order_relaxed)));
+            // Issue #2633: scope-local BP admit deny + map overflow (LRU
+            // evict under #2778 still bumps overflow for dashboards).
+            insert_kv("spawn-bp-admit-reject-scope-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_bp_admit_reject_scope_total.load(std::memory_order_relaxed)));
+            insert_kv("spawn-bp-scope-overflow-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_bp_scope_overflow_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2633", aura::orch::kMailboxBpScopeGaugeIssue);
+            insert_kv("issue-2633", aura::orch::kMailboxBpScopeGaugeIssue);
+            // Issue #2778: scope BP map lifecycle (erase/reset/LRU) — additive.
+            insert_kv("scope-bp-map-size",
+                      static_cast<std::int64_t>(aura::orch::scope_bp_map_size_for_test()));
+            insert_kv("schema-2778", aura::orch::kMailboxBpScopeMapLifecycleIssue);
+            insert_kv("issue-2778", aura::orch::kMailboxBpScopeMapLifecycleIssue);
+            insert_kv("scope-bp-map-lifecycle-wired", 1);
             // Issue #2228: schema lineage (preserved by #2398).
             insert_kv("schema-2228", aura::orch::kMailboxBpAdmitIssue);
             insert_kv("issue-2228", aura::orch::kMailboxBpAdmitIssue);
