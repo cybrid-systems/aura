@@ -1,24 +1,38 @@
-; lib/std/ast.aura — High-level AST helpers (Issue #563)
+; lib/std/ast.aura — High-level AST helpers (Issue #563 / #2734)
 ;
 ; Import with: (import "std/ast")
 ; Or:        (require "std/ast" all:)
 ;
-; High-level wrappers around the 23 (ast:*) primitives. The
-; engine primitives need workspace access (red-line #2 of
-; the decision framework) so they STAY in the engine; this
-; stdlib adds Agent-friendly composite patterns on top.
+; ── Agent API surface (Issue #2734) ─────────────────────────────
+; Two registration families in the engine:
 ;
-; Conventions used here (per #558 decision framework §3 green
-; lights):
-;   - Pure functions: (ast:summary) (ast:diff-formatted)
-;     (ast:validate-summary) (ast:version-summary)
-;   - Safe input checks on all wrappers (defensive)
-;   - Engine primitive names match exactly (verified via
-;     docs/design/ast-workspace-decision.md Tier table)
+;   A. Direct callables (add()):
+;        ast:snapshot, ast:restore, ast:list-snapshots,
+;        ast:validate-nodes, ast:validate-ownership, ast:validate-post-restore,
+;        ast:diff, ast:stable-ref, ast:print, …
+;
+;   B. Stats catalog only (register_stats_impl → stats:get "…"):
+;        ast:nodes, ast:defs, ast:generation, ast:version, ast:summary
+;        Direct (ast:nodes) is unbound; use (stats:get "ast:nodes") or the
+;        thin aliases exported below after (require "std/ast" all:).
+;
+; Pipeline strict (AURA_PIPELINE_STRICT): some tree-walker paths refuse
+; unless set to 0 or force-soa — denseness hosts typically use STRICT=0.
+;
+; This stdlib adds Agent-friendly composites and thin aliases for family B.
 
 (export ast:summary-formatted ast:diff-formatted
         ast:validate-summary ast:version-summary
-        ast:ref-stats ast:memory-pressure)
+        ast:ref-stats ast:memory-pressure
+        ; thin aliases for stats-only keys (callable after require)
+        ast:nodes ast:defs ast:generation ast:version ast:summary)
+
+; ── Thin aliases for stats:get-only names (#2734) ───────────────
+(define (ast:nodes) (stats:get "ast:nodes"))
+(define (ast:defs) (stats:get "ast:defs"))
+(define (ast:generation) (stats:get "ast:generation"))
+(define (ast:version) (stats:get "ast:version"))
+(define (ast:summary) (stats:get "ast:summary"))
 
 ; ── (ast:summary-formatted) ──
 ; Wrap (ast:summary) with a formatted multi-line string for
@@ -27,7 +41,9 @@
   (let ((raw (ast:summary)))
     (if (string? raw)
       (string-append "AST summary:\n" raw)
-      "AST summary: <unavailable>")))
+      (if (pair? raw)
+        (string-append "AST summary: " (if (null? raw) "<empty>" "<alist>"))
+        "AST summary: <unavailable>"))))
 
 ; ── (ast:diff-formatted a b) ──
 ; Compute (ast:diff a b) and format the result for display.
@@ -57,8 +73,7 @@
       (list "validate-post-restore" v-post))))
 
 ; ── (ast:version-summary) ──
-; Combine (ast:version) + (ast:generation) + (stats:get "ast:generation-stats")
-; into a single alist summary.
+; Combine stats-only version/generation + generation-stats.
 (define (ast:version-summary)
   (list
     (list "version"      (ast:version))
@@ -66,7 +81,7 @@
     (list "gen-stats"    (stats:get "ast:generation-stats"))))
 
 ; ── (ast:ref-stats) ──
-; Combine ref-related stats into a single alist.
+; Combine ref-related surfaces into a single alist.
 (define (ast:ref-stats)
   (list
     (list "snapshot"    (ast:snapshot 0))
@@ -76,8 +91,7 @@
 
 ; ── (ast:memory-pressure) ──
 ; Return one of "low" / "medium" / "high" based on
-; (ast:recycle-nodes) + (stats:get "ast:node-lifecycle-stats") ratios.
-; Pure stdlib (no engine state mutation).
+; lifecycle stats ratios. Pure stdlib (no engine state mutation).
 (define (ast:memory-pressure)
   (let ((stats (stats:get "ast:node-lifecycle-stats")))
     (cond
