@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 789 | Preferred destination suites |
-| **Total scanned** | **789** | |
+| `tests/core/test_*.cpp` | 790 | Preferred destination suites |
+| **Total scanned** | **790** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 81 | 81 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 228 | 228 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 229 | 229 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 99 | 99 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 44 | 44 | P1 — domain hygiene suite exists |
@@ -762,6 +762,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_raw_pointer_safety.cpp`
 - `tests/compiler/test_rebind_new_body_hygiene.cpp`
 - `tests/compiler/test_rebind_parse_failure_no_leak.cpp`
+- `tests/compiler/test_rebind_rollback_nodeid_validity.cpp`
 - `tests/compiler/test_reemit_defer_batch.cpp`
 - `tests/compiler/test_reemit_mutation_boundary_handshake.cpp`
 - `tests/compiler/test_reemit_production_default_defer.cpp`
@@ -1094,13 +1095,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (228)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (229)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (228)
+#### domain/ (229)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1274,6 +1275,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_query_by_marker_provenance.cpp` (—) [domain_suite, theme_compiler] — AC1: all 3 individual primitives are registered and return schema=2242
 - `tests/compiler/test_query_mutate_consistency.cpp` (—) [domain_suite, theme_compiler] — test_query_mutate_consistency.cpp — Issue #1374:
 - `tests/compiler/test_rebind_parse_failure_no_leak.cpp` (—) [domain_suite, theme_compiler] — AC1: rebind parse-error path cites #2791 + free_orphan_nodes_from
+- `tests/compiler/test_rebind_rollback_nodeid_validity.cpp` (—) [domain_suite, theme_compiler] — AC1: rebind source cites #2795; old_value after parse + live check
 - `tests/compiler/test_reemit_mutation_boundary_handshake.cpp` (—) [domain_suite, theme_compiler] — Handshake policy for Agent / plugin authors (AC5 / #2205):
 - `tests/compiler/test_replace_value_audit_consistency.cpp` (—) [domain_suite, theme_compiler] — AC1: replace-value + rollback_to_size cite #2793; force RolledBack helper
 - `tests/compiler/test_require_effect_auto_isolation.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Restricted + tenant principal unset + require_effect(Mutate) →
