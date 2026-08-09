@@ -1638,6 +1638,15 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  make_int(m ? load_u64(m, m->pipeline_epoch_sync_total) : 0)},
                 {"pipeline-soa-view-aware-total",
                  make_int(m ? load_u64(m, m->pipeline_soa_view_aware_total) : 0)},
+                // Issue #2822: auto-wire when set_pipeline_mutation_epoch never called.
+                {"pipeline-epoch-unset-runs-total",
+                 make_int(static_cast<std::int64_t>(aura::compiler::pipeline_epoch_unset_runs_total
+                                                        .load(std::memory_order_relaxed)))},
+                {"pipeline-epoch-auto-wire-wired", make_int(1)},
+                {"pipeline-epoch-base-floor",
+                 make_int(static_cast<std::int64_t>(aura::compiler::kPipelineEpochBaseFloor))},
+                {"schema-2822", make_int(2822)},
+                {"issue-2822", make_int(2822)},
                 // #1323
                 {"jit-fn-unhandled-counts-query-locked",
                  make_int(m ? load_u64(m, m->jit_fn_unhandled_counts_query_locked) : 1)},

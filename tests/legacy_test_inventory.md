@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 816 | Preferred destination suites |
-| **Total scanned** | **816** | |
+| `tests/core/test_*.cpp` | 817 | Preferred destination suites |
+| **Total scanned** | **817** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 82 | 82 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 83 | 83 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 236 | 236 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 100 | 100 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
@@ -825,6 +825,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_root_epoch_gc_safety_post_invalidate.cpp`
 - `tests/compiler/test_root_remap_pass.cpp`
 - `tests/compiler/test_root_remap_pin_contract_unified.cpp`
+- `tests/compiler/test_run_one_epoch_default.cpp`
 - `tests/compiler/test_runtime_concurrent_full_cycle_chaos.cpp`
 - `tests/serve/test_runtime_mutation_boundary_steal_safety.cpp`
 - `tests/compiler/test_runtime_observability_correlated_stats.cpp`
@@ -1033,13 +1034,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (82)
+### `arena_compaction` — Arena / compaction / GC (83)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (82)
+#### domain/ (83)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1114,6 +1115,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_root_epoch_gc_safety_post_invalidate.cpp` (—) [domain_suite, theme_core] — test_compiler_root_epoch_gc_safety_post_invalidate.cpp — Issue #599:
 - `tests/compiler/test_root_remap_pass.cpp` (—) [domain_suite, theme_compiler] — capture rewrite after Moving densify. Verifies AC1–AC5 from #2294
 - `tests/compiler/test_root_remap_pin_contract_unified.cpp` (—) [domain_suite, theme_compiler] — contract. Phase 5 reads compact_r.pin_contract_held but loses the
+- `tests/compiler/test_run_one_epoch_default.cpp` (—) [domain_suite, theme_compiler] — AC1: source auto-wires from current_mutation_epoch; floor; unset metric
 - `tests/compiler/test_security_event_wal_replay.cpp` (—) [domain_suite, theme_compiler] — AC1: ring ≥ 1024; ring-wrap-total increments when N>1024 denies
 - `tests/compiler/test_security_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Fresh / vacuous → health_bp high / force-reason ok
 - `tests/core/test_set_arena_atomic_owner.cpp` (—) [domain_suite, theme_core] — test_set_arena_atomic_owner.cpp — Issue #1663
