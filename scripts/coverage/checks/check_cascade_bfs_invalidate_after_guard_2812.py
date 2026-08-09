@@ -46,7 +46,11 @@ def main() -> int:
     must("enqueue_cascade_bfs_invalidate", "AC1", mut)
     must("define_needs_precise_invalidation", "AC1", mut)
     cascade = mut.find("push_post_mutate_incremental_cascade")
-    cwin = mut[cascade : cascade + 4500] if cascade >= 0 else ""
+    # Cascade grew (#2815/#2816); bound window to re-lower section, not fixed length.
+    end = mut.find("// 3) Eager partial re-lower", cascade if cascade >= 0 else 0)
+    if end < 0:
+        end = (cascade if cascade >= 0 else 0) + 9000
+    cwin = mut[cascade:end] if cascade >= 0 else ""
     must("enqueue_cascade_bfs_invalidate", "AC1", cwin)
     if "run_full=*/false" not in cwin and "/*run_full=*/false" not in cwin:
         fails.append("AC1: soft finalize (run_full=false) must remain under Guard")
