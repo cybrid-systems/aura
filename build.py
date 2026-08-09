@@ -1395,6 +1395,18 @@ def cmd_lint():
             "Issue #2824 dirty pipeline counter isolation linter failed — run python3 scripts/coverage/checks/check_dirty_pipeline_counter_isolation_2824.py"
         )
         return r
+    # Issue #2825: dual-emit per-instruction SoA source_marker (hygiene parity).
+    # ac2825 in test_emit_soa_source_marker_propagation.
+    esm_script = COVERAGE_CHECKS / "check_emit_soa_source_marker_propagation_2825.py"
+    if not esm_script.exists():
+        fail(f"missing {esm_script}")
+        return 1
+    r = run([sys.executable, str(esm_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2825 emit SoA source_marker linter failed — run python3 scripts/coverage/checks/check_emit_soa_source_marker_propagation_2825.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

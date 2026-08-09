@@ -15403,6 +15403,18 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"enable-soa-dual-emit-skip-reset-wired", make_int(1)},
                 {"schema-2821", make_int(2821)},
                 {"issue-2821", make_int(2821)},
+                // Issue #2825: dual-emit per-instruction source_marker.
+                {"lowering-soa-source-marker-stamped-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_lowering_soa_source_marker_stamped_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"lowering-soa-source-marker-mismatch-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_lowering_soa_source_marker_mismatch_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"soa-source-marker-wired", make_int(1)},
+                {"schema-2825", make_int(2825)},
+                {"issue-2825", make_int(2825)},
                 // Issue #2520: residual AoS bridge banned on production SoA-only.
                 // residual_aos_bridge_total is a TEST-ONLY metric (target 0).
                 {"residual-aos-bridge-total",

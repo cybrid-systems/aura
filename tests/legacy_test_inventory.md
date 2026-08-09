@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 819 | Preferred destination suites |
-| **Total scanned** | **819** | |
+| `tests/core/test_*.cpp` | 820 | Preferred destination suites |
+| **Total scanned** | **820** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 237 | 237 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 52 | 52 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 53 | 53 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 52 | 52 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
@@ -388,6 +388,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_edsl_validate_or_refresh.cpp`
 - `tests/compiler/test_effect_epoch_mutation_unify.cpp`
 - `tests/compiler/test_emit_object_deprecated.cpp`
+- `tests/compiler/test_emit_soa_source_marker_propagation.cpp`
 - `tests/compiler/test_enable_soa_dual_emit_no_reset.cpp`
 - `tests/compiler/test_engine_metrics_facade.cpp`
 - `tests/reflect/test_enum_name_table_c1.cpp`
@@ -1514,19 +1515,20 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Query returns all folded keys; schema-2613 registered
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (52)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (53)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (52)
+#### domain/ (53)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
 - `tests/compiler/test_clone_walk_gensym_ceiling.cpp` (—) [domain_suite, theme_compiler] — AC1: rename_binding cites #2804; ceiling + clone_walk metric
 - `tests/compiler/test_concurrent_clone_hygiene_depth.cpp` (—) [domain_suite, theme_compiler] — AC1: clone_macro_body_at_depth / hygiene_depth; #2806 cites
 - `tests/compiler/test_contracts.cpp` (—) [small, domain_suite, theme_compiler] — tests/compiler/test_contracts.cpp — Issue #83: C++26 contract_assert + trailing pre/post
+- `tests/compiler/test_emit_soa_source_marker_propagation.cpp` (—) [domain_suite, theme_compiler] — AC1: add_instruction + emit pass source_marker; columns + view API
 - `tests/reflect/test_enum_name_table_c1.cpp` (—) [domain_suite, theme_reflect] — Wave C1: generic enum_name_table API across several domain enums.
 - `tests/reflect/test_error_merr.cpp` (—) [small, domain_suite, theme_reflect] — test_error_merr.cpp — Pilot for centralized make_merr (refactor Step 0.1+)
 - `tests/reflect/test_flat_instr_reflect_b2.cpp` (—) [domain_suite, theme_reflect] — Wave B2: FlatInstruction auto_serialize round-trip + IR field overlap.

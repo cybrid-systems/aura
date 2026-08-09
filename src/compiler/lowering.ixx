@@ -284,17 +284,27 @@ export struct LoweringState {
             std::uint8_t coercion_tag = 0;
             if (op == aura::ir::IROpcode::CastOp)
                 coercion_tag = static_cast<std::uint8_t>(op2);
-            module_v2.add_instruction(
+            // Issue #2825: pass per-instruction source_marker (not only fn-level).
+            const auto sm = last_aos.source_marker;
+            const auto soa_idx = module_v2.add_instruction(
                 cur_func_v2_idx, op, {op0, op1, op2, op3}, last_aos.source_ast_node_id,
                 last_aos.type_id, last_aos.shape_id, last_aos.linear_ownership_state,
-                last_aos.adt_variant_id, last_aos.narrow_evidence, coercion_tag);
+                last_aos.adt_variant_id, last_aos.narrow_evidence, coercion_tag, sm);
             // Issue #1273: mirror source_marker into SoA function when present.
-            if (last_aos.source_marker == 1 && cur_func_v2_idx < module_v2.functions.size()) {
+            if (sm == 1 && cur_func_v2_idx < module_v2.functions.size()) {
                 module_v2.functions[cur_func_v2_idx].marker = 1;
             }
+            // Issue #2825: stamp + parity observability.
+            if (sm != 0)
+                g_lowering_soa_source_marker_stamped_total_atomic().fetch_add(
+                    1, std::memory_order_relaxed);
+            auto& sfn = module_v2.functions[cur_func_v2_idx];
+            if (soa_idx < sfn.source_markers_.size() && sfn.source_markers_[soa_idx] != sm) {
+                g_lowering_soa_source_marker_mismatch_total_atomic().fetch_add(
+                    1, std::memory_order_relaxed);
+            }
             // Issue #1644: non-zero source_marker on SoA dual-emit path.
-            // (Evaluator metrics via query path — no Evaluator name here.)
-            (void)(last_aos.source_marker != 0);
+            (void)(sm != 0);
             if (last_aos.narrow_evidence != 0 || last_aos.type_id != 0)
                 ++soa_type_metadata_stamped;
             ++soa_instructions_emitted;
