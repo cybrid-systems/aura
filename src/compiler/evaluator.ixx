@@ -13771,6 +13771,10 @@ public:
         // Issue #2121: RegionExclusive vs GlobalExclusive lock mode.
         bool region_mode_ = false;
         std::uint32_t region_shard_ = 0;
+        // Issue #2847: admitted region_key + cone/ImpactScope mask for
+        // type/occurrence commit bind (mask==0 → global exclusive / quiet).
+        std::uint64_t admitted_region_key_ = 0;
+        std::uint64_t admitted_cone_mask_ = 0;
         // Issue #1590: inert guard after legacy-ctor mutation-quota reject
         // (no lock, no depth, dtor is a no-op). try_acquire returns AuraError
         // instead of constructing inert.
@@ -13810,6 +13814,13 @@ public:
         // locks (shared workspace + region exclusive) instead of global unique.
         [[nodiscard]] bool is_region_mode() const noexcept { return region_mode_; }
         [[nodiscard]] std::uint32_t region_shard() const noexcept { return region_shard_; }
+        // Issue #2847: admitted cone mask (0 = global exclusive / quiet).
+        [[nodiscard]] std::uint64_t admitted_cone_mask() const noexcept {
+            return admitted_cone_mask_;
+        }
+        [[nodiscard]] std::uint64_t admitted_region_key() const noexcept {
+            return admitted_region_key_;
+        }
         // Issue #1590: true when legacy ctor soft-failed on mutation quota.
         [[nodiscard]] bool is_inert() const noexcept { return inert_; }
         // Issue #1684: mark success_flag false so dtor rolls back (if

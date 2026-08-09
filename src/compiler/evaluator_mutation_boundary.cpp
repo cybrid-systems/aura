@@ -1592,9 +1592,13 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // defers synchronous reemit. Failure always takes the full restore path.
     render_fast_exit_ = outermost && aura::core::arena_policy::in_render_hotpath();
     // Issue #2121: decide RegionExclusive vs GlobalExclusive.
+    // Issue #2847: stamp admitted cone/ImpactScope mask for type commit bind.
     if (outermost && region_key.has_value() && ev_->workspace_region_concurrency_enabled()) {
         region_mode_ = true;
         region_shard_ = Evaluator::workspace_region_shard(*region_key);
+        admitted_region_key_ = *region_key;
+        admitted_cone_mask_ =
+            effective_region_cone_mask(Evaluator::parallel_task_cone_mask(), *region_key);
     }
     // Issue #2686: same-thread nested mutate under (eval-current) shared pin
     // would unique_lock under shared_lock → EDEADLK. Fail-closed so concurrent
@@ -1845,6 +1849,38 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             1, std::memory_order_relaxed);
     }
     bool success = flag_ ? *flag_ : true;
+    // Issue #2847: region type/occurrence commit bind. When this Guard
+    // admitted a non-zero cone/ImpactScope mask, any OccurrenceGoal
+    // predicate node outside that mask is type-cross-talk. Soft: observe
+    // only. production / Full: reject commit (success=false). mask==0 /
+    // GlobalExclusive: zero extra cost (region_type_commit_ok short-circuit).
+    if (is_outermost_ && success && admitted_cone_mask_ != 0) {
+        std::uint64_t touched = 0;
+        if (void* h = ev_->commit_type_checker_handle()) {
+            auto* tc = static_cast<TypeChecker*>(h);
+            const auto& goals = tc->constraint_system().occurrence_goals_for_test();
+            // Bound walk (soft-cone discipline — same cap as #2842 fingerprint).
+            constexpr std::size_t kMaxGoals = 256;
+            const std::size_t n = goals.size() < kMaxGoals ? goals.size() : kMaxGoals;
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto pred = goals[i].predicate_cond_node;
+                if (pred != 0)
+                    touched |= typed_audit::node_id_to_region_mask_bit(pred);
+            }
+        }
+        if (!typed_audit::region_type_commit_ok(admitted_cone_mask_, touched)) {
+            const bool hard = typed_audit::production_defaults_active() ||
+                              typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+            typed_audit::note_region_type_cross_talk(hard);
+            if (hard) {
+                // Production reject: do not commit half-green type surface.
+                success = false;
+                if (flag_)
+                    *flag_ = false;
+            }
+            // Soft: observe only — success unchanged.
+        }
+    }
     // Issue #2120: use ctor-captured is_outermost_ so depth_slot can
     // stay elevated until unlock (steal/GC must not see depth==0 mid
     // exit pipeline). Nested guards still use the same member flag.
@@ -3436,6 +3472,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , is_outermost_(o.is_outermost_)
     , region_mode_(o.region_mode_)
     , region_shard_(o.region_shard_)
+    , admitted_region_key_(o.admitted_region_key_)
+    , admitted_cone_mask_(o.admitted_cone_mask_)
     , inert_(o.inert_)
     , enter_ts_(std::move(o.enter_ts_))
     , uncaught_at_enter_(o.uncaught_at_enter_)
@@ -3457,6 +3495,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.is_outermost_ = false;
     o.region_mode_ = false;
     o.region_shard_ = 0;
+    o.admitted_region_key_ = 0;
+    o.admitted_cone_mask_ = 0;
     o.inert_ = false;
     o.enter_ts_.reset();
     o.defuse_version_at_enter_ = 0;
@@ -3486,6 +3526,8 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         is_outermost_ = o.is_outermost_;
         region_mode_ = o.region_mode_;
         region_shard_ = o.region_shard_;
+        admitted_region_key_ = o.admitted_region_key_;
+        admitted_cone_mask_ = o.admitted_cone_mask_;
         inert_ = o.inert_;
         enter_ts_ = std::move(o.enter_ts_);
         uncaught_at_enter_ = o.uncaught_at_enter_;
@@ -3505,6 +3547,8 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         o.is_outermost_ = false;
         o.region_mode_ = false;
         o.region_shard_ = 0;
+        o.admitted_region_key_ = 0;
+        o.admitted_cone_mask_ = 0;
         o.inert_ = false;
         o.enter_ts_.reset();
         o.defuse_version_at_enter_ = 0;

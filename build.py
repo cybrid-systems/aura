@@ -634,6 +634,20 @@ def cmd_lint():
             "Issue #2761 region mask-overlap admit linter failed — run python3 scripts/coverage/checks/check_region_mask_overlap_admit_2761.py"
         )
         return r
+    # Issue #2847: bind concurrent region admit to type/occurrence commit
+    # gate (#2724/#2761 residual). Soft observe / production reject when
+    # OccurrenceGoal pred bits fall outside admitted cone mask. ac2847_*
+    # in test_mailbox_hold_starvation_hard per #81967.
+    rtcg_script = COVERAGE_CHECKS / "check_region_type_commit_gate_2847.py"
+    if not rtcg_script.exists():
+        fail(f"missing {rtcg_script}")
+        return 1
+    r = run([sys.executable, str(rtcg_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2847 region type commit gate linter failed — run python3 scripts/coverage/checks/check_region_type_commit_gate_2847.py"
+        )
+        return r
     # Issue #2762: post-mutate incremental macro re-expand under Guard
     # cascade (#165/#2096 residual). Wires post_mutation_macro_reexpand
     # into push_post_mutate_incremental_cascade + metrics + schema-2762.

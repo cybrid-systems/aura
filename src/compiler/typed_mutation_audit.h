@@ -939,6 +939,9 @@ struct CommitReadinessInput {
     bool occurrence_face_hard = false;              // true under prod/Full
     bool cone_outside_goal_drop_face = false;       // #2703 face hit
     bool occurrence_empty_after_fence_face = false; // #2704 face hit
+    // Issue #2847: region type/occurrence cross-talk face (active under
+    // prod/Full when face latch set by note_region_type_cross_talk).
+    bool region_type_cross_talk_face = false;
 };
 
 struct CommitReadiness {
@@ -1337,6 +1340,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
         return 10; // #2703 / #2716
     if (r == "occurrence_empty_after_fence")
         return 11; // #2704 / #2716
+    if (r == "region_type_cross_talk")
+        return 13; // #2847
     return 0;      // ok
 }
 
@@ -1356,9 +1361,10 @@ inline void install_occurrence_full_solve_recover(OccurrenceFullSolveRecoverFn f
     g_occurrence_full_solve_recover_fn = fn;
     g_occurrence_full_solve_recover_ctx = ctx;
 }
-// Forward decls — defined later with face counter clear helpers (#2703/#2704).
+// Forward decls — defined later with face counter clear helpers (#2703/#2704/#2847).
 inline void clear_cone_outside_goal_drop_for_test() noexcept;
 inline void clear_occurrence_empty_after_fence_for_test() noexcept;
+[[nodiscard]] inline bool region_type_cross_talk_face_hit() noexcept;
 
 // Pure decision table (AC5: identical inputs → identical output; no atomics).
 [[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept {
@@ -1437,7 +1443,7 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
                 // Consume faces so re-entry does not immediately re-reject.
                 clear_cone_outside_goal_drop_for_test();
                 clear_occurrence_empty_after_fence_for_test();
-                // Fall through to step 7 ok (recovered).
+                // Fall through to step 7 region face / ok (recovered).
             } else {
                 g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
                 if (cone_face) {
@@ -1446,6 +1452,13 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
                 return (set("occurrence_empty_after_fence", false, 850), r);
             }
         }
+    }
+
+    // 6b) Issue #2847: region type/occurrence cross-talk under concurrent
+    // admit. production/Full + face latch → hard reject. Soft leaves
+    // face unset (observe-only via note_region_type_cross_talk(false)).
+    if (in.occurrence_face_hard && in.region_type_cross_talk_face) {
+        return (set("region_type_cross_talk", false, 900), r);
     }
 
     // 7) ok — clean SOLVED + linear + blame + !truncated + no face hit.
@@ -1484,6 +1497,8 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     if (face_hard) {
         in.cone_outside_goal_drop_face = (cone_outside_goal_drop_total_v_read() > 0);
         in.occurrence_empty_after_fence_face = (occurrence_empty_after_fence_total_v_read() > 0);
+        // Issue #2847: region type cross-talk face latch.
+        in.region_type_cross_talk_face = region_type_cross_talk_face_hit();
         // Issue #2716: face-hit observe counter (not true recover).
         // #2750 moves true recover success to recover_success_total.
         if (in.cone_outside_goal_drop_face || in.occurrence_empty_after_fence_face) {
@@ -2393,6 +2408,75 @@ inline constexpr int kConeOutsideGoalDropIssue = 2703;
 inline void clear_cone_outside_goal_drop_for_test() noexcept {
     g_cone_outside_goal_drop_total.store(0, std::memory_order_relaxed);
     g_cone_outside_goal_drop_soft_total.store(0, std::memory_order_relaxed);
+}
+
+// ── Issue #2847: region type/occurrence commit bind ────────────────────
+// Residual of #2724/#2760/#2761: region concurrent admit isolates AST
+// topology mutation but type/occurrence state is still per-Evaluator
+// shared (solve_delta_cs_ / occurrence_goals_ / type_dep). Two fibers on
+// "disjoint" regions can cross-talk via shared CS. This face rejects
+// commit when any touched OccurrenceGoal predicate node bit falls
+// outside the admitted cone/ImpactScope mask.
+//
+// Soft: metric only (region_type_cross_talk_observe_total).
+// production / Full: reject (region_type_cross_talk_reject_total) + face
+// for commit_readiness force_reason "region_type_cross_talk" (code 13).
+// mask==0 / GlobalExclusive: zero cost (region_type_commit_ok short-circuit).
+inline constexpr int kRegionTypeCrossTalkIssue = 2847;
+inline std::atomic<std::uint64_t> g_region_type_cross_talk_observe_total{0};
+inline std::atomic<std::uint64_t> g_region_type_cross_talk_reject_total{0};
+// Face latch for commit_readiness (1 = hit; cleared for tests / recover).
+inline std::atomic<std::uint8_t> g_region_type_cross_talk_face{0};
+inline std::atomic<std::uint32_t> g_region_type_cross_talk_wired{1};
+
+[[nodiscard]] inline std::uint64_t region_type_cross_talk_observe_total_v_read() noexcept {
+    return g_region_type_cross_talk_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t region_type_cross_talk_reject_total_v_read() noexcept {
+    return g_region_type_cross_talk_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t region_type_cross_talk_wired_v_read() noexcept {
+    return g_region_type_cross_talk_wired.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool region_type_cross_talk_face_hit() noexcept {
+    return g_region_type_cross_talk_face.load(std::memory_order_relaxed) != 0;
+}
+inline void clear_region_type_cross_talk_for_test() noexcept {
+    g_region_type_cross_talk_observe_total.store(0, std::memory_order_relaxed);
+    g_region_type_cross_talk_reject_total.store(0, std::memory_order_relaxed);
+    g_region_type_cross_talk_face.store(0, std::memory_order_relaxed);
+}
+
+// Map OccurrenceGoal predicate NodeId → one bit of a 64-bit cone mask
+// (same 63-bit packing as impact_block_to_region_mask_bit / region_key
+// — no tree walk). Hot path remains pure arithmetic.
+[[nodiscard]] inline std::uint64_t node_id_to_region_mask_bit(std::uint32_t node_id) noexcept {
+    if (node_id == 0)
+        return 0;
+    return 1ULL << (static_cast<std::uint64_t>(node_id) % 63ull);
+}
+
+// Pure gate: admitted_mask==0 → ok (global exclusive / quiet).
+// touched==0 → ok (no type/occurrence work this boundary).
+// Else: every touched bit must sit inside admitted_mask.
+[[nodiscard]] inline bool region_type_commit_ok(std::uint64_t admitted_mask,
+                                                std::uint64_t touched_type_mask) noexcept {
+    if (admitted_mask == 0)
+        return true;
+    if (touched_type_mask == 0)
+        return true;
+    return (touched_type_mask & ~admitted_mask) == 0;
+}
+
+// Note cross-talk. production_hard → reject counter + face latch;
+// Soft → observe counter only (commit may still succeed).
+inline void note_region_type_cross_talk(bool production_hard) noexcept {
+    if (production_hard) {
+        g_region_type_cross_talk_reject_total.fetch_add(1, std::memory_order_relaxed);
+        g_region_type_cross_talk_face.store(1, std::memory_order_release);
+    } else {
+        g_region_type_cross_talk_observe_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 // Issue #2704: production hard-face on OccurrenceGoal rehydrate miss after

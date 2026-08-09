@@ -3122,7 +3122,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #2814 M7 audit: missing invariant enforcement link
             // before trail write. Call note_invariant_enforcement_ran
             // (or _skipped) before finish_mutate_hard_gate to close the gap.
-            note_invariant_enforcement_ran(nchg);
+            aura::compiler::typed_audit::note_invariant_enforcement_ran(nchg);
             if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
                 ok = false;
                 return mev("invariant-denied",

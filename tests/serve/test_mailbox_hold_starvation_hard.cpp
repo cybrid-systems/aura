@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/mutation_hold_budget.h" // #2761 live regions_disjoint unit checks
+#include "compiler/typed_mutation_audit.h" // #2847 region_type_commit_ok
 #include "serve/multi_fiber_mailbox.h"
 
 #include <cstdint>
@@ -1357,6 +1358,138 @@ static void ac2761_6_source_and_linter() {
           "AC6: no docs/design/2761-* per #1655");
 }
 
+// ── Issue #2847: region type/occurrence commit bind ────────────────────
+// Residual of #2724/#2760/#2761: concurrent region admit isolates AST
+// mutation but shared type CS can still cross-talk. Pure gate + Soft/
+// production faces + query schema-2847.
+
+static void ac2847_1_pure_commit_ok() {
+    std::println("\n--- #2847 AC1: pure region_type_commit_ok ---");
+    using aura::compiler::typed_audit::node_id_to_region_mask_bit;
+    using aura::compiler::typed_audit::region_type_commit_ok;
+    // Quiet / global exclusive: admitted==0 → always ok.
+    CHECK(region_type_commit_ok(0, 0), "AC1: mask0+touched0 ok");
+    CHECK(region_type_commit_ok(0, 0b1111), "AC1: mask0 ignores touched (global exclusive)");
+    // No type work: touched==0 → ok even with admitted mask.
+    CHECK(region_type_commit_ok(0b0011, 0), "AC1: no type work ok");
+    // In-cone: ok.
+    CHECK(region_type_commit_ok(0b0011, 0b0001), "AC1: in-cone touched ok");
+    CHECK(region_type_commit_ok(0b0011, 0b0011), "AC1: full in-cone ok");
+    // Cross-talk: touched bit outside admitted.
+    CHECK(!region_type_commit_ok(0b0011, 0b0100), "AC1: out-of-cone reject");
+    CHECK(!region_type_commit_ok(0b0011, 0b0101), "AC1: mixed in+out reject");
+    // node_id packing is pure arithmetic (no tree walk).
+    CHECK(node_id_to_region_mask_bit(0) == 0, "AC1: node 0 → no bit");
+    CHECK(node_id_to_region_mask_bit(1) != 0, "AC1: node 1 → non-zero bit");
+    CHECK(node_id_to_region_mask_bit(1) == node_id_to_region_mask_bit(1 + 63),
+          "AC1: node bits wrap at 63");
+}
+
+static void ac2847_2_soft_observe_production_reject() {
+    std::println("\n--- #2847 AC2/AC3: Soft observe vs production reject ---");
+    using namespace aura::compiler::typed_audit;
+    clear_region_type_cross_talk_for_test();
+    const auto o0 = region_type_cross_talk_observe_total_v_read();
+    const auto r0 = region_type_cross_talk_reject_total_v_read();
+    // Soft: observe only, no face latch.
+    note_region_type_cross_talk(/*production_hard=*/false);
+    CHECK(region_type_cross_talk_observe_total_v_read() == o0 + 1, "AC3: Soft observe +1");
+    CHECK(region_type_cross_talk_reject_total_v_read() == r0, "AC3: Soft no reject");
+    CHECK(!region_type_cross_talk_face_hit(), "AC3: Soft no face latch");
+    // Production: reject + face.
+    note_region_type_cross_talk(/*production_hard=*/true);
+    CHECK(region_type_cross_talk_reject_total_v_read() == r0 + 1, "AC2: production reject +1");
+    CHECK(region_type_cross_talk_face_hit(), "AC2: production face latch set");
+    // commit_readiness under prod face → region_type_cross_talk reason.
+    CommitReadinessInput in{};
+    in.occurrence_face_hard = true;
+    in.region_type_cross_talk_face = true;
+    const auto cr = commit_readiness(in);
+    CHECK(cr.force_reason == "region_type_cross_talk", "AC2: force_reason region_type_cross_talk");
+    CHECK(cr.force_reason_code == 13, "AC2: force_reason_code 13");
+    CHECK(!cr.would_allow_commit, "AC2: would_allow_commit false");
+    clear_region_type_cross_talk_for_test();
+    CHECK(!region_type_cross_talk_face_hit(), "AC2: face cleared for test");
+}
+
+static void ac2847_4_zero_cost_quiet() {
+    std::println("\n--- #2847 AC4: mask==0 path zero-cost class ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Gate is admitted_cone_mask_ != 0 (quiet/global skips entirely).
+    CHECK(emb.find("admitted_cone_mask_ != 0") != std::string::npos,
+          "AC4: gate on admitted_cone_mask_ != 0");
+    CHECK(emb.find("region_type_commit_ok") != std::string::npos,
+          "AC4: emb uses region_type_commit_ok");
+    const auto ta = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(ta.find("if (admitted_mask == 0)") != std::string::npos,
+          "AC4: pure helper short-circuits admitted==0");
+    CHECK(ta.find("if (touched_type_mask == 0)") != std::string::npos,
+          "AC4: pure helper short-circuits touched==0");
+}
+
+static void ac2847_5_additive_and_preserved() {
+    std::println("\n--- #2847 AC5: additive query + prior region surfaces ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(source_has_key(q, "region-type-cross-talk-observe-total"), "AC5: query observe total");
+    CHECK(source_has_key(q, "region-type-cross-talk-reject-total"), "AC5: query reject total");
+    CHECK(source_has_key(q, "region-type-cross-talk-wired"), "AC5: wired sentinel");
+    CHECK(source_has_key(q, "schema-2847"), "AC5: schema-2847");
+    CHECK(source_has_key(q, "issue-2847"), "AC5: issue-2847");
+    // Prior region admit surfaces preserved.
+    CHECK(source_has_key(q, "mutation-region-concurrent-admit-total"),
+          "AC5: #2724 concurrent-admit preserved");
+    CHECK(source_has_key(q, "mutation-region-mask-overlap-reject-total"),
+          "AC5: #2761 mask-overlap preserved");
+    CHECK(source_has_key(q, "schema-2761"), "AC5: schema-2761 preserved");
+    CHECK(source_has_key(q, "schema-2760"), "AC5: schema-2760 preserved");
+    CHECK(emb.find("g_mutation_region_concurrent_admit_total") != std::string::npos,
+          "AC5: emb #2724 admit counter preserved");
+    CHECK(emb.find("admitted_cone_mask_") != std::string::npos,
+          "AC5: Guard stores admitted_cone_mask_");
+}
+
+static void ac2847_6_source_and_linter() {
+    std::println("\n--- #2847 AC6: source-cite + linter + no docs/design ---");
+    const auto ta = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto eix = read_file("src/compiler/evaluator.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_region_type_commit_gate_2847.py");
+    CHECK(ta.find("region_type_commit_ok") != std::string::npos, "AC6: pure helper present");
+    CHECK(ta.find("kRegionTypeCrossTalkIssue = 2847") != std::string::npos, "AC6: issue stamp");
+    CHECK(ta.find("g_region_type_cross_talk_observe_total") != std::string::npos,
+          "AC6: observe counter");
+    CHECK(ta.find("g_region_type_cross_talk_reject_total") != std::string::npos,
+          "AC6: reject counter");
+    CHECK(ta.find("region_type_cross_talk") != std::string::npos, "AC6: force_reason string");
+    CHECK(ta.find("#2847") != std::string::npos, "AC6: typed_audit cites #2847");
+    CHECK(emb.find("#2847") != std::string::npos, "AC6: emb cites #2847");
+    CHECK(emb.find("note_region_type_cross_talk") != std::string::npos,
+          "AC6: emb notes cross-talk");
+    CHECK(eix.find("admitted_cone_mask_") != std::string::npos,
+          "AC6: Guard field in evaluator.ixx");
+    CHECK(q.find("#2847") != std::string::npos || q.find("2847") != std::string::npos,
+          "AC6: query cites #2847");
+    CHECK(t.find("ac2847_1_pure_commit_ok") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac2847_2_soft_observe_production_reject") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2847_4_zero_cost_quiet") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2847_5_additive_and_preserved") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac2761_1_unequal_key_mask_overlap_reject") != std::string::npos,
+          "AC6: #2761 preserved");
+    CHECK(t.find("ac2724_1_disjoint_concurrent_admit") != std::string::npos,
+          "AC6: #2724 preserved");
+    CHECK(!lint.empty() && lint.find("2847") != std::string::npos, "AC6: linter present");
+    CHECK(build.find("check_region_type_commit_gate_2847") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2847-region-type-commit.md").empty(),
+          "AC6: no docs/design/2847-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_2847.cpp").empty(),
+          "AC6: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -1426,9 +1559,14 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2761_3_soft_and_hot_path();
     ac2761_5_additive_observability();
     ac2761_6_source_and_linter();
-    std::println("\n=== #2551 + #2701 + #2720 + #2724 + #2726 + #2754 + #2757 + #2760 + #2761: {} "
-                 "passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== Issue #2847: region type/occurrence commit bind (#2724/#2761 residual) ===");
+    ac2847_1_pure_commit_ok();
+    ac2847_2_soft_observe_production_reject();
+    ac2847_4_zero_cost_quiet();
+    ac2847_5_additive_and_preserved();
+    ac2847_6_source_and_linter();
+    std::println("\n=== #2551..#2761 + #2847: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
