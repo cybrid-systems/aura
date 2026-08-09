@@ -510,7 +510,16 @@ public:
     // legacy lookup(string) in the lambda body still finds the
     // param. Without this, body code that does (lookup name)
     // would miss lambda params.
-    void set_pool(const aura::ast::StringPool* p) { pool_ = p; }
+    //
+    // Issue #2868: when the pool *pointer* changes, re-key
+    // bindings_symid_ so SymId integers match the new pool's
+    // intern table. Fresh set-code StringPools reuse the same id
+    // space; raw SymId compare across pools made isomorphic
+    // `(define bbb …)` reuse `aaa`'s cell (module first-leaf
+    // unbound / prior define body stolen). Implemented in
+    // evaluator_env.cpp.
+    void set_pool(const aura::ast::StringPool* p);
+    [[nodiscard]] const aura::ast::StringPool* pool() const noexcept { return pool_; }
     // Issue #145: SymId-based lookup. Fast path — integer compare
     // instead of string compare. Returns the most recent binding
     // (shadowing semantics preserved).

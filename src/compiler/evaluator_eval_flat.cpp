@@ -4942,9 +4942,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     if (!existing && v.sym_id != aura::ast::INVALID_SYM) {
                         // SymId path: re-define after capture/materialize may only
                         // have the cell on bindings_symid_.
-                        if (auto by_sym = eval_env.lookup_by_symid(v.sym_id);
-                            by_sym && is_cell(*by_sym))
-                            existing = by_sym;
+                        // Issue #2868: only trust SymId equality when the env is
+                        // already keyed by *this* AST pool (set_pool re-keys on
+                        // change). Cross-pool integer match reused another
+                        // define's cell without binding the new name.
+                        if (eval_env.pool() == p) {
+                            if (auto by_sym = eval_env.lookup_by_symid(v.sym_id);
+                                by_sym && is_cell(*by_sym))
+                                existing = by_sym;
+                        }
                     }
                     if (existing && is_cell(*existing)) {
                         auto ci = as_cell_id(*existing);
@@ -5109,8 +5115,25 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // for the same name. Fresh bind() stacks a new
                                 // cell; if set! resolved the oldest cell, loop
                                 // counters froze. Prefer update-in-place.
-                                if (auto existing = mutable_env.lookup_cell_index(d.first)) {
-                                    cell_ids.push_back(static_cast<std::size_t>(*existing));
+                                //
+                                // Issue #2868: use *local string* binding only —
+                                // not full lookup_cell_index (parent / SymId
+                                // paths). Cross-pool SymId equality could treat
+                                // a new name as an existing foreign cell and
+                                // skip bind() → first multi-define leaf unbound
+                                // from module frames; set_pool re-keys SymIds
+                                // but local string match is the correct policy
+                                // for "same name re-entry" here.
+                                std::optional<std::size_t> existing_ci;
+                                for (auto it = mutable_env.bindings().rbegin();
+                                     it != mutable_env.bindings().rend(); ++it) {
+                                    if (it->first == d.first && is_cell(it->second)) {
+                                        existing_ci = as_cell_id(it->second);
+                                        break;
+                                    }
+                                }
+                                if (existing_ci) {
+                                    cell_ids.push_back(*existing_ci);
                                     continue;
                                 }
                                 auto ci = alloc_cell(make_void());
