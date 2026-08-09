@@ -540,6 +540,15 @@ std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_pre
 std::uint32_t aura_lookup_stable_func_id(const char* name); // 0 if missing
 std::uint64_t aura_stable_func_id_map_size(void);
 void aura_clear_stable_func_id_map(void);
+// Issue #2670: multi-eval namespace by (eval_owner, name). Explicit eval_ptr
+// variants for dual-Evaluator hosts; legacy wrappers dispatch via reemit/
+// register owner TLS (nullptr → process-default key).
+std::uint32_t aura_get_or_preserve_stable_func_id_for_eval(void* eval_ptr, const char* name,
+                                                           int* out_preserved);
+std::uint32_t aura_lookup_stable_func_id_for_eval(void* eval_ptr, const char* name);
+void aura_clear_stable_func_id_map_for_eval(void* eval_ptr);
+// Issue #2692: force-bump mismatch counter (test / intentional inject).
+void aura_bump_cross_eval_sid_owner_mismatch_total(void);
 
 // Issue #2016: live (adapted) and preferred emit region masks.
 // Evolution bit (1<<2) is always stripped from both.
@@ -634,14 +643,17 @@ void aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept;
 [[nodiscard]] std::uint64_t aura_cross_cow_soft_migrate_max_drift(void) noexcept;
 // Force-bump table epoch (test / hot-swap seam).
 void aura_aot_bump_func_table_epoch(void);
-// Issue #2713 / #2744 observability (file-scope counters in aura_jit_bridge.cpp).
+// Issue #2713 / #2744 / #2841 observability (file-scope counters in
+// aura_jit_bridge.cpp). #2841: production multi-eval cascade defaults to
+// owner-scoped (no peer force-stale); hard invalidate notes force-bump.
 std::uint64_t cross_eval_epoch_bump_total_v_read(void);
 void* last_cross_eval_epoch_bump_owner_v_read(void);
 std::uint32_t cross_eval_epoch_bump_wired_v_read(void);
-// Issue #2744: next aura_aot_bump_func_table_epoch() always advances the
-// process-global table epoch (skip multi-eval cascade throttle).
+// Issue #2744 / #2841: next aura_aot_bump_func_table_epoch() always advances
+// the process-global table epoch (skip multi-eval cascade throttle).
+// Hard invalidate_function / reload fall-back call this first.
 void aura_aot_note_cross_eval_epoch_force_bump(void);
-// Issue #2744: multi-eval cascade bumps that were owner-scoped throttled.
+// Issue #2744 / #2841: multi-eval cascade bumps that were owner-scoped throttled.
 std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void);
 
 // Issue #2304 / #2366: epoch invariant mode (process-level).

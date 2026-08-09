@@ -1753,12 +1753,17 @@ static std::atomic<std::uint64_t> g_cross_eval_epoch_bump_total{0};
 // this to attribute the most recent cross-eval bump to a specific
 // eval. Relaxed order — observability only, no control flow.
 static std::atomic<void*> g_last_cross_eval_epoch_bump_owner{nullptr};
-// Issue #2744: multi-eval cascade bumps that were owner-scoped throttled
-// (skipped process-global table epoch) under production or
-// AURA_CROSS_EVAL_EPOCH_THROTTLE=1. Additive — #2713 counters preserved.
+// Issue #2841 / #2744: multi-eval cascade bumps that were owner-scoped
+// throttled (skipped process-global table epoch) under production or
+// AURA_CROSS_EVAL_EPOCH_THROTTLE=1. Issue #2841 makes production multi-eval
+// cascade the default owner-scoped path (soft mark_define_dirty stamps
+// reemit/register owner TLS in atomic_bump_epochs_and_stamp_bridge;
+// hard invalidate notes force-bump first). Additive — #2713 counters
+// preserved.
 static std::atomic<std::uint64_t> g_cross_eval_epoch_action_throttled_total{0};
 // Force flag: hard invalidate / Agent fence paths set this TLS so the
 // next bump always advances the process-global epoch (AC hard path).
+// Issue #2841: invalidate_function notes force-bump before the unified bump.
 static thread_local int g_cross_eval_epoch_force_bump = 0;
 // Read accessors (mirror the #2693 / #2668 / #2640 file-scope counter
 // style — queryable in light-link test bundles without the production
@@ -1781,8 +1786,9 @@ extern "C" void aura_aot_note_cross_eval_epoch_force_bump(void) {
 
 namespace {
 [[nodiscard]] bool cross_eval_epoch_throttle_armed() noexcept {
-    // Soft / sandbox=off: only when env explicitly armed (issue AC Soft).
-    // Production multi-eval: throttle on by default.
+    // Issue #2841 AC4 / #2744: Soft / sandbox=off → only when env
+    // explicitly armed. Production multi-eval cascade default = on
+    // (owner-scoped; no peer force-stale of joint table epoch).
     if (const char* e = std::getenv("AURA_CROSS_EVAL_EPOCH_THROTTLE"); e && *e) {
         if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
             return true;
@@ -1794,24 +1800,31 @@ namespace {
 } // namespace
 
 extern "C" void aura_aot_bump_func_table_epoch(void) {
-    // Issue #2744: multi-eval cascade tax action. When >1 live AotState
-    // and throttle is armed, prefer owner-scoped stale-slot invalidate
-    // over a process-global table epoch advance so foreign evals are not
-    // force-staled by peer cascade. Hard invalidate / explicit fence
-    // paths call aura_aot_note_cross_eval_epoch_force_bump() first.
-    // Per-eval epoch domain split is a follow-up (non-goal for #2713/#2744);
-    // joint table epoch writers stay aura_aot_bump_func_table_epoch.
+    // Issue #2841 / #2744: multi-eval cascade tax action. When >1 live
+    // AotState and throttle is armed (production default, or env), prefer
+    // owner-scoped stale-slot invalidate over a process-global table epoch
+    // advance so foreign evals are not force-staled by peer cascade.
+    // Soft mark_define_dirty stamps reemit/register owner TLS via
+    // atomic_bump_epochs_and_stamp_bridge (Issue #2841). Hard invalidate /
+    // reload fall-back / explicit fence paths call
+    // aura_aot_note_cross_eval_epoch_force_bump() first.
+    // Per-eval epoch domain split is a follow-up (non-goal for
+    // #2713/#2744/#2841); joint table epoch writers stay
+    // aura_aot_bump_func_table_epoch.
     const bool multi = aura_aot_state_map_size() > 1;
     const bool force = g_cross_eval_epoch_force_bump != 0;
     g_cross_eval_epoch_force_bump = 0;
     if (multi && !force && cross_eval_epoch_throttle_armed()) {
+        // Prefer reemit-owner TLS; fall back to register-owner (AC1).
         void* owner = aura_aot_get_reemit_owner_eval();
         if (!owner)
             owner = aura_aot_get_register_owner_eval();
         if (owner) {
             // Owner-scoped residual: clear this eval's generation-behind
             // slots without advancing g_aot_table_epoch (foreign slots
-            // stay non-stale). #2713 observability still stamps the tax.
+            // stay generation-current). #2713 observability still stamps
+            // the tax; #2744 throttled counter advances so Agents see the
+            // choice (AC1 / AC5).
             g_cross_eval_epoch_bump_total.fetch_add(1, std::memory_order_relaxed);
             g_last_cross_eval_epoch_bump_owner.store(owner, std::memory_order_relaxed);
             g_cross_eval_epoch_action_throttled_total.fetch_add(1, std::memory_order_relaxed);
@@ -1820,7 +1833,9 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
             return;
         }
         // No owner TLS: fall through to global bump (single-owner residual
-        // or misconfigured multi-eval — preserve prior behavior).
+        // or misconfigured multi-eval without cascade owner stamp —
+        // preserve prior behavior). Soft cascade host should set owner
+        // via atomic_bump_epochs_and_stamp_bridge (#2841).
     }
 
     const std::uint64_t new_epoch = g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel) + 1;

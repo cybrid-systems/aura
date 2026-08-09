@@ -727,6 +727,13 @@ void CompilerService::invalidate_function(const std::string& name) {
     // dep_graph teardown below. Replaces the historical hand-rolled
     // bump_bridge_epoch + defuse + aot sequence that could desync
     // with the soft path.
+    // Issue #2841 AC2 / #2744: hard invalidate must advance the
+    // process-global AOT table epoch under multi-eval production.
+    // Soft cascade owner-scoped throttle must not apply — note
+    // force-bump before the unified helper (TLS consumed by
+    // aura_aot_bump_func_table_epoch). Cascade owner TLS is still
+    // stamped inside the helper for last-owner attribution.
+    aura_aot_note_cross_eval_epoch_force_bump(); // Issue #2841 hard path
     atomic_bump_epochs_and_stamp_bridge(name);
     // Issue #531: bump closure_stale_refresh_count_ on
     // every invalidate_function — measures the closure

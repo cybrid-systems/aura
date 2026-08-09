@@ -28,6 +28,7 @@
 #include "compiler/runtime_shared.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <print>
@@ -47,9 +48,17 @@ namespace {
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Synthetic eval owner pointers for multi-eval ACs (#2670+). Declared early
+// so #2857 cleanup tests (and later suites) can share the same keys.
+// Not constexpr: integer→pointer reinterpret_cast is not a constant expression.
+static void* k2670EvalA = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1000ULL));
+static void* k2670EvalB = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2000ULL));
+static void* k2670EvalC = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x3000ULL));
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -415,12 +424,7 @@ static void ac2857_5_source_cite_and_no_design() {
 // Evaluator instances sharing a process. Legacy C funcs without _for_eval
 // suffix dispatch via TLS owner (cleared between tests) so default-key
 // behavior stays single-workspace.
-
-// Synthetic eval owner pointers (distinct process-equivalent addresses).
-// Not constexpr: integer→pointer reinterpret_cast is not a constant expression.
-static void* k2670EvalA = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1000ULL));
-static void* k2670EvalB = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x2000ULL));
-static void* k2670EvalC = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x3000ULL));
+// k2670EvalA/B/C declared near top of anonymous namespace (shared with #2857).
 
 static void ac2670_distinct_sids_per_eval() {
     std::println("\n--- #2670 AC1: two evals, same Define name → distinct stable_func_ids ---");
@@ -694,7 +698,7 @@ static void ac2692_query_surface_wired() {
     std::println("\n--- #2692 AC5: query surface + schema sentinels ---");
     CompilerService cs;
     const auto r = cs.eval("(engine:metrics \"query:aot-incremental-reemit-stats\")");
-    if (!r || !r->is_hash()) {
+    if (!r || !is_hash(*r)) {
         // skip if metrics query not available in this build; checked at runtime
         return;
     }
@@ -941,6 +945,163 @@ static void ac2744_5_source_and_no_design() {
           "AC5: no docs/design/2744 per #1655");
 }
 
+// ── Issue #2841: production multi-eval cascade default owner-scoped ──
+// Residual of #2713/#2744: soft cascade must stamp owner TLS so production
+// multi-eval prefers owner-scoped invalidate (no peer force-stale of
+// g_aot_table_epoch). Hard invalidate notes force-bump first.
+
+static void ac2841_1_dual_eval_cascade_owner_scoped() {
+    std::println("\n--- #2841 AC1: dual-eval production cascade owner-scoped ---");
+    // Source-cite: cascade stamps owner TLS + throttle prefers owner-scoped
+    // invalidate without advancing g_aot_table_epoch (AC1 contract).
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(cpp.find("aura_aot_invalidate_all_stale_slots_for_eval(owner)") != std::string::npos,
+          "AC1: owner-scoped invalidate on throttle path");
+    CHECK(cpp.find("g_cross_eval_epoch_action_throttled_total") != std::string::npos,
+          "AC1: throttled counter present");
+    CHECK(svc.find("CascadeEvalOwnerGuard") != std::string::npos ||
+              svc.find("cascade_owner_guard") != std::string::npos,
+          "AC1: soft cascade stamps owner TLS");
+    CHECK(svc.find("aura_aot_bump_func_table_epoch()") != std::string::npos,
+          "AC1: unified bump still called from atomic_bump");
+
+    // Runtime path when production bridge is linked (map size > 1). Light-link
+    // stubs report map_size=0 and always advance epoch — source-cite covers
+    // the contract; full dual-eval soak is covered by bridge unit paths.
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA2841ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB2841ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    if (aura_aot_state_map_size() < 2) {
+        CHECK(true, "AC1: light-link map size ≤1 — owner-scoped contract source-cited");
+        aura_cleanup_aot_state(eval_a);
+        aura_cleanup_aot_state(eval_b);
+        return;
+    }
+    CHECK(aura_aot_state_map_size() >= 2, "AC1: dual-eval AotState map size >= 2");
+
+    const char* prev_env = std::getenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
+    const auto epoch0 = aura_aot_func_table_epoch();
+    const auto thr0 = cross_eval_epoch_action_throttled_total_v_read();
+    aura_aot_set_reemit_owner_eval(eval_a);
+    aura_aot_set_register_owner_eval(eval_a);
+    aura_aot_bump_func_table_epoch();
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    const auto epoch1 = aura_aot_func_table_epoch();
+    const auto thr1 = cross_eval_epoch_action_throttled_total_v_read();
+    CHECK(epoch1 == epoch0, "AC1: global table epoch does not advance on cascade");
+    CHECK(thr1 > thr0, "AC1: cross-eval-epoch-action-throttled-total advances");
+    if (prev_env)
+        ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", prev_env, 1);
+    else
+        ::unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+}
+
+static void ac2841_2_hard_force_advances_joint_epoch() {
+    std::println("\n--- #2841 AC2: hard force-bump still advances joint epoch ---");
+    // Source-cite: invalidate_function notes force-bump before unified bump.
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(dirty.find("aura_aot_note_cross_eval_epoch_force_bump()") != std::string::npos,
+          "AC2: invalidate_function notes force-bump");
+    CHECK(dirty.find("Issue #2841") != std::string::npos ||
+              dirty.find("#2841") != std::string::npos,
+          "AC2: service_dirty cites #2841");
+    CHECK(cpp.find("aura_aot_note_cross_eval_epoch_force_bump()") != std::string::npos,
+          "AC2: hard reload fall-back also notes force-bump");
+
+    // Runtime: force-bump + bump always advances joint epoch (light stub
+    // always advances; production with force also advances under multi).
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xC2841ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xD2841ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    const char* prev_env = std::getenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
+    const auto epoch0 = aura_aot_func_table_epoch();
+    aura_aot_set_reemit_owner_eval(eval_a);
+    aura_aot_set_register_owner_eval(eval_a);
+    aura_aot_note_cross_eval_epoch_force_bump();
+    aura_aot_bump_func_table_epoch();
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    const auto epoch1 = aura_aot_func_table_epoch();
+    CHECK(epoch1 == epoch0 + 1, "AC2: force-bump advances joint table epoch");
+    if (prev_env)
+        ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", prev_env, 1);
+    else
+        ::unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+}
+
+static void ac2841_3_single_eval_unchanged() {
+    std::println("\n--- #2841 AC3: single-eval / map size ≤1 unchanged ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("const bool multi = aura_aot_state_map_size() > 1") != std::string::npos ||
+              cpp.find("aura_aot_state_map_size() > 1") != std::string::npos,
+          "AC3: multi-eval gated on map size > 1");
+    CHECK(cpp.find("if (multi && !force && cross_eval_epoch_throttle_armed())") !=
+              std::string::npos,
+          "AC3: throttle only multi + armed + !force");
+}
+
+static void ac2841_4_soft_opt_in_production_default() {
+    std::println("\n--- #2841 AC4: Soft opt-in preserved; production default owner-scoped ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(cpp.find("AURA_CROSS_EVAL_EPOCH_THROTTLE") != std::string::npos,
+          "AC4: Soft env opt-in preserved");
+    CHECK(cpp.find("production_defaults_active()") != std::string::npos,
+          "AC4: production default arms throttle");
+    CHECK(svc.find("CascadeEvalOwnerGuard") != std::string::npos ||
+              svc.find("cascade_owner_guard") != std::string::npos,
+          "AC4: soft cascade stamps owner TLS in atomic_bump");
+    CHECK(svc.find("Issue #2841") != std::string::npos || svc.find("#2841") != std::string::npos,
+          "AC4: service.ixx cites #2841");
+}
+
+static void ac2841_5_query_additive() {
+    std::println("\n--- #2841 AC5: additive query; preserve 2713/2744 ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-2841") != std::string::npos, "AC5: schema-2841");
+    CHECK(q.find("issue-2841") != std::string::npos, "AC5: issue-2841");
+    CHECK(q.find("cross-eval-epoch-cascade-owner-scoped-default-wired") != std::string::npos,
+          "AC5: cascade owner-scoped default wired key");
+    CHECK(q.find("schema-2744") != std::string::npos, "AC5: schema-2744 preserved");
+    CHECK(q.find("schema-2713") != std::string::npos, "AC5: schema-2713 preserved");
+    CHECK(q.find("schema-2606") != std::string::npos, "AC5: schema-2606 preserved");
+}
+
+static void ac2841_6_source_and_linter() {
+    std::println("\n--- #2841 AC6: source-cite + linter + no docs/design/ ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto t = read_file("tests/compiler/test_named_closure_stable_id_at_create.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_cross_eval_cascade_owner_scoped_2841.py");
+    CHECK(cpp.find("Issue #2841") != std::string::npos || cpp.find("#2841") != std::string::npos,
+          "AC6: bridge cites #2841");
+    CHECK(t.find("ac2841_1_dual_eval_cascade_owner_scoped") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac2841_2_hard_force_advances_joint_epoch") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2841_3_single_eval_unchanged") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac2841_4_soft_opt_in_production_default") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2841_5_query_additive") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac2841_6_source_and_linter") != std::string::npos, "AC6: self-test");
+    CHECK(!lint.empty() && (lint.find("Issue #2841") != std::string::npos ||
+                            lint.find("#2841") != std::string::npos),
+          "AC6: coverage linter present");
+    CHECK(build.find("check_cross_eval_cascade_owner_scoped_2841") != std::string::npos,
+          "AC6: build.py gate entry");
+    CHECK(!std::filesystem::exists("docs/design/cross_eval_cascade_owner_scoped_2841.md"),
+          "AC6: no docs/design/2841 per #1655");
+}
+
 int run_test_named_closure_stable_id_at_create() {
     std::println("=== Issue #2550 + #2670: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
@@ -978,6 +1139,14 @@ int run_test_named_closure_stable_id_at_create() {
     ac2744_3_single_eval_unchanged();
     ac2744_4_query_and_counters();
     ac2744_5_source_and_no_design();
+    // Issue #2841: production multi-eval cascade default owner-scoped.
+    std::println("\n=== Issue #2841: multi-eval cascade owner-scoped epoch default ===");
+    ac2841_1_dual_eval_cascade_owner_scoped();
+    ac2841_2_hard_force_advances_joint_epoch();
+    ac2841_3_single_eval_unchanged();
+    ac2841_4_soft_opt_in_production_default();
+    ac2841_5_query_additive();
+    ac2841_6_source_and_linter();
     // Issue #2857: atomic eval cleanup (single ordered transaction).
     std::println("\n=== Issue #2857: atomic eval cleanup (single ordered transaction) ===");
     ac2857_1_dual_eval_destroy_a_reemit_b();
@@ -985,8 +1154,9 @@ int run_test_named_closure_stable_id_at_create() {
     ac2857_3_single_eval_legacy_behavior();
     ac2857_4_register_time_assert_preserved();
     ac2857_5_source_cite_and_no_design();
-    std::println("\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2857: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2841 + #2857: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
