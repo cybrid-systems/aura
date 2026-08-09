@@ -849,6 +849,19 @@ def cmd_lint():
             "Issue #2869 nested fiber join linter failed — run python3 scripts/coverage/checks/check_nested_fiber_join_2869.py"
         )
         return r
+    # Issue #2870: top-level free-var set! from named-let / after fiber:join.
+    # lookup_cell_* live top_ for any parent_id (not only parent_id_==0).
+    # Suite fiber_join_toplevel_set_2870.aura per #81967.
+    fjts_script = COVERAGE_CHECKS / "check_fiber_join_toplevel_set_2870.py"
+    if not fjts_script.exists():
+        fail(f"missing {fjts_script}")
+        return 1
+    r = run([sys.executable, str(fjts_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2870 fiber join toplevel set! linter failed — run python3 scripts/coverage/checks/check_fiber_join_toplevel_set_2870.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +

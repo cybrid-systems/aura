@@ -3208,20 +3208,8 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
         });
         if (result)
             return result;
-        // Live top_ free vars when parent is frame 0 (see lookup_cell_index).
-        if (parent_id_ == 0 && owner_) {
-            for (auto& b : owner_->top_env().bindings()) {
-                if (b.first == n) {
-                    if (is_cell(b.second)) {
-                        auto ci = as_cell_id(b.second);
-                        if (ci < cells->size())
-                            return &(*cells)[ci];
-                    }
-                    return nullptr;
-                }
-            }
-        }
-        return result;
+        // Fall through to parent_ walk + live top_ (#2870) — do not return
+        // early: let* free-var cells may live only on the parent_ Env chain.
     }
     // 3. Legacy pointer walk (preserved for unregistered Envs).
     //    Same shadowing semantics: closest frame wins.
@@ -3237,7 +3225,8 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
             }
         }
     }
-    // 4. Live top_ free-var cells when owner set (empty materialize).
+    // 4. Issue #2870 / #2566: live top_ free-var cells after parent miss
+    //    (named-let free-var set! of top-level define; empty materialize).
     if (owner_) {
         for (auto& b : owner_->top_env().bindings()) {
             if (b.first == n) {
@@ -3331,34 +3320,9 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
         });
         if (result)
             return result;
-        // Live top_ free vars (parent_id_==0): same fallback as Env::lookup.
-        // Captured frames snapshot top_ at define time; after mutate:rebind
-        // the live cell for suite counters (total-pass) lives on top_, not
-        // on frame 0. Without this, set! free vars unbound after mutation.
-        if (parent_id_ == 0 && owner_) {
-            for (auto& b : owner_->top_env().bindings()) {
-                if (b.first == n) {
-                    if (is_cell(b.second))
-                        return as_cell_id(b.second);
-                    return std::nullopt;
-                }
-            }
-            // SymId path on live top_
-            if (pool_) {
-                auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
-                for (auto it = owner_->top_env().bindings_symid().rbegin();
-                     it != owner_->top_env().bindings_symid().rend(); ++it) {
-                    if (it->first == s) {
-                        if (is_cell(it->second))
-                            return as_cell_id(it->second);
-                        return std::nullopt;
-                    }
-                }
-            }
-        }
-        return result;
+        // Fall through to parent_ walk + live top_ (#2870).
     }
-    // 3. Legacy pointer walk
+    // 3. Legacy pointer walk (let*/named-let free-var cells often here)
     for (auto* p = parent_; p; p = p->parent_) {
         for (auto& b : p->bindings_) {
             if (b.first == n) {
@@ -3368,13 +3332,28 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
             }
         }
     }
-    // 4. Live top_ when owner set but no SoA parent (empty materialize)
+    // 4. Issue #2870 / #2566: live top_ free-var cells after parent miss.
+    //    Named-let/letrec call envs use non-zero parent_id_; free-var set!
+    //    of a top-level define was unbound while Variable read worked
+    //    (Env::lookup hits live top_ at cur==0). Prefer parent_ above so
+    //    let* locals shadow same-named top_ defines.
     if (owner_) {
         for (auto& b : owner_->top_env().bindings()) {
             if (b.first == n) {
                 if (is_cell(b.second))
                     return as_cell_id(b.second);
                 return std::nullopt;
+            }
+        }
+        if (pool_) {
+            auto s = const_cast<aura::ast::StringPool*>(pool_)->intern(n);
+            for (auto it = owner_->top_env().bindings_symid().rbegin();
+                 it != owner_->top_env().bindings_symid().rend(); ++it) {
+                if (it->first == s) {
+                    if (is_cell(it->second))
+                        return as_cell_id(it->second);
+                    return std::nullopt;
+                }
             }
         }
     }
