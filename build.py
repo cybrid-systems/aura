@@ -1504,6 +1504,18 @@ def cmd_lint():
             "Issue #2833 TCO Jump terminator linter failed — run python3 scripts/coverage/checks/check_tco_jump_terminator_2833.py"
         )
         return r
+    # Issue #2834: DCEPass must not treat Branch/Jump block ids as slots.
+    # ac2834 in test_dce_branch_block_id_overprotect.
+    dcebr_script = COVERAGE_CHECKS / "check_dce_branch_block_id_overprotect_2834.py"
+    if not dcebr_script.exists():
+        fail(f"missing {dcebr_script}")
+        return 1
+    r = run([sys.executable, str(dcebr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2834 DCE Branch block-id overprotect linter failed — run python3 scripts/coverage/checks/check_dce_branch_block_id_overprotect_2834.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

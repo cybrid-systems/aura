@@ -1827,6 +1827,11 @@ public:
     static std::uint64_t operand_under_count_total() noexcept {
         return operand_under_count_total_.load(std::memory_order_relaxed);
     }
+    // Issue #2834: times Branch/Jump block-id operands were *not* treated
+    // as slots (would have over-protected pure ops under the default scan).
+    static std::uint64_t branch_block_id_overprotect_total() noexcept {
+        return branch_block_id_overprotect_total_.load(std::memory_order_relaxed);
+    }
 
 public:
     // Public wrapper for use by other passes (e.g.,
@@ -2036,13 +2041,9 @@ public:
         }
     }
 
-    // Issue #2830: mark all slots *read* by instr. Call / Apply /
-    // PrimCall store a fixed header in operands[0..3]; the actual
-    // call args live in a contiguous local range described by
-    // (arg_base, arg_count). The prior fixed operand_count_local
-    // scan only marked the header values (treating arg_base /
-    // arg_count themselves as slots) and missed arg slots beyond
-    // the header — pure producers of those args were DCE'd.
+    // Issue #2830 / #2834: mark all *slot* reads by instr.
+    // Call / Apply / PrimCall expand arg ranges; Branch / Jump must
+    // not treat block-id operands as slots (#2834).
     //
     // Layout (matches ir_executor + EscapeAnalysisPass):
     //   Call:     ops[0]=callee, ops[1]=arg_base, ops[2]=arg_count,
@@ -2051,9 +2052,12 @@ public:
     //             args at [closure+1, closure+1+n)
     //   PrimCall: ops[0]=prim_id (not a slot), ops[1]=arg_base,
     //             ops[2]=arg_count, ops[3]=result; args at [base, base+n)
-    //   MakePair: fixed ops[1]=car, ops[2]=cdr (already covered by default)
+    //   Branch:   ops[0]=cond slot; ops[1..2]=block ids (not slots)
+    //   Jump:     ops[0]=block id only
+    //   MakePair: fixed ops[1]=car, ops[2]=cdr (default path)
     template <typename Mark>
-    static void mark_used_slots(const aura::ir::IRInstruction& instr, Mark&& mark) {
+    static void mark_used_slots(const aura::ir::IRInstruction& instr, Mark&& mark,
+                                std::size_t used_size) {
         using O = aura::ir::IROpcode;
         switch (instr.opcode) {
             case O::Call: {
@@ -2081,6 +2085,23 @@ public:
                 for (std::uint32_t i = 0; i < count; ++i)
                     mark(base + i, /*expanded=*/true);
                 // ops[3] is result write when present.
+                break;
+            }
+            case O::Branch: {
+                // Issue #2834: only condition is a slot; targets are block ids.
+                mark(instr.operands[0], /*expanded=*/false);
+                // Count prevented overprotects: prior default path would have
+                // marked used[block_id] when block_id < used_size.
+                for (std::uint32_t k = 1; k < 3; ++k) {
+                    if (instr.operands[k] < used_size)
+                        branch_block_id_overprotect_total_.fetch_add(1, std::memory_order_relaxed);
+                }
+                break;
+            }
+            case O::Jump: {
+                // Issue #2834: Jump has no slot operands (ops[0] = block id).
+                if (instr.operands[0] < used_size)
+                    branch_block_id_overprotect_total_.fetch_add(1, std::memory_order_relaxed);
                 break;
             }
             default: {
@@ -2116,7 +2137,7 @@ public:
                 used[slot] = true;
         };
         for (const auto& instr : block.instructions)
-            mark_used_slots(instr, mark);
+            mark_used_slots(instr, mark, used_size);
 
         // Pass 2: mark dead pure ops whose result slot is
         // unused. Replace with Nop (preserves indices).
@@ -2143,6 +2164,8 @@ public:
 
     std::size_t eliminated_ = 0;
     static inline std::atomic<std::uint64_t> operand_under_count_total_{0};
+    // Issue #2834: prevented false used[block_id] marks from Branch/Jump.
+    static inline std::atomic<std::uint64_t> branch_block_id_overprotect_total_{0};
 };
 
 // Issue #160: Escape Analysis Pass (full IR promotion).

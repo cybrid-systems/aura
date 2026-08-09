@@ -17190,6 +17190,13 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                  make_int(aura::compiler::TCOPass::kTcoJumpTerminatorIssue)},
                 {"schema-2833", make_int(2833)},
                 {"issue-2833", make_int(2833)},
+                // Issue #2834: Branch/Jump block ids are not DCE slot uses.
+                {"dce-branch-block-id-overprotect-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::DCEPass::branch_block_id_overprotect_total()))},
+                {"dce-branch-block-id-wired", make_int(1)},
+                {"schema-2834", make_int(2834)},
+                {"issue-2834", make_int(2834)},
                 // lineage 1576 + #2025 + #2106 + #2130 dirty peel
                 {"schema", make_int(2130)},
             };

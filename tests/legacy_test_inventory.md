@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 828 | Preferred destination suites |
-| **Total scanned** | **828** | |
+| `tests/core/test_*.cpp` | 829 | Preferred destination suites |
+| **Total scanned** | **829** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 53 | 53 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 81 | 81 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 137 | 137 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 60 | 60 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -350,6 +350,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_cross_cow_drift_contract.cpp`
 - `tests/compiler/test_cross_cow_soft_migrate.cpp`
 - `tests/stdlib/test_datetime.cpp`
+- `tests/compiler/test_dce_branch_block_id_overprotect.cpp`
 - `tests/compiler/test_dce_elided_deopt_meta.cpp`
 - `tests/compiler/test_dce_pass_variable_args.cpp`
 - `tests/compiler/test_dead_coercion_batch.cpp`
@@ -1740,13 +1741,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (136)
+### `observability` — Observability / metrics / query:*-stats (137)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (136)
+#### domain/ (137)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1776,6 +1777,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_cpp26_contracts_hotpath.cpp` (—) [domain_suite, theme_core] — Issue #1321/#1519/#1620/#742 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_cross_cow_drift_contract.cpp` (—) [domain_suite, theme_compiler] — AC1: Near-drift live closure → soft migrate + remount ok; soft +1
 - `tests/compiler/test_cross_cow_soft_migrate.cpp` (—) [domain_suite, theme_compiler] — AC1: soft migrate enabled by default; stale within drift → restamp + continue
+- `tests/compiler/test_dce_branch_block_id_overprotect.cpp` (—) [domain_suite, theme_compiler] — AC1: mark_used_slots has Branch/Jump cases; cites #2834; metric
 - `tests/compiler/test_dead_coercion_elim.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2066 — DeadCoercionElimination IR-layer CastOp elision test.
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_dead_coercion_elision_narrow_batch.cpp — dead_coercion_elision_narrow pair
 - `tests/compiler/test_dead_coercion_layered.cpp` (—) [large, domain_suite, theme_compiler] — test_dead_coercion_layered.cpp
