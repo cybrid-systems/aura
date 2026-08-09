@@ -72,7 +72,9 @@ _ALLOCATE_PATTERNS = re.compile(
     r"pool\.alloc|StringPool::acquire|FlatAST::push)\b"
 )
 _WIRE_PATTERNS = re.compile(
-    r"\b(wire_general_object_create_pair|wire_general_object_create_pair_or_exempt|"
+    r"\b(wire_general_object_create_pair_or_required_fail|"
+    r"wire_general_object_create_pair_or_exempt|"
+    r"wire_general_object_create_pair|"
     r"note_general_object_pin_mutate_wire)\b"
 )
 _EXEMPT_PATTERNS = re.compile(r"\bGENERAL_OBJECT_PIN_EXEMPT\s*\(")
