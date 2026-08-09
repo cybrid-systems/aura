@@ -1492,6 +1492,18 @@ def cmd_lint():
             "Issue #2832 TCO arg_base OOB linter failed — run python3 scripts/coverage/checks/check_tco_arg_base_oob_2832.py"
         )
         return r
+    # Issue #2833: TCOPass single Jump terminator (no duplicate / Branch residue).
+    # ac2833 in test_tco_jump_terminator_emitted.
+    tcojt_script = COVERAGE_CHECKS / "check_tco_jump_terminator_2833.py"
+    if not tcojt_script.exists():
+        fail(f"missing {tcojt_script}")
+        return 1
+    r = run([sys.executable, str(tcojt_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2833 TCO Jump terminator linter failed — run python3 scripts/coverage/checks/check_tco_jump_terminator_2833.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 827 | Preferred destination suites |
-| **Total scanned** | **827** | |
+| `tests/core/test_*.cpp` | 828 | Preferred destination suites |
+| **Total scanned** | **828** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 53 | 53 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 81 | 81 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 60 | 60 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -950,6 +950,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_tag_arity_key_hash.cpp`
 - `tests/compiler/test_tco_arg_base_oob.cpp`
 - `tests/compiler/test_tco_dead_block_accumulation.cpp`
+- `tests/compiler/test_tco_jump_terminator_emitted.cpp`
 - `tests/compiler/test_tcp_listen_accept.cpp`
 - `tests/core/test_tenant_isolation_enforcement.cpp`
 - `tests/compiler/test_tenant_scope_fiber_mandate.cpp`
@@ -1739,13 +1740,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (135)
+### `observability` — Observability / metrics / query:*-stats (136)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (135)
+#### domain/ (136)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1869,6 +1870,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_stats_module_unification.cpp` (—) [domain_suite, theme_compiler] — test_stats_module_unification.cpp — Issue #560:
 - `tests/compiler/test_stdlib_production_review.cpp` (—) [small, domain_suite, theme_compiler] — test_stdlib_production_review_923_940.cpp — Issues #923–#940 Phase 1
 - `tests/compiler/test_subtype_constraint_meet.cpp` (—) [domain_suite, theme_compiler] — AC1: SUBTYPE goals in solve_delta; CONFLICT exports kind=SUBTYPE
+- `tests/compiler/test_tco_jump_terminator_emitted.cpp` (—) [domain_suite, theme_compiler] — AC1: source has one Jump assign in transform; cites #2833; no "need Branch"
 - `tests/compiler/test_test_strategy.cpp` (—) [domain_suite, theme_compiler] — Issue #1623/#1624/#1627/#1887 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_tier_dispatch.cpp` (—) [domain_suite, theme_compiler] — test_tier_dispatch.cpp — Issue #1356: HotTierTable for kPrimPerfHot primitives
 - `tests/compiler/test_timeout_repair_rich_roots.cpp` (—) [domain_suite, theme_compiler] — AC1: TIMEOUT with live occurrence goals → suggested set includes

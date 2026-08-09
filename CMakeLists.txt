@@ -1927,6 +1927,8 @@ aura_add_issue_test(test_tco_dead_block_accumulation)
 aura_issue_test_link_light(test_tco_dead_block_accumulation)
 aura_add_issue_test(test_tco_arg_base_oob)
 aura_issue_test_link_light(test_tco_arg_base_oob)
+aura_add_issue_test(test_tco_jump_terminator_emitted)
+aura_issue_test_link_light(test_tco_jump_terminator_emitted)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
