@@ -1,0 +1,91 @@
+; Issue #2868 — set-code/eval: multi-round install must not steal cells or
+; leave freshly installed names unbound from a required module frame.
+;
+; Root cause: SymIds are pool-local; each set-code allocates a fresh StringPool
+; that reuses the same integer id space. Cross-pool SymId compare made an
+; isomorphic later (define bbb …) reuse aaa's cell, and multi-define Phase 1
+; skip-bind left the first new leaf string-unbound (module free-var miss while
+; top-level SymId collision still "found" it).
+(require "std/test" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+; ── AC1: isomorphic single defines must not share cells ───────────
+(display "AC1 isomorphic sequential set-code\n")
+(set-code "(define aaa (lambda (x) 100))")
+(eval-current)
+(assert! (= (aaa 0) 100) "aaa=100")
+(set-code "(define bbb (lambda (x) 200))")
+(eval-current)
+(assert! (= (aaa 0) 100) "aaa still 100 after bbb install")
+(assert! (= (bbb 0) 200) "bbb=200")
+
+; ── AC2: prior define survives dual-leaf install ──────────────────
+(display "AC2 prior + dual-leaf from top-level\n")
+(set-code "(define unify_score (lambda (x) (* x 2)))")
+(eval-current)
+(assert! (= (unify_score 7) 14) "score=14")
+(set-code "(define prom_leaf_a (lambda (x) (+ x 1)))(define prom_leaf_b (lambda (x) (* x 2)))")
+(eval-current)
+(assert! (= (prom_leaf_a 3) 4) "leaf_a=4 top")
+(assert! (= (prom_leaf_b 3) 6) "leaf_b=6 top")
+(assert! (= (unify_score 7) 14) "score still 14 after dual install")
+(assert! (= (aaa 0) 100) "aaa still 100")
+(assert! (= (bbb 0) 200) "bbb still 200")
+
+; ── AC3: free-var call of dual leaves after prior (same process) ──
+(display "AC3 free-var call of dual leaves after prior\n")
+(define (probe-from-frame)
+  (set-code "(define prior (lambda (x) (+ x 9)))")
+  (eval-current)
+  (set-code "(define leaf_a (lambda (x) (+ x 1)))(define leaf_b (lambda (x) (* x 2)))")
+  (eval-current)
+  (list (try (prior 0) (catch (e) -1))
+        (try (leaf_a 3) (catch (e) -1))
+        (try (leaf_b 3) (catch (e) -1))))
+
+(define r (probe-from-frame))
+(assert! (= (car r) 9) "prior still +9 from frame")
+(assert! (= (car (cdr r)) 4) "leaf_a=4 from frame")
+(assert! (= (car (cdr (cdr r))) 6) "leaf_b=6 from frame")
+(assert! (= (prior 0) 9) "prior top")
+(assert! (= (leaf_a 3) 4) "leaf_a top")
+(assert! (= (leaf_b 3) 6) "leaf_b top")
+
+; ── AC4: required module frame (Unify set-code-module-bind residual) ──
+(display "AC4 required-module dual-leaf after prior install\n")
+(write-file "/tmp/aura2868_mod.aura"
+  (string-append
+    "(export run-2868!)\n"
+    "(define (run-2868!)\n"
+    "  (set-code \"(define unify_score (lambda (x) (* x 2)))\")\n"
+    "  (eval-current)\n"
+    "  (set-code \"(define prom_leaf_a (lambda (x) (+ x 1)))(define prom_leaf_b (lambda (x) (* x 2)))\")\n"
+    "  (eval-current)\n"
+    "  (list (try (unify_score 7) (catch (e) -1))\n"
+    "        (try (prom_leaf_a 3) (catch (e) -1))\n"
+    "        (try (prom_leaf_b 3) (catch (e) -1))))\n"))
+(require "/tmp/aura2868_mod.aura" all:)
+(define mr (run-2868!))
+(assert! (= (car mr) 14) "module score=14 (not stolen by leaf_a)")
+(assert! (= (car (cdr mr)) 4) "module leaf_a=4 (was unbound residual)")
+(assert! (= (car (cdr (cdr mr))) 6) "module leaf_b=6")
+(assert! (= (try (prom_leaf_a 3) (catch (e) -1)) 4) "top leaf_a after module")
+(assert! (= (try (prom_leaf_b 3) (catch (e) -1)) 6) "top leaf_b after module")
+(assert! (= (try (unify_score 7) (catch (e) -1)) 14) "top score after module")
+
+(if (= *fails* 0)
+    (begin (display "OK-2868 set-code module bind\n"))
+    (begin
+      (display "FAIL-2868 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))

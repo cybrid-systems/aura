@@ -822,6 +822,20 @@ def cmd_lint():
             "Issue #2865 std/socket require-path linter failed — run python3 scripts/coverage/checks/check_std_socket_require_path_2865.py"
         )
         return r
+    # Issue #2868: set-code/eval cross-pool SymId redefinition + module-frame
+    # bind. Env::set_pool re-keys bindings_symid_; Define/multi-define must
+    # not reuse foreign-pool cells (Unify prom dual-leaf residual).
+    # Suite tests/suite/set_code_module_bind_2868.aura per #81967.
+    scmb_script = COVERAGE_CHECKS / "check_set_code_module_bind_2868.py"
+    if not scmb_script.exists():
+        fail(f"missing {scmb_script}")
+        return 1
+    r = run([sys.executable, str(scmb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2868 set-code module bind linter failed — run python3 scripts/coverage/checks/check_set_code_module_bind_2868.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +

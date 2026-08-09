@@ -397,6 +397,49 @@ std::optional<EvalValue> Env::lookup_binding(std::string_view n) const {
 // uses Env::lookup(name). Restoring the mirror (when pool_ is set)
 // unblocks let/letrec-bound lambdas (tree-walker path) — CI
 // gradual/suite/integ/bash regressions ("unbound variable: x").
+void Env::set_pool(const aura::ast::StringPool* p) {
+    if (p == pool_)
+        return;
+    // Issue #2868: SymIds are pool-local. set-code allocates a fresh
+    // StringPool per install; without re-key, lookup_by_symid /
+    // lookup_cell_index SymId paths treat `intern("prom_leaf_a")` in
+    // the new pool as equal to a prior define's SymId from the old
+    // pool → cell reuse, missing string bind, module-frame unbound.
+    if (p) {
+        if (!bindings_.empty()) {
+            // String mirror is source of truth for named top_/module binds.
+            std::vector<std::pair<aura::ast::SymId, types::EvalValue>> rekeyed;
+            rekeyed.reserve(bindings_.size());
+            auto* mut = const_cast<aura::ast::StringPool*>(p);
+            for (const auto& b : bindings_) {
+                rekeyed.emplace_back(mut->intern(b.first), b.second);
+            }
+            bindings_symid_ = std::move(rekeyed);
+            bindings_linear_ownership_state_.assign(bindings_symid_.size(), linear_rt::Untracked);
+        } else if (pool_ && !bindings_symid_.empty()) {
+            // SymId-only capture frame: resolve names via the previous pool.
+            std::vector<std::pair<aura::ast::SymId, types::EvalValue>> rekeyed;
+            std::vector<std::uint8_t> rekeyed_lin;
+            rekeyed.reserve(bindings_symid_.size());
+            rekeyed_lin.reserve(bindings_symid_.size());
+            auto* mut = const_cast<aura::ast::StringPool*>(p);
+            for (std::size_t i = 0; i < bindings_symid_.size(); ++i) {
+                const auto name = pool_->resolve(bindings_symid_[i].first);
+                if (name.empty())
+                    continue;
+                rekeyed.emplace_back(mut->intern(name), bindings_symid_[i].second);
+                if (i < bindings_linear_ownership_state_.size())
+                    rekeyed_lin.push_back(bindings_linear_ownership_state_[i]);
+                else
+                    rekeyed_lin.push_back(linear_rt::Untracked);
+            }
+            bindings_symid_ = std::move(rekeyed);
+            bindings_linear_ownership_state_ = std::move(rekeyed_lin);
+        }
+    }
+    pool_ = p;
+}
+
 void Env::bind_symid(aura::ast::SymId s, types::EvalValue v) {
     bind_symid_with_linear_state(s, std::move(v), linear_rt::Untracked);
 }
