@@ -6805,6 +6805,9 @@ struct CompilerMetrics {
     // Fiber::tenant_scope_mismatch_total() process-wide static aggregate
     // — bumped once per mismatch, not per resume.
     std::atomic<std::uint64_t> tenant_scope_mismatch_total{0};
+    // Issue #2839: production hard-face principal mismatch at fiber
+    // resume / steal / mailbox deliver. Soft only bumps the soft total.
+    std::atomic<std::uint64_t> tenant_scope_mismatch_hard_total{0};
     // Issue #740: linear ownership safety in JIT L2 hot paths
     // post-invalidate (Arena/DropOp/GC root re-sync).
     // Exposed via (query:linear-jit-safety-stats).

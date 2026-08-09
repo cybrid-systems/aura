@@ -365,6 +365,22 @@ bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view o
     return require_effect(req_bits, op, ref.id, ref.tenant_id);
 }
 
+// Issue #2839: NodeId-only side-effect entry. Force-construct stamped ref
+// from the current principal then require_effect_on_ref so Restricted /
+// Strict isolation + capability deny before body (no partial mutate on
+// foreign-tenant NodeId under principal-unset or wrong principal). Prefer
+// this over 2-arg require_effect when the op mutates a concrete NodeId.
+// Exempt: non-workspace side effects (file/io/network) remain 2-arg with
+// documented rationale in the coverage linter inventory.
+bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_view op,
+                                           ast::NodeId node_id) noexcept {
+    // make_stamped_ref stamps capability_tenant_id_ + fiber so ref_tenant
+    // matches principal — isolation auto-gate (#2490) then runs with a
+    // non-zero ref_tenant (closes 3-arg default ref_tenant=0 window).
+    const auto ref = make_stamped_ref(node_id);
+    return require_effect_on_ref(req_bits, op, ref);
+}
+
 // Issue #2706: test-only public surface — forwards to private
 // check_and_record_effect. Unit Soft paths that need explicit mid or
 // required≠actual bits use this; production prims must not.

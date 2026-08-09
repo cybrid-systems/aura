@@ -14,6 +14,7 @@ module;
 #include "typed_mutation_audit.h"  // #2053 production defaults query keys
 #include "serve/http_health.h"
 #include "serve/metrics.h"
+#include "serve/fiber.h"               // Issue #2839: Fiber::tenant_scope_mismatch_* totals
 #include "hash_meta.h"                 // FNV constants (#901)
 #include "core/capability_model.hh"    // #1565: snapshot_capability_effect_stats
 #include "core/sandbox.hh"             // #1876: query:sandbox-status
@@ -4674,6 +4675,17 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2835", 2835);
             insert_kv("issue-2835", 2835);
             insert_kv("restricted-multi-tenant-hard-fiber-wired", 1);
+            // Issue #2839: residual fiber-principal mismatch hard face +
+            // NodeId-stamped require_effect_for_node_id surface.
+            insert_kv("tenant-scope-mismatch-total",
+                      static_cast<std::int64_t>(aura::serve::Fiber::tenant_scope_mismatch_total()));
+            insert_kv(
+                "tenant-scope-mismatch-hard-total",
+                static_cast<std::int64_t>(aura::serve::Fiber::tenant_scope_mismatch_hard_total()));
+            insert_kv("fiber-principal-mismatch-hard-wired", 1);
+            insert_kv("require-effect-for-node-id-wired", 1);
+            insert_kv("schema-2839", 2839);
+            insert_kv("issue-2839", 2839);
             const auto checks = cap.checks == 0 ? 1 : cap.checks;
             insert_kv("effect-deny-rate-bp",
                       static_cast<std::int64_t>((cap.denied * 10000) / checks));

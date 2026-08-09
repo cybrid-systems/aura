@@ -566,6 +566,58 @@ static void ac2706_6_source_cite() {
     }
 }
 
+// ── #2839: NodeId-only require_effect_for_node_id + inventory ──
+static void ac2839_1_node_id_helper_and_inventory() {
+    std::println("\n--- #2839 AC1: require_effect_for_node_id + inventory ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto compile = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    CHECK(sec.find("require_effect_for_node_id") != std::string::npos,
+          "2839 AC1: require_effect_for_node_id defined");
+    CHECK(ixx.find("require_effect_for_node_id") != std::string::npos,
+          "2839 AC1: evaluator.ixx declares helper");
+    CHECK(sec.find("make_stamped_ref") != std::string::npos &&
+              sec.find("require_effect_on_ref") != std::string::npos,
+          "2839 AC1: helper stamps then on_ref");
+    // Production NodeId mutate path uses the helper.
+    CHECK(compile.find("require_effect_for_node_id") != std::string::npos,
+          "2839 AC1: mutate:from-verification-feedback uses for_node_id");
+    // Inventory of remaining 2-arg exempt paths (non-workspace).
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutation.cpp");
+    const auto file = read_file("src/compiler/evaluator_primitives_file.cpp");
+    CHECK(mut.find("mutation-log-compact") != std::string::npos,
+          "2839 AC1 inventory: mutation-log-compact exempt (no NodeId)");
+    CHECK(file.find("write-file") != std::string::npos,
+          "2839 AC1 inventory: write-file exempt (filesystem)");
+}
+
+static void ac2839_2_for_node_id_restricted_unset_denies() {
+    std::println("\n--- #2839 AC2: for_node_id unset principal denies under Restricted ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1); // Restricted
+    ev.set_capability_tenant_id(0);
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "test:2839-ac2-node", /*node_id=*/1);
+    CHECK(!ok, "2839 AC2: Restricted + unset principal denies for_node_id");
+}
+
+static void ac2839_6_linter_and_no_invent() {
+    std::println("\n--- #2839 AC6: linter wire + no invent ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_side_effect_fiber_principal_2839") != std::string::npos,
+          "2839 AC6: build.py wires #2839 linter");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+    CHECK(!linter.empty() && linter.find("Issue #2839") != std::string::npos,
+          "2839 AC6: coverage linter present");
+    std::ifstream invent("tests/compiler/test_issue_2839.cpp");
+    if (!invent)
+        invent.open("../tests/compiler/test_issue_2839.cpp");
+    CHECK(!invent.good(), "2839 AC6: no test_issue_2839.cpp");
+}
+
 } // namespace
 
 int run_test_require_effect_auto_isolation() {
@@ -592,6 +644,10 @@ int run_test_require_effect_auto_isolation() {
     ac2706_2_private_and_linter();
     ac2706_5_query_surface();
     ac2706_6_source_cite();
+    std::println("\n=== Issue #2839: NodeId for_node_id residual ===");
+    ac2839_1_node_id_helper_and_inventory();
+    ac2839_2_for_node_id_restricted_unset_denies();
+    ac2839_6_linter_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

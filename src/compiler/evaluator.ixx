@@ -5984,6 +5984,14 @@ public:
     // — no late-isolation-deny window.
     [[nodiscard]] bool require_effect_on_ref(std::uint16_t req_bits, std::string_view op,
                                              const ast::FlatAST::StableNodeRef& ref) noexcept;
+    // Issue #2839: NodeId-only side-effect entry — force-construct a
+    // stamped StableNodeRef (current principal) then require_effect_on_ref
+    // so isolation + capability fire together before body. Prefer this
+    // over 2-arg/3-arg require_effect when the op mutates a concrete
+    // workspace NodeId. Foreign-tenant NodeIds should arrive as stamped
+    // StableNodeRef via require_effect_on_ref (not re-stamped here).
+    [[nodiscard]] bool require_effect_for_node_id(std::uint16_t req_bits, std::string_view op,
+                                                  ast::NodeId node_id) noexcept;
     // Issue #2706: test-only public surface for unit Soft paths that need
     // explicit mid / required≠actual control. Production prims MUST NOT call
     // this — use require_effect / require_effect_on_ref. Coverage linter

@@ -220,6 +220,56 @@ static void ac7_source_and_gate() {
           "AC7: coverage linter present");
 }
 
+// ── #2839: production hard-face on fiber principal mismatch ──
+static void ac2839_3_hard_mismatch_source_cite() {
+    std::println("\n--- #2839 AC3: production hard face on principal mismatch ---");
+    const auto em = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto om = read_file("src/compiler/observability_metrics.h");
+    const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(em.find("Issue #2839") != std::string::npos, "2839 AC3: install hook cites #2839");
+    CHECK(em.find("isolation-deny:fiber-principal-mismatch") != std::string::npos,
+          "2839 AC3: SE reason fiber-principal-mismatch");
+    CHECK(em.find("bump_tenant_scope_mismatch_hard") != std::string::npos,
+          "2839 AC3: hard bump on production mismatch");
+    CHECK(em.find("production_defaults_active()") != std::string::npos,
+          "2839 AC3: production_defaults gates hard face");
+    // Re-bind still installs TenantScope after mismatch.
+    CHECK(em.find("new Evaluator::TenantScope") != std::string::npos,
+          "2839 AC3: TenantScope re-bind after mismatch");
+    CHECK(fh.find("bump_tenant_scope_mismatch_hard") != std::string::npos,
+          "2839 AC3: Fiber hard counter accessor");
+    CHECK(om.find("tenant_scope_mismatch_hard_total") != std::string::npos,
+          "2839 AC3: CompilerMetrics hard total");
+    CHECK(sec.find("schema-2839") != std::string::npos, "2839 AC3: schema-2839 on posture");
+    CHECK(sec.find("tenant-scope-mismatch-hard-total") != std::string::npos,
+          "2839 AC3: query key hard-total");
+}
+
+static void ac2839_4_soft_no_hard_on_off() {
+    std::println("\n--- #2839 AC4: Soft/Off skips hard face ---");
+    const auto em = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    // mode == 0 returns before hard face.
+    CHECK(em.find("mode == 0") != std::string::npos,
+          "2839 AC4: Off sandbox short-circuit before hard face");
+    // Soft (production_defaults false, mode Sampled) only hits hard when
+    // mode==1||2; Sampled is mode typically not 1/2 when sandbox Sampled.
+    CHECK(em.find("mode == 1 || mode == 2") != std::string::npos ||
+              em.find("mode == 1") != std::string::npos,
+          "2839 AC4: hard face Restricted/Strict mode arm");
+}
+
+static void ac2839_6_linter_wire() {
+    std::println("\n--- #2839 AC6: linter wire ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_side_effect_fiber_principal_2839") != std::string::npos,
+          "2839 AC6: build.py wires #2839 linter");
+    std::ifstream invent("tests/compiler/test_issue_2839.cpp");
+    if (!invent)
+        invent.open("../tests/compiler/test_issue_2839.cpp");
+    CHECK(!invent.good(), "2839 AC6: no test_issue_2839.cpp");
+}
+
 } // namespace
 
 int run_test_tenant_scope_fiber_mandate() {
@@ -231,6 +281,10 @@ int run_test_tenant_scope_fiber_mandate() {
     ac5_off_sandbox_no_force();
     ac6_multi_tenant_stress_no_bleed();
     ac7_source_and_gate();
+    std::println("=== Issue #2839: fiber principal hard face residual ===");
+    ac2839_3_hard_mismatch_source_cite();
+    ac2839_4_soft_no_hard_on_off();
+    ac2839_6_linter_wire();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

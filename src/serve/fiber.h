@@ -981,12 +981,22 @@ public:
     [[nodiscard]] std::uint64_t assigned_tenant_id() const noexcept {
         return assigned_tenant_id_.load(std::memory_order_acquire);
     }
-    // Issue #2491: process-wide TenantScope mismatch counter.
+    // Issue #2491: process-wide TenantScope mismatch counter (soft observe).
     static void bump_tenant_scope_mismatch() noexcept {
         static_tenant_scope_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
     }
     [[nodiscard]] static std::uint64_t tenant_scope_mismatch_total() noexcept {
         return static_tenant_scope_mismatch_total_.load(std::memory_order_relaxed);
+    }
+    // Issue #2839: production hard-face for principal mismatch at fiber
+    // resume / steal handoff / mailbox deliver. Soft path only bumps the
+    // #2491 soft counter; production/Restricted also bumps this hard
+    // counter + SE (see aura_fiber_install_tenant_scope_for_resume).
+    static void bump_tenant_scope_mismatch_hard() noexcept {
+        static_tenant_scope_mismatch_hard_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t tenant_scope_mismatch_hard_total() noexcept {
+        return static_tenant_scope_mismatch_hard_total_.load(std::memory_order_relaxed);
     }
 
 private:
@@ -1183,6 +1193,9 @@ private:
     // assigned_tenant_id_). Mirrors Fiber::static_*_total() pattern
     // for process-wide aggregates. Accessors are public above.
     static std::atomic<std::uint64_t> static_tenant_scope_mismatch_total_;
+    // Issue #2839: production hard-face mismatch total (see bump_tenant_
+    // scope_mismatch_hard). Soft path never bumps this.
+    static std::atomic<std::uint64_t> static_tenant_scope_mismatch_hard_total_;
     // Issue #2397: true iff this fiber contributed +1 to the
     // still-running gauge (mark_reclaimed while !Done). Cleared by
     // note_body_exit_if_reclaimed or ~Fiber (abandon without retired).
