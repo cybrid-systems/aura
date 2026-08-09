@@ -1287,6 +1287,18 @@ def cmd_lint():
             "Issue #2815 cascade multi-define stale linter failed — run python3 scripts/coverage/checks/check_cascade_multi_define_stale_2815.py"
         )
         return r
+    # Issue #2816: cascade path2 O(N+M) define-by-sym index.
+    # ac2816 in test_cascade_path2_define_index.
+    cp2_script = COVERAGE_CHECKS / "check_cascade_path2_define_index_2816.py"
+    if not cp2_script.exists():
+        fail(f"missing {cp2_script}")
+        return 1
+    r = run([sys.executable, str(cp2_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2816 cascade path2 define index linter failed — run python3 scripts/coverage/checks/check_cascade_path2_define_index_2816.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

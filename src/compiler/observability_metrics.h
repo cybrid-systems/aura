@@ -305,6 +305,11 @@ struct CompilerMetrics {
     // Issue #2815: cascade noted 2nd+ Define NodeId for the same name
     // (pre-#2815 first-emplace-wins left extra Defines unstamped → stale IR).
     std::atomic<std::uint64_t> cascade_multi_define_stale_total{0};
+    // Issue #2816: path2 define-by-sym index (O(N+M) vs O(N×M) linear scan).
+    //   - cascade_path2_lookup_total: defuse_affected_syms_ lookups via index
+    //   - cascade_path2_index_nodes_total: Define nodes indexed on last path2
+    std::atomic<std::uint64_t> cascade_path2_lookup_total{0};
+    std::atomic<std::uint64_t> cascade_path2_index_nodes_total{0};
     // Issue #2762: post-mutate incremental macro re-expand under
     // MutationBoundaryGuard cascade (#165/#2096 residual).
     //   - post_mutate_macro_reexpand_total: call sites re-expanded
