@@ -1,8 +1,8 @@
 // steal_safety.h — Issue #2699 unified steal safety single transaction.
 //
 // Steal safety logic was previously distributed across three call sites:
-//   - WorkerThread::try_steal_from (src/serve/worker.cpp) — snapshot sample,
-//     is_stealable(snap), inconsistency bump, force-deopt, ticket stamp,
+//   - WorkerThread::try_steal_from (src/serve/worker.cpp) — candidate filter
+//     then sole enqueue via steal_safety_transaction Ok (#2752/#2844);
 //     call_steal_complete.
 //   - aura_evaluator_on_steal_complete (src/compiler/evaluator_fiber_mutation.cpp)
 //     — residual GcDefer clear (#2314/#2546), PanicCheckpoint clear (#2667),
