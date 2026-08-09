@@ -433,16 +433,24 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> pure_contract_violated_total{0};
     // pure=#t requested but this task forced the lock (boundary held / unsafe).
     std::atomic<std::uint64_t> pure_fallback_locked_total{0};
-    // Issue #2662: opt-in flag for production hardening. When this flag is
-    // set AND production_defaults_active() returns true, a pure-contract
-    // violation in one task flips `batch_force_eval_mu` (per-batch atomic
-    // inside parallel-intend), forcing subsequent pure tasks in the same
-    // batch to take eval_mu (best-effort-pure → serialized for the rest of
-    // the batch). Default false for throughput; production defaults can set
-    // it for safety. NOT a transactional isolation promise — best-effort
-    // hardening only. Cross-check: tests/orch/test_parallel_intend_pure_contract
-    // AC6 + scripts/coverage/checks/check_2662_coverage.py.
+    // Issue #2662: process-wide host flag for pure-parallel force-lock on
+    // violation. Issue #2838: under production_defaults_active() (and not
+    // Soft / AURA_SANDBOX=off) the *effective* policy defaults to true even
+    // when this atomic is false — see resolve_parallel_intend_force_lock_
+    // on_violation(). Host-set true is always honored; env opt-out
+    // AURA_PARALLEL_INTEND_FORCE_LOCK=0 restores Soft throughput under
+    // production. Atomic default remains false so Soft/unit ergonomics
+    // stay zero-cost unless production resolves the default on.
+    // NOT a transactional isolation promise — best-effort hardening only.
+    // Cross-check: tests/orch/test_parallel_intend_pure_contract AC6 +
+    // scripts/coverage/checks/check_2662_coverage.py /
+    // check_parallel_intend_force_lock_prod_default_2838.py.
     std::atomic<bool> parallel_intend_force_lock_on_violation{false};
+    // Issue #2838: bumped once per parallel-intend pure batch where the
+    // production default force-lock policy was injected (host flag was
+    // false, env unset, production_defaults && !sandbox=off). Mirrors
+    // agent_no_yield_default_applied_total (#2585).
+    std::atomic<std::uint64_t> parallel_intend_force_lock_default_applied_total{0};
     // Issue #2399: AgentScope concurrent misuse detection (metric path).
     // Bumped when a second thread enters spawn/join_all/watch_all/cancel_all
     // (and read APIs after #2777) while another thread already holds the scope.
@@ -1021,6 +1029,81 @@ struct AgentSpec {
     if (env && env[0] == '0' && env[1] == '\0')
         return 0; // explicit operator opt-out
     return 50;    // production default
+}
+
+// Issue #2838: production default for parallel_intend force-lock-on-violation.
+// Pure decision (no side effects). Priority:
+//   1. AURA_PARALLEL_INTEND_FORCE_LOCK=0 → false (operator opt-out)
+//   2. AURA_PARALLEL_INTEND_FORCE_LOCK=1 → true  (operator force-on)
+//   3. host_flag (atomic) true → true (host set; leave alone)
+//   4. Soft / AURA_SANDBOX=off (dev_off) → false
+//   5. production_defaults_active → true (production default inject)
+//   6. else false
+//
+// default_applied is true only when case 5 fires (production injects
+// default while host flag was false and env unset). Caller bumps
+// parallel_intend_force_lock_default_applied_total when default_applied.
+struct ParallelIntendForceLockDecision {
+    bool effective = false;
+    bool default_applied = false;
+};
+
+[[nodiscard]] inline int parallel_intend_force_lock_env_pref() noexcept {
+    // Cached: env is process-lifetime for this gate. -1 unset, 0 off, 1 on.
+    static const int cached = []() noexcept -> int {
+        const char* e = std::getenv("AURA_PARALLEL_INTEND_FORCE_LOCK");
+        if (e == nullptr || e[0] == '\0')
+            return -1;
+        if (e[0] == '0' && e[1] == '\0')
+            return 0;
+        if (e[0] == '1' && e[1] == '\0')
+            return 1;
+        // Accept off/false / on/true (first-char case-insensitive).
+        if (e[0] == 'o' || e[0] == 'O') {
+            // "off" vs "on"
+            if (e[1] == 'f' || e[1] == 'F')
+                return 0;
+            if (e[1] == 'n' || e[1] == 'N')
+                return 1;
+            return -1;
+        }
+        if (e[0] == 'f' || e[0] == 'F')
+            return 0;
+        if (e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
+            return 1;
+        return -1;
+    }();
+    return cached;
+}
+
+[[nodiscard]] inline ParallelIntendForceLockDecision
+resolve_parallel_intend_force_lock_on_violation(bool host_flag, bool production_defaults,
+                                                bool dev_off) noexcept {
+    ParallelIntendForceLockDecision d;
+    const int env = parallel_intend_force_lock_env_pref();
+    if (env == 0) {
+        d.effective = false;
+        return d; // operator opt-out
+    }
+    if (env == 1) {
+        d.effective = true;
+        return d; // operator force-on (not "default applied")
+    }
+    if (host_flag) {
+        d.effective = true;
+        return d; // host set atomic — leave alone
+    }
+    if (dev_off) {
+        d.effective = false;
+        return d; // Soft / sandbox=off
+    }
+    if (production_defaults) {
+        d.effective = true;
+        d.default_applied = true; // production default inject
+        return d;
+    }
+    d.effective = false;
+    return d;
 }
 
 // Issue #2540: force Fiber::yield when elapsed since last coop edge ≥

@@ -115,14 +115,20 @@ Documented footguns (locked by `tests/orch/test_parallel_intend_pure_contract`):
    a runaway task could mutate state undetected. For Agent / host-thread
    orchestration that needs hard isolation, use the default `:pure #f`
    serialized path or the C++ `parallel_intend` with explicit locks.
-5. **Production hardening (Issue #2662):** under production defaults and
-   `parallel_intend_force_lock_on_violation=true`, a single pure-contract
+5. **Production hardening (Issue #2662 + #2838):** under production
+   defaults (and not Soft / `AURA_SANDBOX=off`), a pure-contract
    violation flips `batch_force_eval_mu` for the rest of the batch —
    subsequent pure tasks in that batch take `eval_mu` (fall back to
-   `pure_fallback_locked`). The flag is opt-in (default off for
-   throughput); it never promises transactional isolation, only that
-   the *rest of the batch* serializes after the first violation. Best-
-   effort hardening, not isolation.
+   `pure_fallback_locked`). Issue #2838 makes this the **production
+   default** (effective force-lock on even when the process-wide
+   `parallel_intend_force_lock_on_violation` atomic is false). Soft /
+   sandbox=off stays off for throughput unless the host sets the
+   atomic. Operator opt-out under production:
+   `AURA_PARALLEL_INTEND_FORCE_LOCK=0`. Host-set `true` is always
+   honored. It never promises transactional isolation, only that the
+   *rest of the batch* serializes after the first violation. Best-
+   effort hardening, not isolation. Counter:
+   `parallel-intend-force-lock-default-applied-total` (schema-2838).
 6. **Heap race example (Issue #2651):** overnight multi-fiber fanout
    exposed `string_heap` / pairs races under shared Evaluator (#2651
    fixed the hot path). Pure parallel is NOT a free pass — Agents

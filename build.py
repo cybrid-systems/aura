@@ -340,6 +340,19 @@ def cmd_lint():
             "Issue #2662 production hardening coverage linter failed — run python3 scripts/coverage/checks/check_2662_coverage.py"
         )
         return r
+    # Issue #2838: production default enable force-lock-on-violation
+    # (residual of #2662 opt-in). Extends test_parallel_intend_pure_contract
+    # (#81967); no docs/design/ (#1655).
+    flpd_script = COVERAGE_CHECKS / "check_parallel_intend_force_lock_prod_default_2838.py"
+    if not flpd_script.exists():
+        fail(f"missing {flpd_script}")
+        return 1
+    r = run([sys.executable, str(flpd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2838 parallel-intend force-lock production default linter failed — run python3 scripts/coverage/checks/check_parallel_intend_force_lock_prod_default_2838.py"
+        )
+        return r
     # Issue #2664: production-default hard-fail on untracked external roots
     # after Moving densify (close false-safety). arena.ixx OR-folds
     # production_defaults_active() into the existing env=hard branch +

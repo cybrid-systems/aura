@@ -2501,13 +2501,36 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::atomic<std::uint64_t> pure_fallback_locked{0};
             std::atomic<std::uint64_t> pure_contract_violated{0};
             // Issue #2662: batch_force_eval_mu — once a pure task violates the
-            // contract in production mode + parallel_intend_force_lock_on_violation
-            // flag, subsequent pure tasks in this batch take eval_mu (per-batch).
+            // contract under effective force-lock policy (#2838 production
+            // default; #2662 host flag / env), subsequent pure tasks in this
+            // batch take eval_mu (per-batch).
             std::atomic<bool> batch_force_eval_mu{false};
+            // Issue #2838: per-batch effective force-lock-on-violation policy
+            // (resolved once at batch start; pure_mode only). Zero cost when
+            // !pure_mode (left false).
+            bool force_lock_on_violation_policy = false;
         };
         auto ash = std::make_shared<AuraShared>();
         ash->values.assign(cids.size(), make_void());
         ash->errors.assign(cids.size(), {});
+        // Issue #2838: resolve effective force-lock policy once per pure
+        // batch (zero cost on :pure #f — short-circuit). Bump default-
+        // applied counter when production injects the default.
+        if (pure_mode) {
+            const bool host_flag =
+                aura::orch::g_orch_module_stats.parallel_intend_force_lock_on_violation.load(
+                    std::memory_order_relaxed);
+            const bool prod = aura::compiler::typed_audit::production_defaults_active();
+            const char* sb = std::getenv("AURA_SANDBOX");
+            const bool dev_off = sb && *sb && std::string_view(sb) == "off";
+            const auto d = aura::orch::resolve_parallel_intend_force_lock_on_violation(
+                host_flag, prod, dev_off);
+            ash->force_lock_on_violation_policy = d.effective;
+            if (d.default_applied) {
+                aura::orch::g_orch_module_stats.parallel_intend_force_lock_default_applied_total
+                    .fetch_add(1, std::memory_order_relaxed);
+            }
+        }
 
         std::vector<aura::serve::parallel_orch::TaskSpec> tasks;
         tasks.reserve(cids.size());
@@ -2600,16 +2623,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                 ash->pure_contract_violated.fetch_add(1, std::memory_order_relaxed);
                                 aura::orch::g_orch_module_stats.pure_contract_violated_total
                                     .fetch_add(1, std::memory_order_relaxed);
-                                // Issue #2662: production hardening — under
-                                // production_defaults + opt-in flag, force
+                                // Issue #2662 / #2838: production hardening —
+                                // when the per-batch effective force-lock
+                                // policy is on (production default under
+                                // #2838, host flag, or env force-on), force
                                 // remaining pure tasks in this batch to take
                                 // eval_mu (best-effort-pure → serialized for
                                 // the rest of the batch). NOT a transactional
                                 // isolation promise — best-effort hardening.
-                                if (aura::compiler::typed_audit::production_defaults_active() &&
-                                    aura::orch::g_orch_module_stats
-                                        .parallel_intend_force_lock_on_violation.load(
-                                            std::memory_order_relaxed)) {
+                                // Soft / sandbox=off stays off unless host
+                                // set the atomic or env force-on.
+                                if (ash->force_lock_on_violation_policy) {
                                     ash->batch_force_eval_mu.store(true, std::memory_order_relaxed);
                                 }
                             } else {
@@ -4586,6 +4610,23 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2585", 2585);
             insert_kv("issue-2585", 2585);
             insert_kv("agent-no-yield-default-applied-wired", 1);
+            // Issue #2838: production default force-lock-on-violation for
+            // parallel-intend pure path. Counter bumps when the production
+            // default is injected (host flag false, env unset). #2662 host
+            // flag atomic still exposed via process-wide read.
+            insert_kv(
+                "parallel-intend-force-lock-default-applied-total",
+                static_cast<std::int64_t>(os.parallel_intend_force_lock_default_applied_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "parallel-intend-force-lock-host-flag",
+                os.parallel_intend_force_lock_on_violation.load(std::memory_order_relaxed) ? 1 : 0);
+            insert_kv("parallel-intend-force-lock-prod-default-wired", 1);
+            insert_kv("schema-2838", 2838);
+            insert_kv("issue-2838", 2838);
+            // Preserve #2662 lineage sentinel on the same surface.
+            insert_kv("schema-2662", 2662);
+            insert_kv("issue-2662", 2662);
             // Issue #2543: orch self-throttle over aot-hot-update-health.
             insert_kv("orch-hot-update-health-throttle-total",
                       static_cast<std::int64_t>(os.orch_hot_update_health_throttle_total.load(
