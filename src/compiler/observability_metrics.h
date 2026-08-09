@@ -3184,6 +3184,30 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> pattern_epoch_mismatch_total{0};     // #2861
     std::atomic<std::uint64_t> pattern_dangling_prevented_total{0}; // #2861
 
+    // Issue #2862: query:children-stable full safety contract
+    // metrics (refine #2036 / #678 / #655 Gap4 / #2861). Tracks the
+    // 3 new CompilerMetrics surfaces for query:children-stable
+    // (children_stable_span_calls_total is already tracked on
+    // FlatAST as ws->children_stable_span_calls_total() - ast.ixx
+    // #2198 - and reused via the query surface):
+    //   - children_stable_pin_hits_total: every SafePCVSpan pin hit
+    //       on the public surface (amortized refcount).
+    //   - children_stable_invalidation_detected_total: StableNodeRef
+    //       returned from children-stable that failed is_valid /
+    //       refresh after concurrent mutate and was dropped before
+    //       caller observed it.
+    //   - children_stable_epoch_mismatch_total: QueryEpoch
+    //       (mutation_epoch + generation) mismatch on a held span
+    //       under concurrent Guard.
+    // Distinct from #2861 pattern_safe_span / pattern_epoch_mismatch
+    // (query:pattern walks) - these are the query:children-stable
+    // surfaces. Children-stable views are held ACROSS mutate rounds
+    // so invalidation_detected + epoch_mismatch have longer
+    // exposure windows than the pattern equivalents.
+    std::atomic<std::uint64_t> children_stable_pin_hits_total{0};              // #2862
+    std::atomic<std::uint64_t> children_stable_invalidation_detected_total{0}; // #2862
+    std::atomic<std::uint64_t> children_stable_epoch_mismatch_total{0};        // #2862
+
     // Issue #2170: LayoutStamp publish + last-stamp fields (P1
     // MemorySafety-Review / Epoch). Backs the extended
     // (query:stable-ref-stats-hash) keys layout-stamp-*.
