@@ -72,6 +72,15 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     // (zero-cost when force_jit_regions_mask_ is already 0).
     if (successes > 0)
         maybe_force_jit_repromote_on_clean_success();
+    // Issue #2855: amortized force-drain check. Invoked from
+    // on_reemit_pipeline_call (NOT steal-complete path — #2715 regression
+    // guard). Soft zero-cost when force_deadline == 0 or pending is
+    // empty (should_force_drain_deferred_remit short-circuits). When
+    // production + pending + age >= force_deadline + depth==0 →
+    // single force-drain body runs. CAS re-entry guard prevents
+    // concurrent force-drain; BoundaryExit concurrent drain bumps
+    // double-prevented via drain_pending_recovery (above).
+    (void)force_drain_deferred_reemit();
     else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
         force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     // Issue #2601: lazy retry hook. Zero-cost when force_jit_regions_mask_ == 0
