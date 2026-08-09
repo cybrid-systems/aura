@@ -83,9 +83,15 @@ export template <AnalysisPass P> bool run_analysis_one(aura::ir::IRModule& mod, 
     return !pass.has_error();
 }
 
-// Issue #494: optional yield hook between pass stages (wired from service).
+// Issue #494: optional yield policy between pass stages (wired from service).
+// Returns true when a cooperative yield SHOULD happen. Does not perform the
+// yield itself — Issue #2823: run_one calls the fiber yield action when true.
 export using PipelineYieldHook = bool (*)() noexcept;
+// Issue #2823: actual Fiber::yield (or test mock) invoked when policy is true.
+export using PipelineFiberYieldAction = void (*)() noexcept;
 export inline std::atomic<std::uint64_t> pipeline_yield_count{0};
+// Issue #2823: times run_one invoked the fiber yield action (actual yield).
+export inline std::atomic<std::uint64_t> pipeline_fiber_yield_calls_total{0};
 export inline std::atomic<std::uint64_t> passes_skipped_dirty_pipeline{0};
 // Issue #744: blocks skipped because fn shape is stable and block is clean.
 export inline std::atomic<std::uint64_t> passes_skipped_shape_stable_blocks{0};
@@ -234,6 +240,8 @@ inline void note_define_dirty_mask_stats(const DefineDirtyMaskView& view) noexce
 
 namespace pass_pipeline_detail {
     inline PipelineYieldHook g_pipeline_yield_hook = nullptr;
+    // Issue #2823: action that performs Fiber::yield(PassPipeline) (or test mock).
+    inline PipelineFiberYieldAction g_pipeline_fiber_yield_action = nullptr;
     // Issue #1322: execution context — fiber/render hot-path soft gate for run_one.
     inline thread_local int g_pipeline_hotpath_depth = 0;
     inline thread_local std::uint64_t g_pipeline_mutation_epoch = 0;
@@ -263,6 +271,17 @@ export void set_pipeline_yield_hook(PipelineYieldHook hook) noexcept {
 
 export [[nodiscard]] PipelineYieldHook pipeline_yield_hook() noexcept {
     return pass_pipeline_detail::g_pipeline_yield_hook;
+}
+
+// Issue #2823: register the function that actually yields the fiber
+// (Fiber::yield(PassPipeline)). Separated from the policy hook so
+// run_one can act on a true return without relying on the hook body.
+export void set_pipeline_fiber_yield_action(PipelineFiberYieldAction fn) noexcept {
+    pass_pipeline_detail::g_pipeline_fiber_yield_action = fn;
+}
+
+export [[nodiscard]] PipelineFiberYieldAction pipeline_fiber_yield_action() noexcept {
+    return pass_pipeline_detail::g_pipeline_fiber_yield_action;
 }
 
 // SoAViewAwarePass / LegacyPass / RequiresSoAViewPass: concept_constraints (#1577).
@@ -421,9 +440,19 @@ bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Pass
 export template <Pass P>
 bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
     post(r : r == !pass.has_error()) {
+    // Issue #2823: cooperative yield between passes (#494 lineage).
+    // Policy hook returns true when a yield is requested; run_one then
+    // performs the actual fiber yield via g_pipeline_fiber_yield_action.
+    // Prior to #2823 only the metric was bumped (hook return discarded for
+    // action) — or the service trampoline both yielded and returned true,
+    // coupling policy with action. Split: policy vs action.
     if (pass_pipeline_detail::g_pipeline_yield_hook &&
         pass_pipeline_detail::g_pipeline_yield_hook()) {
         pipeline_yield_count.fetch_add(1, std::memory_order_relaxed);
+        if (pass_pipeline_detail::g_pipeline_fiber_yield_action) {
+            pass_pipeline_detail::g_pipeline_fiber_yield_action();
+            pipeline_fiber_yield_calls_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     // Issue #1322 / #2822: sync JITFriendlyPass epoch hint.
     // Prior: if (epoch != 0) only — silently skipped when callers never

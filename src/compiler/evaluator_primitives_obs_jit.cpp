@@ -534,6 +534,8 @@ void ObservabilityPrims::register_jit_p4(PrimRegistrar add, Evaluator& ev) {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             const std::uint64_t pipeline_yield =
                 aura::compiler::pipeline_yield_count.load(std::memory_order_relaxed);
+            const std::uint64_t fiber_yield_calls =
+                aura::compiler::pipeline_fiber_yield_calls_total.load(std::memory_order_relaxed);
             const std::uint64_t passes_skip_dirty =
                 aura::compiler::passes_skipped_dirty_pipeline.load(std::memory_order_relaxed);
             const std::uint64_t passes_skip_type = ev.get_passes_skipped_type_dirty();
@@ -546,7 +548,7 @@ void ObservabilityPrims::register_jit_p4(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t pipeline_total = pipeline_yield + passes_skip_dirty +
                                                  passes_skip_type + relower_skip + relower_per_fn +
                                                  mod_skip;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32); // #2823 schema keys
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -574,6 +576,13 @@ void ObservabilityPrims::register_jit_p4(PrimRegistrar add, Evaluator& ev) {
                 }
             };
             insert_kv("pipeline-yield-count", static_cast<std::int64_t>(pipeline_yield));
+            // Issue #2823: actual fiber yield action invocations from run_one.
+            insert_kv("pipeline-fiber-yield-calls-total",
+                      static_cast<std::int64_t>(fiber_yield_calls));
+            insert_kv("pipeline-fiber-yield-action-wired",
+                      aura::compiler::pipeline_fiber_yield_action() ? 1 : 0);
+            insert_kv("schema-2823", 2823);
+            insert_kv("issue-2823", 2823);
             insert_kv("passes-skipped-dirty", static_cast<std::int64_t>(passes_skip_dirty));
             insert_kv("passes-skipped-type-dirty", static_cast<std::int64_t>(passes_skip_type));
             insert_kv("relower-skipped", static_cast<std::int64_t>(relower_skip));
