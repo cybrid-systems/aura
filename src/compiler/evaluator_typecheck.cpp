@@ -2051,6 +2051,11 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         }
         const std::uint64_t mid0 = total_mutations_.load(std::memory_order_relaxed);
         const std::uint64_t epoch0 = defuse_version_.load(std::memory_order_relaxed);
+        // Issue #2814 M7 audit: missing invariant enforcement link
+        // before trail write. Call note_invariant_enforcement_ran(mid0)
+        // (with the actual mutation_id from this scope, not nchg) before
+        // capture_audit_event_forced to close the audit_enforcement_gap_total.
+        note_invariant_enforcement_ran(mid0);
         capture_audit_event_forced(mid0, op, classify_kind(op), epoch0, epoch0, AuditOutcome::Error,
                                    0, static_cast<std::uint32_t>(nodes_changed),
                                    static_cast<std::int64_t>(aura_fiber_current_id()), 0);
