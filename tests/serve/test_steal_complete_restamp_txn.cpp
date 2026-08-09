@@ -663,6 +663,95 @@ static void ac2752_4_source_and_linter() {
           "AC5: no docs/design/2752-* per #1655");
 }
 
+// ── Issue #2844: steal_safety_transaction sole enqueue gate for stolen ──
+// Residual of #2699/#2721/#2752: production steal path must treat
+// steal_safety_transaction as the only decision that may
+// local_queue_.push(stolen). Soft-continue after snapshot sample must
+// never enqueue.
+
+static void ac2844_1_sole_enqueue_gate() {
+    std::println("\n--- #2844 AC1: sole enqueue gate is steal_safety_transaction Ok ---");
+    const auto wc = read_file("src/serve/worker.cpp");
+    CHECK(wc.find("steal_safety_transaction(stolen)") != std::string::npos,
+          "AC1: worker calls steal_safety_transaction(stolen)");
+    CHECK(wc.find("StealSafetyDecision::Ok") != std::string::npos, "AC1: Ok gate before enqueue");
+    CHECK(wc.find("local_queue_.push(stolen)") != std::string::npos,
+          "AC1: Ok path enqueues stolen");
+    CHECK(wc.find("steal_safety_transaction_is_sole_enqueue_gate_for_stolen") != std::string::npos,
+          "AC1: sole-gate wire-in marker");
+    CHECK(wc.find("Issue #2844") != std::string::npos || wc.find("#2844") != std::string::npos,
+          "AC1: worker cites #2844");
+    const auto txn_pos = wc.find("steal_safety_transaction(stolen)");
+    const auto ok_pos = wc.find("StealSafetyDecision::Ok");
+    const auto push_pos = wc.find("local_queue_.push(stolen)");
+    CHECK(txn_pos != std::string::npos && ok_pos != std::string::npos &&
+              push_pos != std::string::npos && txn_pos < ok_pos && ok_pos < push_pos,
+          "AC1: transaction → Ok → push(stolen) order");
+    // Exactly one push(stolen).
+    std::size_t count = 0;
+    for (std::size_t p = 0; (p = wc.find("local_queue_.push(stolen)", p)) != std::string::npos;
+         p += 1)
+        ++count;
+    CHECK(count == 1, "AC1: exactly one local_queue_.push(stolen)");
+}
+
+static void ac2844_2_no_soft_enqueue_after_sample() {
+    std::println("\n--- #2844 AC2: no soft-enqueue after snapshot sample ---");
+    const auto wc = read_file("src/serve/worker.cpp");
+    CHECK(wc.find("no soft-enqueue after snapshot sample") != std::string::npos,
+          "AC2: soft-enqueue after sample forbidden (documented)");
+    CHECK(wc.find("Never enqueue a stolen fiber after inconsistency sample") != std::string::npos,
+          "AC2: inconsistency path never enqueues");
+    // Soft metric-only only under soft mode / !production helpers.
+    CHECK(wc.find("is_steal_snapshot_soft_mode") != std::string::npos,
+          "AC2: soft-mode helper consulted");
+    CHECK(wc.find("steal_snapshot_soft_production_locked") != std::string::npos,
+          "AC2: production lock helper present");
+}
+
+static void ac2844_3_counters_preserved() {
+    std::println("\n--- #2844 AC3: transaction + residual counters preserved ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(hdr.find("g_steal_safety_transaction_calls_total") != std::string::npos,
+          "AC3: calls counter");
+    CHECK(hdr.find("g_steal_safety_transaction_reject_hard_total") != std::string::npos,
+          "AC3: reject_hard counter");
+    CHECK(hdr.find("g_steal_safety_transaction_ok_total") != std::string::npos, "AC3: ok counter");
+    CHECK(hdr.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC3: residual hard-AND counters preserved");
+    CHECK(hdr.find("g_steal_safety_residual_layout_stamp_mismatch_total") != std::string::npos ||
+              hdr.find("resume_fence") != std::string::npos ||
+              hdr.find("residual_layout") != std::string::npos,
+          "AC3: layout residual surface preserved");
+}
+
+static void ac2844_4_source_and_linter() {
+    std::println("\n--- #2844 AC4/AC5: source-cite + linter + no docs/design ---");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_sole_enqueue_gate_2844.py");
+    const auto wc = read_file("src/serve/worker.cpp");
+    CHECK(t.find("ac2844_1_sole_enqueue_gate") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2844_2_no_soft_enqueue_after_sample") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2844_3_counters_preserved") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2844_4_source_and_linter") != std::string::npos, "AC5: self-test");
+    CHECK(t.find("ac2752_1_try_steal_from_only_transaction") != std::string::npos,
+          "AC5: #2752 tests preserved");
+    CHECK(t.find("ac2699_1_unified_entry_exists") != std::string::npos,
+          "AC5: #2699 tests preserved");
+    CHECK(!lint.empty() &&
+              (lint.find("2844") != std::string::npos || lint.find("#2844") != std::string::npos),
+          "AC5: coverage linter present");
+    CHECK(build.find("check_steal_sole_enqueue_gate_2844") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(wc.find("#2844 sole stolen-fiber enqueue") != std::string::npos,
+          "AC5: sole enqueue cite on push");
+    CHECK(read_file("docs/design/2844-steal-sole-enqueue-gate.md").empty(),
+          "AC5: no docs/design/2844-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_2844.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
 // ── Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ───────
 // AC1: durable per-Fiber evaluator_id set on Guard enter.
 // AC2: cleared on Guard exit / cancel so stale steals cannot see a previous evaluator.
@@ -819,6 +908,11 @@ int run_test_steal_complete_restamp_txn() {
     ac2752_2_no_ticket_stamp_in_worker();
     ac2752_3_counters_additive();
     ac2752_4_source_and_linter();
+    std::println("\n=== Issue #2844: steal_safety_transaction sole enqueue gate ===");
+    ac2844_1_sole_enqueue_gate();
+    ac2844_2_no_soft_enqueue_after_sample();
+    ac2844_3_counters_preserved();
+    ac2844_4_source_and_linter();
     std::println("\n=== Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ===");
     ac2727_1_evaluator_id_set_on_guard_enter();
     ac2727_2_evaluator_id_cleared_on_guard_exit();
@@ -827,9 +921,9 @@ int run_test_steal_complete_restamp_txn() {
     ac2727_5_source_and_linter();
     if (g_failed)
         return 1;
-    std::println(
-        "steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2727: OK ({} passed)",
-        g_passed);
+    std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
+                 "#2727: OK ({} passed)",
+                 g_passed);
     return 0;
 }
 

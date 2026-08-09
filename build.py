@@ -495,6 +495,20 @@ def cmd_lint():
             "Issue #2752 try_steal_from only steal_safety_transaction coverage linter failed — run python3 scripts/coverage/checks/check_try_steal_from_txn_2752.py"
         )
         return r
+    # Issue #2844: steal_safety_transaction is the sole enqueue gate for
+    # stolen fibers (no residual soft-continue after snapshot sample).
+    # Closes #2699/#2721/#2752 residual: every local_queue_.push(stolen)
+    # must be dominated by StealSafetyDecision::Ok.
+    sole_script = COVERAGE_CHECKS / "check_steal_sole_enqueue_gate_2844.py"
+    if not sole_script.exists():
+        fail(f"missing {sole_script}")
+        return 1
+    r = run([sys.executable, str(sole_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2844 steal sole enqueue gate linter failed — run python3 scripts/coverage/checks/check_steal_sole_enqueue_gate_2844.py"
+        )
+        return r
     # Issue #2700: mailbox + long-hold MutationBoundary interleaving —
     # happens-before contract: outermost MutationBoundaryGuard held ⇒
     # mailbox StableNodeRef payloads require handoff_completed; otherwise

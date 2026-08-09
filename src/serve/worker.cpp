@@ -4,7 +4,7 @@
 #include "aura_platform.h"
 #include "compiler/lock_order_audit.h" // Issue #2354: FiberRegistry rank
 #include "core/gc_hooks.h"             // Issue #2377: steal-complete missing counter
-#include "serve/steal_safety.h"        // Issue #2752: steal_safety_transaction sole Ok path
+#include "serve/steal_safety.h" // Issue #2752/#2844: steal_safety_transaction sole enqueue gate
 
 #include <cstdio>
 #include <unistd.h>
@@ -66,16 +66,21 @@ static inline void call_probe_linear_on_steal() noexcept {
 // Weak no-op / null ABI under production → fail-closed (never legacy-only
 // path that skips residual + stamp). Light/sandbox (production Soft lock
 // off) may use weak no-op or legacy N-call fallback with metric bump.
-// Issue #2752: call_steal_complete is no longer on the try_steal_from
+// Issue #2752/#2844: call_steal_complete is no longer on the try_steal_from
 // success path — steal_safety_transaction owns steps 3–7 (including
 // aura_evaluator_on_steal_complete + ticket stamp). Kept as a named
 // helper only for the historical #2699 wire-in marker string (linter
 // AC2) and any light diagnostic paths that still need a direct
 // complete entry without the full transaction gate.
+// Issue #2844: steal_safety_transaction_is_sole_enqueue_gate_for_stolen
+// (wire-in marker — every stolen-fiber enqueue must be dominated by
+// an Ok decision from the transaction; soft-continue after snapshot
+// sample must never enqueue a stolen fiber).
 static inline void call_steal_complete(Fiber* stolen) noexcept {
     // Issue #2699: call_steal_complete_now_uses_unified_transaction
     // Issue #2752: try_steal_from_only_uses_steal_safety_transaction
-    // (wire-in markers — single #2699/#2752 transaction entry point).
+    // Issue #2844: steal_safety_transaction_is_sole_enqueue_gate_for_stolen
+    // (wire-in markers — single #2699/#2752/#2844 transaction entry point).
     if (aura_evaluator_on_steal_complete) {
         // Strong wins over weak when linked. Weak no-op under production
         // aborts inside fiber_bridge (#2377); under sandbox it bumps
@@ -283,16 +288,17 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
         }
 
         // Issue #588 / #2184: one MutationSafetySnapshot sample for the
-        // steal decision (depth + held + yield jointly). Defer when
+        // candidate filter (depth + held + yield jointly). Defer when
         // MutationBoundary with active Guard (depth>0 or held).
+        // Issue #2844: this sample is NOT an enqueue authority — only
+        // steal_safety_transaction may authorize a stolen-fiber enqueue.
+        // Soft-continue after this sample must never enqueue.
         const auto snap = stolen->mutation_safety_snapshot();
         if (stolen->mutation_safety_snapshot_inconsistent(snap)) {
             Fiber::bump_mutation_steal_snapshot_mismatch();
-            // Issue #2310 AC1 / #2372: fail-closed on inconsistency.
-            // Production default is force-deopt + full refresh under
-            // exclusive recovery (NOT silent resume of generation-behind
-            // code). Soft env is ignored under production lock (#2372);
-            // test override still allows Soft under AURA_SANDBOX=off.
+            // Issue #2310 AC1 / #2372 / #2844: fail-closed on inconsistency.
+            // Production lock ignores Soft env (#2372) — force-deopt or abort.
+            // Soft / !production: metric-only; never enqueue (continue).
             // Missing strong force-deopt ABI under production → abort
             // (never silent continue after mismatch bump only).
             if (!aura::serve::is_steal_snapshot_soft_mode()) {
@@ -307,17 +313,18 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                                          "builds must link the strong ABI\n");
                     std::abort();
                 }
-                // Light/test without production lock: null ABI still
-                // continues after mismatch bump (legacy light-link path).
+                // Light/test without production lock: null ABI — still
+                // MUST NOT enqueue (#2844 sole-gate residual). Soft-
+                // continue = next steal attempt only, never push.
             }
-            // Do not normal-enqueue until refresh completes (under
-            // exclusive recovery). The fiber is dropped from this steal
-            // attempt — generation-behind code must NOT silently resume.
-            continue;
+            // Soft mode: metric-only soft-continue (#2844 AC Soft).
+            // Never enqueue a stolen fiber after inconsistency sample.
+            continue; // #2844: no soft-enqueue after snapshot sample
         }
-        // Issue #2549: authoritative enqueue gate is is_stealable(snap)
+        // Issue #2549: candidate filter is_stealable(snap)
         // (is_steal_candidate + is_at_mutation_boundary_safe on one sample).
-        // Never reason-class alone.
+        // Issue #2844: candidate filter may only score / defer — sole
+        // enqueue authority remains steal_safety_transaction below.
         if (stolen->is_stealable(snap)) {
             const int pri = fiber_steal_priority(stolen);
             if (pri >= 2) {
@@ -375,20 +382,27 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 else
                     ads_score.steal_score_bucket_200p.fetch_add(1, std::memory_order_relaxed);
             }
-            // Issue #2752 (closes #2699/#2721 residual): sole authoritative
-            // Ok / RejectHard path is steal_safety_transaction(stolen).
-            // Transaction owns sample→inconsistency→residual hard-AND
+            // Issue #2752 / #2844 (closes #2699/#2721 residual): sole
+            // authoritative Ok / RejectHard path is
+            // steal_safety_transaction(stolen). Transaction owns
+            // sample→inconsistency→residual hard-AND
             // (#2546 GcDefer hard-AND / #2203 steal-complete residual clear)→
             // PanicCheckpoint→LayoutStamp→provenance→ticket stamp (step 7
             // only on Ok; never set_resume_safety_ticket from worker).
-            // Pre-transaction inconsistency force-deopt path above stays.
+            // Pre-transaction inconsistency force-deopt path above stays
+            // and never enqueues (#2844).
             // On LayoutStamp hard-fail (#2510) or residual hard-fail (#2546)
             // the fiber is Cancel+Done — must not enqueue Ready.
+            //
+            // Issue #2844: THIS is the only decision that may authorize
+            // a stolen-fiber enqueue. Candidate filters above must not
+            // soft-continue into push. Soft/sandbox metric-only only when
+            // !production (handled inside transaction + soft-mode helpers).
             const auto decision = steal_safety_transaction(stolen);
             if (decision != StealSafetyDecision::Ok) {
                 // RejectHard: fiber Cancel+Done / force-deopt / residual
                 // hard-AND (#2546) — do not enqueue Ready
-                // (sample→enqueue→resume window closed).
+                // (sample→enqueue→resume window closed). #2844: sole gate.
                 return false;
             }
             stolen->bump_steal_success();
@@ -410,7 +424,11 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
                 if (aura_evaluator_bump_boundary_held_steal_safe)
                     aura_evaluator_bump_boundary_held_steal_safe();
             }
-            local_queue_.push(stolen);
+            // Issue #2844: sole enqueue of a stolen fiber — dominated by
+            // StealSafetyDecision::Ok from steal_safety_transaction above.
+            // Coverage linter fails if another push(stolen) appears without
+            // this Ok dominance.
+            local_queue_.push(stolen); // #2844 sole stolen-fiber enqueue
             return true;
         }
 

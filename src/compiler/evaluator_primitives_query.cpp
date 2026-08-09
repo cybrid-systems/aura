@@ -4874,16 +4874,38 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
-            (void)ht->insert_pair("schema", make_int(2862));
-            (void)ht->insert_pair("issue", make_int(2862));
-            (void)ht->insert_pair("children-stable-span-calls-total",
-                                  make_int(static_cast<std::int64_t>(span_calls)));
-            (void)ht->insert_pair("children-stable-pin-hits-total",
-                                  make_int(static_cast<std::int64_t>(pin_hits)));
-            (void)ht->insert_pair("children-stable-invalidation-detected-total",
-                                  make_int(static_cast<std::int64_t>(invalidation_detected)));
-            (void)ht->insert_pair("children-stable-epoch-mismatch-total",
-                                  make_int(static_cast<std::int64_t>(epoch_mismatch)));
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev->push_string_heap(k_str);
+                EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2862);
+            insert_kv("issue", 2862);
+            insert_kv("children-stable-span-calls-total", static_cast<std::int64_t>(span_calls));
+            insert_kv("children-stable-pin-hits-total", static_cast<std::int64_t>(pin_hits));
+            insert_kv("children-stable-invalidation-detected-total",
+                      static_cast<std::int64_t>(invalidation_detected));
+            insert_kv("children-stable-epoch-mismatch-total",
+                      static_cast<std::int64_t>(epoch_mismatch));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -4935,18 +4957,41 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
-            (void)ht->insert_pair("schema", make_int(2863));
-            (void)ht->insert_pair("issue", make_int(2863));
-            (void)ht->insert_pair("mutate-replace-subtree-calls-total",
-                                  make_int(static_cast<std::int64_t>(calls)));
-            (void)ht->insert_pair("mutate-replace-subtree-fine-rollback-total",
-                                  make_int(static_cast<std::int64_t>(fine_rollback)));
-            (void)ht->insert_pair("mutate-replace-subtree-densify-triggers-total",
-                                  make_int(static_cast<std::int64_t>(densify_triggers)));
-            (void)ht->insert_pair("mutate-replace-subtree-hygiene-rejects-total",
-                                  make_int(static_cast<std::int64_t>(hygiene_rejects)));
-            (void)ht->insert_pair("mutate-replace-subtree-restamp-nodes-total",
-                                  make_int(static_cast<std::int64_t>(restamp_nodes)));
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev->push_string_heap(k_str);
+                EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2863);
+            insert_kv("issue", 2863);
+            insert_kv("mutate-replace-subtree-calls-total", static_cast<std::int64_t>(calls));
+            insert_kv("mutate-replace-subtree-fine-rollback-total",
+                      static_cast<std::int64_t>(fine_rollback));
+            insert_kv("mutate-replace-subtree-densify-triggers-total",
+                      static_cast<std::int64_t>(densify_triggers));
+            insert_kv("mutate-replace-subtree-hygiene-rejects-total",
+                      static_cast<std::int64_t>(hygiene_rejects));
+            insert_kv("mutate-replace-subtree-restamp-nodes-total",
+                      static_cast<std::int64_t>(restamp_nodes));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -4994,18 +5039,41 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
-            (void)ht->insert_pair("schema", make_int(2864));
-            (void)ht->insert_pair("issue", make_int(2864));
-            (void)ht->insert_pair("mutate-remove-node-calls-total",
-                                  make_int(static_cast<std::int64_t>(calls)));
-            (void)ht->insert_pair("mutate-remove-node-edges-removed-total",
-                                  make_int(static_cast<std::int64_t>(edges_removed)));
-            (void)ht->insert_pair("mutate-remove-node-multi-parent-count-total",
-                                  make_int(static_cast<std::int64_t>(multi_parent)));
-            (void)ht->insert_pair("mutate-remove-node-rollback-fidelity-total",
-                                  make_int(static_cast<std::int64_t>(rollback_fidelity)));
-            (void)ht->insert_pair("mutate-remove-node-densify-triggered-total",
-                                  make_int(static_cast<std::int64_t>(densify_triggered)));
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                auto kidx = ev->push_string_heap(k_str);
+                EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        keys[idx] = key_ev.val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2864);
+            insert_kv("issue", 2864);
+            insert_kv("mutate-remove-node-calls-total", static_cast<std::int64_t>(calls));
+            insert_kv("mutate-remove-node-edges-removed-total",
+                      static_cast<std::int64_t>(edges_removed));
+            insert_kv("mutate-remove-node-multi-parent-count-total",
+                      static_cast<std::int64_t>(multi_parent));
+            insert_kv("mutate-remove-node-rollback-fidelity-total",
+                      static_cast<std::int64_t>(rollback_fidelity));
+            insert_kv("mutate-remove-node-densify-triggered-total",
+                      static_cast<std::int64_t>(densify_triggered));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
