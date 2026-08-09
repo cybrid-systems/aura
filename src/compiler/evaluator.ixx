@@ -3569,6 +3569,24 @@ public:
             return m->macro_provenance_repin_total.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #2858: auto-restamp on allowed MacroIntroduced mutate
+    // counters (root + descendant cascade fan-out for sub-tree
+    // rewrites). Read-only on the 2 new CompilerMetrics atomics
+    // backing (query:macro-mutate-auto-restamp-stats) primitive +
+    // linter/observability access for self-evolvers that need to
+    // confirm restamp fired (or fan-out was zero on a flat 1-node
+    // replacement). Source-cited at propagate_macro_introduced_marker
+    // in evaluator_primitives_mutate.cpp.
+    [[nodiscard]] std::uint64_t get_macro_mutate_auto_restamp_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->macro_mutate_auto_restamp_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_macro_mutate_auto_restamp_nodes() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->macro_mutate_auto_restamp_nodes.load(std::memory_order_relaxed);
+        return 0;
+    }
     [[nodiscard]] std::uint64_t get_macro_refresh_invoke_count() const noexcept {
         return macro_refresh_invoke_count_.load(std::memory_order_relaxed);
     }

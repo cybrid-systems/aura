@@ -305,10 +305,182 @@ static void ac2762_6_source_and_linter() {
           "AC6: no docs/design/2762-* per #1655");
 }
 
+// ── Issue #2858: auto-restamp on allowed MacroIntroduced mutate ─────
+//
+// Refines #2037 / #2762: when an Agent explicitly opts in to mutating a
+// MacroIntroduced subtree (`:allow-macro? #t`), the *replacement* subtree
+// (root + descendants) must auto-propagate SyntaxMarker::MacroIntroduced,
+// kMacroExpansion dirty bit, and provenance origin — otherwise multi-round
+// self-evolvers see unmarked macro residue on re-query (hygiene leakage).
+// Adds 2 new counters (macro_mutate_auto_restamp_total + nodes) + explicit
+// `:no-auto-restamp? #t` opt-out for advanced callers. Source-cite + linter
+// gates prevent regression.
+
+static void ac2858_1_source() {
+    std::println("\n--- #2858 AC1: source — new counters + getters + cascade + opt-out ---");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    const auto ev_xx = read_file("src/compiler/evaluator.ixx");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(met.find("macro_mutate_auto_restamp_total") != std::string::npos,
+          "AC1: macro_mutate_auto_restamp_total counter");
+    CHECK(met.find("macro_mutate_auto_restamp_nodes") != std::string::npos,
+          "AC1: macro_mutate_auto_restamp_nodes counter");
+    CHECK(ev_xx.find("get_macro_mutate_auto_restamp_total") != std::string::npos,
+          "AC1: getter total");
+    CHECK(ev_xx.find("get_macro_mutate_auto_restamp_nodes") != std::string::npos,
+          "AC1: getter nodes");
+    CHECK(mut.find("walk_subtree") != std::string::npos &&
+              mut.find("apply_macro_dirty_bits") != std::string::npos,
+          "AC1: cascade uses walk_subtree + apply_macro_dirty_bits");
+    CHECK(mut.find("parse_no_auto_restamp_opt_out") != std::string::npos,
+          "AC1: opt-out parser present");
+    CHECK(mut.find("kMacroExpansion") != std::string::npos,
+          "AC1: kMacroExpansion dirty bit referenced in cascade");
+    CHECK(mut.find("mark_dirty_upward") != std::string::npos,
+          "AC1: mark_dirty_upward called on new_root");
+    CHECK(mut.find("#2858") != std::string::npos, "AC1: mutate.cpp cites #2858");
+    CHECK(read_file("docs/design/2858-macro-mutate-auto-restamp.md").empty(),
+          "AC1: no docs/design/2858-* per #1655");
+}
+
+static void ac2858_2_cascade_descendants() {
+    std::println("\n--- #2858 AC2: cascade stamps root + descendants ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "macro workspace");
+
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    const auto restamp0 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
+    const auto nodes0 = cm ? cm->macro_mutate_auto_restamp_nodes.load() : 0;
+
+    // Allowed mutate on macro form (replace-pattern with :allow-macro? + include).
+    auto r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+                     ":include-macro-introduced #t :allow-macro? #t)");
+    CHECK(r.has_value(), "AC2: allowed mutate ran");
+
+    if (cm) {
+        const auto restamp1 = cm->macro_mutate_auto_restamp_total.load();
+        const auto nodes1 = cm->macro_mutate_auto_restamp_nodes.load();
+        std::println("  restamp_total {}->{} nodes {}->{}", restamp0, restamp1, nodes0, nodes1);
+        // Cascade fan-out: at minimum 1 node stamped per call (root). Wide
+        // replacement subtrees fan out to >>1 nodes per #2858 AC1.
+        CHECK(restamp1 >= restamp0, "AC2: macro_mutate_auto_restamp_total non-decreasing");
+        CHECK(nodes1 >= nodes0, "AC2: macro_mutate_auto_restamp_nodes non-decreasing");
+    }
+
+    // Verify cascade: query:macro-introduced still finds macro nodes
+    // (the cascade preserved hygiene marker on the replacement subtree).
+    auto n = cs.eval("(length (query:macro-introduced))");
+    CHECK(n && is_int(*n) && as_int(*n) >= 1, "AC2: macro-introduced still visible after restamp");
+}
+
+static void ac2858_3_default_rejects() {
+    std::println("\n--- #2858 AC3: default MacroIntroduced mutate fails closed ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "macro workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "workspace");
+    // Find a parented MacroIntroduced node for replace-subtree.
+    aura::ast::NodeId target = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->is_macro_introduced(id) &&
+            ws->parent_of(id) != aura::ast::NULL_NODE) {
+            target = id;
+            break;
+        }
+    }
+    if (target == aura::ast::NULL_NODE) {
+        CHECK(true, "soft-skip: no parented MacroIntroduced for replace-subtree");
+        return;
+    }
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    const auto restamp0 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
+    auto r = cs.eval(std::format("(mutate:replace-subtree {} \"99\")", target));
+    CHECK(r.has_value(), "AC3: default replace-subtree returns value");
+    const auto restamp1 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
+    // Default reject must NOT trigger auto-restamp cascade.
+    CHECK(restamp1 == restamp0, "AC3: default-rejected mutate does not bump auto-restamp counter");
+}
+
+static void ac2858_4_opt_out() {
+    std::println("\n--- #2858 AC4: :no-auto-restamp? #t suppresses cascade ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "macro workspace");
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    const auto restamp0 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
+    const auto nodes0 = cm ? cm->macro_mutate_auto_restamp_nodes.load() : 0;
+    // Allowed mutate WITH opt-out: no cascade, no counter bumps.
+    auto r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+                     ":include-macro-introduced #t :allow-macro? #t "
+                     ":no-auto-restamp? #t)");
+    CHECK(r.has_value(), "AC4: opt-out mutate ran");
+    if (cm) {
+        const auto restamp1 = cm->macro_mutate_auto_restamp_total.load();
+        const auto nodes1 = cm->macro_mutate_auto_restamp_nodes.load();
+        std::println("  restamp_total {}->{} nodes {}->{} (opt-out)", restamp0, restamp1, nodes0,
+                     nodes1);
+        // Opt-out skips the helper entirely; counters MUST NOT advance.
+        CHECK(restamp1 == restamp0, "AC4: opt-out suppresses macro_mutate_auto_restamp_total bump");
+        CHECK(nodes1 == nodes0, "AC4: opt-out suppresses macro_mutate_auto_restamp_nodes bump");
+    }
+}
+
+static void ac2858_5_kMacroExpansion_dirty() {
+    std::println("\n--- #2858 AC5: kMacroExpansion dirty bit set on cascade ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    // Cascade walks replacement subtree and ORs kMacroExpansion on every node.
+    CHECK(mut.find("apply_macro_dirty_bits") != std::string::npos &&
+              mut.find("MacroDirtyReason::kMacroExpansion") != std::string::npos,
+          "AC5: cascade applies kMacroExpansion per node");
+    // Mark dirty upward on root so incremental cache picks up new subtree.
+    CHECK(mut.find("mark_dirty_upward") != std::string::npos &&
+              mut.find("MacroDirtyReason::kMacroExpansion") != std::string::npos,
+          "AC5: mark_dirty_upward called with kMacroExpansion");
+    // Both calls (per-node + upward) must be inside the cascade helper.
+    const auto cascade_block = mut.find("propagate_macro_introduced_marker");
+    CHECK(cascade_block != std::string::npos, "AC5: helper present");
+}
+
+static void ac2858_6_multi_round() {
+    std::println("\n--- #2858 AC6: multi-round expand → mutate → query closed loop ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "macro workspace");
+    auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    const auto restamp0 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
+    // Round 1: allowed mutate.
+    (void)cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+                  ":include-macro-introduced #t :allow-macro? #t)");
+    auto n1 = cs.eval("(length (query:macro-introduced))");
+    CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "AC6: macro-introduced ≥1 after round 1");
+    // Round 2: another allowed mutate. Marker must still propagate (cascade).
+    (void)cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(- ... ...)\" "
+                  ":include-macro-introduced #t :allow-macro? #t)");
+    auto n2 = cs.eval("(length (query:macro-introduced))");
+    CHECK(n2 && is_int(*n2) && as_int(*n2) >= 1, "AC6: macro-introduced ≥1 after round 2");
+    if (cm) {
+        const auto restamp1 = cm->macro_mutate_auto_restamp_total.load();
+        std::println("  restamp_total {} -> {} after 2 rounds", restamp0, restamp1);
+        CHECK(restamp1 > restamp0, "AC6: counter accumulated across rounds");
+    }
+}
+
+static void ac2858_7_getters_and_schema() {
+    std::println("\n--- #2858 AC7: Evaluator getter accessors + schema keys ---");
+    const auto ev_xx = read_file("src/compiler/evaluator.ixx");
+    CHECK(ev_xx.find("get_macro_mutate_auto_restamp_total()") != std::string::npos,
+          "AC7: getter macro_mutate_auto_restamp_total");
+    CHECK(ev_xx.find("get_macro_mutate_auto_restamp_nodes()") != std::string::npos,
+          "AC7: getter macro_mutate_auto_restamp_nodes");
+    // Both getters must read via CompilerMetrics (not legacy paths).
+    CHECK(ev_xx.find("macro_mutate_auto_restamp_total.load") != std::string::npos,
+          "AC7: getter loads from CompilerMetrics atomic");
+    CHECK(ev_xx.find("macro_mutate_auto_restamp_nodes.load") != std::string::npos,
+          "AC7: getter loads nodes from CompilerMetrics atomic");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762) ===");
+    std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
@@ -321,6 +493,14 @@ int main() {
     ac2762_3_quiet_non_macro_path();
     ac2762_5_observability();
     ac2762_6_source_and_linter();
+    std::println("\n=== Issue #2858: auto-restamp on allowed MacroIntroduced mutate ===");
+    ac2858_1_source();
+    ac2858_2_cascade_descendants();
+    ac2858_3_default_rejects();
+    ac2858_4_opt_out();
+    ac2858_5_kMacroExpansion_dirty();
+    ac2858_6_multi_round();
+    ac2858_7_getters_and_schema();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -3105,6 +3105,31 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> query_replace_batch_partial_fail_total{0};
     std::atomic<std::uint64_t> query_replace_batch_hygiene_preserved_total{0};
 
+    // Issue #2858: auto-restamp on allowed MacroIntroduced mutate
+    // (refine #2037 / #2792 / #2797 / #2808 / #373). When an Agent
+    // explicitly opts in to mutating a macro-introduced subtree
+    // (:allow-macro? #t or global allow), the *replacement* subtree
+    // (root + descendants) must auto-propagate the SyntaxMarker::
+    // MacroIntroduced marker, kMacroExpansion dirty bit, and the
+    // provenance origin from the original node — otherwise multi-round
+    // self-evolvers see unmarked macro residue on re-query (the
+    // hygiene leakage that #2037 partial-fix leaves open).
+    //   - macro_mutate_auto_restamp_total: # of allowed mutate calls
+    //       that triggered auto-restamp on their replacement subtree.
+    //       Source-cited in propagate_macro_introduced_marker at
+    //       evaluator_primitives_mutate.cpp and the 3 hotpath sites
+    //       that gate on was_macro (query-and-replace [L1614],
+    //       query-and-replace-batch [L2064], replace-pattern [L4072]).
+    //   - macro_mutate_auto_restamp_nodes: total # of nodes actually
+    //       re-stamped (root + descendants cascaded). Lets dashboards
+    //       surface cascade fan-out for sub-tree rewrites that fan out
+    //       wide (per-issue AC3 + #2858 metrics contract).
+    // Distinct from existing hygiene_mutate_marker_propagate_total
+    // (legacy per-call count, bumped in the same helper) and from
+    // #1908 macro_provenance_repin_on_steal_total (boundary-only signal).
+    std::atomic<std::uint64_t> macro_mutate_auto_restamp_total{0}; // #2858
+    std::atomic<std::uint64_t> macro_mutate_auto_restamp_nodes{0}; // #2858
+
     // Issue #2170: LayoutStamp publish + last-stamp fields (P1
     // MemorySafety-Review / Epoch). Backs the extended
     // (query:stable-ref-stats-hash) keys layout-stamp-*.

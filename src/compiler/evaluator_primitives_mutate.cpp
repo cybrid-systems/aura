@@ -473,17 +473,56 @@ namespace {
         return std::nullopt;
     }
 
-    // Issue #2037: after allowed MacroIntroduced mutate, stamp the
-    // replacement root so hygiene survives re-query.
+    // Issue #2858: after allowed MacroIntroduced mutate, stamp the
+    // replacement root + descendants + kMacroExpansion dirty bit +
+    // provenance origin. Closed-loop hygiene for multi-round self-evo
+    // (replaces the #2037 root-only partial fix). opt_out suppresses
+    // the cascade for advanced callers (rare; default = restamp).
+    //
+    // Cascade walks the replacement subtree using FlatAST::walk_subtree
+    // (iterative DFS, bounded at 1024 nodes — same pattern as
+    // clone_macro_body at macro_expansion.cpp ~L1820). For each node:
+    //   - set_marker(MacroIntroduced)
+    //   - apply_macro_dirty_bits(kMacroExpansion) — per-node dirty bit
+    //   - record_macro_hygiene_provenance — stamp provenance
+    // Then mark_dirty_upward(new_root, kMacroExpansion) propagates
+    // the dirty bit up to ancestors for incremental cache
+    // invalidation. Bumps 3 counters: existing
+    // hygiene_mutate_marker_propagate_total (legacy per-call count) +
+    // new macro_mutate_auto_restamp_total (per allowed-mutate count) +
+    // new macro_mutate_auto_restamp_nodes (cascade fan-out).
     static void propagate_macro_introduced_marker(Evaluator& ev, aura::ast::FlatAST& flat,
-                                                  aura::ast::NodeId new_root) {
+                                                  aura::ast::NodeId new_root,
+                                                  bool opt_out = false) {
+        if (opt_out)
+            return;
         if (new_root == aura::ast::NULL_NODE || new_root >= flat.size())
             return;
-        flat.set_marker(new_root, aura::ast::SyntaxMarker::MacroIntroduced);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+
+        // Cascade: marker + dirty bit + provenance on root + descendants.
+        std::uint64_t stamped_count = 0;
+        flat.walk_subtree(new_root, [&](aura::ast::NodeId cur) {
+            flat.set_marker(cur, aura::ast::SyntaxMarker::MacroIntroduced);
+            flat.apply_macro_dirty_bits(
+                cur,
+                static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+            aura::core::provenance::record_macro_hygiene_provenance(static_cast<std::uint32_t>(cur),
+                                                                    ev.capability_tenant_id());
+            ++stamped_count;
+        });
+
+        // Mark dirty upward so incremental cache invalidation picks up
+        // the new macro subtree on the next typecheck / impact probe.
+        flat.mark_dirty_upward(
+            new_root,
+            static_cast<std::uint8_t>(aura::ast::FlatAST::MacroDirtyReason::kMacroExpansion));
+
+        // Bump counters (issue #2858 AC3 metrics contract).
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->hygiene_mutate_marker_propagate_total.fetch_add(1, std::memory_order_relaxed);
-        aura::core::provenance::record_macro_hygiene_provenance(
-            static_cast<std::uint32_t>(new_root), ev.capability_tenant_id());
+            m->macro_mutate_auto_restamp_total.fetch_add(1, std::memory_order_relaxed);
+            m->macro_mutate_auto_restamp_nodes.fetch_add(stamped_count, std::memory_order_relaxed);
+        }
     }
 
     // Issue #373: parse `:allow-macro? #t` from a mutate:*
@@ -505,6 +544,36 @@ namespace {
         std::size_t target_idx = std::string::npos;
         for (std::size_t i = 0; i < kt.size(); ++i) {
             if (kt[i] == ":allow-macro?") {
+                target_idx = i;
+                break;
+            }
+        }
+        if (target_idx == std::string::npos)
+            return false;
+        for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+            if (!is_keyword(args[i]))
+                continue;
+            if (as_keyword_idx(args[i]) != target_idx)
+                continue;
+            if (is_bool(args[i + 1]))
+                return as_bool(args[i + 1]);
+            return false;
+        }
+        return false;
+    }
+
+    // Issue #2858: parse `:no-auto-restamp? #t` from a mutate:*
+    // primitive's argument span. Returns true iff the kwarg is
+    // present AND its value is true. Default #f if absent. Used to
+    // opt out of the auto-restamp cascade for advanced callers
+    // (rare — default is to restamp on every allowed MacroIntroduced
+    // mutate). Same pattern as parse_allow_macro_opt_out above
+    // (linear keyword-table scan, ~10-30 entries, once per mutate call).
+    static bool parse_no_auto_restamp_opt_out(Evaluator& ev, std::span<const EvalValue> args) {
+        const auto& kt = ev.keyword_table();
+        std::size_t target_idx = std::string::npos;
+        for (std::size_t i = 0; i < kt.size(); ++i) {
+            if (kt[i] == ":no-auto-restamp?") {
                 target_idx = i;
                 break;
             }
@@ -1525,6 +1594,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #2037: MacroIntroduced hygiene closed-loop.
             const bool allow_macro_qar =
                 ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            // Issue #2858: explicit opt-out from auto-restamp cascade
+            // (advanced callers). Default = restamp; rare opt-out.
+            const bool no_auto_restamp_qar = parse_no_auto_restamp_opt_out(ev, a);
             const std::uint64_t initial_log_size = flat.all_mutations().size();
             flat.begin_atomic_batch();
             for (auto& match_ref : matches) {
@@ -1609,9 +1681,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 }
 
                 flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
-                // Issue #2037: propagate MacroIntroduced marker on allowed mutates.
+                // Issue #2037 + #2858: propagate MacroIntroduced marker
+                // on allowed mutates (root + descendant cascade +
+                // kMacroExpansion dirty + provenance origin).
                 if (was_macro)
-                    propagate_macro_introduced_marker(ev, flat, repl_pr.root);
+                    propagate_macro_introduced_marker(ev, flat, repl_pr.root, no_auto_restamp_qar);
                 replaced_roots.push_back(repl_pr.root);
                 flat.add_mutation(repl_pr.root, "query-and-replace", "matched", "template",
                                   summary);
@@ -1974,6 +2048,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (aura::messaging::g_fiber_yield_mutation_boundary)
                 aura::messaging::g_fiber_yield_mutation_boundary();
 
+            // Issue #2858: explicit opt-out from auto-restamp cascade
+            // (advanced callers). Default = restamp; rare opt-out.
+            const bool no_auto_restamp_batch = parse_no_auto_restamp_opt_out(ev, a);
+
             std::uint64_t initial_log_size = flat.all_mutations().size();
             flat.begin_atomic_batch();
 
@@ -2061,7 +2139,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
                 flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
                 if (was_macro) {
-                    propagate_macro_introduced_marker(ev, flat, repl_pr.root);
+                    propagate_macro_introduced_marker(ev, flat, repl_pr.root,
+                                                      no_auto_restamp_batch);
                     ++hygiene_kept;
                 }
                 replaced_roots.push_back(repl_pr.root);
@@ -3950,6 +4029,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // ── Apply replacements via string substitution ────────
         // Issue #2037: MacroIntroduced closed-loop hygiene on each match.
         const bool allow_macro_kw = parse_allow_macro_opt_out(ev, a);
+        // Issue #2858: explicit opt-out from auto-restamp cascade
+        // (advanced callers). Default = restamp; rare opt-out.
+        const bool no_auto_restamp_rp = parse_no_auto_restamp_opt_out(ev, a);
         const bool allow_macro_all =
             ev.get_allow_macro_mutate() || allow_macro_kw || include_macro_introduced;
         int replaced_count = 0;
@@ -4067,9 +4149,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
             // Replace the matched node
             flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
-            // Issue #2037: propagate MacroIntroduced so re-query keeps hygiene.
+            // Issue #2037 + #2858: propagate MacroIntroduced so re-query
+            // keeps hygiene (root + descendant cascade + dirty + provenance).
             if (was_macro)
-                propagate_macro_introduced_marker(ev, flat, repl_pr.root);
+                propagate_macro_introduced_marker(ev, flat, repl_pr.root, no_auto_restamp_rp);
             replaced_count++;
         }
 
