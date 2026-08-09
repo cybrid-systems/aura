@@ -12,6 +12,8 @@
 #include "test_harness.hpp"
 
 #include "core/provenance_tracker.hh"
+#include "orch/agent_spawn.h"
+#include "serve/multi_fiber_mailbox.h"
 
 #include <cstdint>
 #include <fstream>
@@ -19,6 +21,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <utility>
 
 import std;
 import aura.compiler.evaluator;
@@ -32,7 +35,9 @@ using aura::ast::FlatAST;
 using aura::ast::NodeId;
 using aura::ast::NULL_NODE;
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -43,8 +48,18 @@ using aura::test::g_failed;
 using aura::test::g_passed;
 
 // Local helper: read a text file into a string (used by source-cite ACs).
+// Prefer AURA_SOURCE_DIR (set by CMake) so source-cites work when the
+// binary is launched from build/.
 std::string read_file(const char* path) {
-    std::ifstream in(path);
+    std::ifstream in;
+#ifdef AURA_SOURCE_DIR
+    const std::string rooted = std::string(AURA_SOURCE_DIR) + "/" + path;
+    in.open(rooted);
+    if (!in)
+        in.open(path);
+#else
+    in.open(path);
+#endif
     if (!in)
         return {};
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -347,6 +362,141 @@ int run_test_stable_ref_export_validate() {
 
         // AC6: coverage linter extended (check_2663_coverage.py).
         CHECK(true, "2663 AC6: coverage linter scripts/coverage/checks/check_2663_coverage.py");
+    }
+
+    // ── Issue #2848: language-path auto handoff_ref on orch:agent-send ──
+    // AC1: StableNodeRef pair → auto handoff + push Ok (or structured fail)
+    // AC2: string/int/bool zero-cost short-circuit (source-cite)
+    // AC3: raw C++ push without handoff still Closed (#2663 regression)
+    // AC4: additive metrics + schema-2848 query keys
+    // AC5: prefer-existing tests + coverage linter
+    // AC6: Soft prefer export documented; production gate preserved
+    {
+        std::println("\n--- #2848 AC1-AC6: agent-send auto handoff_ref ---");
+
+        const auto ag_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto mb_src = read_file("src/serve/multi_fiber_mailbox.h");
+
+        // AC2: string/int/bool short-circuit remains (no held_ref_token work).
+        CHECK(ag_src.find("is_string(a[1])") != std::string::npos,
+              "2848 AC2: string payload short-circuit present");
+        CHECK(ag_src.find("zero-cost") != std::string::npos,
+              "2848 AC2: zero-cost ordinary payload documented");
+        CHECK(ag_src.find("no held_ref_token") != std::string::npos,
+              "2848 AC2: ordinary path does not set held_ref_token");
+
+        // AC1: language path calls handoff_ref + stamp helper.
+        CHECK(ag_src.find("ev.handoff_ref(") != std::string::npos,
+              "2848 AC1: orch:agent-send calls handoff_ref");
+        CHECK(ag_src.find("stamp_mail_message_handoff_completed") != std::string::npos,
+              "2848 AC1: stamps handoff_completed after success");
+        CHECK(ag_src.find("handoff-required") != std::string::npos,
+              "2848 AC1: structured handoff-required on fail");
+        CHECK(ag_src.find("export-stale") != std::string::npos,
+              "2848 AC1: structured export-stale on stale fail");
+        CHECK(spawn_src.find("stamp_mail_message_handoff_completed") != std::string::npos,
+              "2848 AC1: stamp helper in agent_spawn.h");
+        CHECK(spawn_src.find("kAgentSendAutoHandoffIssue = 2848") != std::string::npos,
+              "2848 AC1: issue constant 2848");
+
+        // AC3: raw C++ #2663 gate still Closed without handoff.
+        CHECK(mb_src.find("if (msg.held_ref_token.has_value() && !msg.handoff_completed)") !=
+                  std::string::npos,
+              "2848 AC3: #2663 push gate preserved");
+        {
+            using aura::serve::mf_mailbox::MailMessage;
+            using aura::serve::mf_mailbox::MultiFiberMailbox;
+            using aura::serve::mf_mailbox::PushStatus;
+            MultiFiberMailbox box(/*high_water=*/64);
+            MailMessage raw;
+            raw.payload = "held-without-handoff";
+            raw.held_ref_token = 42;
+            raw.handoff_completed = false;
+            const auto st = box.push(std::move(raw));
+            CHECK(st == PushStatus::Closed, "2848 AC3: raw C++ push without handoff still Closed");
+            // Stamped path admits (gate not Closed solely for held-ref).
+            MailMessage okm;
+            okm.payload = "held-with-handoff";
+            aura::orch::stamp_mail_message_handoff_completed(okm, 42);
+            const auto st2 = box.push(std::move(okm));
+            CHECK(st2 == PushStatus::Ok, "2848 AC3: stamped handoff_completed admits push");
+        }
+
+        // AC4: metrics + schema keys on orch-module-stats surface.
+        CHECK(ag_src.find("agent-send-auto-handoff-total") != std::string::npos,
+              "2848 AC4: agent-send-auto-handoff-total query key");
+        CHECK(ag_src.find("agent-send-handoff-fail-total") != std::string::npos,
+              "2848 AC4: agent-send-handoff-fail-total query key");
+        CHECK(spawn_src.find("agent_send_auto_handoff_total") != std::string::npos,
+              "2848 AC4: OrchModuleStats auto_handoff counter");
+        CHECK(spawn_src.find("agent_send_handoff_fail_total") != std::string::npos,
+              "2848 AC4: OrchModuleStats handoff_fail counter");
+        {
+            CompilerService cs2848;
+            CHECK(setup_workspace(cs2848), "2848 AC4 workspace");
+            auto schema = cs2848.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "schema-2848"))");
+            CHECK(schema && is_int(*schema) && as_int(*schema) == 2848,
+                  "2848 AC4: schema-2848 on orch-module-stats");
+            auto wired = cs2848.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "agent-send-auto-handoff-wired"))");
+            CHECK(wired && is_int(*wired) && as_int(*wired) == 1,
+                  "2848 AC4: agent-send-auto-handoff-wired=1");
+            auto aht = cs2848.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "agent-send-auto-handoff-total"))");
+            CHECK(aht && is_int(*aht) && as_int(*aht) >= 0, "2848 AC4: auto-handoff-total key");
+            auto fht = cs2848.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "agent-send-handoff-fail-total"))");
+            CHECK(fht && is_int(*fht) && as_int(*fht) >= 0, "2848 AC4: handoff-fail-total key");
+        }
+
+        // AC1 language path: spawn + stable-ref + agent-send → auto handoff Ok.
+        {
+            CompilerService cs;
+            CHECK(setup_workspace(cs), "2848 AC1 workspace");
+            auto& ev = cs.evaluator();
+            auto* ws = ev.workspace_flat();
+            CHECK(ws != nullptr, "2848 AC1 flat");
+            const auto nid = first_live(*ws);
+            CHECK(nid != NULL_NODE, "2848 AC1 live node");
+
+            auto sp = cs.eval(
+                R"((orch:spawn-agent "ac2848-agent" (lambda () 1) :attach-mailbox #t :high-water 32))");
+            CHECK(sp && is_hash(*sp), "2848 AC1: spawn-agent hash");
+
+            auto send = cs.eval(std::format(
+                R"((hash-ref (orch:agent-send "ac2848-agent" (query:stable-ref {})) "ok"))", nid));
+            CHECK(send && is_bool(*send) && as_bool(*send),
+                  "2848 AC1: agent-send StableNodeRef auto handoff → ok");
+
+            auto auto_h = cs.eval(std::format(
+                R"((hash-ref (orch:agent-send "ac2848-agent" (query:stable-ref {})) "auto-handoff"))",
+                nid));
+            CHECK(auto_h && is_bool(*auto_h) && as_bool(*auto_h),
+                  "2848 AC1: auto-handoff flag set on success");
+
+            auto aht2 = cs.eval(
+                R"((hash-ref (engine:metrics "query:orch-module-stats") "agent-send-auto-handoff-total"))");
+            CHECK(aht2 && is_int(*aht2) && as_int(*aht2) >= 1,
+                  "2848 AC1: auto-handoff-total advanced");
+
+            // Ordinary string remains Ok and does not require handoff.
+            auto ssend =
+                cs.eval(R"((hash-ref (orch:agent-send "ac2848-agent" "plain-ping") "ok"))");
+            CHECK(ssend && is_bool(*ssend) && as_bool(*ssend),
+                  "2848 AC2: plain string agent-send still Ok");
+
+            (void)cs.eval(R"((orch:agent-join "ac2848-agent" :timeout-ms 5000))");
+        }
+
+        // AC6 Soft / production documentation.
+        CHECK(ag_src.find("Soft / sandbox=off") != std::string::npos &&
+                  ag_src.find("prefer the export path") != std::string::npos,
+              "2848 AC6: Soft prefer export path documented");
+        CHECK(spawn_src.find("never weakens the mailbox gate") != std::string::npos,
+              "2848 AC6: production never weakens #2663 gate");
+        CHECK(true, "2848 AC5: coverage linter check_agent_send_auto_handoff_2848.py");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);

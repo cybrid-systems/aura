@@ -293,6 +293,19 @@ def cmd_lint():
             "Issue #2663 mailbox handoff coverage linter failed — run python3 scripts/coverage/checks/check_2663_coverage.py"
         )
         return r
+    # Issue #2848: language-path auto handoff_ref for StableNodeRef
+    # orch:agent-send (#2663 residual). Soft prefer export; structured
+    # handoff-required on fail; #2663 raw push gate preserved.
+    asah_script = COVERAGE_CHECKS / "check_agent_send_auto_handoff_2848.py"
+    if not asah_script.exists():
+        fail(f"missing {asah_script}")
+        return 1
+    r = run([sys.executable, str(asah_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2848 agent-send auto handoff linter failed — run python3 scripts/coverage/checks/check_agent_send_auto_handoff_2848.py"
+        )
+        return r
     # Issue #2633: scope-local mailbox BP recent gauge coverage contract
     # (AgentSpec::bp_scope_id + note_mailbox_bp_recent_event(scope_id) overload
     # + spawn admit preflight + per-bucket decay + counters + map cap +

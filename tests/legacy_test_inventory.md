@@ -1352,7 +1352,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_stable_ref_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_stable_ref_batch.cpp
 - `tests/compiler/test_stable_ref_cow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #1912 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_stable_ref_cow_refresh_failclosed.cpp` (—) [domain_suite, theme_compiler] — AC1: unpinned cow_epoch mismatch → refresh_if_stale returns false;
-- `tests/compiler/test_stable_ref_export_validate.cpp` (—) [domain_suite, theme_compiler] — AC1: Agent export sites (export_ref, query:stable-ref, query:ensure-ref,
+- `tests/compiler/test_stable_ref_export_validate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Agent export sites (export_ref, query:stable-ref, query:ensure-ref,
 - `tests/compiler/test_stable_ref_pin_lifecycle.cpp` (—) [domain_suite, theme_compiler] — AC1: EDSL pin-stable-refs / unpin-stable-refs / with-pinned registered
 - `tests/compiler/test_stable_ref_provenance_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_stable_ref_provenance_batch.cpp — test_stable_ref 3-merge (R19 phase 20).
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp` (—) [domain_suite, theme_serve] — test_stable_ref_provenance_fiber_cow.cpp — Merged #457/#497/#527/#540/#549 + #551/#552 (#1978).
