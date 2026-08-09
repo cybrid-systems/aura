@@ -1371,6 +1371,18 @@ def cmd_lint():
             "Issue #2822 run_one epoch default linter failed — run python3 scripts/coverage/checks/check_run_one_epoch_default_2822.py"
         )
         return r
+    # Issue #2823: run_one performs fiber yield action when policy is true.
+    # ac2823 in test_run_one_yield_hook_actual.
+    roy_script = COVERAGE_CHECKS / "check_run_one_yield_hook_actual_2823.py"
+    if not roy_script.exists():
+        fail(f"missing {roy_script}")
+        return 1
+    r = run([sys.executable, str(roy_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2823 run_one yield hook actual linter failed — run python3 scripts/coverage/checks/check_run_one_yield_hook_actual_2823.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

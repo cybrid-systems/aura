@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 817 | Preferred destination suites |
-| **Total scanned** | **817** | |
+| `tests/core/test_*.cpp` | 818 | Preferred destination suites |
+| **Total scanned** | **818** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 83 | 83 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 236 | 236 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 100 | 100 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 21 | 21 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 52 | 52 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
@@ -826,6 +826,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_root_remap_pass.cpp`
 - `tests/compiler/test_root_remap_pin_contract_unified.cpp`
 - `tests/compiler/test_run_one_epoch_default.cpp`
+- `tests/compiler/test_run_one_yield_hook_actual.cpp`
 - `tests/compiler/test_runtime_concurrent_full_cycle_chaos.cpp`
 - `tests/serve/test_runtime_mutation_boundary_steal_safety.cpp`
 - `tests/compiler/test_runtime_observability_correlated_stats.cpp`
@@ -1371,13 +1372,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (100)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (101)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (100)
+#### domain/ (101)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1454,6 +1455,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_residual_defer_steal_hard_and.cpp` (—) [domain_suite, theme_serve] — AC1: Hard + residual non-zero after clear → fiber Cancel+Done; hard-fail +1
 - `tests/serve/test_residual_force_safepoint.cpp` (—) [domain_suite, theme_serve] — Issue #2636 — residual reclaim body-age + env-opt-in force-safepoint
 - `tests/core/test_restore_children_structural_lock.cpp` (—) [domain_suite, theme_core] — AC1: restore_children without external guard restores correctly (self-locks)
+- `tests/compiler/test_run_one_yield_hook_actual.cpp` (—) [domain_suite, theme_compiler] — AC1: source splits policy hook vs fiber yield action; cites #2823
 - `tests/compiler/test_runtime_concurrent_full_cycle_chaos.cpp` (—) [domain_suite, theme_compiler] — test_runtime_concurrent_full_cycle_chaos.cpp — Issue #755:
 - `tests/serve/test_runtime_mutation_boundary_steal_safety.cpp` (—) [domain_suite, theme_serve] — test_runtime_mutation_boundary_steal_safety.cpp — Issue #588:
 - `tests/serve/test_safe_yield_orchestration.cpp` (—) [domain_suite, theme_serve] — Issue #1504/#1591/#1635 (#1978 renamed): issue# moved from filename to header.

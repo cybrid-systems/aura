@@ -702,8 +702,11 @@ public:
                 return false;
             return static_cast<CompilerService*>(raw)->is_shape_stable(std::string(name));
         });
-        // Issue #494: yield between pass-pipeline stages when running on a fiber.
+        // Issue #494 / #2823: policy + action for pass-pipeline cooperative yield.
+        // Policy: true when on a fiber. Action: Fiber::yield(PassPipeline).
         aura::compiler::set_pipeline_yield_hook(&CompilerService::pipeline_yield_trampoline);
+        aura::compiler::set_pipeline_fiber_yield_action(
+            &CompilerService::pipeline_fiber_yield_action);
         evaluator_.set_type_registry(&type_registry_);
         // Issue #2148: precise meet lattice hits → CompilerMetrics
         // (also re-wired on each typecheck path with poly metrics).
@@ -12765,12 +12768,18 @@ public:
     }
     void bump_shape_fiber_refresh() noexcept { shape::record_shape_fiber_refresh(); }
 
-    // Issue #494: yield between pass-pipeline stages when on a fiber.
+    // Issue #2823: policy only — true when a fiber should yield between
+    // pass stages. The cooperative yield itself is pipeline_fiber_yield_action
+    // (invoked by run_one when this returns true).
     static bool pipeline_yield_trampoline() noexcept {
+        return aura::serve::g_current_fiber != nullptr;
+    }
+
+    // Issue #2823: perform cooperative PassPipeline yield (action half).
+    static void pipeline_fiber_yield_action() noexcept {
         if (!aura::serve::g_current_fiber)
-            return false;
+            return;
         aura::serve::Fiber::yield(aura::serve::YieldReason::PassPipeline);
-        return true;
     }
 
     // Issue #657 / #984: lowering + JIT compiler-core incremental hooks.
