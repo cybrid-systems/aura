@@ -92,6 +92,19 @@ g_enable_soa_dual_emit_skip_reset_total_atomic() noexcept {
     return v;
 }
 
+// Issue #2825: dual-emit stamped a non-zero per-instruction source_marker.
+export inline std::atomic<std::uint64_t>&
+g_lowering_soa_source_marker_stamped_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+// Issue #2825: AoS vs SoA source_marker disagree after dual-emit (parity fail).
+export inline std::atomic<std::uint64_t>&
+g_lowering_soa_source_marker_mismatch_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
 // Issue #2520 / #2618: residual AoS bridge is test/opt-in only under
 // AURA_IR_SOA_ONLY. Production packs must not call to_aos_view /
 // to_aos_module without AURA_ALLOW_AOS_BRIDGE (compile-time) or
@@ -279,6 +292,9 @@ export struct IRFunctionSoA {
     std::vector<std::uint32_t> narrow_evidence_;
     // Issue #746: CastOp coercion type_tag (mirrors operands[2] on AoS CastOp).
     std::vector<std::uint8_t> coercion_tags_;
+    // Issue #2825: per-instruction SyntaxMarker (0=User, 1=MacroIntroduced).
+    // Mirrors IRInstruction::source_marker for AoS↔SoA hygiene parity.
+    std::vector<std::uint8_t> source_markers_;
 
     // Basic blocks: ranges into the SoA columns
     std::vector<BasicBlockSoA> blocks_;
@@ -340,6 +356,7 @@ export struct IRFunctionSoA {
         adt_variant_ids_.reserve(n);
         narrow_evidence_.reserve(n);
         coercion_tags_.reserve(n);
+        source_markers_.reserve(n); // Issue #2825
     }
 
     // Issue #196: per-block dirty tracking. The bitmask is
@@ -756,6 +773,12 @@ export struct IRInstructionView {
     constexpr std::uint32_t adt_variant_id() const { return func->adt_variant_ids_[idx]; }
     constexpr std::uint32_t narrow_evidence() const { return func->narrow_evidence_[idx]; }
     constexpr std::uint8_t coercion_tag() const { return func->coercion_tags_[idx]; }
+    // Issue #2825: per-instruction hygiene marker (0=User, 1=MacroIntroduced).
+    constexpr std::uint8_t source_marker() const {
+        if (!func || idx >= func->source_markers_.size())
+            return 0;
+        return func->source_markers_[idx];
+    }
 
     // Convenience: structured operand access. Many call sites
     // want operands as a span. We allocate a tiny stack array
@@ -800,13 +823,15 @@ export struct IRModuleV2 {
     // Issue #380: the instruction_dirty_ column gets a 0 byte
     // appended (new instructions are clean — they were just
     // added, no cached derivation to invalidate).
+    // Issue #2825: source_marker is the last optional param (default 0) so
+    // existing call sites keep compiling; dual-emit passes last_aos.source_marker.
     std::uint32_t add_instruction(std::size_t func_idx, aura::ir::IROpcode opcode,
                                   std::array<std::uint32_t, 4> operands = {},
                                   std::uint32_t source_node_id = 0, std::uint32_t type_id = 0,
                                   std::uint32_t shape_id = 0, std::uint8_t linear_state = 0,
                                   std::uint32_t adt_variant_id = 0,
-                                  std::uint32_t narrow_evidence = 0,
-                                  std::uint8_t coercion_tag = 0) {
+                                  std::uint32_t narrow_evidence = 0, std::uint8_t coercion_tag = 0,
+                                  std::uint8_t source_marker = 0) {
         auto& func = functions[func_idx];
         auto idx = static_cast<std::uint32_t>(func.size());
         func.opcodes_.push_back(opcode);
@@ -821,6 +846,7 @@ export struct IRModuleV2 {
         func.adt_variant_ids_.push_back(adt_variant_id);
         func.narrow_evidence_.push_back(narrow_evidence);
         func.coercion_tags_.push_back(coercion_tag);
+        func.source_markers_.push_back(source_marker); // Issue #2825
         // Issue #380: new instruction starts clean. The mark_*_dirty
         // call later will flip this to 1 if the cached IR for this
         // instruction needs re-derivation.
@@ -1058,6 +1084,9 @@ export inline aura::ir::IRFunction to_aos_view(const IRFunctionSoA& soa) {
             instr.linear_ownership_state = soa.linear_ownership_states_[i];
             instr.adt_variant_id = soa.adt_variant_ids_[i];
             instr.narrow_evidence = soa.narrow_evidence_[i];
+            // Issue #2825: per-instruction hygiene marker (default 0 if column short).
+            if (i < soa.source_markers_.size())
+                instr.source_marker = soa.source_markers_[i];
             b.instructions.push_back(std::move(instr));
         }
         f.blocks.push_back(std::move(b));
