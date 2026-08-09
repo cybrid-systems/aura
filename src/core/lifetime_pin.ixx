@@ -34,6 +34,9 @@ using ::aura::core::lifetime::kLifetimePinPhase;
 
 // Stats + process atomics
 using ::aura::core::lifetime::apply_general_object_pin_required_env;
+using ::aura::core::lifetime::clear_general_object_pin_required_breach;
+using ::aura::core::lifetime::g_general_object_pin_required_breach;
+using ::aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total;
 using ::aura::core::lifetime::g_general_object_pin_required_enforced_total;
 using ::aura::core::lifetime::g_general_object_pin_required_pref;
 using ::aura::core::lifetime::g_lifetime_pin_stats;
@@ -46,6 +49,9 @@ using ::aura::core::lifetime::g_moving_compact_pin_contract_fail_total;
 using ::aura::core::lifetime::g_moving_compact_pin_hits_total;
 using ::aura::core::lifetime::g_moving_compact_remap_us_total;
 using ::aura::core::lifetime::g_pin_registry_lock_wait_us_total;
+using ::aura::core::lifetime::general_object_pin_required_active;
+using ::aura::core::lifetime::general_object_pin_required_breach_active;
+using ::aura::core::lifetime::kGeneralObjectPinRequiredProdDefaultIssue;
 using ::aura::core::lifetime::LifetimePinStats;
 using ::aura::core::lifetime::pin_registry_lock_wait_us_total;
 
@@ -96,6 +102,7 @@ using ::aura::core::lifetime::pin_or_fail;
 using ::aura::core::lifetime::validate_general_object;
 using ::aura::core::lifetime::wire_general_object_create_pair;
 using ::aura::core::lifetime::wire_general_object_create_pair_or_exempt;
+using ::aura::core::lifetime::wire_general_object_create_pair_or_required_fail;
 
 // Macro re-export for module TUs that import this module.
 // GENERAL_OBJECT_PIN_EXEMPT is a preprocessor macro from the header GMF;

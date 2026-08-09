@@ -1581,6 +1581,19 @@ def cmd_lint():
             "Issue #2839 side-effect + fiber principal linter failed — run python3 scripts/coverage/checks/check_side_effect_fiber_principal_2839.py"
         )
         return r
+    # Issue #2840: GeneralObjectPin required densify fail-closed residual
+    # (#2597/#2665: pref locked but callers void-cast wire + densify
+    # unguarded). Sticky breach + Moving gate + required-fail callers.
+    goprd_script = COVERAGE_CHECKS / "check_general_object_pin_required_prod_default_2840.py"
+    if not goprd_script.exists():
+        fail(f"missing {goprd_script}")
+        return 1
+    r = run([sys.executable, str(goprd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2840 GeneralObjectPin required densify fail-closed linter failed — run python3 scripts/coverage/checks/check_general_object_pin_required_prod_default_2840.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

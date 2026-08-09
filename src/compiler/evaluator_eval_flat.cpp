@@ -2404,8 +2404,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     // Issue #2363: GeneralObjectPin adopt (site 2/7) — batch :replace-pattern.
     aura::core::lifetime::GeneralObjectPin pat_pool_pin;
     aura::core::lifetime::GeneralObjectPin pat_flat_pin;
-    (void)aura::core::lifetime::wire_general_object_create_pair(
-        pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool), static_cast<void*>(pat_flat));
+    // Issue #2840: production required-mode fail-closed on pin wire.
+    if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+            pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool), static_cast<void*>(pat_flat)))
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :replace-pattern: GeneralObjectPin required under production (#2840)"});
     auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
     if (!pat_pr.success || pat_pr.root == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
@@ -3816,9 +3820,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Issue #2363: GeneralObjectPin adopt (site 3/7) — require import.
                                 aura::core::lifetime::GeneralObjectPin ipool_pin;
                                 aura::core::lifetime::GeneralObjectPin iflat_pin;
-                                (void)aura::core::lifetime::wire_general_object_create_pair(
-                                    ipool_pin, iflat_pin, static_cast<void*>(ipool),
-                                    static_cast<void*>(iflat));
+                                // Issue #2840: production required-mode fail-closed.
+                                if (!aura::core::lifetime::
+                                        wire_general_object_create_pair_or_required_fail(
+                                            ipool_pin, iflat_pin, static_cast<void*>(ipool),
+                                            static_cast<void*>(iflat))) {
+                                    return std::unexpected(
+                                        Diagnostic{ErrorKind::InternalError,
+                                                   "import: GeneralObjectPin required under "
+                                                   "production (#2840)"});
+                                }
                                 auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
                                 if (!pr.success || pr.root == aura::ast::NULL_NODE) {
                                     return std::unexpected(Diagnostic{ErrorKind::ParseError,

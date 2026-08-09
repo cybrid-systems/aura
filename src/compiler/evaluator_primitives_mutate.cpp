@@ -3907,8 +3907,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Wire counter bumps once per site via wire_general_object_create_pair.
         aura::core::lifetime::GeneralObjectPin pat_pool_pin;
         aura::core::lifetime::GeneralObjectPin pat_flat_pin;
-        (void)aura::core::lifetime::wire_general_object_create_pair(
-            pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool), static_cast<void*>(pat_flat));
+        // Issue #2840: under production required mode, pin failure fails
+        // closed (no densify of unpinned intermediate). Soft: observe-only.
+        if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+                pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool),
+                static_cast<void*>(pat_flat))) {
+            ok = false;
+            return mev("general-object-pin-required",
+                       "GeneralObjectPin required under production (#2840)");
+        }
         auto pat_pr = aura::parser::parse_to_flat(pattern_str, *pat_flat, *pat_pool);
         if (!pat_pr.success || pat_pr.root == NULL_NODE) {
             ok = false;

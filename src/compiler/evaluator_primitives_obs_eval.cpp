@@ -1891,6 +1891,18 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                     g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0 ? 1 : 0);
                 insert_kv("schema-2665", 2665);
                 insert_kv("issue-2665", 2665);
+                // Issue #2840: densify fail-closed on required pin breach.
+                using aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total;
+                using aura::core::lifetime::general_object_pin_required_breach_active;
+                insert_kv("general-object-pin-required-breach",
+                          general_object_pin_required_breach_active() ? 1 : 0);
+                insert_kv("general-object-pin-required-breach-densify-fail-total",
+                          static_cast<std::int64_t>(
+                              g_general_object_pin_required_breach_densify_fail_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("general-object-pin-required-prod-default-wired", 1);
+                insert_kv("schema-2840", 2840);
+                insert_kv("issue-2840", 2840);
             }
             // Issue #2709: GeneralObjectPin mandatory coverage beyond
             // inventory-of-7. Closes the partial-adoption gap by replacing

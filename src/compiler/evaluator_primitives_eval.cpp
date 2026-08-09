@@ -349,9 +349,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Issue #2363: GeneralObjectPin adopt (site 6/7) — load.
         aura::core::lifetime::GeneralObjectPin load_pool_pin;
         aura::core::lifetime::GeneralObjectPin load_flat_pin;
-        (void)aura::core::lifetime::wire_general_object_create_pair(load_pool_pin, load_flat_pin,
-                                                                    static_cast<void*>(pool_ptr),
-                                                                    static_cast<void*>(flat_ptr));
+        // Issue #2840: production required-mode fail-closed on pin wire.
+        if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+                load_pool_pin, load_flat_pin, static_cast<void*>(pool_ptr),
+                static_cast<void*>(flat_ptr)))
+            return make_void();
 
         auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
@@ -398,8 +400,10 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // Issue #2363: GeneralObjectPin adopt (site 7/7) — eval-expr.
         aura::core::lifetime::GeneralObjectPin expr_pool_pin;
         aura::core::lifetime::GeneralObjectPin expr_flat_pin;
-        (void)aura::core::lifetime::wire_general_object_create_pair(
-            expr_pool_pin, expr_flat_pin, static_cast<void*>(pool), static_cast<void*>(flat));
+        // Issue #2840: production required-mode fail-closed on pin wire.
+        if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+                expr_pool_pin, expr_flat_pin, static_cast<void*>(pool), static_cast<void*>(flat)))
+            return make_void();
         auto root = ev.data_to_flat(a[0], *flat, *pool, 0);
         if (root == aura::ast::NULL_NODE)
             return make_void();

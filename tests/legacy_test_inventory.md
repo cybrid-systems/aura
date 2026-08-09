@@ -1909,7 +1909,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_cross_cow_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_cross_cow_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_eval_current_no_auto_fix.cpp` (—) [domain_suite, theme_compiler] — AC1: last form lambda → closure returned unchanged
 - `tests/orch/test_failure_policy_bridge.cpp` (—) [large, domain_suite, theme_orch] — Issue #2756 — WorkflowFailurePolicy composition (batch + AgentScope +
-- `tests/core/test_general_object_pin_coverage_gate.cpp` (—) [domain_suite, theme_core] — AC1: Linter fails when a listed inventory site lacks wire call
+- `tests/core/test_general_object_pin_coverage_gate.cpp` (—) [large, domain_suite, theme_core] — AC1: Linter fails when a listed inventory site lacks wire call
 - `tests/core/test_hash_iter_invalidation.cpp` (—) [domain_suite, theme_core] — test_hash_iter_invalidation.cpp - Issue #1398:
 - `tests/compiler/test_hash_table_grow.cpp` (—) [domain_suite, theme_compiler] — AC1: (hash) with 16 k/v pairs retains all keys
 - `tests/compiler/test_hot_pass_contract_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_hot_pass_contract_batch.cpp — thematic multi-TU batch
