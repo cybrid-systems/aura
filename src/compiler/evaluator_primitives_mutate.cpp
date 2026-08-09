@@ -3119,6 +3119,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.workspace_flat_ ? static_cast<std::uint64_t>(
                                          ev.workspace_flat_->all_mutations().size() > 0 ? 1 : 0)
                                    : 0;
+            // Issue #2814 M7 audit: missing invariant enforcement link
+            // before trail write. Call note_invariant_enforcement_ran
+            // (or _skipped) before finish_mutate_hard_gate to close the gap.
+            note_invariant_enforcement_ran(nchg);
             if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
                 ok = false;
                 return mev("invariant-denied",
