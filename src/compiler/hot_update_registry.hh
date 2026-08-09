@@ -102,6 +102,26 @@ public:
     // Test isolation: reset streak / totals / window defaults without
     // touching force_jit_regions_mask_ (use on_reload_success for that).
     void reset_force_jit_repromote_for_test() noexcept;
+    // Issue #2855: env-cached force-drain deadline (distinct semantics from
+    // #2748 AURA_DEFERRED_REEMIT_DEADLINE_MS which only counts deadline_hit;
+    // this gates the actual force-drain body). Default 0 = disabled
+    // (observe-only — no force drain). When > 0: under production lock,
+    // age >= this triggers force_drain_deferred_reemit() at the next
+    // safe thread context (on_reemit_pipeline_call amortized site, never
+    // steal path).
+    [[nodiscard]] static std::uint64_t force_drain_deadline_ms() noexcept;
+    [[nodiscard]] static std::uint64_t reemit_deferred_force_drain_deadline_hit_env_read() noexcept;
+    inline static std::atomic<std::uint64_t> g_force_drain_deadline_hit_total_{
+        0}; // mirrors deadline_hit_total_; force gate
+    // Issue #2855 file-scope atomics (mirror #2854 / #2853 patterns).
+    inline std::atomic<std::uint64_t> g_reemit_deferred_force_drain_total_{0};
+    inline std::atomic<std::uint64_t> g_reemit_deferred_force_drain_skipped_reentered_total_{0};
+    inline std::atomic<std::uint64_t> g_reemit_deferred_force_drain_double_prevented_total_{0};
+    // CAS re-entry guard — single force-drain body in flight at a time
+    // across the whole process (thread-safe via atomic_bool CAS). Reset to
+    // false after the body returns (RAII-like via scoped flag holder).
+    inline std::atomic<bool> g_reemit_force_drain_in_flight_{false};
+    inline constexpr int kReemitForceDrainIssue = 2855;
     // Issue #2094: unified StormLevel facade. Combines
     // HotUpdateRegistry's sliding-window deopt storm (global reemit
     // throttle) with ShapeProfiler's shape-storm detector into a
@@ -306,6 +326,36 @@ public:
     [[nodiscard]] std::uint64_t deferred_reemit_age_max_observed_ms() const noexcept;
     [[nodiscard]] std::uint64_t deferred_reemit_deadline_hit_total() const noexcept;
     void reset_reemit_boundary_handshake_for_test() noexcept;
+
+    // Issue #2855: production deferred-reemit deadline force-drain.
+    // The age-observability only-counted the #2748 path; this surfaces a
+    // bounded recovery window so BoundaryExit delays (long fiber work,
+    // cancelled paths, pathological interleavings) cannot keep AOT/JIT
+    // generation-behind for unbounded wall time under production Defer.
+    // The force-drain hook drives drain_pending_recovery(DrainReason::Explicit)
+    // when production_defaults_active + sandbox != off + has_deferred_reemit()
+    // + age >= force_deadline_ms + soft_reemit_boundary_depth() == 0.
+    // CAS re-entry guard (AC4 storm re-entry) — only one body in flight;
+    // concurrent BoundaryExit + force-drain → at most one body, double-drain
+    // prevented counter may rise. Soft / force_deadline=0 → observe-only
+    // (#2748 behavior preserved). NOT invoked from steal-complete (#2715
+    // regression guard — production steal path must not foreign-drain).
+    [[nodiscard]] bool should_force_drain_deferred_reemit() const noexcept;
+    // Returns true if a force-drain body actually ran (caller can use this
+    // to skip subsequent drain_pending_recovery(BoundaryExit) on the same
+    // exit when the force-drain already cleared pending). Exchange-not-check
+    // semantics — pending clear + force-drain body run are atomic via the
+    // CAS re-entry guard below.
+    [[nodiscard]] bool force_drain_deferred_reemit() noexcept;
+    [[nodiscard]] std::uint64_t reemit_deferred_force_drain_total() const noexcept;
+    [[nodiscard]] std::uint64_t
+    reemit_deferred_force_drain_skipped_reentered_total() const noexcept;
+    [[nodiscard]] std::uint64_t reemit_deferred_force_drain_double_prevented_total() const noexcept;
+    // Test reset — clears the 3 #2855 cumulative counters + CAS re-entry
+    // guard + deadline_hit_total (so back-to-back AC tests don't observe
+    // stale state). Does NOT touch max_observed (lifetime peak — same
+    // semantics as #2748 reset_reemit_boundary_handshake_for_test).
+    void reset_reemit_force_drain_for_test() noexcept;
 
     // Issue #2690: unified PendingRecovery drain. Both
     // `maybe_storm_clear_health_pass` (StormClear) and outermost

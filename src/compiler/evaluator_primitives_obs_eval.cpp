@@ -6312,6 +6312,51 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"ownership_rebind_same_tx_wired", make_int(1)},
                 {"schema-2854", make_int(2854)},
                 {"issue-2854", make_int(2854)},
+                // Issue #2855: production deferred-reemit deadline force-drain
+                // (bounded native hole). Additive cumulative counters + last-stamp
+                // observability so Agents can assert the force gate is engaged
+                // under production Defer (env AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS).
+                // Force-drain body fires from on_reemit_pipeline_call (NOT steal path
+                // per #2715 regression guard); drives the deferred-reemit recovery
+                // branch directly with CAS re-entry guard. Exchange-not-check semantics:
+                // concurrent BoundaryExit + force-drain → at most one body, double-
+                // drain prevented counter may rise. Preserve #2748/#2715/#2690/#2604
+                // surfaces (regression check).
+                {"reemit-deferred-force-drain-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::hot_update_registry().reemit_deferred_force_drain_total()))},
+                {"reemit_deferred_force_drain_total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::hot_update_registry().reemit_deferred_force_drain_total()))},
+                {"reemit-deferred-force-drain-skipped-reentered-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::hot_update_registry()
+                         .reemit_deferred_force_drain_skipped_reentered_total()))},
+                {"reemit_deferred_force_drain_skipped_reentered_total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::hot_update_registry()
+                         .reemit_deferred_force_drain_skipped_reentered_total()))},
+                {"reemit-deferred-force-drain-double-prevented-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::hot_update_registry()
+                         .reemit_deferred_force_drain_double_prevented_total()))},
+                {"reemit_deferred_force_drain_double_prevented_total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::hot_update_registry()
+                         .reemit_deferred_force_drain_double_prevented_total()))},
+                // Env-cached deadline (0 = disabled, observe-only #2748 preserved).
+                // Surfaces to Agent dashboards so they can distinguish "force gate
+                // engaged" from "observe-only context" without re-parsing env.
+                {"reemit-deferred-force-drain-deadline-ms",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::HotUpdateRegistry::force_drain_deadline_ms()))},
+                {"reemit_deferred_force_drain_deadline_ms",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::HotUpdateRegistry::force_drain_deadline_ms()))},
+                {"reemit-deferred-force-drain-wired", make_int(1)},
+                {"reemit_deferred_force_drain_wired", make_int(1)},
+                {"schema-2855", make_int(2855)},
+                {"issue-2855", make_int(2855)},
                 // Issue #2405: predictive estimate surface (separate pure query);
                 // discovery key here so Agents find hold-estimate from hold-stats.
                 {"hold-estimate-wired", make_int(1)},
