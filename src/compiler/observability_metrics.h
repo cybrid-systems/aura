@@ -310,6 +310,9 @@ struct CompilerMetrics {
     //   - cascade_path2_index_nodes_total: Define nodes indexed on last path2
     std::atomic<std::uint64_t> cascade_path2_lookup_total{0};
     std::atomic<std::uint64_t> cascade_path2_index_nodes_total{0};
+    // Issue #2817: ghost names (affected but no live Define) skipped for
+    // defuse_touch — avoids stale defuse index entries for non-existent Defines.
+    std::atomic<std::uint64_t> cascade_ghost_name_touch_total{0};
     // Issue #2762: post-mutate incremental macro re-expand under
     // MutationBoundaryGuard cascade (#165/#2096 residual).
     //   - post_mutate_macro_reexpand_total: call sites re-expanded

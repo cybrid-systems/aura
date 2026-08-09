@@ -1299,6 +1299,18 @@ def cmd_lint():
             "Issue #2816 cascade path2 define index linter failed — run python3 scripts/coverage/checks/check_cascade_path2_define_index_2816.py"
         )
         return r
+    # Issue #2817: cascade ghost-name defuse_touch skip (no live Define).
+    # ac2817 in test_cascade_defuse_touch_null_define.
+    cgn_script = COVERAGE_CHECKS / "check_cascade_defuse_touch_null_define_2817.py"
+    if not cgn_script.exists():
+        fail(f"missing {cgn_script}")
+        return 1
+    r = run([sys.executable, str(cgn_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2817 cascade ghost-name defuse_touch linter failed — run python3 scripts/coverage/checks/check_cascade_defuse_touch_null_define_2817.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
