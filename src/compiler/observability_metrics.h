@@ -3235,6 +3235,31 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutate_replace_subtree_hygiene_rejects_total{0};  // #2863
     std::atomic<std::uint64_t> mutate_replace_subtree_restamp_nodes_total{0};    // #2863
 
+    // Issue #2864: mutate:remove-node full safety contract metrics
+    // (refine #1688 / #1689 / #1281 / #369 / #2863 sibling). Tracks
+    // the 5 non-negotiable safety contract surfaces mandated by
+    // #2864 AC #7 ("observability: edges_removed,
+    // multi_parent_count, rollback_fidelity, densify_triggered"):
+    //   - mutate_remove_node_calls_total: every primitive entry
+    //       (all paths via MutationBoundaryGuard).
+    //   - mutate_remove_node_edges_removed_total: parent-edge
+    //       removals (DAG multi-parent case bumps by N).
+    //   - mutate_remove_node_multi_parent_count_total: # of times
+    //       a target had 2+ parents (DAG path exercised).
+    //   - mutate_remove_node_rollback_fidelity_total: fine-rollback
+    //       fired on failure (parse / hygiene / linear / type).
+    //   - mutate_remove_node_densify_triggered_total: post-mutate
+    //       densify cascade fired (external root topology change).
+    // Distinct from existing #2863 mutate_replace_subtree_* (sibling
+    // mutate:replace-subtree contract). These are the #2864
+    // remove-node contract surfaces covering entry + edges removed +
+    // multi-parent count + rollback fidelity + densify triggers.
+    std::atomic<std::uint64_t> mutate_remove_node_calls_total{0};              // #2864
+    std::atomic<std::uint64_t> mutate_remove_node_edges_removed_total{0};      // #2864
+    std::atomic<std::uint64_t> mutate_remove_node_multi_parent_count_total{0}; // #2864
+    std::atomic<std::uint64_t> mutate_remove_node_rollback_fidelity_total{0};  // #2864
+    std::atomic<std::uint64_t> mutate_remove_node_densify_triggered_total{0};  // #2864
+
     // Issue #2170: LayoutStamp publish + last-stamp fields (P1
     // MemorySafety-Review / Epoch). Backs the extended
     // (query:stable-ref-stats-hash) keys layout-stamp-*.
