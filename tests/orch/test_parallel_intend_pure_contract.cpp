@@ -734,6 +734,110 @@ int run_test_parallel_intend_pure_contract() {
               "2662 AC7: pure_unlocked_applies monotonic under 8+ fiber stress");
     }
 
+    // ── Issue #2838: production default force-lock-on-violation ─────────────
+    // AC1: production_defaults + flag false → effective on; Soft/dev_off → off
+    // AC2: env opt-out is documented (source-cite; env is process-lifetime
+    //      cached so we don't mutate getenv in-process).
+    // AC3: additive counter + query keys schema-2838
+    // AC4: README production-default wording (no transactional isolation)
+    // AC5: extend this test + linter; no invent test_issue_2838.cpp
+    // AC6: pure #f path zero cost (resolve only under pure_mode)
+    {
+        std::println("\n--- #2838 AC1: resolve pure decision matrix ---");
+        using aura::orch::resolve_parallel_intend_force_lock_on_violation;
+        // Production + host flag false + !dev_off → effective on, default applied.
+        {
+            const auto d = resolve_parallel_intend_force_lock_on_violation(
+                /*host_flag=*/false, /*production_defaults=*/true, /*dev_off=*/false);
+            // Env may be set in the process — only assert the pure matrix when
+            // env is unset (pref == -1). When env is force-on/off, document it.
+            const int env = aura::orch::parallel_intend_force_lock_env_pref();
+            if (env == -1) {
+                CHECK(d.effective, "2838 AC1: production + flag false → effective on");
+                CHECK(d.default_applied, "2838 AC1: production inject marks default_applied");
+            } else if (env == 0) {
+                CHECK(!d.effective, "2838 AC1: env=0 opts out under production");
+                CHECK(!d.default_applied, "2838 AC1: env=0 is not default_applied");
+            } else {
+                CHECK(d.effective, "2838 AC1: env=1 force-on under production");
+                CHECK(!d.default_applied, "2838 AC1: env=1 is not default_applied");
+            }
+        }
+        // Soft / sandbox=off → off unless host flag.
+        {
+            const auto d = resolve_parallel_intend_force_lock_on_violation(
+                /*host_flag=*/false, /*production_defaults=*/true, /*dev_off=*/true);
+            const int env = aura::orch::parallel_intend_force_lock_env_pref();
+            if (env == -1) {
+                CHECK(!d.effective, "2838 AC1: Soft/dev_off + flag false → effective off");
+                CHECK(!d.default_applied, "2838 AC1: Soft does not mark default_applied");
+            }
+        }
+        // Host flag true under Soft → on (host left alone).
+        {
+            const auto d = resolve_parallel_intend_force_lock_on_violation(
+                /*host_flag=*/true, /*production_defaults=*/false, /*dev_off=*/true);
+            const int env = aura::orch::parallel_intend_force_lock_env_pref();
+            if (env != 0) {
+                CHECK(d.effective, "2838 AC1: host flag true under Soft → effective on");
+                CHECK(!d.default_applied, "2838 AC1: host flag is not default_applied");
+            }
+        }
+        // Non-production + flag false + !dev_off → off.
+        {
+            const auto d = resolve_parallel_intend_force_lock_on_violation(
+                /*host_flag=*/false, /*production_defaults=*/false, /*dev_off=*/false);
+            const int env = aura::orch::parallel_intend_force_lock_env_pref();
+            if (env == -1) {
+                CHECK(!d.effective, "2838 AC1: non-production + flag false → off");
+                CHECK(!d.default_applied, "2838 AC1: non-production no default_applied");
+            }
+        }
+    }
+
+    {
+        std::println("\n--- #2838 AC3/AC4/AC5/AC6: surface + README + zero-cost pure #f ---");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto ag = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto rd = read_file("src/orch/README.md");
+        const auto build = read_file("build.py");
+        CHECK(spawn_src.find("resolve_parallel_intend_force_lock_on_violation") !=
+                  std::string::npos,
+              "2838 AC5: resolve helper in agent_spawn.h");
+        CHECK(spawn_src.find("parallel_intend_force_lock_default_applied_total") !=
+                  std::string::npos,
+              "2838 AC3: default-applied counter declared");
+        CHECK(spawn_src.find("AURA_PARALLEL_INTEND_FORCE_LOCK") != std::string::npos,
+              "2838 AC2: env opt-out name in resolve helper");
+        CHECK(ag.find("force_lock_on_violation_policy") != std::string::npos,
+              "2838 AC1: per-batch effective policy field");
+        CHECK(ag.find("if (pure_mode)") != std::string::npos &&
+                  ag.find("resolve_parallel_intend_force_lock_on_violation") != std::string::npos,
+              "2838 AC6: resolve only under pure_mode (zero cost on :pure #f)");
+        CHECK(ag.find("schema-2838") != std::string::npos, "2838 AC3: schema-2838 on query");
+        CHECK(ag.find("parallel-intend-force-lock-default-applied-total") != std::string::npos,
+              "2838 AC3: query key default-applied-total");
+        CHECK(ag.find("schema-2662") != std::string::npos, "2838 AC3: #2662 schema preserved");
+        CHECK(rd.find("Issue #2838") != std::string::npos || rd.find("#2838") != std::string::npos,
+              "2838 AC4: README cites #2838");
+        CHECK(rd.find("AURA_PARALLEL_INTEND_FORCE_LOCK=0") != std::string::npos,
+              "2838 AC4: README documents env opt-out");
+        CHECK(rd.find("production default") != std::string::npos ||
+                  rd.find("**production") != std::string::npos,
+              "2838 AC4: README documents production default");
+        // No transactional isolation wording on the #2838 path.
+        CHECK(rd.find("never promises transactional isolation") != std::string::npos ||
+                  rd.find("Best-\neffort hardening, not isolation") != std::string::npos ||
+                  rd.find("not isolation") != std::string::npos,
+              "2838 AC4: README keeps no-transactional-isolation disclaimer");
+        CHECK(build.find("check_parallel_intend_force_lock_prod_default_2838") != std::string::npos,
+              "2838 AC5: build.py wires #2838 linter");
+        std::ifstream invent("tests/orch/test_issue_2838.cpp");
+        if (!invent)
+            invent.open("../tests/orch/test_issue_2838.cpp");
+        CHECK(!invent.good(), "2838 AC5: no test_issue_2838.cpp (#81967)");
+    }
+
     // ── Issue #2746: parallel_intend + region concurrent mutate ──
     {
         std::println("\n--- #2746 AC1: TaskSpec.region_key + :region-keys surface ---");
