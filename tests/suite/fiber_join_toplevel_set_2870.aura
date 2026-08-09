@@ -1,0 +1,81 @@
+; Issue #2870 — top-level free-var set! after fiber:join / from named-let.
+;
+; Unify residual: after (fiber:join …), (set! spawn-count …) inside a
+; named-let fanout failed unbound. Root cause: lookup_cell_index only
+; consulted live top_ when parent_id_==0; named-let/letrec call envs use
+; a non-zero parent_id (let frame), so free-var set! of a top-level define
+; missed while Variable read still worked. join is the Unify surface;
+; nested let frame is the cause.
+(require "std/test" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+; AC1: named-let free-var set! of top-level (no join) — denseness-era fail mode
+(display "AC1 named-let free-var set!\n")
+(define sc 0)
+(define (fanout-plain n)
+  (let loop ((k 0))
+    (if (>= k n) k
+      (begin
+        (set! sc (+ sc 1))
+        (loop (+ k 1))))))
+(assert! (= (fanout-plain 4) 4) "fanout-plain returns 4")
+(assert! (= sc 4) "sc=4 after named-let set!")
+
+; AC2: issue R2c — join then named-let fanout with set! + spawn
+(display "AC2 join then fanout set! spawn-count\n")
+(define spawn-count 0)
+(define (fanout n)
+  (let loop ((k 0) (ids (quote ())))
+    (if (>= k n) ids
+      (let ((fid (fiber:spawn (lambda () 7))))
+        (set! spawn-count (+ spawn-count 1))
+        (if (and (number? fid) (> fid 0))
+          (loop (+ k 1) (cons fid ids))
+          ids)))))
+(define j0 (fiber:join (fiber:spawn (lambda () 42))))
+(assert! (= j0 42) "j0=42")
+(define ids (fanout 4))
+(assert! (= (length ids) 4) "ids length 4")
+(assert! (= spawn-count 4) "spawn-count=4")
+
+; AC3: simple procedure set! after join (control)
+(display "AC3 procedure set! after join\n")
+(define x 0)
+(define (bump) (set! x (+ x 1)) x)
+(assert! (= (bump) 1) "bump before join")
+(fiber:join (fiber:spawn (lambda () 1)))
+(assert! (= (bump) 2) "bump after join")
+(assert! (= x 2) "x=2")
+
+; AC4: let* control from issue (distinct names — no top-level shadow)
+(display "AC4 let* sibling set! control\n")
+(let* ((lc 0)
+       (fanout
+         (lambda (n)
+           (let loop ((k 0) (ids (quote ())))
+             (if (>= k n) ids
+               (let ((fid (fiber:spawn (lambda () 1))))
+                 (set! lc (+ lc 1))
+                 (if (and (number? fid) (> fid 0))
+                   (loop (+ k 1) (cons fid ids))
+                   ids))))))
+       (ids0 (fanout 4)))
+  (assert! (= (length ids0) 4) "let* ids length 4")
+  (assert! (= lc 4) "let* lc=4"))
+
+(if (= *fails* 0)
+    (begin (display "OK-2870 fiber join toplevel set!\n"))
+    (begin
+      (display "FAIL-2870 fails=")
+      (display *fails*)
+      (newline)
+      (error "2870 suite failed")))
