@@ -2145,9 +2145,11 @@ void register_workspace_query_primitives(
             // Issue #2363: GeneralObjectPin adopt (site 4/7) — query:pattern.
             aura::core::lifetime::GeneralObjectPin pat_pool_pin;
             aura::core::lifetime::GeneralObjectPin pat_flat_pin;
-            (void)aura::core::lifetime::wire_general_object_create_pair(
-                pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool),
-                static_cast<void*>(pat_flat));
+            // Issue #2840: production required-mode fail-closed on pin wire.
+            if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+                    pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool),
+                    static_cast<void*>(pat_flat)))
+                return make_void();
             auto pr = aura::parser::parse_to_flat(ws.string_heap[idx], *pat_flat, *pat_pool);
             if (!pr.success || pr.root == aura::ast::NULL_NODE)
                 return make_void();
@@ -2236,11 +2238,13 @@ void register_workspace_query_primitives(
                 // Issue #2363: GeneralObjectPin adopt (site 5/7) — query:pattern guard.
                 aura::core::lifetime::GeneralObjectPin guard_pool_pin;
                 aura::core::lifetime::GeneralObjectPin guard_flat_pin;
-                (void)aura::core::lifetime::wire_general_object_create_pair(
-                    guard_pool_pin, guard_flat_pin, static_cast<void*>(guard_pool),
-                    static_cast<void*>(guard_flat));
-                auto pr = aura::parser::parse_to_flat(let_src, *guard_flat, *guard_pool);
+                // Issue #2840: production required-mode fail-closed on pin wire.
                 bool ok = false;
+                if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+                        guard_pool_pin, guard_flat_pin, static_cast<void*>(guard_pool),
+                        static_cast<void*>(guard_flat)))
+                    return false; // reject guard under required pin fail
+                auto pr = aura::parser::parse_to_flat(let_src, *guard_flat, *guard_pool);
                 if (pr.success && pr.root != aura::ast::NULL_NODE) {
                     auto gr = ev.eval_flat(*guard_flat, *guard_pool, pr.root, ev.top_env());
                     if (gr) {

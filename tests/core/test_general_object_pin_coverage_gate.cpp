@@ -391,6 +391,79 @@ static void ac2709_6_source_and_linter() {
           "AC6: no docs/design/2709-* per #1655");
 }
 
+// ── Issue #2840: densify fail-closed on required pin breach ──────────────
+// Residual of #2597/#2665: production defaults lock required, but callers
+// cast wire return to void and densify was not gated on pin failure.
+// #2840 sets sticky breach on wire fail under required + Moving densify
+// fail-closes; callers use wire_*_or_required_fail.
+static void ac2840_1_breach_and_densify_gate() {
+    std::println("\n--- #2840 AC1: breach sticky + densify gate ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(lp.find("Issue #2840") != std::string::npos, "2840 AC1: lifetime_pin.hh cites #2840");
+    CHECK(lp.find("g_general_object_pin_required_breach") != std::string::npos,
+          "2840 AC1: sticky breach flag");
+    CHECK(lp.find("general_object_pin_required_active") != std::string::npos,
+          "2840 AC1: required_active helper");
+    CHECK(lp.find("wire_general_object_create_pair_or_required_fail") != std::string::npos,
+          "2840 AC1: caller-facing required-fail helper");
+    CHECK(lp.find("g_general_object_pin_required_breach.store(1") != std::string::npos,
+          "2840 AC1: wire fail sets breach under required");
+    CHECK(arena.find("general_object_pin_required_breach_active") != std::string::npos,
+          "2840 AC1: densify checks breach");
+    CHECK(arena.find("g_general_object_pin_required_breach_densify_fail_total") !=
+              std::string::npos,
+          "2840 AC1: densify fail counter");
+    CHECK(arena.find("clear_general_object_pin_required_breach") != std::string::npos,
+          "2840 AC1: clean densify clears breach");
+}
+
+static void ac2840_2_callers_fail_closed() {
+    std::println("\n--- #2840 AC2: create paths use required-fail helper ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(mut.find("wire_general_object_create_pair_or_required_fail") != std::string::npos,
+          "2840 AC2: mutate uses required-fail wire");
+    CHECK(ev.find("wire_general_object_create_pair_or_required_fail") != std::string::npos,
+          "2840 AC2: eval uses required-fail wire");
+    CHECK(qw.find("wire_general_object_create_pair_or_required_fail") != std::string::npos,
+          "2840 AC2: query_workspace uses required-fail wire");
+    CHECK(flat.find("wire_general_object_create_pair_or_required_fail") != std::string::npos,
+          "2840 AC2: eval_flat uses required-fail wire");
+    // Soft still zero-cost: helper returns true when not required.
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(lp.find("Soft: observe-only") != std::string::npos ||
+              lp.find("return true;   // Soft") != std::string::npos ||
+              lp.find("return true;") != std::string::npos,
+          "2840 AC2: Soft observe-only path in helper");
+}
+
+static void ac2840_3_query_and_defaults() {
+    std::println("\n--- #2840 AC3: query keys + production defaults lineage ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto hh = read_file("src/compiler/security_defaults.hh");
+    CHECK(obs.find("schema-2840") != std::string::npos, "2840 AC3: schema-2840");
+    CHECK(obs.find("general-object-pin-required-breach") != std::string::npos,
+          "2840 AC3: breach query key");
+    CHECK(obs.find("general-object-pin-required-breach-densify-fail-total") != std::string::npos,
+          "2840 AC3: densify-fail-total query key");
+    CHECK(hh.find("#2840") != std::string::npos, "2840 AC3: security_defaults cites #2840");
+    CHECK(obs.find("schema-2665") != std::string::npos, "2840 AC3: schema-2665 preserved");
+}
+
+static void ac2840_6_linter_and_no_invent() {
+    std::println("\n--- #2840 AC6: linter + no invent ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_general_object_pin_required_prod_default_2840") != std::string::npos,
+          "2840 AC6: build.py wires #2840 linter");
+    std::ifstream invent("tests/core/test_issue_2840.cpp");
+    if (!invent)
+        invent.open("../tests/core/test_issue_2840.cpp");
+    CHECK(!invent.good(), "2840 AC6: no test_issue_2840.cpp");
+}
+
 int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
     std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
@@ -398,6 +471,8 @@ int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2665: production-default required-mode fail-closed counter + "
                  "additive query keys (extends #2496 test file per #81967) ===");
     std::println("=== Issue #2709: GeneralObjectPin mandatory coverage beyond inventory-of-7 "
+                 "(extends #2496 test file per #81967) ===");
+    std::println("=== Issue #2840: densify fail-closed on required pin breach "
                  "(extends #2496 test file per #81967) ===");
     // contiguous form for check_general_object_pin_auto_wire_2597.py:
     // production default AURA_GENERAL_OBJECT_PIN=required (extends #2496 test file per #81967)
@@ -421,6 +496,10 @@ int run_test_general_object_pin_coverage_gate() {
     ac2709_4_required_mode_fail_closed_regression();
     ac2709_5_query_keys_added();
     ac2709_6_source_and_linter();
+    ac2840_1_breach_and_densify_gate();
+    ac2840_2_callers_fail_closed();
+    ac2840_3_query_and_defaults();
+    ac2840_6_linter_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

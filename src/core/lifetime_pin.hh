@@ -237,6 +237,26 @@ inline std::atomic<std::uint64_t> g_general_object_pin_required_enforced_total{0
 // apply_general_object_pin_required_env() + production-default lock
 // in apply_production_security_defaults step 15 (Issue #2597).
 inline std::atomic<int> g_general_object_pin_required_pref{-1};
+// Issue #2840: sticky breach flag — set when required-mode wire fails.
+// Moving densify fail-closes (pin_contract_held=false) while breach is
+// set so Agents cannot densify after an unpinned intermediate create.
+// Soft / pref<=0 never sets breach. Clear via clear_general_object_pin_
+// required_breach() or a clean densify window under required mode.
+inline std::atomic<std::uint8_t> g_general_object_pin_required_breach{0};
+inline std::atomic<std::uint64_t> g_general_object_pin_required_breach_densify_fail_total{0};
+inline constexpr int kGeneralObjectPinRequiredProdDefaultIssue = 2840;
+
+[[nodiscard]] inline bool general_object_pin_required_active() noexcept {
+    return g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0;
+}
+
+[[nodiscard]] inline bool general_object_pin_required_breach_active() noexcept {
+    return g_general_object_pin_required_breach.load(std::memory_order_acquire) != 0;
+}
+
+inline void clear_general_object_pin_required_breach() noexcept {
+    g_general_object_pin_required_breach.store(0, std::memory_order_release);
+}
 
 // Issue #2597: marker for create sites that don't need a
 // wire_general_object_create_pair call. Used for sites that are
@@ -1055,16 +1075,37 @@ inline void note_general_object_pin_mutate_wire() noexcept {
 // fails, bump g_general_object_pin_required_enforced_total (Agent-
 // visible hard-fail counter). Soft / dev_off / unset (pref <= 0)
 // stays zero-cost — observe-only via wire counter.
+// Issue #2840: under required mode, pin failure also sets sticky
+// g_general_object_pin_required_breach so Moving densify fail-closes
+// until clear. Callers that ignore the bool return still cannot
+// silently densify unpinned intermediates under production.
 inline bool wire_general_object_create_pair(GeneralObjectPin& pin_a, GeneralObjectPin& pin_b,
                                             void* a, void* b, std::uint64_t gen = 0,
                                             std::uint64_t arena_id = 0) noexcept {
     const bool ok_a = a ? pin_a.pin(a, gen, arena_id) : false;
     const bool ok_b = b ? pin_b.pin(b, gen, arena_id) : false;
     note_general_object_pin_mutate_wire();
-    if (g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0 && !(ok_a && ok_b)) {
+    if (general_object_pin_required_active() && !(ok_a && ok_b)) {
         g_general_object_pin_required_enforced_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2840: sticky densify breach — Moving fail-closes while set.
+        g_general_object_pin_required_breach.store(1, std::memory_order_release);
     }
     return ok_a && ok_b;
+}
+
+// Issue #2840: caller-facing helper — wire pair and, under required mode,
+// treat pin failure as hard fail for the create path (return false so
+// callers stop using unpinned intermediates). Soft/observe: always
+// returns true after wire (create proceeds; densify still soft).
+// Use instead of `(void)wire_general_object_create_pair(...)`.
+[[nodiscard]] inline bool
+wire_general_object_create_pair_or_required_fail(GeneralObjectPin& pin_a, GeneralObjectPin& pin_b,
+                                                 void* a, void* b, std::uint64_t gen = 0,
+                                                 std::uint64_t arena_id = 0) noexcept {
+    const bool ok = wire_general_object_create_pair(pin_a, pin_b, a, b, gen, arena_id);
+    if (general_object_pin_required_active())
+        return ok; // fail-closed under production required
+    return true;   // Soft: observe-only — create continues
 }
 
 // Issue #2709: default-on wire for shared create helpers. Replaces the

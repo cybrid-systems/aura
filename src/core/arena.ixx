@@ -1591,12 +1591,34 @@ public:
                             1, std::memory_order_relaxed);
                     }
                 }
-            } else if (result.objects_moved > 0 && !result.moving_incomplete_remap &&
-                       result.pin_contract_held) {
+            }
+            // Issue #2840: production GeneralObjectPin required breach
+            // (unpinned intermediate create under required mode) fail-closes
+            // Moving densify — pin_contract_held=false so Phase-5 cannot
+            // claim pin-or-remap success. Soft / pref<=0 never sets breach.
+            if (aura::core::lifetime::general_object_pin_required_active() &&
+                aura::core::lifetime::general_object_pin_required_breach_active()) {
+                result.pin_contract_held = false;
+                result.moving_incomplete_remap = true;
+                aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total
+                    .fetch_add(1, std::memory_order_relaxed);
+                // Align with untracked hard face under production: block
+                // Moving precondition so success metrics stay suppressed.
+                if (g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) > 0 ||
+                    aura::core::lifetime::general_object_pin_required_active()) {
+                    result.moving_blocked_precondition = true;
+                    result.soft_gated = true;
+                }
+            }
+
+            if (result.objects_moved > 0 && !result.moving_incomplete_remap &&
+                result.pin_contract_held) {
                 // Issue #2837: clean Moving densify clears sticky densify-off
                 // so Agents can resume densify after re-registering roots
                 // and completing a green window.
                 clear_moving_incomplete_remap_sticky_densify_off();
+                // Issue #2840: clean densify clears general-object pin breach.
+                aura::core::lifetime::clear_general_object_pin_required_breach();
             }
         } else {
             // Force path (#2160 / #2157).
