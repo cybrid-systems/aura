@@ -15387,6 +15387,14 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"constfold-soa-run-wired", make_int(1)},
                 {"schema-1920", make_int(1920)},
                 {"issue-1920", make_int(1920)},
+                // Issue #2820: last-block seal after alloc_block dual-emit.
+                {"lowering-alloc-block-unsealed-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_lowering_alloc_block_unsealed_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"alloc-block-seal-last-wired", make_int(1)},
+                {"schema-2820", make_int(2820)},
+                {"issue-2820", make_int(2820)},
                 // Issue #2520: residual AoS bridge banned on production SoA-only.
                 // residual_aos_bridge_total is a TEST-ONLY metric (target 0).
                 {"residual-aos-bridge-total",

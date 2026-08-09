@@ -1926,17 +1926,19 @@ static IRModule lower_to_ir_impl(
     top_func.region = state.region;
     auto top_id = state.module.add_function(std::move(top_func));
     state.module.entry_function_id = top_id;
-    // Issue #684: seal the final SoA block + publish snapshot.
+    // Issue #684 / #2820: seal EVERY function's last SoA block + publish
+    // snapshot. alloc_block only seals the previous block when a new one
+    // is allocated; without finalize_soa_module the last block of each
+    // function keeps a stale end_idx and SoA readers miss the tail.
     if (state.dual_emit_soa && !state.module_v2.functions.empty()) {
+        state.finalize_soa_module(); // Issue #2820
         const auto v2_idx = state.cur_func_v2_idx;
-        auto& soa_fn = state.module_v2.functions[v2_idx];
-        if (!soa_fn.blocks_.empty()) {
-            state.module_v2.seal_block(v2_idx,
-                                       static_cast<std::uint32_t>(soa_fn.blocks_.size() - 1));
+        if (v2_idx < state.module_v2.functions.size()) {
+            auto& soa_fn = state.module_v2.functions[v2_idx];
+            soa_fn.local_count = state.local_count;
+            if (!top_func.name.empty())
+                soa_fn.name = top_func.name;
         }
-        soa_fn.local_count = state.local_count;
-        if (!top_func.name.empty())
-            soa_fn.name = top_func.name;
     }
     g_last_soa_snapshot.instructions_emitted = state.soa_instructions_emitted;
     g_last_soa_snapshot.functions_emitted = state.soa_functions_emitted;

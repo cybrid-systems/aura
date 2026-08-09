@@ -1335,6 +1335,18 @@ def cmd_lint():
             "Issue #2819 audit trail lockfree linter failed — run python3 scripts/coverage/checks/check_audit_trail_lockfree_2819.py"
         )
         return r
+    # Issue #2820: seal last SoA block after alloc_block dual-emit.
+    # ac2820 in test_alloc_block_seal_last.
+    abs_script = COVERAGE_CHECKS / "check_alloc_block_seal_last_2820.py"
+    if not abs_script.exists():
+        fail(f"missing {abs_script}")
+        return 1
+    r = run([sys.executable, str(abs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2820 alloc_block seal last linter failed — run python3 scripts/coverage/checks/check_alloc_block_seal_last_2820.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

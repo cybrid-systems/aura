@@ -76,6 +76,14 @@ export inline std::atomic<std::uint64_t>& g_residual_aos_bridge_total_atomic() n
     return v;
 }
 
+// Issue #2820: last SoA block of a function left unsealed (end_idx stale)
+// until finalize. Bumped when finalize_module_v2_last_blocks / lowering
+// finalize_soa_module discovers and seals a stale last block.
+export inline std::atomic<std::uint64_t>& g_lowering_alloc_block_unsealed_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
 // Issue #2520 / #2618: residual AoS bridge is test/opt-in only under
 // AURA_IR_SOA_ONLY. Production packs must not call to_aos_view /
 // to_aos_module without AURA_ALLOW_AOS_BRIDGE (compile-time) or
@@ -954,6 +962,31 @@ export struct IRModuleV2 {
     void seal_block(std::size_t func_idx, std::uint32_t block_idx) {
         auto& func = functions[func_idx];
         func.blocks_[block_idx].end_idx = static_cast<std::uint32_t>(func.size());
+    }
+
+    // Issue #2820: seal the LAST block of every function so SoA readers
+    // (for idx in [start_idx, end_idx)) see the full instruction tail.
+    // alloc_block only seals the previous block when a new one is allocated;
+    // without this, the final block keeps end_idx == start_idx (empty range).
+    // Returns how many last blocks needed sealing. Bumps
+    // g_lowering_alloc_block_unsealed_total_atomic for each stale last block.
+    std::uint64_t finalize_last_blocks() noexcept {
+        std::uint64_t sealed = 0;
+        for (std::size_t fi = 0; fi < functions.size(); ++fi) {
+            auto& fn = functions[fi];
+            if (fn.blocks_.empty())
+                continue;
+            const auto last = static_cast<std::uint32_t>(fn.blocks_.size() - 1);
+            auto& blk = fn.blocks_[last];
+            const auto want = static_cast<std::uint32_t>(fn.size());
+            if (blk.end_idx != want) {
+                g_lowering_alloc_block_unsealed_total_atomic().fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                seal_block(fi, last);
+                ++sealed;
+            }
+        }
+        return sealed;
     }
 
     // Issue #463: add a function to the module. Returns the
