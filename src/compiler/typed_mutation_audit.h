@@ -13,7 +13,9 @@
 #include "core/provenance_tracker.hh"
 #include "core/resource_quota.hh"  // process_resource_quota_manager (#2493 mid resolve)
 #include "core/workspace_epoch.hh" // current_mutation_epoch (#2493 mid resolve)
-#include "audit_mid_fallback_slo.h" // MidFallbackSloInput + decide_audit_mid_fallback_slo (#2635 hard-deny)
+// Issue #2836: resolve-time mid-fallback hard face is absolute zero-tolerance
+// (no SLO rate check). Schedule-gate (#2630/#2594) still uses
+// audit_mid_fallback_slo.h; include removed from this header after #2836.
 
 // Issue #2758: thin count API (defined in ownership_rebind.cpp) so this
 // header does not include ownership_rebind.h (avoid include-order cascade).
@@ -218,7 +220,13 @@ struct TypedMutationAuditCounters {
     // WorkspaceEpoch Mutation, no ResourceQuota host mid). Agent
     // dashboards can compute join quality from this counter (lower =
     // fewer process-origin join stamps; mid-vocabulary preferred).
+    // Soft/Sampled only after #2836 (production/Full refuse instead).
     std::atomic<std::uint64_t> audit_mid_fallback_gen_total{0};
+    // Issue #2836: absolute zero-tolerance hard-refuse counter — bumped when
+    // resolve_audit_mutation_id refuses a process-origin stamp under
+    // production_defaults_active() || Full (returns 0; no gen bump).
+    // Distinct from audit_mid_fallback_gen_total (Soft join-stamp path).
+    std::atomic<std::uint64_t> audit_mid_fallback_refused_total{0};
     // Issue #1884: TypePropagation / predicate_memo ↔ invariant correlation.
     std::atomic<std::uint64_t> type_prop_invariant_correlation_total{0};
     std::atomic<std::uint64_t> type_prop_invariant_pass_with_evidence_total{0};
@@ -1403,8 +1411,14 @@ format_invariant_deny_reason(std::string_view kind, std::uint64_t tenant_id, std
 //   1. caller mid when non-zero
 //   2. current_mutation_epoch() when non-zero  (WorkspaceEpoch Mutation — #2149)
 //   3. ResourceQuota host mid when set
-//   4. next_audit_mutation_id() as last-resort join stamp (process-origin,
-//      not a competing epoch vocabulary); bumps audit_mid_fallback_gen_total.
+//   4. Soft/Sampled only: next_audit_mutation_id() last-resort join stamp
+//      (process-origin); bumps audit_mid_fallback_gen_total.
+// Issue #2836: under production_defaults_active() || Full, step 4 is
+// absolute zero-tolerance — refuse process-origin stamp (return 0) and
+// bump audit_mid_fallback_refused_total. Supersedes #2635 rate-based
+// resolve-time hard-deny (SLO gate remains on schedule admission #2630).
+// Soft / Sampled keep Soft fallback (#2493 AC4, #2635 AC3, #2836 AC2).
+// #2636 note: AuditStrategy has {Off, Sampled, Full} only — no Strict enum.
 [[nodiscard]] inline std::uint64_t
 resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
     if (caller_mid != 0)
@@ -1416,48 +1430,22 @@ resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
     const auto rq = process_resource_quota_manager().provenance_mutation_id;
     if (rq != 0)
         return rq;
-    // Issue #2635: production mid-fallback SLO hard-deny. Under production
-    // defaults (or Full strategy — same hard-deny gate as the existing
-    // capture_security_correlated_audit path at line 362/363), if the
-    // live mid-fallback rate already exceeds the SLO threshold, refuse
-    // the last-resort process-origin stamp (return 0) so callers can
-    // deny or re-stamp with a real mid. The schedule-gate (#2630) is
-    // the primary *admission* control; this is the secondary
-    // *resolve-time* hard face so residual paths cannot silently
-    // degrade SE ↔ TypedMutationAudit ↔ CapabilityGrant epoch
-    // alignment after the gate admits the call. Soft /
-    // AURA_SANDBOX=off / Sampled callers continue to allow fallback +
-    // only bump counters (AC parity with #2594; AC3 explicit). The
-    // input snapshot is best-effort (load-relaxed) — same generation
-    // check race window as #2594.
-    //
-    // #2636 follow-up: removed the erroneous `AuditStrategy::Strict`
-    // arm that the repro build's -Werror caught — AuditStrategy only
-    // has {Off, Sampled, Full}; the "Strict" gating is expressed via
-    // the separate `strict_sandbox` bool passed to the existing
-    // capture_security_correlated_audit path, not via an enum value.
+    // Issue #2836 / #2635 lineage: production mid-fallback absolute
+    // zero-tolerance. hard_deny_eligible = production_defaults || Full
+    // (same gate shape as #2635; behavior is now absolute refuse, not
+    // rate-based would_arm_degraded). Soft/Sampled fall through.
     const bool hard_deny_eligible =
         production_defaults_active() || get_strategy() == AuditStrategy::Full;
     if (hard_deny_eligible) {
-        const MidFallbackSloInput slo{
-            .fallback_gen = g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
-                std::memory_order_relaxed),
-            .contextual_total =
-                g_typed_mutation_audit_counters.contextual_total.load(std::memory_order_relaxed),
-            .production_defaults = production_defaults_active(),
-            .soft_mode = false,
-        };
-        const auto d = decide_audit_mid_fallback_slo(slo);
-        if (d.would_arm_degraded) {
-            // Hard-deny: refuse process-origin stamp; caller treats
-            // mid==0 as deny or surfaces a typed "mid-fallback-slo-breached"
-            // error (e.g. capture_security_correlated_audit / AOT/JIT
-            // audit paths). The schedule-gate (#2630) already saw the
-            // same SLO signal at admission — this is the resolve-time
-            // fail-closed face (AC4: same signal, no double-deny race).
-            return 0;
-        }
+        // Absolute refuse: no process-origin join stamp into the trail.
+        // Callers treat mid==0 as deny / re-stamp or surface
+        // "mid-fallback-refused" (#2836 AC4). Distinct refuse metric —
+        // does NOT bump audit_mid_fallback_gen_total (#2836 AC1).
+        g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return 0;
     }
+    // Soft / Sampled: last-resort process-origin stamp + gen counter.
     g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.fetch_add(
         1, std::memory_order_relaxed);
     return next_audit_mutation_id();
@@ -2101,6 +2089,9 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.audit_mutation_id_gen.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.store(0,
                                                                        std::memory_order_relaxed);
+    // Issue #2836
+    g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.store(
+        0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.type_prop_invariant_correlation_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.type_prop_invariant_pass_with_evidence_total.store(
