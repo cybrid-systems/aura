@@ -2156,6 +2156,7 @@ static std::atomic<std::uint64_t> g_2177_aot_macro_marker_stripped_total{0};
 // in light stubs that do not link fiber mutation.
 extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* ev_ptr) noexcept;
 
+
 extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker) {
     (void)cloned_marker; // reserved for future marker-specific routing
     // File-level atomic fallback always bumps (unified process-wide surface

@@ -487,6 +487,7 @@ add_executable(test_concurrent tests/serve/test_concurrent.cpp)
 set_property(TARGET test_concurrent PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_concurrent PRIVATE src)
 target_sources(test_concurrent PRIVATE
+    src/compiler/test_concurrent_stubs.cpp # Issue #2858 stub: aura_evaluator_bump_macro_provenance_repin_on_steal
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/steal_safety.cpp
