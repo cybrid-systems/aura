@@ -214,6 +214,9 @@ export inline std::atomic<std::uint64_t> run_dirty_pipeline_invocations_total{0}
 export inline std::atomic<std::uint64_t> run_dirty_pipeline_pass_runs_total{0};
 export inline std::atomic<std::uint64_t> run_dirty_pipeline_clean_skips_total{0};
 export inline std::atomic<std::uint64_t> run_dirty_pipeline_dirty_runs_total{0};
+// Issue #2824: process-wide mig counters advanced more than this pipeline's
+// TLS-attributed skips/runs (concurrent pipelines or external record_*).
+export inline std::atomic<std::uint64_t> pipeline_dirty_counter_concurrent_contamination_total{0};
 export inline std::atomic<std::uint64_t> soa_dirty_aware_pass_wired{1};
 // Issue #2258 / #2434: pure Wrap pipeline metrics + concept-rejection.
 // pure_wrap: stages that are PureWrapPass (kPureWrap / PureAnalysisPass).
@@ -756,39 +759,56 @@ concept SoaDirtyAwarePass = requires(P& p, IRModuleV2& m) {
 // Short-circuits on has_error() when the pass exposes it.
 // Metrics: run_dirty_pipeline_*_total (invocations / pass runs /
 // clean_skips / dirty_runs from for_each_block helpers inside passes).
+//
+// Issue #2824: attribute clean_skips / dirty_runs via TLS for the whole
+// pipeline invocation (enter at entry, flush at exit). Per-pass process-
+// wide deltas incorrectly included concurrent pipelines' record_dirty_*
+// bumps; TLS dual-write isolates this pipeline's contribution.
 export template <typename... Passes>
     requires(SoaDirtyAwarePass<std::remove_cvref_t<Passes>> && ...)
 bool run_dirty_pipeline(IRModuleV2& mod, Passes&... passes) {
+    // Issue #2824: TLS attribution + concurrent contamination detection.
     run_dirty_pipeline_invocations_total.fetch_add(1, std::memory_order_relaxed);
+    // Process-wide baseline for concurrent contamination detection.
+    const auto proc_skips0 =
+        ir_soa_migration::dirty_block_driven_skips.load(std::memory_order_relaxed);
+    const auto proc_runs0 =
+        ir_soa_migration::dirty_block_driven_runs.load(std::memory_order_relaxed);
+    ir_soa_migration::enter_dirty_pipeline_attribution();
     bool ok = true;
     auto run_one_soa = [&](auto& pass) {
         if (!ok)
             return;
-        // Capture ir_soa_migration dirty counters around the pass so
-        // pipeline-level clean_skips / dirty_runs stay in sync even when
-        // the pass records via record_dirty_block_skip/run.
-        const auto mig_skips0 =
-            ir_soa_migration::dirty_block_driven_skips.load(std::memory_order_relaxed);
-        const auto mig_runs0 =
-            ir_soa_migration::dirty_block_driven_runs.load(std::memory_order_relaxed);
         pass.run_dirty(mod);
         run_dirty_pipeline_pass_runs_total.fetch_add(1, std::memory_order_relaxed);
-        const auto mig_skips1 =
-            ir_soa_migration::dirty_block_driven_skips.load(std::memory_order_relaxed);
-        const auto mig_runs1 =
-            ir_soa_migration::dirty_block_driven_runs.load(std::memory_order_relaxed);
-        if (mig_skips1 > mig_skips0)
-            run_dirty_pipeline_clean_skips_total.fetch_add(mig_skips1 - mig_skips0,
-                                                           std::memory_order_relaxed);
-        if (mig_runs1 > mig_runs0)
-            run_dirty_pipeline_dirty_runs_total.fetch_add(mig_runs1 - mig_runs0,
-                                                          std::memory_order_relaxed);
         if constexpr (requires { pass.has_error(); }) {
             if (pass.has_error())
                 ok = false;
         }
     };
     (run_one_soa(passes), ...);
+    std::uint64_t tls_skips = 0;
+    std::uint64_t tls_runs = 0;
+    ir_soa_migration::leave_dirty_pipeline_attribution(tls_skips, tls_runs);
+    if (tls_skips > 0)
+        run_dirty_pipeline_clean_skips_total.fetch_add(tls_skips, std::memory_order_relaxed);
+    if (tls_runs > 0)
+        run_dirty_pipeline_dirty_runs_total.fetch_add(tls_runs, std::memory_order_relaxed);
+    // Concurrent contamination: process-wide advanced more than TLS attributed.
+    const auto proc_skips1 =
+        ir_soa_migration::dirty_block_driven_skips.load(std::memory_order_relaxed);
+    const auto proc_runs1 =
+        ir_soa_migration::dirty_block_driven_runs.load(std::memory_order_relaxed);
+    const auto proc_d_skips = proc_skips1 > proc_skips0 ? proc_skips1 - proc_skips0 : 0;
+    const auto proc_d_runs = proc_runs1 > proc_runs0 ? proc_runs1 - proc_runs0 : 0;
+    std::uint64_t contam = 0;
+    if (proc_d_skips > tls_skips)
+        contam += proc_d_skips - tls_skips;
+    if (proc_d_runs > tls_runs)
+        contam += proc_d_runs - tls_runs;
+    if (contam > 0)
+        pipeline_dirty_counter_concurrent_contamination_total.fetch_add(contam,
+                                                                        std::memory_order_relaxed);
     return ok;
 }
 

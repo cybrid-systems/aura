@@ -616,7 +616,8 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
         "query:pass-pipeline-dirtyaware-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                // #2824: schema keys; keep load factor comfortable.
+                auto* ht = FlatHashTable::create(48);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -731,6 +732,14 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
                 {"soa-dirty-aware-pass-wired",
                  make_int(static_cast<std::int64_t>(soa_dirty_wired))},
                 {"schema-2143", make_int(2143)},
+                // Issue #2824: concurrent contamination of dirty pipeline counters.
+                {"pipeline-dirty-counter-concurrent-contamination-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pipeline_dirty_counter_concurrent_contamination_total.load(
+                         std::memory_order_relaxed)))},
+                {"dirty-pipeline-tls-attribution-wired", make_int(1)},
+                {"schema-2824", make_int(2824)},
+                {"issue-2824", make_int(2824)},
             };
             return build_hash(kv);
         });

@@ -1909,6 +1909,8 @@ aura_add_issue_test(test_run_one_epoch_default)
 aura_issue_test_link_light(test_run_one_epoch_default)
 aura_add_issue_test(test_run_one_yield_hook_actual)
 aura_issue_test_link_light(test_run_one_yield_hook_actual)
+aura_add_issue_test(test_dirty_pipeline_counter_isolation)
+aura_issue_test_link_light(test_dirty_pipeline_counter_isolation)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

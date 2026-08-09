@@ -1383,6 +1383,18 @@ def cmd_lint():
             "Issue #2823 run_one yield hook actual linter failed — run python3 scripts/coverage/checks/check_run_one_yield_hook_actual_2823.py"
         )
         return r
+    # Issue #2824: run_dirty_pipeline TLS attribution isolates concurrent counters.
+    # ac2824 in test_dirty_pipeline_counter_isolation.
+    dpi_script = COVERAGE_CHECKS / "check_dirty_pipeline_counter_isolation_2824.py"
+    if not dpi_script.exists():
+        fail(f"missing {dpi_script}")
+        return 1
+    r = run([sys.executable, str(dpi_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2824 dirty pipeline counter isolation linter failed — run python3 scripts/coverage/checks/check_dirty_pipeline_counter_isolation_2824.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

@@ -54,6 +54,13 @@ inline std::atomic<std::uint64_t> consumer_jit_hits{0};
 // Dirty / shape / linear integration.
 inline std::atomic<std::uint64_t> dirty_block_driven_skips{0};
 inline std::atomic<std::uint64_t> dirty_block_driven_runs{0};
+// Issue #2824: thread-local attribution while inside run_dirty_pipeline.
+// Process-wide counters still advance for global dashboards; TLS isolates
+// per-pipeline aggregate so concurrent pipelines cannot contaminate
+// run_dirty_pipeline_clean_skips_total / dirty_runs_total.
+inline thread_local int g_dirty_pipeline_tls_depth = 0;
+inline thread_local std::uint64_t g_tls_dirty_pipeline_skips = 0;
+inline thread_local std::uint64_t g_tls_dirty_pipeline_runs = 0;
 inline std::atomic<std::uint64_t> shape_column_consults{0};
 inline std::atomic<std::uint64_t> linear_column_consults{0};
 // Closure capture dirty tracking (#1046 / #1920).
@@ -91,11 +98,46 @@ inline void record_consumer_jit() noexcept {
     consumer_jit_hits.fetch_add(1, std::memory_order_relaxed);
     record_hotpath_hit();
 }
+// Issue #2824: enter/leave run_dirty_pipeline attribution scope.
+// Nested enter is supported (depth); only outermost leave flushes TLS.
+inline void enter_dirty_pipeline_attribution() noexcept {
+    if (g_dirty_pipeline_tls_depth++ == 0) {
+        g_tls_dirty_pipeline_skips = 0;
+        g_tls_dirty_pipeline_runs = 0;
+    }
+}
+// Returns this scope's attributed skips/runs (outermost only; nested → 0,0).
+inline void leave_dirty_pipeline_attribution(std::uint64_t& skips_out,
+                                             std::uint64_t& runs_out) noexcept {
+    if (g_dirty_pipeline_tls_depth <= 0) {
+        skips_out = 0;
+        runs_out = 0;
+        return;
+    }
+    if (--g_dirty_pipeline_tls_depth == 0) {
+        skips_out = g_tls_dirty_pipeline_skips;
+        runs_out = g_tls_dirty_pipeline_runs;
+        g_tls_dirty_pipeline_skips = 0;
+        g_tls_dirty_pipeline_runs = 0;
+    } else {
+        skips_out = 0;
+        runs_out = 0;
+    }
+}
+[[nodiscard]] inline bool in_dirty_pipeline_attribution() noexcept {
+    return g_dirty_pipeline_tls_depth > 0;
+}
+
 inline void record_dirty_block_skip(std::uint64_t n = 1) noexcept {
     dirty_block_driven_skips.fetch_add(n, std::memory_order_relaxed);
+    // Issue #2824: dual-write TLS when attributed to an active dirty pipeline.
+    if (g_dirty_pipeline_tls_depth > 0)
+        g_tls_dirty_pipeline_skips += n;
 }
 inline void record_dirty_block_run(std::uint64_t n = 1) noexcept {
     dirty_block_driven_runs.fetch_add(n, std::memory_order_relaxed);
+    if (g_dirty_pipeline_tls_depth > 0)
+        g_tls_dirty_pipeline_runs += n;
 }
 inline void record_shape_column_consult() noexcept {
     shape_column_consults.fetch_add(1, std::memory_order_relaxed);
