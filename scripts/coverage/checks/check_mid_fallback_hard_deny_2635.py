@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Issue #2635: production mid-fallback SLO hard-deny via schedule-gate +
-resolve path (no silent process-origin join stamps under Restricted).
+"""Issue #2635: production mid-fallback hard-deny lineage (resolve + schedule).
 
-Contract (one row per AC):
-  AC1 production + mid-fallback SLO already breached → resolve_audit_mutation_id
-     returns 0 (no new process-origin stamp)
-  AC2 production + SLO clear → last-resort still works (join completeness
-     preserved)
-  AC3 Soft / sandbox off → fallback always allowed; only counters bump
-  AC4 #2630 schedule-gate still sees the same SLO signal; no double-deny race
-  AC5 existing #2493 / #2594 coverage scripts pass; new
-     check_mid_fallback_hard_deny_2635.py covers #2635
-  AC6 SE / TypedMutationAudit / grant epoch join quality (fallback rate)
-     does not degrade under sustained production load
+#2836 upgraded the *resolve-time* face to absolute zero-tolerance under
+production_defaults || Full (no rate check). This linter preserves the
+#2635 contract surface that still holds:
+
+  AC1 production / Full last-resort → resolve returns 0 (hard_deny_eligible)
+  AC2 Soft / Sampled last-resort still works (gen counter + next mid)
+  AC3 Soft path skips hard_deny_eligible (Sampled / not Full)
+  AC4 #2630 schedule-gate still sees MidFallbackSloInput / would_arm_degraded
+  AC5 existing #2493 / #2594 coverage scripts pass; this linter stays wired
+  AC6 resolve signature + next_audit_mutation_id Soft path preserved
 
 Exit 0 = all rows satisfied.
 """
@@ -47,51 +45,32 @@ def main() -> int:
     linter_2493 = _read("scripts/coverage/checks/check_audit_mutation_id_unify_2493.py")
     linter_2594 = _read("scripts/coverage/checks/check_audit_mid_fallback_slo_2594.py")
 
-    # AC1: production + SLO breached → return 0 (no new process-origin stamp)
-    must("Issue #2635", "AC1", tma)
+    # AC1: production/Full hard-deny face → return 0 (absolute after #2836)
+    must("#2635", "AC1", tma)
     must("hard_deny_eligible", "AC1", tma)
-    must("decide_audit_mid_fallback_slo(slo)", "AC1", tma)
-    must("d.would_arm_degraded", "AC1", tma)
-    must("return 0;", "AC1", tma)  # the hard-deny return
+    must("return 0;", "AC1", tma)
+    must("production_defaults_active()", "AC1", tma)
 
-    # AC1: typed_mutation_audit.h includes audit_mid_fallback_slo.h
-    must('#include "audit_mid_fallback_slo.h"', "AC1", tma)
-
-    # AC2: production + SLO clear → last-resort still works (fallback
-    # counter bumps, next_audit_mutation_id returned)
+    # AC2: Soft last-resort still present (gen bump + next mid)
     must("audit_mid_fallback_gen_total.fetch_add", "AC2", tma)
     must("return next_audit_mutation_id();", "AC2", tma)
 
-    # AC3: Soft / sandbox off → fallback always allowed
-    # (The hard_deny_eligible gate is the production+strict path; soft
-    # paths skip the gate and fall through to the existing fallback.)
-    # #2636 follow-up: removed 'AuditStrategy::Strict' — the AuditStrategy enum
-    # at typed_mutation_audit.h:39-43 only has {Off, Sampled, Full}. The issue
-    # body (#2635) mentioned "Strict" as a security profile, but the actual
-    # enum value doesn't exist (the related boolean is the separate
-    # strict_sandbox parameter). Existing code at typed_mutation_audit.h:362-363
-    # uses 'AuditStrategy::Full' only. The hard_deny_eligible gate therefore
-    # reads 'production_defaults_active() || AuditStrategy::Full' — verified.
-    must("hard_deny_eligible", "AC3", tma)  # gate is production_defaults || Full
-    must("AuditStrategy::Full", "AC3", tma)  # the actual enum value used
-    must("soft_mode", "AC3", slo)  # SLO soft_mode field (§#2594)
+    # AC3: Full strategy arm; Soft skips gate
+    must("hard_deny_eligible", "AC3", tma)
+    must("AuditStrategy::Full", "AC3", tma)
+    must("soft_mode", "AC3", slo)
 
-    # AC4: schedule-gate (#2630) sees the same SLO signal
-    # (MidFallbackSloInput + would_arm_degraded are reused by the gate.)
+    # AC4: schedule-gate (#2630) still sees SLO signal (admission face)
     must("MidFallbackSloInput", "AC4", slo)
     must("would_arm_degraded", "AC4", slo)
 
-    # AC5: existing #2493 / #2594 coverage scripts still pass
+    # AC5: existing #2493 / #2594 coverage scripts still present
     must("Issue #2493", "AC5", linter_2493)
     must("Issue #2594", "AC5", linter_2594)
-
-    # AC5: new linter + test extension
     must("check_mid_fallback_hard_deny_2635", "AC5", build)
-    must("Issue #2635", "AC5", test)
+    must("#2635", "AC5", test)
 
-    # AC6: no schema / surface change to StableNodeRef or typed_mutation_audit
-    # public surface — verified by source-cite (typed_mutation_audit.h has
-    # no public API bump; only the last-resort branch gains a guard).
+    # AC6: resolve surface unchanged; Soft next_audit still called
     must("next_audit_mutation_id()", "AC6", tma)
     must("resolve_audit_mutation_id(std::uint64_t caller_mid = 0)", "AC6", tma)
 
@@ -108,7 +87,11 @@ def main() -> int:
 
     # cross-check: stamp-resolve --strict must still be green
     r = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "coverage" / "checks" / "check_stamp_resolve_coverage.py"), "--strict"],
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "coverage" / "checks" / "check_stamp_resolve_coverage.py"),
+            "--strict",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,

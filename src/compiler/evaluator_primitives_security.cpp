@@ -441,6 +441,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"audit-mid-fallback-slo-wired", make_int(1)},
                 {"schema-2594", make_int(2594)},
                 {"issue-2594", make_int(2594)},
+                // Issue #2836: absolute zero-tolerance refuse surface
+                // (resolve_audit_mutation_id under production/Full).
+                {"refused-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load(
+                         std::memory_order_relaxed)))},
+                {"mid-fallback-refused",
+                 make_int(static_cast<std::int64_t>(
+                     g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load(
+                         std::memory_order_relaxed) > 0
+                         ? 1
+                         : 0))},
+                {"zero-tolerance-wired", make_int(1)},
+                {"schema-2836", make_int(2836)},
+                {"issue-2836", make_int(2836)},
             };
             return build_hash(kv);
         });

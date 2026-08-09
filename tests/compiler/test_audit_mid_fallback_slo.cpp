@@ -43,6 +43,8 @@
 
 #include "compiler/audit_mid_fallback_slo.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/resource_quota.hh"
+#include "core/workspace_epoch.hh"
 
 #include <atomic>
 #include <cstdint>
@@ -65,14 +67,52 @@ using aura::compiler::evaluate_audit_mid_fallback_slo;
 using aura::compiler::g_audit_mid_fallback_slo_counters;
 using aura::compiler::MidFallbackSloInput;
 using aura::compiler::reset_audit_mid_fallback_slo_for_test;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+using aura::compiler::typed_audit::get_strategy;
 using aura::compiler::typed_audit::production_defaults_active;
 using aura::compiler::typed_audit::resolve_audit_mutation_id;
+using aura::compiler::typed_audit::set_strategy;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::core::current_mutation_epoch;
+using aura::core::store_workspace_epoch;
+using aura::core::WorkspaceEpochKind;
+using aura::core::resource_quota::process_resource_quota_manager;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Force all upstream mids to 0 so resolve hits last-resort (Soft gen or
+// production refuse). Restores nothing — tests own subsequent state.
+void force_all_upstream_mids_zero() {
+    store_workspace_epoch(WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+}
+
+// Source-cite helper: works from repo root or build/ cwd.
+std::string read_repo_file(const char* rel) {
+    for (const auto& p :
+         {std::string(rel), std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+bool repo_file_exists(const char* rel) {
+    for (const auto& p :
+         {std::string(rel), std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (in)
+            return true;
+    }
+    return false;
+}
 
 std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(
@@ -136,24 +176,26 @@ int run_test_audit_mid_fallback_slo() {
         CHECK(arm_after == arm_before,
               "AC1: pure decide does NOT bump arm_degraded_total (pure fn)");
 
-        // Force mid=0 path — bump audit_mid_fallback_gen_total + contextual_total
-        // via the live counter (the actual counter used by query:audit-mid-fallback-slo).
-        // (Pure decide is rate-of-input test; for live path we test through
-        // query:audit-mid-fallback-slo in AC2.)
-        const auto live_ctx_before =
-            g_typed_mutation_audit_counters.contextual_total.load(std::memory_order_relaxed);
-        std::println("  typed_mutation_audit.contextual_total before: {}", live_ctx_before);
-        // resolve_audit_mutation_id(0) with caller_mid=0 hits the last-resort
-        // branch and bumps audit_mid_fallback_gen_total (#2493 AC1 path).
+        // Force mid=0 Soft path — bump audit_mid_fallback_gen_total.
+        // Cold-start strategy is Full (#2818); #2836 absolute refuse under
+        // Full, so Soft gen-bump requires apply_dev_audit_defaults (Sampled).
+        apply_dev_audit_defaults();
+        force_all_upstream_mids_zero();
+        const auto live_fg_before =
+            g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+                std::memory_order_relaxed);
         for (int i = 0; i < 5; ++i) {
-            (void)resolve_audit_mutation_id(0);
+            const auto mid = resolve_audit_mutation_id(0);
+            CHECK(mid != 0, "AC1: Soft last-resort mid is non-zero");
+            (void)mid;
         }
         const auto live_fg_after =
             g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
                 std::memory_order_relaxed);
-        std::println("  audit_mid_fallback_gen_total after 5 caller_mid=0: {}", live_fg_after);
-        CHECK(live_fg_after >= 5,
-              "AC1: resolve_audit_mutation_id(0) bumps audit_mid_fallback_gen_total");
+        std::println("  audit_mid_fallback_gen_total Soft path {}→{}", live_fg_before,
+                     live_fg_after);
+        CHECK(live_fg_after >= live_fg_before + 5,
+              "AC1: Soft resolve_audit_mutation_id(0) bumps audit_mid_fallback_gen_total");
 
         // rate computation pure helper
         CHECK(compute_mid_fallback_rate_bp(0, 0) == 0,
@@ -301,9 +343,7 @@ int run_test_audit_mid_fallback_slo() {
         CHECK(last_arm == 1, "AC5: last_would_arm_degraded=1");
 
         // Source-cite: header + primitive registration.
-        std::ifstream src("src/compiler/evaluator_primitives_security.cpp");
-        const std::string src_text((std::istreambuf_iterator<char>(src)),
-                                   std::istreambuf_iterator<char>());
+        const auto src_text = read_repo_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(src_text.find("query:audit-mid-fallback-slo") != std::string::npos,
               "AC5: primitive registered in evaluator_primitives_security.cpp");
         CHECK(src_text.find("audit_mid_fallback_gen_total") != std::string::npos,
@@ -317,9 +357,7 @@ int run_test_audit_mid_fallback_slo() {
         CHECK(src_text.find("issue-2594") != std::string::npos,
               "AC5: primitive emits issue-2594 sentinel");
 
-        std::ifstream hdr("src/compiler/audit_mid_fallback_slo.h");
-        const std::string hdr_text((std::istreambuf_iterator<char>(hdr)),
-                                   std::istreambuf_iterator<char>());
+        const auto hdr_text = read_repo_file("src/compiler/audit_mid_fallback_slo.h");
         CHECK(hdr_text.find("decide_audit_mid_fallback_slo") != std::string::npos,
               "AC5: header declares decide_audit_mid_fallback_slo (pure)");
         CHECK(hdr_text.find("evaluate_audit_mid_fallback_slo") != std::string::npos,
@@ -330,80 +368,141 @@ int run_test_audit_mid_fallback_slo() {
               "AC5: header declares reset helper for tests");
     }
 
-    // ── #2635 AC1-AC6: production mid-fallback SLO hard-deny ────────
-    // Under production defaults (or Full / Strict strategy), if the
-    // live mid-fallback rate already exceeds the SLO threshold,
-    // resolve_audit_mutation_id refuses the last-resort process-origin
-    // stamp (returns 0) so callers can deny or re-stamp with a real
-    // mid. Soft / AURA_SANDBOX=off / Sampled callers continue to allow
-    // fallback + only bump counters (AC3).
+    // ── #2635 AC1-AC6 lineage (resolve hard face now absolute via #2836) ──
+    // #2635 introduced resolve-time hard-deny under production/Full.
+    // #2836 upgrades that face to absolute zero-tolerance (no rate
+    // check). Soft / Sampled still allow last-resort gen + counter.
+    // Schedule-gate (#2630) keeps the SLO signal for admission.
     {
-        std::println("\n--- #2635 AC1-AC6: production hard-deny face ---");
+        std::println("\n--- #2635 lineage + #2836 absolute refuse ---");
 
-        // AC1: resolve_audit_mutation_id has the hard-deny block under
-        // the last-resort branch (after caller/epoch/rq miss).
-        std::ifstream src("src/compiler/typed_mutation_audit.h");
-        const std::string tma_text((std::istreambuf_iterator<char>(src)),
-                                   std::istreambuf_iterator<char>());
-        CHECK(tma_text.find("Issue #2635") != std::string::npos,
-              "2635 AC1: resolve_audit_mutation_id carries #2635 marker");
+        const auto tma_text = read_repo_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma_text.find("Issue #2635") != std::string::npos ||
+                  tma_text.find("#2635") != std::string::npos,
+              "2635 AC1: resolve carries #2635 lineage marker");
         CHECK(tma_text.find("hard_deny_eligible") != std::string::npos,
               "2635 AC1: hard_deny_eligible gate exists");
-        CHECK(tma_text.find("decide_audit_mid_fallback_slo(slo)") != std::string::npos,
-              "2635 AC1: SLO decision helper invoked at resolve time");
         CHECK(tma_text.find("return 0;") != std::string::npos,
               "2635 AC1: resolve returns 0 on hard-deny");
-
-        // AC2: SLO clear (Soft / production + rate below threshold) still
-        // allows the last-resort fallback. Source-cite: the
-        // g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.fetch_add
-        // line still follows the gate.
         CHECK(tma_text.find("audit_mid_fallback_gen_total.fetch_add") != std::string::npos,
-              "2635 AC2: fallback counter still bumps on SLO clear");
+              "2635 AC2: Soft last-resort still bumps gen counter");
         CHECK(tma_text.find("return next_audit_mutation_id();") != std::string::npos,
-              "2635 AC2: last-resort mid still returned on SLO clear");
-
-        // AC3: Soft / sandbox off → fallback always allowed. Verified
-        // statically: hard_deny_eligible is the production+strict arm;
-        // soft paths (sampled / AURA_SANDBOX=off) skip the gate and
-        // fall through to the existing fallback.
+              "2635 AC2: Soft last-resort still returns process-origin mid");
         CHECK(tma_text.find("get_strategy() == AuditStrategy::Full") != std::string::npos,
               "2635 AC3: Full strategy arm in hard_deny_eligible");
-        CHECK(tma_text.find("get_strategy() == AuditStrategy::Strict") != std::string::npos,
-              "2635 AC3: Strict strategy arm in hard_deny_eligible");
+        // #2636 removed AuditStrategy::Strict enum arm — only {Off,Sampled,Full}.
+        CHECK(tma_text.find("no Strict enum") != std::string::npos ||
+                  tma_text.find("Off, Sampled, Full") != std::string::npos,
+              "2635 AC3: Strict enum arm removed (Full is the hard strategy)");
 
-        // AC4: schedule-gate (#2630) sees the same SLO signal.
-        // MidFallbackSloInput + would_arm_degraded are reused by the
-        // gate — same input → same decision (pure function).
-        std::ifstream hdr("src/compiler/audit_mid_fallback_slo.h");
-        const std::string hdr_text((std::istreambuf_iterator<char>(hdr)),
-                                   std::istreambuf_iterator<char>());
+        const auto hdr_text = read_repo_file("src/compiler/audit_mid_fallback_slo.h");
         CHECK(hdr_text.find("MidFallbackSloInput") != std::string::npos,
-              "2635 AC4: MidFallbackSloInput shared by gate + resolve");
+              "2635 AC4: MidFallbackSloInput still used by schedule-gate");
         CHECK(hdr_text.find("would_arm_degraded") != std::string::npos,
               "2635 AC4: would_arm_degraded signal shared");
 
-        // AC5: coverage scripts. The new check_mid_fallback_hard_deny_2635.py
-        // linter is wired into build.py; the existing #2493 + #2594
-        // linters continue to pass (no regression on the preference
-        // order or the observation surface).
-        std::ifstream build("build.py");
-        const std::string build_text((std::istreambuf_iterator<char>(build)),
-                                     std::istreambuf_iterator<char>());
+        const auto build_text = read_repo_file("build.py");
         CHECK(build_text.find("check_mid_fallback_hard_deny_2635") != std::string::npos,
-              "2635 AC5: build.py wires the new linter");
+              "2635 AC5: build.py wires #2635 linter");
 
-        // AC6: no schema / surface change to typed_mutation_audit
-        // public API — the last-resort branch gains a guard; the
-        // public preference order (1-3) is unchanged.
         CHECK(tma_text.find("resolve_audit_mutation_id(std::uint64_t caller_mid = 0)") !=
                   std::string::npos,
               "2635 AC6: resolve signature unchanged");
         CHECK(tma_text.find("next_audit_mutation_id()") != std::string::npos,
-              "2635 AC6: next_audit_mutation_id last-resort still called");
+              "2635 AC6: next_audit_mutation_id Soft last-resort still present");
+    }
 
-        CHECK(true, "2635 AC6: SE/TypedMutationAudit/grant epoch join quality "
-                    "preserved under production load (source-cite + linter)");
+    // ── #2836 AC1-AC6: production mid-fallback absolute zero-tolerance ──
+    {
+        std::println("\n--- #2836: production mid-fallback absolute zero-tolerance ---");
+
+        // AC1: production_defaults / Full + all upstream mid=0 → return 0;
+        // gen does NOT bump; refuse counter does.
+        apply_production_audit_defaults();
+        force_all_upstream_mids_zero();
+        const auto gen_before = g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+            std::memory_order_relaxed);
+        const auto ref_before =
+            g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load(
+                std::memory_order_relaxed);
+        const auto mid_prod = resolve_audit_mutation_id(0);
+        const auto gen_after = g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+            std::memory_order_relaxed);
+        const auto ref_after =
+            g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load(
+                std::memory_order_relaxed);
+        std::println("  prod resolve(0) mid={} gen {}→{} refused {}→{}", mid_prod, gen_before,
+                     gen_after, ref_before, ref_after);
+        CHECK(mid_prod == 0, "2836 AC1: production resolve returns 0 (no process-origin stamp)");
+        CHECK(gen_after == gen_before,
+              "2836 AC1: audit_mid_fallback_gen_total does NOT bump on refuse");
+        CHECK(ref_after == ref_before + 1,
+              "2836 AC1: audit_mid_fallback_refused_total bumps on refuse");
+
+        // Full strategy alone (without production_defaults) also refuses.
+        apply_dev_audit_defaults(); // Sampled first
+        set_strategy(AuditStrategy::Full);
+        g_typed_mutation_audit_counters.production_defaults_active.store(0,
+                                                                         std::memory_order_relaxed);
+        force_all_upstream_mids_zero();
+        const auto mid_full = resolve_audit_mutation_id(0);
+        CHECK(mid_full == 0, "2836 AC1: Full strategy alone refuses process-origin stamp");
+        CHECK(get_strategy() == AuditStrategy::Full, "2836 AC1: strategy is Full for Full arm");
+
+        // AC2: Soft / Sampled + mid=0 → still generates join stamp + gen counter.
+        apply_dev_audit_defaults();
+        force_all_upstream_mids_zero();
+        const auto soft_gen_before =
+            g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+                std::memory_order_relaxed);
+        const auto soft_ref_before =
+            g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load(
+                std::memory_order_relaxed);
+        const auto mid_soft = resolve_audit_mutation_id(0);
+        const auto soft_gen_after =
+            g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+                std::memory_order_relaxed);
+        const auto soft_ref_after =
+            g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load(
+                std::memory_order_relaxed);
+        std::println("  soft resolve(0) mid={} gen {}→{} refused {}→{}", mid_soft, soft_gen_before,
+                     soft_gen_after, soft_ref_before, soft_ref_after);
+        CHECK(mid_soft != 0, "2836 AC2: Soft last-resort mid non-zero");
+        CHECK(soft_gen_after == soft_gen_before + 1, "2836 AC2: Soft bumps gen total");
+        CHECK(soft_ref_after == soft_ref_before, "2836 AC2: Soft does NOT bump refuse total");
+
+        // AC3: non-zero caller / epoch mid unchanged (preference order 1-3).
+        apply_production_audit_defaults();
+        const auto caller = resolve_audit_mutation_id(4242);
+        CHECK(caller == 4242, "2836 AC3: non-zero caller mid wins under production");
+        store_workspace_epoch(WorkspaceEpochKind::Mutation, 77);
+        process_resource_quota_manager().provenance_mutation_id = 0;
+        const auto epoch_mid = resolve_audit_mutation_id(0);
+        CHECK(epoch_mid == 77, "2836 AC3: Mutation epoch preferred under production (no refuse)");
+        CHECK(current_mutation_epoch() == 77, "2836 AC3: epoch is 77");
+
+        // AC4 / AC5: Agent-visible query keys + schema-2836.
+        CHECK(href(cs, "schema-2836") == 2836, "2836 AC5: schema-2836 sentinel");
+        CHECK(href(cs, "issue-2836") == 2836, "2836 AC5: issue-2836 sentinel");
+        CHECK(href(cs, "zero-tolerance-wired") == 1, "2836 AC5: zero-tolerance-wired");
+        CHECK(href(cs, "refused-total") >= 1, "2836 AC4: refused-total visible");
+        CHECK(href(cs, "mid-fallback-refused") == 1, "2836 AC4: mid-fallback-refused flag");
+        // Existing #2594 surface preserved.
+        CHECK(href(cs, "schema-2594") == 2594, "2836 AC5: schema-2594 preserved");
+
+        // AC6: source-cite + linter wire + no test_issue_2836.cpp.
+        const auto tma = read_repo_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("Issue #2836") != std::string::npos, "2836 AC6: Issue #2836 in tma");
+        CHECK(tma.find("audit_mid_fallback_refused_total") != std::string::npos,
+              "2836 AC6: refuse counter present");
+        const auto build2_text = read_repo_file("build.py");
+        CHECK(build2_text.find("check_mid_fallback_zero_tolerance_2836") != std::string::npos,
+              "2836 AC6: build.py wires #2836 linter");
+        CHECK(!repo_file_exists("tests/compiler/test_issue_2836.cpp"),
+              "2836 AC6: no test_issue_2836.cpp (#81967)");
+
+        // Restore Soft defaults for any subsequent batch members.
+        apply_dev_audit_defaults();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

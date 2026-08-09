@@ -130,11 +130,14 @@ static void ac3_aot_hotupdate_uses_resolve() {
 
 // AC4: Soft / no mutation activity → resolve falls back to gen;
 // non-zero join stamp recorded; no crash. Counter bumps.
+// Issue #2836: cold-start is Full (absolute refuse); Soft last-resort
+// requires apply_dev_audit_defaults (Sampled) + all upstream mids zero.
 static void ac4_soft_no_activity_fallback() {
     std::println("\n--- #2493 AC4: Soft no-mutation-activity fallback ---");
     reset_all();
-    // Do NOT bump_mutation_epoch — keep it 0 for this test (no Mutation
-    // activity). Also clear RQ host mid by resetting.
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    // Force last-resort: no Mutation activity, no RQ host mid.
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
     process_resource_quota_manager().provenance_mutation_id = 0;
     const auto before = g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load();
     const auto mid = resolve_audit_mutation_id();

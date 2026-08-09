@@ -1528,6 +1528,20 @@ def cmd_lint():
             "Issue #2835 Restricted multi-tenant hard fiber linter failed — run python3 scripts/coverage/checks/check_restricted_multi_tenant_hard_fiber_2835.py"
         )
         return r
+    # Issue #2836: production mid-fallback absolute zero-tolerance.
+    # resolve_audit_mutation_id refuses process-origin stamps under
+    # production_defaults || Full; Soft/Sampled keep last-resort gen.
+    # Extends test_audit_mid_fallback_slo (#81967); no docs/design/ (#1655).
+    mzt_script = COVERAGE_CHECKS / "check_mid_fallback_zero_tolerance_2836.py"
+    if not mzt_script.exists():
+        fail(f"missing {mzt_script}")
+        return 1
+    r = run([sys.executable, str(mzt_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2836 mid-fallback zero-tolerance linter failed — run python3 scripts/coverage/checks/check_mid_fallback_zero_tolerance_2836.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

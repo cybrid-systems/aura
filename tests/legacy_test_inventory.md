@@ -1160,7 +1160,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_atomic_batch_rollback_fiber_task1.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_atomic_batch_rollback_fiber_task1.cpp —
 - `tests/compiler/test_atomic_batch_rollback_metric_noise.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: abort_batch_workspace cites #2796; no enforce_all on abort paths
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` (—) [batch_driver, domain_suite, theme_compiler] — - AC1: workspace:snapshot + workspace:rollback-to primitives
-- `tests/compiler/test_audit_mid_fallback_slo.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_audit_mid_fallback_slo.cpp
+- `tests/compiler/test_audit_mid_fallback_slo.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_audit_mid_fallback_slo.cpp
 - `tests/compiler/test_audit_mutation_id_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: require_effect deny under Restricted → SE.mutation_id matches
 - `tests/compiler/test_audit_ring_publish.cpp` (—) [domain_suite, theme_compiler] — AC1: both kAuditRing == 1024
 - `tests/compiler/test_audit_wal_force_multi_tenant.cpp` (—) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
