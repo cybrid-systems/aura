@@ -1,0 +1,61 @@
+; Issue #2871 — named-let true TCO in tree-walker (no early recursion cap).
+;
+; Unify residual: recursive named-let map/list builders hit
+; "recursion depth exceeded (>700)" well before a 700-step mental model
+; (pure loop ~700; multi-frame bodies earlier ~200). Root cause: TW
+; closure/letrec tail paths used `return eval_flat(body)` (C stack growth)
+; while IR self-rec define paths got PendingCall TCO. Fix: continue the
+; eval_flat TCO loop for Call / LetRec / Let / inline-lambda tails; pin
+; parent Envs when rebinding tail_env.
+(require "std/test" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+; AC1: pure named-let counter past former hard cap
+(display "AC1 named-let pure past 700\n")
+(define (deep n)
+  (let loop ((i 0) (acc 0))
+    (if (>= i n) acc (loop (+ i 1) (+ acc 1)))))
+(assert! (= (deep 100) 100) "deep 100")
+(assert! (= (deep 700) 700) "deep 700")
+(assert! (= (deep 2000) 2000) "deep 2000")
+
+; AC2: multi-frame body (cons per step) — Unify map-build shape
+(display "AC2 named-let cons-acc past 700\n")
+(define (deep-list n)
+  (let loop ((i 0) (acc (quote ())))
+    (if (>= i n) (length acc)
+      (loop (+ i 1) (cons i acc)))))
+(assert! (= (deep-list 100) 100) "deep-list 100")
+(assert! (= (deep-list 500) 500) "deep-list 500")
+(assert! (= (deep-list 2000) 2000) "deep-list 2000")
+
+; AC3: free-var from outer lambda (named-let inside procedure)
+(display "AC3 named-let free-var outer n\n")
+(define (sum-to n)
+  (let loop ((i 0) (acc 0))
+    (if (>= i n) acc (loop (+ i 1) (+ acc i)))))
+(assert! (= (sum-to 10) 45) "sum-to 10 = 45")
+(assert! (= (sum-to 1000) 499500) "sum-to 1000")
+
+; AC4: self-rec define control (IR TCO path still works)
+(display "AC4 self-rec define control\n")
+(define (loop-self i acc n)
+  (if (>= i n) acc (loop-self (+ i 1) (+ acc 1) n)))
+(assert! (= (loop-self 0 0 2000) 2000) "self-rec 2000")
+
+(if (= *fails* 0)
+    (begin (display "OK-2871 named-let TCO\n"))
+    (begin
+      (display "FAIL-2871 fails=")
+      (display *fails*)
+      (newline)
+      (error "2871 suite failed")))

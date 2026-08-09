@@ -862,6 +862,19 @@ def cmd_lint():
             "Issue #2870 fiber join toplevel set! linter failed — run python3 scripts/coverage/checks/check_fiber_join_toplevel_set_2870.py"
         )
         return r
+    # Issue #2871: named-let true TCO in tree-walker (no early >700 cap).
+    # TW Call/LetRec continue; pin parent Envs across tail_env rebind.
+    # Suite named_let_tco_2871.aura per #81967.
+    nlt_script = COVERAGE_CHECKS / "check_named_let_tco_2871.py"
+    if not nlt_script.exists():
+        fail(f"missing {nlt_script}")
+        return 1
+    r = run([sys.executable, str(nlt_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2871 named-let TCO linter failed — run python3 scripts/coverage/checks/check_named_let_tco_2871.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +

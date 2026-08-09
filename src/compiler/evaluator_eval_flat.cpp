@@ -3224,6 +3224,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         const Env* current_env = &env;
         aura::ast::NodeId current_id = id;
         std::optional<Env> tail_env;
+        // Issue #2871: when TCO rebinds tail_env, any Env that still serves
+        // as a raw parent_ target (letrec / inline-lambda child frames)
+        // must outlive the rebind. Call TCO materialize uses SoA capture
+        // (no raw parent to the prior frame) so it can overwrite freely;
+        // pin only when we are about to emplace a child of *current_env
+        // while current_env lives inside tail_env.
+        std::vector<std::unique_ptr<Env>> tco_pinned;
+        auto pin_if_current_in_tail = [&]() {
+            if (tail_env.has_value() && current_env == &*tail_env) {
+                tco_pinned.push_back(std::make_unique<Env>(std::move(*tail_env)));
+                tail_env.reset();
+                current_env = tco_pinned.back().get();
+            }
+        };
 
         // Recursion depth guard: friendly error vs segfault
         // Each eval_flat frame is large (~7–8KB of C stack on aarch64/x86_64),
@@ -3512,7 +3526,9 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 return ar;
                             iargs.push_back(*ar);
                         }
-                        tail_env.emplace(&eval_env);
+                        // Issue #2871: pin parent if it lives in tail_env before emplace.
+                        pin_if_current_in_tail();
+                        tail_env.emplace(current_env);
                         tail_env->set_primitives(&primitives_);
 
                         for (std::size_t i = 0; i < iargs.size(); ++i) {
@@ -3522,7 +3538,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         if (dotted && !pspan.empty()) {
                             types::EvalValue rest = make_void();
                             for (std::size_t i = v.children.size() - 1; i > named_count; --i) {
-                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                                auto ar = eval_flat(*f, *p, v.child(i), *current_env);
                                 if (!ar)
                                     return ar;
                                 auto pid = pairs_.size();
@@ -3533,8 +3549,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                         auto body_id =
                             callee.children.empty() ? aura::ast::NULL_NODE : callee.child(0);
-                        if (body_id != aura::ast::NULL_NODE)
-                            return eval_flat(*f, *p, body_id, *tail_env);
+                        // Issue #2871: true TCO — stay in this eval_flat frame
+                        // (named-let / inline lambda tail calls must not grow C stack).
+                        if (body_id != aura::ast::NULL_NODE) {
+                            current_env = &*tail_env;
+                            current_id = body_id;
+                            continue;
+                        }
                         return make_void();
                     }
                     // Macro expansion: evaluate args, bind in env, evaluate body (produces template
@@ -4309,9 +4330,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             }
                             tail_env->bind_symid(cl.params.back(), rest);
                         }
-                        if (cl.body_id != aura::ast::NULL_NODE)
-                            return eval_flat(*cl.flat, cl.pool ? *cl.pool : *p, cl.body_id,
-                                             *tail_env);
+                        // Issue #2871: true TCO for TW closure calls.
+                        // Previously `return eval_flat(body)` grew C stack per
+                        // hop; named-let (letrec→lambda) never hit IR TCOPass
+                        // and failed at MAX_C_STACK_DEPTH (~700). Self-rec
+                        // define paths often lower to IR (PendingCall) and
+                        // appeared TCO-safe while named-let did not.
+                        if (cl.body_id != aura::ast::NULL_NODE && cl.flat) {
+                            f = cl.flat;
+                            if (cl.pool)
+                                p = cl.pool;
+                            current_env = &*tail_env;
+                            current_id = cl.body_id;
+                            continue;
+                        }
                         return make_void();
                     }
                     // Functor instantiation: callee is a %functor marker
@@ -4693,8 +4725,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                     auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
                     if (rec) {
                         // For letrec, the init value is evaluated in the new env (with cell
-                        // binding)
-                        tail_env.emplace(&eval_env);
+                        // binding).
+                        // Issue #2871: pin parent when it lives in tail_env (TCO call frame
+                        // holding free vars such as named-let outer `n`) so emplace does not
+                        // destroy the parent while child.parent_ still points at it.
+                        pin_if_current_in_tail();
+                        const Env& letrec_parent = *current_env;
+                        tail_env.emplace(&letrec_parent);
                         tail_env->set_primitives(&primitives_);
                         // Issue #1482 restore: pool is required so bind_symid (and
                         // bind-with-pool) populate bindings_symid_ — the PRIMARY array
@@ -4706,38 +4743,38 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         if (p)
                             tail_env->set_pool(p);
 
-                        // Issue #232 fix: register eval_env in env_frames_
+                        // Issue #232 fix: register parent in env_frames_
                         // (always, not just when parent_id_ is NULL), then
-                        // set tail_env's parent_id_ to eval_env's id. The
+                        // set tail_env's parent_id_ to parent's id. The
                         // materialized call env can then walk the SoA chain
                         // via lookup()'s parent_id_ fallback (added in #232
                         // commit 6e73ef2). The fix below is needed because
-                        // even when eval_env.parent_id_ is non-NULL (e.g., a
+                        // even when parent.parent_id_ is non-NULL (e.g., a
                         // materialized call env has parent_id_ = top_'s id),
                         // the SoA walk needs to find the BINDINGS (e.g., 'n'
-                        // from a let*), which live in eval_env but NOT in top_.
-                        // Registering eval_env in env_frames_ makes those
+                        // from a let*), which live in the parent but NOT in top_.
+                        // Registering the parent in env_frames_ makes those
                         // bindings visible to the SoA walk.
                         //
-                        // Idempotency: skip if eval_env is already a frame
+                        // Idempotency: skip if parent is already a frame
                         // (this would require tracking which envs are frames;
                         // for now, we always register, which is wasteful but
                         // correct).
-                        if (eval_env.parent_id() == NULL_ENV_ID) {
-                            EnvId eval_id = alloc_env_frame_from_env(eval_env);
-                            const_cast<Env&>(eval_env).set_parent_id(eval_id);
+                        if (letrec_parent.parent_id() == NULL_ENV_ID) {
+                            EnvId eval_id = alloc_env_frame_from_env(letrec_parent);
+                            const_cast<Env&>(letrec_parent).set_parent_id(eval_id);
                         } else {
-                            // eval_env already has a parent_id_ (probably the
+                            // parent already has a parent_id_ (probably the
                             // top env). The SoA walk starts at this parent_id_
                             // which is top_ — but top_ doesn't have the let*'s
-                            // bindings. Register eval_env as a NEW frame in
+                            // bindings. Register parent as a NEW frame in
                             // env_frames_ (at the next index) and update its
                             // parent_id_ to the new id. The old parent_id_ is
-                            // preserved on the eval_env's OWN frame.
-                            EnvId new_id = alloc_env_frame_from_env(eval_env);
-                            const_cast<Env&>(eval_env).set_parent_id(new_id);
+                            // preserved on the parent's OWN frame.
+                            EnvId new_id = alloc_env_frame_from_env(letrec_parent);
+                            const_cast<Env&>(letrec_parent).set_parent_id(new_id);
                         }
-                        tail_env->set_parent_id(eval_env.parent_id());
+                        tail_env->set_parent_id(letrec_parent.parent_id());
 
                         std::size_t ci = cells_.size();
                         cells_.push_back(make_void());
@@ -4753,9 +4790,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         if (!vv)
                             return vv;
                         cells_[ci] = *vv;
-                        // Body evaluated in *tail_env (recursive refs need the child env)
-                        if (body_id != aura::ast::NULL_NODE)
-                            return eval_flat(*f, *p, body_id, *tail_env);
+                        // Body evaluated in *tail_env (recursive refs need the child env).
+                        // Issue #2871: TCO into body — named-let desugars to
+                        // (letrec ((name lambda)) (name inits)); the call that
+                        // drives the loop must not nest a new eval_flat frame.
+                        if (body_id != aura::ast::NULL_NODE) {
+                            current_env = &*tail_env;
+                            current_id = body_id;
+                            continue;
+                        }
                         return make_void();
                     } else {
                         // For let, bind directly to current eval_env (like define) to avoid
@@ -4853,8 +4896,11 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         // dual-write a second Untracked entry and shadow Owned
                         // linear state for (let ((x (Linear ...))) ...).
                         me.bind_symid_with_linear_state(v.sym_id, make_cell(ci), lin_state);
-                        if (body_id != aura::ast::NULL_NODE)
-                            return eval_flat(*f, *p, body_id, eval_env);
+                        // Issue #2871: TCO into let body (tail position).
+                        if (body_id != aura::ast::NULL_NODE) {
+                            current_id = body_id;
+                            continue;
+                        }
                         return make_void();
                     }
                 }
