@@ -8211,7 +8211,10 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
             const auto sid = pool.intern(n);
             auto it = define_by_sym.find(sid);
             if (it == define_by_sym.end() || it->second.empty()) {
-                affected_names.insert(n); // name-only: dirty IR cache by name
+                // Issue #2817: ghost name — no live Define NodeId. Still
+                // mark IR dirty by name (if any cache key exists), but do
+                // NOT defuse_touch (would stamp stale index entries).
+                affected_names.insert(n);
                 continue;
             }
             for (auto id : it->second)
@@ -8219,13 +8222,27 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         }
     }
 
-    // Soft IR-cache dirty + defuse touch once per unique name.
+    // Names that have at least one live Define NodeId (for defuse_touch filter).
+    std::unordered_set<std::string> names_with_def;
+    names_with_def.reserve(affected_defs.size());
+    for (const auto& [id, nm] : affected_defs)
+        names_with_def.insert(nm);
+
+    // Soft IR-cache dirty once per unique name; defuse_touch only when a
+    // live Define exists (Issue #2817).
+    std::uint64_t ghost_name_touches = 0;
     for (const auto& name : affected_names) {
         if (mark_define_dirty_fn_)
             mark_define_dirty_fn_(name);
-        const auto sid = pool.intern(name);
-        if (defuse_touch_fn_ && sid != aura::ast::INVALID_SYM)
-            defuse_touch_fn_(defuse_index_, sid);
+        if (names_with_def.count(name) != 0) {
+            const auto sid = pool.intern(name);
+            if (defuse_touch_fn_ && sid != aura::ast::INVALID_SYM)
+                defuse_touch_fn_(defuse_index_, sid);
+        } else {
+            // Ghost name: in defuse_affected_syms_ / affected_names but no
+            // matching Define. Skip defuse_touch to avoid index pollution.
+            ++ghost_name_touches;
+        }
     }
 
     // Per-Define finalize + BFS enqueue (every unique def_id).
@@ -8237,18 +8254,8 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         if (define_needs_precise_invalidation_for_inval(flat, def_id))
             enqueue_cascade_bfs_invalidate(name);
     }
-    // Name-only entries (no live Define) still count so relower runs.
-    for (const auto& name : affected_names) {
-        bool has_def = false;
-        for (const auto& [id, nm] : affected_defs) {
-            if (nm == name) {
-                has_def = true;
-                break;
-            }
-        }
-        if (!has_def)
-            ++defines_n;
-    }
+    // Name-only (ghost) entries still count so relower may run for cache keys.
+    defines_n += ghost_name_touches;
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
         if (multi_define_extra > 0)
@@ -8260,6 +8267,10 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         if (path2_index_nodes > 0)
             m->cascade_path2_index_nodes_total.fetch_add(path2_index_nodes,
                                                          std::memory_order_relaxed);
+        // Issue #2817: ghost-name defuse_touch skips.
+        if (ghost_name_touches > 0)
+            m->cascade_ghost_name_touch_total.fetch_add(ghost_name_touches,
+                                                        std::memory_order_relaxed);
     }
 
     // 3) Eager partial re-lower of dirty ir_cache_v2 entries
