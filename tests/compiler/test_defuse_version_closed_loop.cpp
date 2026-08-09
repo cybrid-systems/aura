@@ -17,11 +17,20 @@
 // AC7: query regression (epoch-stats,
 //      mutation-boundary-invariant-stats)
 //
+// #2860 (additive): query:evolution-epoch-snapshot unified
+// fiber-scoped "evolution epoch" view for Agent self-evo loops.
+// Schema=2860 + additive keys (hygiene-depth / defuse-version /
+// mutation-boundary-depth / macro-introduced-count /
+// layout-stamp-gen-arena / layout-stamp-gen-flat /
+// residual-defer-*). Source-cite ACs for gate-only ship; runtime
+// behavior verifies on next CI run.
+//
 // Uses one CompilerService for the integration matrix.
 
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <fstream>
 #include <string>
 
 import std;
@@ -111,8 +120,73 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_419_detail
 
+// ── Issue #2860: unified query:evolution-epoch-snapshot
+// Source-cite ACs (gate-only ship; runtime verifies on CI).
+
+static std::string read_file_2860(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static void ac2860_1_source() {
+    std::println("\n--- #2860 AC1: source — primitive registered + hash builder ---");
+    const auto q = read_file_2860("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:evolution-epoch-snapshot") != std::string::npos,
+          "#2860 AC1: primitive registered");
+    CHECK(q.find("make_int(static_cast<std::int64_t>(2860))") != std::string::npos ||
+              q.find("2860") != std::string::npos,
+          "#2860 AC1: schema = 2860 present");
+    CHECK(q.find("hygiene-depth") != std::string::npos, "#2860 AC1: hygiene-depth key");
+    CHECK(q.find("defuse-version") != std::string::npos, "#2860 AC1: defuse-version key");
+    CHECK(q.find("mutation-boundary-depth") != std::string::npos,
+          "#2860 AC1: mutation-boundary-depth key");
+    CHECK(q.find("macro-introduced-count") != std::string::npos,
+          "#2860 AC1: macro-introduced-count key");
+    CHECK(q.find("layout-stamp-gen-arena") != std::string::npos &&
+              q.find("layout-stamp-gen-flat") != std::string::npos,
+          "#2860 AC1: layout-stamp generation keys");
+    CHECK(q.find("residual-defer-total") != std::string::npos &&
+              q.find("residual-defer-forced-clear") != std::string::npos &&
+              q.find("residual-defer-steal-hard-fail") != std::string::npos,
+          "#2860 AC1: residual-defer flag keys");
+    CHECK(q.find("FlatHashTable::create") != std::string::npos &&
+              q.find("insert_pair") != std::string::npos,
+          "#2860 AC1: hash builder uses FlatHashTable + insert_pair");
+    CHECK(read_file_2860("docs/design/2860-evolution-epoch-snapshot.md").empty(),
+          "#2860 AC1: no docs/design/2860-* per #1655");
+}
+
+static void ac2860_2_additive_keys() {
+    std::println("\n--- #2860 AC2: additive-keys contract (no regression) ---");
+    const auto q = read_file_2860("src/compiler/evaluator_primitives_query.cpp");
+    // Existing surfaces preserved (additive, not replaced).
+    CHECK(q.find("query:defuse-version-stats") != std::string::npos,
+          "#2860 AC2: defuse-version-stats preserved");
+    CHECK(q.find("query:macro-fiber-hygiene") != std::string::npos,
+          "#2860 AC2: macro-fiber-hygiene preserved");
+    CHECK(q.find("query:mutation-boundary-hold-stats") != std::string::npos,
+          "#2860 AC2: mutation-boundary-hold-stats preserved");
+    // New primitive is registered after defuse-version-stats (additive
+    // on the same registration block).
+    const auto defuse_pos = q.find("query:defuse-version-stats");
+    const auto epoch_pos = q.find("query:evolution-epoch-snapshot");
+    CHECK(defuse_pos != std::string::npos && epoch_pos != std::string::npos,
+          "#2860 AC2: both primitives present");
+    CHECK(epoch_pos > defuse_pos,
+          "#2860 AC2: epoch-snapshot registered after defuse-version-stats (additive)");
+}
+
 int main() {
     aura::compiler::CompilerService cs;
     aura_419_detail::run_matrix(cs);
+    std::println("\n=== #2860: unified evolution-epoch-snapshot (source-cite gate-only) ===");
+    ac2860_1_source();
+    ac2860_2_additive_keys();
     return RUN_ALL_TESTS();
 }

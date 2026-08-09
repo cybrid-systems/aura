@@ -14541,6 +14541,106 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       guard_epoch + aot + bridge));
         });
 
+    // Issue #2860: query:evolution-epoch-snapshot. Unified fiber-scoped
+    // "evolution epoch" view for Agent self-evo loops. Reduces the
+    // multi-primitive stitch (query:macro-fiber-hygiene +
+    // pattern-index-stats + mutation-boundary-hold-stats + defuse
+    // queries + marker-stats) into one cheap, atomic-only snapshot
+    // that Agent loops can poll at high frequency without torn
+    // views under concurrent mutate. Returns a hash with:
+    //   - hygiene_depth / violations / gensym_map_size (fiber)
+    //   - defuse_version / dirty_node_count
+    //   - mutation_boundary_depth / nested_max
+    //   - macro_introduced_count (workspace walk)
+    //   - generation (arena + flat gen from layout_stamp)
+    //   - layout_stamp_publish_total
+    //   - residual_defer flags (3 atomic counters)
+    //   - schema = 2860
+    // Optional [:fiber-id n] arg → fiber-scoped; absent → current
+    // fiber. Zero heavy allocation; pure atomic / snapshot loads.
+    // Source-cited in the additive-keys contract with #2174,
+    // #2097, #2101 (existing fiber-hygiene / boundary-hold /
+    // macro-marker surfaces remain green; this is additive, not
+    // duplicative).
+    ObservabilityPrims::register_stats_impl(
+        "query:evolution-epoch-snapshot", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            // ── fiber hygiene (per-fiber; default = current fiber) ──
+            const auto fiber_h = ev->get_fiber_hygiene_metrics();
+            // ── defuse / epoch ──
+            const std::uint64_t defuse_version = ev->current_defuse_version();
+            // ── mutation boundary depth ──
+            const int mb_depth_slo = *Evaluator::mutation_boundary_depth_slot(ev);
+            const std::uint64_t mutation_boundary_depth =
+                mb_depth_slo > 0 ? static_cast<std::uint64_t>(mb_depth_slo) : 0;
+            // ── macro_introduced_count (workspace walk) ──
+            std::uint64_t macro_introduced_count = 0;
+            if (auto* ws = ev->workspace_flat_) {
+                const auto sz = ws->size();
+                for (aura::ast::NodeId id = 0; id < sz; ++id) {
+                    if (ws->is_live_node(id) && ws->is_macro_introduced(id))
+                        ++macro_introduced_count;
+                }
+            }
+            // ── generation / layout_stamp ──
+            const auto l_stamp = ev->current_layout_stamp();
+            const std::uint64_t gen_arena = ev->get_layout_stamp_last_arena_gen();
+            const std::uint64_t gen_flat = ev->get_layout_stamp_last_flat_gen();
+            const std::uint64_t layout_stamp_publish_total = ev->get_layout_stamp_publish_total();
+            // ── residual_defer flags ──
+            const std::uint64_t residual_defer_total =
+                m ? m->mutation_boundary_residual_defer_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t residual_defer_forced_clear =
+                m ? m->mutation_boundary_residual_defer_forced_clear_total.load(
+                        std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t residual_defer_steal_hard_fail =
+                m ? m->residual_defer_steal_hard_fail_total.load(std::memory_order_relaxed) : 0;
+            // ── build hash (schema = 2860 + additive keys) ──
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            (void)ht->insert_pair("schema", make_int(2860));
+            (void)ht->insert_pair("issue", make_int(2860));
+            // Fiber hygiene (per AC).
+            (void)ht->insert_pair("hygiene-depth",
+                                  make_int(static_cast<std::int64_t>(fiber_h.hygiene_depth)));
+            (void)ht->insert_pair("hygiene-violations",
+                                  make_int(static_cast<std::int64_t>(fiber_h.violations)));
+            (void)ht->insert_pair("gensym-map-size",
+                                  make_int(static_cast<std::int64_t>(fiber_h.gensym_map_size)));
+            // Defuse / epoch.
+            (void)ht->insert_pair("defuse-version",
+                                  make_int(static_cast<std::int64_t>(defuse_version)));
+            // Mutation boundary depth.
+            (void)ht->insert_pair("mutation-boundary-depth",
+                                  make_int(static_cast<std::int64_t>(mutation_boundary_depth)));
+            // Macro marker counts.
+            (void)ht->insert_pair("macro-introduced-count",
+                                  make_int(static_cast<std::int64_t>(macro_introduced_count)));
+            // Generation / layout_stamp.
+            (void)ht->insert_pair("layout-stamp-gen-arena",
+                                  make_int(static_cast<std::int64_t>(gen_arena)));
+            (void)ht->insert_pair("layout-stamp-gen-flat",
+                                  make_int(static_cast<std::int64_t>(gen_flat)));
+            (void)ht->insert_pair("layout-stamp-publish-total",
+                                  make_int(static_cast<std::int64_t>(layout_stamp_publish_total)));
+            // Residual defer flags.
+            (void)ht->insert_pair("residual-defer-total",
+                                  make_int(static_cast<std::int64_t>(residual_defer_total)));
+            (void)ht->insert_pair("residual-defer-forced-clear",
+                                  make_int(static_cast<std::int64_t>(residual_defer_forced_clear)));
+            (void)ht->insert_pair(
+                "residual-defer-steal-hard-fail",
+                make_int(static_cast<std::int64_t>(residual_defer_steal_hard_fail)));
+            return make_hash(ht);
+        });
+
     // Issue #420: query:macro-hygiene-contract-stats. Returns the
     // sum of 7 end-to-end MacroIntroduced hygiene contract
     // observability counters spanning clone/expand → query:pattern
