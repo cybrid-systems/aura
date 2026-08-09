@@ -8672,6 +8672,13 @@ struct CompilerMetrics {
     // Issue #2610: auto-detect expected_partial from dirty cone (mirrors audit).
     std::atomic<std::uint64_t> composite_commit_auto_partial_from_cone_total{0};
     std::atomic<std::uint64_t> composite_commit_auto_partial_from_cone_observe_total{0};
+    // Issue #2851: non-empty mutation log on outermost success boundary
+    // forces expected_partial under production (#2610 residual — under-marked
+    // Agents with txn_dirty=false but log_delta>0). Soft: observe only when
+    // env opt-in (AURA_COMPOSITE_LOG_FORCES_PARTIAL=1). Quiet path (no log
+    // delta / Soft default) is zero-cost — counter not bumped.
+    std::atomic<std::uint64_t> composite_commit_log_forces_partial_total{0};
+    std::atomic<std::uint64_t> composite_commit_log_forces_partial_observe_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_limited_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_soft_cap{256};
     // Issue #1528: O(delta) re-inference observability.

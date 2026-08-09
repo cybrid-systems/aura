@@ -289,6 +289,14 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_commit_auto_partial_from_cone_total{0};         // #2610
     std::atomic<std::uint64_t> composite_commit_auto_partial_from_cone_observe_total{0}; // #2610
     std::atomic<std::uint32_t> composite_auto_partial_from_cone_wired{1};                // #2610
+    // Issue #2851: residual close of #2610. Non-empty mutation log on
+    // outermost success boundary forces expected_partial under
+    // production_defaults / Full / Strict. Soft: observe only when env
+    // opt-in (AURA_COMPOSITE_LOG_FORCES_PARTIAL=1). Quiet path (log_delta=0)
+    // is zero-cost — counter not bumped, force_reason not advanced.
+    std::atomic<std::uint64_t> composite_commit_log_forces_partial_total{0};         // #2851
+    std::atomic<std::uint64_t> composite_commit_log_forces_partial_observe_total{0}; // #2851
+    std::atomic<std::uint32_t> composite_commit_log_forces_partial_wired{1};         // #2851
     // Issue #2458: outermost commit gate on truncated reverify / incomplete
     // blame (non-empty under-scanned CS — residual half-green after #2345).
     // Soft/Sampled: observe only (commit may still succeed).
@@ -462,6 +470,33 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
     return production_defaults_active() || get_strategy() == AuditStrategy::Full ||
            composite_empty_cs_hard_env();
 }
+
+// Issue #2851: Soft-path env opt-in for the log-forces-partial observe
+// counter. Default Soft path has zero behavior change (per AC2); only bumps
+// observe counter when env AURA_COMPOSITE_LOG_FORCES_PARTIAL=1 — lets
+// Soft / Sampled test suites observe the same signal Agents see in
+// production without changing Soft commit outcomes. Quiet path (env unset):
+// always false → zero overhead (one relaxed load + one compare per boundary).
+[[nodiscard]] inline bool composite_log_forces_partial_env_opt_in() noexcept {
+    static const bool cached = []() noexcept -> bool {
+        const char* e = std::getenv("AURA_COMPOSITE_LOG_FORCES_PARTIAL");
+        if (e == nullptr || e[0] == '\0')
+            return false;
+        return e[0] == '1';
+    }();
+    return cached;
+}
+
+// Issue #2851: process-wide "pending" log delta plumbed from
+// evaluator_mutation_boundary.cpp (which has access to cp.mutation_log_size
+// + workspace_flat_->mutation_log_size()) to evaluator_typecheck.cpp
+// (Evaluator::composite_txn_commit body, where the #2610 auto_partial_from_cone
+// bump lives). Set per-boundary before composite_txn_commit call; read + reset
+// inside composite_txn_commit body. Relaxed atomic — single producer (boundary
+// exit) / single consumer (composite_txn_commit entry). Default 0 = no
+// log delta since last composite commit.
+inline std::atomic<std::uint64_t> g_composite_commit_log_forces_partial_pending_log_delta{0};
+inline constexpr int kCompositeCommitLogForcesPartialIssue = 2851;
 
 // Issue #2621: process-wide last partial cone truncate (Agents + pure tests).
 // Stamped by TypeChecker::infer_flat_partial after #2560 soft/hard truncate.
@@ -1058,6 +1093,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
         return 11; // #2704
     if (r == "auto_partial")
         return 6; // #2610
+    if (r == "log_forces_partial")
+        return 12; // #2851
     if (r == "empty_cs")
         return 5;
     if (r == "truncate")
@@ -2040,6 +2077,11 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.composite_commit_auto_partial_from_cone_total.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_commit_auto_partial_from_cone_observe_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2851
+    g_typed_mutation_audit_counters.composite_commit_log_forces_partial_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_log_forces_partial_observe_total.store(
         0, std::memory_order_relaxed);
     // Issue #2458
     g_typed_mutation_audit_counters.truncate_commit_observe_total.store(0,

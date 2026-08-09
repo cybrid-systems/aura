@@ -861,6 +861,34 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         }
         (void)agent_expected_partial;
     }
+    // Issue #2851: residual close of #2610. Non-empty mutation log on
+    // outermost success boundary forces expected_partial under production
+    // or Full strategy (complementary signal to #2610 cone-detect).
+    // Quiet path (pending_log_delta == 0): no force, no bump, zero cost.
+    // Soft default: zero behavior change. Soft + env opt-in
+    // (AURA_COMPOSITE_LOG_FORCES_PARTIAL=1): observe counter bumps only.
+    const std::uint64_t pending_log_delta =
+        typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.load(
+            std::memory_order_relaxed);
+    if (pending_log_delta > 0 && !agent_expected_partial) {
+        const bool hard_log = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        if (hard_log) {
+            // Force effective expected_partial so existing empty-CS hard-miss
+            // / SDO matrix (#2345/#2509/#2610) fires — Agent under-mark with
+            // non-empty log delta can no longer vacuous-green.
+            expected_partial = true;
+            c.composite_commit_log_forces_partial_total.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->composite_commit_log_forces_partial_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        } else if (typed_audit::composite_log_forces_partial_env_opt_in()) {
+            c.composite_commit_log_forces_partial_observe_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->composite_commit_log_forces_partial_observe_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
+    }
     // Matrix cell counters (#2509) — use effective expected after auto.
     if (expected_partial && has_work) {
         c.composite_commit_expected_has_work_total.fetch_add(1, std::memory_order_relaxed);

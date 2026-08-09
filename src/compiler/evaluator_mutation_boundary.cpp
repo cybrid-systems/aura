@@ -770,9 +770,30 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // !truncated_reverify (or full-resync) before native continues.
                     if (composite) {
                         typed_audit::CompositeTxnCommitResult ccr{};
+                        // Issue #2851: stage mutations-since-boundary-enter so
+                        // composite_txn_commit body (which holds the #2610
+                        // auto_partial_from_cone bump site) can run the
+                        // log-delta force-partial check. Quiet path (no
+                        // log delta / Soft default) stores 0 → zero behavior
+                        // change. Default 0 also matches the empty-state
+                        // reset below.
+                        const std::uint64_t log_delta =
+                            workspace_flat_ && cp.mutation_log_size > 0
+                                ? (workspace_flat_->mutation_log_size() > cp.mutation_log_size
+                                       ? workspace_flat_->mutation_log_size() - cp.mutation_log_size
+                                       : 0ull)
+                                : 0ull;
+                        typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
+                            log_delta, std::memory_order_relaxed);
                         inv_ok = composite_txn_commit(
                             mid, audit_op, static_cast<std::uint32_t>(audit_target), cp.version,
                             epoch_after, nested_boundary, batch_active, &ccr);
+                        // Reset pending log_delta after composite_txn_commit
+                        // returns so subsequent non-composite boundaries
+                        // don't see stale value. composite_txn_commit body
+                        // reads + clears via the new #2851 check below.
+                        typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
+                            0, std::memory_order_relaxed);
                         first = ccr.audit;
                         recovered = ccr.partial_recovered;
                         if (inv_ok)
