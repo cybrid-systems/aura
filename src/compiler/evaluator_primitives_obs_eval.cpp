@@ -17109,6 +17109,13 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"linear-ownership-input-scan-recovered-wired", make_int(1)},
                 {"schema-2828", make_int(2828)},
                 {"issue-2828", make_int(2828)},
+                // Issue #2829: RefCountOp-inc is non-consuming (ops[2]==1).
+                {"linear-ownership-refcount-inc-false-positive-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::LinearOwnershipWrap::refcount_inc_false_positive_total()))},
+                {"linear-ownership-refcount-inc-wired", make_int(1)},
+                {"schema-2829", make_int(2829)},
+                {"issue-2829", make_int(2829)},
                 // lineage 1576 + #2025 + #2106 + #2130 dirty peel
                 {"schema", make_int(2130)},
             };

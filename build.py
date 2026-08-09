@@ -1444,6 +1444,18 @@ def cmd_lint():
             "Issue #2828 linear ownership Branch/CellGet input scan linter failed — run python3 scripts/coverage/checks/check_linear_ownership_branch_cellget_2828.py"
         )
         return r
+    # Issue #2829: RefCountOp-inc is non-consuming (ops[2]==1 only share).
+    # ac2829 in test_linear_ownership_refcount_inc.
+    lori_script = COVERAGE_CHECKS / "check_linear_ownership_refcount_inc_2829.py"
+    if not lori_script.exists():
+        fail(f"missing {lori_script}")
+        return 1
+    r = run([sys.executable, str(lori_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2829 linear ownership RefCountOp-inc linter failed — run python3 scripts/coverage/checks/check_linear_ownership_refcount_inc_2829.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
