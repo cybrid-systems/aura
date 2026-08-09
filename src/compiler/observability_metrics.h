@@ -3179,10 +3179,11 @@ struct CompilerMetrics {
     // Distinct from existing tag_arity_index_hit_rate
     // (query:pattern-index-stats #547) and macro_marker counters
     // (#2858 restamp); these are the #2861 contract-level surfaces.
-    std::atomic<std::uint64_t> pattern_safe_span_uses_total{0};     // #2861
-    std::atomic<std::uint64_t> pattern_hygiene_filtered_total{0};   // #2861
-    std::atomic<std::uint64_t> pattern_epoch_mismatch_total{0};     // #2861
-    std::atomic<std::uint64_t> pattern_dangling_prevented_total{0}; // #2861
+    // pattern_safe_span_uses_total / pattern_dangling_prevented_total
+    // declared with older PatternSafety block below; pattern_hygiene_
+    // filtered_total with #2123 above. Only the new epoch-mismatch
+    // counter is added here (avoid redeclare).
+    std::atomic<std::uint64_t> pattern_epoch_mismatch_total{0}; // #2861
 
     // Issue #2862: query:children-stable full safety contract
     // metrics (refine #2036 / #678 / #655 Gap4 / #2861). Tracks the

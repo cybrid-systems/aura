@@ -358,6 +358,8 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> workflow_retry_total{0};        // composed RetryN
     std::atomic<std::uint64_t> workflow_circuit_open_total{0}; // composed CircuitBreaker
     std::atomic<std::uint64_t> workflow_residual_reclaim_under_policy_total{0};
+    // Issue #2843: Aura orch:compose-workflow prim invocations (additive).
+    std::atomic<std::uint64_t> workflow_compose_aura_total{0};
     // Issue #2852: supervised-batch / workflow-apply counter (additive —
     // bumps once per apply_workflow call regardless of phase outcome).
     // Lets Agents observe supervise-batch adoption without changing the
@@ -2416,6 +2418,8 @@ struct WorkflowFailurePolicy {
 
 inline constexpr int kWorkflowFailurePolicyIssue = 2756;
 inline constexpr int kWorkflowApplySugarIssue = 2852; // #2852 supervised-batch / apply_workflow
+// Issue #2843: Aura language surface for WorkflowFailurePolicy (compose prim).
+inline constexpr int kWorkflowComposeAuraIssue = 2843;
 
 // Compose from batch FailurePolicy (+ residual preference). Maps agent
 // via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.
@@ -2487,6 +2491,50 @@ to_parallel_policy(const WorkflowFailurePolicy& w) noexcept {
 }
 [[nodiscard]] inline bool residual_prefers_defer(const WorkflowFailurePolicy& w) noexcept {
     return w.residual == ResidualReclaimPreference::Defer;
+}
+
+// Issue #2843: string names for Aura hash projection (parity with C++ table).
+[[nodiscard]] inline const char*
+failure_policy_name(serve::parallel_orch::FailurePolicy p) noexcept {
+    using FP = serve::parallel_orch::FailurePolicy;
+    switch (p) {
+        case FP::FailFast:
+            return "fail-fast";
+        case FP::CollectAll:
+            return "collect-all";
+        case FP::RetryN:
+            return "retry-n";
+        case FP::CircuitBreaker:
+            return "circuit-breaker";
+    }
+    return "collect-all";
+}
+[[nodiscard]] inline const char* agent_failure_action_name(AgentFailureAction a) noexcept {
+    switch (a) {
+        case AgentFailureAction::ReportOnly:
+            return "report-only";
+        case AgentFailureAction::RestartN:
+            return "restart-n";
+        case AgentFailureAction::Cancel:
+        default:
+            return "cancel";
+    }
+}
+[[nodiscard]] inline const char* residual_preference_name(ResidualReclaimPreference r) noexcept {
+    switch (r) {
+        case ResidualReclaimPreference::Cancel:
+            return "cancel";
+        case ResidualReclaimPreference::Defer:
+            return "defer";
+        case ResidualReclaimPreference::Report:
+        default:
+            return "report";
+    }
+}
+// Bump Aura-side compose counter (prim path). C++ compose_workflow_policy
+// already bumps workflow_compose_total; this is additive language surface.
+inline void note_workflow_compose_aura() noexcept {
+    g_orch_module_stats.workflow_compose_aura_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Observe residual/reclaim under a workflow policy (AC2). Call when the

@@ -446,6 +446,48 @@ Rules:
 
 Regression: `tests/orch/test_failure_policy_bridge` (`ac2756_*`).
 
+### Aura surface: `orch:compose-workflow` (Issue #2843)
+
+#2756 shipped C++ composition only. #2843 adds the Aura prim so denseness
+hosts (Aether/Hermes stdin, `lib/std/orchestrator`) can compose without
+hand-wiring switch tables:
+
+```text
+(orch:compose-workflow batch-policy
+   [:residual 'report|'cancel|'defer]
+   [:max-retries n]
+   [:consecutive-fail-limit n]
+   [:retry-backoff-ms n])
+  → hash {
+      ok,
+      batch-policy / failure-policy,   ; parallel-intend kwargs
+      max-retries, consecutive-fail-limit, retry-backoff-ms, fail-fast,
+      policy / on-stall,               ; scope-watch kwargs
+      max-restarts, consecutive-stall-limit, restart-backoff-ms,
+      residual, residual-cancel, residual-defer,  ; advisory only
+      schema-2756, schema-2843, wired
+    }
+```
+
+Apply without duplicating mapping tables:
+
+```text
+(define pol (orch:compose-workflow 'retry-n :residual 'cancel :max-retries 3))
+(parallel-intend tasks :workflow pol)
+(orch:scope-watch :workflow pol :stall-ms 1000)
+```
+
+Parity with C++ `to_agent_policy` / `to_parallel_policy` (AC1). Residual is
+**advisory** — does not alter #2661 reclaim (AC2). Soft never hard-denies
+(AC3). Unused path leaves #2007 / #2229 / #2539 / #2756 defaults (AC1).
+
+Counters on `query:orch-module-stats`: `workflow-compose-aura-total` (+
+existing `workflow-compose-total` from C++ compose), `schema-2843`.
+
+MVP scope linter remains green (no `AgentRegistry` / `conduct_parallel`).
+
+Regression: `tests/orch/test_failure_policy_bridge` (`ac2843_*`).
+
 ### `agent-ask` / `agent-reply` (Issue #2231 / #2401 / #2538, cross-agent request/response)
 
 Standardized request/response channel between agents without a process-global

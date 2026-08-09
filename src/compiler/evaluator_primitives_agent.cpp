@@ -2395,6 +2395,56 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         policy.failure_policy = FP::RetryN;
                     else if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
                         policy.failure_policy = FP::CircuitBreaker;
+                } else if ((k == "workflow" || k == "workflow-policy" || k == "workflow_policy") &&
+                           types::is_hash(val)) {
+                    // Issue #2843: apply orch:compose-workflow hash projection
+                    // onto ParallelPolicy (no switch-table reimplementation).
+                    auto hidx = types::as_hash_idx(val);
+                    if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+                        auto* ht = g_hash_tables[hidx];
+                        auto meta = ht->metadata();
+                        auto keys = ht->keys();
+                        auto vals = ht->values();
+                        auto hcap = ht->capacity;
+                        auto key_str = [&](EvalValue kv) -> std::string {
+                            if (types::is_string(kv))
+                                return heap_str_from(ev.string_heap_, kv);
+                            return {};
+                        };
+                        for (std::size_t si = 0; si < hcap; ++si) {
+                            if (meta[si] == 0xFF)
+                                continue;
+                            EvalValue ke{};
+                            ke.val = keys[si];
+                            EvalValue ve{};
+                            ve.val = vals[si];
+                            auto ks = key_str(ke);
+                            using FP = aura::serve::parallel_orch::FailurePolicy;
+                            if ((ks == "failure-policy" || ks == "batch-policy") &&
+                                types::is_string(ve)) {
+                                auto v = heap_str_from(ev.string_heap_, ve);
+                                if (v == "fail-fast")
+                                    policy.failure_policy = FP::FailFast;
+                                else if (v == "collect-all")
+                                    policy.failure_policy = FP::CollectAll;
+                                else if (v == "retry-n")
+                                    policy.failure_policy = FP::RetryN;
+                                else if (v == "circuit-breaker")
+                                    policy.failure_policy = FP::CircuitBreaker;
+                            } else if (ks == "max-retries" && types::is_int(ve)) {
+                                policy.max_retries = static_cast<std::uint32_t>(
+                                    std::max<std::int64_t>(0, types::as_int(ve)));
+                            } else if (ks == "consecutive-fail-limit" && types::is_int(ve)) {
+                                policy.consecutive_fail_limit = static_cast<std::uint32_t>(
+                                    std::max<std::int64_t>(1, types::as_int(ve)));
+                            } else if (ks == "retry-backoff-ms" && types::is_int(ve)) {
+                                policy.retry_backoff_ms = static_cast<std::uint32_t>(
+                                    std::max<std::int64_t>(0, types::as_int(ve)));
+                            } else if (ks == "fail-fast" && types::is_bool(ve)) {
+                                policy.fail_fast = types::as_bool(ve);
+                            }
+                        }
+                    }
                 } else if ((k == "region-keys" || k == "region_keys") && types::is_vector(val)) {
                     // Issue #2746: per-task region keys for #2724 concurrent admit.
                     auto rvidx = types::as_vector_idx(val);
@@ -3482,6 +3532,47 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                            types::is_int(val)) {
                     policy.restart_backoff_ms =
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "workflow" || k == "workflow-policy" || k == "workflow_policy") &&
+                           types::is_hash(val)) {
+                    // Issue #2843: apply orch:compose-workflow hash onto
+                    // AgentFailurePolicy (scope-watch projection).
+                    auto hidx = types::as_hash_idx(val);
+                    if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+                        auto* ht = g_hash_tables[hidx];
+                        auto meta = ht->metadata();
+                        auto keys = ht->keys();
+                        auto vals = ht->values();
+                        auto hcap = ht->capacity;
+                        for (std::size_t si = 0; si < hcap; ++si) {
+                            if (meta[si] == 0xFF)
+                                continue;
+                            EvalValue ke{};
+                            ke.val = keys[si];
+                            EvalValue ve{};
+                            ve.val = vals[si];
+                            if (!types::is_string(ke))
+                                continue;
+                            auto ks = heap_str_from(ev.string_heap_, ke);
+                            if ((ks == "policy" || ks == "on-stall") && types::is_string(ve)) {
+                                auto pol = heap_str_from(ev.string_heap_, ve);
+                                if (pol == "cancel")
+                                    policy.on_stall = aura::orch::AgentFailureAction::Cancel;
+                                else if (pol == "report-only")
+                                    policy.on_stall = aura::orch::AgentFailureAction::ReportOnly;
+                                else if (pol == "restart-n")
+                                    policy.on_stall = aura::orch::AgentFailureAction::RestartN;
+                            } else if (ks == "max-restarts" && types::is_int(ve)) {
+                                policy.max_restarts = static_cast<std::uint32_t>(
+                                    std::max<std::int64_t>(0, types::as_int(ve)));
+                            } else if (ks == "consecutive-stall-limit" && types::is_int(ve)) {
+                                policy.consecutive_stall_limit = static_cast<std::uint32_t>(
+                                    std::max<std::int64_t>(0, types::as_int(ve)));
+                            } else if (ks == "restart-backoff-ms" && types::is_int(ve)) {
+                                policy.restart_backoff_ms = static_cast<std::uint32_t>(
+                                    std::max<std::int64_t>(0, types::as_int(ve)));
+                            }
+                        }
+                    }
                 }
             }
             const auto before_restart =
@@ -3986,6 +4077,142 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Soft / sandbox=off never hard-denies beyond the existing watch_all /
     // parallel_intend gates (AC6). Defaults FailurePolicy surfaces
     // unchanged for non-callers (AC1).
+    // Issue #2843: orch:compose-workflow — Aura surface for #2756
+    // WorkflowFailurePolicy composition. Returns a structured hash that
+    // projects onto parallel-intend kwargs + orch:scope-watch kwargs
+    // (and may be passed as :workflow hash to either prim). Soft never
+    // hard-denies. Unused path leaves #2007/#2229/#2539/#2756 defaults.
+    //
+    //   (orch:compose-workflow batch-policy
+    //      [:residual 'report|'cancel|'defer]
+    //      [:max-retries n] [:consecutive-fail-limit n] [:retry-backoff-ms n])
+    //   → hash {ok, batch-policy, failure-policy, agent/policy, residual,
+    //           max-retries, …, schema-2756, schema-2843}
+    add("orch:compose-workflow",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty()) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:compose-workflow: usage "
+                    "(orch:compose-workflow batch-policy [:residual r] "
+                    "[:max-retries n] [:consecutive-fail-limit n] [:retry-backoff-ms n])",
+                    ev.primitive_error_counter_ptr());
+            }
+            using FP = aura::serve::parallel_orch::FailurePolicy;
+            FP batch = FP::CollectAll;
+            auto parse_batch = [](std::string_view v) -> FP {
+                while (!v.empty() && v[0] == ':')
+                    v = v.substr(1);
+                if (v == "fail-fast" || v == "fail_fast")
+                    return FP::FailFast;
+                if (v == "collect-all" || v == "collect_all")
+                    return FP::CollectAll;
+                if (v == "retry-n" || v == "retry_n" || v == "retry")
+                    return FP::RetryN;
+                if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
+                    return FP::CircuitBreaker;
+                return FP::CollectAll;
+            };
+            if (types::is_string(a[0]) || types::is_keyword(a[0])) {
+                std::string v = types::is_string(a[0]) ? heap_str_from(ev.string_heap_, a[0])
+                                                       : orch_keyword_key(a[0]);
+                batch = parse_batch(v);
+            } else if (types::is_int(a[0])) {
+                const auto n = types::as_int(a[0]);
+                if (n == 0)
+                    batch = FP::FailFast;
+                else if (n == 1)
+                    batch = FP::CollectAll;
+                else if (n == 2)
+                    batch = FP::RetryN;
+                else if (n == 3)
+                    batch = FP::CircuitBreaker;
+            }
+            auto residual = aura::orch::ResidualReclaimPreference::Report;
+            std::uint32_t max_retries = 0;
+            std::uint32_t consecutive_fail_limit = 3;
+            std::uint32_t retry_backoff_ms = 0;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if (k == "residual" && (types::is_string(val) || types::is_keyword(val))) {
+                    std::string rv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
+                                                           : orch_keyword_key(val);
+                    while (!rv.empty() && rv[0] == ':')
+                        rv = rv.substr(1);
+                    if (rv == "cancel")
+                        residual = aura::orch::ResidualReclaimPreference::Cancel;
+                    else if (rv == "defer")
+                        residual = aura::orch::ResidualReclaimPreference::Defer;
+                    else
+                        residual = aura::orch::ResidualReclaimPreference::Report;
+                } else if ((k == "max-retries" || k == "max_retries") && types::is_int(val)) {
+                    max_retries =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "consecutive-fail-limit" || k == "consecutive_fail_limit") &&
+                           types::is_int(val)) {
+                    consecutive_fail_limit =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(1, types::as_int(val)));
+                } else if ((k == "retry-backoff-ms" || k == "retry_backoff_ms") &&
+                           types::is_int(val)) {
+                    retry_backoff_ms =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "batch-policy" || k == "failure-policy" ||
+                            k == "failure_policy") &&
+                           (types::is_string(val) || types::is_keyword(val))) {
+                    std::string bv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
+                                                           : orch_keyword_key(val);
+                    batch = parse_batch(bv);
+                }
+            }
+            // Compose via C++ #2756 helper (bumps workflow_compose_total + class counters).
+            const auto w = aura::orch::compose_workflow_policy(
+                batch, residual, max_retries, consecutive_fail_limit, retry_backoff_ms);
+            aura::orch::note_workflow_compose_aura();
+            const auto ap = aura::orch::to_agent_policy(w);
+            const auto pp = aura::orch::to_parallel_policy(w);
+            auto push_str = [&ev](const char* s) -> EvalValue {
+                auto idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(s);
+                return make_string(idx);
+            };
+            // Projected fields usable as parallel-intend / scope-watch kwargs
+            // (AC1 / AC4). Residual is advisory only (AC2) — not applied to
+            // #2661 reclaim.
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},
+                {"batch-policy", push_str(aura::orch::failure_policy_name(w.batch_policy))},
+                // parallel-intend kwargs projection
+                {"failure-policy", push_str(aura::orch::failure_policy_name(pp.failure_policy))},
+                {"max-retries", make_int(static_cast<std::int64_t>(pp.max_retries))},
+                {"consecutive-fail-limit",
+                 make_int(static_cast<std::int64_t>(pp.consecutive_fail_limit))},
+                {"retry-backoff-ms", make_int(static_cast<std::int64_t>(pp.retry_backoff_ms))},
+                {"fail-fast", make_bool(pp.fail_fast || w.batch_policy == FP::FailFast)},
+                // scope-watch kwargs projection (agent stall policy)
+                {"policy", push_str(aura::orch::agent_failure_action_name(ap.on_stall))},
+                {"on-stall", push_str(aura::orch::agent_failure_action_name(ap.on_stall))},
+                {"max-restarts", make_int(static_cast<std::int64_t>(ap.max_restarts))},
+                {"consecutive-stall-limit",
+                 make_int(static_cast<std::int64_t>(ap.consecutive_stall_limit))},
+                {"restart-backoff-ms", make_int(static_cast<std::int64_t>(ap.restart_backoff_ms))},
+                // residual preference (advisory)
+                {"residual", push_str(aura::orch::residual_preference_name(w.residual))},
+                {"residual-cancel", make_bool(aura::orch::residual_prefers_cancel(w))},
+                {"residual-defer", make_bool(aura::orch::residual_prefers_defer(w))},
+                {"parallel-intend-kwargs-ready", make_bool(true)},
+                {"scope-watch-kwargs-ready", make_bool(true)},
+                {"schema", make_int(aura::orch::kWorkflowComposeAuraIssue)},
+                {"schema-2756", make_int(aura::orch::kWorkflowFailurePolicyIssue)},
+                {"issue-2756", make_int(aura::orch::kWorkflowFailurePolicyIssue)},
+                {"schema-2843", make_int(aura::orch::kWorkflowComposeAuraIssue)},
+                {"issue-2843", make_int(aura::orch::kWorkflowComposeAuraIssue)},
+                {"schema-2539", make_int(aura::orch::kFailurePolicyBridgeIssue)},
+                {"wired", make_int(1)},
+            };
+            return build_orch_hash(kv);
+        });
+
     add("orch:supervise-batch", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_pair(a[0]) || !types::is_hash(a[1])) {
             return make_primitive_error(
@@ -4481,6 +4708,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                           os.workflow_failure_policy_wired.load(std::memory_order_relaxed)));
             insert_kv("schema-2756", 2756);
             insert_kv("issue-2756", 2756);
+            // Issue #2843: Aura orch:compose-workflow prim surface.
+            // Additive over #2756 C++ composition; Soft never hard-denies.
+            insert_kv("workflow-compose-aura-total",
+                      static_cast<std::int64_t>(
+                          os.workflow_compose_aura_total.load(std::memory_order_relaxed)));
+            insert_kv("workflow-compose-aura-wired", 1);
+            insert_kv("schema-2843", 2843);
+            insert_kv("issue-2843", 2843);
             // Issue #2588: Aura language surface for AgentScope supervision
             // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
             // orch:scope-cancel-all). Per-Evaluator scope map
