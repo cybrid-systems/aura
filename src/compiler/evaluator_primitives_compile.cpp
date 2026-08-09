@@ -3291,10 +3291,11 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
     // nested eda:* cannot leave partial structured mutate state without
     // panic-checkpoint restore (NodeId validated before Guard).
     // AURA_SIDE_EFFECT_PRIM — verification-feedback mutate (#2057).
+    // Issue #2839: NodeId-only entry uses require_effect_for_node_id so
+    // isolation + capability fire on a stamped ref before body (no
+    // 2-arg default ref_tenant=0 window).
     add("mutate:from-verification-feedback", [&ev](const auto& a) -> EvalValue {
         using aura::compiler::security::kEffectMutate;
-        if (!ev.require_effect(kEffectMutate, "mutate:from-verification-feedback"))
-            return make_bool(false);
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_string(a[2]))
             return make_bool(false);
         auto strategy_idx = as_string_idx(a[0]);
@@ -3304,6 +3305,10 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
         const auto node_id = static_cast<std::int64_t>(as_int(a[1]));
         auto payload_idx = as_string_idx(a[2]);
         if (payload_idx >= ev.string_heap_.size())
+            return make_bool(false);
+        // Issue #2839: stamp + require_effect_on_ref before Guard body.
+        if (!ev.require_effect_for_node_id(kEffectMutate, "mutate:from-verification-feedback",
+                                           static_cast<ast::NodeId>(node_id)))
             return make_bool(false);
         // Issue #1772: validate NodeId before eda:* delegation so invalid
         // agent targets are observable (mutate_from_feedback_invalid_node_total)

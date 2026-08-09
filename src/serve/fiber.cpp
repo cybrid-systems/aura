@@ -104,6 +104,8 @@ std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
 // Issue #2491: process-wide TenantScope install mismatch counter
 // (resume detects current capability_tenant_id_ != assigned_tenant_id_).
 std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_total_{0};
+// Issue #2839: production hard-face mismatch total.
+std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_hard_total_{0};
 // Issue #2498: process-wide orphan-root drops on Reclaimed (summed
 // across all fibers). Accessor Fiber::orphan_roots_dropped_on_reclaim_total().
 // HWM tracks the peak count of pending orphan roots across all fibers

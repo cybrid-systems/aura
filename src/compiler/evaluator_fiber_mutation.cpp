@@ -25,7 +25,9 @@ module;
 #include "compiler/mutation_hold_budget.h" // Issue #2720/#2726: holder degrade counters + reject_enabled
 #include "compiler/typed_mutation_audit.h" // Issue #2710: production_defaults_active on steal Ok clear
 #include "core/layout_stamp.hh"            // Issue #2519: full 8-field LayoutStamp equality
-#include <algorithm>                       // Issue #2189: remove_if for pin table invalidate
+#include "core/security_event_wal.hh" // Issue #2839: IsolationDeny SE on fiber principal mismatch
+#include "core/workspace_epoch.hh"    // Issue #2839: Mutation epoch mid for SE
+#include <algorithm>                  // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
 #include <memory>   // Issue #1880: unique_ptr for soft-path sentinel
@@ -2532,14 +2534,44 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
         return;
     // Mismatch detection: if the worker's ambient principal diverges
     // from the fiber's stamped tenant, bump the metric. The Scope
-    // install itself still proceeds (mandate entry contract) — the
-    // bump is observability for ops / Agent dashboards.
+    // install itself still proceeds (mandate re-bind entry contract) —
+    // #2839 adds production hard-face (hard counter + SE) so Agents
+    // cannot treat soft-only mismatch as silent.
     if (ev->capability_tenant_id() != 0 && ev->capability_tenant_id() != assigned) {
         aura::serve::Fiber::bump_tenant_scope_mismatch();
         if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
             m->tenant_scope_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2839 AC3: production / Restricted multi-tenant hard face.
+        // Soft (sandbox off already returned above; Sampled without
+        // production defaults stays soft-only). production_defaults or
+        // Restricted/Strict (mode 1/2) → hard counter + IsolationDeny SE
+        // with reason fiber-principal-mismatch. TenantScope still
+        // installs below so principal is re-bound to assigned.
+        const bool hard =
+            aura::compiler::typed_audit::production_defaults_active() || mode == 1 || mode == 2;
+        if (hard) {
+            aura::serve::Fiber::bump_tenant_scope_mismatch_hard();
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                m->tenant_scope_mismatch_hard_total.fetch_add(1, std::memory_order_relaxed);
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            const auto epoch = ::aura::core::current_mutation_epoch();
+            const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+            // Signature: kind, tenant, mid, epoch, effect_bits, op, reason, denied, fiber_id
+            emit_security_event_durable(SecurityEventKind::IsolationDeny, assigned, mid, epoch,
+                                        /*effect_bits=*/0, /*op=*/"fiber-principal-mismatch",
+                                        /*reason=*/"isolation-deny:fiber-principal-mismatch",
+                                        /*denied=*/true,
+                                        /*fiber_id=*/static_cast<std::int64_t>(f->id()));
+            // Correlated TypedMutationAudit trail join (same mid).
+            typed_audit::capture_security_correlated_audit(
+                mid, "fiber-principal-mismatch", mid, /*denied=*/true,
+                /*target_node=*/0, static_cast<std::int64_t>(f->id()));
+        }
     }
     // Install scope (release any prior scope first — defensive).
+    // Issue #2839: re-bind principal to assigned even after mismatch
+    // (steal / keepalive / mailbox deliver re-entry).
     g_fiber_tenant_scope.reset(
         new Evaluator::TenantScope(*ev, assigned, /*name=*/{}, /*allow_cross=*/false));
 }

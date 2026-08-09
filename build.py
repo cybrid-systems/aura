@@ -1567,6 +1567,20 @@ def cmd_lint():
             "Issue #2837 Moving external-root remap linter failed — run python3 scripts/coverage/checks/check_moving_external_root_remap_2837.py"
         )
         return r
+    # Issue #2839: residual side-effect + fiber-entry principal enforcement.
+    # require_effect_for_node_id + production hard-face on TenantScope
+    # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
+    # mandate tests (#81967); no docs/design/ (#1655).
+    sefp_script = COVERAGE_CHECKS / "check_side_effect_fiber_principal_2839.py"
+    if not sefp_script.exists():
+        fail(f"missing {sefp_script}")
+        return 1
+    r = run([sys.executable, str(sefp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2839 side-effect + fiber principal linter failed — run python3 scripts/coverage/checks/check_side_effect_fiber_principal_2839.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
