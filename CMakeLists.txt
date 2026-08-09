@@ -1888,6 +1888,9 @@ aura_issue_test_link_light(test_cascade_relower_silent_skip)
 # Issue #2814 M7: capture_audit_event_forced linked to invariant enforcement.
 aura_add_issue_test(test_capture_audit_event_forced_enforcement_link)
 aura_issue_test_link_light(test_capture_audit_event_forced_enforcement_link)
+# Issue #2815: cascade marks all Define NodeIds for a name (not first-wins).
+aura_add_issue_test(test_cascade_multi_define_stale)
+aura_issue_test_link_light(test_cascade_multi_define_stale)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

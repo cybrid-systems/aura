@@ -302,6 +302,9 @@ struct CompilerMetrics {
     //   - cascade_relower_skipped_total: defines_n>0 but fn_ null (misconfig)
     std::atomic<std::uint64_t> cascade_relower_ran_total{0};
     std::atomic<std::uint64_t> cascade_relower_skipped_total{0};
+    // Issue #2815: cascade noted 2nd+ Define NodeId for the same name
+    // (pre-#2815 first-emplace-wins left extra Defines unstamped → stale IR).
+    std::atomic<std::uint64_t> cascade_multi_define_stale_total{0};
     // Issue #2762: post-mutate incremental macro re-expand under
     // MutationBoundaryGuard cascade (#165/#2096 residual).
     //   - post_mutate_macro_reexpand_total: call sites re-expanded
