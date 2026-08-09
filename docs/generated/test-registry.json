@@ -1229,7 +1229,7 @@
     {
       "file": "tests/compiler/test_hard_fiber_restricted.cpp",
       "category": "unit",
-      "reason": "Issue #2536 — Restricted same-tenant multi-fiber soft by default;",
+      "reason": "Issue #2536 / #2835 — Restricted same-tenant multi-fiber soft by",
       "issue": null
     },
     {

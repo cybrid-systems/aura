@@ -1,13 +1,14 @@
 // @category: unit
-// @reason: Issue #2536 — Restricted same-tenant multi-fiber soft by default;
-// optional hard via AURA_HARD_FIBER_ISOLATION=1.
+// @reason: Issue #2536 / #2835 — Restricted same-tenant multi-fiber soft by
+// default; multi-tenant under Restricted hard (#2835); env override.
 //
 //   AC1: Restricted default soft — fiber A grant, fiber B allow + mismatch metric
 //   AC2: Restricted + env=1 → deny + fiber_hard_deny++
-//   AC3: multi-tenant+Strict default hard (regression #2151)
+//   AC3: multi-tenant under Restricted hard (#2835); fiber B denied
 //   AC4: AURA_SANDBOX=off forces soft even with env=1
-//   AC5: policy comments + posture keys schema-2536
+//   AC5: policy comments + posture keys schema-2536 / schema-2835
 //   AC6: source-cite + linter
+//   AC2835: pure Restricted soft; multi+Restricted hard; HFI=0 soft
 
 #include "test_harness.hpp"
 #include "compiler/security_capabilities.h"
@@ -64,6 +65,8 @@ void reset_all() {
     clear_env("AURA_SANDBOX");
     clear_env("AURA_MULTI_TENANT");
     clear_env("AURA_HARD_FIBER_ISOLATION");
+    clear_env("AURA_COMMERCIAL_TENANT");
+    aura::compiler::security::reset_commercial_tenant_profile_for_test(false);
 }
 std::string read_file(const char* path) {
     for (const auto& p :
@@ -85,7 +88,8 @@ std::int64_t posture(CompilerService& cs, std::string_view key) {
 } // namespace
 
 int run_test_hard_fiber_restricted() {
-    std::println("=== Issue #2536: Restricted hard-fiber optional policy ===");
+    std::println("=== Issue #2536/#2835: Restricted hard-fiber policy ===");
+    CHECK(true, "ac2835: issue stamp");
 
     {
         std::println("\n--- AC1: Restricted default soft share ---");
@@ -130,12 +134,24 @@ int run_test_hard_fiber_restricted() {
               "AC2: hard_deny metric++");
     }
     {
-        std::println("\n--- AC3: multi-tenant+Strict default hard ---");
+        std::println("\n--- AC3: multi-tenant under Restricted hard (#2835) ---");
         reset_all();
-        set_env("AURA_SANDBOX", "restricted"); // escalates to Strict with multi-tenant
+        set_env("AURA_SANDBOX", "restricted"); // stays Restricted; multi arms hard
         set_env("AURA_MULTI_TENANT", "1");
         apply_production_security_defaults();
-        CHECK(g_capability_registry().hard_fiber_isolation(), "AC3: MT+Strict hard default");
+        CHECK(g_capability_registry().hard_fiber_isolation(),
+              "AC3: Restricted+multi_tenant hard (#2835)");
+        // Fiber B cannot use fiber A's Mutate grant.
+        auto prov = make_grant_provenance(0, true, 0, 1);
+        g_capability_registry().grant(12, "mutate", Effect::Mutate, prov);
+        const auto hd0 = g_capability_effect_metrics().capability_fiber_hard_deny_total.load();
+        EffectProvenance call;
+        call.mutation_id = prov.mutation_id;
+        call.epoch = prov.epoch;
+        call.fiber_id = 2;
+        CHECK(!g_capability_registry().provenance_ok(12, call), "AC3: hard deny fiber B");
+        CHECK(g_capability_effect_metrics().capability_fiber_hard_deny_total.load() > hd0,
+              "AC3: hard_deny metric++");
     }
     {
         std::println("\n--- AC4: sandbox=off forces soft ---");
@@ -152,10 +168,35 @@ int run_test_hard_fiber_restricted() {
         apply_production_security_defaults();
         CompilerService cs;
         CHECK(posture(cs, "schema-2536") == 2536, "schema-2536");
+        CHECK(posture(cs, "schema-2835") == 2835, "schema-2835");
         CHECK(posture(cs, "hard-fiber-restricted-policy-wired") == 1, "wired");
+        CHECK(posture(cs, "restricted-multi-tenant-hard-fiber-wired") == 1, "2835 wired");
         CHECK(posture(cs, "hard-fiber-isolation") == 0, "Restricted soft on posture");
         CHECK(posture(cs, "fiber-mismatch-total") >= 0, "mismatch total key");
         CHECK(posture(cs, "fiber-hard-deny-total") >= 0, "hard-deny total key");
+    }
+    {
+        std::println("\n--- AC2835: pure Restricted soft; multi hard; HFI=0 soft ---");
+        reset_all();
+        set_env("AURA_SANDBOX", "restricted");
+        apply_production_security_defaults();
+        CHECK(!g_capability_registry().hard_fiber_isolation(),
+              "AC2835: pure Restricted single-tenant soft");
+
+        reset_all();
+        set_env("AURA_SANDBOX", "restricted");
+        set_env("AURA_MULTI_TENANT", "1");
+        set_env("AURA_HARD_FIBER_ISOLATION", "0");
+        apply_production_security_defaults();
+        CHECK(!g_capability_registry().hard_fiber_isolation(),
+              "AC2835: HFI=0 forces soft under multi Restricted");
+
+        reset_all();
+        set_env("AURA_SANDBOX", "strict");
+        set_env("AURA_MULTI_TENANT", "1");
+        apply_production_security_defaults();
+        CHECK(g_capability_registry().hard_fiber_isolation(), "AC2835: Strict+multi still hard");
+        CHECK(g_capability_registry().grant_epoch_retain_window() == 64, "AC2835: multi → K=64");
     }
     {
         std::println("\n--- AC6: source-cite ---");
@@ -163,13 +204,15 @@ int run_test_hard_fiber_restricted() {
         auto cap = read_file("src/core/capability_model.hh");
         auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
         CHECK(def.find("2536") != std::string::npos, "defaults cite");
+        CHECK(def.find("2835") != std::string::npos, "defaults cite #2835");
         CHECK(def.find("TenantScope") != std::string::npos ||
                   def.find("principal boundary") != std::string::npos,
               "principal boundary contract");
         CHECK(cap.find("2536") != std::string::npos, "capability cite");
         CHECK(sec.find("schema-2536") != std::string::npos, "posture schema");
+        CHECK(sec.find("schema-2835") != std::string::npos, "posture schema-2835");
     }
-    std::println("\n=== #2536: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2536/#2835: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
