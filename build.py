@@ -1516,6 +1516,18 @@ def cmd_lint():
             "Issue #2834 DCE Branch block-id overprotect linter failed — run python3 scripts/coverage/checks/check_dce_branch_block_id_overprotect_2834.py"
         )
         return r
+    # Issue #2835: Restricted multi-tenant → hard_fiber_isolation.
+    # ac2835 in test_hard_fiber_restricted.
+    rmthf_script = COVERAGE_CHECKS / "check_restricted_multi_tenant_hard_fiber_2835.py"
+    if not rmthf_script.exists():
+        fail(f"missing {rmthf_script}")
+        return 1
+    r = run([sys.executable, str(rmthf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2835 Restricted multi-tenant hard fiber linter failed — run python3 scripts/coverage/checks/check_restricted_multi_tenant_hard_fiber_2835.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

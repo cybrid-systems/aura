@@ -4655,6 +4655,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2536", 2536);
             insert_kv("issue-2536", 2536);
             insert_kv("hard-fiber-restricted-policy-wired", 1);
+            // Issue #2835: Restricted multi-tenant hard-fiber escalate.
+            insert_kv("schema-2835", 2835);
+            insert_kv("issue-2835", 2835);
+            insert_kv("restricted-multi-tenant-hard-fiber-wired", 1);
             const auto checks = cap.checks == 0 ? 1 : cap.checks;
             insert_kv("effect-deny-rate-bp",
                       static_cast<std::int64_t>((cap.denied * 10000) / checks));

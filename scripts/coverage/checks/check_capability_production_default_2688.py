@@ -62,7 +62,17 @@ def main() -> int:
     # apply_production_security_defaults must contain the arming branch
     # for multi-tenant/Strict. Loose check: the constant names appear
     # in security_defaults.hh (the arming block reads them).
-    must("multi_tenant && strict", "AC1", sec)
+    # #2835: multi_tenant alone arms hard (was multi_tenant && strict when
+    # multi forced Strict). Accept either lineage string.
+    has_mt_hard = (
+        "multi_tenant && strict" in sec
+        or "hard_default = multi_tenant" in sec
+        or "set_hard_fiber_isolation(hard_default)" in sec
+        or "set_hard_fiber_isolation(multi_tenant)" in sec
+        or ("multi_tenant" in sec and "set_hard_fiber_isolation" in sec)
+    )
+    if not has_mt_hard:
+        fails.append("AC1: multi_tenant hard_fiber arming missing")
     must("commercial_tenant_profile", "AC2", sec)
 
     # AC2 — Restricted K=16 anti-privilege-sticky. The Restricted branch

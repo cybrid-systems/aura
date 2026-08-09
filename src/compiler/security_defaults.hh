@@ -159,10 +159,12 @@ inline void grant_render_kernel_principal() noexcept {
 // when force-on-boundary is on, #2222) + soft coercion apply + observe-only
 // blame commit + tree-walker Allow + Soft mutate type gate + lock-order OFF.
 inline void apply_production_security_defaults() noexcept {
-    // Issue #2688: production-default hard_fiber_isolation + grant epoch
-    // retain window. The arming branches below implement the contract
-    // (Strict / multi-tenant → hard=true + K=64; Restricted → K=16
-    // hard=false; Soft → K=0 hard=false). Env overrides win.
+    // Issue #2688 / #2835: production-default hard_fiber_isolation + grant
+    // epoch retain window. Arming contract:
+    //   multi-tenant → hard=true + K=64 (sandbox may stay Restricted #2835)
+    //   pure Restricted single-tenant → K=16 hard=false (#2536 soft share)
+    //   Soft / sandbox=off → K=0 hard=false
+    // Env AURA_HARD_FIBER_ISOLATION / AURA_GRANT_EPOCH_RETAIN always win.
     using namespace ::aura::core::sandbox;
     using namespace ::aura::core::capability;
     using namespace ::aura::core::workspace_isolation;
@@ -175,8 +177,12 @@ inline void apply_production_security_defaults() noexcept {
     const char* sandbox_e = std::getenv("AURA_SANDBOX");
     const bool dev_off = sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
 
-    // 2) Multi-tenant: escalate to Strict when AURA_MULTI_TENANT is set
-    //    (unless explicitly AURA_SANDBOX=off for local iteration).
+    // 2) Multi-tenant profile when AURA_MULTI_TENANT is set (unless
+    //    AURA_SANDBOX=off). Issue #2835: do **not** force Strict — commercial
+    //    multi-tenant often stays Restricted for latency while still needing
+    //    fiber-level grant isolation (step 6 hard_fiber). Explicit
+    //    AURA_SANDBOX=strict remains Strict. Issue #2657 set_mode is still
+    //    the sole writer when operators choose strict/off/restricted via env.
     bool multi_tenant = false;
     if (!dev_off) {
         const char* mt = std::getenv("AURA_MULTI_TENANT");
@@ -184,11 +190,6 @@ inline void apply_production_security_defaults() noexcept {
             std::string_view mv(mt);
             if (mv == "1" || mv == "true" || mv == "yes" || mv == "on") {
                 multi_tenant = true;
-                // Issue #2657: route through the process-wide authority.
-                // set_mode is the SOLE writer across all four stores;
-                // following code reads via the acquire-load (registry
-                // atomic) and the plain enum mirror.
-                set_mode(SandboxMode::Strict);
             }
         }
     }
@@ -315,38 +316,32 @@ inline void apply_production_security_defaults() noexcept {
     if (!dev_off)
         ::aura_set_remap_name_fallback_enabled(0);
 
-    // 6) Issue #2151 / #2536: hard fiber isolation policy.
+    // 6) Issue #2151 / #2536 / #2584 / #2835: hard fiber isolation policy.
     //
-    //    Contract (Issue #2536):
-    //      - TenantScope (#2491 assigned_tenant_id) is the principal boundary.
-    //      - Same-tenant multi-fiber grant share is intentional SOFT by default
-    //        under Restricted (#2076 production): fiber B may use fiber A's
-    //        grant; mismatch only bumps capability_fiber_mismatch_total.
-    //      - hard_fiber_isolation=true deny path is commercial *optional*
-    //        reinforcement (fiber-level grant isolation), NOT the default
-    //        under pure Restricted (would break legitimate multi-fiber agents).
+    //    Contract:
+    //      - TenantScope (#2491) is the principal boundary.
+    //      - Pure Restricted single-tenant (#2076 default): soft share —
+    //        fiber B may use fiber A's grant; mismatch metric only (#2536).
+    //      - Multi-tenant profile (AURA_MULTI_TENANT): hard fiber deny on
+    //        grant_fiber_id mismatch (#2835) even when sandbox stays
+    //        Restricted for latency (no forced Strict).
+    //      - Commercial profile (AURA_COMMERCIAL_TENANT): hard under
+    //        Restricted (#2584).
+    //      - multi_tenant + Strict (AURA_SANDBOX=strict): hard (#2151).
     //
     //    Defaults when AURA_HARD_FIBER_ISOLATION unset:
-    //      multi_tenant && Strict → hard=true  (#2151 commercial)
-    //      Restricted alone       → hard=false (#2536 soft share)
-    //    Env always wins when set (including Restricted + env=1 → hard):
+    //      multi_tenant            → hard=true  (#2835 / #2151)
+    //      commercial_tenant       → hard=true  (#2584)
+    //      Restricted alone        → hard=false (#2536 soft share)
+    //      Strict alone (no multi) → hard=false (unchanged)
+    //    Env always wins when set:
     //      AURA_HARD_FIBER_ISOLATION=1|true|yes|on  → hard
-    //      AURA_HARD_FIBER_ISOLATION=0|false|off|… → soft
-    //    AURA_SANDBOX=off forces soft (unit tests must not inherit hard deny).
-    //
-    //    Issue #2584: AURA_COMMERCIAL_TENANT config profile. When set
-    //    (1|true|yes|on) under !dev_off, hard_fiber_isolation is forced
-    //    true even under pure Restricted — the common commercial Restricted
-    //    deployment pattern. AURA_HARD_FIBER_ISOLATION=0|false|off still
-    //    wins (explicit off overrides the profile). Active profile flag is
-    //    cached and surfaced via query:security-posture (#2534) under the
-    //    "commercial-tenant-profile" key.
+    //      AURA_HARD_FIBER_ISOLATION=0|false|off|… → soft (AC3)
+    //    AURA_SANDBOX=off forces soft (unit tests).
     if (dev_off) {
         commercial_tenant_profile_flag().store(false, std::memory_order_release);
         g_capability_registry().set_hard_fiber_isolation(false);
     } else {
-        // #2584: detect commercial profile (does not change today's
-        // defaults; only flips hard_fiber_isolation when set).
         const char* ct = std::getenv("AURA_COMMERCIAL_TENANT");
         bool commercial_active = false;
         if (ct && *ct) {
@@ -363,21 +358,22 @@ inline void apply_production_security_defaults() noexcept {
         commercial_tenant_profile_flag().store(commercial_active, std::memory_order_release);
         if (commercial_active && !hfi_explicit_off) {
             // #2584: commercial profile forces hard fiber even under
-            // pure Restricted (AC2). AURA_HARD_FIBER_ISOLATION=0 still
-            // wins (AC3) via the hfi_explicit_off branch above.
+            // pure Restricted. AURA_HARD_FIBER_ISOLATION=0 still wins.
             g_capability_registry().set_hard_fiber_isolation(true);
         } else if (hfi && *hfi) {
-            // Issue #2536: env applies under Restricted as well as Strict —
-            // not overwritten by the multi_tenant&&strict default branch.
+            // Issue #2536: env applies under Restricted as well as Strict.
             std::string_view hv(hfi);
             const bool on = (hv == "1" || hv == "true" || hv == "yes" || hv == "on");
             g_capability_registry().set_hard_fiber_isolation(on);
         } else {
-            const bool strict = g_sandbox_state().mode == SandboxMode::Strict ||
-                                g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
-            // Multi-tenant Strict: hard-deny on fiber mismatch (commercial default).
-            // Pure Restricted (or Strict without multi-tenant): soft (#2536).
-            g_capability_registry().set_hard_fiber_isolation(multi_tenant && strict);
+            // Issue #2835: multi-tenant → hard under Restricted or Strict
+            // (fiber grant isolation without requiring full Strict sandbox).
+            // Pure Restricted single-tenant → soft (#2536).
+            // Lineage: #2688 used multi_tenant && strict when multi forced
+            // Strict; after #2835 multi alone is sufficient (covers both
+            // Restricted multi-tenant AC1 and multi_tenant && strict Strict).
+            const bool hard_default = multi_tenant; // was: multi_tenant && strict
+            g_capability_registry().set_hard_fiber_isolation(hard_default);
         }
     }
 
