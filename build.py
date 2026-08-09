@@ -1480,6 +1480,18 @@ def cmd_lint():
             "Issue #2831 TCO dead-block accumulation linter failed — run python3 scripts/coverage/checks/check_tco_dead_block_accumulation_2831.py"
         )
         return r
+    # Issue #2832: TCOPass non-zero arg_base OOB guard.
+    # ac2832 in test_tco_arg_base_oob.
+    tcoob_script = COVERAGE_CHECKS / "check_tco_arg_base_oob_2832.py"
+    if not tcoob_script.exists():
+        fail(f"missing {tcoob_script}")
+        return 1
+    r = run([sys.executable, str(tcoob_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2832 TCO arg_base OOB linter failed — run python3 scripts/coverage/checks/check_tco_arg_base_oob_2832.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

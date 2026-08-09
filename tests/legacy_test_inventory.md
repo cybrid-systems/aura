@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 826 | Preferred destination suites |
-| **Total scanned** | **826** | |
+| `tests/core/test_*.cpp` | 827 | Preferred destination suites |
+| **Total scanned** | **827** | |
 
 ### Related artifacts
 
@@ -37,7 +37,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 53 | 53 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 80 | 80 | P2 — link-profile heavy; migrate AC smoke first |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 81 | 81 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 60 | 60 | P3 — review case-by-case |
@@ -948,6 +948,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_sys_open_path_harden.cpp`
 - `tests/core/test_tag_arity_index_lock.cpp`
 - `tests/core/test_tag_arity_key_hash.cpp`
+- `tests/compiler/test_tco_arg_base_oob.cpp`
 - `tests/compiler/test_tco_dead_block_accumulation.cpp`
 - `tests/compiler/test_tcp_listen_accept.cpp`
 - `tests/core/test_tenant_isolation_enforcement.cpp`
@@ -1586,13 +1587,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_symbol_eq.cpp` (—) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 - `tests/compiler/test_unquote_splicing_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: pre_scan cites #2807; unquote-splicing boundary + metric
 
-### `jit_incremental` — JIT / AOT / incremental relower (80)
+### `jit_incremental` — JIT / AOT / incremental relower (81)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (80)
+#### domain/ (81)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr.cpp` (—) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1670,6 +1671,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_specjit_per_eval_storm_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / Global path — process-wide stamp path unchanged
 - `tests/compiler/test_specjit_pereval_storm_e2e.cpp` (—) [domain_suite, theme_compiler] — AC1: Dual eval, PerEval — storm in B does not clear A's specializations
 - `tests/compiler/test_storm_isolation.cpp` (—) [domain_suite, theme_compiler] — too — "prefer per-region hard too" per the issue AC2 note).
+- `tests/compiler/test_tco_arg_base_oob.cpp` (—) [domain_suite, theme_compiler] — AC1: source bounds-checks arg_base+count vs local_count; cites #2832
 - `tests/compiler/test_tco_dead_block_accumulation.cpp` (—) [domain_suite, theme_compiler] — AC1: source has sweep_dead_blocks + tco_dead_block_total; cites #2831
 - `tests/compiler/test_typechecker_incremental_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_typechecker_incremental_batch.cpp — typechecker_incremental pair dup-merge
 - `tests/compiler/test_workload_adaptive_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)

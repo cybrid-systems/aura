@@ -4130,6 +4130,10 @@ public:
     static std::uint64_t tco_dead_block_total() noexcept {
         return tco_dead_block_total_.load(std::memory_order_relaxed);
     }
+    // Issue #2832: times non-zero arg_base TCO was skipped due to OOB slots.
+    static std::uint64_t tco_arg_base_oob_skipped_total() noexcept {
+        return tco_arg_base_oob_skipped_total_.load(std::memory_order_relaxed);
+    }
     // Issue #2434: HotPassDodCompliant + pure Wrap (local Call+Return rewrite).
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
     static constexpr bool kPureWrap = true;
@@ -4189,11 +4193,21 @@ private:
         // 0..arg_count-1 (callee's param slots) and the Jump
         // (which is the only thing the callee sees) doesn't
         // need to know about the original arg_base.
+        //
+        // Issue #2832 contract: for non-zero arg_base, every
+        // source slot arg_base+i must be < caller.local_count.
+        // Prior code assumed well-formed IR and emitted OOB
+        // Local operands[1] silently. Now: refuse the transform
+        // (leave Call+Return intact) and bump oob-skipped.
         if (arg_base != 0) {
-            // Check that all caller slots [arg_base ..
-            // arg_base + arg_count - 1] are valid (we can't
-            // bail out mid-transformation). The IR is assumed
-            // to be well-formed, so we don't re-validate.
+            if (arg_count > 0) {
+                const auto end =
+                    static_cast<std::uint64_t>(arg_base) + static_cast<std::uint64_t>(arg_count);
+                if (end > static_cast<std::uint64_t>(caller.local_count)) {
+                    tco_arg_base_oob_skipped_total_.fetch_add(1, std::memory_order_relaxed);
+                    return;
+                }
+            }
             // Insert Local copies in FORWARD order: insert
             // Local(callee_param_i, caller_arg_base + i) at
             // position (call_idx + i) for i in 0..arg_count-1.
@@ -4203,10 +4217,6 @@ private:
             // forward iteration with an ever-increasing insert
             // position naturally builds the correct order:
             // [MC, CI, ..., CI, Local(0), Local(1), Local(2), Call→Jump]
-            // (Note: we deliberately don't use reverse iteration
-            //  because the insert position is computed from the
-            //  ORIGINAL call_idx, and reverse iteration would
-            //  interleave the inserts with the Call and Return.)
             //
             // Capture source_ast_node_id + type_id BEFORE
             // inserting (the `call_instr` reference is to the
@@ -4216,6 +4226,7 @@ private:
             const auto src_node_id = call_instr->source_ast_node_id;
             const auto src_type_id = call_instr->type_id;
             const std::size_t call_idx = n - 2; // index of the Call instruction
+            // Pre-validated: arg_base+i < local_count for all i (see above).
             for (std::uint32_t i = 0; i < arg_count; ++i) {
                 aura::ir::IRInstruction local;
                 local.opcode = aura::ir::IROpcode::Local;
@@ -4232,27 +4243,17 @@ private:
             // Update the call_instr pointer to point at the
             // new Call location (the vector may have reallocated,
             // so the original pointer is dangling).
-            // Now the Call's arg_base is still the original
-            // (non-zero) value, but we're about to rewrite
-            // the Call to a Jump so the arg_base is irrelevant.
-            // (We don't need to mutate call_instr->operands[1]
-            // before the rewrite, since the Jump opcode only
-            // reads operands[0].)
             call_instr = &block.instructions[call_idx + arg_count];
         }
-        // Transform: replace Call with Branch to callee's entry,
-        // remove Return. The Branch takes no args (callee's
+        // Transform: replace Call with Jump to callee's entry,
+        // remove Return. The Jump takes no args (callee's
         // params are already at slots 0..arg_count-1, after the
         // Local copies above for non-zero arg_base).
-        call_instr->opcode = aura::ir::IROpcode::Jump; // wait, Jump is unconditional; need Branch
-        // Actually, use Jump since the target is unconditional
-        // (after the tail call there's no condition to check).
         call_instr->opcode = aura::ir::IROpcode::Jump;
         call_instr->operands[0] = callee_entry_id;
-        // Remove the Return (Branch is the new terminator)
+        // Remove the Return (Jump is the new terminator)
         block.instructions.pop_back();
         ++tco_count_;
-        (void)caller;
     }
 
     // Issue #202: inter-block TCO. Detects the pattern
@@ -4418,6 +4419,8 @@ private:
     std::size_t tco_inter_block_count_ = 0;
     std::size_t tco_dead_block_count_ = 0; // Issue #2831
     static inline std::atomic<std::uint64_t> tco_dead_block_total_{0};
+    // Issue #2832: non-zero arg_base TCO refused due to OOB source slots.
+    static inline std::atomic<std::uint64_t> tco_arg_base_oob_skipped_total_{0};
     std::vector<const aura::ir::IRFunction*> func_index_;
 };
 

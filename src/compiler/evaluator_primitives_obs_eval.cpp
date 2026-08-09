@@ -17176,6 +17176,13 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"tco-dead-block-sweep-wired", make_int(1)},
                 {"schema-2831", make_int(2831)},
                 {"issue-2831", make_int(2831)},
+                // Issue #2832: TCO non-zero arg_base OOB skip.
+                {"tco-arg-base-oob-skipped-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::TCOPass::tco_arg_base_oob_skipped_total()))},
+                {"tco-arg-base-oob-wired", make_int(1)},
+                {"schema-2832", make_int(2832)},
+                {"issue-2832", make_int(2832)},
                 // lineage 1576 + #2025 + #2106 + #2130 dirty peel
                 {"schema", make_int(2130)},
             };
