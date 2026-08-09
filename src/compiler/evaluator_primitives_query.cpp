@@ -4884,7 +4884,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                   make_int(static_cast<std::int64_t>(invalidation_detected)));
             (void)ht->insert_pair("children-stable-epoch-mismatch-total",
                                   make_int(static_cast<std::int64_t>(epoch_mismatch)));
-            return make_hash(ht);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #2863: query:replace-subtree-stats. Hash view of the
@@ -4945,7 +4947,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                   make_int(static_cast<std::int64_t>(hygiene_rejects)));
             (void)ht->insert_pair("mutate-replace-subtree-restamp-nodes-total",
                                   make_int(static_cast<std::int64_t>(restamp_nodes)));
-            return make_hash(ht);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #2864: query:remove-node-stats. Hash view of the
@@ -5002,7 +5006,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                   make_int(static_cast<std::int64_t>(rollback_fidelity)));
             (void)ht->insert_pair("mutate-remove-node-densify-triggered-total",
                                   make_int(static_cast<std::int64_t>(densify_triggered)));
-            return make_hash(ht);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #2179: query:impact-scope-stats — cross-function instruction-
