@@ -360,6 +360,8 @@ aura_lookup_stable_func_id_for_eval(void* /*eval_ptr*/, const char* /*name*/) {
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_clear_stable_func_id_map_for_eval(void* /*eval_ptr*/) {}
+// Issue #2692: mismatch counter weak stub (light tests observe no-op).
+extern "C" __attribute__((weak)) void aura_bump_cross_eval_sid_owner_mismatch_total(void) {}
 // Issue #2713: cross-eval epoch tax observability weak stubs (production
 // in aura_jit_bridge.cpp). Light tests see zero tax / not wired.
 extern "C" __attribute__((weak)) std::uint64_t cross_eval_epoch_bump_total_v_read(void) {

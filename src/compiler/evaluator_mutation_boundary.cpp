@@ -2077,11 +2077,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     if (flag_)
                         *flag_ = false;
                     success = false;
-                    aura::compiler::typed_mutation_audit::capture_audit_event_forced(
+                    aura::compiler::typed_audit::capture_audit_event_forced(
                         /*mutation_id=*/0, schema_err,
-                        aura::compiler::typed_mutation_audit::MutationKind::MutateClass,
+                        aura::compiler::typed_audit::MutationKind::Structural,
                         /*before_epoch=*/0, /*after_epoch=*/0,
-                        aura::compiler::typed_mutation_audit::AuditOutcome::SchemaViolation);
+                        aura::compiler::typed_audit::AuditOutcome::Error);
                 }
             }
         }

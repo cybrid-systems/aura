@@ -15154,6 +15154,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                      static_cast<std::int64_t>(cross_eval_epoch_action_throttled_total_v_read()))},
                 {"schema-2744", make_int(2744)},
                 {"issue-2744", make_int(2744)},
+                // Issue #2841: production multi-eval cascade defaults to
+                // owner-scoped epoch (no peer force-stale). Additive
+                // schema only; counters shared with #2744 / #2713.
+                {"cross-eval-epoch-cascade-owner-scoped-default-wired", make_int(1)},
+                {"schema-2841", make_int(2841)},
+                {"issue-2841", make_int(2841)},
                 // Issue #2602: synchronous remount walk on reemit success
                 // (named closures with stable_func_id != 0). Distinct
                 // from call-time closure_capture_remount_ok / _fail.

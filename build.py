@@ -1594,6 +1594,19 @@ def cmd_lint():
             "Issue #2840 GeneralObjectPin required densify fail-closed linter failed — run python3 scripts/coverage/checks/check_general_object_pin_required_prod_default_2840.py"
         )
         return r
+    # Issue #2841: multi-eval cascade defaults to owner-scoped epoch under
+    # production (#2713/#2744 residual). Soft atomic_bump stamps owner TLS;
+    # hard invalidate_function notes force-bump; Soft env opt-in preserved.
+    ceos_script = COVERAGE_CHECKS / "check_cross_eval_cascade_owner_scoped_2841.py"
+    if not ceos_script.exists():
+        fail(f"missing {ceos_script}")
+        return 1
+    r = run([sys.executable, str(ceos_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2841 cross-eval cascade owner-scoped linter failed — run python3 scripts/coverage/checks/check_cross_eval_cascade_owner_scoped_2841.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

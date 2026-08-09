@@ -11873,7 +11873,31 @@ public:
         // Issue #1476: defuse_version_ in lockstep (acq_rel) for #1475 readers.
         evaluator_.bump_defuse_version_for_test();
         metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
-        // Keep AOT table epoch in lockstep for dual-check aura_closure_call.
+        // Issue #2841 / #2744: stamp current Evaluator as reemit/register
+        // owner before the AOT table epoch bump so multi-eval production
+        // cascade can prefer owner-scoped stale-slot invalidate (no peer
+        // force-stale of g_aot_table_epoch). Soft mark_define_dirty relies
+        // on this TLS alone; hard invalidate_function notes force-bump
+        // first so the joint epoch still advances. Single-eval: map size
+        // ≤1 short-circuits throttle (zero extra cost beyond owner TLS).
+        struct CascadeEvalOwnerGuard {
+            void* prev_reemit;
+            void* prev_reg;
+            explicit CascadeEvalOwnerGuard(void* e) noexcept
+                : prev_reemit(aura_aot_get_reemit_owner_eval())
+                , prev_reg(aura_aot_get_register_owner_eval()) {
+                aura_aot_set_reemit_owner_eval(e);
+                aura_aot_set_register_owner_eval(e);
+            }
+            ~CascadeEvalOwnerGuard() noexcept {
+                aura_aot_set_reemit_owner_eval(prev_reemit);
+                aura_aot_set_register_owner_eval(prev_reg);
+            }
+            CascadeEvalOwnerGuard(const CascadeEvalOwnerGuard&) = delete;
+            CascadeEvalOwnerGuard& operator=(const CascadeEvalOwnerGuard&) = delete;
+        } cascade_owner_guard(static_cast<void*>(&evaluator_));
+        // Keep AOT table epoch in lockstep for dual-check aura_closure_call
+        // (or owner-scoped residual under multi-eval production — #2841).
         aura_aot_bump_func_table_epoch();
         // Issue #1414 / #1496: wipe solve_delta cache with the same
         // write-side protocol so soft dirty and hard invalidate agree.
