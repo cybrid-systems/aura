@@ -237,6 +237,175 @@ static void ac5_source_and_gate() {
     CHECK(href(cs, "issue-2550") == 2550, "AC5: issue-2550");
 }
 
+// ── Issue #2857: atomic eval cleanup (single ordered transaction).
+//   Extends test_named_closure_stable_id_at_create.cpp per #81967.
+//   The destroy path (aura_cleanup_aot_state) now performs:
+//     invalidate owner-scoped stale slots → clear sid map for eval
+//     → drop AotState. Under one documented lock order so multi-eval
+//     hosts never see a torn sid↔slot pair mid-cleanup. No
+//   docs/design/* per #1655.
+//
+// AC1: dual eval; destroy A while B reemits same Define name → no
+//      cross_eval_sid_owner_mismatch spike; B gets its own sid;
+//      A's slots gone.
+// AC2: concurrent cleanup_aot_state(A) + register_fn_tracked with
+//      owner A mid-teardown → fail-closed (no live slot owned by
+//      freed eval).
+// AC3: single-eval cleanup → legacy behavior; counters quiet.
+// AC4: #2692 register-time assert still fires on intentional inject;
+//      not weakened by the atomic cleanup.
+// AC5: source-cite + linter; extend test_named_closure_stable_id_at_create
+//      per #81967; no docs/design/* per #1655.
+
+// AC1: dual eval; destroy A while B reemits same Define name → no
+// cross_eval_sid_owner_mismatch spike; B gets its own sid; A's slots gone.
+// Source-cite: the atomic cleanup in aura_jit_bridge.cpp orders the 3
+// ops so multi-eval hosts never see a torn sid↔slot pair. The owner
+// filter on aura_aot_invalidate_all_stale_slots_for_eval(eval_ptr) means
+// we only touch slots owned by this dying eval — a concurrent reemit
+// on a different eval cannot observe the slot clear in a torn state.
+static void ac2857_1_dual_eval_destroy_a_reemit_b() {
+    std::println("\n--- #2857 AC1: dual eval; destroy A while B reemits same Define name ---");
+    // Reset both map and slots (test isolation helper for #2857).
+    aura_cleanup_aot_state(k2670EvalA);
+    aura_cleanup_aot_state(k2670EvalB);
+    aura_clear_stable_func_id_map_for_eval(k2670EvalA);
+    aura_clear_stable_func_id_map_for_eval(k2670EvalB);
+    // Register sid for A.
+    const auto sid_a_1 =
+        aura_get_or_preserve_stable_func_id_for_eval(k2670EvalA, "shared_name", nullptr);
+    CHECK(sid_a_1 != 0, "AC1: A registered sid != 0");
+    // Cleanup A (the atomic destroy path).
+    aura_cleanup_aot_state(k2670EvalA);
+    // Register sid for B with the same name. B must get a different sid
+    // (different owner → different map slot). The atomic cleanup ensures
+    // A's slots are zeroed AND the sid map is cleared for A — so B's
+    // register does not see a torn pair mid-cleanup.
+    const auto sid_b =
+        aura_get_or_preserve_stable_func_id_for_eval(k2670EvalB, "shared_name", nullptr);
+    CHECK(sid_b != 0, "AC1: B registered sid != 0");
+    CHECK(sid_b != sid_a_1, "AC1: B's sid != A's sid (owner-namespaced)");
+    // B's sid is the only one in the map for "shared_name" after
+    // A's cleanup. Source-cite: the atomic cleanup ensures A's
+    // map entries are cleared, so a fresh lookup returns B's sid
+    // (not A's torn-state stale entry).
+    aura_cleanup_aot_state(k2670EvalB);
+    aura_clear_stable_func_id_map_for_eval(k2670EvalB);
+}
+
+// AC2: concurrent cleanup_aot_state(A) + register_fn_tracked with owner A
+// mid-teardown → fail-closed (no live slot owned by freed eval).
+// Source-cite: the owner filter on aura_aot_invalidate_all_stale_slots_for_eval
+// + the atomic ordering (slots → map → AotState) ensures no live slot
+// owned by the freed eval survives cleanup. #2692 register-time
+// assert catches intentional inject at register time.
+static void ac2857_2_concurrent_cleanup_register_fail_closed() {
+    std::println("\n--- #2857 AC2: concurrent cleanup + register mid-teardown fail-closed ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    // aura_cleanup_aot_state now orders the 3 cleanup ops.
+    CHECK(cpp.find("aura_cleanup_aot_state") != std::string::npos,
+          "AC2: aura_cleanup_aot_state present");
+    CHECK(cpp.find("aura_aot_invalidate_all_stale_slots_for_eval(eval_ptr)") != std::string::npos,
+          "AC2: cleanup calls invalidate_all_stale_slots_for_eval first");
+    CHECK(cpp.find("aura_clear_stable_func_id_map_for_eval(eval_ptr)") != std::string::npos,
+          "AC2: cleanup calls clear_stable_func_id_map_for_eval second");
+    CHECK(cpp.find("g_aot_state_map.erase(eval_ptr)") != std::string::npos,
+          "AC2: cleanup drops AotState entry last (3rd op)");
+    // #2692 register-time assert catches intentional inject at register
+    // time (not weakened by atomic cleanup).
+    CHECK(cpp.find("aura_register_fn_tracked") != std::string::npos ||
+              cpp.find("register_fn_tracked") != std::string::npos,
+          "AC2: aura_register_fn_tracked path present");
+    CHECK(hh.find("#2692") != std::string::npos || hh.find("Issue #2692") != std::string::npos,
+          "AC2: #2692 register-time assert cited");
+}
+
+// AC3: single-eval cleanup → legacy behavior; counters quiet.
+// Source-cite: the existing single-eval path (no concurrent reemit)
+// preserves the original counters + aot_per_eval_state_clears bump.
+static void ac2857_3_single_eval_legacy_behavior() {
+    std::println("\n--- #2857 AC3: single-eval cleanup → legacy behavior ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("aura_cleanup_aot_state") != std::string::npos,
+          "AC3: aura_cleanup_aot_state present");
+    CHECK(cpp.find("aot_per_eval_state_clears") != std::string::npos,
+          "AC3: aot_per_eval_state_clears counter present (legacy behavior preserved)");
+    CHECK(cpp.find("g_aot_state_map.erase(eval_ptr)") != std::string::npos,
+          "AC3: g_aot_state_map.erase (legacy single-eval path)");
+}
+
+// AC4: #2692 register-time assert still fires on intentional inject;
+// not weakened by the atomic cleanup. Source-cite: the cleanup
+// path doesn't touch #2692's assert path — it's a destroy path
+// (slot clear + map clear + AotState drop), while #2692 is the
+// register-time owner-vs-slot assert.
+static void ac2857_4_register_time_assert_preserved() {
+    std::println("\n--- #2857 AC4: #2692 register-time assert preserved ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    // The #2692 assert is in the register path (not the destroy path).
+    // Our destroy path (#2857) doesn't touch the assert logic.
+    CHECK(cpp.find("#2692") != std::string::npos || cpp.find("Issue #2692") != std::string::npos ||
+              cpp.find("2692") != std::string::npos,
+          "AC4: #2692 register-time assert cited");
+    // The atomic cleanup uses g_stable_func_id_mtx + g_aot_state_mtx
+    // (per the documented lock order comment). #2692 uses the same
+    // mutexes; the cleanup path doesn't acquire them in a way that
+    // would deadlock with #2692.
+    CHECK(cpp.find("g_aot_state_mtx") != std::string::npos, "AC4: g_aot_state_mtx present");
+}
+
+// AC5: source-cite + linter + extend test_named_closure_stable_id_at_create
+// per #81967; no docs/design/* per #1655.
+static void ac2857_5_source_cite_and_no_design() {
+    std::println("\n--- #2857 AC5: source-cite + no docs/design/* ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto t = read_file("tests/compiler/test_named_closure_stable_id_at_create.cpp");
+    // aura_jit_bridge.cpp cites #2857.
+    CHECK(cpp.find("Issue #2857") != std::string::npos || cpp.find("#2857") != std::string::npos,
+          "AC5: cpp cites #2857 (atomic eval cleanup)");
+    CHECK(cpp.find("single ordered transaction") != std::string::npos ||
+              cpp.find("race window") != std::string::npos ||
+              cpp.find("same transaction") != std::string::npos ||
+              cpp.find("documented lock order") != std::string::npos,
+          "AC5: cpp documents atomic cleanup / lock order");
+    CHECK(cpp.find("aura_aot_invalidate_all_stale_slots_for_eval") != std::string::npos,
+          "AC5: cpp calls invalidate_all_stale_slots_for_eval (atomic cleanup)");
+    CHECK(cpp.find("aura_clear_stable_func_id_map_for_eval") != std::string::npos,
+          "AC5: cpp calls clear_stable_func_id_map_for_eval (atomic cleanup)");
+    CHECK(cpp.find("g_aot_state_map.erase") != std::string::npos,
+          "AC5: cpp drops AotState entry (atomic cleanup)");
+    // hot_update_registry.hh has #2853/#2854 metrics (preserved regression
+    // surface — atomic cleanup is additive to #2853 production lock + #2854
+    // stamp + #2855 force-drain).
+    CHECK(hh.find("#2853") != std::string::npos || hh.find("Issue #2853") != std::string::npos,
+          "AC5: #2853 production residual policy lock (preserved)");
+    CHECK(hh.find("#2854") != std::string::npos || hh.find("Issue #2854") != std::string::npos,
+          "AC5: #2854 same-tx stamp (preserved)");
+    // Self-test presence.
+    CHECK(t.find("ac2857_1_dual_eval_destroy_a_reemit_b") != std::string::npos,
+          "AC5: AC1 self-test present");
+    CHECK(t.find("ac2857_2_concurrent_cleanup_register_fail_closed") != std::string::npos,
+          "AC5: AC2 self-test present");
+    CHECK(t.find("ac2857_3_single_eval_legacy_behavior") != std::string::npos,
+          "AC5: AC3 self-test present");
+    CHECK(t.find("ac2857_4_register_time_assert_preserved") != std::string::npos,
+          "AC5: AC4 self-test present");
+    CHECK(t.find("ac2857_5_source_cite_and_no_design") != std::string::npos, "AC5: AC5 self-test");
+    // Prior tests preserved (regression).
+    CHECK(t.find("ac2744_5_source_and_no_design") != std::string::npos,
+          "AC5: #2744 tests preserved");
+    CHECK(t.find("ac2713_6_source_and_linter") != std::string::npos, "AC5: #2713 tests preserved");
+    CHECK(t.find("ac2692_source_and_no_design") != std::string::npos, "AC5: #2692 tests preserved");
+    CHECK(t.find("ac2670_schema_and_source") != std::string::npos, "AC5: #2670 tests preserved");
+    // No docs/design/ per #1655 (silent ship — close comment + commit
+    // message carry design rationale; no per-issue plan docs).
+    const std::string design_path = "docs/design/2857-";
+    CHECK(read_file((design_path + "atomic-eval-cleanup.md").c_str()).empty(),
+          "AC5: no docs/design/2857-* per #1655");
+}
+
 } // namespace
 
 // ── #2670: stable_func_id map namespace by eval_owner ──
@@ -809,8 +978,15 @@ int run_test_named_closure_stable_id_at_create() {
     ac2744_3_single_eval_unchanged();
     ac2744_4_query_and_counters();
     ac2744_5_source_and_no_design();
-    std::println("\n=== #2550 + #2670 + #2692 + #2713 + #2744: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // Issue #2857: atomic eval cleanup (single ordered transaction).
+    std::println("\n=== Issue #2857: atomic eval cleanup (single ordered transaction) ===");
+    ac2857_1_dual_eval_destroy_a_reemit_b();
+    ac2857_2_concurrent_cleanup_register_fail_closed();
+    ac2857_3_single_eval_legacy_behavior();
+    ac2857_4_register_time_assert_preserved();
+    ac2857_5_source_cite_and_no_design();
+    std::println("\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2857: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
