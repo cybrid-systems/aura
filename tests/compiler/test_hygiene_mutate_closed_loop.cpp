@@ -477,10 +477,59 @@ static void ac2858_7_getters_and_schema() {
           "AC7: getter loads nodes from CompilerMetrics atomic");
 }
 
+// ── Issue #2863: mutate:replace-subtree full safety contract
+// Source-cite ACs (gate-only ship; runtime verifies on CI).
+
+static void ac2863_1_source_atomics() {
+    std::println("\n--- #2863 AC1: source — 5 new safety atomics present ---");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    CHECK(met.find("mutate_replace_subtree_calls_total") != std::string::npos,
+          "#2863 AC1: mutate_replace_subtree_calls_total atomic");
+    CHECK(met.find("mutate_replace_subtree_fine_rollback_total") != std::string::npos,
+          "#2863 AC1: mutate_replace_subtree_fine_rollback_total atomic");
+    CHECK(met.find("mutate_replace_subtree_densify_triggers_total") != std::string::npos,
+          "#2863 AC1: mutate_replace_subtree_densify_triggers_total atomic");
+    CHECK(met.find("mutate_replace_subtree_hygiene_rejects_total") != std::string::npos,
+          "#2863 AC1: mutate_replace_subtree_hygiene_rejects_total atomic");
+    CHECK(met.find("mutate_replace_subtree_restamp_nodes_total") != std::string::npos,
+          "#2863 AC1: mutate_replace_subtree_restamp_nodes_total atomic");
+    CHECK(met.find("// #2863") != std::string::npos,
+          "#2863 AC1: comment block cites #2863 contract surfaces");
+}
+
+static void ac2863_2_source_primitive() {
+    std::println("\n--- #2863 AC2: source — query:replace-subtree-stats primitive ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:replace-subtree-stats") != std::string::npos,
+          "#2863 AC2: query:replace-subtree-stats primitive registered");
+    CHECK(q.find("make_int(2863)") != std::string::npos, "#2863 AC2: schema=2863 in hash builder");
+    CHECK(q.find("mutate-replace-subtree-calls-total") != std::string::npos &&
+              q.find("mutate-replace-subtree-fine-rollback-total") != std::string::npos &&
+              q.find("mutate-replace-subtree-densify-triggers-total") != std::string::npos &&
+              q.find("mutate-replace-subtree-hygiene-rejects-total") != std::string::npos &&
+              q.find("mutate-replace-subtree-restamp-nodes-total") != std::string::npos,
+          "#2863 AC2: 5 contract counter keys in hash");
+    // Critical dependency on #2858 (auto-restamp on allowed MacroIntroduced).
+    CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp")
+                  .find("macro_mutate_auto_restamp_total") != std::string::npos,
+          "#2863 AC2: #2858 dependency present (auto-restamp surface)");
+}
+
+static void ac2863_3_no_docs() {
+    std::println("\n--- #2863 AC3: no docs/design/ + lineage refs ---");
+    CHECK(read_file("docs/design/2863-replace-subtree-contract.md").empty(),
+          "#2863 AC3: no docs/design/2863-* per #1655");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("#2858") != std::string::npos && q.find("#2797") != std::string::npos &&
+              q.find("#1281") != std::string::npos && q.find("#369") != std::string::npos &&
+              q.find("#2801") != std::string::npos,
+          "#2863 AC3: lineage refs to #2858/#2797/#1281/#369/#2801");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858) ===");
+    std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
@@ -501,6 +550,11 @@ int main() {
     ac2858_5_kMacroExpansion_dirty();
     ac2858_6_multi_round();
     ac2858_7_getters_and_schema();
+    std::println("\n=== Issue #2863: mutate:replace-subtree full safety contract (source-cite "
+                 "gate-only) ===");
+    ac2863_1_source_atomics();
+    ac2863_2_source_primitive();
+    ac2863_3_no_docs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
