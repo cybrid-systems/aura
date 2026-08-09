@@ -219,7 +219,7 @@ private:
     std::function<bool(std::uint32_t)> block_dirty_fn_;
 };
 
-// ── Issue #606: LinearOwnershipWrap — pure read-only linear use-after-move probe ─
+// ── Issue #606 / #2828: LinearOwnershipWrap — pure read-only linear UaM probe ─
 //
 // Reads every IRFunction's instruction stream for a
 // MoveOp/DropOp/RefCountOp consumer followed by a read of the
@@ -229,6 +229,12 @@ private:
 // can run linear-ownership analysis as a typed PureAnalysisPass
 // stage; matches the legacy pass's `has_error()` semantic
 // (use_after_move_count > 0).
+//
+// Issue #2828: reads_input previously returned false for Branch /
+// Return / CellGet / MakePair ("no input slots") even though those
+// ops read slot operands. Scan uses per-op input ranges so Branch
+// only checks the condition (ops[1..2] are block ids), Return checks
+// the value at ops[0], and has_result_slot ops skip the write at ops[0].
 export class LinearOwnershipWrap {
 public:
     void run(aura::ir::IRModule& module) const {
@@ -266,6 +272,15 @@ public:
     static std::uint64_t lifetime_functions_scanned() noexcept {
         return lifetime_functions_scanned_.load(std::memory_order_relaxed);
     }
+    // Issue #2828: UaM detections on Branch/Return/CellGet/MakePair
+    // (ops previously excluded by the false reads_input list).
+    static std::uint64_t input_scan_missed_total() noexcept {
+        return input_scan_missed_total_.load(std::memory_order_relaxed);
+    }
+    // Shared process-wide bump (used by legacy LinearOwnershipPass too).
+    static void note_input_scan_missed() noexcept {
+        input_scan_missed_total_.fetch_add(1, std::memory_order_relaxed);
+    }
 
 private:
     mutable std::size_t use_after_move_count_ = 0;
@@ -276,6 +291,8 @@ private:
     static inline std::atomic<std::uint64_t> lifetime_use_after_move_{0};
     static inline std::atomic<std::uint64_t> lifetime_double_consume_{0};
     static inline std::atomic<std::uint64_t> lifetime_functions_scanned_{0};
+    // Issue #2828: recovered UaM hits on previously false-listed ops.
+    static inline std::atomic<std::uint64_t> input_scan_missed_total_{0};
 
     static bool is_consuming_(aura::ir::IROpcode op) {
         switch (op) {
@@ -288,18 +305,54 @@ private:
         }
     }
 
+    // Issue #2828: only true input-free ops. Branch/Return/CellGet/
+    // MakePair read slots and must be scanned.
     static bool reads_input_(aura::ir::IROpcode op) {
         switch (op) {
             case aura::ir::IROpcode::Nop:
-            case aura::ir::IROpcode::Branch:
             case aura::ir::IROpcode::Jump:
-            case aura::ir::IROpcode::Return:
             case aura::ir::IROpcode::ConstVoid:
-            case aura::ir::IROpcode::CellGet:
-            case aura::ir::IROpcode::MakePair:
-                return false;
+                return false; // no input slots
             default:
                 return true;
+        }
+    }
+
+    // Issue #2828: ops that the pre-fix false-list wrongly excluded.
+    static bool is_recovered_input_op_(aura::ir::IROpcode op) noexcept {
+        switch (op) {
+            case aura::ir::IROpcode::Branch:
+            case aura::ir::IROpcode::Return:
+            case aura::ir::IROpcode::CellGet:
+            case aura::ir::IROpcode::MakePair:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Issue #2828: [begin, end) of slot-read operand indices.
+    // Branch: cond only (ops[1..2] are block ids, not slots).
+    // Return: value at ops[0] (no result write).
+    // has_result_slot: skip ops[0] write; scan ops[1..n).
+    static std::pair<std::uint32_t, std::uint32_t>
+    input_slot_range_(aura::ir::IROpcode op) noexcept {
+        using O = aura::ir::IROpcode;
+        switch (op) {
+            case O::Branch:
+                return {0, 1}; // operands[0] = condition slot
+            case O::Return:
+                return {0, 1}; // operands[0] = return value slot
+            case O::Jump:
+            case O::Nop:
+            case O::ConstVoid:
+                return {0, 0};
+            default: {
+                const auto* info = aura::ir::lookup_opcode(op);
+                const auto n = info ? static_cast<std::uint32_t>(info->operand_count) : 4u;
+                const auto begin = (info && info->has_result_slot) ? 1u : 0u;
+                return {begin, n};
+            }
         }
     }
 
@@ -317,14 +370,17 @@ private:
                         moved[consumed] = 1;
                     }
                 } else if (reads_input_(instr.opcode)) {
-                    // Iterating operands[] directly (operand_count is
-                    // the legacy 0-4 counter; .size() is the
-                    // authoritative bound for the std::array view).
-                    const std::size_t n = std::min<std::size_t>(instr.operands.size(), 4);
-                    for (std::size_t k = 1; k < n; ++k) {
+                    // Issue #2828: per-op input range (not blind k=1..4).
+                    const auto [begin, end] = input_slot_range_(instr.opcode);
+                    const auto n = std::min<std::uint32_t>(
+                        end, static_cast<std::uint32_t>(instr.operands.size()));
+                    for (std::uint32_t k = begin; k < n; ++k) {
                         auto s = instr.operands[k];
-                        if (s < moved.size() && moved[s])
+                        if (s < moved.size() && moved[s]) {
                             ++use_after_move_count_;
+                            if (is_recovered_input_op_(instr.opcode))
+                                note_input_scan_missed();
+                        }
                     }
                 }
             }
@@ -2327,24 +2383,56 @@ private:
         }
     }
 
-    // True if the opcode reads a slot as an INPUT. For these
-    // ops, if the source slot has been moved, it's a use-after-move.
+    // Issue #2828: only true input-free ops. Branch/Return/CellGet/
+    // MakePair read slots — the old "no input slots" false cases were
+    // wrong and silently dropped use-after-move on those operands.
+    //
+    // Per-op input semantics (slot reads only):
+    //   Branch:  operands[0] = condition (ops[1..2] = block ids)
+    //   Return:  operands[0] = return value
+    //   CellGet: operands[1] = cell_id (ops[0] = result write)
+    //   MakePair: operands[1..2] = car/cdr (ops[0] = result write)
     static bool reads_input(aura::ir::IROpcode op) {
-        // Conservative: most ops read some input. The result
-        // slot (operands[0] for has_result_slot ops) is a write,
-        // not a read, so it's not an input. Inputs are
-        // operands[1..operand_count].
         switch (op) {
             case aura::ir::IROpcode::Nop:
-            case aura::ir::IROpcode::Branch:
             case aura::ir::IROpcode::Jump:
-            case aura::ir::IROpcode::Return:
             case aura::ir::IROpcode::ConstVoid:
-            case aura::ir::IROpcode::CellGet:
-            case aura::ir::IROpcode::MakePair:
                 return false; // no input slots
             default:
                 return true; // has at least one input
+        }
+    }
+
+    // Issue #2828: [begin, end) of slot-read operand indices.
+    static std::pair<std::uint32_t, std::uint32_t>
+    input_slot_range(aura::ir::IROpcode op) noexcept {
+        using O = aura::ir::IROpcode;
+        switch (op) {
+            case O::Branch:
+                return {0, 1}; // condition only
+            case O::Return:
+                return {0, 1}; // return value
+            case O::Jump:
+            case O::Nop:
+            case O::ConstVoid:
+                return {0, 0};
+            default: {
+                const auto n = DCEPass::operand_count_local(op);
+                const auto begin = DCEPass::has_result_slot_local(op) ? 1u : 0u;
+                return {begin, n};
+            }
+        }
+    }
+
+    static bool is_recovered_input_op(aura::ir::IROpcode op) noexcept {
+        switch (op) {
+            case aura::ir::IROpcode::Branch:
+            case aura::ir::IROpcode::Return:
+            case aura::ir::IROpcode::CellGet:
+            case aura::ir::IROpcode::MakePair:
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -2368,14 +2456,17 @@ private:
                         moved[consumed] = 1;
                     }
                 } else if (reads_input(instr.opcode) && func.local_count > 0) {
-                    // Check all input operands for use-after-move.
-                    // Skip operands[0] (result slot, a write).
-                    auto op_count = DCEPass::operand_count_local(instr.opcode);
-                    for (std::uint32_t k = 1; k < op_count; ++k) {
+                    // Issue #2828: per-op input range (not blind k=1..n).
+                    // Branch/Return need ops[0]; CellGet/MakePair need
+                    // ops[1..] after the result write.
+                    const auto [begin, end] = input_slot_range(instr.opcode);
+                    for (std::uint32_t k = begin; k < end; ++k) {
                         auto slot = instr.operands[k];
                         if (slot < func.local_count && moved[slot]) {
                             // Use-after-move detected.
                             ++use_after_move_count_;
+                            if (is_recovered_input_op(instr.opcode))
+                                LinearOwnershipWrap::note_input_scan_missed();
                         }
                     }
                 }
