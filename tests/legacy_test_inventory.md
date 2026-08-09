@@ -1459,7 +1459,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_prompt6_epoch_atomic_visibility_fiber_steal.cpp` (—) [domain_suite, theme_serve] — test_prompt6_epoch_atomic_visibility_fiber_steal.cpp — Issue #739:
 - `tests/compiler/test_prompt6_full_memory_safety_fuzz_stress.cpp` (—) [domain_suite, theme_compiler] — test_prompt6_full_memory_safety_fuzz_stress.cpp — Issue #602:
 - `tests/compiler/test_propagate_marker_cycle_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1679/#1682/#1782 (#1978 renamed): issue# moved from filename to header.
-- `tests/serve/test_residual_defer_steal_hard_and.cpp` (—) [domain_suite, theme_serve] — AC1: Hard + residual non-zero after clear → fiber Cancel+Done; hard-fail +1
+- `tests/serve/test_residual_defer_steal_hard_and.cpp` (—) [large, domain_suite, theme_serve] — AC1: Hard + residual non-zero after clear → fiber Cancel+Done; hard-fail +1
 - `tests/serve/test_residual_force_safepoint.cpp` (—) [domain_suite, theme_serve] — Issue #2636 — residual reclaim body-age + env-opt-in force-safepoint
 - `tests/core/test_restore_children_structural_lock.cpp` (—) [domain_suite, theme_core] — AC1: restore_children without external guard restores correctly (self-locks)
 - `tests/compiler/test_run_one_yield_hook_actual.cpp` (—) [domain_suite, theme_compiler] — AC1: source splits policy hook vs fiber yield action; cites #2823
