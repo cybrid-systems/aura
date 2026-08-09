@@ -203,7 +203,57 @@ int run_test_composite_commit_cs_reuse() {
               "escape blocked counter");
     }
 
-    std::println("\n=== #2180 + #2644 + #2671 composite CS reuse + drift-inject soak: {} passed, "
+    // ── Issue #2859: auto_validate + schema_cache wired into
+    // MutationBoundaryGuard commit path — ACs are source-cite based
+    // (grep/read_file) for gate-only ship. Runtime behavior (force-
+    // rollback + audit event under production/Strict on schema_cache
+    // OOB, ok counter on happy path) verifies on next CI run.
+
+    std::println("\n--- #2859 AC1: new counters + getters present ---");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    const auto ev_xx = read_file("src/compiler/evaluator.ixx");
+    CHECK(met.find("schema_validate_on_commit_ok_total") != std::string::npos,
+          "#2859 AC1: schema_validate_on_commit_ok_total counter");
+    CHECK(met.find("schema_validate_on_commit_fail_total") != std::string::npos,
+          "#2859 AC1: schema_validate_on_commit_fail_total counter");
+    CHECK(ev_xx.find("get_schema_validate_on_commit_ok_total()") != std::string::npos,
+          "#2859 AC1: getter ok_total");
+    CHECK(ev_xx.find("get_schema_validate_on_commit_fail_total()") != std::string::npos,
+          "#2859 AC1: getter fail_total");
+
+    std::println("\n--- #2859 AC2: commit-path wire-up + RAII guard + kwarg parser ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(emb.find("schema_validate_on_commit") != std::string::npos,
+          "#2859 AC2: commit path references schema_validate_on_commit");
+    CHECK(emb.find("capture_audit_event_forced") != std::string::npos &&
+              emb.find("AuditOutcome::SchemaViolation") != std::string::npos,
+          "#2859 AC2: failure emits typed audit event (SchemaViolation)");
+    CHECK(mut.find("ValidateSchemaGuard") != std::string::npos,
+          "#2859 AC2: RAII ValidateSchemaGuard struct present");
+    CHECK(mut.find("parse_validate_schema_on_commit_opt_in") != std::string::npos,
+          "#2859 AC2: :validate-schema-on-commit? kwarg parser present");
+    CHECK(mut.find("schema_guard_qar") != std::string::npos,
+          "#2859 AC2: wired at mutate:query-and-replace");
+    CHECK(mut.find("schema_guard_batch") != std::string::npos,
+          "#2859 AC2: wired at mutate:query-and-replace-batch");
+    CHECK(mut.find("schema_guard_rp") != std::string::npos,
+          "#2859 AC2: wired at mutate:replace-pattern");
+
+    std::println("\n--- #2859 AC3: no docs/design/ + Evaluator flag + production gate ---");
+    CHECK(read_file("docs/design/2859-schema-validate-on-commit.md").empty(),
+          "#2859 AC3: no docs/design/2859-* per #1655");
+    CHECK(ev_xx.find("validate_schema_on_commit_") != std::string::npos,
+          "#2859 AC3: Evaluator flag declared");
+    CHECK(ev_xx.find("validate_schema_on_commit()") != std::string::npos &&
+              ev_xx.find("set_validate_schema_on_commit") != std::string::npos,
+          "#2859 AC3: Evaluator getter + setter present");
+    CHECK(emb.find("ev_->validate_schema_on_commit()") != std::string::npos &&
+              emb.find("ev_->effect_sandbox_mode()") != std::string::npos,
+          "#2859 AC3: commit path checks flag + production gate");
+
+    std::println("\n=== #2180 + #2644 + #2671 + #2859 composite CS reuse + drift-inject + "
+                 "schema-validate soak: {} passed, "
                  "{} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

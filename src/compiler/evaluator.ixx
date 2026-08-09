@@ -3587,6 +3587,25 @@ public:
             return m->macro_mutate_auto_restamp_nodes.load(std::memory_order_relaxed);
         return 0;
     }
+    // Issue #2859: auto_validate + schema_cache wired into
+    // MutationBoundaryGuard commit success path counters. Read-only
+    // on the 2 new CompilerMetrics atomics backing
+    // (query:schema-validate-on-commit-stats) primitive + linter/
+    // observability access for self-evolvers that need to confirm
+    // schema-validate fired (or detect that a commit failed
+    // validation under production/Strict). Source-cited at the
+    // outermost commit-success path in
+    // evaluator_mutation_boundary.cpp.
+    [[nodiscard]] std::uint64_t get_schema_validate_on_commit_ok_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->schema_validate_on_commit_ok_total.load(std::memory_order_relaxed);
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t get_schema_validate_on_commit_fail_total() const noexcept {
+        if (auto* m = static_cast<const CompilerMetrics*>(compiler_metrics()))
+            return m->schema_validate_on_commit_fail_total.load(std::memory_order_relaxed);
+        return 0;
+    }
     [[nodiscard]] std::uint64_t get_macro_refresh_invoke_count() const noexcept {
         return macro_refresh_invoke_count_.load(std::memory_order_relaxed);
     }
@@ -5748,6 +5767,12 @@ private:
     // Issue #676: sandbox mode — when true, sensitive primitives
     // require matching capabilities (io/mutate/exec).
     bool sandbox_mode_ = false;
+    // Issue #2859: opt-in flag for outermost MutationBoundaryGuard
+    // commit-path schema_validate (auto_validate + schema_cache).
+    // Default false = zero-overhead Soft path. Set via
+    // (mutate:validate-schema-on-commit #t) kwarg or
+    // set_validate_schema_on_commit(true).
+    bool validate_schema_on_commit_ = false;
     // Issue #1565: multi-tenant id for capability effect checks.
     // Issue #2659: this Evaluator-local field is the SOLE source of truth
     // for the current principal. The legacy process-global
@@ -6027,6 +6052,21 @@ public:
     void revoke_effect_capability(std::uint64_t tenant_id, std::string_view name) noexcept;
     void set_effect_sandbox_mode(std::uint8_t mode) noexcept; // 0 Off, 1 Restricted, 2 Strict
     [[nodiscard]] std::uint8_t effect_sandbox_mode() const noexcept;
+    // Issue #2859: opt-in gate for outermost MutationBoundaryGuard
+    // commit-path schema_validate (auto_validate + schema_cache).
+    // When true AND effect_sandbox_mode != 0 (production/Strict),
+    // the outermost Guard dtor walks mutated subtrees tagged with
+    // schema_cache (clone_macro_body + set_schema_cache), calls
+    // aura::reflect::auto_validate on cached POD view, and on
+    // failure force-rolls back + emits a typed audit event. Soft /
+    // non-production default = zero overhead (gate short-circuits
+    // before any reflect walk). Set via
+    // (mutate:validate-schema-on-commit #t) primitive kwarg or
+    // global flag.
+    void set_validate_schema_on_commit(bool v) noexcept { validate_schema_on_commit_ = v; }
+    [[nodiscard]] bool validate_schema_on_commit() const noexcept {
+        return validate_schema_on_commit_;
+    }
     // Issue #2076: production default Restricted sandbox + env override.
     // Reads AURA_SANDBOX env var (off/strict/restricted/unset) and calls
     // set_effect_sandbox_mode. Unset → Restricted (production safe-by-default).

@@ -592,6 +592,60 @@ namespace {
         return false;
     }
 
+    // Issue #2859: RAII guard for validate_schema_on_commit flag.
+    // Captures the previous flag value on construction, sets the
+    // desired value, restores the previous value on destruction.
+    // Used by the 3 mutate hotpath sites that opt in via
+    // :validate-schema-on-commit? kwarg — guarantees the flag is
+    // cleared even on early return (e.g. error path before
+    // primitive body completes).
+    struct ValidateSchemaGuard {
+        Evaluator& ev;
+        bool prev;
+        ValidateSchemaGuard(Evaluator& e, bool v)
+            : ev(e)
+            , prev(e.validate_schema_on_commit()) {
+            e.set_validate_schema_on_commit(v);
+        }
+        ~ValidateSchemaGuard() { ev.set_validate_schema_on_commit(prev); }
+    };
+
+    // Issue #2859: parse `:validate-schema-on-commit? #t` from a
+    // mutate:* primitive's argument span. Returns true iff the
+    // kwarg is present AND its value is true. Default #f if
+    // absent. Used to opt in to outermost MutationBoundaryGuard
+    // commit-path schema_validate (auto_validate + schema_cache).
+    // When true AND effect_sandbox_mode != 0 (production/Strict),
+    // the outermost Guard dtor walks mutated subtrees tagged with
+    // schema_cache and force-rolls back on mismatch. Soft /
+    // non-production default = zero overhead. Same pattern as
+    // parse_allow_macro_opt_out / parse_no_auto_restamp_opt_out
+    // above (linear keyword-table scan, ~10-30 entries, once per
+    // mutate call).
+    static bool parse_validate_schema_on_commit_opt_in(Evaluator& ev,
+                                                       std::span<const EvalValue> args) {
+        const auto& kt = ev.keyword_table();
+        std::size_t target_idx = std::string::npos;
+        for (std::size_t i = 0; i < kt.size(); ++i) {
+            if (kt[i] == ":validate-schema-on-commit?") {
+                target_idx = i;
+                break;
+            }
+        }
+        if (target_idx == std::string::npos)
+            return false;
+        for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+            if (!is_keyword(args[i]))
+                continue;
+            if (as_keyword_idx(args[i]) != target_idx)
+                continue;
+            if (is_bool(args[i + 1]))
+                return as_bool(args[i + 1]);
+            return false;
+        }
+        return false;
+    }
+
 } // namespace
 
 void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
@@ -1597,6 +1651,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #2858: explicit opt-out from auto-restamp cascade
             // (advanced callers). Default = restamp; rare opt-out.
             const bool no_auto_restamp_qar = parse_no_auto_restamp_opt_out(ev, a);
+            // Issue #2859: opt-in for outermost MutationBoundaryGuard
+            // commit-path schema_validate. Default = off (zero
+            // overhead Soft path). When true AND production/Strict,
+            // the outermost Guard dtor walks schema_cache and
+            // force-rolls back on mismatch. RAII guard auto-resets
+            // on early return + at primitive exit.
+            ValidateSchemaGuard schema_guard_qar(ev,
+                                                 parse_validate_schema_on_commit_opt_in(ev, a) ||
+                                                     ev.validate_schema_on_commit());
             const std::uint64_t initial_log_size = flat.all_mutations().size();
             flat.begin_atomic_batch();
             for (auto& match_ref : matches) {
@@ -2051,6 +2114,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #2858: explicit opt-out from auto-restamp cascade
             // (advanced callers). Default = restamp; rare opt-out.
             const bool no_auto_restamp_batch = parse_no_auto_restamp_opt_out(ev, a);
+            // Issue #2859: opt-in for outermost MutationBoundaryGuard
+            // commit-path schema_validate (see query-and-replace site
+            // above for full comment). RAII guard auto-resets on
+            // early return + at primitive exit.
+            ValidateSchemaGuard schema_guard_batch(ev,
+                                                   parse_validate_schema_on_commit_opt_in(ev, a) ||
+                                                       ev.validate_schema_on_commit());
 
             std::uint64_t initial_log_size = flat.all_mutations().size();
             flat.begin_atomic_batch();
@@ -4032,6 +4102,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #2858: explicit opt-out from auto-restamp cascade
         // (advanced callers). Default = restamp; rare opt-out.
         const bool no_auto_restamp_rp = parse_no_auto_restamp_opt_out(ev, a);
+        // Issue #2859: opt-in for outermost MutationBoundaryGuard
+        // commit-path schema_validate (see query-and-replace site
+        // above for full comment). RAII guard auto-resets on early
+        // return + at primitive exit.
+        ValidateSchemaGuard schema_guard_rp(ev, parse_validate_schema_on_commit_opt_in(ev, a) ||
+                                                    ev.validate_schema_on_commit());
         const bool allow_macro_all =
             ev.get_allow_macro_mutate() || allow_macro_kw || include_macro_introduced;
         int replaced_count = 0;
