@@ -8121,6 +8121,13 @@ struct CompilerMetrics {
     // to-crash path — dashboards should see this counter near zero in
     // healthy production and an alert-worthy spike on regression.
     std::atomic<std::uint64_t> mutation_boundary_residual_defer_hard_fail_total{0}; // #2269
+    // Issue #2846: residual-defer-after-exit closed loop. Bumped when
+    // outermost MutationBoundary exit (success *or* failure) or
+    // steal-complete residual terminal observed residual GcDeferReason
+    // (Soft: observe leftover; Clear: residual was force-cleared at exit).
+    // Pairs with g_residual_defer_after_exit_total process-wide (#2846).
+    // Agents alert on growth under multi-fiber denseness (GC starvation).
+    std::atomic<std::uint64_t> residual_defer_after_exit_total{0}; // #2846
     // Issue #2853: gauge — bumped each Phase-5 outermost-success residual
     // check where production lock was actively gating the policy
     // (production_defaults_active() + sandbox != off + not test override).

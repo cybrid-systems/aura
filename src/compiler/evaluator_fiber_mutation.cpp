@@ -3019,25 +3019,37 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Next to existing #2314 residual clear (step 3) — final re-check after
     // recovery work may re-arm bits under concurrent pressure.
     if (fiber && !hard_failed) {
+        // Issue #2546 + #2846: residual hard-AND + residual-after-exit closed
+        // loop. Production/Hard force-clears via close_residual_defer_after_exit;
+        // Soft observes leftover. Zero cost when residual already 0.
         if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
-            // Final force clear (idempotent with step 3 #2314 interlock).
             void* clear_id = prev_eval_id;
             if (auto* ev = evaluator_for_scheduler_hooks()) {
                 if (clear_id == nullptr)
                     clear_id = static_cast<void*>(ev);
-                const auto r = aura::gc_hooks::force_clear_residual_defer_for_evaluator(clear_id);
-                if (r.panic_depth_cleared > 0 || r.bits_reconciled > 0 || r.hold_released) {
+                const bool production_force = aura::serve::is_steal_snapshot_hard_mode();
+                // #2846 sole residual-after-exit gate on steal-complete
+                // (force_clear + after-exit counter when residual seen).
+                const auto after =
+                    aura::gc_hooks::close_residual_defer_after_exit(clear_id, production_force);
+                if (after.residual_seen) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                        m->residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                // Preserve #2546 residual_defer_cleared_on_steal when clear did work.
+                if (after.clear.panic_depth_cleared > 0 || after.clear.bits_reconciled > 0 ||
+                    after.clear.hold_released) {
                     aura::gc_hooks::g_residual_defer_cleared_on_steal_total.fetch_add(
                         1, std::memory_order_relaxed);
                     if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
                         m->residual_defer_cleared_on_steal_total.fetch_add(
                             1, std::memory_order_relaxed);
-                        if (r.panic_depth_cleared > 0)
-                            m->gc_defer_orphan_cleared_total.fetch_add(r.panic_depth_cleared,
-                                                                       std::memory_order_relaxed);
-                        if (r.bits_reconciled > 0)
+                        if (after.clear.panic_depth_cleared > 0)
+                            m->gc_defer_orphan_cleared_total.fetch_add(
+                                after.clear.panic_depth_cleared, std::memory_order_relaxed);
+                        if (after.clear.bits_reconciled > 0)
                             m->mutation_boundary_residual_defer_bit_reconcile_total.fetch_add(
-                                r.bits_reconciled, std::memory_order_relaxed);
+                                after.clear.bits_reconciled, std::memory_order_relaxed);
                     }
                 }
             }

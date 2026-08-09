@@ -2492,40 +2492,75 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     if (aura::gc_hooks::defer_reasons_snapshot() != 0)
                         std::abort();
                 } else if (policy == ResidualPolicy::Clear) {
-                    // Issue #2600: shared exit helper — same residual
-                    // clear + hold release steps the soft fiber boundary
-                    // exit uses (orch_soft_boundary_exit in
-                    // evaluator_fiber_mutation.cpp). Closes dual-rail
-                    // drift between soft + full Guard paths. Stack-light
-                    // (no full Guard construction). Idempotent (atomic +
-                    // CAS-based — calling twice does not double-bump
-                    // counters). The shared helper also matches the
-                    // #2314 steal-complete interlock (same essential
-                    // operations). Per-evaluator clear + hold release
-                    // (the previous force_clear_all_gc_defer_for_evaluator
-                    // was a superset of per-evaluator clear; per-evaluator
-                    // is sufficient since each evaluator handles its own
-                    // defer via its own soft/full Guard exit).
-                    // We capture the clear result BEFORE the helper so the
-                    // #2296 per-evaluator metrics still bump correctly
-                    // (the helper doesn't surface per-evaluator clear
-                    // counters — those are computed here from the original
-                    // call signature).
-                    const auto fr = aura::gc_hooks::force_clear_residual_defer_for_evaluator(
-                        static_cast<void*>(ev_));
-                    // Shared exit: also releases MutationHold + reconciles
-                    // (covers both soft + full Guard paths in one place).
+                    // Issue #2600 + #2846: force residual clear + hold
+                    // release + residual-after-exit closed loop. Shared
+                    // exit helper matches soft fiber boundary path
+                    // (orch_soft_boundary_exit). Idempotent under multi-
+                    // fiber (CAS-based). Production denseness never
+                    // leaves residual armed across outermost exit.
+                    // #2296 lineage: close_residual_defer_after_exit →
+                    // force_clear_residual_defer_for_evaluator →
+                    // force_clear_all_gc_defer_for_evaluator + reconcile.
+                    const auto after = aura::gc_hooks::close_residual_defer_after_exit(
+                        static_cast<void*>(ev_), /*production_force=*/true);
                     aura::compiler::mutation_boundary_shared_exit(static_cast<void*>(ev_));
                     if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                        const auto n = (fr.panic_depth_cleared > 0)
-                                           ? static_cast<std::uint64_t>(fr.panic_depth_cleared)
+                        const auto n = (after.clear.panic_depth_cleared > 0)
+                                           ? after.clear.panic_depth_cleared
                                            : 1u;
                         m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
                             n, std::memory_order_relaxed);
+                        if (after.residual_seen)
+                            m->residual_defer_after_exit_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    }
+                } else {
+                    // Soft (sandbox / unit tests): no clear, no abort —
+                    // residual metric bump above (legacy #2211). Issue
+                    // #2846: Soft observe residual-after-exit so Agents
+                    // can detect permanent GC-starvation risk under denseness.
+                    const auto after = aura::gc_hooks::close_residual_defer_after_exit(
+                        static_cast<void*>(ev_), /*production_force=*/false);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        if (after.residual_seen)
+                            m->residual_defer_after_exit_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
                     }
                 }
-                // Soft (sandbox / unit tests): no clear, no abort, just
-                // the residual metric bump above. Legacy #2211 behavior.
+            }
+        } else {
+            // Issue #2846: outermost *failure* exit also closes residual
+            // defer (success *and* failure). Partial recovery (failed +
+            // checkpoint left armed) intentionally keeps defer — skip.
+            // Other failures: production Clear force-clears; Soft observes.
+            const bool partial_recovery = had_panic_checkpoint_ && !panic_handled;
+            if (!partial_recovery) {
+                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const bool dev_off =
+                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
+                const bool production_force = !(dev_off || test_soft);
+                if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        m->mutation_boundary_residual_defer_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    const auto after = aura::gc_hooks::close_residual_defer_after_exit(
+                        static_cast<void*>(ev_), production_force);
+                    if (production_force)
+                        aura::compiler::mutation_boundary_shared_exit(static_cast<void*>(ev_));
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        if (production_force) {
+                            const auto n = (after.clear.panic_depth_cleared > 0)
+                                               ? after.clear.panic_depth_cleared
+                                               : 1u;
+                            m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
+                                n, std::memory_order_relaxed);
+                        }
+                        if (after.residual_seen)
+                            m->residual_defer_after_exit_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    }
+                }
             }
         }
         // Issue #2184: clear fiber-local held mirror after outermost exit.
