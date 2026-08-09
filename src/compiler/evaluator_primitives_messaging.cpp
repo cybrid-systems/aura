@@ -76,7 +76,33 @@ namespace {
     // Serialize the entire fiber body on the thread backend only; serve-async
     // scheduler fibers keep their own isolation. Product semantics of dual-name
     // rebind still hold (both bindings apply; no SIGABRT).
+    //
+    // Issue #2869: the body mutex must NOT be held while fiber:join waits for
+    // a child on the same thread backend — the child needs that mutex to run.
+    // Parent holding lock + join wait = classic deadlock (nested join hang).
+    // TLS points at the owning unique_lock so join can unlock/relock around
+    // the wait. Serve-async path never sets this (g_fiber_spawn present).
     std::mutex s_cli_thread_fiber_body_mtx;
+    thread_local std::unique_lock<std::mutex>* s_tls_cli_body_lock = nullptr;
+
+    // RAII: temporarily release CLI body mutex around nested fiber:join wait.
+    struct CliBodyLockJoinGuard {
+        std::unique_lock<std::mutex>* lock = nullptr;
+        bool unlocked = false;
+        CliBodyLockJoinGuard() {
+            if (s_tls_cli_body_lock && s_tls_cli_body_lock->owns_lock()) {
+                lock = s_tls_cli_body_lock;
+                lock->unlock();
+                unlocked = true;
+            }
+        }
+        ~CliBodyLockJoinGuard() {
+            if (unlocked && lock && !lock->owns_lock())
+                lock->lock();
+        }
+        CliBodyLockJoinGuard(const CliBodyLockJoinGuard&) = delete;
+        CliBodyLockJoinGuard& operator=(const CliBodyLockJoinGuard&) = delete;
+    };
 
 } // namespace
 
@@ -610,9 +636,23 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             // at run time would be racy; instead lock only when the launch path
             // sets the "thread" fid bit (see below). Here: always take the mutex
             // when g_fiber_spawn is null at body start (CLI denseness).
+            //
+            // Issue #2869: publish TLS lock pointer so nested fiber:join can
+            // temporarily unlock while waiting for a child (child needs this
+            // mutex to run on the thread backend).
             std::unique_lock<std::mutex> body_lock(s_cli_thread_fiber_body_mtx, std::defer_lock);
             if (!aura::messaging::g_fiber_spawn)
                 body_lock.lock();
+            struct TlsBodyLockScope {
+                std::unique_lock<std::mutex>* prev;
+                explicit TlsBodyLockScope(std::unique_lock<std::mutex>* cur) noexcept
+                    : prev(s_tls_cli_body_lock) {
+                    s_tls_cli_body_lock = cur;
+                }
+                ~TlsBodyLockScope() noexcept { s_tls_cli_body_lock = prev; }
+                TlsBodyLockScope(const TlsBodyLockScope&) = delete;
+                TlsBodyLockScope& operator=(const TlsBodyLockScope&) = delete;
+            } tls_scope(body_lock.owns_lock() ? &body_lock : nullptr);
             *result_ptr = ev.apply_closure(cid, {});
             // Issue #1291: wait until spawn path publishes the real fid
             // AND registers s_fiber_results[fid] (g_fiber_spawn may run
@@ -862,12 +902,20 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             std::println(std::cerr, "[fiber:join] WARN: serve-async mode without g_fiber_lookup; "
                                     "degrading to cv-based blocking. This is a misconfiguration "
                                     "in production; check the fiber scheduler hook installation.");
+            // Issue #2869: unlock CLI body mutex while waiting (nested join).
+            CliBodyLockJoinGuard body_join_guard;
             std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
             s_fiber_results_cv.wait_for(lock, std::chrono::seconds(200), is_ready);
         } else {
             // Stdin mode: real blocking wait on the cv. 200s
             // ceiling via wait_for (returns false on timeout,
             // true on notify).
+            //
+            // Issue #2869: if this join runs inside a thread-backend
+            // fiber body that holds s_cli_thread_fiber_body_mtx,
+            // release it for the wait so the child can acquire the
+            // mutex and complete. Relock after wakeup (RAII).
+            CliBodyLockJoinGuard body_join_guard;
             std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
             s_fiber_results_cv.wait_for(lock, std::chrono::seconds(200), is_ready);
         }
