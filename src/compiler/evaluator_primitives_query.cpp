@@ -4948,6 +4948,63 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(ht);
         });
 
+    // Issue #2864: query:remove-node-stats. Hash view of the
+    // mutate:remove-node full safety contract metrics (refine
+    // #1688 / #1689 / #1281 / #369 / #2863 sibling). Tracks the 5
+    // non-negotiable safety contract surfaces mandated by #2864
+    // AC #7 ("observability: edges_removed, multi_parent_count,
+    // rollback_fidelity, densify_triggered"):
+    //   - mutate-remove-node-calls-total: every primitive entry.
+    //   - mutate-remove-node-edges-removed-total: parent-edge
+    //       removals (DAG multi-parent case bumps by N).
+    //   - mutate-remove-node-multi-parent-count-total: # of times
+    //       a target had 2+ parents (DAG path exercised).
+    //   - mutate-remove-node-rollback-fidelity-total: fine-rollback
+    //       fired on failure.
+    //   - mutate-remove-node-densify-triggered-total: post-mutate
+    //       densify cascade fired.
+    // Distinct from existing #2863 mutate_replace_subtree_*
+    // (sibling mutate:replace-subtree contract). These are the
+    // #2864 remove-node contract surfaces.
+    ObservabilityPrims::register_stats_impl(
+        "query:remove-node-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t calls =
+                m ? m->mutate_remove_node_calls_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t edges_removed =
+                m ? m->mutate_remove_node_edges_removed_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t multi_parent =
+                m ? m->mutate_remove_node_multi_parent_count_total.load(std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t rollback_fidelity =
+                m ? m->mutate_remove_node_rollback_fidelity_total.load(std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t densify_triggered =
+                m ? m->mutate_remove_node_densify_triggered_total.load(std::memory_order_relaxed)
+                  : 0;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            (void)ht->insert_pair("schema", make_int(2864));
+            (void)ht->insert_pair("issue", make_int(2864));
+            (void)ht->insert_pair("mutate-remove-node-calls-total",
+                                  make_int(static_cast<std::int64_t>(calls)));
+            (void)ht->insert_pair("mutate-remove-node-edges-removed-total",
+                                  make_int(static_cast<std::int64_t>(edges_removed)));
+            (void)ht->insert_pair("mutate-remove-node-multi-parent-count-total",
+                                  make_int(static_cast<std::int64_t>(multi_parent)));
+            (void)ht->insert_pair("mutate-remove-node-rollback-fidelity-total",
+                                  make_int(static_cast<std::int64_t>(rollback_fidelity)));
+            (void)ht->insert_pair("mutate-remove-node-densify-triggered-total",
+                                  make_int(static_cast<std::int64_t>(densify_triggered)));
+            return make_hash(ht);
+        });
+
     // Issue #2179: query:impact-scope-stats — cross-function instruction-
     // level impact scope metrics (refine #2109 instr-level precision).
     // Returns a hash with:

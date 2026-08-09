@@ -526,10 +526,61 @@ static void ac2863_3_no_docs() {
           "#2863 AC3: lineage refs to #2858/#2797/#1281/#369/#2801");
 }
 
+// ── Issue #2864: mutate:remove-node full safety contract
+// Source-cite ACs (gate-only ship; runtime verifies on CI).
+
+static void ac2864_1_source_atomics() {
+    std::println("\n--- #2864 AC1: source — 5 new safety atomics present ---");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    CHECK(met.find("mutate_remove_node_calls_total") != std::string::npos,
+          "#2864 AC1: mutate_remove_node_calls_total atomic");
+    CHECK(met.find("mutate_remove_node_edges_removed_total") != std::string::npos,
+          "#2864 AC1: mutate_remove_node_edges_removed_total atomic");
+    CHECK(met.find("mutate_remove_node_multi_parent_count_total") != std::string::npos,
+          "#2864 AC1: mutate_remove_node_multi_parent_count_total atomic");
+    CHECK(met.find("mutate_remove_node_rollback_fidelity_total") != std::string::npos,
+          "#2864 AC1: mutate_remove_node_rollback_fidelity_total atomic");
+    CHECK(met.find("mutate_remove_node_densify_triggered_total") != std::string::npos,
+          "#2864 AC1: mutate_remove_node_densify_triggered_total atomic");
+    CHECK(met.find("// #2864") != std::string::npos,
+          "#2864 AC1: comment block cites #2864 contract surfaces");
+}
+
+static void ac2864_2_source_primitive() {
+    std::println("\n--- #2864 AC2: source — query:remove-node-stats primitive ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:remove-node-stats") != std::string::npos,
+          "#2864 AC2: query:remove-node-stats primitive registered");
+    CHECK(q.find("make_int(2864)") != std::string::npos, "#2864 AC2: schema=2864 in hash builder");
+    CHECK(q.find("mutate-remove-node-calls-total") != std::string::npos &&
+              q.find("mutate-remove-node-edges-removed-total") != std::string::npos &&
+              q.find("mutate-remove-node-multi-parent-count-total") != std::string::npos &&
+              q.find("mutate-remove-node-rollback-fidelity-total") != std::string::npos &&
+              q.find("mutate-remove-node-densify-triggered-total") != std::string::npos,
+          "#2864 AC2: 5 contract counter keys in hash");
+    // Existing primitive + sibling #2863 primitive preserved.
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("\"mutate:remove-node\"") != std::string::npos,
+          "#2864 AC2: existing mutate:remove-node primitive preserved");
+    CHECK(q.find("query:replace-subtree-stats") != std::string::npos,
+          "#2864 AC2: sibling #2863 query:replace-subtree-stats preserved");
+}
+
+static void ac2864_3_no_docs() {
+    std::println("\n--- #2864 AC3: no docs/design/ + lineage refs ---");
+    CHECK(read_file("docs/design/2864-remove-node-contract.md").empty(),
+          "#2864 AC3: no docs/design/2864-* per #1655");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("#1688") != std::string::npos && q.find("#1689") != std::string::npos &&
+              q.find("#1281") != std::string::npos && q.find("#369") != std::string::npos &&
+              q.find("#2863") != std::string::npos,
+          "#2864 AC3: lineage refs to #1688/#1689/#1281/#369/#2863");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863) ===");
+    std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
@@ -555,6 +606,11 @@ int main() {
     ac2863_1_source_atomics();
     ac2863_2_source_primitive();
     ac2863_3_no_docs();
+    std::println(
+        "\n=== Issue #2864: mutate:remove-node full safety contract (source-cite gate-only) ===");
+    ac2864_1_source_atomics();
+    ac2864_2_source_primitive();
+    ac2864_3_no_docs();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
