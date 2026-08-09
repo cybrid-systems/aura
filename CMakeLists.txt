@@ -1921,6 +1921,8 @@ aura_add_issue_test(test_linear_ownership_branch_cellget)
 aura_issue_test_link_light(test_linear_ownership_branch_cellget)
 aura_add_issue_test(test_linear_ownership_refcount_inc)
 aura_issue_test_link_light(test_linear_ownership_refcount_inc)
+aura_add_issue_test(test_dce_pass_variable_args)
+aura_issue_test_link_light(test_dce_pass_variable_args)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

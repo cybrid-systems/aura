@@ -1811,7 +1811,7 @@ public:
         eliminated_ = 0;
         for (auto& func : module.functions) {
             for (auto& block : func.blocks) {
-                run_on_block(block);
+                run_on_block(block, func.local_count);
             }
         }
     }
@@ -1822,6 +1822,11 @@ public:
     // Issue #2434: HotPassDodCompliant + pure Wrap (column/result-slot pure rules).
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
     static constexpr bool kPureWrap = true;
+    // Issue #2830: times expanded Call/Apply/PrimCall arg-range scan marked
+    // a slot the fixed operand_count_local header would have missed.
+    static std::uint64_t operand_under_count_total() noexcept {
+        return operand_under_count_total_.load(std::memory_order_relaxed);
+    }
 
 public:
     // Public wrapper for use by other passes (e.g.,
@@ -1916,7 +1921,10 @@ public:
             case aura::ir::IROpcode::Jump:
                 return 1;
             case aura::ir::IROpcode::Call:
-                return 4; // callee, args, count, result
+                // Issue #2830: fixed header only (callee, arg_base, arg_count,
+                // result). Actual arg slots are [arg_base, arg_base+count) —
+                // see mark_used_slots expanded scan, not this count.
+                return 4;
             case aura::ir::IROpcode::Return:
                 return 1;
             case aura::ir::IROpcode::MakeClosure:
@@ -1926,6 +1934,7 @@ public:
             case aura::ir::IROpcode::CaptureRef:
                 return 3;
             case aura::ir::IROpcode::Apply:
+                // Issue #2830: header only; args at [closure+1, closure+1+n).
                 return 4;
             case aura::ir::IROpcode::NewCell:
                 return 1;
@@ -2027,46 +2036,87 @@ public:
         }
     }
 
-    void run_on_block(aura::ir::BasicBlock& block) {
-        // Pass 1: collect the set of operand indices that are
-        // referenced by any later instruction. A pure op's
+    // Issue #2830: mark all slots *read* by instr. Call / Apply /
+    // PrimCall store a fixed header in operands[0..3]; the actual
+    // call args live in a contiguous local range described by
+    // (arg_base, arg_count). The prior fixed operand_count_local
+    // scan only marked the header values (treating arg_base /
+    // arg_count themselves as slots) and missed arg slots beyond
+    // the header — pure producers of those args were DCE'd.
+    //
+    // Layout (matches ir_executor + EscapeAnalysisPass):
+    //   Call:     ops[0]=callee, ops[1]=arg_base, ops[2]=arg_count,
+    //             ops[3]=result (write); args at [arg_base, arg_base+n)
+    //   Apply:    ops[0]=closure, ops[1]=arg_count, ops[2]=result;
+    //             args at [closure+1, closure+1+n)
+    //   PrimCall: ops[0]=prim_id (not a slot), ops[1]=arg_base,
+    //             ops[2]=arg_count, ops[3]=result; args at [base, base+n)
+    //   MakePair: fixed ops[1]=car, ops[2]=cdr (already covered by default)
+    template <typename Mark>
+    static void mark_used_slots(const aura::ir::IRInstruction& instr, Mark&& mark) {
+        using O = aura::ir::IROpcode;
+        switch (instr.opcode) {
+            case O::Call: {
+                // Callee is a real slot read.
+                mark(instr.operands[0], /*expanded=*/false);
+                const auto base = instr.operands[1];
+                const auto count = instr.operands[2];
+                for (std::uint32_t i = 0; i < count; ++i)
+                    mark(base + i, /*expanded=*/true);
+                // ops[3] is result write — not a use.
+                break;
+            }
+            case O::Apply: {
+                mark(instr.operands[0], /*expanded=*/false); // closure
+                const auto count = instr.operands[1];
+                for (std::uint32_t i = 0; i < count; ++i)
+                    mark(instr.operands[0] + 1 + i, /*expanded=*/true);
+                // ops[2] is result write.
+                break;
+            }
+            case O::PrimCall: {
+                // ops[0] is prim_id (not a local slot).
+                const auto base = instr.operands[1];
+                const auto count = instr.operands[2];
+                for (std::uint32_t i = 0; i < count; ++i)
+                    mark(base + i, /*expanded=*/true);
+                // ops[3] is result write when present.
+                break;
+            }
+            default: {
+                const auto op_count = DCEPass::operand_count_local(instr.opcode);
+                for (std::uint32_t k = 0; k < op_count; ++k) {
+                    // Skip result write of has_result_slot ops.
+                    if (k == 0 && has_result_slot_local(instr.opcode))
+                        continue;
+                    mark(instr.operands[k], /*expanded=*/false);
+                }
+                break;
+            }
+        }
+    }
+
+    void run_on_block(aura::ir::BasicBlock& block, std::uint32_t local_count = 0) {
+        // Pass 1: collect slots referenced as inputs. A pure op's
         // result is dead iff its result slot is not in this set.
         //
-        // We use a bitset of size N (number of instructions in
-        // this block). Slot index = the operand value when it's
-        // a local slot (which is just an index into the same
-        // block.instructions vector).
-        //
-        // For has_result_slot ops (the pure ops we care about),
-        // operands[0] is the RESULT slot (a write, not a read)
-        // — we skip it. For side-effecting ops, operands[0] is
-        // an input (callee, target, value) — we count it. The
-        // Call opcode is the exception: operands[0] is callee
-        // (input), operands[3] is the result slot (a write).
-        //
-        // We also stop counting at `operand_count` to avoid
-        // treating uninitialized operand values (which are 0)
-        // as references to slot 0. operand_count is the number
-        // of MEANINGFUL operands (per kOpcodeInfo in ir.ixx).
+        // Issue #2830: size by max(instrs, local_count) so Call arg
+        // slots beyond the instruction stream length stay visible.
         const std::size_t n = block.instructions.size();
         if (n == 0)
             return;
-        std::vector<bool> used(n, false);
-        for (const auto& instr : block.instructions) {
-            auto op_count = DCEPass::operand_count_local(instr.opcode);
-            for (std::uint32_t k = 0; k < op_count; ++k) {
-                auto op = instr.operands[k];
-                // Skip the result slot of has_result_slot ops.
-                if (k == 0 && has_result_slot_local(instr.opcode))
-                    continue;
-                // Call's result slot is operands[3], not [0].
-                if (k == 3 && instr.opcode == aura::ir::IROpcode::Call)
-                    continue;
-                if (op < n) {
-                    used[op] = true;
-                }
-            }
-        }
+        const std::size_t used_size = std::max(n, static_cast<std::size_t>(local_count));
+        std::vector<bool> used(used_size, false);
+        auto mark = [&](std::uint32_t slot, bool expanded) {
+            // Issue #2830: count every expanded arg-range mark (slots the
+            // fixed header scan would not treat as real arg uses).
+            if (expanded)
+                operand_under_count_total_.fetch_add(1, std::memory_order_relaxed);
+            if (slot < used_size)
+                used[slot] = true;
+        };
+        for (const auto& instr : block.instructions)
+            mark_used_slots(instr, mark);
 
         // Pass 2: mark dead pure ops whose result slot is
         // unused. Replace with Nop (preserves indices).
@@ -2077,7 +2127,7 @@ public:
             if (!has_result_slot_local(instr.opcode))
                 continue;
             auto result_slot = instr.operands[0];
-            if (result_slot < n && !used[result_slot]) {
+            if (result_slot < used_size && !used[result_slot]) {
                 // Dead pure compute — replace with Nop. (We
                 // don't shrink the vector because operand
                 // references in other instructions are
@@ -2092,6 +2142,7 @@ public:
     }
 
     std::size_t eliminated_ = 0;
+    static inline std::atomic<std::uint64_t> operand_under_count_total_{0};
 };
 
 // Issue #160: Escape Analysis Pass (full IR promotion).

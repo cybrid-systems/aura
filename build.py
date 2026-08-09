@@ -1456,6 +1456,18 @@ def cmd_lint():
             "Issue #2829 linear ownership RefCountOp-inc linter failed — run python3 scripts/coverage/checks/check_linear_ownership_refcount_inc_2829.py"
         )
         return r
+    # Issue #2830: DCEPass expands Call/Apply/PrimCall arg ranges.
+    # ac2830 in test_dce_pass_variable_args.
+    dceva_script = COVERAGE_CHECKS / "check_dce_pass_variable_args_2830.py"
+    if not dceva_script.exists():
+        fail(f"missing {dceva_script}")
+        return 1
+    r = run([sys.executable, str(dceva_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2830 DCE variable-arg scan linter failed — run python3 scripts/coverage/checks/check_dce_pass_variable_args_2830.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
