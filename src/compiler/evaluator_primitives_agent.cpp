@@ -3904,6 +3904,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     });
 
     // Issue #2011: language surface for agent_send / agent_recv.
+    // Issue #2848: StableNodeRef-bearing payloads (query:stable-ref pair shape
+    // (id . gen) / (id . (gen . _))) auto-run Evaluator::handoff_ref then
+    // stamp held_ref_token + handoff_completed before push. Ordinary
+    // string/int/bool remain zero-cost (no held_ref_token). Handoff failure
+    // returns structured status "handoff-required" / "export-stale" — never
+    // ambiguous Closed conflation with mailbox-closed. Soft / sandbox=off
+    // still prefer the export path for consistency (AC6). #2663 gate stays
+    // hard for raw C++ MultiFiberMailbox::push callers (defense in depth).
     add("orch:agent-send", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0])) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -3917,19 +3925,83 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                         "orch:agent-send: unknown agent",
                                         ev.primitive_error_counter_ptr());
         }
-        std::string payload;
-        if (types::is_string(a[1]))
-            payload = heap_str_from(ev.string_heap_, a[1]);
-        else if (types::is_int(a[1]))
-            payload = std::to_string(types::as_int(a[1]));
-        else if (types::is_bool(a[1]))
-            payload = types::as_bool(a[1]) ? "#t" : "#f";
-        else
-            payload = "payload";
 
         aura::serve::mf_mailbox::MailMessage msg;
-        msg.payload = std::move(payload);
         msg.priority = aura::serve::mf_mailbox::MailPriority::Normal;
+        bool auto_handoff_ok = false;
+
+        // AC2: string/int/bool — existing short-circuit; no held_ref_token,
+        // no handoff work, single optional load on the #2663 gate.
+        if (types::is_string(a[1])) {
+            msg.payload = heap_str_from(ev.string_heap_, a[1]);
+        } else if (types::is_int(a[1])) {
+            msg.payload = std::to_string(types::as_int(a[1]));
+        } else if (types::is_bool(a[1])) {
+            msg.payload = types::as_bool(a[1]) ? "#t" : "#f";
+        } else if (types::is_pair(a[1]) && ev.workspace_flat_) {
+            // Issue #2848 AC1: packed StableNodeRef (id . gen) shape.
+            // Require in-bounds id so ordinary cons lists of ints do not
+            // spuriously enter the handoff path.
+            const auto outer = types::as_pair_idx(a[1]);
+            bool is_stable_shape = false;
+            aura::ast::FlatAST::StableNodeRef held{};
+            if (outer < ev.pairs_.size() && types::is_int(ev.pairs_[outer].car)) {
+                held.id = static_cast<aura::ast::NodeId>(types::as_int(ev.pairs_[outer].car));
+                const auto cdr = ev.pairs_[outer].cdr;
+                if (types::is_pair(cdr)) {
+                    const auto inner = types::as_pair_idx(cdr);
+                    if (inner < ev.pairs_.size() && types::is_int(ev.pairs_[inner].car)) {
+                        held.gen = static_cast<std::uint16_t>(types::as_int(ev.pairs_[inner].car));
+                        is_stable_shape = true;
+                    }
+                } else if (types::is_int(cdr)) {
+                    held.gen = static_cast<std::uint16_t>(types::as_int(cdr));
+                    is_stable_shape = true;
+                }
+            }
+            auto* ws = ev.workspace_flat_;
+            if (is_stable_shape && held.id != aura::ast::NULL_NODE && held.id < ws->size()) {
+                // Soft / production: prefer export path for consistency (AC6).
+                ev.stamp_stable_ref(held);
+                auto out = ev.handoff_ref(std::move(held));
+                if (!out) {
+                    // Structured typed failure — not silent Closed (#2848 AC1).
+                    aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    auto sidx = ev.string_heap_.size();
+                    // Distinguish export-stale vs generic handoff-required when
+                    // last_mutate_error_ carries a stale-ref reason.
+                    const char* fail_st = "handoff-required";
+                    if (!ev.last_mutate_error().empty() &&
+                        ev.last_mutate_error().find("stale") != std::string::npos)
+                        fail_st = "export-stale";
+                    ev.string_heap_.push_back(fail_st);
+                    std::vector<std::pair<std::string, EvalValue>> fkv = {
+                        {"ok", make_bool(false)},
+                        {"status", make_string(sidx)},
+                        {"schema", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                        {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                        {"schema-2011", make_int(2011)},
+                        {"schema-2663", make_int(2663)},
+                        {"agent-send-auto-handoff-wired", make_int(1)},
+                    };
+                    return build_orch_hash(fkv);
+                }
+                aura::orch::stamp_mail_message_handoff_completed(
+                    msg, static_cast<std::uint64_t>(out->id));
+                // Encode post-handoff id:gen so receivers can rehydrate.
+                msg.payload =
+                    "stable-ref:" + std::to_string(out->id) + ":" + std::to_string(out->gen);
+                auto_handoff_ok = true;
+                aura::orch::g_orch_module_stats.agent_send_auto_handoff_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                msg.payload = "payload";
+            }
+        } else {
+            msg.payload = "payload";
+        }
+
         auto st = aura::orch::agent_send(*hp, std::move(msg));
         const char* st_s = "ok";
         if (st == aura::serve::mf_mailbox::PushStatus::Backpressure)
@@ -3943,7 +4015,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"status", make_string(sidx)},
             {"schema", make_int(1588)},
             {"schema-2011", make_int(2011)},
+            {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+            {"agent-send-auto-handoff-wired", make_int(1)},
         };
+        if (auto_handoff_ok)
+            kv.push_back({"auto-handoff", make_bool(true)});
         return build_orch_hash(kv);
     });
 
@@ -4569,6 +4645,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("agent-reply-wired", 1);
             insert_kv("send-closed", static_cast<std::int64_t>(
                                          os.send_closed_total.load(std::memory_order_relaxed)));
+            // Issue #2848: language-path auto handoff_ref metrics (additive;
+            // #2663 / #2632 handoff_reject counters preserved on mailbox).
+            insert_kv("agent-send-auto-handoff-total",
+                      static_cast<std::int64_t>(
+                          os.agent_send_auto_handoff_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-send-handoff-fail-total",
+                      static_cast<std::int64_t>(
+                          os.agent_send_handoff_fail_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2848", aura::orch::kAgentSendAutoHandoffIssue);
+            insert_kv("issue-2848", aura::orch::kAgentSendAutoHandoffIssue);
+            insert_kv("agent-send-auto-handoff-wired", 1);
             insert_kv("recv-empty", static_cast<std::int64_t>(
                                         os.recv_empty_total.load(std::memory_order_relaxed)));
             insert_kv("join-ok",

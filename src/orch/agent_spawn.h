@@ -293,6 +293,15 @@ struct OrchModuleStats {
     // production dashboards can alert before scope fragmentation.
     std::atomic<std::uint64_t> spawn_bp_scope_overflow_total{0};
     std::atomic<std::uint64_t> send_closed_total{0};
+    // Issue #2848: language-path (orch:agent-send) auto handoff_ref for
+    // StableNodeRef-bearing payloads. auto_handoff = successful export +
+    // stamp of held_ref_token/handoff_completed before push; handoff_fail =
+    // structured typed failure (never ambiguous Closed conflation with
+    // mailbox-closed). Ordinary string/int/bool payloads never touch these
+    // (zero-cost short-circuit). #2663 mailbox gate remains defense-in-depth
+    // for raw C++ MultiFiberMailbox::push callers.
+    std::atomic<std::uint64_t> agent_send_auto_handoff_total{0};
+    std::atomic<std::uint64_t> agent_send_handoff_fail_total{0};
     std::atomic<std::uint64_t> recv_empty_total{0};
     std::atomic<std::uint64_t> join_wait_us_total{0};
     std::atomic<std::uint64_t> join_ok_total{0};
@@ -1926,8 +1935,28 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
                        JoinPolicy{.primary_ms = timeout_ms, .drain_ms = kDefaultJoinDrainMs});
 }
 
+// Issue #2848: stamp MailMessage after a successful Evaluator::handoff_ref so
+// the #2663 push/broadcast gate admits the held-ref payload. Language path
+// (orch:agent-send) auto-calls this after handoff; raw C++ callers that set
+// held_ref_token without stamping still hit PushStatus::Closed +
+// handoff_reject_total (defense in depth — never weakens the mailbox gate).
+// Soft / sandbox=off still prefer the export path for consistency; fail is
+// structured typed status on the language path (not silent Closed).
+inline void stamp_mail_message_handoff_completed(serve::mf_mailbox::MailMessage& msg,
+                                                 std::uint64_t held_token) noexcept {
+    msg.held_ref_token = held_token;
+    msg.handoff_completed = true;
+}
+
+// Issue #2848 lineage: schema / query surface for auto handoff metrics.
+inline constexpr int kAgentSendAutoHandoffIssue = 2848;
+
 // Send a message to an agent's mailbox (if any).
 // Issue #1881: bump all outcomes (ok / backpressure / closed) — no dead path.
+// Issue #2848: auto handoff_ref for StableNodeRef payloads lives on the
+// language path (orch:agent-send in evaluator_primitives_agent.cpp). This
+// C++ helper still pushes as-is so raw callers that set held_ref_token
+// without handoff_completed continue to hit the #2663 Closed gate.
 [[nodiscard]] inline serve::mf_mailbox::PushStatus agent_send(AgentHandle& h,
                                                               serve::mf_mailbox::MailMessage msg) {
     if (!h.ok || !h.mailbox) {
