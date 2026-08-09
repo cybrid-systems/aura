@@ -1275,6 +1275,18 @@ def cmd_lint():
             "Issue #2814 audit enforcement link linter failed — run python3 scripts/coverage/checks/check_capture_audit_event_forced_enforcement_link_2814.py"
         )
         return r
+    # Issue #2815: cascade multi-define same-name (not first-wins).
+    # ac2815 in test_cascade_multi_define_stale.
+    cmd_script = COVERAGE_CHECKS / "check_cascade_multi_define_stale_2815.py"
+    if not cmd_script.exists():
+        fail(f"missing {cmd_script}")
+        return 1
+    r = run([sys.executable, str(cmd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2815 cascade multi-define stale linter failed — run python3 scripts/coverage/checks/check_cascade_multi_define_stale_2815.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

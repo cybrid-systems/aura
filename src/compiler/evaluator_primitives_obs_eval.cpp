@@ -7423,6 +7423,14 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"cascade-relower-wired", make_int(1)},
                 {"schema-2813", make_int(2813)},
                 {"issue-2813", make_int(2813)},
+                // Issue #2815: multi-Define same-name cascade (extra defs marked).
+                {"cascade-multi-define-stale-total",
+                 make_int(m ? load(m->cascade_multi_define_stale_total) : 0)},
+                {"cascade_multi_define_stale_total",
+                 make_int(m ? load(m->cascade_multi_define_stale_total) : 0)},
+                {"cascade-multi-define-wired", make_int(1)},
+                {"schema-2815", make_int(2815)},
+                {"issue-2815", make_int(2815)},
                 // Issue #2762: post-mutate macro re-expand under Guard cascade
                 // (refine #165/#2096). Additive — #2038 keys preserved.
                 {"post-mutate-macro-reexpand-total",

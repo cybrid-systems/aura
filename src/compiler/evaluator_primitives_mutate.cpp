@@ -8129,9 +8129,18 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     auto& pool = *workspace_pool_;
     const auto& log = flat.all_mutations();
 
-    // name → define NodeId (first sighting wins)
-    std::unordered_map<std::string, aura::ast::NodeId> affected;
-    affected.reserve(16);
+    // Issue #2815: collect unique Define NodeIds (not name→single-id).
+    // Pre-#2815 used unordered_map::emplace(name, def_id) so a second
+    // Define with the same name was silently dropped (first-sighting wins).
+    // Multi-define same-name workspaces then left the non-winning Define's
+    // IR dirty-bits / finalize path unstamped → stale IR.
+    // Structure:
+    //   affected_defs: def_id → name (unique by NodeId)
+    //   affected_names: names for mark_define_dirty / defuse_touch (once each)
+    std::unordered_map<aura::ast::NodeId, std::string> affected_defs;
+    affected_defs.reserve(16);
+    std::unordered_set<std::string> affected_names;
+    std::uint64_t multi_define_extra = 0; // #2815: 2nd+ def_id for a name
 
     auto note_define = [&](aura::ast::NodeId def_id) {
         if (def_id == aura::ast::NULL_NODE || def_id >= flat.size())
@@ -8142,7 +8151,18 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         auto n = pool.resolve(v.sym_id);
         if (n.empty())
             return;
-        affected.emplace(std::string(n), def_id);
+        const std::string name(n);
+        auto [it, inserted] = affected_defs.emplace(def_id, name);
+        if (!inserted)
+            return; // same NodeId already noted
+        // Second+ distinct Define NodeId for this name → multi-define case.
+        for (const auto& [oid, oname] : affected_defs) {
+            if (oid != def_id && oname == name) {
+                ++multi_define_extra;
+                break;
+            }
+        }
+        affected_names.insert(name);
     };
 
     // 1) Mutation log targets → enclosing Define (structural / value mutates).
@@ -8162,45 +8182,60 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     }
 
     // 2) Names already staged by precise mutates (query-and-replace etc.).
+    // Issue #2815: note ALL Define nodes with this name (not first-only).
     for (const auto& n : defuse_affected_syms_) {
         if (n.empty())
             continue;
         const auto sid = pool.intern(n);
-        aura::ast::NodeId def_id = aura::ast::NULL_NODE;
+        bool found = false;
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.is_free_slot(id))
+                continue;
             auto v = flat.get(id);
             if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sid) {
-                def_id = id;
-                break;
+                note_define(id);
+                found = true;
             }
         }
-        if (def_id != aura::ast::NULL_NODE)
-            affected.emplace(n, def_id);
-        else
-            affected.emplace(n, aura::ast::NULL_NODE);
+        if (!found)
+            affected_names.insert(n); // name-only: dirty IR cache by name
     }
 
-    std::uint64_t defines_n = 0;
-    for (const auto& [name, def_id] : affected) {
-        ++defines_n;
-        // Soft IR-cache dirty mark (service skips mutate lock when Workspace
-        // is already held by MutationBoundaryGuard — no lock inversion).
+    // Soft IR-cache dirty + defuse touch once per unique name.
+    for (const auto& name : affected_names) {
         if (mark_define_dirty_fn_)
             mark_define_dirty_fn_(name);
         const auto sid = pool.intern(name);
         if (defuse_touch_fn_ && sid != aura::ast::INVALID_SYM)
             defuse_touch_fn_(defuse_index_, sid);
-        if (def_id != aura::ast::NULL_NODE) {
-            // Soft path under Guard: mark_dirty_upward + impact_scope.
-            // Issue #2812: hard invalidate_function (BFS over dep_graph /
-            // called_by) takes mutate_mtx_ and must not run while
-            // workspace_mtx_ is held (lock-order inversion). Enqueue for
-            // drain_cascade_bfs_invalidate after outermost unlock when the
-            // define needs precise invalidation (lambda / closure body).
-            finalize_define_mutate_invalidation(flat, name, def_id, /*run_full=*/false);
-            if (define_needs_precise_invalidation_for_inval(flat, def_id))
-                enqueue_cascade_bfs_invalidate(name);
+    }
+
+    // Per-Define finalize + BFS enqueue (every unique def_id).
+    std::uint64_t defines_n = static_cast<std::uint64_t>(affected_defs.size());
+    for (const auto& [def_id, name] : affected_defs) {
+        // Soft path under Guard: mark_dirty_upward + impact_scope.
+        // Issue #2812: hard invalidate_function deferred to post-unlock.
+        finalize_define_mutate_invalidation(flat, name, def_id, /*run_full=*/false);
+        if (define_needs_precise_invalidation_for_inval(flat, def_id))
+            enqueue_cascade_bfs_invalidate(name);
+    }
+    // Name-only entries (no live Define) still count so relower runs.
+    for (const auto& name : affected_names) {
+        bool has_def = false;
+        for (const auto& [id, nm] : affected_defs) {
+            if (nm == name) {
+                has_def = true;
+                break;
+            }
         }
+        if (!has_def)
+            ++defines_n;
+    }
+
+    if (multi_define_extra > 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->cascade_multi_define_stale_total.fetch_add(multi_define_extra,
+                                                          std::memory_order_relaxed);
     }
 
     // 3) Eager partial re-lower of dirty ir_cache_v2 entries
