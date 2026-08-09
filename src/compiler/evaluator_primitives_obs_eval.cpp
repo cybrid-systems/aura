@@ -30,6 +30,7 @@ module;
 #include "core/self_healing_hooks.h"
 #include <chrono>
 #include "typed_mutation_audit.h"
+#include "compiler/ownership_rebind.h"     // Issue #2854: last_ownership_rebind_report_v_read
 #include "compiler/mutation_hold_budget.h" // Issue #2313
 #include "core/persistent_child_vector.hh" // Issue #2406: query:pcv-hotpath-stats
 #include "core/gc_hooks.h"
@@ -17161,6 +17162,13 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"linear-ownership-refcount-inc-wired", make_int(1)},
                 {"schema-2829", make_int(2829)},
                 {"issue-2829", make_int(2829)},
+                // Issue #2830: DCE expanded Call/Apply/PrimCall arg-range scan.
+                {"dce-operand-under-count-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::DCEPass::operand_under_count_total()))},
+                {"dce-variable-arg-scan-wired", make_int(1)},
+                {"schema-2830", make_int(2830)},
+                {"issue-2830", make_int(2830)},
                 // lineage 1576 + #2025 + #2106 + #2130 dirty peel
                 {"schema", make_int(2130)},
             };
