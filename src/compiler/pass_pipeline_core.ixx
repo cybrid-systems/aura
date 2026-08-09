@@ -106,6 +106,10 @@ export inline std::atomic<std::uint64_t> pipeline_epoch_sync_total{0};
 // Issue #2822: run_one auto-resolved epoch because TLS pipeline epoch was 0
 // (caller never called set_pipeline_mutation_epoch).
 export inline std::atomic<std::uint64_t> pipeline_epoch_unset_runs_total{0};
+// Issue #2827: run_one saw a partial epoch API (set_pipeline_epoch XOR
+// pipeline_epoch_hint). Set-only still syncs; hint-only cannot set and is
+// counted here for observability of incomplete pass shapes.
+export inline std::atomic<std::uint64_t> pipeline_epoch_sync_partial_skipped_total{0};
 // Issue #2822: floor when process mutation epoch is also 0 so JITFriendly
 // passes always leave run_one with a non-zero pipeline_epoch_hint.
 export inline constexpr std::uint64_t kPipelineEpochBaseFloor = 1;
@@ -457,16 +461,17 @@ bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
             pipeline_fiber_yield_calls_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #1322 / #2822: sync JITFriendlyPass epoch hint.
-    // Prior: if (epoch != 0) only — silently skipped when callers never
-    // wired set_pipeline_mutation_epoch (TLS default 0), so JIT-friendly
-    // passes kept pipeline_epoch_hint()==0 and pipeline_epoch_sync_total
-    // undercounted. #2822 auto-wires from process mutation epoch and
-    // floors at kPipelineEpochBaseFloor so sync always runs.
-    if constexpr (requires(P& p) {
-                      p.set_pipeline_epoch(std::uint64_t{});
-                      { p.pipeline_epoch_hint() } -> std::convertible_to<std::uint64_t>;
-                  }) {
+    // Issue #1322 / #2822 / #2827: sync JIT-friendly pipeline epoch.
+    // #2822: auto-wire when TLS epoch is 0 (no silent if (epoch != 0) skip).
+    // #2827: gate set on set_pipeline_epoch alone — prior AND of set +
+    // pipeline_epoch_hint silently skipped set-only and hint-only passes.
+    // Sync only needs set_pipeline_epoch; hint is a separate accessor.
+    // partial_skipped_total counts XOR shapes for observability.
+    constexpr bool kHasSetPipelineEpoch = requires(P& p) { p.set_pipeline_epoch(std::uint64_t{}); };
+    constexpr bool kHasPipelineEpochHint = requires(const P& p) {
+        { p.pipeline_epoch_hint() } -> std::convertible_to<std::uint64_t>;
+    };
+    if constexpr (kHasSetPipelineEpoch) {
         auto epoch = pass_pipeline_detail::g_pipeline_mutation_epoch;
         if (epoch == 0) {
             // Issue #2822: TLS unset — auto-init from process-global mutation epoch.
@@ -483,6 +488,11 @@ bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
         }
         pass.set_pipeline_epoch(epoch);
         pipeline_epoch_sync_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if constexpr (kHasSetPipelineEpoch != kHasPipelineEpochHint) {
+        // Issue #2827: partial API — set-only still synced above; hint-only
+        // cannot set. Count both for incomplete pass-shape observability.
+        pipeline_epoch_sync_partial_skipped_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #1322: under render/JIT hot path, count light-analysis samples
     // (full pass still runs in Phase 1; lighter skip policy is follow-up).
