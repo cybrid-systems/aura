@@ -426,6 +426,225 @@ static void ac2776_4_source_cite_linter() {
           "AC4: no docs/design/2776-* per #1655");
 }
 
+// ── Issue #2845: stamp fail proof on every rollback/exhaust path ──────
+// Residual of #2753/#2776: would_allow_native=false + last_fail_reason +
+// force_jit_regions_mask must be published on every non-Ok terminal.
+
+static void ac2845_1_version_fail_proof() {
+    std::println("\n--- #2845 AC1: Version fail → would_allow_native=0 + reason ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_recovery_idle(reg);
+    // Success stamp first so a stale "allow native" would be visible if fail path missed.
+    {
+        AotReloadConsistencyProof ok{};
+        ok.table_epoch = 42;
+        ok.bridge_epoch = 42;
+        ok.defuse_version = 1;
+        ok.region_mask = 0;
+        ok.last_fail_reason = 0;
+        ok.force_jit_regions_mask = 0;
+        ok.would_allow_native = true;
+        ok.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(ok);
+    }
+    const auto stamp_before = aura_last_aot_reload_consistency_stamp_epoch();
+    const auto fail_before = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    // Simulate Version rollback stamp (same helper note_reload_rollback uses).
+    {
+        AotReloadConsistencyProof p{};
+        p.table_epoch = aura_aot_func_table_epoch();
+        p.bridge_epoch = 42;
+        p.defuse_version = 1;
+        p.region_mask = 0;
+        p.last_fail_reason = static_cast<std::uint8_t>(AotReloadFail::Version);
+        p.force_jit_regions_mask = 0;
+        stamp_aot_reload_consistency_proof_fail(p);
+    }
+    auto snap = load_aot_reload_consistency_proof_snapshot();
+    CHECK(snap.would_allow_native == false, "AC1: would_allow_native==0 after Version fail");
+    CHECK(snap.last_fail_reason == static_cast<std::uint8_t>(AotReloadFail::Version),
+          "AC1: last_fail_reason matches Version");
+    CHECK(snap.stamp_epoch > stamp_before, "AC1: stamp_epoch advanced");
+    CHECK(aura_aot_reload_consistency_proof_stamped_on_fail_total() > fail_before,
+          "AC1: stamped_on_fail_total advanced");
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+          "AC1: accessor would_allow_native==0");
+}
+
+static void ac2845_2_force_jit_mask_in_proof() {
+    std::println("\n--- #2845 AC2: Env/Linear exhaust → force-JIT mask in proof ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_recovery_idle(reg);
+    {
+        AotReloadConsistencyProof ok{};
+        ok.would_allow_native = true;
+        ok.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(ok);
+    }
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 1,
+          "AC2: pre-exhaust allow native");
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    auto snap = load_aot_reload_consistency_proof_snapshot();
+    const auto env_bit = static_cast<std::uint64_t>(1) << static_cast<unsigned>(AotReloadFail::Env);
+    CHECK(snap.would_allow_native == false, "AC2: would_allow_native==0 after Env force-JIT");
+    CHECK(snap.last_fail_reason == static_cast<std::uint8_t>(AotReloadFail::Env),
+          "AC2: last_fail_reason Env");
+    CHECK((snap.force_jit_regions_mask & env_bit) != 0, "AC2: force_jit_regions_mask has Env bit");
+    // Linear exhaust too.
+    reg.on_force_jit_for_reason(AotReloadFail::Linear);
+    snap = load_aot_reload_consistency_proof_snapshot();
+    const auto lin_bit = static_cast<std::uint64_t>(1)
+                         << static_cast<unsigned>(AotReloadFail::Linear);
+    CHECK(snap.would_allow_native == false, "AC2: still disallow native after Linear");
+    CHECK((snap.force_jit_regions_mask & lin_bit) != 0, "AC2: Linear bit set");
+    CHECK((snap.force_jit_regions_mask & env_bit) != 0, "AC2: Env bit retained");
+    clear_recovery_idle(reg);
+}
+
+static void ac2845_3_success_commit_still_allows_when_idle() {
+    std::println("\n--- #2845 AC3: success stamp allows native when idle ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_recovery_idle(reg);
+    AotReloadConsistencyProof ok{};
+    ok.table_epoch = 7;
+    ok.bridge_epoch = 7;
+    ok.defuse_version = 1;
+    ok.region_mask = 0;
+    ok.last_fail_reason = 0;
+    ok.force_jit_regions_mask = 0;
+    ok.would_allow_native = true;
+    ok.schema = kAotReloadConsistencyProofIssue;
+    stamp_aot_reload_consistency_proof(ok);
+    auto snap = load_aot_reload_consistency_proof_snapshot();
+    CHECK(snap.would_allow_native == true, "AC3: success allows native when fail==0 && mask==0");
+    CHECK(snap.last_fail_reason == 0, "AC3: last_fail Ok");
+    CHECK(snap.force_jit_regions_mask == 0, "AC3: force mask 0");
+    // Regression: success path does not bump fail counter.
+    const auto fail_n = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    stamp_aot_reload_consistency_proof(ok);
+    CHECK(aura_aot_reload_consistency_proof_stamped_on_fail_total() == fail_n,
+          "AC3: success stamp does not advance stamped_on_fail_total");
+}
+
+static void ac2845_4_concurrent_fail_success_no_tear() {
+    std::println("\n--- #2845 AC4: concurrent fail+success stamp never tears ---");
+    constexpr int kIters = 20000;
+    std::atomic<int> start{0};
+    std::atomic<int> tears{0};
+    std::atomic<int> reads{0};
+    auto fail_writer = [&]() {
+        while (start.load(std::memory_order_acquire) == 0) {
+        }
+        for (int i = 0; i < kIters; ++i) {
+            AotReloadConsistencyProof p{};
+            p.table_epoch = 5'000'000ULL + static_cast<std::uint64_t>(i);
+            p.bridge_epoch = p.table_epoch;
+            p.defuse_version = p.table_epoch;
+            p.region_mask = 1;
+            p.last_fail_reason = static_cast<std::uint8_t>(AotReloadFail::Version);
+            p.force_jit_regions_mask = 1ULL << static_cast<unsigned>(AotReloadFail::Version);
+            stamp_aot_reload_consistency_proof_fail(p);
+        }
+    };
+    auto ok_writer = [&]() {
+        while (start.load(std::memory_order_acquire) == 0) {
+        }
+        for (int i = 0; i < kIters; ++i) {
+            AotReloadConsistencyProof p{};
+            p.table_epoch = 6'000'000ULL + static_cast<std::uint64_t>(i);
+            p.bridge_epoch = p.table_epoch;
+            p.defuse_version = p.table_epoch;
+            p.region_mask = 2;
+            p.last_fail_reason = 0;
+            p.force_jit_regions_mask = 0;
+            p.would_allow_native = true;
+            p.schema = kAotReloadConsistencyProofIssue;
+            stamp_aot_reload_consistency_proof(p);
+        }
+    };
+    auto reader = [&]() {
+        while (start.load(std::memory_order_acquire) == 0) {
+        }
+        for (int i = 0; i < kIters * 2; ++i) {
+            auto p = load_aot_reload_consistency_proof_snapshot();
+            reads.fetch_add(1, std::memory_order_relaxed);
+            if (p.bridge_epoch > p.table_epoch)
+                tears.fetch_add(1, std::memory_order_relaxed);
+            // Fail stamps always force would_allow_native=false when reason!=0.
+            if (p.last_fail_reason != 0 && p.would_allow_native)
+                tears.fetch_add(1, std::memory_order_relaxed);
+            // Success pattern: mask 0 and reason 0 implies allow when stamped ok.
+            if (p.last_fail_reason == 0 && p.force_jit_regions_mask != 0 && p.would_allow_native)
+                tears.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::thread t1(fail_writer);
+    std::thread t2(ok_writer);
+    std::thread t3(reader);
+    start.store(1, std::memory_order_release);
+    t1.join();
+    t2.join();
+    t3.join();
+    CHECK(reads.load() > 0, "AC4: reader sampled");
+    CHECK(tears.load() == 0, "AC4: zero torn / inconsistent allow-native snapshots");
+    // seqlock_retry_total may rise under dual writers — just readable.
+    (void)aura_aot_reload_proof_seqlock_retry_total();
+}
+
+static void ac2845_5_soft_no_extra_stamp() {
+    std::println("\n--- #2845 AC5: soft/quiet path no forced extra stamp ---");
+    const auto total_before = aura_aot_reload_consistency_proof_stamped_total();
+    const auto fail_before = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    // Soft idle: only build_from_live / snapshot — no stamp.
+    auto soft = build_aot_reload_consistency_proof_from_live(true);
+    CHECK(soft.schema == 2753, "AC5: soft build schema");
+    (void)load_aot_reload_consistency_proof_snapshot();
+    CHECK(aura_aot_reload_consistency_proof_stamped_total() == total_before,
+          "AC5: soft path does not advance stamped_total");
+    CHECK(aura_aot_reload_consistency_proof_stamped_on_fail_total() == fail_before,
+          "AC5: soft path does not advance stamped_on_fail_total");
+}
+
+static void ac2845_6_source_and_linter() {
+    std::println("\n--- #2845 AC6: source-cite + linter + no docs/design ---");
+    const auto thin = read_file("src/compiler/aot_reload_consistency_proof.h");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto t = read_file("tests/compiler/test_reload_recovery_query.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_aot_reload_proof_fail_stamp_2845.py");
+    CHECK(thin.find("stamp_aot_reload_consistency_proof_fail") != std::string::npos,
+          "AC6: fail helper in thin header");
+    CHECK(thin.find("kAotReloadConsistencyProofFailStampIssue") != std::string::npos,
+          "AC6: issue stamp 2845");
+    CHECK(thin.find("g_aot_reload_proof_stamped_on_fail_total") != std::string::npos,
+          "AC6: fail counter");
+    CHECK(thin.find("#2845") != std::string::npos, "AC6: header cites #2845");
+    CHECK(bridge.find("stamp_aot_reload_consistency_proof_fail") != std::string::npos,
+          "AC6: note_reload_rollback uses fail helper");
+    CHECK(bridge.find("#2845") != std::string::npos, "AC6: bridge cites #2845");
+    CHECK(reg.find("stamp_aot_reload_consistency_proof_fail_after_force_jit") != std::string::npos,
+          "AC6: on_force_jit re-stamps");
+    CHECK(reg.find("#2845") != std::string::npos, "AC6: registry cites #2845");
+    CHECK(t.find("ac2845_1_version_fail_proof") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac2845_2_force_jit_mask_in_proof") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2845_3_success_commit_still_allows_when_idle") != std::string::npos,
+          "AC6: AC3 test");
+    CHECK(t.find("ac2845_4_concurrent_fail_success_no_tear") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2845_5_soft_no_extra_stamp") != std::string::npos, "AC6: AC5 test");
+    CHECK(!lint.empty() && lint.find("2845") != std::string::npos, "AC6: coverage linter present");
+    CHECK(build.find("check_aot_reload_proof_fail_stamp_2845") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(t.find("ac2753_1_soft_empty_proof") != std::string::npos, "AC6: #2753 preserved");
+    CHECK(t.find("ac2776_1_fetch_add_and_seqlock_source") != std::string::npos,
+          "AC6: #2776 preserved");
+    CHECK(read_file("docs/design/2845-aot-reload-proof-fail-stamp.md").empty(),
+          "AC6: no docs/design/2845-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2845.cpp").empty(),
+          "AC6: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_reload_recovery_query() {
@@ -444,9 +663,16 @@ int run_test_reload_recovery_query() {
     ac2776_2_concurrent_stamp_monotonic();
     ac2776_3_reader_no_tear();
     ac2776_4_source_cite_linter();
+    std::println("\n=== Issue #2845: fail-path sole stamp (would_allow_native=false) ===");
+    ac2845_1_version_fail_proof();
+    ac2845_2_force_jit_mask_in_proof();
+    ac2845_3_success_commit_still_allows_when_idle();
+    ac2845_4_concurrent_fail_success_no_tear();
+    ac2845_5_soft_no_extra_stamp();
+    ac2845_6_source_and_linter();
     if (g_failed)
         return 1;
-    std::println("reload recovery query #2367 + #2753 + #2776: OK ({} passed)", g_passed);
+    std::println("reload recovery query #2367 + #2753 + #2776 + #2845: OK ({} passed)", g_passed);
     return 0;
 }
 

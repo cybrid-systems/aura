@@ -1387,7 +1387,9 @@ void note_reload_rollback(AotReloadFail reason) noexcept {
     }
     g_last_reload_fail_reason.store(static_cast<std::uint8_t>(reason), std::memory_order_release);
     aura::compiler::hot_update_registry().on_reload_rollback(reason);
-    // Issue #2753: stamp rollback proof (would_allow_native=false + reason).
+    // Issue #2753 / #2845: stamp rollback proof via sole fail-path helper
+    // (would_allow_native=false + reason + live force_jit mask). Staging
+    // discard without commit always routes here (dlopen/version/env/…).
     {
         AotReloadConsistencyProof p{};
         p.table_epoch = aura_aot_func_table_epoch();
@@ -1400,10 +1402,8 @@ void note_reload_rollback(AotReloadFail reason) noexcept {
             aura_hot_update_reload_recovery_get_snapshot(&snap);
             p.force_jit_regions_mask = static_cast<std::uint64_t>(snap.force_jit_regions_mask);
         }
-        p.would_allow_native = false;
-        // Issue #2776: stamp_epoch assigned via fetch_add inside stamp().
-        p.schema = kAotReloadConsistencyProofIssue;
-        stamp_aot_reload_consistency_proof(p);
+        // Issue #2845: sole fail enqueue gate — never stamp success API here.
+        stamp_aot_reload_consistency_proof_fail(p);
     }
 }
 
@@ -3054,6 +3054,10 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     // that Agents can observe. last-fail is the *final* reason
     // from the last attempt (left in place by _once()).
     if (policy.fall_back_jit_only) {
+        // Issue #2845: on_force_jit_for_reason also re-stamps the
+        // AotReloadConsistencyProof (would_allow_native=false + force
+        // mask) so multi-round exhaust is never left on a stale success
+        // or pre-demotion rollback stamp.
         aura::compiler::hot_update_registry().on_force_jit_for_reason(reason);
         if (aot_metrics())
             aot_metrics()->aot_reload_fall_back_jit_only_total.fetch_add(1,
