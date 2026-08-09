@@ -1375,6 +1375,8 @@ AURA_COMPILER_METRICS_FIELD(outermost_exit_phase5_unlock_total)
 AURA_COMPILER_METRICS_FIELD(outermost_exit_order_complete_total)
 // Issue #2211: residual GcDeferReason after outermost success drain.
 AURA_COMPILER_METRICS_FIELD(mutation_boundary_residual_defer_total)
+// Issue #2846: residual-defer-after-exit closed-loop detection.
+AURA_COMPILER_METRICS_FIELD(residual_defer_after_exit_total)
 // Issue #2215: RenderFastExit under render hotpath.
 AURA_COMPILER_METRICS_FIELD(render_fast_exit_total)
 AURA_COMPILER_METRICS_FIELD(render_fast_exit_skipped_audit_total)

@@ -5193,6 +5193,28 @@ def cmd_residual_gc_defer_multi_eval_coverage():
     return 0
 
 
+def cmd_residual_defer_after_exit_coverage():
+    """Issue #2846: residual-defer-after-exit closed loop.
+
+    Validates close_residual_defer_after_exit on outermost success+failure
+    and steal-complete; Soft observe; production Clear force; query schema-2846.
+    """
+    print(f"{B}=== residual-defer-after-exit closed loop (#2846) ==={N}")
+    script = COVERAGE_CHECKS / "check_residual_defer_after_exit_2846.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail(
+            "Issue #2846 residual-defer-after-exit linter failed — run "
+            "python3 scripts/coverage/checks/check_residual_defer_after_exit_2846.py"
+        )
+        return 1
+    ok("residual-defer-after-exit closed loop (#2846) coverage clean")
+    return 0
+
+
 def cmd_capture_cell_remap_coverage():
     """Issue #2297: structural capture-cell remount after densify.
 
@@ -10180,6 +10202,7 @@ def cmd_gate():
         or cmd_root_remap_pass_coverage()
         or cmd_envframe_ownership_transfer_coverage()
         or cmd_residual_gc_defer_multi_eval_coverage()
+        or cmd_residual_defer_after_exit_coverage()
         or cmd_capture_cell_remap_coverage()
         or cmd_general_object_pin_coverage()
         or cmd_aot_per_eval_slot_invalidate_coverage()

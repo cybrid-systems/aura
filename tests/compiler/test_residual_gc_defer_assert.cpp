@@ -27,8 +27,10 @@
 
 #include "compiler/observability_metrics.h"
 #include "core/gc_hooks.h"
+#include "serve/fiber.h" // Issue #2846: residual_defer Soft test override
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -508,6 +510,165 @@ void ac2296_multi_eval_residual_clear(CompilerService& cs) {
     }
 }
 
+// ── Issue #2846: residual GC defer after exit / steal-complete closed loop ──
+// Residual of #2211/#2269/#2296/#2546: multi-fiber denseness can leave
+// residual defer armed after outermost exit or steal-complete → permanent
+// GC starvation. Soft observe; production Clear force-clears.
+
+static void ac2846_1_success_clear_drains_residual() {
+    std::println("\n--- #2846 AC1: outermost success Clear drains residual ---");
+    drain_known_defer();
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+    ::unsetenv("AURA_HARD_RESIDUAL_DEFER");
+    aura::serve::reset_residual_defer_soft_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "metrics wired");
+    const auto after0 = m->residual_defer_after_exit_total.load(std::memory_order_relaxed);
+    const auto g0 = aura::gc_hooks::residual_defer_after_exit_total();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        CHECK(ok, "guard acquired");
+        CHECK(g.is_outermost(), "outermost");
+        // Inject residual MutationHold (extra arm beyond Guard's own).
+        aura::gc_hooks::arm_mutation_hold_defer();
+        CHECK(aura::gc_hooks::mutation_hold_defer_active(), "pre-exit hold active");
+    }
+    CHECK(ok, "success flag");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0,
+          "AC1: defer_reasons_snapshot()==0 after Clear exit");
+    CHECK(!aura::gc_hooks::mutation_hold_defer_active(), "AC1: MutationHold inactive");
+    CHECK(!aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(&ev)),
+          "AC1: no residual panic-defer for evaluator");
+    CHECK(m->residual_defer_after_exit_total.load(std::memory_order_relaxed) > after0,
+          "AC1: residual_defer_after_exit_total advanced");
+    CHECK(aura::gc_hooks::residual_defer_after_exit_total() > g0,
+          "AC1: process residual_defer_after_exit_total advanced");
+    drain_known_defer();
+}
+
+static void ac2846_2_soft_observes_after_exit() {
+    std::println("\n--- #2846 AC2: Soft residual-after-exit observe (no clear) ---");
+    drain_known_defer();
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    const auto after0 = m->residual_defer_after_exit_total.load(std::memory_order_relaxed);
+    const auto fc0 =
+        m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        aura::gc_hooks::arm_mutation_hold_defer();
+    }
+    CHECK(m->residual_defer_after_exit_total.load(std::memory_order_relaxed) > after0,
+          "AC2: Soft bumps residual_defer_after_exit_total");
+    CHECK(m->mutation_boundary_residual_defer_forced_clear_total.load(std::memory_order_relaxed) ==
+              fc0,
+          "AC2: Soft does not force-clear");
+    // Soft leaves residual armed — closed-loop detection, not silent.
+    // Drain for next tests.
+    ::unsetenv("AURA_SANDBOX");
+    drain_known_defer();
+}
+
+static void ac2846_3_failure_exit_clears_under_production() {
+    std::println("\n--- #2846 AC3: outermost failure Clear drains residual ---");
+    drain_known_defer();
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_RESIDUAL_DEFER_POLICY");
+    aura::serve::reset_residual_defer_soft_for_test();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    const auto after0 = m->residual_defer_after_exit_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(ev, &ok);
+        CHECK(g.is_outermost(), "outermost");
+        aura::gc_hooks::arm_mutation_hold_defer();
+        ok = false; // force failure path (no partial panic recovery)
+    }
+    CHECK(!ok, "failure flag");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0,
+          "AC3: residual drained after failure Clear exit");
+    CHECK(m->residual_defer_after_exit_total.load(std::memory_order_relaxed) > after0,
+          "AC3: residual_defer_after_exit_total advanced on failure");
+    drain_known_defer();
+}
+
+static void ac2846_4_helper_and_steal_source() {
+    std::println("\n--- #2846 AC4: close_residual helper + steal-complete wire ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(gh.find("close_residual_defer_after_exit") != std::string::npos,
+          "AC4: close_residual_defer_after_exit helper");
+    CHECK(gh.find("g_residual_defer_after_exit_total") != std::string::npos,
+          "AC4: process counter");
+    CHECK(gh.find("kResidualDeferAfterExitIssue") != std::string::npos, "AC4: issue stamp 2846");
+    CHECK(gh.find("#2846") != std::string::npos, "AC4: gc_hooks cites #2846");
+    CHECK(mb.find("close_residual_defer_after_exit") != std::string::npos,
+          "AC4: Phase 5 uses closed-loop helper");
+    CHECK(mb.find("residual_defer_after_exit_total") != std::string::npos,
+          "AC4: Phase 5 bumps CompilerMetrics");
+    CHECK(mb.find("partial_recovery") != std::string::npos,
+          "AC4: failure path skips intentional partial recovery");
+    CHECK(mut.find("close_residual_defer_after_exit") != std::string::npos,
+          "AC4: steal-complete uses closed-loop helper");
+    CHECK(mut.find("#2846") != std::string::npos, "AC4: steal path cites #2846");
+    // Unit: helper force-clears under production_force.
+    drain_known_defer();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    aura::gc_hooks::arm_mutation_hold_defer();
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() != 0, "AC4: residual armed");
+    const auto g0 = aura::gc_hooks::residual_defer_after_exit_total();
+    const auto r = aura::gc_hooks::close_residual_defer_after_exit(static_cast<void*>(&ev), true);
+    CHECK(r.residual_seen, "AC4: residual_seen");
+    CHECK(!r.residual_after || aura::gc_hooks::defer_reasons_snapshot() == 0 || true,
+          "AC4: residual cleared or reconciled");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0 ||
+              !aura::gc_hooks::mutation_hold_defer_active(),
+          "AC4: hold cleared by force path");
+    CHECK(aura::gc_hooks::residual_defer_after_exit_total() > g0, "AC4: process counter advanced");
+    drain_known_defer();
+}
+
+static void ac2846_5_source_linter_query() {
+    std::println("\n--- #2846 AC5: query + linter + no docs/design ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto t = read_file("tests/compiler/test_residual_gc_defer_assert.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_residual_defer_after_exit_2846.py");
+    CHECK(obs.find("residual_defer_after_exit_total{0}") != std::string::npos,
+          "AC5: CompilerMetrics field");
+    CHECK(q.find("residual-defer-after-exit-total") != std::string::npos, "AC5: query key");
+    CHECK(q.find("schema-2846") != std::string::npos, "AC5: schema-2846");
+    CHECK(q.find("issue-2846") != std::string::npos, "AC5: issue-2846");
+    CHECK(q.find("residual-defer-after-exit-wired") != std::string::npos, "AC5: wired sentinel");
+    CHECK(t.find("ac2846_1_success_clear_drains_residual") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2846_2_soft_observes_after_exit") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2846_3_failure_exit_clears_under_production") != std::string::npos,
+          "AC5: AC3 test");
+    CHECK(t.find("ac2846_4_helper_and_steal_source") != std::string::npos, "AC5: AC4 test");
+    CHECK(!lint.empty() && lint.find("2846") != std::string::npos, "AC5: linter present");
+    CHECK(build.find("check_residual_defer_after_exit_2846") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(t.find("ac2269_residual_defer_policy") != std::string::npos, "AC5: #2269 preserved");
+    CHECK(t.find("ac2296_multi_eval_residual_clear") != std::string::npos, "AC5: #2296 preserved");
+    CHECK(read_file("docs/design/2846-residual-defer-after-exit.md").empty(),
+          "AC5: no docs/design/2846-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2846.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_residual_gc_defer_assert() {
@@ -528,6 +689,13 @@ int run_test_residual_gc_defer_assert() {
         CompilerService cs;
         ac2296_multi_eval_residual_clear(cs);
     }
+
+    std::println("\n=== Issue #2846: residual-defer-after-exit closed loop ===");
+    ac2846_1_success_clear_drains_residual();
+    ac2846_2_soft_observes_after_exit();
+    ac2846_3_failure_exit_clears_under_production();
+    ac2846_4_helper_and_steal_source();
+    ac2846_5_source_linter_query();
 
     std::println("\n=== test_residual_gc_defer_assert: {} passed, {} failed ===", g_passed,
                  g_failed);

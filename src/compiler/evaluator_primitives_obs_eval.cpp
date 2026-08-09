@@ -6133,6 +6133,17 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"force-clear-all-gc-defer-wired", make_int(1)},
                 {"schema-2296", make_int(2296)},
                 {"issue-2296", make_int(2296)},
+                // Issue #2846: residual-defer-after-exit closed loop
+                // (outermost exit success+failure + steal-complete). Soft
+                // observe leftover; production Clear force-clears + counts.
+                {"residual-defer-after-exit-total",
+                 make_int(m ? load(m->residual_defer_after_exit_total)
+                            : static_cast<std::int64_t>(
+                                  aura::gc_hooks::residual_defer_after_exit_total()))},
+                {"residual-defer-after-exit-wired", make_int(1)},
+                {"close-residual-defer-after-exit-wired", make_int(1)},
+                {"schema-2846", make_int(2846)},
+                {"issue-2846", make_int(2846)},
                 // Issue #2364: PanicCheckpoint residual × densify closed loop.
                 {"panic-defer-after-densify-total",
                  make_int(m ? load(m->panic_defer_after_densify_total)

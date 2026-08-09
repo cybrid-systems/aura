@@ -512,6 +512,18 @@ inline void bump_steal_complete_entry_missing_total() noexcept {
 // Issue #2314: force_clear_residual_defer_for_evaluator is defined below
 // force_clear_all_gc_defer_for_evaluator / mutation_hold helpers (order
 // matters — header-only free functions must not call undeclared siblings).
+//
+// Issue #2846: residual-defer-after-exit closed loop — Agent-visible
+// counter when residual GcDeferReason remains (or was force-cleared)
+// after outermost MutationBoundary exit / steal-complete terminal.
+// Soft: observe-only bump when residual survives exit (no clear).
+// Production Clear: force clear + reconcile; bump when residual was
+// non-zero at the exit boundary (closed-loop detection).
+inline constexpr int kResidualDeferAfterExitIssue = 2846;
+inline std::atomic<std::uint64_t> g_residual_defer_after_exit_total{0}; // #2846
+[[nodiscard]] inline std::uint64_t residual_defer_after_exit_total() noexcept {
+    return g_residual_defer_after_exit_total.load(std::memory_order_relaxed);
+}
 
 // Issue #2088: process-wide arm-count mirrors for Agent dashboards
 // (query:gc-defer-reason-stats). Bumped when a reason bit transitions
@@ -990,6 +1002,46 @@ inline ResidualClearResult force_clear_residual_defer_for_evaluator(void* evalua
     // Final reconcile after hold release (hold bit ≠ Panic).
     r.bits_reconciled += reconcile_gc_defer_bits_after_clear();
     return r;
+}
+
+// Issue #2846: closed-loop residual-after-exit helper.
+// Call from every outermost MutationBoundary exit (success *and*
+// failure that is not intentional partial recovery) and every
+// steal-complete residual terminal.
+//
+//   production_force=true  → force_clear_residual_defer_for_evaluator +
+//                            reconcile; bump residual_defer_after_exit when
+//                            residual was non-zero at entry (detected).
+//   production_force=false → Soft observe only: bump residual_defer_after_exit
+//                            when residual non-zero; do NOT clear (Soft metric).
+// Happy path (residual already 0): single relaxed load, zero clear work.
+// Idempotent under multi-fiber (force_clear is CAS-based).
+struct ResidualAfterExitResult {
+    bool residual_seen = false;
+    bool residual_after = false;
+    ResidualClearResult clear{};
+};
+inline ResidualAfterExitResult close_residual_defer_after_exit(void* evaluator_id,
+                                                               bool production_force) noexcept {
+    ResidualAfterExitResult out{};
+    // Zero-cost happy path — single relaxed snapshot load.
+    if (defer_reasons_snapshot() == 0)
+        return out;
+    out.residual_seen = true;
+    if (production_force) {
+        // Production denseness: never leave residual armed across exit /
+        // steal-complete (permanent GC starvation under multi-fiber).
+        out.clear = force_clear_residual_defer_for_evaluator(evaluator_id);
+        // Final process-wide reconcile if bits lag multi-eval depth drain.
+        if (defer_reasons_snapshot() != 0)
+            out.clear.bits_reconciled += reconcile_gc_defer_bits_after_clear();
+    }
+    out.residual_after = (defer_reasons_snapshot() != 0);
+    // Closed-loop detection: residual was present at the exit boundary
+    // (Soft leftover OR production residual that required force-clear).
+    // Agents alert on residual-defer-after-exit-total growth under denseness.
+    g_residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
+    return out;
 }
 
 // ── Issue #2364: PanicCheckpoint residual × densify closed loop ──
