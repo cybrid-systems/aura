@@ -1432,6 +1432,18 @@ def cmd_lint():
             "Issue #2827 run_one requires-expression partial linter failed — run python3 scripts/coverage/checks/check_run_one_requires_expression_partial_2827.py"
         )
         return r
+    # Issue #2828: LinearOwnership Branch/Return/CellGet/MakePair input scan.
+    # ac2828 in test_linear_ownership_branch_cellget.
+    lobc_script = COVERAGE_CHECKS / "check_linear_ownership_branch_cellget_2828.py"
+    if not lobc_script.exists():
+        fail(f"missing {lobc_script}")
+        return 1
+    r = run([sys.executable, str(lobc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2828 linear ownership Branch/CellGet input scan linter failed — run python3 scripts/coverage/checks/check_linear_ownership_branch_cellget_2828.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

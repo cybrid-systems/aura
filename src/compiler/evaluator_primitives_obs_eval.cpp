@@ -17041,6 +17041,13 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"shape-aware-fold-dirty-aware", make_int(1)},
                 {"schema-2130", make_int(2130)},
                 {"issue-2130", make_int(2130)},
+                // Issue #2828: Branch/Return/CellGet/MakePair input scan recovered.
+                {"linear-ownership-input-scan-missed-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::LinearOwnershipWrap::input_scan_missed_total()))},
+                {"linear-ownership-input-scan-recovered-wired", make_int(1)},
+                {"schema-2828", make_int(2828)},
+                {"issue-2828", make_int(2828)},
                 // lineage 1576 + #2025 + #2106 + #2130 dirty peel
                 {"schema", make_int(2130)},
             };
