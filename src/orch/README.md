@@ -336,8 +336,9 @@ Semantic boundary:
 3. **RestartN** is only meaningful for long-lived agents with keepalive;
    `max_restarts = 0` disables re-spawn (cap at zero).
 4. **Not calling the bridge leaves #2007 / #2229 defaults unchanged** (AC3).
-5. Optional sugar (`orch:supervise-batch` / auto-apply after batch fail) is
-   deferred; this issue ships the mapping API only.
+5. Supervised-batch / workflow-apply sugar is shipped as `orch:supervise-batch`
+   (Aura prim) and `aura::orch::apply_workflow` (C++ helper) — see
+   [supervised-batch (Issue #2852)](#supervised-batch-issue-2852).
 
 Regression: `tests/orch/test_failure_policy_bridge` (mapping table);
 `tests/orch/test_agent_failure_policy` (#2229 unchanged).
@@ -372,6 +373,53 @@ auto ap = aura::orch::to_agent_policy(w2);      // AgentScope::watch_all
 if (aura::orch::residual_prefers_cancel(w2)) { /* host cancel path */ }
 aura::orch::note_workflow_residual_reclaim_under_policy(w2); // observe only
 ```
+
+### Supervised-batch (Issue #2852)
+
+One-shot **workflow apply** that maps a composed `WorkflowFailurePolicy` onto
+the **batch** + **scope watch** + **residual observe** surfaces without
+inventing a global registry or saga log. Hosts stay in control of fibers,
+agents, and reclaim (#2661).
+
+```cpp
+#include "orch/orch.h"
+#include "serve/scheduler.h"
+
+aura::serve::Scheduler sched;
+aura::orch::AgentScope scope; // per-Evaluator scope (no global map).
+
+auto w = aura::orch::compose_workflow_policy(
+    aura::orch::FailurePolicy::RetryN,
+    aura::orch::ResidualReclaimPreference::Cancel,
+    /*max_retries=*/3);
+
+std::vector<aura::serve::parallel_orch::TaskSpec> tasks = { /* … */ };
+auto out = aura::orch::apply_workflow(
+    sched, scope, std::span<const aura::serve::parallel_orch::TaskSpec>(tasks),
+    w,
+    /*stall_timeout_ms=*/1000,
+    /*watch_scope=*/true);
+
+// Phase A — parallel_intend under to_parallel_policy(w).
+// Phase B — scope.watch_all under to_agent_policy(w) (scope-local only).
+// Phase C — when BatchResult.status != Ok OR watch.stalled > 0,
+//          note_workflow_residual_reclaim_under_policy is bumped.
+//          (#2661 Reclaimed cleanup is NOT modified.)
+// Additive metric: g_orch_module_stats.workflow_apply_total bumps once
+// per call (counter only — no-op for callers that never call apply_workflow).
+```
+
+Aura entry point:
+
+```text
+(orch:supervise-batch tasks policy [:stall-timeout-ms n] [:watch-scope bool])
+   → hash {ok, ok-count, err-count, status, residual-observed, schema-2852}
+```
+
+Defaults: `stall_timeout_ms=0`, `watch_scope=true`. Soft / sandbox=off
+never hard-denies beyond the existing `watch_all` / `parallel_intend` gates
+(AC6). Regression: `tests/orch/test_failure_policy_bridge` (extended
+in-place per #81967 — adds `ac2852_*` tests).
 
 | Compose input | Batch (`to_parallel_policy`) | Agent (`to_agent_policy`) |
 |---------------|------------------------------|---------------------------|

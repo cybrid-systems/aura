@@ -26,6 +26,13 @@
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
 #include "serve/scheduler.h"
+// Issue #2852: forward declare AgentScope (full definition lives in
+// agent_scope.h which includes this header — circular include avoided by
+// declaring here). apply_workflow body is defined in agent_scope.h right
+// after AgentScope is fully defined so it can call scope.watch_all.
+namespace aura::orch {
+class AgentScope;
+} // namespace aura::orch
 
 #include <atomic>
 #include <optional>
@@ -351,6 +358,11 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> workflow_retry_total{0};        // composed RetryN
     std::atomic<std::uint64_t> workflow_circuit_open_total{0}; // composed CircuitBreaker
     std::atomic<std::uint64_t> workflow_residual_reclaim_under_policy_total{0};
+    // Issue #2852: supervised-batch / workflow-apply counter (additive —
+    // bumps once per apply_workflow call regardless of phase outcome).
+    // Lets Agents observe supervise-batch adoption without changing the
+    // underlying batch / residual metrics surfaces (#2539/#2756).
+    std::atomic<std::uint64_t> workflow_apply_total{0}; // #2852
     std::atomic<std::uint32_t> workflow_failure_policy_wired{1};
     // Issue #2588: Aura language surface for AgentScope supervision
     // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
@@ -2320,6 +2332,7 @@ struct WorkflowFailurePolicy {
 };
 
 inline constexpr int kWorkflowFailurePolicyIssue = 2756;
+inline constexpr int kWorkflowApplySugarIssue = 2852; // #2852 supervised-batch / apply_workflow
 
 // Compose from batch FailurePolicy (+ residual preference). Maps agent
 // via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.
@@ -2400,6 +2413,48 @@ note_workflow_residual_reclaim_under_policy(const WorkflowFailurePolicy& /*w*/) 
     g_orch_module_stats.workflow_residual_reclaim_under_policy_total.fetch_add(
         1, std::memory_order_relaxed);
 }
+
+// Issue #2852: supervised-batch / workflow-apply sugar. One-shot helper
+// that maps a composed WorkflowFailurePolicy onto (a) parallel_intend with
+// the projected ParallelPolicy and (b) optional scope watch under the
+// projected AgentFailurePolicy, then (c) observes residual via
+// note_workflow_residual_reclaim_under_policy when batch status != Ok or
+// scope stall was detected. No AgentRegistry, no conduct_parallel, no
+// process-global agent map (per #2661 / #2756 / non-goals). Default
+// FailurePolicy surfaces for callers that never call this helper are
+// unchanged (AC1 / AC6). Soft / sandbox=off never hard-denies beyond the
+// existing watch_all / parallel_intend gates (AC6).
+//
+// Phase A (parallel_intend): uses serve::parallel_orch::parallel_intend
+// directly with the projected ParallelPolicy (Phase 1 of #2539/#2756).
+// Phase B (scope watch): calls AgentScope::watch_all with the projected
+// AgentFailurePolicy. When watch_scope=false, the helper still observes
+// residual from Phase A alone — host can opt out of scope-phase overhead.
+// Phase C (residual observe): bumps
+// workflow_residual_reclaim_under_policy_total when BatchResult.status is
+// not Ok OR scope watch saw any stalled handle. Does NOT change #2661
+// reclaim cleanup (AC2).
+//
+// Returns the underlying BatchResult for callers that need ok_count /
+// err_count / join_status etc. The ScopeWatchResult (when watch_scope=true)
+// is accessible via the out_watch parameter; nullptr when watch_scope=false.
+struct ApplyWorkflowResult {
+    serve::parallel_orch::BatchResult batch;
+    int scope_stalled = 0;
+    int scope_alive = 0;
+    int scope_done = 0;
+    bool scope_watch_called = false;
+    bool residual_observed = false;
+};
+
+// Issue #2852: apply_workflow definition is in agent_scope.h (after the
+// AgentScope class is fully defined) so it can call scope.watch_all.
+// Forward declared here for callers that include agent_spawn.h first.
+[[nodiscard]] ApplyWorkflowResult
+apply_workflow(serve::Scheduler& sched, AgentScope& scope,
+               std::span<const serve::parallel_orch::TaskSpec> tasks,
+               const WorkflowFailurePolicy& w, std::uint32_t stall_timeout_ms = 0,
+               bool watch_scope = true) noexcept;
 
 // Wait up to stall_timeout_ms (default 2× keepalive_interval_ms) for a
 // keepalive. Prefers the shared last_keepalive clock (set by the helper
