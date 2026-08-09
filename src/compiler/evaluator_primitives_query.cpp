@@ -4809,6 +4809,61 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #2862: query:children-stable-stats. Hash view of the
+    // query:children-stable full safety contract metrics (refine
+    // #2036 / #678 / #655 Gap4 / #2861). Tracks the 4 non-negotiable
+    // safety contract surfaces mandated by #2861 AC #7 ("metrics on
+    // query / stability surface"):
+    //   - children-stable-span-calls-total: every SafePCVSpan /
+    //       children_ safe_view walk on the public surface (already
+    //       tracked on FlatAST as ws->children_stable_span_calls_total()
+    //       - ast.ixx #2198 - and reused via the query surface).
+    //   - children-stable-pin-hits-total: every SafePCVSpan pin hit
+    //       (amortized refcount).
+    //   - children-stable-invalidation-detected-total: StableNodeRef
+    //       returned from children-stable that failed is_valid /
+    //       refresh after concurrent mutate and was dropped.
+    //   - children-stable-epoch-mismatch-total: QueryEpoch
+    //       (mutation_epoch + generation) mismatch on a held span
+    //       under concurrent Guard.
+    // Distinct from #2861 pattern-safety-stats (query:pattern walks)
+    // - these are the query:children-stable surfaces. Children-stable
+    // views are held ACROSS mutate rounds so invalidation_detected +
+    // epoch_mismatch have longer exposure windows than the pattern
+    // equivalents.
+    ObservabilityPrims::register_stats_impl(
+        "query:children-stable-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            auto* ws = ev->workspace_flat();
+            const std::uint64_t span_calls = ws ? ws->children_stable_span_calls_total() : 0;
+            const std::uint64_t pin_hits =
+                m ? m->children_stable_pin_hits_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t invalidation_detected =
+                m ? m->children_stable_invalidation_detected_total.load(std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t epoch_mismatch =
+                m ? m->children_stable_epoch_mismatch_total.load(std::memory_order_relaxed) : 0;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            (void)ht->insert_pair("schema", make_int(2862));
+            (void)ht->insert_pair("issue", make_int(2862));
+            (void)ht->insert_pair("children-stable-span-calls-total",
+                                  make_int(static_cast<std::int64_t>(span_calls)));
+            (void)ht->insert_pair("children-stable-pin-hits-total",
+                                  make_int(static_cast<std::int64_t>(pin_hits)));
+            (void)ht->insert_pair("children-stable-invalidation-detected-total",
+                                  make_int(static_cast<std::int64_t>(invalidation_detected)));
+            (void)ht->insert_pair("children-stable-epoch-mismatch-total",
+                                  make_int(static_cast<std::int64_t>(epoch_mismatch)));
+            return make_hash(ht);
+        });
+
     // Issue #2179: query:impact-scope-stats — cross-function instruction-
     // level impact scope metrics (refine #2109 instr-level precision).
     // Returns a hash with:

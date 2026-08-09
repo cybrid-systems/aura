@@ -220,13 +220,67 @@ static void ac6_no_pmr_children() {
           "PCV vector children_ present");
 }
 
+// ── Issue #2862: query:children-stable full safety contract
+// Source-cite ACs (gate-only ship; runtime verifies on CI).
+
+static void ac2862_1_source_atomics() {
+    std::println("\n--- #2862 AC1: source — 3 new safety atomics present ---");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    CHECK(met.find("children_stable_pin_hits_total") != std::string::npos,
+          "#2862 AC1: children_stable_pin_hits_total atomic");
+    CHECK(met.find("children_stable_invalidation_detected_total") != std::string::npos,
+          "#2862 AC1: children_stable_invalidation_detected_total atomic");
+    CHECK(met.find("children_stable_epoch_mismatch_total") != std::string::npos,
+          "#2862 AC1: children_stable_epoch_mismatch_total atomic");
+    CHECK(met.find("// #2862") != std::string::npos,
+          "#2862 AC1: comment block cites #2862 contract surfaces");
+    // Reuse existing FlatAST atomic.
+    const auto ast = read_file("src/core/ast.ixx");
+    CHECK(ast.find("children_stable_span_calls_total_") != std::string::npos,
+          "#2862 AC1: existing FlatAST children_stable_span_calls_total_ atomic reused");
+}
+
+static void ac2862_2_source_primitive() {
+    std::println("\n--- #2862 AC2: source — query:children-stable-stats primitive ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:children-stable-stats") != std::string::npos,
+          "#2862 AC2: query:children-stable-stats primitive registered");
+    CHECK(q.find("schema") != std::string::npos && q.find("make_int(2862)") != std::string::npos,
+          "#2862 AC2: schema=2862 in hash builder");
+    CHECK(q.find("children-stable-span-calls-total") != std::string::npos &&
+              q.find("children-stable-pin-hits-total") != std::string::npos &&
+              q.find("children-stable-invalidation-detected-total") != std::string::npos &&
+              q.find("children-stable-epoch-mismatch-total") != std::string::npos,
+          "#2862 AC2: 4 contract counter keys in hash");
+    // Additive on existing #2036 + #2861 pattern safety stats.
+    CHECK(q.find("query:children-stable-safe-default-total") != std::string::npos,
+          "#2862 AC2: #2036 children-stable-safe-default-total preserved");
+    CHECK(q.find("query:pattern-safety-stats") != std::string::npos,
+          "#2862 AC2: #2861 pattern-safety-stats preserved");
+}
+
+static void ac2862_3_no_docs() {
+    std::println("\n--- #2862 AC3: no docs/design/ + lineage refs ---");
+    CHECK(read_file("docs/design/2862-children-stable-contract.md").empty(),
+          "#2862 AC3: no docs/design/2862-* per #1655");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("#2036") != std::string::npos && q.find("#678") != std::string::npos &&
+              q.find("#655") != std::string::npos && q.find("#2861") != std::string::npos,
+          "#2862 AC3: lineage refs to #2036/#678/#655/#2861");
+}
+
 } // namespace
 
 int main() {
-    std::println("=== test_pcv_children_safe_default_migration (#2036) ===");
+    std::println("=== test_pcv_children_safe_default_migration (#2036 + #2862) ===");
     ac1_source();
     ac2_stable_pins_safe();
     ac3_multifiber_safe_span();
+    std::println(
+        "\n=== #2862: query:children-stable full safety contract (source-cite gate-only) ===");
+    ac2862_1_source_atomics();
+    ac2862_2_source_primitive();
+    ac2862_3_no_docs();
     ac4_counters();
     ac5_query();
     ac6_no_pmr_children();
