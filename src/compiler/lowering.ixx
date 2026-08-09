@@ -122,9 +122,27 @@ export struct LoweringState {
     // Used by cached define functions to emit correct MakeClosure for self-recursion.
     // Issue #2292: self_func_id may legitimately be 0 (first function in the
     // module after preclaim). Use self_func_active — never test id != 0 alone.
+    // Issue #2826: prefer is_self() / matches_self_name() helpers; linter
+    // scripts/coverage/checks/check_self_func_id_usage_2826.py flags bare
+    // self_func_id != 0 / == 0 comparisons.
     std::string self_name;
     std::uint32_t self_func_id = 0;
     bool self_func_active = false;
+    // Issue #2826: self_func_active is load-bearing (id 0 is a valid func id).
+    static_assert(sizeof(self_func_active) > 0,
+                  "Issue #2292/#2826: use self_func_active with self_func_id");
+
+    // Issue #2826: safe self-func queries — always AND with self_func_active.
+    [[nodiscard]] bool is_self_func_active() const noexcept { return self_func_active; }
+    [[nodiscard]] bool is_self(std::uint32_t func_id) const noexcept {
+        return self_func_active && self_func_id == func_id;
+    }
+    [[nodiscard]] bool matches_self_name(std::string_view name) const noexcept {
+        return self_func_active && !self_name.empty() && self_name == name;
+    }
+    [[nodiscard]] std::uint32_t self_func_id_or_invalid() const noexcept {
+        return self_func_active ? self_func_id : static_cast<std::uint32_t>(-1);
+    }
 
     // Current source AST node being lowered (for type propagation to IR)
     ast::NodeId current_source_id = ast::NULL_NODE;

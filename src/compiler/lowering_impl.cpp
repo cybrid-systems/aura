@@ -237,9 +237,8 @@ static std::uint32_t lower_flat_expr(
             // BEFORE outer Define's Cell binding is consulted. Otherwise the
             // body captures a cell that is empty in a fresh IRInterpreter
             // (call-site re-lower of (fact N)), and Call returns 0.
-            // Note: self_func_id may be 0 — use self_func_active, not id != 0.
-            if (state.self_func_active && !state.self_name.empty() &&
-                std::string(name) == state.self_name) {
+            // Issue #2826: matches_self_name() ANDS self_func_active (id may be 0).
+            if (state.matches_self_name(name)) {
                 auto slot = state.alloc_local();
                 state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
                 return slot;
@@ -433,7 +432,8 @@ static std::uint32_t lower_flat_expr(
                 }
             }
             // Self-reference fallback (primary path is at Variable entry — #2292).
-            if (state.self_func_active && std::string(name) == state.self_name) {
+            // Issue #2826: matches_self_name() — never test self_func_id != 0 alone.
+            if (state.matches_self_name(name)) {
                 auto slot = state.alloc_local();
                 state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
                 return slot;

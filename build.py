@@ -1407,6 +1407,18 @@ def cmd_lint():
             "Issue #2825 emit SoA source_marker linter failed — run python3 scripts/coverage/checks/check_emit_soa_source_marker_propagation_2825.py"
         )
         return r
+    # Issue #2826: self_func_id footgun — helpers + ban bare id!=0.
+    # ac2826 in test_self_func_active_invariant.
+    sfa_script = COVERAGE_CHECKS / "check_self_func_id_usage_2826.py"
+    if not sfa_script.exists():
+        fail(f"missing {sfa_script}")
+        return 1
+    r = run([sys.executable, str(sfa_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2826 self_func_id usage linter failed — run python3 scripts/coverage/checks/check_self_func_id_usage_2826.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
