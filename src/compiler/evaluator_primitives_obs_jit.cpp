@@ -8868,6 +8868,26 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hotpath-guard-exit-wired", 1);
             insert_kv("schema", 1894); // lineage 839 / 1614
             insert_kv("issue", 1894);
+            // Issue #2814 M7: audit Success ↔ invariant enforcement link.
+            insert_kv("audit-enforcement-link-wired",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.audit_enforcement_link_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("audit-enforcement-ran-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.audit_enforcement_ran_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "audit-enforcement-skipped-intentional-total",
+                static_cast<std::int64_t>(
+                    g_typed_mutation_audit_counters.audit_enforcement_skipped_intentional_total
+                        .load(std::memory_order_relaxed)));
+            insert_kv("audit-enforcement-gap-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.audit_enforcement_gap_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-2814", 2814);
+            insert_kv("issue-2814", 2814);
             // Issue #2053: production audit defaults
             insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
             insert_kv("strategy",

@@ -1263,6 +1263,18 @@ def cmd_lint():
             "Issue #2813 cascade relower silent skip linter failed — run python3 scripts/coverage/checks/check_cascade_relower_silent_skip_2813.py"
         )
         return r
+    # Issue #2814 M7: capture_audit_event_forced enforcement link gap metric.
+    # ac2814 in test_capture_audit_event_forced_enforcement_link.
+    ael_script = COVERAGE_CHECKS / "check_capture_audit_event_forced_enforcement_link_2814.py"
+    if not ael_script.exists():
+        fail(f"missing {ael_script}")
+        return 1
+    r = run([sys.executable, str(ael_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2814 audit enforcement link linter failed — run python3 scripts/coverage/checks/check_capture_audit_event_forced_enforcement_link_2814.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires
