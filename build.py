@@ -1468,6 +1468,18 @@ def cmd_lint():
             "Issue #2830 DCE variable-arg scan linter failed — run python3 scripts/coverage/checks/check_dce_pass_variable_args_2830.py"
         )
         return r
+    # Issue #2831: TCOPass sweeps unreachable dead blocks after TCO.
+    # ac2831 in test_tco_dead_block_accumulation.
+    tcodb_script = COVERAGE_CHECKS / "check_tco_dead_block_accumulation_2831.py"
+    if not tcodb_script.exists():
+        fail(f"missing {tcodb_script}")
+        return 1
+    r = run([sys.executable, str(tcodb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2831 TCO dead-block accumulation linter failed — run python3 scripts/coverage/checks/check_tco_dead_block_accumulation_2831.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

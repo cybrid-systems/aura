@@ -72,6 +72,8 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     // (zero-cost when force_jit_regions_mask_ is already 0).
     if (successes > 0)
         maybe_force_jit_repromote_on_clean_success();
+    else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     // Issue #2855: amortized force-drain check. Invoked from
     // on_reemit_pipeline_call (NOT steal-complete path — #2715 regression
     // guard). Soft zero-cost when force_deadline == 0 or pending is
@@ -81,8 +83,6 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     // concurrent force-drain; BoundaryExit concurrent drain bumps
     // double-prevented via drain_pending_recovery (above).
     (void)force_drain_deferred_reemit();
-    else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
-        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     // Issue #2601: lazy retry hook. Zero-cost when force_jit_regions_mask_ == 0
     // (idle path) — the decide_exhausted_min_dirty_retry() short-circuits.
     // The bridge owns the actual reemit drive (counter bumps + reemit call).
@@ -1187,6 +1187,83 @@ std::uint64_t HotUpdateRegistry::deferred_reemit_age_max_observed_ms() const noe
 
 std::uint64_t HotUpdateRegistry::deferred_reemit_deadline_hit_total() const noexcept {
     return reemit_deferred_deadline_hit_total_.load(std::memory_order_relaxed);
+}
+
+// ── Issue #2855: production deferred-reemit force-drain ──────────────────
+std::uint64_t HotUpdateRegistry::force_drain_deadline_ms() noexcept {
+    // Env-cached force-drain gate (distinct from #2748 observe-only deadline).
+    // Default 0 = disabled (no force drain body).
+    static std::atomic<std::uint64_t> cached{0};
+    static std::atomic<bool> loaded{false};
+    if (!loaded.load(std::memory_order_acquire)) {
+        std::uint64_t v = 0;
+        if (const char* e = std::getenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS"); e && *e)
+            v = static_cast<std::uint64_t>(std::strtoull(e, nullptr, 10));
+        cached.store(v, std::memory_order_relaxed);
+        loaded.store(true, std::memory_order_release);
+    }
+    return cached.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::reemit_deferred_force_drain_deadline_hit_env_read() noexcept {
+    return g_force_drain_deadline_hit_total_.load(std::memory_order_relaxed);
+}
+
+bool HotUpdateRegistry::should_force_drain_deferred_reemit() const noexcept {
+    const auto deadline = force_drain_deadline_ms();
+    if (deadline == 0)
+        return false; // observe-only / disabled
+    if (!has_deferred_reemit())
+        return false;
+    // Soft re-entry: never force-drain while soft boundary depth > 0.
+    if (soft_reemit_boundary_depth() > 0)
+        return false;
+    const auto age = deferred_reemit_age_ms();
+    if (age < deadline)
+        return false;
+    g_force_drain_deadline_hit_total_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+bool HotUpdateRegistry::force_drain_deferred_reemit() noexcept {
+    if (!should_force_drain_deferred_reemit())
+        return false;
+    // CAS re-entry guard — one force-drain body in flight process-wide.
+    bool expected = false;
+    if (!g_reemit_force_drain_in_flight_.compare_exchange_strong(expected, true,
+                                                                 std::memory_order_acq_rel)) {
+        g_reemit_deferred_force_drain_skipped_reentered_total_.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        return false;
+    }
+    // Drive unified pending recovery (BoundaryExit-equivalent drain).
+    // Exchange-not-check: deferred clear is owned by drain_pending_recovery.
+    aura_hot_update_drain_pending_recovery(static_cast<std::uint8_t>(DrainReason::BoundaryExit));
+    g_reemit_deferred_force_drain_total_.fetch_add(1, std::memory_order_relaxed);
+    g_reemit_force_drain_in_flight_.store(false, std::memory_order_release);
+    return true;
+}
+
+std::uint64_t HotUpdateRegistry::reemit_deferred_force_drain_total() const noexcept {
+    return g_reemit_deferred_force_drain_total_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t
+HotUpdateRegistry::reemit_deferred_force_drain_skipped_reentered_total() const noexcept {
+    return g_reemit_deferred_force_drain_skipped_reentered_total_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t
+HotUpdateRegistry::reemit_deferred_force_drain_double_prevented_total() const noexcept {
+    return g_reemit_deferred_force_drain_double_prevented_total_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::reset_reemit_force_drain_for_test() noexcept {
+    g_reemit_deferred_force_drain_total_.store(0, std::memory_order_relaxed);
+    g_reemit_deferred_force_drain_skipped_reentered_total_.store(0, std::memory_order_relaxed);
+    g_reemit_deferred_force_drain_double_prevented_total_.store(0, std::memory_order_relaxed);
+    g_reemit_force_drain_in_flight_.store(false, std::memory_order_relaxed);
+    g_force_drain_deadline_hit_total_.store(0, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::reset_reemit_boundary_handshake_for_test() noexcept {
