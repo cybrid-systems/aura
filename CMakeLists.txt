@@ -1897,6 +1897,8 @@ aura_issue_test_link_light(test_cascade_path2_define_index)
 # Issue #2817: cascade skips defuse_touch for ghost names (no live Define).
 aura_add_issue_test(test_cascade_defuse_touch_null_define)
 aura_issue_test_link_light(test_cascade_defuse_touch_null_define)
+aura_add_issue_test(test_should_audit_sampled_default)
+aura_issue_test_link_light(test_should_audit_sampled_default)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

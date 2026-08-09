@@ -1,6 +1,10 @@
 // typed_mutation_audit.h — Issue #1589 / #1216 / #1882: production TypedMutationAuditPass.
 // Thread-safe strategy gate, contextual event capture, in-memory ring trail.
-// #1882: AOT hot-update + JIT hotpath audit capture (sampled by default).
+// #1882: AOT hot-update + JIT hotpath audit capture.
+// Issue #2818: cold-start default is AuditStrategy::Full (every mutation
+// audited + invariant hard-gate). Sampled/ratio=4 is opt-in only via
+// apply_dev_audit_defaults() (tests / AURA_SANDBOX=off). Deployments that
+// never call apply_production_audit_defaults still audit fully.
 // Header form so serve/evaluator/tests can include without module churn.
 
 #ifndef AURA_COMPILER_TYPED_MUTATION_AUDIT_H
@@ -109,10 +113,17 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> trail_writes{0};
     std::atomic<std::uint64_t> rollbacks{0};
     std::atomic<std::uint64_t> errors{0};
-    std::atomic<std::uint32_t> strategy{static_cast<std::uint32_t>(AuditStrategy::Sampled)};
-    std::atomic<std::uint32_t> sample_ratio{4}; // every Nth id when Sampled (N>=1)
+    // Issue #2818: Full is the cold-start default so small non-linear mutates
+    // never under-sample invariants. Sampled only via apply_dev_audit_defaults.
+    std::atomic<std::uint32_t> strategy{static_cast<std::uint32_t>(AuditStrategy::Full)};
+    std::atomic<std::uint32_t> sample_ratio{1}; // every Nth id when Sampled (N>=1)
     // Issue #2053: 1 when production security defaults applied (Full or ratio=1).
     std::atomic<std::uint32_t> production_defaults_active{0};
+    // Issue #2818: 1 after apply_dev_audit_defaults (explicit Sampled opt-in).
+    std::atomic<std::uint32_t> dev_audit_opt_in{0};
+    // Issue #2818: Sampled+ratio>1 without apply_dev_audit_defaults opt-in.
+    std::atomic<std::uint64_t> audit_strategy_default_warnings_total{0};
+    std::atomic<std::uint32_t> audit_strategy_default_warning_fired{0};
     std::atomic<std::uint64_t> trail_seq{0};
     // Issue #1613: macro hygiene audit trail (hygiene-protected blocks + allowed macro mutates).
     std::atomic<std::uint64_t> macro_hygiene_events{0};
@@ -614,26 +625,60 @@ inline void clear_soft_truncated_silent_dep_escalate_for_test() noexcept {
 }
 
 // Issue #2053: production multi-tenant AI — capture every self-modify event.
-// Full strategy (default under apply_production_audit_defaults). Dev/test
-// keep Sampled/ratio=4 via apply_dev_audit_defaults / reset_typed_mutation_audit.
+// Full strategy + production_defaults_active=1. Issue #2818: Full is also
+// the cold-start static default; this call additionally arms production
+// hard-face flags (production_defaults_active). Dev/test keep Sampled/ratio=4
+// via apply_dev_audit_defaults / reset_for_test.
 inline void apply_production_audit_defaults() noexcept {
     set_strategy(AuditStrategy::Full);
     set_sample_ratio(1);
     g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2053: restore fast-iteration Sampled defaults (tests / AURA_SANDBOX=off).
 // Issue #2185: does not flip coercion reject-on-miss — callers that want full
 // dev restore should also call reset_coercion_provenance_miss_policy_for_test
 // or apply_production_security_defaults with AURA_SANDBOX=off.
+// Issue #2818: marks dev_audit_opt_in so Sampled under-sample is intentional.
 inline void apply_dev_audit_defaults() noexcept {
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
     g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.dev_audit_opt_in.store(1, std::memory_order_relaxed);
+}
+
+// Issue #2818: one-shot warn when Sampled under-samples without apply_dev
+// opt-in (e.g. set_strategy(Sampled)+ratio>1). Production Sampled/1 and
+// apply_dev_audit_defaults paths do not warn.
+inline void maybe_warn_sampled_without_opt_in() noexcept {
+    if (get_strategy() != AuditStrategy::Sampled)
+        return;
+    if (g_typed_mutation_audit_counters.dev_audit_opt_in.load(std::memory_order_relaxed) != 0)
+        return;
+    if (production_defaults_active())
+        return;
+    if (get_sample_ratio() <= 1)
+        return;
+    std::uint32_t expected = 0;
+    if (!g_typed_mutation_audit_counters.audit_strategy_default_warning_fired
+             .compare_exchange_strong(expected, 1, std::memory_order_relaxed))
+        return;
+    g_typed_mutation_audit_counters.audit_strategy_default_warnings_total.fetch_add(
+        1, std::memory_order_relaxed);
+    // stderr once so operators see Sampled under-sample without opt-in.
+    std::fprintf(stderr,
+                 "[aura typed_audit #2818] Sampled ratio=%u without "
+                 "apply_dev_audit_defaults —  under-sampling invariants. "
+                 "Call apply_production_audit_defaults() (Full) or "
+                 "apply_dev_audit_defaults() (explicit Sampled opt-in). "
+                 "Metric: audit_strategy_default_warnings_total.\n",
+                 static_cast<unsigned>(get_sample_ratio()));
 }
 
 // Thread-safe Full / Sampled / Off gate.
 // Sampled: audit when mutation_id % sample_ratio == 0.
+// Issue #2818: cold-start default is Full (no under-sample).
 [[nodiscard]] inline bool should_audit(std::uint64_t mutation_id) noexcept {
     g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
     const auto s = get_strategy();
@@ -641,6 +686,7 @@ inline void apply_dev_audit_defaults() noexcept {
         return false;
     if (s == AuditStrategy::Full)
         return true;
+    maybe_warn_sampled_without_opt_in();
     const auto ratio = get_sample_ratio();
     if (ratio <= 1)
         return true;
@@ -1823,9 +1869,17 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 }
 
 // Test helper: reset counters + trail (not for production hot path).
+// Ends with apply_dev_audit_defaults() (Sampled/4 + dev_audit_opt_in) so
+// unit tests keep the fast-iteration path; cold-start process default is
+// Full (#2818) until this or apply_dev is called.
 inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.audits_considered.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.samples_skipped.store(0, std::memory_order_relaxed);
+    // Issue #2818
+    g_typed_mutation_audit_counters.audit_strategy_default_warnings_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_strategy_default_warning_fired.store(
+        0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.contextual_total.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.trail_writes.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.rollbacks.store(0, std::memory_order_relaxed);
@@ -2032,7 +2086,7 @@ inline void reset_for_test() noexcept {
                                                                          std::memory_order_relaxed);
     g_typed_mutation_audit_counters.linear_cross_closure_prod_depth_default.store(
         2, std::memory_order_relaxed);
-    apply_dev_audit_defaults(); // Sampled/4; clears production_defaults_active
+    apply_dev_audit_defaults(); // Sampled/4 + dev_audit_opt_in; clears production
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)
         e = TypedMutationAuditEvent{};
