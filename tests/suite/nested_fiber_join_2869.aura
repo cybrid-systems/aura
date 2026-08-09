@@ -1,0 +1,57 @@
+; Issue #2869 — nested fiber:join-in-worker must return (thread backend=2).
+;
+; Pre-fix: CLI thread-fallback serializes fiber bodies with one mutex (#2738).
+; Parent held that mutex while fiber:join waited for a child that needs the
+; same mutex → hang forever. Fix: temporarily unlock body mutex around join wait.
+(require "std/test" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(display "backend\n")
+(define be (fiber:spawn-backend))
+(assert! (or (= be 1) (= be 2)) "spawn-backend is 1 or 2")
+(display "  backend=") (display be) (newline)
+
+; AC1: single nested join returns child value
+(display "AC1 single nested join\n")
+(define f
+  (fiber:spawn
+    (lambda ()
+      (let ((c (fiber:spawn (lambda () 7))))
+        (fiber:join c)))))
+(assert! (and (number? f) (> f 0)) "outer fid positive")
+(assert! (= (fiber:join f) 7) "nested join=7")
+
+; AC2: worker joins two children
+(display "AC2 worker joins two children\n")
+(define (outer)
+  (let* ((a (fiber:spawn (lambda () 1)))
+         (b (fiber:spawn (lambda () 2))))
+    (+ (fiber:join a) (fiber:join b))))
+(assert! (= (fiber:join (fiber:spawn outer)) 3) "outer sum=3")
+
+; AC3: flat fanout still works (control / non-regression)
+(display "AC3 flat fanout from main\n")
+(define a (fiber:spawn (lambda () 10)))
+(define b (fiber:spawn (lambda () 20)))
+(assert! (= (+ (fiber:join a) (fiber:join b)) 30) "flat sum=30")
+
+; AC4: sequential main spawn-join (control)
+(display "AC4 sequential main spawn-join\n")
+(assert! (= (fiber:join (fiber:spawn (lambda () 42))) 42) "seq join=42")
+
+(if (= *fails* 0)
+    (begin (display "OK-2869 nested fiber join\n"))
+    (begin
+      (display "FAIL-2869 fails=")
+      (display *fails*)
+      (newline)
+      (exit 1)))

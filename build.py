@@ -836,6 +836,19 @@ def cmd_lint():
             "Issue #2868 set-code module bind linter failed — run python3 scripts/coverage/checks/check_set_code_module_bind_2868.py"
         )
         return r
+    # Issue #2869: nested fiber:join-in-worker must not hang on CLI thread
+    # backend (#2738 body mutex + join wait deadlock). Unlock body mutex
+    # around join wait via TLS. Suite nested_fiber_join_2869.aura per #81967.
+    nfj_script = COVERAGE_CHECKS / "check_nested_fiber_join_2869.py"
+    if not nfj_script.exists():
+        fail(f"missing {nfj_script}")
+        return 1
+    r = run([sys.executable, str(nfj_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2869 nested fiber join linter failed — run python3 scripts/coverage/checks/check_nested_fiber_join_2869.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +
