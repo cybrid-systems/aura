@@ -10,6 +10,9 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_hold_budget.h"
+#include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
 
@@ -21,12 +24,15 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::serve::Fiber;
@@ -55,6 +61,14 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+static void spin_us(std::int64_t min_us) {
+    auto t0 = std::chrono::steady_clock::now();
+    while (
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count() < min_us) {
+    }
 }
 
 static void set_env(const char* k, const char* v) {
@@ -350,12 +364,256 @@ static void ac2667_3_coverage_linter_wired() {
           "2667 AC5: build.py wires check_2667_coverage linter");
 }
 
+// ── Issue #2853: production residual policy lock (Clear/Hard default; Soft
+//   only via sandbox=off or explicit test override). Extends #2546/#2667 test
+//   file per #81967. Covers Phase-5 MutationBoundaryGuard dtor policy +
+//   hold-SLO force-fail + gauge + query surface (schema-2853 additive).
+//
+// AC1: production_defaults_active + sandbox unset → production_residual_policy_locked()
+//      is true. AURA_SANDBOX=off → lock inactive.
+// AC2: test override (set_residual_defer_soft_for_test / set_hold_slo_soft_for_test)
+//      bypasses the production lock (unit Soft-path ergonomics).
+// AC3: mutation_hold_slo_soft_mode() returns false under production lock even
+//      when AURA_MUTATION_HOLD_SLO_SOFT=1 is set (Soft env IGNORED under lock).
+// AC4: AURA_SANDBOX=off → mutation_hold_slo_soft_mode() returns true regardless
+//      of production_defaults_active (Soft path always available for dev/test).
+// AC5: Phase-5 dtor + production lock + residual non-zero → gauge bumps
+//      (forced_clear path applies; #2269 default B). Hold SLO + production
+//      lock + SLO breach → force-fail (mirrors #2349 production default).
+// AC6: query surface (query:mutation-boundary-hold-stats) exposes schema-2853
+//      + issue-2853 + production-residual-policy-lock-active gauge + lock-
+//      active-now sentinel + hold-slo-effective-soft-mode + residual-defer-
+//      soft-for-test + hold-slo-soft-for-test + wired sentinel.
+// AC7: source-cite (fiber.h helpers + .cpp definitions + mutation_hold_budget
+//      + evaluator_mutation_boundary Phase-5 + observability_metrics field +
+//      evaluator_primitives_obs_eval query keys).
+
+// Helper: save/restore production_defaults_active.
+struct ProdLockGuard {
+    std::uint32_t saved;
+    explicit ProdLockGuard(bool active) noexcept
+        : saved(aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.load(std::memory_order_relaxed)) {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(active ? 1u : 0u, std::memory_order_relaxed);
+    }
+    ~ProdLockGuard() noexcept {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(saved, std::memory_order_relaxed);
+    }
+};
+
+static void ac2853_1_production_lock_state() {
+    std::println("\n--- #2853 AC1: production lock state (defaults_active + sandbox) ---");
+    // Clear any pre-existing state.
+    unsetenv("AURA_SANDBOX");
+    {
+        ProdLockGuard prod(/*active=*/false);
+        CHECK(!aura::serve::production_residual_policy_locked(),
+              "AC1: prod inactive → lock inactive");
+    }
+    {
+        ProdLockGuard prod(/*active=*/true);
+        CHECK(aura::serve::production_residual_policy_locked(),
+              "AC1: prod active + sandbox unset → lock active");
+    }
+    setenv("AURA_SANDBOX", "off", 1);
+    {
+        ProdLockGuard prod(/*active=*/true);
+        CHECK(!aura::serve::production_residual_policy_locked(),
+              "AC1: prod active + sandbox=off → lock inactive (bypass)");
+    }
+    {
+        ProdLockGuard prod(/*active=*/false);
+        CHECK(!aura::serve::production_residual_policy_locked(),
+              "AC1: prod inactive → lock inactive regardless of sandbox");
+    }
+    unsetenv("AURA_SANDBOX");
+}
+
+static void ac2853_2_test_override_bypasses_lock() {
+    std::println("\n--- #2853 AC2: test override bypasses production lock ---");
+    ProdLockGuard prod(/*active=*/true);
+    unsetenv("AURA_SANDBOX");
+    CHECK(aura::serve::production_residual_policy_locked(), "AC2: lock active baseline");
+
+    // Without override: residual/hold-SLO effective mode is Production (not Soft).
+    CHECK(!aura::serve::is_residual_defer_soft_for_test(), "AC2: residual test override off");
+    CHECK(!aura::serve::is_hold_slo_soft_for_test(), "AC2: hold-SLO test override off");
+
+    aura::serve::set_residual_defer_soft_for_test(true);
+    aura::serve::set_hold_slo_soft_for_test(true);
+    CHECK(aura::serve::is_residual_defer_soft_for_test(), "AC2: residual test override on");
+    CHECK(aura::serve::is_hold_slo_soft_for_test(), "AC2: hold-SLO test override on");
+
+    aura::serve::reset_residual_defer_soft_for_test();
+    aura::serve::reset_hold_slo_soft_for_test();
+    CHECK(!aura::serve::is_residual_defer_soft_for_test(),
+          "AC2: residual test override reset → off");
+    CHECK(!aura::serve::is_hold_slo_soft_for_test(), "AC2: hold-SLO test override reset → off");
+}
+
+static void ac2853_3_hold_slo_soft_env_ignored_under_lock() {
+    std::println(
+        "\n--- #2853 AC3: AURA_MUTATION_HOLD_SLO_SOFT=1 IGNORED under production lock ---");
+    // Soft path is OFF under production lock.
+    {
+        ProdLockGuard prod(/*active=*/true);
+        unsetenv("AURA_SANDBOX");
+        setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
+        CHECK(!aura::compiler::mutation_hold_slo_soft_mode(),
+              "AC3: prod lock + AURA_MUTATION_HOLD_SLO_SOFT=1 → still Production (env ignored)");
+        unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    }
+    // Without lock, legacy behavior preserved.
+    {
+        ProdLockGuard prod(/*active=*/false);
+        unsetenv("AURA_SANDBOX");
+        setenv("AURA_MUTATION_HOLD_SLO_SOFT", "1", 1);
+        CHECK(aura::compiler::mutation_hold_slo_soft_mode(),
+              "AC3: no prod + AURA_MUTATION_HOLD_SLO_SOFT=1 → Soft (legacy)");
+        unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    }
+}
+
+static void ac2853_4_sandbox_off_always_soft() {
+    std::println("\n--- #2853 AC4: AURA_SANDBOX=off always Soft regardless of prod state ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    {
+        ProdLockGuard prod(/*active=*/true);
+        CHECK(aura::compiler::mutation_hold_slo_soft_mode(),
+              "AC4: sandbox=off + prod → Soft (lock bypass)");
+        CHECK(!aura::serve::production_residual_policy_locked(),
+              "AC4: sandbox=off → lock inactive even with prod active");
+    }
+    {
+        ProdLockGuard prod(/*active=*/false);
+        CHECK(aura::compiler::mutation_hold_slo_soft_mode(), "AC4: sandbox=off + no prod → Soft");
+    }
+    unsetenv("AURA_SANDBOX");
+}
+
+static void ac2853_5_phase5_dtor_gauge_and_query_surface() {
+    std::println("\n--- #2853 AC5/AC6: Phase-5 gauge + query surface (schema-2853 additive) ---");
+    CompilerService cs;
+    CompilerMetrics metrics;
+    cs.evaluator().set_compiler_metrics(&metrics);
+    ProdLockGuard prod(/*active=*/true);
+    unsetenv("AURA_SANDBOX");
+
+    // Warm eval for metrics registration.
+    CHECK(cs.eval("(+ 1 1)").has_value(), "AC5: warm eval");
+    CHECK(href(cs, "schema-2853") == 2853, "AC5: schema-2853 live");
+    CHECK(href(cs, "issue-2853") == 2853, "AC5: issue-2853 live");
+    CHECK(href(cs, "production-residual-policy-lock-wired") == 1, "AC5: wired sentinel live");
+    CHECK(href(cs, "production_residual_policy_lock_wired") == 1, "AC5: wired camelCase live");
+    CHECK(href(cs, "production-residual-policy-lock-active") == 1,
+          "AC5: lock-active-now live (prod + sandbox unset)");
+    CHECK(href(cs, "production_residual_policy_lock_active") == 1,
+          "AC5: lock-active-now camelCase live");
+    CHECK(href(cs, "hold-slo-effective-soft-mode") == 0,
+          "AC5: hold-SLO effective mode = Production (force-fail) under lock");
+    CHECK(href(cs, "hold_slo_effective_soft_mode") == 0, "AC5: hold-SLO effective mode camelCase");
+    CHECK(href(cs, "residual-defer-soft-for-test") == 0, "AC5: residual test override = off");
+    CHECK(href(cs, "hold-slo-soft-for-test") == 0, "AC5: hold-SLO test override = off");
+
+    // Source-cite: schema-2853 keys present in obs_eval.cpp + Phase-5 policy
+    // decision + gauge atomic wired in fiber.h.
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto mh = read_file("src/compiler/mutation_hold_budget.h");
+    const auto om = read_file("src/compiler/observability_metrics.h");
+
+    CHECK(emb.find("Issue #2853") != std::string::npos, "AC7: dtor cites #2853");
+    CHECK(emb.find("production_residual_policy_locked()") != std::string::npos,
+          "AC7: dtor consults production lock");
+    CHECK(emb.find("is_residual_defer_soft_for_test") != std::string::npos,
+          "AC7: dtor consults residual test override");
+    CHECK(emb.find("g_production_residual_policy_lock_active_total") != std::string::npos,
+          "AC7: dtor bumps file-scope gauge");
+    CHECK(emb.find("AURA_RESIDUAL_DEFER_POLICY=soft") != std::string::npos ||
+              emb.find("Soft env is IGNORED") != std::string::npos,
+          "AC7: dtor documents Soft env IGNORED under production lock");
+
+    CHECK(obs.find("schema-2853") != std::string::npos, "AC7: obs_eval schema-2853 key");
+    CHECK(obs.find("production-residual-policy-lock-active-total") != std::string::npos,
+          "AC7: obs_eval gauge key");
+    CHECK(obs.find("hold-slo-effective-soft-mode") != std::string::npos,
+          "AC7: obs_eval effective-mode key");
+
+    CHECK(fh.find("is_residual_defer_soft_for_test") != std::string::npos,
+          "AC7: fiber.h residual test override decl");
+    CHECK(fh.find("is_hold_slo_soft_for_test") != std::string::npos,
+          "AC7: fiber.h hold-SLO test override decl");
+    CHECK(fh.find("production_residual_policy_locked") != std::string::npos,
+          "AC7: fiber.h production lock decl");
+    CHECK(fh.find("g_production_residual_policy_lock_active_total") != std::string::npos,
+          "AC7: fiber.h file-scope gauge atomic");
+
+    CHECK(fc.find("production_residual_policy_locked()") != std::string::npos,
+          "AC7: fiber.cpp production lock def");
+
+    CHECK(mh.find("is_hold_slo_soft_for_test") != std::string::npos,
+          "AC7: mutation_hold_budget reads hold-SLO test override");
+    CHECK(mh.find("production_defaults_active()") != std::string::npos,
+          "AC7: mutation_hold_budget production lock check");
+    CHECK(mh.find("AURA_MUTATION_HOLD_SLO_SOFT") != std::string::npos,
+          "AC7: mutation_hold_budget legacy Soft env retained (legacy path)");
+    CHECK(mh.find("Issue #2853") != std::string::npos, "AC7: mutation_hold_budget cites #2853");
+
+    CHECK(om.find("production_residual_policy_lock_active_total{0}") != std::string::npos,
+          "AC7: CompilerMetrics field present");
+    CHECK(om.find("// #2853") != std::string::npos, "AC7: observability_metrics cites #2853");
+
+    // Schema lineage preserved.
+    CHECK(obs.find("schema-2349") != std::string::npos,
+          "AC7: schema-2349 retained (regression check)");
+    CHECK(obs.find("schema-2269") != std::string::npos,
+          "AC7: schema-2269 retained (regression check)");
+    CHECK(obs.find("schema-2211") != std::string::npos,
+          "AC7: schema-2211 retained (regression check)");
+
+    cs.evaluator().set_compiler_metrics(nullptr);
+}
+
+static void ac2853_6_phase5_dtor_force_fail_hold_slo() {
+    std::println(
+        "\n--- #2853 AC5b: hold SLO + production lock → force-fail (regression #2349) ---");
+    CompilerService cs;
+    CompilerMetrics metrics;
+    cs.evaluator().set_compiler_metrics(&metrics);
+    ProdLockGuard prod(/*active=*/true);
+    unsetenv("AURA_SANDBOX");
+    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
+
+    const auto viol0 = metrics.mutation_hold_slo_violation_total.load();
+    const auto rollback0 = metrics.mutation_boundary_rollbacks_total.load();
+    bool ok = true;
+    {
+        aura::compiler::Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        spin_us(5'000); // > 2ms SLO
+    }
+    CHECK(!ok, "AC5b: prod lock + SLO breach → success_flag forced false");
+    CHECK(metrics.mutation_hold_slo_violation_total.load() > viol0,
+          "AC5b: violation counter bumped");
+    CHECK(metrics.mutation_boundary_rollbacks_total.load() > rollback0,
+          "AC5b: rollback counter bumped");
+
+    cs.evaluator().set_compiler_metrics(nullptr);
+    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+}
+
 } // namespace
 
 int run_test_residual_defer_steal_hard_and() {
     std::println("=== Issue #2546: residual hard-AND on steal-complete ===");
     std::println("=== Issue #2667: production-only hard residual GcDefer on steal-complete + "
                  "PanicCheckpoint rebind (extends #2546 test file per #81967) ===");
+    std::println("=== Issue #2853: production residual policy lock (Clear/Hard default; Soft "
+                 "only via sandbox=off or test override) ===");
     ac1_hard_residual_cancels();
     ac2_clean_zero_cost();
     ac3_soft_leftover_no_cancel();
@@ -364,10 +622,16 @@ int run_test_residual_defer_steal_hard_and() {
     ac2667_1_production_panic_checkpoint_clear();
     ac2667_2_query_sentinel_source_cite();
     ac2667_3_coverage_linter_wired();
+    ac2853_1_production_lock_state();
+    ac2853_2_test_override_bypasses_lock();
+    ac2853_3_hold_slo_soft_env_ignored_under_lock();
+    ac2853_4_sandbox_off_always_soft();
+    ac2853_5_phase5_dtor_gauge_and_query_surface();
+    ac2853_6_phase5_dtor_force_fail_hold_slo();
     modes_off();
     if (g_failed)
         return 1;
-    std::println("\n=== #2546+#2667: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2546+#2667+#2853: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
 

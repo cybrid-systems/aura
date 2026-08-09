@@ -2331,27 +2331,66 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // Legacy AURA_HARD_RESIDUAL_DEFER=1 still maps to hard
                 // for backward compat (kept so pre-#2269 deploys keep
                 // their hard-fail behavior).
-                const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
-                const bool policy_hard_env =
-                    policy_e && *policy_e && std::string_view(policy_e) == "hard";
-                const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
-                const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
                 const char* sandbox_e = std::getenv("AURA_SANDBOX");
                 const bool dev_off =
                     sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
+                const bool prod_lock = aura::serve::production_residual_policy_locked();
+                // Issue #2853 AC4: bump gauge when production lock is
+                // actively gating the policy (sandbox != off + production
+                // defaults active + not test override). Surfaces to
+                // query:mutation-boundary-hold-stats schema-2853.
+                if (prod_lock && !test_soft) {
+                    aura::serve::g_production_residual_policy_lock_active_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (auto* gm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        gm->production_residual_policy_lock_active_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
                 // Default under production security defaults: clear
                 // (B path — availability-friendly). Sandbox / unit
                 // tests: soft (legacy behavior).
+                //
+                // Issue #2853 AC1: production lock (sandbox != off +
+                // production_defaults_active + not test override) →
+                // AURA_RESIDUAL_DEFER_POLICY=soft env is IGNORED. Only
+                // Clear (default) or Hard (explicit env) applies.
                 enum class ResidualPolicy { Soft, Clear, Hard };
-                ResidualPolicy policy = ResidualPolicy::Soft;
-                if (dev_off) {
+                ResidualPolicy policy = ResidualPolicy::Clear; // production default
+                if (dev_off || test_soft) {
+                    // Soft path: sandbox=off or explicit test override
+                    // (BOTH bypass the production lock — AC2).
                     policy = ResidualPolicy::Soft;
-                } else if (policy_hard_env || legacy_hard) {
-                    policy = ResidualPolicy::Hard;
+                } else if (prod_lock) {
+                    // Production lock: only Clear (default) or Hard
+                    // (explicit AURA_RESIDUAL_DEFER_POLICY=hard or
+                    // legacy AURA_HARD_RESIDUAL_DEFER=1). Soft env is
+                    // IGNORED.
+                    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                    const bool policy_hard_env =
+                        policy_e && *policy_e && std::string_view(policy_e) == "hard";
+                    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                    const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
+                    if (policy_hard_env || legacy_hard) {
+                        policy = ResidualPolicy::Hard;
+                    }
+                    // else: stay Clear (production default — AC1).
                 } else {
-                    // unset AURA_RESIDUAL_DEFER_POLICY + production
-                    // security defaults active → clear (B).
-                    policy = ResidualPolicy::Clear;
+                    // Non-production (no prod_defaults_active or sandbox=off
+                    // — both bypass prod_lock): legacy env-based path
+                    // honors hard / soft / clear env vars (no production
+                    // lock enforcement).
+                    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                    const bool policy_hard_env =
+                        policy_e && *policy_e && std::string_view(policy_e) == "hard";
+                    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                    const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
+                    if (policy_hard_env || legacy_hard) {
+                        policy = ResidualPolicy::Hard;
+                    } else if (policy_e && *policy_e && std::string_view(policy_e) == "soft") {
+                        policy = ResidualPolicy::Soft;
+                    }
+                    // else: stay Clear (default).
                 }
                 if (policy == ResidualPolicy::Hard) {
                     if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))

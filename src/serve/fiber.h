@@ -1388,6 +1388,36 @@ void reset_steal_snapshot_soft_for_test() noexcept;
 // Implementation in fiber.cpp (production canary via typed_mutation_audit).
 [[nodiscard]] bool is_steal_snapshot_hard_mode() noexcept;
 
+// Issue #2853: residual-defer Soft test override — mirrors
+// set_steal_snapshot_soft_for_test. When set, residual defer Phase-5
+// policy picks Soft regardless of env or production lock (unit-test
+// ergonomics). reset clears override.
+// Production lock (sandbox != off + production_defaults_active):
+// AURA_RESIDUAL_DEFER_POLICY=soft is IGNORED. Only Clear (default)
+// or Hard (AURA_RESIDUAL_DEFER_POLICY=hard / AURA_HARD_RESIDUAL_DEFER=1)
+// applies under the lock — Soft path requires sandbox=off OR test override.
+[[nodiscard]] bool is_residual_defer_soft_for_test() noexcept;
+void set_residual_defer_soft_for_test(bool soft) noexcept;
+void reset_residual_defer_soft_for_test() noexcept;
+
+// Issue #2853: hold-SLO Soft test override — mirrors
+// set_steal_snapshot_soft_for_test. When set, mutation_hold_slo_soft_mode()
+// returns true (Soft path: metric only, no force-fail). reset clears.
+[[nodiscard]] bool is_hold_slo_soft_for_test() noexcept;
+void set_hold_slo_soft_for_test(bool soft) noexcept;
+void reset_hold_slo_soft_for_test() noexcept;
+
+// Issue #2853: production residual policy lock — set when sandbox != off
+// and production_defaults_active(). Test override wins (bypasses lock).
+// Soft env (AURA_RESIDUAL_DEFER_POLICY=soft, AURA_MUTATION_HOLD_SLO_SOFT=1)
+// is ignored under the lock. AURA_SANDBOX=off also bypasses the lock.
+// Production lock state is derived from typed_audit::production_defaults_active()
+// (gated by AURA_SANDBOX=off) — no separate atomic needed; the gauge below
+// surfaces the lock activity to Agents via query:mutation-boundary-hold-stats.
+// Defined out-of-line in fiber.cpp (typed_mutation_audit.h is a compiler
+// header — keep serve/fiber.h free of compiler/ includes for cycle safety).
+[[nodiscard]] bool production_residual_policy_locked() noexcept;
+
 // Issue #2702: file-scope atomics for the resume hard-fail surface.
 // Mirror the #2693/#2694/#2695/#2696/#2697/#2698/#2700/#2701 pattern
 // (file-scope atomics in the relevant header; light binaries get the
@@ -1415,6 +1445,27 @@ inline void clear_resume_hard_fail_for_test() noexcept {
     g_resume_soft_observe_total.store(0, std::memory_order_relaxed);
 }
 [[nodiscard]] bool is_steal_snapshot_hard_abort() noexcept;
+
+// Issue #2853: file-scope atomics for the production residual policy gauge.
+// Mirror g_resume_hard_fail_total pattern (#2693/#2702). Bumped each
+// Phase-5 outermost-success residual check where production lock was
+// active (sandbox != off + production_defaults_active() and not test
+// override). Surfaces to query:mutation-boundary-hold-stats as
+// production-residual-policy-lock-active-total so Agents can assert
+// the lock is engaged under production defaults.
+inline std::atomic<std::uint64_t> g_production_residual_policy_lock_active_total{0};
+inline std::atomic<std::uint32_t> g_production_residual_policy_lock_wired{1};
+inline constexpr int kProductionResidualPolicyLockIssue = 2853;
+
+[[nodiscard]] inline std::uint64_t production_residual_policy_lock_active_total_v_read() noexcept {
+    return g_production_residual_policy_lock_active_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t production_residual_policy_lock_wired_v_read() noexcept {
+    return g_production_residual_policy_lock_wired.load(std::memory_order_relaxed);
+}
+inline void clear_production_residual_policy_lock_for_test() noexcept {
+    g_production_residual_policy_lock_active_total.store(0, std::memory_order_relaxed);
+}
 
 } // namespace aura::serve
 
