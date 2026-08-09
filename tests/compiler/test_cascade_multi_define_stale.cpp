@@ -96,15 +96,18 @@ int run_test_cascade_multi_define_stale() {
         CHECK(!mut.empty(), "AC1: sources readable");
         auto cascade = mut.find("push_post_mutate_incremental_cascade");
         CHECK(cascade != std::string::npos, "AC1: cascade present");
-        auto win = mut.substr(cascade, 5500);
+        auto end = mut.find("// 3) Eager partial re-lower", cascade);
+        auto win = end != std::string::npos && end > cascade ? mut.substr(cascade, end - cascade)
+                                                             : mut.substr(cascade, 9000);
         CHECK(win.find("Issue #2815") != std::string::npos, "AC1: cites #2815");
         CHECK(win.find("affected_defs") != std::string::npos, "AC1: affected_defs by NodeId");
         CHECK(win.find("cascade_multi_define_stale_total") != std::string::npos,
               "AC1: multi-define metric bump");
         // Must not use name-keyed emplace-only first-wins without NodeId map.
         CHECK(win.find("note ALL Define nodes") != std::string::npos ||
-                  win.find("ALL Define") != std::string::npos,
-              "AC1: path2 notes all Defines");
+                  win.find("ALL Define") != std::string::npos ||
+                  win.find("define_by_sym") != std::string::npos,
+              "AC1: path2 notes all Defines (index or scan)");
         CHECK(met.find("cascade_multi_define_stale_total") != std::string::npos, "AC1: metrics.h");
         CHECK(obs.find("schema-2815") != std::string::npos, "AC1: query schema-2815");
     }

@@ -1891,6 +1891,9 @@ aura_issue_test_link_light(test_capture_audit_event_forced_enforcement_link)
 # Issue #2815: cascade marks all Define NodeIds for a name (not first-wins).
 aura_add_issue_test(test_cascade_multi_define_stale)
 aura_issue_test_link_light(test_cascade_multi_define_stale)
+# Issue #2816: cascade path2 O(N+M) define-by-sym index (not O(N×M)).
+aura_add_issue_test(test_cascade_path2_define_index)
+aura_issue_test_link_light(test_cascade_path2_define_index)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

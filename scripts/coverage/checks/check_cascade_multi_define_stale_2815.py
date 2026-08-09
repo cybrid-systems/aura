@@ -40,7 +40,10 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
 
     cascade = mut.find("push_post_mutate_incremental_cascade")
-    win = mut[cascade : cascade + 5500] if cascade >= 0 else ""
+    end = mut.find("// 3) Eager partial re-lower", cascade if cascade >= 0 else 0)
+    if end < 0:
+        end = (cascade if cascade >= 0 else 0) + 9000
+    win = mut[cascade:end] if cascade >= 0 else ""
 
     # AC1
     must("Issue #2815", "AC1", win)

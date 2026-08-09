@@ -7431,6 +7431,18 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"cascade-multi-define-wired", make_int(1)},
                 {"schema-2815", make_int(2815)},
                 {"issue-2815", make_int(2815)},
+                // Issue #2816: path2 O(N+M) define-by-sym index.
+                {"cascade-path2-lookup-total",
+                 make_int(m ? load(m->cascade_path2_lookup_total) : 0)},
+                {"cascade_path2_lookup_total",
+                 make_int(m ? load(m->cascade_path2_lookup_total) : 0)},
+                {"cascade-path2-index-nodes-total",
+                 make_int(m ? load(m->cascade_path2_index_nodes_total) : 0)},
+                {"cascade_path2_index_nodes_total",
+                 make_int(m ? load(m->cascade_path2_index_nodes_total) : 0)},
+                {"cascade-path2-index-wired", make_int(1)},
+                {"schema-2816", make_int(2816)},
+                {"issue-2816", make_int(2816)},
                 // Issue #2762: post-mutate macro re-expand under Guard cascade
                 // (refine #165/#2096). Additive — #2038 keys preserved.
                 {"post-mutate-macro-reexpand-total",

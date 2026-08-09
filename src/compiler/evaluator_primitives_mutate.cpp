@@ -8183,22 +8183,40 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
 
     // 2) Names already staged by precise mutates (query-and-replace etc.).
     // Issue #2815: note ALL Define nodes with this name (not first-only).
-    for (const auto& n : defuse_affected_syms_) {
-        if (n.empty())
-            continue;
-        const auto sid = pool.intern(n);
-        bool found = false;
+    // Issue #2816: O(N) build of SymId→Define NodeIds once, then O(1)
+    // lookup per affected name. Pre-#2816 nested linear scan was
+    // O(N×M) (N=flat.size(), M=defuse_affected_syms_.size()) and
+    // dominated cascade latency under large multi-symbol self-modify.
+    // Quiet path: empty defuse set → zero index build cost.
+    std::uint64_t path2_lookups = 0;
+    std::uint64_t path2_index_nodes = 0;
+    if (!defuse_affected_syms_.empty()) {
+        std::unordered_map<aura::ast::SymId, std::vector<aura::ast::NodeId>> define_by_sym;
+        define_by_sym.reserve(std::max<std::size_t>(16, flat.size() / 8));
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             if (flat.is_free_slot(id))
                 continue;
             auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Define && v.sym_id == sid) {
-                note_define(id);
-                found = true;
-            }
+            if (v.tag != aura::ast::NodeTag::Define)
+                continue;
+            if (v.sym_id == aura::ast::INVALID_SYM)
+                continue;
+            define_by_sym[v.sym_id].push_back(id);
+            ++path2_index_nodes;
         }
-        if (!found)
-            affected_names.insert(n); // name-only: dirty IR cache by name
+        for (const auto& n : defuse_affected_syms_) {
+            if (n.empty())
+                continue;
+            ++path2_lookups;
+            const auto sid = pool.intern(n);
+            auto it = define_by_sym.find(sid);
+            if (it == define_by_sym.end() || it->second.empty()) {
+                affected_names.insert(n); // name-only: dirty IR cache by name
+                continue;
+            }
+            for (auto id : it->second)
+                note_define(id);
+        }
     }
 
     // Soft IR-cache dirty + defuse touch once per unique name.
@@ -8232,10 +8250,16 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
             ++defines_n;
     }
 
-    if (multi_define_extra > 0) {
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        if (multi_define_extra > 0)
             m->cascade_multi_define_stale_total.fetch_add(multi_define_extra,
                                                           std::memory_order_relaxed);
+        // Issue #2816: path2 index + lookup observability.
+        if (path2_lookups > 0)
+            m->cascade_path2_lookup_total.fetch_add(path2_lookups, std::memory_order_relaxed);
+        if (path2_index_nodes > 0)
+            m->cascade_path2_index_nodes_total.fetch_add(path2_index_nodes,
+                                                         std::memory_order_relaxed);
     }
 
     // 3) Eager partial re-lower of dirty ir_cache_v2 entries
