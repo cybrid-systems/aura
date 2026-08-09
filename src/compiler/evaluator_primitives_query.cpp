@@ -7256,6 +7256,25 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                           mutation_region_mask_overlap_wired_v_read()));
                             insert_kv("schema-2761", 2761);
                             insert_kv("issue-2761", 2761);
+                            // Issue #2847: region type/occurrence
+                            // commit bind — Soft observe / production
+                            // reject when OccurrenceGoal pred bits fall
+                            // outside admitted cone mask. Additive —
+                            // all #2724/#2754/#2757/#2760/#2761 above.
+                            insert_kv("region-type-cross-talk-observe-total",
+                                      static_cast<std::int64_t>(
+                                          aura::compiler::typed_audit::
+                                              region_type_cross_talk_observe_total_v_read()));
+                            insert_kv("region-type-cross-talk-reject-total",
+                                      static_cast<std::int64_t>(
+                                          aura::compiler::typed_audit::
+                                              region_type_cross_talk_reject_total_v_read()));
+                            insert_kv("region-type-cross-talk-wired",
+                                      static_cast<std::int64_t>(
+                                          aura::compiler::typed_audit::
+                                              region_type_cross_talk_wired_v_read()));
+                            insert_kv("schema-2847", 2847);
+                            insert_kv("issue-2847", 2847);
                             // Issue #2726: P0 cross-fiber
                             // hold-budget force-degrade real
                             // cancel (per-fiber pending-cancel
