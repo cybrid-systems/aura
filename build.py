@@ -1542,6 +1542,18 @@ def cmd_lint():
             "Issue #2836 mid-fallback zero-tolerance linter failed — run python3 scripts/coverage/checks/check_mid_fallback_zero_tolerance_2836.py"
         )
         return r
+    # Issue #2837: Moving densify external-root slot remap + sticky densify-off.
+    # Extends test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
+    mer_script = COVERAGE_CHECKS / "check_moving_external_root_remap_2837.py"
+    if not mer_script.exists():
+        fail(f"missing {mer_script}")
+        return 1
+    r = run([sys.executable, str(mer_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2837 Moving external-root remap linter failed — run python3 scripts/coverage/checks/check_moving_external_root_remap_2837.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

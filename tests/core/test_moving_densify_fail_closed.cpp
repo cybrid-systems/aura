@@ -31,6 +31,7 @@
 
 #include "test_harness.hpp"
 
+#include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h"
 
 #include <cstdint>
@@ -44,6 +45,8 @@ import aura.core.arena;
 
 namespace {
 
+using aura::ast::ASTArena;
+using aura::ast::LiveCompactMode;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -80,9 +83,10 @@ static void ac1_source_cite_live_compact_result() {
 static void ac3_soft_zero_extra_work() {
     std::println("\n--- #2495 AC3: Soft / no objects moved → zero extra work ---");
     const auto ixx = read_file("src/core/arena.ixx");
-    // The fail-closed block is gated on objects_moved > 0 && untracked_kept > 0.
-    CHECK(ixx.find("if (result.objects_moved > 0 && result.untracked_kept_count > 0)") !=
-              std::string::npos,
+    // The fail-closed block is gated on objects_moved > 0 && (untracked_kept > 0
+    // || stale_unremapped > 0) — #2837 extended the untracked axis.
+    CHECK(ixx.find("result.objects_moved > 0") != std::string::npos &&
+              ixx.find("result.untracked_kept_count > 0") != std::string::npos,
           "AC3: fail-closed block gated on densify actually moved objects");
     // empty() predicate keeps the trivial-no-move semantics.
     CHECK(ixx.find("untracked_kept_count == 0") != std::string::npos,
@@ -434,6 +438,197 @@ static void ac2664_6_coverage_linter_wired() {
           "2664 AC6: build.py wires check_2664_coverage into the gate");
 }
 
+// ── Issue #2837: external-root slot remap + sticky densify-off ─────────────
+//
+// Full remapping path for registered external root *slots* (void**).
+// Production hard incomplete-remap arms sticky densify-off so Agents cannot
+// keep densifying while untracked live roots remain. Soft remains observe-only.
+
+// Trivial small-pool tracked object for densify tests.
+struct Pod16 {
+    std::int32_t a = 0;
+    std::int32_t b = 0;
+    std::int32_t c = 0;
+    std::int32_t d = 0;
+    Pod16() = default;
+    Pod16(std::int32_t a_, std::int32_t b_, std::int32_t c_, std::int32_t d_) noexcept
+        : a(a_)
+        , b(b_)
+        , c(c_)
+        , d(d_) {}
+};
+
+struct MovingFlagGuard {
+    int prev_pref = -1;
+    int prev_hard = -1;
+    explicit MovingFlagGuard(int enable) {
+        prev_pref = aura::ast::g_moving_compact_enabled_pref.load(std::memory_order_relaxed);
+        prev_hard = aura::ast::g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+        // Clear sticky first so set_moving_compact_enabled is not overridden.
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::ast::set_moving_compact_enabled(enable);
+    }
+    ~MovingFlagGuard() {
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::ast::g_moving_compact_enabled_pref.store(prev_pref, std::memory_order_relaxed);
+        aura::ast::g_moving_untracked_hard_abort_pref.store(prev_hard, std::memory_order_relaxed);
+    }
+};
+
+// AC1: registered void** slot remapped after Moving densify.
+static void ac2837_1_slot_remapped() {
+    std::println("\n--- #2837 AC1: external-root slot remapped after densify ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed); // Soft
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "2837 AC1: create ok");
+    void* ext = p0; // external raw root holding densify candidate
+    void* old = ext;
+    arena.register_external_root_slot_for_densify(&ext);
+    const auto remap_before =
+        aura::ast::g_moving_external_root_slot_remap_total.load(std::memory_order_relaxed);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "2837 AC1: objects_moved > 0");
+    void* neu = arena.resolve_object_remap(old);
+    CHECK(neu != nullptr, "2837 AC1: densify produced remap entry for old");
+    CHECK(ext == neu, "2837 AC1: external slot rewritten to new address");
+    CHECK(r.external_roots_remapped_count >= 1, "2837 AC1: result.external_roots_remapped_count");
+    CHECK(aura::ast::g_moving_external_root_slot_remap_total.load() >= remap_before + 1,
+          "2837 AC1: process-wide slot remap total bumps");
+    // Payload intact at new address.
+    CHECK(static_cast<Pod16*>(ext)->a == 1 && static_cast<Pod16*>(ext)->b == 2,
+          "2837 AC1: payload intact via remapped slot");
+    (void)p1;
+    (void)p2;
+}
+
+// AC2: value-only prep register (no slot) → stale unremapped + incomplete.
+static void ac2837_2_value_only_stale_fail_closed() {
+    std::println("\n--- #2837 AC2: value-only prep → stale fail-closed ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    void* old = ext;
+    // Value-only (#2775) — cannot rewrite caller storage.
+    arena.register_external_root_for_densify(ext);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "2837 AC2: objects_moved > 0");
+    CHECK(r.external_roots_stale_unremapped_count >= 1 || r.moving_incomplete_remap,
+          "2837 AC2: stale unremapped or incomplete remap");
+    CHECK(r.pin_contract_held == false || r.moving_incomplete_remap,
+          "2837 AC2: pin_contract_held false on incomplete");
+    // Caller storage still holds old address (not rewritten).
+    CHECK(ext == old, "2837 AC2: value-only leaves caller slot unre-written");
+    (void)p1;
+    (void)p2;
+}
+
+// AC3: production hard incomplete → sticky densify-off.
+static void ac2837_3_sticky_densify_off_under_hard() {
+    std::println("\n--- #2837 AC3: production hard → sticky densify-off ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed); // hard
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    arena.register_external_root_for_densify(ext); // value-only → incomplete under move
+    const auto sticky_before = aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+        std::memory_order_relaxed);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "2837 AC3: objects_moved > 0");
+    CHECK(r.moving_incomplete_remap, "2837 AC3: incomplete remap");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "2837 AC3: sticky densify-off armed");
+    CHECK(aura::ast::moving_compact_enabled() == 0,
+          "2837 AC3: moving_compact_enabled() forced 0 under sticky");
+    CHECK(aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load() >= sticky_before + 1,
+          "2837 AC3: sticky densify-off total bumps");
+    // Clear restores densify when pref is on.
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::set_moving_compact_enabled(1);
+    CHECK(aura::ast::moving_compact_enabled() == 1, "2837 AC3: clear sticky restores densify");
+    (void)p1;
+    (void)p2;
+    (void)r;
+}
+
+// AC4: Soft / hard_pref<=0 does not arm sticky densify-off.
+static void ac2837_4_soft_no_sticky() {
+    std::println("\n--- #2837 AC4: Soft incomplete does not arm sticky ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    arena.register_external_root_for_densify(ext);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "2837 AC4: objects_moved > 0");
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "2837 AC4: Soft does not arm sticky densify-off");
+    CHECK(aura::ast::moving_compact_enabled() == 1, "2837 AC4: Moving still enabled under Soft");
+    (void)p1;
+    (void)p2;
+}
+
+// AC5: Soft / no-move → zero extra slot work (source-cite gate).
+static void ac2837_5_soft_no_move_zero_cost() {
+    std::println("\n--- #2837 AC5: Soft / no-move zero extra slot work ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("result.objects_moved > 0 && !external_root_slots_for_densify_.empty()") !=
+              std::string::npos,
+          "2837 AC5: slot rewrite gated on objects_moved > 0");
+    CHECK(arena.find("register_external_root_slot_for_densify") != std::string::npos,
+          "2837 AC5: slot registration API present");
+}
+
+// AC6: Agent surface + source-cite + linter + no invent file / design doc.
+static void ac2837_6_source_cite_and_surface() {
+    std::println("\n--- #2837 AC6: source-cite + Agent surface + linter ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto build = read_file("build.py");
+    CHECK(arena.find("Issue #2837") != std::string::npos ||
+              arena.find("#2837") != std::string::npos,
+          "2837 AC6: arena.ixx cites #2837");
+    CHECK(arena.find("g_moving_external_root_slot_remap_total") != std::string::npos,
+          "2837 AC6: slot remap counter");
+    CHECK(arena.find("g_moving_incomplete_remap_sticky_densify_off") != std::string::npos,
+          "2837 AC6: sticky densify-off flag");
+    CHECK(arena.find("external_roots_remapped_count") != std::string::npos,
+          "2837 AC6: LiveCompactResult remapped count");
+    CHECK(obs.find("schema-2837") != std::string::npos, "2837 AC6: schema-2837 on health query");
+    CHECK(obs.find("sticky-densify-off") != std::string::npos, "2837 AC6: sticky-densify-off key");
+    CHECK(obs.find("external-root-slot-remap-total") != std::string::npos,
+          "2837 AC6: external-root-slot-remap-total key");
+    CHECK(build.find("check_moving_external_root_remap_2837") != std::string::npos,
+          "2837 AC6: build.py wires #2837 linter");
+    // No invent test_issue_2837.cpp (#81967); no design doc (#1655).
+    std::ifstream invent("tests/core/test_issue_2837.cpp");
+    if (!invent) {
+        invent.open("../tests/core/test_issue_2837.cpp");
+    }
+    CHECK(!invent.good(), "2837 AC6: no test_issue_2837.cpp");
+    std::ifstream design("docs/design/2837-moving-external-root-remap.md");
+    if (!design) {
+        design.open("../docs/design/2837-moving-external-root-remap.md");
+    }
+    CHECK(!design.good(), "2837 AC6: no docs/design/2837-*");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -445,6 +640,8 @@ int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2599: EnvFrame densify ownership scan fail enters outermost commit "
                  "barrier (extends #2495 test file per #81967) ===");
     std::println("=== Issue #2664: production-default hard-fail on untracked external roots "
+                 "(extends #2495 test file per #81967) ===");
+    std::println("=== Issue #2837: external-root slot remap + sticky densify-off "
                  "(extends #2495 test file per #81967) ===");
 
     ac1_source_cite_live_compact_result();
@@ -470,6 +667,12 @@ int run_test_moving_densify_fail_closed() {
     ac2664_4_env_hard_still_aborts();
     ac2664_5_phase5_gate_source_cite();
     ac2664_6_coverage_linter_wired();
+    ac2837_1_slot_remapped();
+    ac2837_2_value_only_stale_fail_closed();
+    ac2837_3_sticky_densify_off_under_hard();
+    ac2837_4_soft_no_sticky();
+    ac2837_5_soft_no_move_zero_cost();
+    ac2837_6_source_cite_and_surface();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 

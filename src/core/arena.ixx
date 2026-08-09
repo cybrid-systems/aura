@@ -564,6 +564,25 @@ inline constexpr int kMovingUnifiedSuccessGateIssue = 2682;
 export inline std::atomic<std::uint64_t> g_moving_external_root_prep_register_total{0};
 inline constexpr int kMovingExternalRootPrepRegisterIssue = 2775;
 
+// Issue #2837: external-root *slot* remaps after Moving densify. Bumped
+// once per void** slot whose *slot value was rewritten via last_object_remap_.
+// Distinct from prep-register (#2775 value-only observability).
+export inline std::atomic<std::uint64_t> g_moving_external_root_slot_remap_total{0};
+// Issue #2837: sticky force densify-off after production hard incomplete-remap.
+// When set, moving_compact_enabled() returns 0 until clear (Agent must
+// re-register roots / clear sticky). Soft observe-only never arms sticky.
+export inline std::atomic<std::uint8_t> g_moving_incomplete_remap_sticky_densify_off{0};
+export inline std::atomic<std::uint64_t> g_moving_incomplete_remap_sticky_densify_off_total{0};
+inline constexpr int kMovingExternalRootRemapIssue = 2837;
+
+export inline void clear_moving_incomplete_remap_sticky_densify_off() noexcept {
+    g_moving_incomplete_remap_sticky_densify_off.store(0, std::memory_order_release);
+}
+
+export [[nodiscard]] inline bool moving_incomplete_remap_sticky_densify_off() noexcept {
+    return g_moving_incomplete_remap_sticky_densify_off.load(std::memory_order_acquire) != 0;
+}
+
 // Issue #2495/#2596: g_moving_untracked_hard_abort_pref defined in
 // arena_auto_policy_stats.h (header form for security_defaults.hh).
 // Visible here via #include in global fragment (namespace aura::ast).
@@ -572,6 +591,11 @@ export inline void set_moving_compact_enabled(int enabled) noexcept {
     g_moving_compact_enabled_pref.store(enabled ? 1 : 0, std::memory_order_release);
 }
 export inline int moving_compact_enabled() noexcept {
+    // Issue #2837: sticky densify-off after production incomplete-remap
+    // hard-fail. Overrides pref/env until clear_moving_incomplete_remap_
+    // sticky_densify_off() (or a clean Moving densify clears it).
+    if (g_moving_incomplete_remap_sticky_densify_off.load(std::memory_order_acquire) != 0)
+        return 0;
     const int pref = g_moving_compact_enabled_pref.load(std::memory_order_acquire);
     if (pref == 0 || pref == 1)
         return pref;
@@ -653,14 +677,18 @@ export struct LiveCompactResult {
     std::size_t untracked_kept_count = 0;
     // Issue #2775: per-call count of external roots registered via
     // ASTArena::register_external_root_for_densify(void*) / batch span
-    // that were cleared during this Moving densify window. The set is
-    // consumed atomically at the start of the Moving branch (before
-    // relocate_tracked_objects_for_moving_), regardless of whether the
-    // densify succeeds, hard-fails, or completes quietly. Per-call
-    // (last-window semantics #2376); Agent dashboards observe via
+    // that were cleared during this Moving densify window. Consumed after
+    // relocate + #2837 slot rewrite (prep values used for stale detection).
+    // Per-call (last-window semantics #2376); Agent dashboards observe via
     // moving_densify_health::snapshot().external_roots_prep_registered_last.
     // zero = no caller registered external roots before this Moving.
     std::size_t external_roots_prep_registered_cleared = 0;
+    // Issue #2837: count of void** slots rewritten via last_object_remap_
+    // during this Moving densify window.
+    std::size_t external_roots_remapped_count = 0;
+    // Issue #2837: prep-registered values that were densify old addresses
+    // but no slot rewrite covered them (stale external root residual).
+    std::size_t external_roots_stale_unremapped_count = 0;
     // Issue #2267: RootRemapPass counters (StableNodeRef + Closure captures).
     std::size_t root_remap_stable_ref_total = 0;
     std::size_t root_remap_stable_ref_fail_total = 0;
@@ -958,12 +986,28 @@ public:
         return external_roots_for_densify_.size();
     }
 
-    // Explicit clear (also called automatically at the start of each
-    // live_compact(Moving) work — see live_compact() body). Exposed for
-    // callers that want to reset prep state without running a Moving
-    // densify (e.g. test teardown, error recovery after caller knows the
-    // next Moving won't happen on this arena).
-    void clear_external_roots_for_densify() noexcept { external_roots_for_densify_.clear(); }
+    // Explicit clear (also called automatically at the end of each
+    // live_compact(Moving) work after slot rewrite — see live_compact()).
+    // Exposed for callers that want to reset prep state without running a
+    // Moving densify (e.g. test teardown, error recovery after caller knows
+    // the next Moving won't happen on this arena).
+    void clear_external_roots_for_densify() noexcept {
+        external_roots_for_densify_.clear();
+        external_root_slots_for_densify_.clear();
+    }
+
+    // Issue #2837: register a *slot* (void**) holding a pointer that may
+    // reference a densify-tracked object. After live_compact(Moving)
+    // relocates tracked objects, *slot is rewritten to the new address
+    // when *slot is a key in last_object_remap_. Also value-registers
+    // *slot via #2775 prep set (observability + stale detection).
+    // No-op when slot == nullptr or *slot == nullptr.
+    void register_external_root_slot_for_densify(void** slot) noexcept {
+        if (slot == nullptr || *slot == nullptr)
+            return;
+        external_root_slots_for_densify_.push_back(slot);
+        register_external_root_for_densify(*slot);
+    }
 
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
     // When set, allocate_raw consults allow_fn(owner, size) before
@@ -1359,8 +1403,11 @@ public:
     // Phase model:
     //   1. Mark: count live tracked objects (dtors_) + small-pool live bytes
     //   2. Relocate: freelist holes are reuse-slots (lazy relocate on next
-    //      alloc); count free slots as relocate-ready. Full pointer remapping
-    //      of still-live objects remains deferred (external raw pointers).
+    //      alloc); count free slots as relocate-ready. External root *slots*
+    //      registered via register_external_root_slot_for_densify (Issue
+    //      #2837) are rewritten after densify; unregistered external raw
+    //      pointers remain fail-closed (#2495/#2664) + sticky densify-off
+    //      under production hard incomplete-remap (#2837 option 3).
     //   3. Compact: conservative buffer trim (defrag_impl)
     //   4. Coordinate: compact hook + deopt throttle (no deopt storm)
     //
@@ -1431,18 +1478,12 @@ public:
             }
             ++stats_.live_compact_moving_count;
             g_live_compact_moving_count.fetch_add(1, std::memory_order_relaxed);
-            // Issue #2775: consume the per-arena prep-registered external roots
-            // for this Moving densify window. Captured into the result so Agent
-            // dashboards can verify caller compliance ("registered N external
-            // roots before Moving"); the set is then cleared so the next Moving
-            // window starts fresh. Consume happens AFTER the feature-flag +
-            // precondition gates so a blocked Moving window preserves the
-            // registration for the next attempt (caller intent not lost on a
-            // transient soft-gate / pin-count gate). Counter bump itself
-            // already fired at register time (g_moving_external_root_prep_
-            // register_total is process-wide cumulative).
-            result.external_roots_prep_registered_cleared = external_roots_for_densify_.size();
-            external_roots_for_densify_.clear();
+            // Issue #2775 / #2837: prep-registered external roots + slots
+            // are retained through relocate so #2837 can rewrite slots
+            // and detect stale unremapped prep values. Captured into the
+            // result after remapping; then cleared so the next Moving
+            // window starts fresh. Survives blocked-Moving early-returns
+            // above (caller intent not lost on soft-gate / pin-count gate).
             // Densify tracked create objects before freelist/tail compact.
             // Issue #2495: pass out_untracked_kept_count so we can detect
             // densify windows where Moving moved live objects but left
@@ -1454,6 +1495,54 @@ public:
             result.moved_live_objects = result.objects_moved > 0;
             stats_.objects_moved_total += result.objects_moved;
             g_objects_moved_total.fetch_add(result.objects_moved, std::memory_order_relaxed);
+
+            // Issue #2837: rewrite registered external-root slots via
+            // last_object_remap_. Soft / no-move: slot walk is O(registered)
+            // only when objects_moved > 0 (zero extra work on no-move).
+            // Track which densify-old values were covered by a slot rewrite.
+            std::size_t slots_remapped = 0;
+            std::unordered_set<void*> slot_covered_old;
+            if (result.objects_moved > 0 && !external_root_slots_for_densify_.empty() &&
+                !last_object_remap_.empty()) {
+                slot_covered_old.reserve(external_root_slots_for_densify_.size());
+                for (void** slot : external_root_slots_for_densify_) {
+                    if (slot == nullptr || *slot == nullptr)
+                        continue;
+                    auto it = last_object_remap_.find(*slot);
+                    if (it == last_object_remap_.end())
+                        continue;
+                    slot_covered_old.insert(it->first);
+                    *slot = it->second;
+                    ++slots_remapped;
+                }
+            }
+            result.external_roots_remapped_count = slots_remapped;
+            if (slots_remapped > 0) {
+                g_moving_external_root_slot_remap_total.fetch_add(slots_remapped,
+                                                                  std::memory_order_relaxed);
+            }
+
+            // Issue #2837: prep-registered values that densify moved but
+            // no slot rewrite covered → stale external residual.
+            std::size_t stale_unremapped = 0;
+            if (result.objects_moved > 0 && !external_roots_for_densify_.empty() &&
+                !last_object_remap_.empty()) {
+                for (void* p : external_roots_for_densify_) {
+                    if (p == nullptr)
+                        continue;
+                    if (last_object_remap_.find(p) == last_object_remap_.end())
+                        continue;
+                    if (slot_covered_old.find(p) == slot_covered_old.end())
+                        ++stale_unremapped;
+                }
+            }
+            result.external_roots_stale_unremapped_count = stale_unremapped;
+
+            // Consume prep registration for this window (Agent observability).
+            result.external_roots_prep_registered_cleared = external_roots_for_densify_.size();
+            external_roots_for_densify_.clear();
+            external_root_slots_for_densify_.clear();
+
             // Issue #2495: fail-closed against false safety under Moving default.
             // When densify moved objects AND untracked candidates existed, the
             // remap walk missed at least one potential live root (external raw
@@ -1461,7 +1550,10 @@ public:
             // cannot be claimed; bump the untracked counter and mark both
             // moving_incomplete_remap (observability) and pin_contract_held
             // (the unified failure flag the Phase 5 driver checks).
-            if (result.objects_moved > 0 && result.untracked_kept_count > 0) {
+            // Issue #2837: also fail-closed when prep-registered values
+            // densified without a covering slot rewrite (stale_unremapped).
+            if (result.objects_moved > 0 &&
+                (result.untracked_kept_count > 0 || stale_unremapped > 0)) {
                 result.moving_incomplete_remap = true;
                 result.pin_contract_held = false;
                 ++stats_.moving_untracked_external_roots_total;
@@ -1487,7 +1579,24 @@ public:
                     // Issue #2664: Agent-visible hard-fail counter.
                     g_moving_incomplete_remap_densify_hard_fail_total.fetch_add(
                         1, std::memory_order_relaxed);
+                    // Issue #2837: sticky force densify-off until roots are
+                    // re-registered / sticky cleared. Agents see
+                    // would_allow_mutate=false + moving_compact_enabled=0.
+                    // Soft (hard_pref <= 0) does not arm sticky densify-off
+                    // (this branch is hard_pref > 0 only).
+                    const auto prev_sticky = g_moving_incomplete_remap_sticky_densify_off.exchange(
+                        1, std::memory_order_acq_rel);
+                    if (prev_sticky == 0) {
+                        g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
+            } else if (result.objects_moved > 0 && !result.moving_incomplete_remap &&
+                       result.pin_contract_held) {
+                // Issue #2837: clean Moving densify clears sticky densify-off
+                // so Agents can resume densify after re-registering roots
+                // and completing a green window.
+                clear_moving_incomplete_remap_sticky_densify_off();
             }
         } else {
             // Force path (#2160 / #2157).
@@ -2220,16 +2329,15 @@ private:
     std::unordered_map<void*, void*> last_object_remap_;
     // Issue #2775: external roots registered by callers via
     // register_external_root_for_densify(void*) / batch span before a
-    // Moving densify. Optional additive observability — callers declare
-    // external pointers (EvalValue pools, closure captures, known external
-    // holders) they hold; arena stores them and reports the count via
-    // LiveCompactResult::external_roots_prep_registered_cleared on the
-    // Moving branch. Consumed (captured + cleared) at the start of each
-    // live_compact(Moving) work, so the next Moving window starts fresh.
-    // Survives live_compact(Soft) / live_compact(Force) / blocked-Moving
-    // early-returns — caller is responsible for re-registering per window
-    // they want covered. Process-wide counter bump lives on register.
+    // Moving densify. Value-only observability + #2837 stale detection.
+    // Consumed (captured + cleared) after relocate + slot rewrite on each
+    // live_compact(Moving) work. Survives Soft / Force / blocked-Moving
+    // early-returns — caller re-registers per window they want covered.
     std::unordered_set<void*> external_roots_for_densify_;
+    // Issue #2837: void** slots registered via
+    // register_external_root_slot_for_densify. Rewritten after densify when
+    // *slot is a key in last_object_remap_. Cleared with the prep set.
+    std::vector<void**> external_root_slots_for_densify_;
     // Issue #300 Phase 3: see request_defrag() / defrag_requested()
     // / clear_defrag_request() for semantics.
     std::atomic<bool> defrag_requested_{false};

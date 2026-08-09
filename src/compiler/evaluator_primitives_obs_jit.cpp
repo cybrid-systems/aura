@@ -11737,6 +11737,20 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2596", 2596);
             insert_kv("issue-2596", 2596);
             insert_kv("schema-2495", 2495);
+            // Issue #2837: external-root slot remap + sticky densify-off.
+            insert_kv(
+                "external-root-slot-remap-total",
+                static_cast<std::int64_t>(aura::ast::g_moving_external_root_slot_remap_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("sticky-densify-off",
+                      aura::ast::moving_incomplete_remap_sticky_densify_off() ? 1 : 0);
+            insert_kv("sticky-densify-off-total",
+                      static_cast<std::int64_t>(
+                          aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("external-root-remap-wired", 1);
+            insert_kv("schema-2837", 2837);
+            insert_kv("issue-2837", 2837);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
