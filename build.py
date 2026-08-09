@@ -1311,6 +1311,18 @@ def cmd_lint():
             "Issue #2817 cascade ghost-name defuse_touch linter failed — run python3 scripts/coverage/checks/check_cascade_defuse_touch_null_define_2817.py"
         )
         return r
+    # Issue #2818: should_audit Full cold-start; Sampled only via apply_dev.
+    # ac2818 in test_should_audit_sampled_default.
+    sas_script = COVERAGE_CHECKS / "check_should_audit_sampled_default_2818.py"
+    if not sas_script.exists():
+        fail(f"missing {sas_script}")
+        return 1
+    r = run([sys.executable, str(sas_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2818 should_audit Sampled default linter failed — run python3 scripts/coverage/checks/check_should_audit_sampled_default_2818.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

@@ -8816,7 +8816,7 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                   : 0;
             const std::int64_t active = 1;
             auto* ht = FlatHashTable::create(
-                64) /* #1141 / #1894 / #2053 — #2288 added 3 keys (table was full at 48) */;
+                80) /* #1141 / #1894 / #2053 / #2814 / #2818 — room for schema keys */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8888,6 +8888,24 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                               std::memory_order_relaxed)));
             insert_kv("schema-2814", 2814);
             insert_kv("issue-2814", 2814);
+            // Issue #2818: Sampled under-sample without apply_dev opt-in.
+            insert_kv(
+                "audit-strategy-default-warnings-total",
+                static_cast<std::int64_t>(
+                    g_typed_mutation_audit_counters.audit_strategy_default_warnings_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv("dev-audit-opt-in", static_cast<std::int64_t>(
+                                              g_typed_mutation_audit_counters.dev_audit_opt_in.load(
+                                                  std::memory_order_relaxed)));
+            insert_kv("samples-skipped", static_cast<std::int64_t>(
+                                             g_typed_mutation_audit_counters.samples_skipped.load(
+                                                 std::memory_order_relaxed)));
+            insert_kv(
+                "audits-considered",
+                static_cast<std::int64_t>(g_typed_mutation_audit_counters.audits_considered.load(
+                    std::memory_order_relaxed)));
+            insert_kv("schema-2818", 2818);
+            insert_kv("issue-2818", 2818);
             // Issue #2053: production audit defaults
             insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
             insert_kv("strategy",
