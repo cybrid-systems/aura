@@ -1359,6 +1359,18 @@ def cmd_lint():
             "Issue #2821 enable_soa_dual_emit no-reset linter failed — run python3 scripts/coverage/checks/check_enable_soa_dual_emit_no_reset_2821.py"
         )
         return r
+    # Issue #2822: run_one auto-wires pipeline epoch when TLS unset.
+    # ac2822 in test_run_one_epoch_default.
+    roe_script = COVERAGE_CHECKS / "check_run_one_epoch_default_2822.py"
+    if not roe_script.exists():
+        fail(f"missing {roe_script}")
+        return 1
+    r = run([sys.executable, str(roe_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2822 run_one epoch default linter failed — run python3 scripts/coverage/checks/check_run_one_epoch_default_2822.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

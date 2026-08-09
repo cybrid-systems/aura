@@ -18,6 +18,7 @@ module;
 #include <vector>
 
 #include "core/cpp26_contract_stats.h"
+#include "core/workspace_epoch.hh"             // Issue #2822: current_mutation_epoch auto-wire
 #include "compiler/observability_metrics.h"    // Issue #1425: dead_coercion_eliminated_total
 #include "compiler/jit_typed_mutation_stats.h" // Issue #1629: dual-emit flag early-out
 
@@ -96,6 +97,12 @@ export inline std::atomic<std::uint64_t> pass_pipeline_runs_total{0};
 // Issue #1322 Phase 1: DirtyAware + SoAView + epoch coordination metrics.
 export inline std::atomic<std::uint64_t> pipeline_dirty_short_circuit_total{0};
 export inline std::atomic<std::uint64_t> pipeline_epoch_sync_total{0};
+// Issue #2822: run_one auto-resolved epoch because TLS pipeline epoch was 0
+// (caller never called set_pipeline_mutation_epoch).
+export inline std::atomic<std::uint64_t> pipeline_epoch_unset_runs_total{0};
+// Issue #2822: floor when process mutation epoch is also 0 so JITFriendly
+// passes always leave run_one with a non-zero pipeline_epoch_hint.
+export inline constexpr std::uint64_t kPipelineEpochBaseFloor = 1;
 export inline std::atomic<std::uint64_t> pipeline_hotpath_light_analysis_total{0};
 
 // ── Issue #1574: define-level dirty bitmask → optimization pipeline ──
@@ -418,16 +425,32 @@ bool run_one(aura::ir::IRModule& mod, P& pass) pre(&pass != nullptr)
         pass_pipeline_detail::g_pipeline_yield_hook()) {
         pipeline_yield_count.fetch_add(1, std::memory_order_relaxed);
     }
-    // Issue #1322: sync JITFriendlyPass epoch hint when pipeline context set.
+    // Issue #1322 / #2822: sync JITFriendlyPass epoch hint.
+    // Prior: if (epoch != 0) only — silently skipped when callers never
+    // wired set_pipeline_mutation_epoch (TLS default 0), so JIT-friendly
+    // passes kept pipeline_epoch_hint()==0 and pipeline_epoch_sync_total
+    // undercounted. #2822 auto-wires from process mutation epoch and
+    // floors at kPipelineEpochBaseFloor so sync always runs.
     if constexpr (requires(P& p) {
                       p.set_pipeline_epoch(std::uint64_t{});
                       { p.pipeline_epoch_hint() } -> std::convertible_to<std::uint64_t>;
                   }) {
-        const auto epoch = pass_pipeline_detail::g_pipeline_mutation_epoch;
-        if (epoch != 0) {
-            pass.set_pipeline_epoch(epoch);
-            pipeline_epoch_sync_total.fetch_add(1, std::memory_order_relaxed);
+        auto epoch = pass_pipeline_detail::g_pipeline_mutation_epoch;
+        if (epoch == 0) {
+            // Issue #2822: TLS unset — auto-init from process-global mutation epoch.
+            pipeline_epoch_unset_runs_total.fetch_add(1, std::memory_order_relaxed);
+            const auto proc = aura::core::current_mutation_epoch();
+            if (proc != 0) {
+                epoch = proc;
+                // Cache real process epoch so later passes in this pipeline
+                // share one resolve; set_pipeline_mutation_epoch still overrides.
+                pass_pipeline_detail::g_pipeline_mutation_epoch = proc;
+            } else {
+                epoch = kPipelineEpochBaseFloor;
+            }
         }
+        pass.set_pipeline_epoch(epoch);
+        pipeline_epoch_sync_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #1322: under render/JIT hot path, count light-analysis samples
     // (full pass still runs in Phase 1; lighter skip policy is follow-up).
