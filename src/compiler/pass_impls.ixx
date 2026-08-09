@@ -4076,6 +4076,7 @@ public:
     void run(aura::ir::IRModule& module) {
         tco_count_ = 0;
         tco_inter_block_count_ = 0;
+        tco_dead_block_count_ = 0;
         // Build func_id → IRFunction* index (same pattern as
         // InlinePass for O(1) lookup).
         if (func_index_.size() != module.functions.size()) {
@@ -4111,6 +4112,11 @@ public:
             for (auto& block : func.blocks) {
                 run_on_block(func, block, slot_to_func);
             }
+            // Issue #2831: reclaim blocks left unreachable after
+            // inter-block Jump retargets (preds rewritten away).
+            // Without this, dead Call/Return → Jump shells stay in
+            // func.blocks forever and bloat long-running sessions.
+            sweep_dead_blocks(func);
         }
     }
 
@@ -4118,6 +4124,12 @@ public:
     std::string_view name() const { return "tco"; }
     std::size_t tco_count() const { return tco_count_; }
     std::size_t tco_inter_block_count() const { return tco_inter_block_count_; }
+    // Issue #2831: dead blocks reclaimed this run (per-module).
+    std::size_t tco_dead_block_count() const { return tco_dead_block_count_; }
+    // Process-wide cumulative reclaimed dead blocks.
+    static std::uint64_t tco_dead_block_total() noexcept {
+        return tco_dead_block_total_.load(std::memory_order_relaxed);
+    }
     // Issue #2434: HotPassDodCompliant + pure Wrap (local Call+Return rewrite).
     [[nodiscard]] constexpr bool uses_soa_view() const noexcept { return true; }
     static constexpr bool kPureWrap = true;
@@ -4337,8 +4349,75 @@ private:
         return true;
     }
 
+    // Issue #2831: drop blocks unreachable from entry after TCO
+    // rewrote Jump preds away. Reachability via Jump/Branch targets
+    // (block.id), never by vector index — ids are stable.
+    void sweep_dead_blocks(aura::ir::IRFunction& func) {
+        if (func.blocks.size() <= 1)
+            return;
+
+        std::unordered_map<std::uint32_t, std::size_t> id_to_idx;
+        id_to_idx.reserve(func.blocks.size());
+        for (std::size_t i = 0; i < func.blocks.size(); ++i)
+            id_to_idx[func.blocks[i].id] = i;
+
+        std::unordered_set<std::uint32_t> live;
+        std::vector<std::uint32_t> work;
+        live.reserve(func.blocks.size());
+        work.reserve(func.blocks.size());
+
+        // Prefer entry_block; fall back to first block if missing.
+        std::uint32_t start = func.entry_block;
+        if (id_to_idx.find(start) == id_to_idx.end())
+            start = func.blocks[0].id;
+        live.insert(start);
+        work.push_back(start);
+
+        auto enqueue = [&](std::uint32_t tid) {
+            if (id_to_idx.find(tid) == id_to_idx.end())
+                return;
+            if (live.insert(tid).second)
+                work.push_back(tid);
+        };
+
+        while (!work.empty()) {
+            const auto id = work.back();
+            work.pop_back();
+            const auto it = id_to_idx.find(id);
+            if (it == id_to_idx.end())
+                continue;
+            const auto& block = func.blocks[it->second];
+            for (const auto& instr : block.instructions) {
+                if (instr.opcode == aura::ir::IROpcode::Jump) {
+                    enqueue(instr.operands[0]);
+                } else if (instr.opcode == aura::ir::IROpcode::Branch) {
+                    // Branch: ops[0]=cond, ops[1]=then, ops[2]=else
+                    enqueue(instr.operands[1]);
+                    enqueue(instr.operands[2]);
+                }
+            }
+        }
+
+        if (live.size() == func.blocks.size())
+            return;
+
+        std::vector<aura::ir::BasicBlock> kept;
+        kept.reserve(live.size());
+        for (auto& b : func.blocks) {
+            if (live.count(b.id)) {
+                kept.push_back(std::move(b));
+            } else {
+                ++tco_dead_block_count_;
+                tco_dead_block_total_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        func.blocks = std::move(kept);
+    }
+
     std::size_t tco_count_ = 0;
     std::size_t tco_inter_block_count_ = 0;
+    std::size_t tco_dead_block_count_ = 0; // Issue #2831
+    static inline std::atomic<std::uint64_t> tco_dead_block_total_{0};
     std::vector<const aura::ir::IRFunction*> func_index_;
 };
 

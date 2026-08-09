@@ -31,6 +31,7 @@ module;
 #include <chrono>
 #include "typed_mutation_audit.h"
 #include "compiler/ownership_rebind.h"     // Issue #2854: last_ownership_rebind_report_v_read
+#include "compiler/hot_update_registry.hh" // Issue #2855: force-drain counters + registry
 #include "compiler/mutation_hold_budget.h" // Issue #2313
 #include "core/persistent_child_vector.hh" // Issue #2406: query:pcv-hotpath-stats
 #include "core/gc_hooks.h"
@@ -17169,6 +17170,12 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"dce-variable-arg-scan-wired", make_int(1)},
                 {"schema-2830", make_int(2830)},
                 {"issue-2830", make_int(2830)},
+                // Issue #2831: TCO reclaims unreachable dead blocks.
+                {"tco-dead-block-total", make_int(static_cast<std::int64_t>(
+                                             aura::compiler::TCOPass::tco_dead_block_total()))},
+                {"tco-dead-block-sweep-wired", make_int(1)},
+                {"schema-2831", make_int(2831)},
+                {"issue-2831", make_int(2831)},
                 // lineage 1576 + #2025 + #2106 + #2130 dirty peel
                 {"schema", make_int(2130)},
             };

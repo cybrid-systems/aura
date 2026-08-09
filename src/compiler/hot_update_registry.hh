@@ -113,15 +113,17 @@ public:
     [[nodiscard]] static std::uint64_t reemit_deferred_force_drain_deadline_hit_env_read() noexcept;
     inline static std::atomic<std::uint64_t> g_force_drain_deadline_hit_total_{
         0}; // mirrors deadline_hit_total_; force gate
-    // Issue #2855 file-scope atomics (mirror #2854 / #2853 patterns).
-    inline std::atomic<std::uint64_t> g_reemit_deferred_force_drain_total_{0};
-    inline std::atomic<std::uint64_t> g_reemit_deferred_force_drain_skipped_reentered_total_{0};
-    inline std::atomic<std::uint64_t> g_reemit_deferred_force_drain_double_prevented_total_{0};
+    // Issue #2855 process-wide atomics (static members; mirror deadline_hit).
+    inline static std::atomic<std::uint64_t> g_reemit_deferred_force_drain_total_{0};
+    inline static std::atomic<std::uint64_t> g_reemit_deferred_force_drain_skipped_reentered_total_{
+        0};
+    inline static std::atomic<std::uint64_t> g_reemit_deferred_force_drain_double_prevented_total_{
+        0};
     // CAS re-entry guard — single force-drain body in flight at a time
     // across the whole process (thread-safe via atomic_bool CAS). Reset to
     // false after the body returns (RAII-like via scoped flag holder).
-    inline std::atomic<bool> g_reemit_force_drain_in_flight_{false};
-    inline constexpr int kReemitForceDrainIssue = 2855;
+    inline static std::atomic<bool> g_reemit_force_drain_in_flight_{false};
+    static constexpr int kReemitForceDrainIssue = 2855;
     // Issue #2094: unified StormLevel facade. Combines
     // HotUpdateRegistry's sliding-window deopt storm (global reemit
     // throttle) with ShapeProfiler's shape-storm detector into a
