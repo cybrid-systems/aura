@@ -3157,6 +3157,33 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> schema_validate_on_commit_ok_total{0};   // #2859
     std::atomic<std::uint64_t> schema_validate_on_commit_fail_total{0}; // #2859
 
+    // Issue #2861: query:pattern full safety contract metrics
+    // (refine #819 / #2036 / #2123 / #2763 / #2525). Tracks the
+    // non-negotiable safety contract surfaces mandated by #2861:
+    //   - pattern_safe_span_uses_total: every SafePCVSpan / children_
+    //       safe_view walk on the public surface. Raw std::span over
+    //       PCV is forbidden; this counter must grow on every
+    //       pattern matcher walk and stay non-zero under load.
+    //   - pattern_hygiene_filtered_total: MacroIntroduced nodes
+    //       skipped by the default filter (per AC: "Default hygiene
+    //       filter; opt-in works"). Bumped in the matcher when
+    //       include_macro_introduced == false and a MacroIntroduced
+    //       node is skipped.
+    //   - pattern_epoch_mismatch_total: QueryEpoch (mutation_epoch +
+    //       generation) mismatch detected under concurrent Guard.
+    //       Coordinate with workspace isolation policy (per AC #5).
+    //   - pattern_dangling_prevented_total: StableNodeRef returned
+    //       from a pattern walk that failed is_valid_in / refresh
+    //       under concurrent mutate and was dropped before the
+    //       caller observed it (per AC #3: "zero stale refs").
+    // Distinct from existing tag_arity_index_hit_rate
+    // (query:pattern-index-stats #547) and macro_marker counters
+    // (#2858 restamp); these are the #2861 contract-level surfaces.
+    std::atomic<std::uint64_t> pattern_safe_span_uses_total{0};     // #2861
+    std::atomic<std::uint64_t> pattern_hygiene_filtered_total{0};   // #2861
+    std::atomic<std::uint64_t> pattern_epoch_mismatch_total{0};     // #2861
+    std::atomic<std::uint64_t> pattern_dangling_prevented_total{0}; // #2861
+
     // Issue #2170: LayoutStamp publish + last-stamp fields (P1
     // MemorySafety-Review / Epoch). Backs the extended
     // (query:stable-ref-stats-hash) keys layout-stamp-*.

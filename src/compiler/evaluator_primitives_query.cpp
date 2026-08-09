@@ -2512,6 +2512,58 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                       rebuild_time_us + delta_hits));
         });
 
+    // Issue #2861: query:pattern-safety-stats. Hash view of the
+    // query:pattern full safety contract metrics (refine #819 /
+    // #2036 / #2123 / #2763 / #2525). Tracks the 4 non-negotiable
+    // safety contract surfaces mandated by #2861 AC #7
+    // ("metrics on query stats surface"):
+    //   - pattern-safe-span-uses-total: every SafePCVSpan /
+    //       children_ safe_view walk on the public surface (raw
+    //       std::span over PCV is forbidden).
+    //   - pattern-hygiene-filtered-total: MacroIntroduced nodes
+    //       skipped by the default filter (opt-in via
+    //       :include-macro-introduced).
+    //   - pattern-epoch-mismatch-total: QueryEpoch (mutation_epoch
+    //       + generation) mismatch detected under concurrent Guard.
+    //   - pattern-dangling-prevented-total: StableNodeRef returned
+    //       from a pattern walk that failed is_valid_in / refresh
+    //       under concurrent mutate and was dropped.
+    // Distinct from #547 pattern-index-stats (tag_arity_index hot
+    // path) and #490 pattern-index-rebuild-stats (lazy vs eager
+    // rebuild) — these are the #2861 contract-level surfaces
+    // covering SafePCVSpan + hygiene filter + QueryEpoch + StableNodeRef.
+    ObservabilityPrims::register_stats_impl(
+        "query:pattern-safety-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t safe_span_uses =
+                m ? m->pattern_safe_span_uses_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t hygiene_filtered =
+                m ? m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t epoch_mismatch =
+                m ? m->pattern_epoch_mismatch_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t dangling_prevented =
+                m ? m->pattern_dangling_prevented_total.load(std::memory_order_relaxed) : 0;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            (void)ht->insert_pair("schema", make_int(2861));
+            (void)ht->insert_pair("issue", make_int(2861));
+            (void)ht->insert_pair("pattern-safe-span-uses-total",
+                                  make_int(static_cast<std::int64_t>(safe_span_uses)));
+            (void)ht->insert_pair("pattern-hygiene-filtered-total",
+                                  make_int(static_cast<std::int64_t>(hygiene_filtered)));
+            (void)ht->insert_pair("pattern-epoch-mismatch-total",
+                                  make_int(static_cast<std::int64_t>(epoch_mismatch)));
+            (void)ht->insert_pair("pattern-dangling-prevented-total",
+                                  make_int(static_cast<std::int64_t>(dangling_prevented)));
+            return make_hash(ht);
+        });
+
     // Issue #490 / #1503: query:pattern-index-rebuild-stats. Hash view of
     // lazy vs eager Evaluator index rebuild counters + FlatAST timing +
     // incremental maintenance policy (threshold, auto-warm, patches).
