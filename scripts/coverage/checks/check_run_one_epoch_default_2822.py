@@ -42,7 +42,8 @@ def main() -> int:
     pos = core.find("execute a single pass")
     if pos < 0:
         pos = core.rfind("bool run_one")
-    body = core[pos : pos + 2800] if pos >= 0 else ""
+    # Window must cover yield (#2823) + epoch (#2822) blocks inside run_one.
+    body = core[pos : pos + 4500] if pos >= 0 else ""
 
     # AC1
     must("Issue #2822", "AC1", body)
