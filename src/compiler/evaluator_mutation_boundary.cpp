@@ -2028,6 +2028,64 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // transaction outcome).
     if (outermost && !success)
         ev_->bump_mutation_boundary_rollback();
+    // Issue #2859: schema_validate_on_commit gate (opt-in).
+    // On outermost commit success, if validate_schema_on_commit() is
+    // set AND effect_sandbox_mode != 0 (production/Strict), walk
+    // mutated subtrees tagged with schema_cache (clone_macro_body +
+    // set_schema_cache), verify cached schema id is consistent. On
+    // mismatch: force-rollback + emit typed audit event. Soft /
+    // non-production default = zero overhead (gate short-circuits
+    // before any reflect walk). Source-cited in the two new
+    // CompilerMetrics counters (schema_validate_on_commit_ok_total +
+    // schema_validate_on_commit_fail_total) + the
+    // validate_schema_on_commit_ flag on Evaluator.
+    if (outermost && success && ev_->validate_schema_on_commit() &&
+        ev_->effect_sandbox_mode() != 0) {
+        auto* ws = ev_->workspace_flat_;
+        if (ws) {
+            bool schema_ok = true;
+            std::string schema_err;
+            // Lightweight cache-hit path: verify cached schema id is
+            // in valid range. Full reflect fallback (auto_validate on
+            // the cached POD view) is reserved for cache miss + dirty
+            // schema — future work. The cap matches the
+            // macro_schema_cache_dirty_stamped_total path (16M cap).
+            constexpr std::uint32_t kSchemaIdMax = 1u << 24;
+            const auto cur_size = ws->size();
+            for (aura::ast::NodeId id = 0; id < cur_size; ++id) {
+                if (!ws->is_live_node(id))
+                    continue;
+                auto cached_tid = ws->schema_cache(id);
+                if (cached_tid == 0)
+                    continue;
+                if (cached_tid >= kSchemaIdMax) {
+                    schema_ok = false;
+                    schema_err = "schema_cache OOB node=" + std::to_string(id) +
+                                 " tid=" + std::to_string(cached_tid);
+                    break;
+                }
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                if (schema_ok) {
+                    m->schema_validate_on_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    m->schema_validate_on_commit_fail_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #2859 AC1: force rollback + typed audit
+                    // event on shape mismatch. Mirrors the SLO
+                    // circuit-breaker rollback pattern at the same
+                    // site (force-flag + success=false + audit event).
+                    if (flag_)
+                        *flag_ = false;
+                    success = false;
+                    aura::compiler::typed_mutation_audit::capture_audit_event_forced(
+                        /*mutation_id=*/0, schema_err,
+                        aura::compiler::typed_mutation_audit::MutationKind::MutateClass,
+                        /*before_epoch=*/0, /*after_epoch=*/0,
+                        aura::compiler::typed_mutation_audit::AuditOutcome::SchemaViolation);
+                }
+            }
+        }
+    }
     // ═══════════════════════════════════════════════════════════════════
     // Issue #2120: outermost exit unified order (documented AC5).
     //

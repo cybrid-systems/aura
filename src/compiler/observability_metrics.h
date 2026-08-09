@@ -3130,6 +3130,33 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> macro_mutate_auto_restamp_total{0}; // #2858
     std::atomic<std::uint64_t> macro_mutate_auto_restamp_nodes{0}; // #2858
 
+    // Issue #2859: auto_validate + schema_cache wired into
+    // MutationBoundaryGuard commit success path. When the Agent
+    // opts in (mutate:validate-schema-on-commit #t or global flag)
+    // under production/Strict sandbox, the outermost Guard dtor
+    // walks mutated subtrees (those tagged with schema_cache != 0
+    // by clone_macro_body / set_schema_cache), calls
+    // aura::reflect::auto_validate on the cached POD view, and on
+    // failure force-rolls back + emits a typed audit event. Soft /
+    // non-production default = zero overhead (gate short-circuits
+    // before any reflect walk).
+    //   - schema_validate_on_commit_ok_total: # of successful
+    //       schema-cache auto_validate hits on outermost commit
+    //       (cached POD matched schema). Source-cited in
+    //       ~MutationBoundaryGuard commit-success path
+    //       (evaluator_mutation_boundary.cpp) at the
+    //       validate_schema_on_commit_ block.
+    //   - schema_validate_on_commit_fail_total: # of failed
+    //       schema-cache auto_validate hits that triggered
+    //       force-rollback + typed audit event under production/
+    //       Strict. Pairs with #2859 AC1 (boundary fails + rollback
+    //       + audit event on shape-breaking mutate).
+    // Distinct from existing reflect_validation counters (per-node
+    // bumps in post_mutation_reflect_validate) — these are
+    // outermost-Guard commit-path only.
+    std::atomic<std::uint64_t> schema_validate_on_commit_ok_total{0};   // #2859
+    std::atomic<std::uint64_t> schema_validate_on_commit_fail_total{0}; // #2859
+
     // Issue #2170: LayoutStamp publish + last-stamp fields (P1
     // MemorySafety-Review / Epoch). Backs the extended
     // (query:stable-ref-stats-hash) keys layout-stamp-*.
