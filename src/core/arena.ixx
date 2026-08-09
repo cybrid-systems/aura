@@ -552,6 +552,18 @@ export inline std::atomic<std::uint64_t> g_moving_unified_success_total{0};
 export inline std::atomic<std::uint64_t> g_moving_unified_fail_total{0};
 inline constexpr int kMovingUnifiedSuccessGateIssue = 2682;
 
+// Issue #2775: process-wide counter for external roots registered via
+// ASTArena::register_external_root_for_densify(void*) / batch span.
+// Bumped on each unique-pointer insert into the per-arena set (one bump
+// per pointer, not per call). Additive only — no schema break for the
+// existing g_moving_unified_success_total / _fail_total / untracked_
+// external_roots_total surfaces. Agent dashboards use this to verify
+// caller compliance with "register all external roots before Moving"
+// contract; live_compact(Moving) consumes the per-arena set on each
+// Moving densify window (last-call semantics #2376 pattern).
+export inline std::atomic<std::uint64_t> g_moving_external_root_prep_register_total{0};
+inline constexpr int kMovingExternalRootPrepRegisterIssue = 2775;
+
 // Issue #2495/#2596: g_moving_untracked_hard_abort_pref defined in
 // arena_auto_policy_stats.h (header form for security_defaults.hh).
 // Visible here via #include in global fragment (namespace aura::ast).
@@ -639,6 +651,16 @@ export struct LiveCompactResult {
     // untracked_kept_count > 0, moving_incomplete_remap is set. Visible
     // to Agent dashboards so untracked-buffer accumulation is observable.
     std::size_t untracked_kept_count = 0;
+    // Issue #2775: per-call count of external roots registered via
+    // ASTArena::register_external_root_for_densify(void*) / batch span
+    // that were cleared during this Moving densify window. The set is
+    // consumed atomically at the start of the Moving branch (before
+    // relocate_tracked_objects_for_moving_), regardless of whether the
+    // densify succeeds, hard-fails, or completes quietly. Per-call
+    // (last-window semantics #2376); Agent dashboards observe via
+    // moving_densify_health::snapshot().external_roots_prep_registered_last.
+    // zero = no caller registered external roots before this Moving.
+    std::size_t external_roots_prep_registered_cleared = 0;
     // Issue #2267: RootRemapPass counters (StableNodeRef + Closure captures).
     std::size_t root_remap_stable_ref_total = 0;
     std::size_t root_remap_stable_ref_fail_total = 0;
@@ -690,6 +712,16 @@ export struct AdaptiveCompactResult {
     std::size_t objects_moved_total = 0;
     std::size_t untracked_kept_total = 0;
     bool moving_incomplete_remap_any = false;
+    // Issue #2775: aggregate of LiveCompactResult::external_roots_prep_registered_cleared
+    // across all arenas in this densify window. Pure observability for
+    // Agent dashboards (caller compliance with "register all external
+    // roots before Moving" contract). Does NOT gate any success / fail
+    // predicate (per AC4 — additive only, surfaces preserved). Phase 5
+    // reads this into a local and passes it to
+    // publish_last_moving_densify_window so
+    // moving_densify_health::snapshot().external_roots_prep_registered_last
+    // reflects the last window's caller compliance.
+    std::size_t external_roots_prep_registered_total = 0;
 
     [[nodiscard]] bool empty() const noexcept {
         return bytes_reclaimed_total == 0 && pin_contract_held && !moved_live_objects &&
@@ -888,6 +920,50 @@ public:
         std::lock_guard<std::mutex> lock(root_remap_mtx_);
         return static_cast<bool>(root_remap_);
     }
+
+    // Issue #2775: register an external pointer that the caller holds and
+    // wants declared for the next live_compact(Moving) densify. Single-
+    // pointer overload. Bumps g_moving_external_root_prep_register_total
+    // exactly once per unique pointer (set semantics; duplicate register
+    // is a no-op for the counter). The per-arena set is cleared at the
+    // start of each live_compact(Moving) work (consumed for that window)
+    // and never cleared by Soft / Force / blocked-Moving calls — caller
+    // must re-register for each Moving window they want covered.
+    // No-op when p == nullptr (callers may pass nullptr from nullable
+    // external captures; those don't need densify coverage).
+    void register_external_root_for_densify(void* p) noexcept {
+        if (p == nullptr)
+            return;
+        const bool inserted = external_roots_for_densify_.insert(p).second;
+        if (inserted)
+            g_moving_external_root_prep_register_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Batch span overload — bumps counter by count of newly-inserted
+    // pointers (set dedup). nullptr entries are skipped (mirrors the
+    // single-pointer overload contract). Span may be empty (no-op).
+    void register_external_root_for_densify(std::span<void* const> ptrs) noexcept {
+        for (void* p : ptrs) {
+            if (p == nullptr)
+                continue;
+            const bool inserted = external_roots_for_densify_.insert(p).second;
+            if (inserted)
+                g_moving_external_root_prep_register_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    // Read-only accessor for caller-side observability (tests, Agent
+    // dashboards, soft pre-Moving introspection).
+    [[nodiscard]] std::size_t external_roots_for_densify_count() const noexcept {
+        return external_roots_for_densify_.size();
+    }
+
+    // Explicit clear (also called automatically at the start of each
+    // live_compact(Moving) work — see live_compact() body). Exposed for
+    // callers that want to reset prep state without running a Moving
+    // densify (e.g. test teardown, error recovery after caller knows the
+    // next Moving won't happen on this arena).
+    void clear_external_roots_for_densify() noexcept { external_roots_for_densify_.clear(); }
 
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
     // When set, allocate_raw consults allow_fn(owner, size) before
@@ -1355,6 +1431,18 @@ public:
             }
             ++stats_.live_compact_moving_count;
             g_live_compact_moving_count.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2775: consume the per-arena prep-registered external roots
+            // for this Moving densify window. Captured into the result so Agent
+            // dashboards can verify caller compliance ("registered N external
+            // roots before Moving"); the set is then cleared so the next Moving
+            // window starts fresh. Consume happens AFTER the feature-flag +
+            // precondition gates so a blocked Moving window preserves the
+            // registration for the next attempt (caller intent not lost on a
+            // transient soft-gate / pin-count gate). Counter bump itself
+            // already fired at register time (g_moving_external_root_prep_
+            // register_total is process-wide cumulative).
+            result.external_roots_prep_registered_cleared = external_roots_for_densify_.size();
+            external_roots_for_densify_.clear();
             // Densify tracked create objects before freelist/tail compact.
             // Issue #2495: pass out_untracked_kept_count so we can detect
             // densify windows where Moving moved live objects but left
@@ -2130,6 +2218,18 @@ private:
     // Issue #2166: old→new create-object addresses from last Moving densify.
     // Cleared/rebuilt each Moving call; Soft/Force leave it empty.
     std::unordered_map<void*, void*> last_object_remap_;
+    // Issue #2775: external roots registered by callers via
+    // register_external_root_for_densify(void*) / batch span before a
+    // Moving densify. Optional additive observability — callers declare
+    // external pointers (EvalValue pools, closure captures, known external
+    // holders) they hold; arena stores them and reports the count via
+    // LiveCompactResult::external_roots_prep_registered_cleared on the
+    // Moving branch. Consumed (captured + cleared) at the start of each
+    // live_compact(Moving) work, so the next Moving window starts fresh.
+    // Survives live_compact(Soft) / live_compact(Force) / blocked-Moving
+    // early-returns — caller is responsible for re-registering per window
+    // they want covered. Process-wide counter bump lives on register.
+    std::unordered_set<void*> external_roots_for_densify_;
     // Issue #300 Phase 3: see request_defrag() / defrag_requested()
     // / clear_defrag_request() for semantics.
     std::atomic<bool> defrag_requested_{false};
@@ -2734,6 +2834,12 @@ public:
             out.untracked_kept_total += r.untracked_kept_count;
             out.moving_incomplete_remap_any =
                 out.moving_incomplete_remap_any || r.moving_incomplete_remap;
+            // Issue #2775: aggregate prep-registered external roots count
+            // across all arenas. Pure observability — does not gate any
+            // success / fail predicate. Phase 5 reads this into a local and
+            // passes it to publish_last_moving_densify_window so Agent
+            // dashboards see caller compliance with the prep-API contract.
+            out.external_roots_prep_registered_total += r.external_roots_prep_registered_cleared;
         }
         if (out.root_remap_stable_ref_fail_total + out.root_remap_closure_capture_fail_total > 0)
             out.pin_contract_held = false;

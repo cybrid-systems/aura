@@ -22,6 +22,7 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.core.arena; // Issue #2775: ASTArena::register_external_root_for_densify direct test
 
 namespace {
 
@@ -31,6 +32,7 @@ using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
 namespace mdh = aura::core::moving_densify_health;
+using aura::ast::ASTArena; // Issue #2775: prep API direct test surface
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -267,10 +269,138 @@ static void ac2682_source_cite() {
     }
 }
 
+// ── #2775 AC1: prep API single register bumps counter + set state ──
+static void ac2775_prep_register_single() {
+    std::println("\n--- #2775 AC1: prep API single register ---");
+    ASTArena arena;
+    int dummy1 = 0;
+    const auto before = aura::ast::g_moving_external_root_prep_register_total.load();
+    arena.register_external_root_for_densify(&dummy1);
+    CHECK(aura::ast::g_moving_external_root_prep_register_total.load() == before + 1,
+          "AC1: counter +1 after single register");
+    CHECK(arena.external_roots_for_densify_count() == 1, "AC1: count() == 1");
+}
+
+// ── #2775 AC2: batch span register bumps counter by N ──
+static void ac2775_prep_register_batch() {
+    std::println("\n--- #2775 AC2: prep API batch span ---");
+    ASTArena arena;
+    int dummies[5] = {};
+    void* ptrs[5] = {&dummies[0], &dummies[1], &dummies[2], &dummies[3], &dummies[4]};
+    std::span<void* const> span_ptrs(ptrs, 5);
+    const auto before = aura::ast::g_moving_external_root_prep_register_total.load();
+    arena.register_external_root_for_densify(span_ptrs);
+    CHECK(aura::ast::g_moving_external_root_prep_register_total.load() == before + 5,
+          "AC2: counter +5 after batch span");
+    CHECK(arena.external_roots_for_densify_count() == 5, "AC2: count() == 5");
+}
+
+// ── #2775 AC3: duplicate register no-op (set dedup) ──
+static void ac2775_prep_register_dup() {
+    std::println("\n--- #2775 AC3: duplicate register no-op ---");
+    ASTArena arena;
+    int dummy = 0;
+    void* p = &dummy;
+    const auto before = aura::ast::g_moving_external_root_prep_register_total.load();
+    arena.register_external_root_for_densify(p);
+    CHECK(aura::ast::g_moving_external_root_prep_register_total.load() == before + 1,
+          "AC3: first register +1");
+    arena.register_external_root_for_densify(p);
+    CHECK(aura::ast::g_moving_external_root_prep_register_total.load() == before + 1,
+          "AC3: duplicate register no-op (set dedup)");
+    CHECK(arena.external_roots_for_densify_count() == 1, "AC3: count() == 1");
+}
+
+// ── #2775 AC4: nullptr no-op (counter + set unchanged) ──
+static void ac2775_prep_register_null() {
+    std::println("\n--- #2775 AC4: nullptr no-op ---");
+    ASTArena arena;
+    const auto before = aura::ast::g_moving_external_root_prep_register_total.load();
+    arena.register_external_root_for_densify(nullptr);
+    CHECK(aura::ast::g_moving_external_root_prep_register_total.load() == before,
+          "AC4: nullptr no-op (counter unchanged)");
+    CHECK(arena.external_roots_for_densify_count() == 0, "AC4: count() == 0");
+}
+
+// ── #2775 AC5: explicit clear_external_roots_for_densify() ──
+static void ac2775_prep_clear_explicit() {
+    std::println("\n--- #2775 AC5: explicit clear ---");
+    ASTArena arena;
+    int dummies[3] = {};
+    arena.register_external_root_for_densify(&dummies[0]);
+    arena.register_external_root_for_densify(&dummies[1]);
+    arena.register_external_root_for_densify(&dummies[2]);
+    CHECK(arena.external_roots_for_densify_count() == 3, "AC5: 3 registered");
+    arena.clear_external_roots_for_densify();
+    CHECK(arena.external_roots_for_densify_count() == 0, "AC5: explicit clear");
+    // Note: counter is process-wide cumulative and does NOT roll back on
+    // clear (only set membership does). Counter semantics are
+    // "register events", not "currently registered".
+}
+
+// ── #2775 AC6: publish_last_moving_densify_window prep_count → snapshot ──
+static void ac2775_prep_publish_snapshot() {
+    std::println("\n--- #2775 AC6: publish prep_count → snapshot ---");
+    mdh::reset_moving_densify_health_for_test();
+    mdh::publish_last_moving_densify_window(
+        /*had*/ true, /*pin*/ true, /*incomplete*/ false,
+        /*objects_moved*/ 5, /*untracked_kept*/ 0, /*root_fail*/ 0,
+        /*external_roots_prep_registered_cleared*/ 42);
+    const auto s = mdh::snapshot();
+    CHECK(s.external_roots_prep_registered_last == 42,
+          "AC6: snapshot.external_roots_prep_registered_last == 42");
+}
+
+// ── #2775 AC7: default arg backward-compat (existing 6-arg calls work) ──
+static void ac2775_prep_default_arg_compat() {
+    std::println("\n--- #2775 AC7: 6-arg call backward-compat ---");
+    mdh::reset_moving_densify_health_for_test();
+    mdh::publish_last_moving_densify_window(true, true, false, 5, 0, 0);
+    const auto s = mdh::snapshot();
+    CHECK(s.external_roots_prep_registered_last == 0,
+          "AC7: 6-arg call uses default 0 for prep_count");
+}
+
+// ── #2775 AC8: source-cite + no regression ──
+static void ac2775_source_cite() {
+    std::println("\n--- #2775 AC8: source-cite + no design doc ---");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    const auto hh = read_file("src/core/moving_densify_health.hh");
+    const auto phase5 = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto test_self = read_file("tests/compiler/test_arena_moving_densify_health.cpp");
+    // #2775 citation in all 4 touched files.
+    CHECK(arena_src.find("#2775") != std::string::npos, "AC8: arena.ixx cites #2775");
+    CHECK(hh.find("#2775") != std::string::npos, "AC8: moving_densify_health.hh cites #2775");
+    CHECK(phase5.find("#2775") != std::string::npos,
+          "AC8: evaluator_mutation_boundary.cpp cites #2775");
+    CHECK(test_self.find("#2775") != std::string::npos,
+          "AC8: test_arena_moving_densify_health.cpp cites #2775");
+    // Prep API + counter + snapshot + aggregation all wired.
+    CHECK(arena_src.find("register_external_root_for_densify") != std::string::npos,
+          "AC8: prep API registered in arena.ixx");
+    CHECK(hh.find("external_roots_prep_registered_last") != std::string::npos,
+          "AC8: snapshot field in moving_densify_health.hh");
+    CHECK(arena_src.find("g_moving_external_root_prep_register_total") != std::string::npos,
+          "AC8: process-wide counter declared");
+    CHECK(arena_src.find("external_roots_prep_registered_total") != std::string::npos,
+          "AC8: AdaptiveCompactResult aggregation field declared");
+    CHECK(phase5.find("external_roots_prep_registered_total") != std::string::npos,
+          "AC8: Phase 5 reads aggregation field");
+    CHECK(phase5.find("external_roots_prep_registered_cleared") != std::string::npos,
+          "AC8: Phase 5 forwards to publish");
+    // No design doc regression (per #1655).
+    for (const auto& p :
+         {"docs/design/2775-external-root-prep.md", "docs/design/prep_register_2775.md",
+          "docs/design/external-root-prep-2775.md"}) {
+        std::ifstream f(p);
+        CHECK(!f.good(), "AC8: no design doc at " + std::string(p));
+    }
+}
+
 } // namespace
 
 int run_test_arena_moving_densify_health() {
-    std::println("=== Issue #2619 + #2682: Agent Moving densify health ===");
+    std::println("=== Issue #2619 + #2682 + #2775: Agent Moving densify health ===");
     ac1_query_exposes_window();
     ac2_incomplete_denies_mutate();
     ac3_soft_observe_only();
@@ -279,7 +409,15 @@ int run_test_arena_moving_densify_health() {
     ac2682_unified_predicate_all_conditions();
     ac2682_counters_and_query_wired();
     ac2682_source_cite();
-    std::println("\n=== #2619/#2682: {} passed, {} failed ===", g_passed, g_failed);
+    ac2775_prep_register_single();
+    ac2775_prep_register_batch();
+    ac2775_prep_register_dup();
+    ac2775_prep_register_null();
+    ac2775_prep_clear_explicit();
+    ac2775_prep_publish_snapshot();
+    ac2775_prep_default_arg_compat();
+    ac2775_source_cite();
+    std::println("\n=== #2619/#2682/#2775: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
