@@ -1647,6 +1647,14 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(aura::compiler::kPipelineEpochBaseFloor))},
                 {"schema-2822", make_int(2822)},
                 {"issue-2822", make_int(2822)},
+                // Issue #2827: set-only / hint-only epoch API (AND was too strict).
+                {"pipeline-epoch-sync-partial-skipped-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pipeline_epoch_sync_partial_skipped_total.load(
+                         std::memory_order_relaxed)))},
+                {"pipeline-epoch-sync-partial-wired", make_int(1)},
+                {"schema-2827", make_int(2827)},
+                {"issue-2827", make_int(2827)},
                 // #1323
                 {"jit-fn-unhandled-counts-query-locked",
                  make_int(m ? load_u64(m, m->jit_fn_unhandled_counts_query_locked) : 1)},

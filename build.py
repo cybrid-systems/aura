@@ -1419,6 +1419,19 @@ def cmd_lint():
             "Issue #2826 self_func_id usage linter failed — run python3 scripts/coverage/checks/check_self_func_id_usage_2826.py"
         )
         return r
+    # Issue #2827: run_one epoch sync gates on set_pipeline_epoch alone
+    # (not AND with pipeline_epoch_hint). ac2827 in
+    # test_run_one_requires_expression_partial.
+    rorep_script = COVERAGE_CHECKS / "check_run_one_requires_expression_partial_2827.py"
+    if not rorep_script.exists():
+        fail(f"missing {rorep_script}")
+        return 1
+    r = run([sys.executable, str(rorep_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2827 run_one requires-expression partial linter failed — run python3 scripts/coverage/checks/check_run_one_requires_expression_partial_2827.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

@@ -89,7 +89,8 @@ int run_test_run_one_epoch_default() {
         if (pos == std::string::npos)
             pos = core.rfind("bool run_one");
         CHECK(pos != std::string::npos, "AC1: run_one present");
-        auto win = core.substr(pos, 2800);
+        // Window must cover yield (#2823) + epoch (#2822/#2827) blocks.
+        auto win = core.substr(pos, 4000);
         CHECK(win.find("Issue #2822") != std::string::npos, "AC1: cites #2822");
         CHECK(win.find("pipeline_epoch_unset_runs_total") != std::string::npos,
               "AC1: unset_runs metric");

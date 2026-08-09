@@ -1915,6 +1915,8 @@ aura_add_issue_test(test_emit_soa_source_marker_propagation)
 aura_issue_test_link_light(test_emit_soa_source_marker_propagation)
 aura_add_issue_test(test_self_func_active_invariant)
 aura_issue_test_link_light(test_self_func_active_invariant)
+aura_add_issue_test(test_run_one_requires_expression_partial)
+aura_issue_test_link_light(test_run_one_requires_expression_partial)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion
