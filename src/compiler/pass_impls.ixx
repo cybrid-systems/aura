@@ -281,6 +281,14 @@ public:
     static void note_input_scan_missed() noexcept {
         input_scan_missed_total_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #2829: times RefCountOp-inc was correctly treated as non-consuming
+    // (would have been a false-positive consume under the old always-true path).
+    static std::uint64_t refcount_inc_false_positive_total() noexcept {
+        return refcount_inc_false_positive_total_.load(std::memory_order_relaxed);
+    }
+    static void note_refcount_inc_non_consume() noexcept {
+        refcount_inc_false_positive_total_.fetch_add(1, std::memory_order_relaxed);
+    }
 
 private:
     mutable std::size_t use_after_move_count_ = 0;
@@ -293,12 +301,23 @@ private:
     static inline std::atomic<std::uint64_t> lifetime_functions_scanned_{0};
     // Issue #2828: recovered UaM hits on previously false-listed ops.
     static inline std::atomic<std::uint64_t> input_scan_missed_total_{0};
+    // Issue #2829: RefCountOp-inc non-consume path (avoided false UaM).
+    static inline std::atomic<std::uint64_t> refcount_inc_false_positive_total_{0};
 
-    static bool is_consuming_(aura::ir::IROpcode op) {
-        switch (op) {
+    // Issue #2829: is_consuming needs the full instruction — RefCountOp
+    // encodes inc/dec in operands[2] (1=inc share, 0=dec consume).
+    // See IROpcode::RefCountOp comment + ir_executor RefCountOp case.
+    static bool is_consuming_(const aura::ir::IRInstruction& instr) noexcept {
+        switch (instr.opcode) {
             case aura::ir::IROpcode::MoveOp:
             case aura::ir::IROpcode::DropOp:
+                return true;
             case aura::ir::IROpcode::RefCountOp:
+                // operands[2]: 1 = inc (share, not consume), 0 = dec (consume).
+                if (instr.operands[2] != 0) {
+                    note_refcount_inc_non_consume();
+                    return false;
+                }
                 return true;
             default:
                 return false;
@@ -347,6 +366,9 @@ private:
             case O::Nop:
             case O::ConstVoid:
                 return {0, 0};
+            case O::RefCountOp:
+                // Issue #2829: ops[1] = inner slot; ops[2] = inc/dec flag (not a slot).
+                return {1, 2};
             default: {
                 const auto* info = aura::ir::lookup_opcode(op);
                 const auto n = info ? static_cast<std::uint32_t>(info->operand_count) : 4u;
@@ -361,8 +383,12 @@ private:
         for (auto& block : func.blocks) {
             ++blocks_scanned_;
             for (auto& instr : block.instructions) {
-                if (is_consuming_(instr.opcode)) {
-                    auto consumed = instr.operands[1];
+                if (is_consuming_(instr)) {
+                    // DropOp: ops[0] is the dropped slot (operand_count=1).
+                    // MoveOp / RefCountOp-dec: ops[1] is the source.
+                    auto consumed = (instr.opcode == aura::ir::IROpcode::DropOp)
+                                        ? instr.operands[0]
+                                        : instr.operands[1];
                     if (consumed < moved.size()) {
                         // Issue #1875: double consume (move/drop after already moved).
                         if (moved[consumed])
@@ -2370,13 +2396,21 @@ public:
     static constexpr bool kPureWrap = true;
 
 private:
-    // True if the opcode is a linear-move-ish op that
-    // consumes its source.
-    static bool is_consuming(aura::ir::IROpcode op) {
-        switch (op) {
+    // Issue #2829: is_consuming needs the full instruction — RefCountOp
+    // encodes inc/dec in operands[2] (1=inc share, 0=dec consume).
+    // Prior: always true for RefCountOp ("// dec variant") → false UaM
+    // after legitimate refcount-inc + subsequent read.
+    static bool is_consuming(const aura::ir::IRInstruction& instr) noexcept {
+        switch (instr.opcode) {
             case aura::ir::IROpcode::MoveOp:
             case aura::ir::IROpcode::DropOp:
-            case aura::ir::IROpcode::RefCountOp: // dec variant
+                return true;
+            case aura::ir::IROpcode::RefCountOp:
+                // operands[2]: 1 = inc (share, not consume), 0 = dec (consume).
+                if (instr.operands[2] != 0) {
+                    LinearOwnershipWrap::note_refcount_inc_non_consume();
+                    return false;
+                }
                 return true;
             default:
                 return false;
@@ -2403,7 +2437,7 @@ private:
         }
     }
 
-    // Issue #2828: [begin, end) of slot-read operand indices.
+    // Issue #2828 / #2829: [begin, end) of slot-read operand indices.
     static std::pair<std::uint32_t, std::uint32_t>
     input_slot_range(aura::ir::IROpcode op) noexcept {
         using O = aura::ir::IROpcode;
@@ -2416,6 +2450,9 @@ private:
             case O::Nop:
             case O::ConstVoid:
                 return {0, 0};
+            case O::RefCountOp:
+                // Issue #2829: ops[1] = inner; ops[2] = inc/dec flag (not a slot).
+                return {1, 2};
             default: {
                 const auto n = DCEPass::operand_count_local(op);
                 const auto begin = DCEPass::has_result_slot_local(op) ? 1u : 0u;
@@ -2443,11 +2480,13 @@ private:
 
         for (const auto& block : func.blocks) {
             for (const auto& instr : block.instructions) {
-                if (is_consuming(instr.opcode)) {
+                if (is_consuming(instr)) {
                     // Source slot (the consumed one) is operands[1]
-                    // for MoveOp/DropOp, operands[1] for
-                    // RefCountOp's first input.
-                    auto consumed = instr.operands[1];
+                    // for MoveOp / RefCountOp-dec. DropOp uses ops[0]
+                    // (operand_count=1) — see DropOp kOpcodeInfo.
+                    auto consumed = (instr.opcode == aura::ir::IROpcode::DropOp)
+                                        ? instr.operands[0]
+                                        : instr.operands[1];
                     if (consumed < func.local_count) {
                         if (moved[consumed]) {
                             // Use-after-move detected.

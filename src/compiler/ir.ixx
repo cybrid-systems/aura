@@ -99,9 +99,14 @@ export enum class IROpcode : std::uint8_t {
     BorrowOp,    // immutable borrow: result_slot, inner_slot
     MutBorrowOp, // mutable borrow: result_slot, inner_slot
     DropOp,      // explicit destruct: inner_slot
-    RefCountOp,  // runtime refcount: result_slot, inner_slot, inc(1)/dec(0)
-    ArenaPush,   // push TL arena frame: result_slot (saved offset), size
-    ArenaPop,    // pop TL arena frame: saved_offset_slot
+    // Issue #2829: operands[2] distinguishes share vs consume —
+    //   1 = inc (share; does NOT consume source for linear ownership)
+    //   0 = dec (consume; marks source moved)
+    // LinearOwnership is_consuming must inspect operands[2], not treat
+    // every RefCountOp as consume (false UaM after legitimate share+read).
+    RefCountOp, // runtime refcount: result_slot, inner_slot, inc(1)/dec(0)
+    ArenaPush,  // push TL arena frame: result_slot (saved offset), size
+    ArenaPop,   // pop TL arena frame: saved_offset_slot
     // Issue #61 Iter 2: lazy-deopt guard. Inserted at the entry
     // of a function specialized for a particular shape. The
     // expected shape id is in operands[2]; operands[3] is the
