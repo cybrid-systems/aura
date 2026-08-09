@@ -1015,6 +1015,54 @@ inline std::atomic<std::uint64_t> g_proof_live_goal_count_gauge{0};
 inline constexpr std::uint64_t kProofLiveGoalCountHintAuto =
     static_cast<std::uint64_t>(~std::uint64_t{0});
 
+// Issue #2854: same-transaction order — proof stamping is gated on the
+// rebind + scan outcome so a success proof can never outlive a failed
+// rebind on the same exit (#2854 AC2). Two new cumulative counters:
+//   - g_type_linear_proof_stamped_after_rebind_total bumps when the
+//     proof was stamped AFTER a successful rebind + scan (linear_root_count
+//     reflects the post-remap collect). Quiet empty path stays zero-cost
+//     (AC4 #2723 — no rebind attempted, no counter bump).
+//   - g_type_linear_proof_reject_after_rebind_fail_total bumps when the
+//     rebind OR scan failed AND production / Full audit route forced a
+//     reject proof (would_allow_commit=false, linear_ok=false). Soft
+//     mismatch path under non-prod does NOT bump this counter (Soft
+//     observe is per #2673 contract — separate counter lives in the
+//     densify scan path). No success proof may outlive a failed rebind.
+inline std::atomic<std::uint64_t> g_type_linear_proof_stamped_after_rebind_total{0};
+inline std::atomic<std::uint64_t> g_type_linear_proof_reject_after_rebind_fail_total{0};
+// Last-stamp outcome sentinel for Agent drift detect (mirrors
+// g_last_proof_linear_root_count). 0=Quiet (no rebind attempted),
+// 1=Stamped (rebind+scan ok), 2=Reject (rebind fail OR scan mismatch
+// under prod). Pairs with type_linear_commit_proof_stamped_total to
+// distinguish pre-#2854 success stamps from post-#2854 ordered stamps.
+inline std::atomic<std::uint8_t> g_last_type_linear_proof_outcome{0}; // 0/1/2 per above
+inline constexpr int kTypeLinearProofSameTransactionOrderIssue = 2854;
+
+[[nodiscard]] inline std::uint64_t type_linear_proof_stamped_after_rebind_total_v_read() noexcept {
+    return g_type_linear_proof_stamped_after_rebind_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+type_linear_proof_reject_after_rebind_fail_total_v_read() noexcept {
+    return g_type_linear_proof_reject_after_rebind_fail_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint8_t last_type_linear_proof_outcome_v_read() noexcept {
+    return g_last_type_linear_proof_outcome.load(std::memory_order_relaxed);
+}
+inline void publish_type_linear_proof_outcome(uint8_t outcome) noexcept {
+    g_last_type_linear_proof_outcome.store(outcome, std::memory_order_relaxed);
+}
+inline void clear_type_linear_proof_outcome_for_test() noexcept {
+    g_last_type_linear_proof_outcome.store(0, std::memory_order_relaxed);
+}
+inline void reset_type_linear_proof_same_transaction_counters_for_test() noexcept {
+    g_type_linear_proof_stamped_after_rebind_total.store(0, std::memory_order_relaxed);
+    g_type_linear_proof_reject_after_rebind_fail_total.store(0, std::memory_order_relaxed);
+    g_last_type_linear_proof_outcome.store(0, std::memory_order_relaxed);
+}
+inline constexpr uint8_t kTypeLinearProofOutcomeQuiet = 0;
+inline constexpr uint8_t kTypeLinearProofOutcomeStamped = 1;
+inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
+
 [[nodiscard]] inline std::uint64_t last_proof_live_goal_count_v_read() noexcept {
     return g_last_proof_live_goal_count.load(std::memory_order_relaxed);
 }
@@ -1080,6 +1128,49 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     // Also stamp the epoch (existing low-level helper) so the
     // existing query:last-type-linear-commit-proof path stays
     // additive — query path returns the latest stamp epoch.
+    stamp_type_linear_commit_proof(current_epoch_or_defuse);
+    return p;
+}
+
+// Issue #2854: stamp proof with explicit would_allow_commit + linear_ok
+// (set by caller from the rebind + scan outcome). Ensures no success
+// proof outlives a failed rebind on the same exit (#2854 AC2). The
+// caller MUST bump type_linear_proof_stamped_after_rebind_total (success)
+// or type_linear_proof_reject_after_rebind_fail_total (fail) separately
+// so dashboards can distinguish ordered stamps from pre-#2854 stamps.
+// Mirrors the existing live-stamp path (linear_root_count from post-remap
+// collect via linear_or_dirty_roots_count_for_rebind; epoch + last-count
+// gauges populated for Agent drift detect).
+inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outcome(
+    std::uint64_t current_epoch_or_defuse, bool explicit_would_allow_commit,
+    bool explicit_linear_ok,
+    std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto) noexcept {
+    TypeLinearCommitProof p{};
+    p.readiness_bp = 0;
+    p.force_reason_code = static_cast<std::uint32_t>(-1);
+    // Issue #2854: explicit outcome overrides the live-state defaults.
+    // linear_root_count still comes from the post-remap collect so AC1
+    // (success proof linear_root_count matches post-remap collect) holds.
+    p.would_allow_commit = explicit_would_allow_commit;
+    p.linear_ok = explicit_linear_ok;
+    p.occurrence_consistent = explicit_linear_ok;
+    p.defuse_or_epoch_stamp = current_epoch_or_defuse;
+    p.linear_root_count =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    if (live_goal_count_hint != kProofLiveGoalCountHintAuto) {
+        p.live_goal_count = live_goal_count_hint;
+        g_proof_live_goal_count_gauge.store(live_goal_count_hint, std::memory_order_relaxed);
+    } else {
+        p.live_goal_count = g_proof_live_goal_count_gauge.load(std::memory_order_relaxed);
+    }
+    p.schema = kTypeLinearCommitProofIssue;
+    // Last stamped counts for query / Agent drift detect (same as live path).
+    g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
+    g_last_proof_live_goal_count.store(p.live_goal_count, std::memory_order_relaxed);
+    if (p.linear_root_count > 0 || p.live_goal_count > 0) {
+        g_type_linear_commit_proof_counts_filled_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_type_linear_commit_proof_stamped_total.fetch_add(1, std::memory_order_relaxed);
     stamp_type_linear_commit_proof(current_epoch_or_defuse);
     return p;
 }
