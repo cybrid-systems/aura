@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 808 | Preferred destination suites |
-| **Total scanned** | **808** | |
+| `tests/core/test_*.cpp` | 809 | Preferred destination suites |
+| **Total scanned** | **809** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 52 | 52 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 78 | 78 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 50 | 50 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 129 | 129 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 130 | 130 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 60 | 60 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -281,6 +281,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_capability_single_use_consume.cpp`
 - `tests/compiler/test_capability_string_matrix_unify.cpp`
 - `tests/compiler/test_capability_unified.cpp`
+- `tests/compiler/test_capture_audit_event_forced_enforcement_link.cpp`
 - `tests/compiler/test_cascade_bfs_invalidate_after_guard.cpp`
 - `tests/compiler/test_cascade_impact_batch.cpp`
 - `tests/compiler/test_cascade_incremental_pass_suite.cpp`
@@ -1707,13 +1708,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (129)
+### `observability` — Observability / metrics / query:*-stats (130)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (129)
+#### domain/ (130)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1729,6 +1730,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_bugfix.cpp` (—) [small, domain_suite, theme_compiler] — Issue #957/#968/#982/#984 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_cache_entry_version_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2033; CacheEntryVersionStamp + kRelowerBridgeEpoch
 - `tests/compiler/test_capability_effect_force.cpp` (—) [domain_suite, theme_compiler] — Issue #2072 — force check_and_record_effect on all side-effect primitives.
+- `tests/compiler/test_capture_audit_event_forced_enforcement_link.cpp` (—) [domain_suite, theme_compiler] — AC1: capture_audit_event_forced cites #2814; gap on unlinked Success
 - `tests/compiler/test_cascade_relower_silent_skip.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade cites #2813; skipped/ran metrics; warn path
 - `tests/compiler/test_closedloop_stats_hash_cap.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1795 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_closure_view_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_closure_view_batch.cpp — closure_view pair dup-merge (R19 phase 17).

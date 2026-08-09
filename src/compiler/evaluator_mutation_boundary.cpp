@@ -641,6 +641,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                     m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
                 clear_txn_dirty();
+                // Issue #2814: intentional skip of invariant suite (frame budget).
+                typed_audit::note_invariant_enforcement_skipped(mid);
                 typed_audit::record_boundary_outcome(
                     mid, audit_op, cp.version, epoch_after, /*success=*/true,
                     static_cast<std::uint32_t>(audit_target),
@@ -960,6 +962,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         return cp;
                     }
                     // Success path: record outcome when audit passed / recovered.
+                    // Enforcement already linked via record_invariant_audit_result.
                     if (inv_ok || recovered) {
                         if (!nested_boundary)
                             clear_txn_dirty();
@@ -969,6 +972,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             static_cast<std::uint32_t>(nodes_changed), fid);
                     }
                 } else {
+                    // Issue #2814: Sampled/quiet path — no invariant suite;
+                    // mark intentional skip so Success trail is not a gap.
+                    typed_audit::note_invariant_enforcement_skipped(mid);
                     if (!nested_boundary)
                         clear_txn_dirty();
                     typed_audit::record_boundary_outcome(

@@ -1885,6 +1885,9 @@ aura_issue_test_link_light(test_cascade_bfs_invalidate_after_guard)
 # Issue #2813: cascade must not silently skip ir_cache_v2 re-lower when fn null.
 aura_add_issue_test(test_cascade_relower_silent_skip)
 aura_issue_test_link_light(test_cascade_relower_silent_skip)
+# Issue #2814 M7: capture_audit_event_forced linked to invariant enforcement.
+aura_add_issue_test(test_capture_audit_event_forced_enforcement_link)
+aura_issue_test_link_light(test_capture_audit_event_forced_enforcement_link)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

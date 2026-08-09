@@ -21,6 +21,7 @@ namespace aura::compiler {
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -152,6 +153,13 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> hard_gate_strict_hold_total{0};
     std::atomic<std::uint64_t> hard_gate_sampled_skip_total{0};
     std::atomic<std::uint32_t> hard_gate_wired{1};
+    // Issue #2814 M7: audit trail Success must be linked to invariant
+    // enforcement (or intentional skip). Gap = Success recorded without either.
+    // audit_enforcement_link_wired always 1 when this module is linked.
+    std::atomic<std::uint32_t> audit_enforcement_link_wired{1};
+    std::atomic<std::uint64_t> audit_enforcement_ran_total{0};
+    std::atomic<std::uint64_t> audit_enforcement_skipped_intentional_total{0};
+    std::atomic<std::uint64_t> audit_enforcement_gap_total{0};
     // Issue #2260: MutationBoundary type-proof (SOLVED / !truncated_reverify).
     // Hard-gate exit must full-resync or force-rollback — never silent continue.
     std::atomic<std::uint64_t> boundary_solve_hard_gate_total{0};
@@ -1273,9 +1281,64 @@ resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
     return next_audit_mutation_id();
 }
 
+// Issue #2814 M7: TLS link between trail Success and invariant enforcement.
+// record_invariant_audit_result → note_ran; Guard intentional skip → note_skipped.
+// capture_audit_event_forced(Success, mutate-class kind) without either → gap.
+enum class EnforcementLinkKind : std::uint8_t { None = 0, Ran = 1, Skipped = 2 };
+inline thread_local std::uint64_t g_tls_enforcement_link_mid = 0;
+inline thread_local EnforcementLinkKind g_tls_enforcement_link = EnforcementLinkKind::None;
+
+// Issue #2814: mark that post_mutation_invariant suite (or equivalent)
+// ran for this mutation_id. Call before/during record_invariant_audit_result.
+inline void note_invariant_enforcement_ran(std::uint64_t mutation_id) noexcept {
+    if (mutation_id == 0)
+        return;
+    g_tls_enforcement_link_mid = mutation_id;
+    g_tls_enforcement_link = EnforcementLinkKind::Ran;
+    g_typed_mutation_audit_counters.audit_enforcement_ran_total.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
+// Issue #2814: intentional non-enforcement (Sampled skip, RenderFastExit,
+// strategy Off quiet path). Prevents false gap on legitimate soft paths.
+inline void note_invariant_enforcement_skipped(std::uint64_t mutation_id) noexcept {
+    if (mutation_id == 0)
+        return;
+    g_tls_enforcement_link_mid = mutation_id;
+    g_tls_enforcement_link = EnforcementLinkKind::Skipped;
+    g_typed_mutation_audit_counters.audit_enforcement_skipped_intentional_total.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool enforcement_linked_for(std::uint64_t mutation_id) noexcept {
+    return mutation_id != 0 && g_tls_enforcement_link_mid == mutation_id &&
+           g_tls_enforcement_link != EnforcementLinkKind::None;
+}
+
+// Mutate-class kinds that should be enforcement-linked on Success trails.
+// MacroHygiene / Aot / Jit / security-correlation paths are excluded.
+[[nodiscard]] inline bool mutate_class_kind_requires_enforcement_link(MutationKind kind) noexcept {
+    switch (kind) {
+        case MutationKind::Structural:
+        case MutationKind::ReplaceType:
+        case MutationKind::ReplaceValue:
+        case MutationKind::RecordPatch:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Core trail write (no Sampled gate). Used by capture_audit_event and by
 // #2054 security-correlated emit (always-on so rings stay joined by
 // mutation_id even under Sampled strategy).
+//
+// Issue #2814 M7: this function is pure observability (trail + counters).
+// It does NOT run type/linear/provenance checks. Enforcement lives in
+// run_typed_mutation_invariant_audit → record_invariant_audit_result.
+// On Success for mutate-class kinds, if neither note_invariant_enforcement_ran
+// nor note_invariant_enforcement_skipped was called for this mid, bump
+// audit_enforcement_gap_total (silent enforcement degradation signal).
 inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_view name,
                                        MutationKind kind, std::uint64_t before_epoch,
                                        std::uint64_t after_epoch, AuditOutcome outcome,
@@ -1317,6 +1380,23 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
         g_typed_mutation_audit_counters.rollbacks.fetch_add(1, std::memory_order_relaxed);
     if (outcome == AuditOutcome::Error)
         g_typed_mutation_audit_counters.errors.fetch_add(1, std::memory_order_relaxed);
+
+    // Issue #2814 M7: enforcement-link gap detection.
+    if (outcome == AuditOutcome::Success && mutation_id != 0 &&
+        mutate_class_kind_requires_enforcement_link(kind) && !enforcement_linked_for(mutation_id)) {
+        g_typed_mutation_audit_counters.audit_enforcement_gap_total.fetch_add(
+            1, std::memory_order_relaxed);
+        static std::atomic<int> s_gap_warned{0};
+        if (s_gap_warned.exchange(1, std::memory_order_relaxed) == 0) {
+            std::fprintf(stderr,
+                         "[#2814 M7 audit] Success trail without invariant enforcement "
+                         "link (mid=%llu name=%.*s). Call note_invariant_enforcement_ran "
+                         "or note_invariant_enforcement_skipped before trail write. "
+                         "Metric: audit_enforcement_gap_total.\n",
+                         static_cast<unsigned long long>(mutation_id), static_cast<int>(n),
+                         ev.name);
+        }
+    }
 }
 
 inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name, MutationKind kind,
@@ -1422,6 +1502,9 @@ inline void capture_macro_hygiene_audit(std::string_view name, AuditOutcome outc
 }
 
 // Convenience for mutation boundary integration.
+// Issue #2814: Success trails for mutate-class kinds require an enforcement
+// link (note_invariant_enforcement_ran or note_invariant_enforcement_skipped)
+// before this write, or capture_audit_event_forced bumps gap total.
 inline void record_boundary_outcome(std::uint64_t mutation_id, std::string_view op,
                                     std::uint64_t before_epoch, std::uint64_t after_epoch,
                                     bool success, std::uint32_t target_node = 0,
@@ -1597,6 +1680,8 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
                                           std::uint64_t after_epoch = 0,
                                           std::uint32_t target_node = 0, std::int64_t fiber_id = 0,
                                           std::uint64_t tenant_id = 0) noexcept {
+    // Issue #2814: link trail Success/Error to real enforcement suite.
+    note_invariant_enforcement_ran(mutation_id);
     g_typed_mutation_audit_counters.invariant_audits.fetch_add(1, std::memory_order_relaxed);
     // #1894 AC: exact metric name for audit triggers.
     g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.fetch_add(
@@ -1788,6 +1873,15 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.hard_gate_sampled_skip_total.store(0,
                                                                        std::memory_order_relaxed);
     g_typed_mutation_audit_counters.hard_gate_wired.store(1, std::memory_order_relaxed);
+    // Issue #2814 M7 enforcement-link counters.
+    g_typed_mutation_audit_counters.audit_enforcement_link_wired.store(1,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_enforcement_ran_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_enforcement_skipped_intentional_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_enforcement_gap_total.store(0, std::memory_order_relaxed);
+    g_tls_enforcement_link_mid = 0;
+    g_tls_enforcement_link = EnforcementLinkKind::None;
     g_typed_mutation_audit_counters.boundary_solve_hard_gate_total.store(0,
                                                                          std::memory_order_relaxed);
     g_typed_mutation_audit_counters.boundary_solve_full_resync_total.store(
