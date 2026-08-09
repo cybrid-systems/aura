@@ -18,31 +18,21 @@
 ; Ownership: caller closes both listener and accepted client fds.
 ; Errors are void/() — catchable values, not process abort.
 ; Loopback-only bind keeps denseness probes off the public interface.
+;
+; Issue #2865: re-export host prims as **value aliases** (same pattern as
+; std/io `file-exists?`). Same-name procedure wrappers that call themselves
+; in the body shadow the host primitive and recurse → always ().
+; Do not reintroduce that pattern. Value aliases resolve the host prim into
+; the module cell (#2570 void→prim fallthrough / fill).
 
 (export tcp-connect tcp-send tcp-recv tcp-close
         tcp-listen tcp-local-port tcp-accept tcp-accept-timeout)
 
-; Pass-through wrappers so exports re-bind to host primitives after require.
-(define (tcp-connect host port)
-  (tcp-connect host port))
-
-(define (tcp-send socket data)
-  (tcp-send socket data))
-
-(define (tcp-recv socket maxlen)
-  (tcp-recv socket maxlen))
-
-(define (tcp-close socket)
-  (tcp-close socket))
-
-(define (tcp-listen port)
-  (tcp-listen port))
-
-(define (tcp-local-port socket)
-  (tcp-local-port socket))
-
-(define (tcp-accept listener)
-  (tcp-accept listener))
-
-(define (tcp-accept-timeout listener sec)
-  (tcp-accept-timeout listener sec))
+(define tcp-connect tcp-connect)
+(define tcp-send tcp-send)
+(define tcp-recv tcp-recv)
+(define tcp-close tcp-close)
+(define tcp-listen tcp-listen)
+(define tcp-local-port tcp-local-port)
+(define tcp-accept tcp-accept)
+(define tcp-accept-timeout tcp-accept-timeout)
