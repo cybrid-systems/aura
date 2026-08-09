@@ -2,13 +2,18 @@
 // @reason: Issue #2771 — tcp-listen / tcp-accept server path for multi-host
 //          denseness (Hermes Phase 5 residual). Prefer-existing json_io batch
 //          membership per #81967 (no test_issue_2771.cpp).
+//          Issue #2865 — std/socket require-path must not shadow host prims
+//          with recursive pass-through wrappers.
 //
 //   AC1: tcp-listen / tcp-local-port / tcp-accept / tcp-accept-timeout registered
 //   AC2: listen 127.0.0.1:ephemeral, accept one connection, echo payload
 //   AC3: client tcp-connect + send/recv (second fiber, stdin denseness)
 //   AC4: std/socket export + adaptive help + #2771 cite
 //   AC5: coverage linter wired; no docs/design/2771-*
-
+//   #2865 AC1: (require "std/socket" all:) → (integer? (tcp-listen 0))
+//   #2865 AC2: require-path loopback listen→accept→connect→send→recv→close
+//   #2865 AC3: no recursive (define (tcp-*) (tcp-* …)) wrappers in socket.aura
+//   #2865 AC4: linter + extend this test per #81967
 #include "test_harness.hpp"
 
 #include <cstdlib>
@@ -130,16 +135,114 @@ static void ac5_linter() {
           "AC5: no docs/design/2771-* per #1655");
 }
 
+// ── Issue #2865: std/socket require-path must re-export host prims ──
+static void set_lib_path() {
+#ifdef AURA_SOURCE_DIR
+    const std::string lib = std::string(AURA_SOURCE_DIR) + "/lib";
+#else
+    const std::string lib = "lib";
+#endif
+    setenv("AURA_PATH", lib.c_str(), 1);
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+}
+
+static void ac2865_1_require_tcp_listen() {
+    std::println("\n--- #2865 AC1: require std/socket → tcp-listen returns integer ---");
+    set_lib_path();
+    CompilerService cs;
+    // After require, tcp-listen must be the host prim (not a recursive wrapper).
+    CHECK(eval_bool(cs, R"AURA(
+(begin
+  (require "std/socket" all:)
+  (let ((L (tcp-listen 0)))
+    (let ((ok (integer? L)))
+      (when ok (tcp-close L))
+      ok)))
+)AURA"),
+          "2865 AC1: (require std/socket) (integer? (tcp-listen 0))");
+}
+
+static void ac2865_2_require_loopback() {
+    std::println("\n--- #2865 AC2: require-path loopback echo ---");
+    set_lib_path();
+    CompilerService cs;
+    const char* prog = R"AURA(
+(begin
+  (require "std/socket" all:)
+  (define L (tcp-listen 0))
+  (define p (tcp-local-port L))
+  (define f
+    (fiber:spawn
+      (lambda ()
+        (let ((c (tcp-connect "127.0.0.1" p)))
+          (tcp-send c "ping")
+          (let ((reply (tcp-recv c 64)))
+            (tcp-close c)
+            reply)))))
+  (define s (tcp-accept L))
+  (define msg (tcp-recv s 64))
+  (tcp-send s (string-append "echo:" msg))
+  (tcp-close s)
+  (tcp-close L)
+  (equal? (fiber:join f) "echo:ping"))
+)AURA";
+    CHECK(eval_bool(cs, prog), "2865 AC2: require-path fiber loopback echo:ping");
+}
+
+static void ac2865_3_no_recursive_wrappers() {
+    std::println("\n--- #2865 AC3: no recursive procedure wrappers ---");
+    const auto sock = read_file("lib/std/socket.aura");
+    CHECK(!sock.empty(), "2865 AC3: socket.aura present");
+    // Forbidden pattern: (define (tcp-NAME …) (tcp-NAME …))
+    CHECK(sock.find("(define (tcp-listen") == std::string::npos,
+          "2865 AC3: no (define (tcp-listen …) wrapper");
+    CHECK(sock.find("(define (tcp-connect") == std::string::npos,
+          "2865 AC3: no (define (tcp-connect …) wrapper");
+    CHECK(sock.find("(define (tcp-send") == std::string::npos,
+          "2865 AC3: no (define (tcp-send …) wrapper");
+    CHECK(sock.find("(define (tcp-recv") == std::string::npos,
+          "2865 AC3: no (define (tcp-recv …) wrapper");
+    CHECK(sock.find("(define (tcp-close") == std::string::npos,
+          "2865 AC3: no (define (tcp-close …) wrapper");
+    CHECK(sock.find("(define (tcp-accept") == std::string::npos,
+          "2865 AC3: no (define (tcp-accept …) wrapper");
+    CHECK(sock.find("(define (tcp-local-port") == std::string::npos,
+          "2865 AC3: no (define (tcp-local-port …) wrapper");
+    CHECK(sock.find("(define (tcp-accept-timeout") == std::string::npos,
+          "2865 AC3: no (define (tcp-accept-timeout …) wrapper");
+    // Required: value-alias re-export (std/io pattern).
+    CHECK(sock.find("(define tcp-listen tcp-listen)") != std::string::npos,
+          "2865 AC3: value alias (define tcp-listen tcp-listen)");
+    CHECK(sock.find("Issue #2865") != std::string::npos, "2865 AC3: cites #2865");
+}
+
+static void ac2865_4_linter() {
+    std::println("\n--- #2865 AC4: linter + no docs/design ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_std_socket_require_path_2865") != std::string::npos,
+          "2865 AC4: build.py wires linter");
+    const auto lint = read_file("scripts/coverage/checks/check_std_socket_require_path_2865.py");
+    CHECK(!lint.empty(), "2865 AC4: linter present");
+    CHECK(read_file("docs/design/2865-std-socket-require.md").empty(),
+          "2865 AC4: no docs/design/2865-* per #1655");
+}
+
 } // namespace
 
 int run_test_tcp_listen_accept() {
     std::println("=== Issue #2771: tcp-listen / tcp-accept multi-host denseness ===");
+    std::println("=== Issue #2865: std/socket require-path host prim re-export ===");
     ac1_prims_registered();
     ac2_ac3_echo_fiber_client();
     ac3b_accept_timeout_idle();
     ac4_stdlib_docs();
     ac5_linter();
-    std::println("\n=== #2771: {} passed, {} failed ===", g_passed, g_failed);
+    ac2865_1_require_tcp_listen();
+    ac2865_2_require_loopback();
+    ac2865_3_no_recursive_wrappers();
+    ac2865_4_linter();
+    std::println("\n=== #2771+#2865: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

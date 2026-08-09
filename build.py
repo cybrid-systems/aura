@@ -809,6 +809,19 @@ def cmd_lint():
             "Issue #2771 tcp-listen/accept linter failed — run python3 scripts/coverage/checks/check_tcp_listen_accept_2771.py"
         )
         return r
+    # Issue #2865: std/socket require-path must re-export host tcp-* prims
+    # as value aliases (not recursive procedure wrappers that shadow and
+    # always return ()). ac2865_* in test_tcp_listen_accept per #81967.
+    ssr_script = COVERAGE_CHECKS / "check_std_socket_require_path_2865.py"
+    if not ssr_script.exists():
+        fail(f"missing {ssr_script}")
+        return 1
+    r = run([sys.executable, str(ssr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2865 std/socket require-path linter failed — run python3 scripts/coverage/checks/check_std_socket_require_path_2865.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +
