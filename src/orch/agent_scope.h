@@ -805,6 +805,44 @@ inline std::size_t reset_all_agent_scopes_for_test() noexcept {
     return n;
 }
 
+// Issue #2852: apply_workflow body — defined here (after AgentScope is
+// fully defined) so it can call scope.watch_all. Declaration is in
+// agent_spawn.h (forward decl + simplified ApplyWorkflowResult to break
+// the circular include between agent_spawn.h and agent_scope.h).
+//   - Phase A: parallel_intend with to_parallel_policy(w)
+//   - Phase B: scope.watch_all with to_agent_policy(w) (when watch_scope)
+//   - Phase C: residual observe via note_workflow_residual_reclaim_
+//              under_policy when batch != Ok OR watch saw stalled
+//   - additive: workflow_apply_total bumps once per call
+// No #2661 reclaim change. No AgentRegistry / process-global map.
+[[nodiscard]] inline ApplyWorkflowResult
+apply_workflow(serve::Scheduler& sched, AgentScope& scope,
+               std::span<const serve::parallel_orch::TaskSpec> tasks,
+               const WorkflowFailurePolicy& w, std::uint32_t stall_timeout_ms,
+               bool watch_scope) noexcept {
+    ApplyWorkflowResult out;
+    // Phase A — batch under composed batch policy.
+    out.batch = serve::parallel_orch::parallel_intend(sched, tasks, to_parallel_policy(w));
+    // Phase B — scope watch under composed agent policy (optional).
+    if (watch_scope) {
+        out.scope_watch_called = true;
+        auto wres = scope.watch_all(stall_timeout_ms, to_agent_policy(w));
+        out.scope_stalled = static_cast<int>(wres.stalled);
+        out.scope_alive = static_cast<int>(wres.alive);
+        out.scope_done = static_cast<int>(wres.done);
+    }
+    // Phase C — residual observe (advisory; #2661 contract preserved).
+    const bool batch_residual = out.batch.status != serve::parallel_orch::BatchStatus::Ok;
+    const bool scope_residual = out.scope_stalled > 0;
+    if (batch_residual || scope_residual) {
+        note_workflow_residual_reclaim_under_policy(w);
+        out.residual_observed = true;
+    }
+    // Additive apply counter (AC3) — once per call regardless of outcome.
+    g_orch_module_stats.workflow_apply_total.fetch_add(1, std::memory_order_relaxed);
+    return out;
+}
+
 } // namespace aura::orch
 
 #endif // AURA_ORCH_AGENT_SCOPE_H
