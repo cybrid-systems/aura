@@ -422,6 +422,7 @@ target_sources(test_ir PRIVATE
     src/core/mutation_impl.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
+    src/serve/steal_safety.cpp
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
@@ -488,6 +489,7 @@ target_include_directories(test_concurrent PRIVATE src)
 target_sources(test_concurrent PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
+    src/serve/steal_safety.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/exec/execution_adapter.cpp
@@ -883,6 +885,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/core/mutation_impl.cpp
     src/serve/fiber.cpp
     src/serve/worker.cpp
+    src/serve/steal_safety.cpp
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
