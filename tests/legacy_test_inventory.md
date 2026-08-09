@@ -32,14 +32,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 84 | 84 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 237 | 237 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 53 | 53 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 81 | 81 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 137 | 137 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 60 | 60 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1046,13 +1046,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (84)
+### `arena_compaction` — Arena / compaction / GC (85)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (84)
+#### domain/ (85)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1075,6 +1075,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_closure_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_closure_batch.cpp
 - `tests/compiler/test_compact_policy.cpp` (—) [domain_suite, theme_compiler] — AC1: Table-driven pure compute_compact_policy (fixture → mode)
 - `tests/stdlib/test_datetime.cpp` (—) [domain_suite, theme_stdlib] — test_datetime.cpp — Merged datetime stdlib tests (#1978).
+- `tests/compiler/test_defuse_version_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #189/#417/#419/#456 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_densify_remap_pairing.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft densify → pairing not forced, axes vacuous true, dual-epoch ok
 - `tests/compiler/test_env_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_env_batch.cpp
 - `tests/compiler/test_envframe_epoch_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_envframe_epoch_batch.cpp — EnvFrame / bridge_epoch batch driver.
@@ -1741,13 +1742,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (137)
+### `observability` — Observability / metrics / query:*-stats (136)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (137)
+#### domain/ (136)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1781,7 +1782,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_dead_coercion_elim.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2066 — DeadCoercionElimination IR-layer CastOp elision test.
 - `tests/compiler/test_dead_coercion_elision_narrow_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_dead_coercion_elision_narrow_batch.cpp — dead_coercion_elision_narrow pair
 - `tests/compiler/test_dead_coercion_layered.cpp` (—) [large, domain_suite, theme_compiler] — test_dead_coercion_layered.cpp
-- `tests/compiler/test_defuse_version_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #189/#417/#419/#456 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_delta_truncate_goal_priority.cpp` (—) [domain_suite, theme_compiler] — AC1: Truncate + non-empty occurrence_goals → goal-priority reverify
 - `tests/compiler/test_densify_envframe_ok.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → envframe_ok stays true (vacuous)
 - `tests/compiler/test_densify_root_closure_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → root_remap_ok + closure_remount_ok true
