@@ -1610,9 +1610,35 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth() {
     return Evaluator::mutation_boundary_depth();
 }
 
+// Issue #2849: process-wide count of Evaluators with outermost
+// MutationBoundaryGuard live. yield_hook_evaluator() is thread-local
+// (#1403 stack) so cross-thread observers (mailbox push/fanout on other
+// fibers, steal safety) cannot see per-Evaluator mutation_boundary_held_
+// via TLS alone. Outermost Guard enter/exit bumps this count (paired
+// with mutation_boundary_held_.store true/false). Mailbox mid-mutation
+// delivery gate (#2680/#2849) reads this so concurrent senders always
+// observe held under a live Guard — production fail-closed, never
+// mid-mutation enqueue.
+namespace {
+    std::atomic<std::uint32_t> g_process_mutation_boundary_held_count{0};
+} // namespace
+
+extern "C" void aura_process_mutation_boundary_held_enter() noexcept {
+    g_process_mutation_boundary_held_count.fetch_add(1, std::memory_order_release);
+}
+extern "C" void aura_process_mutation_boundary_held_exit() noexcept {
+    auto cur = g_process_mutation_boundary_held_count.load(std::memory_order_relaxed);
+    while (cur > 0 && !g_process_mutation_boundary_held_count.compare_exchange_weak(
+                          cur, cur - 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+    }
+}
+
 // Issue #2114: C-linkage held flag for reemit handshake (bridge / HotUpdate
 // registry without Evaluator module). True while outermost Guard is alive,
 // including the #2090 dtor reemit window (held cleared after reemit).
+// Issue #2849: also true when ANY Evaluator holds outermost Guard
+// (process-wide count) so cross-thread mailbox delivery cannot observe
+// mid-mutation state via TLS-only yield_hook miss.
 extern "C" int aura_evaluator_mutation_boundary_held() {
     auto* ev = Evaluator::yield_hook_evaluator();
     if (ev && ev->mutation_boundary_held())
@@ -1620,6 +1646,9 @@ extern "C" int aura_evaluator_mutation_boundary_held() {
     // Also treat non-zero depth-slot as held when yield hook unbound
     // mid-teardown (defensive).
     if (Evaluator::mutation_boundary_depth() > 0)
+        return 1;
+    // Issue #2849: process-wide held for cross-thread mailbox / steal.
+    if (g_process_mutation_boundary_held_count.load(std::memory_order_acquire) > 0)
         return 1;
     return 0;
 }

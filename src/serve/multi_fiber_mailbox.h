@@ -185,6 +185,16 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_shared_evaluator_deferred_total{0};              // #2680
     std::atomic<std::uint64_t> mailbox_shared_evaluator_deferred_hard_total{0};         // #2680
     std::atomic<std::uint64_t> mailbox_shared_evaluator_deferred_soft_observe_total{0}; // #2680
+    // Issue #2849: production fail-closed face of the shared-Evaluator
+    // mid-mutation delivery gate (#2680 residual). Same authority
+    // (depth>0 || held) — always Backpressure, never enqueue. under_boundary_*
+    // counters are the Agent-facing #2849 names (bumped by
+    // note_mailbox_deferred_under_boundary alongside the #2680 family).
+    // Soft: soft_observe only; production/Strict: hard_total. Residual
+    // deferred after hold-exit budget still uses #2551 hard throttle.
+    std::atomic<std::uint64_t> mailbox_under_boundary_deferred_total{0};              // #2849
+    std::atomic<std::uint64_t> mailbox_under_boundary_deferred_hard_total{0};         // #2849
+    std::atomic<std::uint64_t> mailbox_under_boundary_deferred_soft_observe_total{0}; // #2849
     // Issue #2511: outermost Guard exit forced deferred drain under budget.
     // hold_exit_drain_total: drain path entered with open depth
     // hold_exit_drain_us_total / max: elapsed under budget
@@ -431,31 +441,19 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
             break;
         }
         if (elapsed_us >= budget) {
-            r.starved = true;
             r.remaining_depth = d;
             r.elapsed_us = elapsed_us;
-            g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.fetch_add(
-                1, std::memory_order_relaxed);
-            // Also feed #2378 starvation so health score sees hold-exit SLA.
-            g_mf_mailbox_stats.mailbox_defer_starvation_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-            // Strict / production: force-resolve open depth (explicit audit).
-            // Soft: leave depth for later natural retries.
-            // Inline Strict probe here — is_mutate_mailbox_strict is defined
-            // later in this header (#2347); avoid forward-order dependency.
+            // Issue #2849 / #2551: deferred_depth is BP accounting (messages
+            // were never enqueued under #2312/#2680/#2849). Always force-close
+            // the accounting depth after budget so Soft multi-eval concurrent
+            // mutates do not false-positive starvation (chaos PR
+            // AURA_CHAOS_MB_STARVE_MAX=0). Production/Strict still bumps the
+            // hard residual face + Agent throttle (#2551).
+            // Inline Strict probe — is_mutate_mailbox_strict is defined later.
             const char* strict_e = std::getenv("AURA_MUTATE_MAILBOX_STRICT");
             const bool hard_resolve =
                 (strict_e && strict_e[0] == '1') || aura_production_defaults_active_probe() != 0;
-            // Issue #2551 AC1: production/Strict residual after budget →
-            // hard counter + Agent throttle (do not clear here even if
-            // force-resolve zeros depth; subsequent free drain clears).
-            if (hard_resolve) {
-                g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(
-                    1, std::memory_order_relaxed);
-            }
-            if (hard_resolve) {
+            {
                 std::uint64_t resolved = 0;
                 std::uint64_t guard = d + 8;
                 while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) >
@@ -483,6 +481,26 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
                     g_mf_mailbox_stats.mailbox_hold_exit_force_resolved_total.fetch_add(
                         resolved, std::memory_order_relaxed);
                 }
+            }
+            // Issue #2551 AC1: production/Strict residual after budget →
+            // hard counter + Agent throttle (even when force-close zeros
+            // depth — subsequent free drain clears the flag).
+            if (hard_resolve) {
+                r.starved = true;
+                g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(
+                    1, std::memory_order_relaxed);
+                g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                g_mf_mailbox_stats.mailbox_defer_starvation_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                // Soft: accounting force-closed; not starvation (mid-mutation
+                // gate already prevented enqueue). Clear throttle if depth 0.
+                r.starved = false;
+                if (r.remaining_depth == 0)
+                    clear_agent_throttle_for_mailbox_starvation();
             }
             break;
         }
@@ -526,6 +544,65 @@ inline void clear_recv_boundary_reject_window() noexcept {
     if (e && e[0] == '1')
         return true;
     return aura_production_defaults_active_probe() != 0;
+}
+
+// Issue #2849: sole helper for shared-Evaluator mid-mutation delivery gate
+// (closes #2680 residual as production fail-closed proof). When the
+// outermost MutationBoundary is live (depth>0 || held) on the shared
+// Evaluator, returns true so push / broadcast_fanout ALWAYS return
+// Backpressure — never enqueue a payload that could observe mid-mutation
+// state (StableNodeRef / EnvFrame views stamped under Guard). Soft still
+// defers (no silent drop) and bumps soft_observe; production/Strict bumps
+// hard. Phase-5 outermost Guard dtor remains the sole place that reopens
+// the deliverability window (clear_recv_boundary_reject_window +
+// drain_deferred_under_budget). Zero cost when boundary idle (two relaxed
+// loads + branch).
+//
+// Callers MUST:
+//   if (note_mailbox_deferred_under_boundary(&local_stats_))
+//       return PushStatus::Backpressure;
+[[nodiscard]] inline bool
+note_mailbox_deferred_under_boundary(MultiFiberMailboxStats* local_stats = nullptr) noexcept {
+    // Production defaults: push under live boundary always Backpressure.
+    if (!(aura_evaluator_mutation_boundary_depth() > 0 ||
+          aura_evaluator_mutation_boundary_held() != 0))
+        return false;
+    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_under_boundary_deferred_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    if (local_stats) {
+        local_stats->mailbox_shared_evaluator_deferred_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        local_stats->mailbox_under_boundary_deferred_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (is_mutate_mailbox_strict()) {
+        g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
+            1, std::memory_order_relaxed);
+        g_mf_mailbox_stats.mailbox_under_boundary_deferred_hard_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (local_stats) {
+            local_stats->mailbox_shared_evaluator_deferred_hard_total.fetch_add(
+                1, std::memory_order_relaxed);
+            local_stats->mailbox_under_boundary_deferred_hard_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    } else {
+        // Soft / sandbox=off: metric-only face of the same defer (still BP —
+        // never weakens the gate to allow mid-mutation delivery).
+        g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+        g_mf_mailbox_stats.mailbox_under_boundary_deferred_soft_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (local_stats) {
+            local_stats->mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
+                1, std::memory_order_relaxed);
+            local_stats->mailbox_under_boundary_deferred_soft_observe_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    note_mailbox_mutation_hold_defer();
+    return true;
 }
 
 // Default N=8 rejects in one Guard window → force mark-failed under Strict.
@@ -677,37 +754,16 @@ public:
                 }
             }
         }
-        // Issue #2680: shared-Evaluator delivery gate. If the shared
-        // Evaluator's MutationBoundary is held (depth>0 || held) by ANY
-        // fiber, defer (BP) rather than letting this payload become visible
-        // to a receiver that shares the same Evaluator mid-mutation.
-        // Mirrors the recv() shared-Evaluator check (L820-821). Per AC2,
-        // uses the same authority as steal safety (aura_evaluator_mutation_
-        // boundary_held / depth C ABI hooks wired from #2184/#2188/#2200).
-        // Per AC1: deferred (not dropped) — sender retries / queues.
-        // Per AC4: Soft / sandbox=off still observes via _soft_observe_total.
-        // Per AC6 happy path: zero cost when deferred_depth==0 (one
-        // relaxed load on `mailbox_shared_evaluator_deferred_total` proxy).
-        if (aura_evaluator_mutation_boundary_depth() > 0 ||
-            aura_evaluator_mutation_boundary_held() != 0) {
-            g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.fetch_add(
-                1, std::memory_order_relaxed);
-            local_stats_.mailbox_shared_evaluator_deferred_total.fetch_add(
-                1, std::memory_order_relaxed);
-            if (is_mutate_mailbox_strict()) {
-                g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                local_stats_.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            } else {
-                g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                local_stats_.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-            note_mailbox_mutation_hold_defer();
+        // Issue #2680 / #2849: shared-Evaluator mid-mutation delivery gate.
+        // If the shared Evaluator's MutationBoundary is held (depth>0 || held)
+        // by ANY fiber, defer (BP) — never enqueue a payload that could
+        // observe mid-mutation state. Same authority as steal safety
+        // (aura_evaluator_mutation_boundary_held / depth). Production
+        // fail-closed via note_mailbox_deferred_under_boundary (always BP;
+        // Soft soft_observe / production hard counters). Phase-5 outermost
+        // Guard dtor is the sole reopen of the deliverability window.
+        if (note_mailbox_deferred_under_boundary(&local_stats_))
             return PushStatus::Backpressure;
-        }
         if (queue_.size() >= high_water_) {
             note_backpressure(&local_stats_, /*from_fanout=*/false);
             return PushStatus::Backpressure;
@@ -759,31 +815,11 @@ public:
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
             return PushStatus::Closed;
-        // Issue #2680: shared-Evaluator delivery gate (fanout variant).
-        // If the shared Evaluator's MutationBoundary is held (depth>0 ||
-        // held) by ANY fiber, defer the ENTIRE fanout — don't partial-
-        // deliver to a subset of attachers while another target on the
-        // shared Evaluator is mid-mutation. Mirrors the recv() L820-821
-        // shared-Evaluator check. Per AC2: same authority as steal safety.
-        // Per AC1: deferred (not dropped) — sender retries / queues.
-        if (aura_evaluator_mutation_boundary_depth() > 0 ||
-            aura_evaluator_mutation_boundary_held() != 0) {
-            g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.fetch_add(
-                1, std::memory_order_relaxed);
-            local_stats_.mailbox_shared_evaluator_deferred_total.fetch_add(
-                1, std::memory_order_relaxed);
-            if (is_mutate_mailbox_strict()) {
-                g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                local_stats_.mailbox_shared_evaluator_deferred_hard_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            } else {
-                g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                local_stats_.mailbox_shared_evaluator_deferred_soft_observe_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-            note_mailbox_mutation_hold_defer();
+        // Issue #2680 / #2849: shared-Evaluator mid-mutation delivery gate
+        // (fanout variant). Defer the ENTIRE fanout — never partial-deliver
+        // while any fiber on the shared Evaluator is mid-mutation. Same
+        // sole helper as push(); production fail-closed (always BP).
+        if (note_mailbox_deferred_under_boundary(&local_stats_)) {
             note_backpressure(&local_stats_, /*from_fanout=*/true);
             return PushStatus::Backpressure;
         }

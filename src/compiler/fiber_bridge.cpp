@@ -44,6 +44,10 @@ __attribute__((weak)) int aura_evaluator_mutation_boundary_held() {
     return 0;
 }
 
+// Issue #2849: process-wide held enter/exit weak no-ops (Evaluator not linked).
+__attribute__((weak)) void aura_process_mutation_boundary_held_enter() noexcept {}
+__attribute__((weak)) void aura_process_mutation_boundary_held_exit() noexcept {}
+
 // Issue #2347: weak no-op when Evaluator not linked (mailbox Strict force path).
 extern "C" __attribute__((weak)) void aura_evaluator_mark_outermost_mutation_failed() noexcept {}
 

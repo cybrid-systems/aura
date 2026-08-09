@@ -1903,6 +1903,19 @@ def cmd_lint():
             "mailbox boundary interleave (#2680) coverage linter failed — run python3 scripts/coverage/checks/check_mailbox_boundary_interleave_2680.py"
         )
         return r
+    # Issue #2849: production fail-closed mid-mutation mailbox delivery
+    # (#2680 residual). Sole note_mailbox_deferred_under_boundary helper;
+    # Phase-5 outermost exit sole reopen; chaos-lite ac2849_* tests.
+    mmd_script = COVERAGE_CHECKS / "check_mailbox_mid_mutation_delivery_2849.py"
+    if not mmd_script.exists():
+        fail(f"missing {mmd_script}")
+        return 1
+    r = run([sys.executable, str(mmd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2849 mailbox mid-mutation delivery linter failed — run python3 scripts/coverage/checks/check_mailbox_mid_mutation_delivery_2849.py"
+        )
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +

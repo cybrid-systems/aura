@@ -20,7 +20,14 @@
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 // Issue #2114 / #2188: outermost Guard held flag (weak default 0 in
 // fiber_bridge when Evaluator not linked).
+// Issue #2849: also true when process-wide held count > 0 so cross-thread
+// mailbox push/fanout observes mid-mutation without TLS yield_hook bind.
 extern "C" int aura_evaluator_mutation_boundary_held();
+// Issue #2849: process-wide outermost Guard enter/exit (paired with
+// mutation_boundary_held_.store true/false). Mailbox mid-mutation delivery
+// gate + steal observers use the count via aura_evaluator_mutation_boundary_held.
+extern "C" void aura_process_mutation_boundary_held_enter() noexcept;
+extern "C" void aura_process_mutation_boundary_held_exit() noexcept;
 extern "C" std::uint64_t aura_fiber_current_id();
 
 // Issue #2491: TenantScope install / release hooks at fiber resume /
