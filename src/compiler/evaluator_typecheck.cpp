@@ -1975,6 +1975,8 @@ bool Evaluator::force_linear_rollback(std::string_view op,
     }
     const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
     const std::uint64_t epoch = defuse_version_.load(std::memory_order_relaxed);
+    // Issue #2814 M7 audit: close audit_enforcement_gap_total.
+    note_invariant_enforcement_ran(mid);
     capture_audit_event_forced(mid, op, classify_kind(op), epoch, epoch, AuditOutcome::Error, 0, 0,
                                static_cast<std::int64_t>(aura_fiber_current_id()), 0);
     return true;
@@ -2152,6 +2154,8 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Trail: Error outcome for Strict / hard fail (Agent audit surface).
+    // Issue #2814 M7 audit: close audit_enforcement_gap_total.
+    note_invariant_enforcement_ran(mid);
     capture_audit_event_forced(mid, op, classify_kind(op), epoch, epoch, AuditOutcome::Error, 0,
                                static_cast<std::uint32_t>(nodes_changed),
                                static_cast<std::int64_t>(aura_fiber_current_id()), 0);
