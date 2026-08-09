@@ -1241,7 +1241,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_hot_pass_pure_wrap.cpp` (—) [domain_suite, theme_compiler] — AC1: Pipeline registration rejects non-HotPassDodCompliant dirty/inc packs
 - `tests/core/test_hotpath_matrix_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — test_hotpath_matrix_batch.cpp — Domain suite batch: behavioral gates.
 - `tests/compiler/test_hygiene_checkpoint.cpp` (—) [domain_suite, theme_compiler] — AC1: save → mutate (introduce new MacroIntroduced node) → restore → pre-save
-- `tests/compiler/test_hygiene_mutate_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2037; enforce_macro_hygiene_mutate_hotpath +
+- `tests/compiler/test_hygiene_mutate_closed_loop.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2037; enforce_macro_hygiene_mutate_hotpath +
 - `tests/core/test_incoming_parent_dirty_atomic.cpp` (—) [domain_suite, theme_core] — AC1: flag is atomic (behavior: concurrent mark + ensure/collect)
 - `tests/compiler/test_incremental_typed_selfmod_dirty_narrowing.cpp` (—) [domain_suite, theme_compiler] — test_incremental_typed_selfmod_dirty_narrowing.cpp — Merged #509/#518/#526/#536/#537/#550 +
 - `tests/compiler/test_invalidate_cascade_order.cpp` (—) [domain_suite, theme_compiler] — test_invalidate_cascade_order.cpp — Issue #1378:
