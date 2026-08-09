@@ -1323,6 +1323,18 @@ def cmd_lint():
             "Issue #2818 should_audit Sampled default linter failed — run python3 scripts/coverage/checks/check_should_audit_sampled_default_2818.py"
         )
         return r
+    # Issue #2819: capture_audit_event_forced lock-free trail (no hot-path mu).
+    # ac2819 in test_audit_trail_lockfree.
+    atl_script = COVERAGE_CHECKS / "check_audit_trail_lockfree_2819.py"
+    if not atl_script.exists():
+        fail(f"missing {atl_script}")
+        return 1
+    r = run([sys.executable, str(atl_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2819 audit trail lockfree linter failed — run python3 scripts/coverage/checks/check_audit_trail_lockfree_2819.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

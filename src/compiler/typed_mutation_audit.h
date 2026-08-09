@@ -111,6 +111,10 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> samples_skipped{0};
     std::atomic<std::uint64_t> contextual_total{0}; // AC: typed_mutation_audit_contextual_total
     std::atomic<std::uint64_t> trail_writes{0};
+    // Issue #2819: lock-free trail publish observability.
+    std::atomic<std::uint64_t> audit_trail_lockfree_total{0};
+    std::atomic<std::uint64_t> audit_trail_mutex_wait_us_total{0}; // 0 when lock-free path
+    std::atomic<std::uint32_t> audit_trail_lockfree_wired{1};
     std::atomic<std::uint64_t> rollbacks{0};
     std::atomic<std::uint64_t> errors{0};
     // Issue #2818: Full is the cold-start default so small non-linear mutates
@@ -393,9 +397,13 @@ inline void clear_linear_densify_scan_mismatch_inject_for_test() noexcept {
         std::memory_order_relaxed);
 }
 
-// Ring buffer protected by mutex (writers on mutation path; readers via query).
+// Issue #2819: lock-free ring for hot-path writers (capture_audit_event_forced).
+// Slot index is trail_seq % size (seq allocated via atomic fetch_add).
+// Writers publish the full event POD without g_trail().mu — matches the
+// SecurityEvent ring pattern (best-effort; readers re-check seq).
+// mu is retained only for exclusive reset_for_test clears.
 struct TypedMutationAuditTrail {
-    std::mutex mu;
+    std::mutex mu; // reset_for_test only (#2819: not on capture hot path)
     TypedMutationAuditEvent ring[kTypedMutationAuditTrailSize]{};
 };
 
@@ -1413,10 +1421,14 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
                                        .count());
     ev.affected_ref_count = affected_ref_count;
 
-    {
-        std::lock_guard lock(g_trail().mu);
-        g_trail().ring[seq % kTypedMutationAuditTrailSize] = ev;
-    }
+    // Issue #2819: lock-free ring publish (no mutex on capture hot path).
+    // trail_seq was already claimed via fetch_add; each seq maps to a unique
+    // slot until wrap. Concurrent writers hit different slots until size wraps.
+    // Readers (trail_at_seq) validate out.seq == expected to drop torn/stale.
+    g_trail().ring[seq % kTypedMutationAuditTrailSize] = ev;
+    g_typed_mutation_audit_counters.audit_trail_lockfree_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    // mutex_wait_us stays 0: lock-free path never waits.
 
     g_typed_mutation_audit_counters.contextual_total.fetch_add(1, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.trail_writes.fetch_add(1, std::memory_order_relaxed);
@@ -1811,29 +1823,30 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
 }
 
 // Copy latest event (seq-1) or empty if none.
+// Issue #2819: lock-free read (no mu); best-effort under concurrent wrap.
 [[nodiscard]] inline bool trail_latest(TypedMutationAuditEvent& out) noexcept {
-    const auto seq = trail_seq();
-    if (seq == 0)
+    const auto head = trail_seq();
+    if (head == 0)
         return false;
-    std::lock_guard lock(g_trail().mu);
-    out = g_trail().ring[(seq - 1) % kTypedMutationAuditTrailSize];
+    out = g_trail().ring[(head - 1) % kTypedMutationAuditTrailSize];
     return true;
 }
 
 // Copy event by absolute seq if still in ring window.
+// Issue #2819: lock-free read; require out.seq == seq (drop torn/overwritten).
 [[nodiscard]] inline bool trail_at_seq(std::uint64_t seq, TypedMutationAuditEvent& out) noexcept {
     const auto head = trail_seq();
     if (head == 0 || seq >= head)
         return false;
     if (head > kTypedMutationAuditTrailSize && seq < head - kTypedMutationAuditTrailSize)
         return false;
-    std::lock_guard lock(g_trail().mu);
     out = g_trail().ring[seq % kTypedMutationAuditTrailSize];
     return out.seq == seq;
 }
 
 // Issue #2054: newest-first scan for mutation_id correlation join.
 // Returns true and copies the most recent matching event still in ring.
+// Issue #2819: lock-free scan (best-effort under concurrent wrap).
 [[nodiscard]] inline bool trail_find_by_mutation_id(std::uint64_t mutation_id,
                                                     TypedMutationAuditEvent& out) noexcept {
     if (mutation_id == 0)
@@ -1843,9 +1856,8 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
         return false;
     const std::size_t window = head < kTypedMutationAuditTrailSize ? static_cast<std::size_t>(head)
                                                                    : kTypedMutationAuditTrailSize;
-    std::lock_guard lock(g_trail().mu);
     for (std::size_t i = 0; i < window; ++i) {
-        const auto& e = g_trail().ring[(head - 1 - i) % kTypedMutationAuditTrailSize];
+        const auto e = g_trail().ring[(head - 1 - i) % kTypedMutationAuditTrailSize];
         if (e.mutation_id == mutation_id) {
             out = e;
             return true;
@@ -1882,6 +1894,11 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.contextual_total.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.trail_writes.store(0, std::memory_order_relaxed);
+    // Issue #2819
+    g_typed_mutation_audit_counters.audit_trail_lockfree_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_trail_mutex_wait_us_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_trail_lockfree_wired.store(1, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.rollbacks.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.errors.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.trail_seq.store(0, std::memory_order_relaxed);
