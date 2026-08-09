@@ -11,7 +11,8 @@
         "moving_incomplete_remap",
         "untracked_kept_count",
         "relocate_tracked_objects_for_moving_(&untracked_kept_local)",
-        "if (result.objects_moved > 0 && result.untracked_kept_count > 0)",
+        "result.untracked_kept_count > 0",
+        "result.objects_moved > 0",
         "result.moving_incomplete_remap = true",
         "result.pin_contract_held = false"
       ]
