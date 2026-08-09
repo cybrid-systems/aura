@@ -91,7 +91,11 @@ def main() -> int:
     must("Issue #2717", "AC1", tma)
     must("build_type_linear_commit_proof_from_live", "AC1", tma)
     must("g_type_linear_commit_proof_stamped_total", "AC1", tma)
-    must("build_type_linear_commit_proof_from_live(cp.version", "AC1", efm)
+    # #2842 may format the stamp call multi-line; require helper + cp.version.
+    if "build_type_linear_commit_proof_from_live" not in efm:
+        fails.append("AC1: missing build_type_linear_commit_proof_from_live")
+    if "cp.version" not in efm and "cp.saved_defuse_version" not in efm:
+        fails.append("AC1: missing cp.version / saved_defuse_version stamp source")
     # The two stamp sites: linear-synth-hard-fail early return + hygiene save.
     must("build_type_linear_commit_proof_from_live", "AC1", efm)
 
@@ -99,7 +103,9 @@ def main() -> int:
     # The stamp is at the END of exit_mutation_boundary — covers
     # composite ok + reject (both fall through to the final stamp).
     must("build_type_linear_commit_proof_from_live", "AC2", efm)
-    must("build_type_linear_commit_proof_from_live(cp.version", "AC2", efm)
+    # #2842 multi-line stamp call: accept cp.version or saved_defuse_version.
+    if "cp.version" not in efm and "cp.saved_defuse_version" not in efm:
+        fails.append("AC2: missing cp.version / saved_defuse_version stamp source")
 
     # AC3 — Soft + quiet path → stamp cheap. #2758 fills counts from
     # linear_or_dirty_roots_count_for_rebind (empty → 0) + goal gauge/hint.

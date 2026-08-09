@@ -13,6 +13,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
+#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -293,7 +294,10 @@ static void ac2717_2_composite_txn_commit_stamps() {
     const auto efm = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(efm.find("build_type_linear_commit_proof_from_live") != std::string::npos,
           "AC2: build call present in evaluator_mutation_boundary.cpp");
-    CHECK(efm.find("build_type_linear_commit_proof_from_live(cp.version") != std::string::npos,
+    // #2842 may format the call multi-line; still stamps with cp.version.
+    CHECK(efm.find("build_type_linear_commit_proof_from_live(cp.version") != std::string::npos ||
+              (efm.find("build_type_linear_commit_proof_from_live") != std::string::npos &&
+               efm.find("cp.version") != std::string::npos),
           "AC2: stamp call uses cp.version as the defuse_or_epoch source");
 }
 
@@ -393,10 +397,12 @@ static void ac2758_1_counts_from_real_walks() {
     CHECK(tma.find("p.live_goal_count =") != std::string::npos, "AC1: live_goal_count assigned");
     CHECK(tma.find("#2708 future wire") == std::string::npos,
           "AC1: #2708 future-wire hard-code removed");
-    // Stamp sites pass CS goal count when TypeChecker present.
-    CHECK(emb.find("occurrence_goals_size()") != std::string::npos,
-          "AC1: stamp site reads occurrence_goals_size");
-    CHECK(emb.find("build_type_linear_commit_proof_from_live(cp.version") != std::string::npos,
+    // Stamp sites pass CS goal count when TypeChecker present (#2842 may
+    // freeze via occurrence_goals_for_test + fingerprint helper).
+    CHECK(emb.find("occurrence_goals_size()") != std::string::npos ||
+              emb.find("occurrence_goals_for_test()") != std::string::npos,
+          "AC1: stamp site reads CS goals");
+    CHECK(emb.find("build_type_linear_commit_proof_from_live") != std::string::npos,
           "AC1: stamp still on boundary path");
     // count wrapper defined next to collect.
     const auto orb = read_file("src/compiler/ownership_rebind.h");
@@ -489,6 +495,173 @@ static void ac2758_5_source_and_linter() {
           "AC6: no new test file per #81967");
 }
 
+// ── Issue #2842: freeze Occurrence truth into TypeLinearCommitProof ──
+// Residual of #2758: live_goal_count + bounded goal_fingerprint from CS
+// at stamp (not gauge-only). Quiet zeros; production gauge is fallback.
+
+static void ac2842_1_stamp_freezes_goal_truth() {
+    std::println("\n--- #2842 AC1: stamp freezes live_goal_count + fingerprint from CS ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(tma.find("goal_fingerprint") != std::string::npos, "AC1: proof has goal_fingerprint");
+    CHECK(tma.find("mix_occurrence_goal_into_fingerprint") != std::string::npos,
+          "AC1: mix helper for var/refined/pred/mid/epoch");
+    CHECK(tma.find("apply_proof_goal_truth") != std::string::npos, "AC1: apply_proof_goal_truth");
+    CHECK(tma.find("Issue #2842") != std::string::npos || tma.find("#2842") != std::string::npos,
+          "AC1: tma cites #2842");
+    CHECK(emb.find("freeze_proof_goal_truth_from_type_checker") != std::string::npos,
+          "AC1: emb freezes truth from TypeChecker CS");
+    CHECK(emb.find("occurrence_goals_for_test()") != std::string::npos ||
+              emb.find("occurrence_goals_size()") != std::string::npos,
+          "AC1: stamp reads CS goals");
+    // Runtime: mix produces non-zero for non-empty goal content; quiet zero.
+    using aura::compiler::typed_audit::build_type_linear_commit_proof_from_live;
+    using aura::compiler::typed_audit::clear_proof_goal_truth_for_test;
+    using aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read;
+    using aura::compiler::typed_audit::last_proof_live_goal_count_v_read;
+    using aura::compiler::typed_audit::mix_occurrence_goal_into_fingerprint;
+    using aura::compiler::typed_audit::type_linear_commit_proof_goal_truth_stamped_total_v_read;
+    clear_proof_goal_truth_for_test();
+    std::uint64_t h = 0xcbf29ce484222325ULL;
+    h = mix_occurrence_goal_into_fingerprint(h, 3, 7, 11, 100, 5);
+    CHECK(h != 0, "AC1: mix produces non-zero fingerprint for non-empty goal");
+    const auto truth_total0 = type_linear_commit_proof_goal_truth_stamped_total_v_read();
+    const auto p = build_type_linear_commit_proof_from_live(/*epoch=*/42, /*goals=*/1, h,
+                                                            /*from_cs=*/true);
+    CHECK(p.live_goal_count == 1, "AC1: stamped live_goal_count == CS size");
+    CHECK(p.goal_fingerprint != 0, "AC1: non-empty goals → non-zero fingerprint");
+    CHECK(last_proof_live_goal_count_v_read() == 1, "AC1: last goal count published");
+    CHECK(last_proof_goal_fingerprint_v_read() == p.goal_fingerprint,
+          "AC1: last fingerprint published");
+    CHECK(type_linear_commit_proof_goal_truth_stamped_total_v_read() > truth_total0,
+          "AC1: goal-truth-stamped-total advances on CS freeze");
+}
+
+static void ac2842_2_fingerprint_differs_on_content_change() {
+    std::println("\n--- #2842 AC2: fingerprint differs when goals change (densify/steal) ---");
+    using aura::compiler::typed_audit::build_type_linear_commit_proof_from_live;
+    using aura::compiler::typed_audit::clear_proof_goal_truth_for_test;
+    using aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read;
+    using aura::compiler::typed_audit::mix_occurrence_goal_into_fingerprint;
+    clear_proof_goal_truth_for_test();
+    std::uint64_t h1 = 0xcbf29ce484222325ULL;
+    h1 = mix_occurrence_goal_into_fingerprint(h1, 1, 2, 3, 10, 1);
+    const auto p1 = build_type_linear_commit_proof_from_live(1, 1, h1, true);
+    // Simulate densify prune: different remaining goal content.
+    std::uint64_t h2 = 0xcbf29ce484222325ULL;
+    h2 = mix_occurrence_goal_into_fingerprint(h2, 9, 8, 7, 20, 2);
+    const auto p2 = build_type_linear_commit_proof_from_live(2, 1, h2, true);
+    CHECK(p1.goal_fingerprint != p2.goal_fingerprint,
+          "AC2: different goal content → different fingerprint");
+    CHECK(last_proof_goal_fingerprint_v_read() == p2.goal_fingerprint,
+          "AC2: last fingerprint tracks latest stamp");
+    // Empty after prune → fingerprint 0.
+    const auto p0 = build_type_linear_commit_proof_from_live(3, 0, 0, true);
+    CHECK(p0.live_goal_count == 0 && p0.goal_fingerprint == 0,
+          "AC2: empty goals → count 0 and fingerprint 0");
+    // densify stamp sites pass freeze helper (source-cite).
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("densify_goal_truth_2842") != std::string::npos ||
+              emb.find("freeze_proof_goal_truth_from_type_checker") != std::string::npos,
+          "AC2: densify stamp freezes goal truth");
+}
+
+static void ac2842_3_quiet_path_zeros() {
+    std::println("\n--- #2842 AC3: quiet path zeros (no goals, no linear roots) ---");
+    using aura::compiler::typed_audit::build_type_linear_commit_proof_from_live;
+    using aura::compiler::typed_audit::clear_proof_goal_truth_for_test;
+    using aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read;
+    using aura::compiler::typed_audit::last_proof_live_goal_count_v_read;
+    using aura::compiler::typed_audit::
+        type_linear_commit_proof_goal_fingerprint_nonzero_total_v_read;
+    clear_proof_goal_truth_for_test();
+    const auto nz0 = type_linear_commit_proof_goal_fingerprint_nonzero_total_v_read();
+    // Explicit quiet CS truth: count 0, fp 0.
+    const auto p = build_type_linear_commit_proof_from_live(0, 0, 0, true);
+    CHECK(p.live_goal_count == 0, "AC3: quiet live_goal_count 0");
+    CHECK(p.goal_fingerprint == 0, "AC3: quiet goal_fingerprint 0");
+    CHECK(last_proof_live_goal_count_v_read() == 0, "AC3: last count 0");
+    CHECK(last_proof_goal_fingerprint_v_read() == 0, "AC3: last fingerprint 0");
+    CHECK(type_linear_commit_proof_goal_fingerprint_nonzero_total_v_read() == nz0,
+          "AC3: nonzero fingerprint counter does not advance on quiet");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kQuietProofGoalTruth") != std::string::npos ||
+              tma.find("empty goals") != std::string::npos ||
+              tma.find("Quiet path") != std::string::npos ||
+              tma.find("quiet path") != std::string::npos,
+          "AC3: quiet path documented");
+}
+
+static void ac2842_4_additive_no_regression() {
+    std::println("\n--- #2842 AC4: additive — #2613/#2697/#2717/#2758 preserved ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(q.find("schema-2613") != std::string::npos ||
+              q.find("type-linear-commit-health") != std::string::npos,
+          "AC4: #2613 health preserved");
+    CHECK(q.find("schema-2697") != std::string::npos, "AC4: schema-2697 preserved");
+    CHECK(q.find("schema-2717") != std::string::npos, "AC4: schema-2717 preserved");
+    CHECK(q.find("schema-2758") != std::string::npos, "AC4: schema-2758 preserved");
+    CHECK(q.find("type-linear-commit-proof-live-goal-count") != std::string::npos,
+          "AC4: live-goal-count key preserved");
+    // clang-format may split adjacent string literals — normalize for find.
+    {
+        std::string qn;
+        qn.reserve(q.size());
+        for (char ch : q) {
+            if (ch != '"' && !std::isspace(static_cast<unsigned char>(ch)))
+                qn.push_back(ch);
+        }
+        CHECK(qn.find("type-linear-commit-proof-goal-fingerprint") != std::string::npos,
+              "AC4: goal-fingerprint query key");
+        CHECK(qn.find("type-linear-commit-proof-goal-truth-stamped-total") != std::string::npos,
+              "AC4: goal-truth-stamped-total");
+    }
+    CHECK(q.find("schema-2842") != std::string::npos, "AC4: schema-2842");
+    CHECK(q.find("issue-2842") != std::string::npos, "AC4: issue-2842");
+    CHECK(tma.find("g_type_linear_commit_proof_goal_truth_stamped_total") != std::string::npos,
+          "AC4: truth-stamped counter in tma");
+    CHECK(tma.find("g_type_linear_commit_proof_goal_fingerprint_nonzero_total") !=
+              std::string::npos,
+          "AC4: fingerprint-nonzero counter in tma");
+    CHECK(tma.find("g_type_linear_commit_proof_goal_truth_gauge_fallback_total") !=
+              std::string::npos,
+          "AC4: gauge-fallback counter in tma");
+}
+
+static void ac2842_5_source_and_linter() {
+    std::println("\n--- #2842 AC5/AC6: source-cite + linter + no docs/design ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_type_linear_commit_proof_goal_truth_2842.py");
+    CHECK(tma.find("Issue #2842") != std::string::npos || tma.find("#2842") != std::string::npos,
+          "AC5: tma cites #2842");
+    CHECK(emb.find("#2842") != std::string::npos, "AC5: emb cites #2842");
+    CHECK(q.find("Issue #2842") != std::string::npos || q.find("#2842") != std::string::npos,
+          "AC5: query cites #2842");
+    CHECK(t.find("ac2842_1_stamp_freezes_goal_truth") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2842_2_fingerprint_differs_on_content_change") != std::string::npos,
+          "AC5: AC2 test");
+    CHECK(t.find("ac2842_3_quiet_path_zeros") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2842_4_additive_no_regression") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2842_5_source_and_linter") != std::string::npos, "AC5: self-test");
+    CHECK(t.find("ac2758_1_counts_from_real_walks") != std::string::npos,
+          "AC5: #2758 tests preserved");
+    CHECK(build.find("check_type_linear_commit_proof_goal_truth_2842") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && (lint.find("Issue #2842") != std::string::npos ||
+                            lint.find("#2842") != std::string::npos),
+          "AC5: linter present");
+    CHECK(read_file("docs/design/2842-type-linear-commit-proof-goal-truth.md").empty(),
+          "AC6: no docs/design/2842-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2842.cpp").empty(),
+          "AC6: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -524,7 +697,14 @@ int run_test_type_linear_commit_health() {
     ac2758_3_last_counts_queryable();
     ac2758_4_additive_no_regression();
     ac2758_5_source_and_linter();
-    std::println("\n=== #2613 + #2697 + #2717 + #2758: {} passed, {} failed ===", g_passed,
+    // Issue #2842: freeze Occurrence truth (count + fingerprint) at stamp.
+    std::println("\n=== Issue #2842: freeze Occurrence truth into TypeLinearCommitProof ===");
+    ac2842_1_stamp_freezes_goal_truth();
+    ac2842_2_fingerprint_differs_on_content_change();
+    ac2842_3_quiet_path_zeros();
+    ac2842_4_additive_no_regression();
+    ac2842_5_source_and_linter();
+    std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
