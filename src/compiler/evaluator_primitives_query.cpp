@@ -4864,6 +4864,67 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(ht);
         });
 
+    // Issue #2863: query:replace-subtree-stats. Hash view of the
+    // mutate:replace-subtree full safety contract metrics (refine
+    // #2858 / #2797 / #1281 / #369 / #2801). Tracks the 5
+    // non-negotiable safety contract surfaces mandated by #2863
+    // AC #8 ("observability: full mutation log, fine-rollback counts,
+    // macro_restamp, densify triggers, hygiene rejects"):
+    //   - mutate-replace-subtree-calls-total: every primitive entry
+    //       (all paths via MutationBoundaryGuard).
+    //   - mutate-replace-subtree-fine-rollback-total: fine-rollback
+    //       fired on failure (parse / hygiene / linear / type).
+    //   - mutate-replace-subtree-densify-triggers-total: post-mutate
+    //       densify cascade fired (children_ PCV topology change).
+    //   - mutate-replace-subtree-hygiene-rejects-total: default
+    //       MacroIntroduced reject (without :allow-macro?).
+    //   - mutate-replace-subtree-restamp-nodes-total: StableNodeRef
+    //       restamp nodes (target + replacement + cascade) on success.
+    // Distinct from existing #2858 macro_mutate_auto_restamp_total
+    // (allowed-mutate cascade) and #2037 hygiene_mutate_restamp_total
+    // (hygiene-restamp-only). These are the #2863 contract surfaces
+    // covering replace-subtree entry + fine-rollback + densify +
+    // hygiene reject + restamp nodes.
+    ObservabilityPrims::register_stats_impl(
+        "query:replace-subtree-stats", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            const auto* m =
+                static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
+            const std::uint64_t calls =
+                m ? m->mutate_replace_subtree_calls_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t fine_rollback =
+                m ? m->mutate_replace_subtree_fine_rollback_total.load(std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t densify_triggers =
+                m ? m->mutate_replace_subtree_densify_triggers_total.load(std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t hygiene_rejects =
+                m ? m->mutate_replace_subtree_hygiene_rejects_total.load(std::memory_order_relaxed)
+                  : 0;
+            const std::uint64_t restamp_nodes =
+                m ? m->mutate_replace_subtree_restamp_nodes_total.load(std::memory_order_relaxed)
+                  : 0;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            (void)ht->insert_pair("schema", make_int(2863));
+            (void)ht->insert_pair("issue", make_int(2863));
+            (void)ht->insert_pair("mutate-replace-subtree-calls-total",
+                                  make_int(static_cast<std::int64_t>(calls)));
+            (void)ht->insert_pair("mutate-replace-subtree-fine-rollback-total",
+                                  make_int(static_cast<std::int64_t>(fine_rollback)));
+            (void)ht->insert_pair("mutate-replace-subtree-densify-triggers-total",
+                                  make_int(static_cast<std::int64_t>(densify_triggers)));
+            (void)ht->insert_pair("mutate-replace-subtree-hygiene-rejects-total",
+                                  make_int(static_cast<std::int64_t>(hygiene_rejects)));
+            (void)ht->insert_pair("mutate-replace-subtree-restamp-nodes-total",
+                                  make_int(static_cast<std::int64_t>(restamp_nodes)));
+            return make_hash(ht);
+        });
+
     // Issue #2179: query:impact-scope-stats — cross-function instruction-
     // level impact scope metrics (refine #2109 instr-level precision).
     // Returns a hash with:

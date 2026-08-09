@@ -3208,6 +3208,32 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> children_stable_invalidation_detected_total{0}; // #2862
     std::atomic<std::uint64_t> children_stable_epoch_mismatch_total{0};        // #2862
 
+    // Issue #2863: mutate:replace-subtree full safety contract
+    // metrics (refine #2858 / #2797 / #1281 / #369 / #2801). Tracks
+    // the 5 non-negotiable safety contract surfaces mandated by
+    // #2863 AC #8 ("observability: full mutation log, fine-rollback
+    // counts, macro_restamp, densify triggers, hygiene rejects"):
+    //   - mutate_replace_subtree_calls_total: every mutate:replace
+    //       subtree primitive entry (all paths via MutationBoundaryGuard).
+    //   - mutate_replace_subtree_fine_rollback_total: fine-rollback
+    //       fired on failure (parse / hygiene / linear / type).
+    //   - mutate_replace_subtree_densify_triggers_total: post-mutate
+    //       densify cascade fired (children_ PCV topology change).
+    //   - mutate_replace_subtree_hygiene_rejects_total: default
+    //       MacroIntroduced reject (without :allow-macro?).
+    //   - mutate_replace_subtree_restamp_nodes_total: StableNodeRef
+    //       restamp nodes (target + replacement + cascade) on success.
+    // Distinct from existing #2858 macro_mutate_auto_restamp_total
+    // (allowed-mutate cascade) and #2037 hygiene_mutate_restamp_total
+    // (hygiene-restamp-only). These are the #2863 contract surfaces
+    // covering replace-subtree entry + fine-rollback + densify +
+    // hygiene reject + restamp nodes.
+    std::atomic<std::uint64_t> mutate_replace_subtree_calls_total{0};            // #2863
+    std::atomic<std::uint64_t> mutate_replace_subtree_fine_rollback_total{0};    // #2863
+    std::atomic<std::uint64_t> mutate_replace_subtree_densify_triggers_total{0}; // #2863
+    std::atomic<std::uint64_t> mutate_replace_subtree_hygiene_rejects_total{0};  // #2863
+    std::atomic<std::uint64_t> mutate_replace_subtree_restamp_nodes_total{0};    // #2863
+
     // Issue #2170: LayoutStamp publish + last-stamp fields (P1
     // MemorySafety-Review / Epoch). Backs the extended
     // (query:stable-ref-stats-hash) keys layout-stamp-*.
