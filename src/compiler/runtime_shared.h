@@ -153,6 +153,13 @@ extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
 // when no captures match. Out params may be null.
 extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_count,
                                                               std::uint64_t* fail_count);
+// Issue #2850: bounded pure-anon (sid==0 && !env/linear) sync remount
+// on reemit success. Budget from aura_sync_remount_pure_anon_budget_default
+// (default 64 under production; 0 Soft). Out params may be null.
+extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_default();
+extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
+                                                          std::uint64_t* ok_count,
+                                                          std::uint64_t* skip_budget_count);
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);

@@ -432,6 +432,21 @@ aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_count, std::uint
 extern "C" __attribute__((weak)) void
 aura_bump_live_closure_sync_remount_anon_captured_totals(std::uint64_t /*ok*/,
                                                          std::uint64_t /*fail*/) {}
+// Issue #2850: pure-anon bounded sync remount weak stubs.
+extern "C" __attribute__((weak)) void
+aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64_t /*ok*/,
+                                                     std::uint64_t /*skip_budget*/) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_sync_remount_pure_anon_budget_default() {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_sync_remount_pure_anon_live_closures(std::uint64_t /*budget*/, std::uint64_t* ok_count,
+                                          std::uint64_t* skip_budget_count) {
+    if (ok_count)
+        *ok_count = 0;
+    if (skip_budget_count)
+        *skip_budget_count = 0;
+}
 // Issue #2637: env opt-in flag weak stub (default 0 = off per AC1).
 extern "C" __attribute__((weak)) int aura_sync_remount_anon_enabled_default() {
     return 0;

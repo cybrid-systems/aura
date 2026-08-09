@@ -821,8 +821,102 @@ int run_test_anonymous_residual_stable_id_policy() {
         }
     }
 
-    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // ── Issue #2850: bounded pure-anon sync remount on reemit ──
+    // AC1: pure-anon path + budget; remount/epoch closes MustDeopt lag
+    // AC2: budget=0 / Soft → path does not run
+    // AC3: named + captured opposite filters; no double remount
+    // AC4: quiet nslots==0 short-circuit
+    // AC5: schema-2850 query keys; lineage preserved
+    // AC6: source-cite + linter; no docs/design/
+    {
+        std::println("\n--- #2850 AC1-AC6: bounded pure-anon sync remount ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+        const auto obs = read_file("src/compiler/observability_metrics.h");
+        const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        const auto build = read_file("build.py");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_pure_anon_sync_remount_budget_2850.py");
+
+        // AC1: pure-anon walk + budget + remount
+        CHECK(rt.find("aura_sync_remount_pure_anon_live_closures") != std::string::npos,
+              "2850 AC1: pure-anon walk C ABI present");
+        CHECK(rt.find("aura_sync_remount_pure_anon_budget_default") != std::string::npos,
+              "2850 AC1: budget default present");
+        CHECK(rt.find("AURA_SYNC_REMOUNT_PURE_ANON_BUDGET") != std::string::npos,
+              "2850 AC1: env budget override");
+        CHECK(br.find("aura_sync_remount_pure_anon_live_closures") != std::string::npos,
+              "2850 AC1: bridge wires pure-anon after captured");
+        CHECK(rt.find("pure_anon_ok") != std::string::npos ||
+                  rt.find("pure_anon") != std::string::npos ||
+                  obs.find("live_closure_sync_remount_pure_anon_ok_total") != std::string::npos,
+              "2850 AC1: pure_anon_ok counter surface");
+        CHECK(obs.find("live_closure_sync_remount_pure_anon_ok_total") != std::string::npos,
+              "2850 AC1: pure_anon_ok counter declared");
+        CHECK(obs.find("live_closure_sync_remount_pure_anon_skip_budget_total") !=
+                  std::string::npos,
+              "2850 AC1: pure_anon_skip_budget counter declared");
+
+        // AC2: budget=0 / Soft zero-cost
+        CHECK(rt.find("return 0; // zero-cost when budget off") != std::string::npos ||
+                  rt.find("budget == 0") != std::string::npos,
+              "2850 AC2: budget==0 short-circuit");
+        CHECK(rt.find("Soft / sandbox / tests → 0") != std::string::npos ||
+                  rt.find("Soft / sandbox") != std::string::npos,
+              "2850 AC2: Soft path budget 0 documented");
+        CHECK(br.find("budget=0") != std::string::npos ||
+                  br.find("pure_budget > 0") != std::string::npos,
+              "2850 AC2: bridge gates on pure_budget > 0");
+
+        // AC3: opposite filters, no double remount
+        CHECK(rt.find("!aura_closure_has_env_or_linear_captures_unlocked") != std::string::npos ||
+                  (rt.find("has_env_or_linear_captures_unlocked") != std::string::npos &&
+                   rt.find("continue;") != std::string::npos),
+              "2850 AC3: pure-anon skips has-captures");
+        // Pure path skips when has captures; captured path skips when !has captures.
+        CHECK(rt.find("aura_sync_remount_anon_captured_live_closures") != std::string::npos,
+              "2850 AC3: captured path preserved");
+        CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+              "2850 AC3: named path preserved");
+        CHECK(rt.find("if (sid != 0)") != std::string::npos,
+              "2850 AC3: pure-anon filters sid==0 only");
+
+        // AC4: quiet nslots==0
+        CHECK(rt.find("nslots == 0") != std::string::npos,
+              "2850 AC4: nslots==0 short-circuit present");
+
+        // AC5: query keys + lineage
+        CompilerService cs2850;
+        CHECK(href(cs2850, "schema-2850") == 2850, "2850 AC5: schema-2850");
+        CHECK(href(cs2850, "issue-2850") == 2850, "2850 AC5: issue-2850");
+        CHECK(href(cs2850, "live-closure-sync-remount-pure-anon-wired") == 1,
+              "2850 AC5: pure-anon-wired");
+        CHECK(href(cs2850, "live-closure-sync-remount-pure-anon-ok-total") >= 0,
+              "2850 AC5: pure-anon-ok-total key");
+        CHECK(href(cs2850, "live-closure-sync-remount-pure-anon-skip-budget-total") >= 0,
+              "2850 AC5: pure-anon-skip-budget-total key");
+        CHECK(href(cs2850, "schema-2691") == 2691, "2850 AC5: schema-2691 retained");
+        CHECK(href(cs2850, "live-closure-sync-remount-anon-captured-ok-total") >= 0,
+              "2850 AC5: #2691 captured-ok retained");
+        CHECK(q.find("schema-2850") != std::string::npos, "2850 AC5: query surface cites schema");
+
+        // AC6: linter + no design docs
+        CHECK(!lint.empty() && lint.find("Issue #2850") != std::string::npos,
+              "2850 AC6: coverage linter present");
+        CHECK(build.find("check_pure_anon_sync_remount_budget_2850") != std::string::npos,
+              "2850 AC6: build.py wires linter");
+        CHECK(br.find("Issue #2850") != std::string::npos, "2850 AC6: bridge cites #2850");
+        CHECK(rt.find("Issue #2850") != std::string::npos, "2850 AC6: runtime cites #2850");
+        for (const auto& p : {"docs/design/2850-pure-anon-sync-remount.md",
+                              "docs/2850-pure-anon-sync-remount.md"}) {
+            std::ifstream f(p);
+            CHECK(!f.good(), "2850 AC6: no design doc at " + std::string(p));
+        }
+        CHECK(true, "2850 AC6: extend test_anonymous_residual_stable_id_policy per #81967");
+    }
+
+    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

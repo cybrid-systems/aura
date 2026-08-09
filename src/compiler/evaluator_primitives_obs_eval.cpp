@@ -15039,6 +15039,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             // (sid == 0 branch). Distinct from #2602 named sync counters.
             std::uint64_t sync_remount_anon_ok = 0;
             std::uint64_t sync_remount_anon_fail = 0;
+            // Issue #2691: captured-only anon sync remount.
+            std::uint64_t sync_remount_anon_cap_ok = 0;
+            std::uint64_t sync_remount_anon_cap_fail = 0;
+            // Issue #2850: pure-anon bounded sync remount.
+            std::uint64_t sync_remount_pure_ok = 0;
+            std::uint64_t sync_remount_pure_skip = 0;
             // Issue #2605: residual / assign / preserve / named-invent axes.
             std::uint64_t residual_backfill = 0;
             std::uint64_t sid_assign = 0;
@@ -15061,6 +15067,16 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     m->live_closure_sync_remount_anon_ok_total.load(std::memory_order_relaxed);
                 sync_remount_anon_fail =
                     m->live_closure_sync_remount_anon_fail_total.load(std::memory_order_relaxed);
+                sync_remount_anon_cap_ok = m->live_closure_sync_remount_anon_captured_ok_total.load(
+                    std::memory_order_relaxed);
+                sync_remount_anon_cap_fail =
+                    m->live_closure_sync_remount_anon_captured_fail_total.load(
+                        std::memory_order_relaxed);
+                sync_remount_pure_ok =
+                    m->live_closure_sync_remount_pure_anon_ok_total.load(std::memory_order_relaxed);
+                sync_remount_pure_skip =
+                    m->live_closure_sync_remount_pure_anon_skip_budget_total.load(
+                        std::memory_order_relaxed);
                 residual_backfill =
                     m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
                 sid_assign = m->stable_func_id_assigned_total.load(std::memory_order_relaxed);
@@ -15204,6 +15220,24 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                                                                            : make_int(0)},
                 {"schema-2666", make_int(2666)},
                 {"issue-2666", make_int(2666)},
+                // Issue #2691: captured-only anon sync remount (sid==0 && has
+                // env/linear). Distinct from full-walk anon ok/fail.
+                {"live-closure-sync-remount-anon-captured-ok-total",
+                 make_int(static_cast<std::int64_t>(sync_remount_anon_cap_ok))},
+                {"live-closure-sync-remount-anon-captured-fail-total",
+                 make_int(static_cast<std::int64_t>(sync_remount_anon_cap_fail))},
+                {"schema-2691", make_int(2691)},
+                {"issue-2691", make_int(2691)},
+                {"closure-pending-recovery-drain-wired", make_int(1)},
+                // Issue #2850: bounded pure-anon sync remount (sid==0 &&
+                // !captures). pure_anon_ok / pure_anon_skip_budget.
+                {"live-closure-sync-remount-pure-anon-ok-total",
+                 make_int(static_cast<std::int64_t>(sync_remount_pure_ok))},
+                {"live-closure-sync-remount-pure-anon-skip-budget-total",
+                 make_int(static_cast<std::int64_t>(sync_remount_pure_skip))},
+                {"live-closure-sync-remount-pure-anon-wired", make_int(1)},
+                {"schema-2850", make_int(2850)},
+                {"issue-2850", make_int(2850)},
                 // Issue #2638: residual sid=0 growth hard cap + fail-closed
                 // drop/MustDeopt under sustained reemit. env
                 // AURA_RESIDUAL_SID0_CAP (default 256 under production;

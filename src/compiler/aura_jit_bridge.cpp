@@ -212,6 +212,16 @@ extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(std::ui
     }
 }
 
+// Issue #2850: pure-anon bounded sync remount counters.
+extern "C" void aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64_t ok,
+                                                                     std::uint64_t skip_budget) {
+    if (auto* m = aot_metrics()) {
+        m->live_closure_sync_remount_pure_anon_ok_total.fetch_add(ok, std::memory_order_relaxed);
+        m->live_closure_sync_remount_pure_anon_skip_budget_total.fetch_add(
+            skip_budget, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2638: residual sid=0 cap-hit counter bumper. Bumped when
 // the residual backfill branch in aura_remap_live_closures_after_reemit
 // sees cur_backfill >= cap (or 0 cap = unlimited → never). Distinct
@@ -3777,6 +3787,20 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
             std::uint64_t anon_cap_ok = 0;
             std::uint64_t anon_cap_fail = 0;
             aura_sync_remount_anon_captured_live_closures(&anon_cap_ok, &anon_cap_fail);
+        }
+        // Issue #2850: bounded pure-anon sync remount (sid==0 && !captures).
+        // Closes residual first-call MustDeopt epoch lag for short pure-anon
+        // hot sites after reemit without unbounded full-anon walk. Budget
+        // default 64 under production; 0 Soft / env override. Soft /
+        // budget=0 / non-production → zero extra work (preserve #2637/#2666).
+        // Named + captured filter opposite sets — no double remount.
+        {
+            const std::uint64_t pure_budget = aura_sync_remount_pure_anon_budget_default();
+            if (pure_budget > 0) {
+                std::uint64_t pure_ok = 0;
+                std::uint64_t pure_skip = 0;
+                aura_sync_remount_pure_anon_live_closures(pure_budget, &pure_ok, &pure_skip);
+            }
         }
     }
 

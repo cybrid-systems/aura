@@ -5935,6 +5935,27 @@ def cmd_closure_anon_captured_remount_2691_coverage():
     return 0
 
 
+def cmd_pure_anon_sync_remount_budget_2850_coverage():
+    """Issue #2850: bounded pure-anon sync remount quota on reemit success.
+
+    Residual of #2691/#2714: pure anon (sid==0, no env/linear) stayed on
+    touch-time MustDeopt after reemit. Bounded budget (default 64 under
+    production; 0 Soft) remounts pure-anon within budget to close the
+    first-call tax. Distinct pure_anon_ok / pure_anon_skip_budget counters.
+    """
+    print(f"{B}=== pure-anon sync remount budget coverage (#2850) ==={N}")
+    script = COVERAGE_CHECKS / "check_pure_anon_sync_remount_budget_2850.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pure-anon sync remount budget (#2850) coverage contract rows failed")
+        return 1
+    ok("pure-anon sync remount budget (#2850) coverage clean")
+    return 0
+
+
 def cmd_aot_slot_owner_consistency_2692_coverage():
     """Issue #2692: cross-eval sid ↔ AOT slot owner consistency assert.
 
@@ -10312,6 +10333,7 @@ def cmd_gate():
         or cmd_evaluator_stamp_sole_authority_2759_coverage()
         or cmd_capability_production_default_2688_coverage()
         or cmd_closure_anon_captured_remount_2691_coverage()
+        or cmd_pure_anon_sync_remount_budget_2850_coverage()
         or cmd_aot_slot_owner_consistency_2692_coverage()
         or cmd_require_effect_on_ref_2689_coverage()
         or cmd_sole_require_effect_2706_coverage()
@@ -11327,6 +11349,7 @@ def main():
         "evaluator-stamp-sole-authority-2759": cmd_evaluator_stamp_sole_authority_2759_coverage,
         "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
         "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
+        "pure-anon-sync-remount-budget-2850": cmd_pure_anon_sync_remount_budget_2850_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
