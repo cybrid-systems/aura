@@ -375,11 +375,23 @@ export struct LoweringState {
         }
     }
 
-    // Enable SoA dual-emit. The test (and future entry points)
-    // call this to switch the state into dual-emit mode. After
-    // calling this, emit() and alloc_block() also write to
-    // module_v2.
-    void enable_soa_dual_emit() {
+    // Enable SoA dual-emit. After the first enable, emit() and
+    // alloc_block() also write to module_v2.
+    //
+    // Issue #2821: if dual-emit is already enabled and force_reset is
+    // false, this is a no-op that preserves module_v2 (and counters).
+    // A second enable must not wipe prior SoA content — that caused
+    // silent AoS↔SoA divergence under shared LoweringState / hot-reload
+    // / accidental double-init. Pass force_reset=true for intentional
+    // wipe (fresh lower on a reused state). Bumps
+    // g_enable_soa_dual_emit_skip_reset_total_atomic on the skip path.
+    void enable_soa_dual_emit(bool force_reset = false) {
+        if (dual_emit_soa && !force_reset) {
+            // Issue #2821: already enabled — preserve module_v2.
+            g_enable_soa_dual_emit_skip_reset_total_atomic().fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            return;
+        }
         dual_emit_soa = true;
         module_v2 = {};
         cur_func_v2_idx = 0;

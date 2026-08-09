@@ -1903,6 +1903,8 @@ aura_add_issue_test(test_audit_trail_lockfree)
 aura_issue_test_link_light(test_audit_trail_lockfree)
 aura_add_issue_test(test_alloc_block_seal_last)
 aura_issue_test_link_light(test_alloc_block_seal_last)
+aura_add_issue_test(test_enable_soa_dual_emit_no_reset)
+aura_issue_test_link_light(test_enable_soa_dual_emit_no_reset)
 # Issue #562: Audit + demote query: namespace primitives
 # (P1). 8 scenarios validating: lib/std/query.aura (high-
 # level Agent API with 5 stdlib functions) + 12 demotion

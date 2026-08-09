@@ -1347,6 +1347,18 @@ def cmd_lint():
             "Issue #2820 alloc_block seal last linter failed — run python3 scripts/coverage/checks/check_alloc_block_seal_last_2820.py"
         )
         return r
+    # Issue #2821: enable_soa_dual_emit skip-reset when already enabled.
+    # ac2821 in test_enable_soa_dual_emit_no_reset.
+    esd_script = COVERAGE_CHECKS / "check_enable_soa_dual_emit_no_reset_2821.py"
+    if not esd_script.exists():
+        fail(f"missing {esd_script}")
+        return 1
+    r = run([sys.executable, str(esd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2821 enable_soa_dual_emit no-reset linter failed — run python3 scripts/coverage/checks/check_enable_soa_dual_emit_no_reset_2821.py"
+        )
+        return r
     # Issue #2727: per-Fiber durable evaluator_id (#2721 residual). Replaces
     # the prior mutation_stack_ptr() proxy with a stable, non-null handle
     # on every Fiber that has entered a mutation boundary. Wires

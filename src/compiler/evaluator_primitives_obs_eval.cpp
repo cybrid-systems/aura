@@ -15395,6 +15395,14 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {"alloc-block-seal-last-wired", make_int(1)},
                 {"schema-2820", make_int(2820)},
                 {"issue-2820", make_int(2820)},
+                // Issue #2821: enable_soa_dual_emit skip-reset when already on.
+                {"enable-soa-dual-emit-skip-reset-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_enable_soa_dual_emit_skip_reset_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"enable-soa-dual-emit-skip-reset-wired", make_int(1)},
+                {"schema-2821", make_int(2821)},
+                {"issue-2821", make_int(2821)},
                 // Issue #2520: residual AoS bridge banned on production SoA-only.
                 // residual_aos_bridge_total is a TEST-ONLY metric (target 0).
                 {"residual-aos-bridge-total",

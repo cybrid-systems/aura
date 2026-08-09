@@ -84,6 +84,14 @@ export inline std::atomic<std::uint64_t>& g_lowering_alloc_block_unsealed_total_
     return v;
 }
 
+// Issue #2821: enable_soa_dual_emit() called while already enabled without
+// force_reset — skip module_v2 wipe so prior SoA content is preserved.
+export inline std::atomic<std::uint64_t>&
+g_enable_soa_dual_emit_skip_reset_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
 // Issue #2520 / #2618: residual AoS bridge is test/opt-in only under
 // AURA_IR_SOA_ONLY. Production packs must not call to_aos_view /
 // to_aos_module without AURA_ALLOW_AOS_BRIDGE (compile-time) or
