@@ -131,6 +131,39 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     }
 }
 
+// Issue #2842: freeze Occurrence truth (live_goal_count + bounded fingerprint)
+// from commit TypeChecker CS at stamp sites. Quiet path (no TC / empty goals):
+// both 0, zero extra cost. Fingerprint mixes up to kProofGoalFingerprintMaxGoals
+// live goals so Agents detect densify/steal content drift without N-key join.
+[[nodiscard]] static aura::compiler::typed_audit::ProofGoalTruth
+freeze_proof_goal_truth_from_type_checker(void* tc_handle) noexcept {
+    using aura::compiler::typed_audit::kProofGoalFingerprintMaxGoals;
+    using aura::compiler::typed_audit::mix_occurrence_goal_into_fingerprint;
+    using aura::compiler::typed_audit::ProofGoalTruth;
+    ProofGoalTruth t{};
+    if (!tc_handle)
+        return t; // from_cs=false → builder may gauge-fallback under production
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    const auto& goals = tc->constraint_system().occurrence_goals_for_test();
+    t.live_goal_count = static_cast<std::uint64_t>(goals.size());
+    t.from_cs = true;
+    if (goals.empty()) {
+        t.goal_fingerprint = 0;
+        return t;
+    }
+    std::uint64_t h = 0xcbf29ce484222325ULL; // FNV offset basis
+    const std::size_t n =
+        goals.size() < kProofGoalFingerprintMaxGoals ? goals.size() : kProofGoalFingerprintMaxGoals;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto& g = goals[i];
+        h = mix_occurrence_goal_into_fingerprint(
+            h, g.var.index, g.refined.index, g.predicate_cond_node, g.source_mutation_id, g.epoch);
+    }
+    // Non-empty goals always produce a non-zero fingerprint (Agent drift).
+    t.goal_fingerprint = (h != 0) ? h : 1;
+    return t;
+}
+
 namespace aura::compiler {
 
 // ── Issue #2137: render hotpath + frame budget ───────────────────────────
@@ -730,16 +763,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // reject path. Agents can hold the proof across
                     // densify / steal / remap and re-check
                     // defuse_or_epoch_stamp without re-joining N
-                    // query surfaces. #2758: fill live_goal_count from
-                    // commit TypeChecker CS when present (0 quiet).
+                    // query surfaces. #2758/#2842: freeze live_goal_count
+                    // + goal_fingerprint from commit TypeChecker CS (0 quiet).
                     {
-                        std::uint64_t goals = 0;
-                        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
-                                commit_type_checker_handle()))
-                            goals = static_cast<std::uint64_t>(
-                                tc->constraint_system().occurrence_goals_size());
-                        (void)typed_audit::build_type_linear_commit_proof_from_live(cp.version,
-                                                                                    goals);
+                        const auto truth =
+                            freeze_proof_goal_truth_from_type_checker(commit_type_checker_handle());
+                        (void)typed_audit::build_type_linear_commit_proof_from_live(
+                            cp.version, truth.live_goal_count, truth.goal_fingerprint,
+                            truth.from_cs);
                     }
                     return cp;
                 }
@@ -3020,6 +3051,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             const bool prod_lock_eff_2854 = prod_lock_2854 && !dev_off_2854;
             const bool reject_path_2854 =
                 rebind_fail_2854 || (densify_scan_mismatch && prod_lock_eff_2854);
+            // Issue #2842: freeze goal truth from commit TC before densify
+            // proof stamp (AC2: prune → next fingerprint differs).
+            const auto densify_goal_truth_2842 =
+                freeze_proof_goal_truth_from_type_checker(ev_->commit_type_checker_handle());
             if (reject_path_2854) {
                 // Mismatch detected → force_linear_rollback bumps
                 // linear_densify_scan_mismatch_total and sets
@@ -3031,7 +3066,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 ev_->force_linear_rollback("densify-phase5-linear-scan");
                 (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                     ev_->defuse_version_.load(std::memory_order_acquire),
-                    /*would_allow_commit=*/false, /*linear_ok=*/false);
+                    /*would_allow_commit=*/false, /*linear_ok=*/false,
+                    densify_goal_truth_2842.live_goal_count,
+                    densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
                 typed_audit::g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(
                     1, std::memory_order_relaxed);
                 typed_audit::publish_type_linear_proof_outcome(
@@ -3047,7 +3084,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // success metrics.
                 (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                     ev_->defuse_version_.load(std::memory_order_acquire),
-                    /*would_allow_commit=*/true, /*linear_ok=*/true);
+                    /*would_allow_commit=*/true, /*linear_ok=*/true,
+                    densify_goal_truth_2842.live_goal_count,
+                    densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
                 typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
                     1, std::memory_order_relaxed);
                 typed_audit::publish_type_linear_proof_outcome(
@@ -3069,7 +3108,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // counter so dashboards see the ordered stamp.
                 (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                     ev_->defuse_version_.load(std::memory_order_acquire),
-                    /*would_allow_commit=*/true, /*linear_ok=*/true);
+                    /*would_allow_commit=*/true, /*linear_ok=*/true,
+                    densify_goal_truth_2842.live_goal_count,
+                    densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
                 typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
                     1, std::memory_order_relaxed);
                 typed_audit::publish_type_linear_proof_outcome(
@@ -3585,7 +3626,8 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
     // Issue #2717: stamp TypeLinearCommitProof on hygiene save (Agent-
     // visible dual-epoch proof). Use saved_defuse_version (HygieneCheckpoint
     // has no .version field — that is MutationCheckpoint).
-    // #2758: fill live_goal_count from commit TypeChecker CS when present.
+    // #2758/#2842: freeze live_goal_count + goal_fingerprint from commit
+    // TypeChecker CS when present (quiet zeros).
     //
     // Issue #2854 same-transaction order: if Phase-5 densify already
     // stamped the proof (Reject or Stamped outcome sentinel), SKIP the
@@ -3597,11 +3639,11 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
     {
         const auto prior_outcome_2854 = typed_audit::last_type_linear_proof_outcome_v_read();
         if (prior_outcome_2854 == typed_audit::kTypeLinearProofOutcomeQuiet) {
-            std::uint64_t goals = 0;
-            if (auto* tc = static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle()))
-                goals = static_cast<std::uint64_t>(tc->constraint_system().occurrence_goals_size());
-            (void)typed_audit::build_type_linear_commit_proof_from_live(cp.saved_defuse_version,
-                                                                        goals);
+            const auto truth =
+                freeze_proof_goal_truth_from_type_checker(commit_type_checker_handle());
+            (void)typed_audit::build_type_linear_commit_proof_from_live(
+                cp.saved_defuse_version, truth.live_goal_count, truth.goal_fingerprint,
+                truth.from_cs);
         }
         // Non-Quiet (Reject / Stamped) → Phase-5 already stamped with
         // the explicit outcome (would_allow_commit + linear_ok derived

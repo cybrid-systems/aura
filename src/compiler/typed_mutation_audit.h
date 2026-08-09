@@ -967,10 +967,19 @@ struct TypeLinearCommitProof {
     std::uint64_t defuse_or_epoch_stamp = 0;
     std::uint64_t live_goal_count = 0;
     std::uint64_t linear_root_count = 0;
+    // Issue #2842: bounded fingerprint of live OccurrenceGoals at stamp
+    // (var.index + refined.index + pred_nid + mid + epoch, up to N). 0 when
+    // empty goals; non-zero when goals non-empty so Agents detect content
+    // drift without N-key join (densify/steal prune changes fingerprint).
+    std::uint64_t goal_fingerprint = 0;
     std::uint64_t schema = 2697;
 };
 
 inline constexpr int kTypeLinearCommitProofIssue = 2697;
+// Issue #2842: goal truth freeze residual of #2758.
+inline constexpr int kTypeLinearCommitProofGoalTruthIssue = 2842;
+// Bound fingerprint walk (soft-cone discipline; no heap beyond existing).
+inline constexpr std::size_t kProofGoalFingerprintMaxGoals = 16;
 
 // File-scope atomics (mirror #2693/#2694/#2695/#2696 pattern).
 inline std::atomic<std::uint64_t> g_last_type_linear_commit_proof_stamp{0};
@@ -1015,13 +1024,25 @@ inline void reset_type_linear_commit_proof_stamped_total_for_test() noexcept {
 // N-key join). Updated every build_type_linear_commit_proof_from_live.
 inline std::atomic<std::uint64_t> g_last_proof_live_goal_count{0};
 inline std::atomic<std::uint64_t> g_last_proof_linear_root_count{0};
+// Issue #2842: last stamped goal fingerprint (content drift detect).
+inline std::atomic<std::uint64_t> g_last_proof_goal_fingerprint{0};
 // Optional dashboard: how often at least one count was non-zero.
 inline std::atomic<std::uint64_t> g_type_linear_commit_proof_counts_filled_total{0};
+// Issue #2842: stamp used CS occurrence_goals_size() (+ fingerprint) truth.
+inline std::atomic<std::uint64_t> g_type_linear_commit_proof_goal_truth_stamped_total{0};
+// Issue #2842: stamped fingerprint was non-zero (goals non-empty).
+inline std::atomic<std::uint64_t> g_type_linear_commit_proof_goal_fingerprint_nonzero_total{0};
+// Issue #2842: production stamp fell back to gauge (CS pointer unavailable).
+inline std::atomic<std::uint64_t> g_type_linear_commit_proof_goal_truth_gauge_fallback_total{0};
 // Process gauge published by stamp sites / query when CS goals known.
-// Quiet default 0 (no CS / empty goals).
+// Quiet default 0 (no CS / empty goals). Gauge is fallback-only under
+// production when CS is unavailable (#2842) — prefer CS size at stamp.
 inline std::atomic<std::uint64_t> g_proof_live_goal_count_gauge{0};
 inline constexpr std::uint64_t kProofLiveGoalCountHintAuto =
     static_cast<std::uint64_t>(~std::uint64_t{0});
+// Sentinel: stamp site could not freeze CS truth (use gauge + note miss).
+inline constexpr std::uint64_t kProofGoalTruthFromGauge =
+    static_cast<std::uint64_t>(~std::uint64_t{0}) - 1;
 
 // Issue #2854: same-transaction order — proof stamping is gated on the
 // rebind + scan outcome so a success proof can never outlive a failed
@@ -1077,11 +1098,122 @@ inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 [[nodiscard]] inline std::uint64_t last_proof_linear_root_count_v_read() noexcept {
     return g_last_proof_linear_root_count.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t last_proof_goal_fingerprint_v_read() noexcept {
+    return g_last_proof_goal_fingerprint.load(std::memory_order_relaxed);
+}
 [[nodiscard]] inline std::uint64_t type_linear_commit_proof_counts_filled_total_v_read() noexcept {
     return g_type_linear_commit_proof_counts_filled_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t
+type_linear_commit_proof_goal_truth_stamped_total_v_read() noexcept {
+    return g_type_linear_commit_proof_goal_truth_stamped_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+type_linear_commit_proof_goal_fingerprint_nonzero_total_v_read() noexcept {
+    return g_type_linear_commit_proof_goal_fingerprint_nonzero_total.load(
+        std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+type_linear_commit_proof_goal_truth_gauge_fallback_total_v_read() noexcept {
+    return g_type_linear_commit_proof_goal_truth_gauge_fallback_total.load(
+        std::memory_order_relaxed);
+}
 inline void publish_proof_live_goal_count(std::uint64_t n) noexcept {
     g_proof_live_goal_count_gauge.store(n, std::memory_order_relaxed);
+}
+inline void clear_proof_goal_truth_for_test() noexcept {
+    g_last_proof_goal_fingerprint.store(0, std::memory_order_relaxed);
+    g_type_linear_commit_proof_goal_truth_stamped_total.store(0, std::memory_order_relaxed);
+    g_type_linear_commit_proof_goal_fingerprint_nonzero_total.store(0, std::memory_order_relaxed);
+    g_type_linear_commit_proof_goal_truth_gauge_fallback_total.store(0, std::memory_order_relaxed);
+    g_last_proof_live_goal_count.store(0, std::memory_order_relaxed);
+    g_proof_live_goal_count_gauge.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2842: mix one OccurrenceGoal into a bounded fingerprint.
+// Fields: var.index + refined.index + pred_nid + mid + epoch (issue AC).
+// Pure POD — stamp sites iterate CS goals and call this (header cannot
+// import TypeChecker / OccurrenceGoal module).
+[[nodiscard]] inline std::uint64_t
+mix_occurrence_goal_into_fingerprint(std::uint64_t h, std::uint32_t var_index,
+                                     std::uint32_t refined_index, std::uint32_t predicate_cond_node,
+                                     std::uint64_t source_mutation_id,
+                                     std::uint64_t epoch) noexcept {
+    // Boost-style hash_combine (stable, no heap).
+    auto mix = [](std::uint64_t seed, std::uint64_t v) noexcept -> std::uint64_t {
+        seed ^= v + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+        return seed;
+    };
+    h = mix(h, static_cast<std::uint64_t>(var_index));
+    h = mix(h, static_cast<std::uint64_t>(refined_index));
+    h = mix(h, static_cast<std::uint64_t>(predicate_cond_node));
+    h = mix(h, source_mutation_id);
+    h = mix(h, epoch);
+    return h;
+}
+
+// Issue #2842: frozen goal truth at stamp. from_cs=true when caller read
+// occurrence_goals_size() + fingerprint from live CS (preferred). from_cs=
+// false means gauge fallback (production miss counter bumped by builder).
+struct ProofGoalTruth {
+    std::uint64_t live_goal_count = 0;
+    std::uint64_t goal_fingerprint = 0;
+    bool from_cs = false;
+};
+
+// Quiet default (empty goals, zero extra cost).
+inline constexpr ProofGoalTruth kQuietProofGoalTruth{};
+
+// Apply goal truth into proof + gauges. from_cs path bumps truth-stamped
+// counter; non-empty fingerprint bumps nonzero counter. Gauge fallback
+// under production bumps miss counter (AC Soft vs production table).
+inline void apply_proof_goal_truth(TypeLinearCommitProof& p, const ProofGoalTruth& truth) noexcept {
+    p.live_goal_count = truth.live_goal_count;
+    p.goal_fingerprint = truth.goal_fingerprint;
+    g_proof_live_goal_count_gauge.store(truth.live_goal_count, std::memory_order_relaxed);
+    g_last_proof_live_goal_count.store(p.live_goal_count, std::memory_order_relaxed);
+    g_last_proof_goal_fingerprint.store(p.goal_fingerprint, std::memory_order_relaxed);
+    if (truth.from_cs) {
+        g_type_linear_commit_proof_goal_truth_stamped_total.fetch_add(1, std::memory_order_relaxed);
+    } else if (production_defaults_active()) {
+        // Gauge-only under production: CS pointer unavailable at stamp.
+        g_type_linear_commit_proof_goal_truth_gauge_fallback_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    if (p.goal_fingerprint != 0) {
+        g_type_linear_commit_proof_goal_fingerprint_nonzero_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+}
+
+// Resolve goal truth from optional CS hint. When live_goal_count_hint is
+// kProofLiveGoalCountHintAuto and fingerprint is 0 with !from_cs, use gauge
+// (legacy #2758 path). When hint is explicit CS size, from_cs should be true.
+[[nodiscard]] inline ProofGoalTruth resolve_proof_goal_truth(std::uint64_t live_goal_count_hint,
+                                                             std::uint64_t goal_fingerprint,
+                                                             bool goal_truth_from_cs) noexcept {
+    ProofGoalTruth t{};
+    if (goal_truth_from_cs || live_goal_count_hint != kProofLiveGoalCountHintAuto) {
+        t.live_goal_count =
+            (live_goal_count_hint == kProofLiveGoalCountHintAuto) ? 0 : live_goal_count_hint;
+        t.goal_fingerprint = goal_fingerprint;
+        // Non-empty goals with zero fingerprint is invalid under CS truth —
+        // force a non-zero sentinel so Agents still see content present.
+        if (t.live_goal_count > 0 && t.goal_fingerprint == 0)
+            t.goal_fingerprint = 1;
+        // Empty goals → fingerprint must be 0 (quiet).
+        if (t.live_goal_count == 0)
+            t.goal_fingerprint = 0;
+        t.from_cs = goal_truth_from_cs || (live_goal_count_hint != kProofLiveGoalCountHintAuto);
+        return t;
+    }
+    // Gauge fallback (no CS at stamp).
+    t.live_goal_count = g_proof_live_goal_count_gauge.load(std::memory_order_relaxed);
+    t.goal_fingerprint = g_last_proof_goal_fingerprint.load(std::memory_order_relaxed);
+    if (t.live_goal_count == 0)
+        t.goal_fingerprint = 0;
+    t.from_cs = false;
+    return t;
 }
 
 // Build a TypeLinearCommitProof from live state. Pure read of existing
@@ -1089,6 +1221,8 @@ inline void publish_proof_live_goal_count(std::uint64_t n) noexcept {
 // linear_root_count. live_goal_count from optional hint (stamp site with
 // TypeChecker CS) or process gauge (default 0). Cheap on quiet path:
 // empty collect short-circuit + zero goals → both counts 0 (AC2 #2758).
+// Issue #2842: goal_fingerprint frozen with live_goal_count when CS truth
+// is passed (from_cs); gauge is fallback only when CS unavailable.
 // Fields:
 //   - readiness_bp / force_reason_code / would_allow_commit: from
 //     commit_readiness_live_policy().
@@ -1096,10 +1230,13 @@ inline void publish_proof_live_goal_count(std::uint64_t n) noexcept {
 //   - defuse_or_epoch_stamp: caller current_epoch_or_defuse.
 //   - live_goal_count + linear_root_count: real walks (#2758; was zero
 //     hard-code under #2717 / #2708 residual).
+//   - goal_fingerprint: #2842 bounded content hash of live goals.
 // live_goal_count_hint: UINT64_MAX = use process gauge; else use hint.
+// goal_truth_from_cs: true when hint came from occurrence_goals_size().
 inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     std::uint64_t current_epoch_or_defuse,
-    std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto) noexcept {
+    std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto,
+    std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false) noexcept {
     TypeLinearCommitProof p{};
     const auto ready = commit_readiness_live_policy();
     const auto live_r = commit_readiness(ready);
@@ -1114,18 +1251,13 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     // empty span → 0, no extra alloc beyond existing short-circuit.
     p.linear_root_count =
         static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
-    // Issue #2758: live_goal_count from stamp-site CS size (hint) or
-    // process gauge (query / prior publish). Quiet: no CS → 0.
-    if (live_goal_count_hint != kProofLiveGoalCountHintAuto) {
-        p.live_goal_count = live_goal_count_hint;
-        g_proof_live_goal_count_gauge.store(live_goal_count_hint, std::memory_order_relaxed);
-    } else {
-        p.live_goal_count = g_proof_live_goal_count_gauge.load(std::memory_order_relaxed);
-    }
+    // Issue #2842 / #2758: freeze goal truth (CS size + fingerprint preferred).
+    const auto truth =
+        resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
+    apply_proof_goal_truth(p, truth);
     p.schema = kTypeLinearCommitProofIssue;
-    // Last stamped counts for query / Agent drift detect (AC3).
+    // Last stamped linear_root for query / Agent drift detect (AC3).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
-    g_last_proof_live_goal_count.store(p.live_goal_count, std::memory_order_relaxed);
     if (p.linear_root_count > 0 || p.live_goal_count > 0) {
         g_type_linear_commit_proof_counts_filled_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1148,11 +1280,12 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
 // so dashboards can distinguish ordered stamps from pre-#2854 stamps.
 // Mirrors the existing live-stamp path (linear_root_count from post-remap
 // collect via linear_or_dirty_roots_count_for_rebind; epoch + last-count
-// gauges populated for Agent drift detect).
+// gauges populated for Agent drift detect). Issue #2842: same goal truth
+// freeze as the live path.
 inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outcome(
     std::uint64_t current_epoch_or_defuse, bool explicit_would_allow_commit,
-    bool explicit_linear_ok,
-    std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto) noexcept {
+    bool explicit_linear_ok, std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto,
+    std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false) noexcept {
     TypeLinearCommitProof p{};
     p.readiness_bp = 0;
     p.force_reason_code = static_cast<std::uint32_t>(-1);
@@ -1165,16 +1298,12 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     p.defuse_or_epoch_stamp = current_epoch_or_defuse;
     p.linear_root_count =
         static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
-    if (live_goal_count_hint != kProofLiveGoalCountHintAuto) {
-        p.live_goal_count = live_goal_count_hint;
-        g_proof_live_goal_count_gauge.store(live_goal_count_hint, std::memory_order_relaxed);
-    } else {
-        p.live_goal_count = g_proof_live_goal_count_gauge.load(std::memory_order_relaxed);
-    }
+    const auto truth =
+        resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
+    apply_proof_goal_truth(p, truth);
     p.schema = kTypeLinearCommitProofIssue;
-    // Last stamped counts for query / Agent drift detect (same as live path).
+    // Last stamped linear_root for query / Agent drift detect (same as live path).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
-    g_last_proof_live_goal_count.store(p.live_goal_count, std::memory_order_relaxed);
     if (p.linear_root_count > 0 || p.live_goal_count > 0) {
         g_type_linear_commit_proof_counts_filled_total.fetch_add(1, std::memory_order_relaxed);
     }

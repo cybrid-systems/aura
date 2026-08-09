@@ -59,8 +59,12 @@ def main() -> int:
     must("p.linear_root_count =", "AC1", tma)
     must("p.live_goal_count =", "AC1", tma)
     must_not("#2708 future wire", "AC1 residual removed", tma)
-    must("occurrence_goals_size()", "AC1", emb)
-    must("build_type_linear_commit_proof_from_live(cp.version", "AC1", emb)
+    # #2842 may freeze via freeze_proof_goal_truth_from_type_checker (CS goals);
+    # #2758 residual still requires a CS goal size path at stamp sites.
+    if "occurrence_goals_size()" not in emb and "occurrence_goals_for_test()" not in emb:
+        fails.append("AC1: missing occurrence_goals_size() or occurrence_goals_for_test()")
+    if "build_type_linear_commit_proof_from_live" not in emb:
+        fails.append("AC1: missing build_type_linear_commit_proof_from_live")
     orb = _read("src/compiler/ownership_rebind.h")
     orc = _read("src/compiler/ownership_rebind.cpp")
     must("linear_or_dirty_roots_count_for_rebind", "AC1", orb)
