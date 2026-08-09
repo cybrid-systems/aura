@@ -16,6 +16,9 @@ extern "C" void aura_bump_live_closure_sync_remount_anon_totals(std::uint64_t ok
 // "touch-time policy" (pure anon, no captures).
 extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(std::uint64_t ok,
                                                                          std::uint64_t fail);
+// Issue #2850: bounded pure-anon sync remount counters (sid==0 && !captures).
+extern "C" void aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64_t ok,
+                                                                     std::uint64_t skip_budget);
 // Issue #2638 residual sid=0 cap-hit counter.
 extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
 // Process-global aot_metrics getter (defined in aura_jit_bridge.cpp; the
@@ -2138,6 +2141,114 @@ extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_
         *ok_count = ok;
     if (fail_count)
         *fail_count = fail;
+}
+
+// Issue #2850: pure-anon budget default. Default 64 under production
+// defaults (bounded first-call tax close); 0 under Soft / sandbox=off /
+// tests (preserve #2637/#2666 Soft). Env AURA_SYNC_REMOUNT_PURE_ANON_BUDGET
+// overrides (0 = off / today's pure-anon touch-time policy). Cached once.
+extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_default() {
+    static const std::uint64_t cached = []() -> std::uint64_t {
+        const char* e = std::getenv("AURA_SYNC_REMOUNT_PURE_ANON_BUDGET");
+        if (e && *e) {
+            const std::string s(e);
+            if (s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF")
+                return 0;
+            try {
+                return static_cast<std::uint64_t>(std::stoull(s));
+            } catch (const std::invalid_argument&) {
+                return 0;
+            } catch (const std::out_of_range&) {
+                return 0;
+            }
+        }
+        // Env unset: production → 64; Soft / sandbox / tests → 0.
+        return aura::compiler::typed_audit::production_defaults_active() ? 64ull : 0ull;
+    }();
+    return cached;
+}
+
+// Issue #2850: bounded pure-anon sync remount on reemit success
+// (sid==0 && !has env/linear). Closes residual first-call MustDeopt
+// epoch lag after reemit for short pure-anon hot sites without the
+// unbounded full-anon walk. Cheaper correct option for pure anon:
+// remount_or_force_deopt (capture remount is a no-op for empty
+// captures; clears epoch-lag MustDeopt on success). Budget caps
+// work; pure_anon_skip_budget counts pure-anon slots past the budget.
+// Named (#2602) + captured (#2691) filter opposite sets — no double
+// remount (sid!=0 skipped; has captures skipped). Soft / budget=0 →
+// zero extra work (call site gates before this).
+extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
+                                                          std::uint64_t* ok_count,
+                                                          std::uint64_t* skip_budget_count) {
+    std::uint64_t ok = 0;
+    std::uint64_t skip = 0;
+
+    if (budget == 0) {
+        if (ok_count)
+            *ok_count = 0;
+        if (skip_budget_count)
+            *skip_budget_count = 0;
+        return; // zero-cost when budget off
+    }
+
+    {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        aura_lock_workspace_write();
+
+        const std::size_t nslots = g_closure_func_ids.size();
+        if (nslots == 0) {
+            aura_unlock_workspace_write();
+            if (ok_count)
+                *ok_count = 0;
+            if (skip_budget_count)
+                *skip_budget_count = 0;
+            return; // AC4: quiet reemit — zero extra walk
+        }
+
+        if (g_closure_stable_func_ids.size() < nslots)
+            g_closure_stable_func_ids.resize(nslots, 0);
+        if (g_closure_must_deopt.size() < nslots)
+            g_closure_must_deopt.resize(nslots, 0);
+
+        const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        std::uint64_t used = 0;
+
+        for (std::size_t cid = 0; cid < nslots; ++cid) {
+            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                continue;
+            // Pure-anon only: sid==0 && no env/linear captures.
+            // Opposite of named (sid!=0) and captured (sid==0 && has captures).
+            const std::uint32_t sid = g_closure_stable_func_ids[cid];
+            if (sid != 0)
+                continue;
+            if (aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid)))
+                continue;
+            if (used >= budget) {
+                ++skip; // past budget — leave on touch-time MustDeopt policy
+                continue;
+            }
+            // remount_or_force_deopt: for pure anon capture remount is a
+            // no-op; success clears epoch-lag MustDeopt before first call.
+            if (remount_or_force_deopt_unlocked_no_call_time_counter(
+                    static_cast<std::int64_t>(cid), live_env,
+                    /*linear_fp=*/0, table_epoch) != 0)
+                ++ok;
+            // fail path sets MustDeopt inside remount helper — still counts
+            // as a budget unit (we attempted remount).
+            ++used;
+        }
+
+        aura_unlock_workspace_write();
+    }
+
+    aura_bump_live_closure_sync_remount_pure_anon_totals(ok, skip);
+
+    if (ok_count)
+        *ok_count = ok;
+    if (skip_budget_count)
+        *skip_budget_count = skip;
 }
 
 // Issue #660 / #2092 / #2550: set the closure's name after allocation.

@@ -1091,6 +1091,15 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2691", make_int(2691)},
                 {"issue-2691", make_int(2691)},
                 {"closure-pending-recovery-drain-wired", make_int(1)},
+                // Issue #2850: bounded pure-anon sync remount counters.
+                {"live-closure-sync-remount-pure-anon-ok-total",
+                 make_int(L(&CompilerMetrics::live_closure_sync_remount_pure_anon_ok_total))},
+                {"live-closure-sync-remount-pure-anon-skip-budget-total",
+                 make_int(
+                     L(&CompilerMetrics::live_closure_sync_remount_pure_anon_skip_budget_total))},
+                {"live-closure-sync-remount-pure-anon-wired", make_int(1)},
+                {"schema-2850", make_int(2850)},
+                {"issue-2850", make_int(2850)},
                 // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
                 // assert. Soft single-eval / process-default (filter
                 // eval = nullptr) keeps this at 0. Production hard
