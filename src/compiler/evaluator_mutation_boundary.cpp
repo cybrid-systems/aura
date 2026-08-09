@@ -1733,6 +1733,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         // flag is cleared by the Guard dtor
         // (the outermost one only).
         ev_->mutation_boundary_held_.store(true, std::memory_order_release);
+        // Issue #2849: process-wide held count so cross-thread mailbox
+        // push/fanout observes mid-mutation without TLS yield_hook bind.
+        // Paired with aura_process_mutation_boundary_held_exit on outermost
+        // dtor (held_.store false). Nested guards do not enter/exit the count.
+        aura_process_mutation_boundary_held_enter();
         // Issue #2204: arm GcDeferReason::MutationHold on outermost enter
         // (after lock + held_). Nested guards do NOT arm (depth already
         // covers concurrent outer holds via process-wide depth). Soft
@@ -2419,6 +2424,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (slot)
             (*slot)--;
         ev_->mutation_boundary_held_.store(false, std::memory_order_release);
+        // Issue #2849: process-wide held count exit (paired with enter at
+        // outermost held_.store true). Cross-thread mailbox gate reopens
+        // only after this count hits zero (and TLS depth is 0).
+        aura_process_mutation_boundary_held_exit();
         // Issue #2517: clear process-wide live max probe if this fiber owns it.
         // Simplified exit: only clear when we are the recorded max holder
         // (next enter rebuilds; best-effort under multi-eval contention).
@@ -2635,13 +2644,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // mutates do not accumulate a stale threshold across outermost
         // boundaries (Soft dashboard + Strict force-rollback both reset).
         aura::serve::mf_mailbox::clear_recv_boundary_reject_window();
-        // Issue #2378 / #2511 / #2551: outermost exit forces mailbox deferred
-        // drain under budget (hold-exit SLA). Success + exception paths both
-        // hit this Phase-5 block (Guard dtor). AC5: free when deferred_depth==0
-        // (single relaxed load). Soft: retain open depth + starvation bump;
-        // Strict/production: force-resolve remaining + audit; residual after
-        // budget → hard counter + Agent throttle flag (#2551).
-        // Wraps note_mailbox_outermost_exit_drain (#2378 opportunity stamp).
+        // Issue #2378 / #2511 / #2551 / #2849: outermost exit is the sole
+        // place that reopens the mailbox deliverability window after the
+        // #2849 mid-mutation push/fanout gate (note_mailbox_deferred_under_
+        // boundary). Forces deferred drain under budget (hold-exit SLA).
+        // Success + exception paths both hit this Phase-5 block (Guard dtor).
+        // AC5: free when deferred_depth==0 (single relaxed load). Soft:
+        // retain open depth + starvation bump; Strict/production:
+        // force-resolve remaining + audit; residual after budget → hard
+        // counter + Agent throttle flag (#2551). Wraps
+        // note_mailbox_outermost_exit_drain (#2378 opportunity stamp).
         (void)aura::serve::mf_mailbox::drain_deferred_under_budget();
         ev_->unbind_yield_hook_evaluator();
         // Issue #2170: publish LayoutStamp at outermost exit (Phase 5).

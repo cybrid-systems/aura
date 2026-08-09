@@ -75,10 +75,13 @@ def main() -> int:
     # AC1: push + broadcast_fanout defer on shared-evaluator held
     # ============================================================
     must("Issue #2680", "AC1", mb)
-    must_count("aura_evaluator_mutation_boundary_depth() > 0", "AC1", mb, 2)
-    must_count("aura_evaluator_mutation_boundary_held() != 0", "AC1", mb, 2)
-    # Both push() and broadcast_fanout() must have the gate (2 occurrences each).
-    must_count("mailbox_shared_evaluator_deferred_total", "AC1", mb, 4)
+    # Issue #2849 residual: sole helper note_mailbox_deferred_under_boundary
+    # consolidates push + fanout (still depth/held authority + Backpressure).
+    must("note_mailbox_deferred_under_boundary", "AC1", mb)
+    must_count("note_mailbox_deferred_under_boundary", "AC1 push+fanout", mb, 3)
+    must("aura_evaluator_mutation_boundary_depth() > 0", "AC1", mb)
+    must("aura_evaluator_mutation_boundary_held() != 0", "AC1", mb)
+    must_count("mailbox_shared_evaluator_deferred_total", "AC1", mb, 2)
     # push path: defer returns Backpressure.
     must("return PushStatus::Backpressure", "AC1", mb)
 
@@ -106,19 +109,20 @@ def main() -> int:
     must("mailbox_shared_evaluator_deferred_total{0}", "AC3", mb)
     must("mailbox_shared_evaluator_deferred_hard_total{0}", "AC3", mb)
     must("mailbox_shared_evaluator_deferred_soft_observe_total{0}", "AC3", mb)
-    # Bump sites in push + broadcast_fanout (each bumps both g_ + local_).
+    # Bump sites via sole helper (#2849); g_ + local_ still both advanced.
     must_count(
         "mailbox_shared_evaluator_deferred_total.fetch_add(",
         "AC3",
         mb,
-        2,
+        1,
     )
     must_count(
         "mailbox_shared_evaluator_deferred_hard_total.fetch_add(",
         "AC3",
         mb,
-        2,
+        1,
     )
+    must("note_mailbox_deferred_under_boundary", "AC3 sole helper", mb)
 
     # ============================================================
     # AC4: Soft / observe-only path remains for tests

@@ -411,6 +411,42 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mailbox-hold-starvation-hard-wired", 1);
             insert_kv("schema-2551", 2551);
             insert_kv("issue-2551", 2551);
+            // Issue #2680 / #2849: shared-Evaluator mid-mutation delivery gate.
+            // under_boundary_* are the Agent-facing #2849 names (same authority
+            // as shared_evaluator_*). Production: hard-total under Strict /
+            // production defaults; Soft: soft_observe. Always Backpressure —
+            // never mid-mutation enqueue.
+            insert_kv("mailbox-shared-evaluator-deferred-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-shared-evaluator-deferred-hard-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_hard_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-shared-evaluator-deferred-soft-observe-total",
+                static_cast<std::int64_t>(
+                    g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_soft_observe_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-deferred-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_deferred_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-deferred-hard-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_deferred_hard_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-under-boundary-deferred-soft-observe-total",
+                static_cast<std::int64_t>(
+                    g_mf_mailbox_stats.mailbox_under_boundary_deferred_soft_observe_total.load(
+                        std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-gate-wired", 1);
+            insert_kv("schema-2680", 2680);
+            insert_kv("issue-2680", 2680);
+            insert_kv("schema-2849", 2849);
+            insert_kv("issue-2849", 2849);
             // Issue #2587: mutate admission gate counter (hard reject
             // vs metric-only soft path; AC1 / AC2). Zero cost when
             // agent-throttle flag == 0 — single relaxed load at every

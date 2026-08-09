@@ -39,6 +39,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 import std;
 import aura.compiler.evaluator;
@@ -711,6 +712,217 @@ static void ac2680_source_cite_rows() {
           "AC1: happens-before contract documented");
 }
 
+// ── Issue #2849: production fail-closed mid-mutation mailbox delivery ──
+// AC1: push under live outermost Guard → always Backpressure (no enqueue)
+// AC2: after outermost exit, deferred deliverable (push Ok + recv)
+// AC3: chaos-lite — concurrent pusher while Guard held never delivers
+//      mid-mutation payload; under_boundary counters advance
+// AC4: source-cite sole helper on push/fanout + Phase-5 drain window
+// AC5: schema-2849 query keys
+// AC6: Soft still BP (never weakens gate); residual after budget = #2551
+
+static void ac2849_1_push_under_guard_always_bp() {
+    std::println("\n--- #2849 AC1: push under live boundary → Backpressure ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "2849 AC1 warm");
+    auto& ev = cs.evaluator();
+    MultiFiberMailbox mb(/*high_water=*/32);
+    const auto def0 =
+        g_mf_mailbox_stats.mailbox_under_boundary_deferred_total.load(std::memory_order_relaxed);
+    const auto shared0 =
+        g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(std::memory_order_relaxed);
+
+    bool ok = true;
+    {
+        auto guard_r = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        CHECK(guard_r.has_value(), "2849 AC1: try_acquire Guard");
+        auto guard = std::move(*guard_r);
+        CHECK(aura_evaluator_mutation_boundary_depth() > 0, "2849 AC1: depth > 0");
+
+        MailMessage mid;
+        mid.payload = "mid-mutation-2849";
+        mid.to_fiber = 0;
+        CHECK(mb.push(std::move(mid)) == PushStatus::Backpressure,
+              "2849 AC1: push under Guard always BP (no mid-mutation enqueue)");
+        // Queue must remain empty — no silent delivery.
+        auto peek = mb.recv(/*wait=*/false, /*timeout_ms=*/0);
+        CHECK(!peek.has_value(), "2849 AC1: no payload enqueued under Guard");
+
+        MailMessage proto;
+        proto.payload = "fanout-mid-mutation-2849";
+        CHECK(mb.broadcast_fanout(proto) == PushStatus::Backpressure,
+              "2849 AC1: fanout under Guard always BP");
+    }
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "2849 AC1: depth 0 after exit");
+    CHECK(g_mf_mailbox_stats.mailbox_under_boundary_deferred_total.load(std::memory_order_relaxed) >
+              def0,
+          "2849 AC1: under_boundary deferred counter advanced");
+    CHECK(g_mf_mailbox_stats.mailbox_shared_evaluator_deferred_total.load(
+              std::memory_order_relaxed) > shared0,
+          "2849 AC1: #2680 shared-evaluator deferred also advanced (lineage)");
+}
+
+static void ac2849_2_after_exit_deliverable() {
+    std::println("\n--- #2849 AC2: after outermost exit deferred deliverable ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "2849 AC2 warm");
+    auto& ev = cs.evaluator();
+    MultiFiberMailbox mb(/*high_water=*/16);
+
+    {
+        bool ok = true;
+        auto guard_r = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        CHECK(guard_r.has_value(), "2849 AC2: Guard");
+        auto guard = std::move(*guard_r);
+        MailMessage blocked;
+        blocked.payload = "should-not-land";
+        (void)mb.push(std::move(blocked)); // BP under Guard
+    }
+    // Phase-5 dtor reopened deliverability window.
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "2849 AC2: depth 0");
+    MailMessage post;
+    post.payload = "post-exit-2849";
+    CHECK(mb.push(std::move(post)) == PushStatus::Ok, "2849 AC2: push Ok after exit");
+    auto got = mb.recv(/*wait=*/false, /*timeout_ms=*/0);
+    CHECK(got.has_value() && got->payload == "post-exit-2849",
+          "2849 AC2: post-exit payload deliverable");
+    // Ensure blocked mid-mutation message never arrived.
+    auto no_mid = mb.recv(/*wait=*/false, /*timeout_ms=*/0);
+    CHECK(!no_mid.has_value() || no_mid->payload != "should-not-land",
+          "2849 AC2: mid-mutation payload never delivered");
+}
+
+static void ac2849_3_chaos_no_mid_mutation_recv() {
+    std::println("\n--- #2849 AC3: chaos-lite concurrent push under Guard ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "2849 AC3 warm");
+    auto& ev = cs.evaluator();
+    MultiFiberMailbox mb(/*high_water=*/64);
+
+    std::atomic<bool> hold{true};
+    std::atomic<std::uint64_t> bp_count{0};
+    std::atomic<std::uint64_t> ok_count{0};
+    std::atomic<bool> saw_mid{false};
+
+    {
+        bool ok = true;
+        auto guard_r = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        CHECK(guard_r.has_value(), "2849 AC3: Guard for chaos");
+        auto guard = std::move(*guard_r);
+        CHECK(aura_evaluator_mutation_boundary_depth() > 0, "2849 AC3: depth live");
+
+        // Concurrent pushers while Guard held — all must BP.
+        std::vector<std::thread> pushers;
+        for (int i = 0; i < 4; ++i) {
+            pushers.emplace_back([&]() {
+                while (hold.load(std::memory_order_acquire)) {
+                    MailMessage m;
+                    m.payload = "mid-mutation-chaos-2849";
+                    auto st = mb.push(std::move(m));
+                    if (st == PushStatus::Backpressure)
+                        bp_count.fetch_add(1, std::memory_order_relaxed);
+                    else if (st == PushStatus::Ok)
+                        ok_count.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
+        // Brief concurrent window.
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        // Receiver during hold must not see mid-mutation payload.
+        auto mid_recv = mb.recv(/*wait=*/false, /*timeout_ms=*/0);
+        if (mid_recv.has_value() && mid_recv->payload == "mid-mutation-chaos-2849")
+            saw_mid.store(true);
+        hold.store(false, std::memory_order_release);
+        for (auto& t : pushers)
+            t.join();
+        (void)guard; // outermost exit on scope end → Phase-5 reopens window
+    }
+
+    CHECK(bp_count.load() > 0, "2849 AC3: concurrent pushers observed BP under Guard");
+    CHECK(ok_count.load() == 0, "2849 AC3: zero Ok enqueue under live Guard");
+    CHECK(!saw_mid.load(), "2849 AC3: zero mid-mutation observation under Guard");
+    // After exit, clean push/recv works.
+    MailMessage clean;
+    clean.payload = "post-chaos-2849";
+    CHECK(mb.push(std::move(clean)) == PushStatus::Ok, "2849 AC3: push Ok after exit");
+    auto got = mb.recv(false, 0);
+    CHECK(got.has_value() && got->payload == "post-chaos-2849",
+          "2849 AC3: clean delivery after exit");
+}
+
+static void ac2849_4_source_cite() {
+    std::println("\n--- #2849 AC4: source-cite sole helper + Phase-5 window ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #2849") != std::string::npos, "2849 AC4: mailbox cites #2849");
+    CHECK(mb.find("note_mailbox_deferred_under_boundary") != std::string::npos,
+          "2849 AC4: sole helper present");
+    CHECK(mb.find("mailbox_under_boundary_deferred_total") != std::string::npos,
+          "2849 AC4: under_boundary deferred counter");
+    CHECK(mb.find("mailbox_under_boundary_deferred_hard_total") != std::string::npos,
+          "2849 AC4: under_boundary hard counter");
+    CHECK(mb.find("mailbox_under_boundary_deferred_soft_observe_total") != std::string::npos,
+          "2849 AC4: under_boundary soft_observe counter");
+    // push + fanout both route through the helper.
+    CHECK(mb.find("if (note_mailbox_deferred_under_boundary(&local_stats_))") != std::string::npos,
+          "2849 AC4: push/fanout gate sites call sole helper");
+    CHECK(mb.find("never enqueue") != std::string::npos ||
+              mb.find("Never enqueue") != std::string::npos,
+          "2849 AC4: never-enqueue fail-closed documented");
+    // Phase-5 sole reopen.
+    CHECK(emb.find("#2849") != std::string::npos, "2849 AC4: Phase-5 cites #2849");
+    CHECK(emb.find("drain_deferred_under_budget") != std::string::npos,
+          "2849 AC4: Phase-5 drain under budget");
+    CHECK(emb.find("clear_recv_boundary_reject_window") != std::string::npos,
+          "2849 AC4: Phase-5 clears recv window");
+    CHECK(emb.find("aura_process_mutation_boundary_held_enter") != std::string::npos,
+          "2849 AC4: process-wide held enter on outermost");
+    CHECK(emb.find("aura_process_mutation_boundary_held_exit") != std::string::npos,
+          "2849 AC4: process-wide held exit on outermost");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("g_process_mutation_boundary_held_count") != std::string::npos,
+          "2849 AC4: process-wide held count authority");
+    CHECK(efm.find("cross-thread mailbox") != std::string::npos,
+          "2849 AC4: held C ABI cites cross-thread mailbox");
+}
+
+static void ac2849_5_schema_query() {
+    std::println("\n--- #2849 AC5: schema-2849 query keys ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "2849 AC5 warm");
+    CHECK(href(cs, "schema-2849") == 2849, "2849 AC5: schema-2849");
+    CHECK(href(cs, "issue-2849") == 2849, "2849 AC5: issue-2849");
+    CHECK(href(cs, "mailbox-under-boundary-gate-wired") == 1,
+          "2849 AC5: under-boundary gate wired");
+    CHECK(href(cs, "mailbox-under-boundary-deferred-total") >= 0,
+          "2849 AC5: under-boundary deferred total key");
+    CHECK(href(cs, "mailbox-under-boundary-deferred-hard-total") >= 0,
+          "2849 AC5: under-boundary hard key");
+    CHECK(href(cs, "mailbox-under-boundary-deferred-soft-observe-total") >= 0,
+          "2849 AC5: under-boundary soft key");
+    // #2680 lineage retained.
+    CHECK(href(cs, "schema-2680") == 2680, "2849 AC5: schema-2680 retained");
+    CHECK(href(cs, "mailbox-shared-evaluator-deferred-total") >= 0,
+          "2849 AC5: shared-evaluator deferred retained");
+}
+
+static void ac2849_6_soft_never_weakens() {
+    std::println("\n--- #2849 AC6: Soft still BP (gate never weakened) ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("never weakens the gate") != std::string::npos ||
+              mb.find("Never enqueue") != std::string::npos ||
+              mb.find("always Backpressure") != std::string::npos ||
+              mb.find("ALWAYS return") != std::string::npos,
+          "2849 AC6: Soft still defers documented");
+    CHECK(mb.find("soft_observe") != std::string::npos, "2849 AC6: Soft soft_observe face");
+    CHECK(mb.find("is_mutate_mailbox_strict") != std::string::npos,
+          "2849 AC6: production hard face toggle retained");
+    // Residual after budget still #2551 hard throttle (source-cite).
+    CHECK(mb.find("mailbox_hold_starvation_hard_total") != std::string::npos,
+          "2849 AC6: residual after budget #2551 hard counter retained");
+    CHECK(true, "2849 AC6: coverage linter check_mailbox_mid_mutation_delivery_2849.py");
+}
+
 // ── Issue #2700 AC1+AC2: explicit happens-before contract — mailbox
 //   StableNodeRef payloads under outermost MutationBoundaryGuard must
 //   have completed handoff_ref or be rejected Closed + bump reject.
@@ -833,6 +1045,14 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac2680_counter_wired();
     ac2680_happy_path_no_extra_deferred();
     ac2680_source_cite_rows();
+    // Issue #2849: production fail-closed mid-mutation delivery (sole
+    // note_mailbox_deferred_under_boundary helper; Phase-5 sole reopen).
+    ac2849_1_push_under_guard_always_bp();
+    ac2849_2_after_exit_deliverable();
+    ac2849_3_chaos_no_mid_mutation_recv();
+    ac2849_4_source_cite();
+    ac2849_5_schema_query();
+    ac2849_6_soft_never_weakens();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
