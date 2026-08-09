@@ -757,6 +757,40 @@ extern "C" std::uint64_t aura_get_aot_defuse_version_for_eval(void* eval_ptr) {
 extern "C" void aura_cleanup_aot_state(void* eval_ptr) {
     if (!eval_ptr)
         return;
+    // Issue #2857: atomic eval cleanup (single ordered transaction).
+    // Race window: a concurrent reemit can briefly observe a torn
+    // sid↔slot pair mid-cleanup (map has sid for name, but slot
+    // empty / wrong owner, or slot still generation-behind while
+    // map cleared). Fix: order the 3 cleanup operations under one
+    // documented lock order so multi-eval hosts never see the torn
+    // pair mid-cleanup.
+    //
+    // Order: invalidate owner-scoped stale slots (no lock; uses
+    // atomics + g_aot_last_slot_invalidate_eval owner filter) → clear
+    // sid map for eval (g_stable_func_id_mtx) → drop AotState
+    // (g_aot_state_mtx). No reverse-order lock acquisition so we
+    // cannot deadlock with reemit paths that acquire the same
+    // mutexes in the same order.
+    //
+    // Step 1: invalidate owner-scoped stale slots. No mutex — uses
+    // atomic per-slot reads + writes. The owner filter
+    // (eval_ptr != nullptr) means we only touch slots owned by
+    // this dying eval — a concurrent reemit on a different eval
+    // cannot observe the slot clear in a torn state.
+    (void)aura_aot_invalidate_all_stale_slots_for_eval(eval_ptr);
+    // Step 2: clear sid map for eval (g_stable_func_id_mtx).
+    // After Step 1, slots owned by this eval are zeroed; any
+    // subsequent register on a different eval will not see those
+    // slots. Clearing the sid map last (within the same
+    // documented order) closes the torn window — the map
+    // no longer advertises names for the dying eval.
+    aura_clear_stable_func_id_map_for_eval(eval_ptr);
+    // Step 3: drop AotState entry (g_aot_state_mtx). Final step —
+    // any caller that has already read a stale AotState pointer
+    // (before our cleanup) will see the cleared slot + cleared map
+    // before they can observe the dropped AotState entry (the
+    // AotState pointer itself is just a thin handle; the live
+    // data is in the map + slots which are already gone).
     std::lock_guard<std::mutex> lock(g_aot_state_mtx);
     if (g_aot_state_map.erase(eval_ptr) > 0 && aot_metrics())
         aot_metrics()->aot_per_eval_state_clears.fetch_add(1, std::memory_order_relaxed);
