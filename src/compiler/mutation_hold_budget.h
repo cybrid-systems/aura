@@ -14,6 +14,7 @@
 #include <string_view>
 
 #include "typed_mutation_audit.h" // production_defaults_active (#2701 AC1)
+#include "serve/fiber.h" // Issue #2853: is_hold_slo_soft_for_test + production_residual_policy_locked
 
 namespace aura::compiler {
 
@@ -61,12 +62,28 @@ namespace aura::compiler {
 }
 
 // Soft / sandbox: metric-only SLO violation (AC2). Production (default): force.
+//
+// Issue #2853: production-residual-policy lock — when
+// production_defaults_active() + sandbox != off, AURA_MUTATION_HOLD_SLO_SOFT=1
+// is IGNORED (Soft env cannot ship silently in production). Soft path
+// requires sandbox=off OR explicit set_hold_slo_soft_for_test(true) override.
+// Mirrors the is_steal_snapshot_soft_mode production-lock pattern (#2372).
+// Happy path cost: relaxed atomic load of test override + env var load only
+// when not under production lock — zero work in the production default.
 [[nodiscard]] inline bool mutation_hold_slo_soft_mode() noexcept {
-    const char* soft = std::getenv("AURA_MUTATION_HOLD_SLO_SOFT");
-    if (soft && soft[0] == '1')
+    // AC2: test override wins (unit Soft-path ergonomics).
+    if (aura::serve::is_hold_slo_soft_for_test())
         return true;
+    // AC2: AURA_SANDBOX=off always Soft (matches #2546/#2667/#2756/#2852 lineage).
     const char* sandbox = std::getenv("AURA_SANDBOX");
-    return sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off";
+    if (sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off")
+        return true;
+    // AC1/AC3: production lock — AURA_MUTATION_HOLD_SLO_SOFT=1 is IGNORED.
+    if (aura::compiler::typed_audit::production_defaults_active())
+        return false;
+    // Legacy: AURA_MUTATION_HOLD_SLO_SOFT=1 → Soft (only honored outside production lock).
+    const char* soft = std::getenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    return soft && soft[0] == '1';
 }
 
 // ── Issue #2517: process-wide live longest outermost hold probe ──

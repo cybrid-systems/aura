@@ -7,9 +7,10 @@
 // #1950 / #1953 / #1954 for the deferred correctness work.
 #include "fiber.h"
 #include "scheduler.h"
-#include "metrics.h"                      // Issue #2119: adaptive_steal_stats yield/hold
-#include "../compiler/messaging_bridge.h" // Issue #285: g_flush_mutation_boundary
-#include "../compiler/shape.h"            // Issue #570: record_shape_fiber_refresh
+#include "metrics.h"                          // Issue #2119: adaptive_steal_stats yield/hold
+#include "../compiler/messaging_bridge.h"     // Issue #285: g_flush_mutation_boundary
+#include "../compiler/shape.h"                // Issue #570: record_shape_fiber_refresh
+#include "../compiler/typed_mutation_audit.h" // Issue #2853: production_residual_policy_locked()
 #include "aura_platform.h"
 #include "core/gc_hooks.h" // Issue #1364
 #include <unordered_map> // Issue #2726: process-wide Fiber* registry for cross-fiber cancel lookup
@@ -442,6 +443,51 @@ bool is_steal_snapshot_hard_abort() noexcept {
         return false;
     const char* v = std::getenv("AURA_STEAL_SNAPSHOT_HARD_ABORT");
     return v && v[0] == '1';
+}
+
+// Issue #2853: residual-defer + hold-SLO Soft test overrides + production
+// residual policy lock — mirror set_steal_snapshot_soft_for_test /
+// set_steal_snapshot_soft_production_locked pattern (#2372).
+//
+// production_locked is DERIVED from typed_audit::production_defaults_active()
+// + AURA_SANDBOX=off bypass (no separate atomic — the gauge
+// g_production_residual_policy_lock_active_total in fiber.h is bumped each
+// Phase-5 check where it is active so Agents can assert via
+// query:mutation-boundary-hold-stats). Test overrides win over production
+// lock + env (same as steal-snapshot helpers).
+namespace {
+    std::atomic<std::uint8_t> g_residual_defer_soft_for_test{0};
+    std::atomic<std::uint8_t> g_hold_slo_soft_for_test{0};
+} // namespace
+
+bool is_residual_defer_soft_for_test() noexcept {
+    return g_residual_defer_soft_for_test.load(std::memory_order_acquire) != 0;
+}
+void set_residual_defer_soft_for_test(bool soft) noexcept {
+    g_residual_defer_soft_for_test.store(soft ? 1 : 0, std::memory_order_release);
+}
+void reset_residual_defer_soft_for_test() noexcept {
+    g_residual_defer_soft_for_test.store(0, std::memory_order_release);
+}
+
+bool is_hold_slo_soft_for_test() noexcept {
+    return g_hold_slo_soft_for_test.load(std::memory_order_acquire) != 0;
+}
+void set_hold_slo_soft_for_test(bool soft) noexcept {
+    g_hold_slo_soft_for_test.store(soft ? 1 : 0, std::memory_order_release);
+}
+void reset_hold_slo_soft_for_test() noexcept {
+    g_hold_slo_soft_for_test.store(0, std::memory_order_release);
+}
+
+bool production_residual_policy_locked() noexcept {
+    // Issue #2853 AC1: production lock = production_defaults_active() AND sandbox != off.
+    // sandbox=off always bypasses (matches #2546/#2667/#2756/#2852 lineage).
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return false;
+    const char* sandbox = std::getenv("AURA_SANDBOX");
+    const bool dev_off = sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off";
+    return !dev_off;
 }
 
 // Issue #2346 / #2518: post-sync resume invariant (Soft metric / Hard mark-failed).

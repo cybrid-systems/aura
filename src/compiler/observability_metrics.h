@@ -7963,6 +7963,16 @@ struct CompilerMetrics {
     // to-crash path — dashboards should see this counter near zero in
     // healthy production and an alert-worthy spike on regression.
     std::atomic<std::uint64_t> mutation_boundary_residual_defer_hard_fail_total{0}; // #2269
+    // Issue #2853: gauge — bumped each Phase-5 outermost-success residual
+    // check where production lock was actively gating the policy
+    // (production_defaults_active() + sandbox != off + not test override).
+    // Surfaces to query:mutation-boundary-hold-stats schema-2853 so Agents
+    // can assert the lock is engaged under production defaults (AC4).
+    // Mirrors aura::serve::g_production_residual_policy_lock_active_total
+    // file-scope atomic (#2693/#2702 pattern); light binaries without
+    // CompilerMetrics wired still bump the file-scope counter via the
+    // MutationBoundaryGuard dtor.
+    std::atomic<std::uint64_t> production_residual_policy_lock_active_total{0}; // #2853
     // Issue #2215: RenderFastExit (outermost success under render hotpath).
     // Skips Full TypedMutationAudit + full linear/dual-path; defers reemit.
     // Exposed via query:mutation-boundary-hold-stats schema-2215.

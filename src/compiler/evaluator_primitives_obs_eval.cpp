@@ -6207,6 +6207,50 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"mutation-hold-slo-wired", make_int(1)},
                 {"schema-2349", make_int(2349)},
                 {"issue-2349", make_int(2349)},
+                // Issue #2853: production residual policy lock —
+                // gauge + lock-active-now + effective-mode sentinels
+                // so Agents can assert the lock is engaged under
+                // production defaults. Mirrors steal-snapshot Soft
+                // lock (#2372) + production residual policy wire
+                // (schema-2853 / issue-2853 additive — no break of
+                // schema-2349 / schema-2211 / schema-2269 lineage).
+                // Lock-active gauge: bumped each Phase-5 outermost
+                // success residual check where production lock was
+                // gating the policy. Light binaries without
+                // CompilerMetrics wired still get the file-scope
+                // atomic via aura::serve::g_production_residual_policy_lock_active_total.
+                {"production-residual-policy-lock-active-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::serve::production_residual_policy_lock_active_total_v_read()))},
+                {"production_residual_policy_lock_active_total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::serve::production_residual_policy_lock_active_total_v_read()))},
+                // Lock-active-now: 1 if production_defaults_active() +
+                // sandbox != off (current state, not cumulative gauge).
+                {"production-residual-policy-lock-active",
+                 make_int(aura::serve::production_residual_policy_locked() ? 1 : 0)},
+                {"production_residual_policy_lock_active",
+                 make_int(aura::serve::production_residual_policy_locked() ? 1 : 0)},
+                // Effective mode sentinels (after production lock + test
+                // override resolution). Soft=1 means Soft path is active
+                // (no force-fail, no force-clear); Soft=0 means Clear or
+                // Hard applies (force-clear or abort).
+                {"hold-slo-effective-soft-mode",
+                 make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
+                {"hold_slo_effective_soft_mode",
+                 make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
+                {"residual-defer-soft-for-test",
+                 make_int(aura::serve::is_residual_defer_soft_for_test() ? 1 : 0)},
+                {"residual_defer_soft_for_test",
+                 make_int(aura::serve::is_residual_defer_soft_for_test() ? 1 : 0)},
+                {"hold-slo-soft-for-test",
+                 make_int(aura::serve::is_hold_slo_soft_for_test() ? 1 : 0)},
+                {"hold_slo_soft_for_test",
+                 make_int(aura::serve::is_hold_slo_soft_for_test() ? 1 : 0)},
+                {"production-residual-policy-lock-wired", make_int(1)},
+                {"production_residual_policy_lock_wired", make_int(1)},
+                {"schema-2853", make_int(2853)},
+                {"issue-2853", make_int(2853)},
                 // Issue #2405: predictive estimate surface (separate pure query);
                 // discovery key here so Agents find hold-estimate from hold-stats.
                 {"hold-estimate-wired", make_int(1)},
