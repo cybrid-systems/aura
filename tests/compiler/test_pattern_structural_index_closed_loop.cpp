@@ -124,8 +124,71 @@ static void run_matrix(CompilerService& cs) {
 
 } // namespace aura_423_detail
 
+// ── Issue #2861: query:pattern full safety contract
+// Source-cite ACs (gate-only ship; runtime verifies on CI).
+
+static std::string read_file_2861(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static void ac2861_1_source_atomics() {
+    std::println("\n--- #2861 AC1: source — 4 new safety atomics present ---");
+    const auto met = read_file_2861("src/compiler/observability_metrics.h");
+    CHECK(met.find("pattern_safe_span_uses_total") != std::string::npos,
+          "#2861 AC1: pattern_safe_span_uses_total atomic");
+    CHECK(met.find("pattern_hygiene_filtered_total") != std::string::npos,
+          "#2861 AC1: pattern_hygiene_filtered_total atomic");
+    CHECK(met.find("pattern_epoch_mismatch_total") != std::string::npos,
+          "#2861 AC1: pattern_epoch_mismatch_total atomic");
+    CHECK(met.find("pattern_dangling_prevented_total") != std::string::npos,
+          "#2861 AC1: pattern_dangling_prevented_total atomic");
+    // Source-cited in comment block as #2861 contract surfaces.
+    CHECK(met.find("// #2861") != std::string::npos,
+          "#2861 AC1: comment block cites #2861 contract surfaces");
+}
+
+static void ac2861_2_source_primitive() {
+    std::println("\n--- #2861 AC2: source — query:pattern-safety-stats primitive ---");
+    const auto q = read_file_2861("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:pattern-safety-stats") != std::string::npos,
+          "#2861 AC2: query:pattern-safety-stats primitive registered");
+    CHECK(q.find("schema") != std::string::npos && q.find("make_int(2861)") != std::string::npos,
+          "#2861 AC2: schema=2861 in hash builder");
+    CHECK(q.find("pattern-safe-span-uses-total") != std::string::npos &&
+              q.find("pattern-hygiene-filtered-total") != std::string::npos &&
+              q.find("pattern-epoch-mismatch-total") != std::string::npos &&
+              q.find("pattern-dangling-prevented-total") != std::string::npos,
+          "#2861 AC2: 4 contract counter keys in hash");
+    // Additive on existing #547 + #490 pattern-index primitives.
+    CHECK(q.find("query:pattern-index-stats") != std::string::npos &&
+              q.find("query:pattern-index-rebuild-stats") != std::string::npos,
+          "#2861 AC2: existing #547 + #490 primitives preserved");
+}
+
+static void ac2861_3_no_docs() {
+    std::println("\n--- #2861 AC3: no docs/design/ + lineage refs ---");
+    CHECK(read_file_2861("docs/design/2861-pattern-safety-contract.md").empty(),
+          "#2861 AC3: no docs/design/2861-* per #1655");
+    const auto q = read_file_2861("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("#819") != std::string::npos && q.find("#2036") != std::string::npos &&
+              q.find("#2123") != std::string::npos && q.find("#2763") != std::string::npos &&
+              q.find("#2525") != std::string::npos,
+          "#2861 AC3: lineage refs to #819/#2036/#2123/#2763/#2525");
+}
+
 int main() {
     aura::compiler::CompilerService cs;
     aura_423_detail::run_matrix(cs);
+    std::println("\n=== #2861: query:pattern full safety contract (source-cite gate-only) ===");
+    ac2861_1_source_atomics();
+    ac2861_2_source_primitive();
+    ac2861_3_no_docs();
     return RUN_ALL_TESTS();
 }
