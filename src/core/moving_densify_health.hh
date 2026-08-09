@@ -37,6 +37,15 @@ inline std::atomic<std::uint64_t> g_last_root_remap_fail_total{0};
 inline std::atomic<std::uint8_t> g_last_had_moving_densify{0};
 inline std::atomic<std::uint64_t> g_last_window_seq{0};
 
+// Issue #2775: last-window snapshot of external roots registered via
+// ASTArena::register_external_root_for_densify(void*) / batch span that
+// were consumed by the most recent Moving densify (regardless of whether
+// Moving succeeded, hard-failed, or completed quietly). Per-window
+// (last-call semantics #2376); Agent dashboards observe via
+// snapshot().external_roots_prep_registered_last. zero = no caller
+// registered external roots before that Moving window.
+inline std::atomic<std::uint64_t> g_last_external_roots_prep_registered{0};
+
 // Soft orch throttle (1 = refuse new mutate until healthy densify).
 inline std::atomic<std::uint8_t> g_agent_throttle_for_moving_densify{0};
 inline std::atomic<std::uint64_t> g_agent_throttle_moving_densify_set_total{0};
@@ -58,6 +67,12 @@ struct MovingDensifyHealthSnapshot {
     std::uint64_t untracked_kept = 0;
     std::uint64_t root_remap_fail_total = 0;
     std::uint64_t untracked_external_roots_total = 0;
+    // Issue #2775: external roots registered by callers via
+    // ASTArena::register_external_root_for_densify that were consumed by
+    // the last Moving densify. Observability only — does not gate any
+    // success / fail predicate; lets Agents verify caller compliance
+    // with "register all external roots before Moving" contract.
+    std::uint64_t external_roots_prep_registered_last = 0;
     std::uint64_t objects_moved_total = 0;
     std::uint64_t moving_blocked_precondition_total = 0;
     std::uint64_t window_seq = 0;
@@ -140,11 +155,10 @@ compute_moving_unified_success(bool moving_blocked_precondition, bool pin_contra
 // Called from Phase 5 / compact_all_moving_pinned / test inject.
 // Soft/sandbox: still publish last-window (observe) but only set throttle
 // when production_hard_active (AC3).
-inline void publish_last_moving_densify_window(bool had_moving_densify, bool pin_contract_held,
-                                               bool moving_incomplete_remap,
-                                               std::uint64_t objects_moved,
-                                               std::uint64_t untracked_kept,
-                                               std::uint64_t root_remap_fail_total) noexcept {
+inline void publish_last_moving_densify_window(
+    bool had_moving_densify, bool pin_contract_held, bool moving_incomplete_remap,
+    std::uint64_t objects_moved, std::uint64_t untracked_kept, std::uint64_t root_remap_fail_total,
+    std::uint64_t external_roots_prep_registered_cleared = 0) noexcept {
     g_last_had_moving_densify.store(had_moving_densify ? 1 : 0, std::memory_order_relaxed);
     g_last_pin_contract_held.store(pin_contract_held ? 1 : 0, std::memory_order_relaxed);
     g_last_moving_incomplete_remap.store(moving_incomplete_remap ? 1 : 0,
@@ -152,6 +166,12 @@ inline void publish_last_moving_densify_window(bool had_moving_densify, bool pin
     g_last_objects_moved.store(objects_moved, std::memory_order_relaxed);
     g_last_untracked_kept.store(untracked_kept, std::memory_order_relaxed);
     g_last_root_remap_fail_total.store(root_remap_fail_total, std::memory_order_relaxed);
+    // Issue #2775: publish last-window external-root prep-register count.
+    // Optional additive arg (default 0) preserves existing callers; new
+    // Phase-5 caller passes LiveCompactResult::external_roots_prep_
+    // registered_cleared so Agent dashboards see caller compliance.
+    g_last_external_roots_prep_registered.store(external_roots_prep_registered_cleared,
+                                                std::memory_order_relaxed);
     g_last_window_seq.fetch_add(1, std::memory_order_relaxed);
 
     const bool allow =
@@ -191,6 +211,7 @@ inline void reset_moving_densify_health_for_test() noexcept {
     g_last_had_moving_densify.store(0, std::memory_order_relaxed);
     g_last_window_seq.store(0, std::memory_order_relaxed);
     g_agent_throttle_for_moving_densify.store(0, std::memory_order_relaxed);
+    g_last_external_roots_prep_registered.store(0, std::memory_order_relaxed);
 }
 
 // Pure snapshot for query / orch (no side effects).
@@ -217,6 +238,10 @@ snapshot(const ProcessTotals& totals = {}) noexcept {
     s.objects_moved_total = totals.objects_moved_total;
     s.moving_blocked_precondition_total = totals.moving_blocked_precondition_total;
     s.window_seq = g_last_window_seq.load(std::memory_order_relaxed);
+    // Issue #2775: surface the last-window prep-register count to Agent
+    // dashboards. Pure observability — does not gate would_allow_mutate.
+    s.external_roots_prep_registered_last =
+        g_last_external_roots_prep_registered.load(std::memory_order_relaxed);
     s.would_allow_mutate = window_would_allow_mutate(s.had_moving_densify, s.pin_contract_held,
                                                      s.moving_incomplete_remap, s.untracked_kept,
                                                      s.root_remap_fail_total);

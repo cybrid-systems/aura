@@ -2467,6 +2467,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         std::size_t densify_untracked_kept = 0;
         bool densify_incomplete_remap = false;
         std::size_t densify_root_remap_fails = 0;
+        // Issue #2775: aggregate external roots registered via prep API that
+        // were consumed by the last Moving densify window. Sourced from
+        // AdaptiveCompactResult::external_roots_prep_registered_total and
+        // forwarded to publish_last_moving_densify_window so Agent dashboards
+        // observe caller compliance with "register all external roots before
+        // Moving" contract. Pure observability — does not gate any
+        // success / fail predicate (per AC4 additive-only).
+        std::size_t densify_external_roots_prep_registered_cleared = 0;
         // Stash RootRemap axes for #2682 unified success predicate (lives
         // outside the moving_compact_enabled() block — compact_r is scoped
         // to that if-body).
@@ -2530,6 +2538,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             densify_objects_moved = compact_r.objects_moved_total;
             densify_untracked_kept = compact_r.untracked_kept_total;
             densify_incomplete_remap = compact_r.moving_incomplete_remap_any;
+            // Issue #2775: prep-API aggregate from AdaptiveCompactResult →
+            // local for the publish call below. See moving_densify_health.hh
+            // for the additive snapshot.external_roots_prep_registered_last
+            // field that surfaces this to Agent dashboards.
+            densify_external_roots_prep_registered_cleared =
+                compact_r.external_roots_prep_registered_total;
             // Issue #2749: split incomplete-remap observability.
             // Objects that participated in pin registry / linear roots /
             // RootRemap (auto-registered intermediates via GeneralObjectPin
@@ -2786,7 +2800,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 had_moving_densify, pin_contract_held && densify_consistency.pin_ok, incomplete,
                 static_cast<std::uint64_t>(densify_objects_moved),
                 static_cast<std::uint64_t>(densify_untracked_kept),
-                static_cast<std::uint64_t>(densify_root_remap_fails));
+                static_cast<std::uint64_t>(densify_root_remap_fails),
+                static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared));
         }
         // Issue #2682: single unified Moving success predicate — folds all
         // 5 conditions (moving_blocked_precondition / pin_contract_held /
