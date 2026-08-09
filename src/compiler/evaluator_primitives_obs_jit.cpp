@@ -8906,6 +8906,21 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                     std::memory_order_relaxed)));
             insert_kv("schema-2818", 2818);
             insert_kv("issue-2818", 2818);
+            // Issue #2819: lock-free audit trail publish.
+            insert_kv("audit-trail-lockfree-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.audit_trail_lockfree_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("audit-trail-mutex-wait-us-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.audit_trail_mutex_wait_us_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("audit-trail-lockfree-wired",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.audit_trail_lockfree_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-2819", 2819);
+            insert_kv("issue-2819", 2819);
             // Issue #2053: production audit defaults
             insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
             insert_kv("strategy",
