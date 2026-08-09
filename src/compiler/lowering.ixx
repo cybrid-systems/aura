@@ -308,7 +308,9 @@ export struct LoweringState {
         // The SoA block's start_idx points to the current
         // end of the SoA function's instruction columns. The
         // end_idx is sealed when the next block is allocated
-        // (or when the function is finished).
+        // (or when the function is finished via finalize_soa_module).
+        // Issue #2820: the LAST block is never sealed by this path —
+        // callers must invoke finalize_soa_module() before reading SoA.
         if (dual_emit_soa && cur_func_v2_idx < module_v2.functions.size()) {
             auto new_bid = module_v2.add_block(cur_func_v2_idx);
             // Seal the previous block (if any) at the start of this one
@@ -319,13 +321,46 @@ export struct LoweringState {
         return static_cast<std::uint32_t>(cur_func->blocks.size() - 1);
     }
 
+    // Issue #2820: seal last block of one SoA function (if end_idx stale).
+    // Bumps g_lowering_alloc_block_unsealed_total when a seal is needed.
+    void seal_soa_function_last_block(std::size_t v2_idx) noexcept {
+        if (!dual_emit_soa || v2_idx >= module_v2.functions.size())
+            return;
+        auto& soa_fn = module_v2.functions[v2_idx];
+        if (soa_fn.blocks_.empty())
+            return;
+        const auto last = static_cast<std::uint32_t>(soa_fn.blocks_.size() - 1);
+        auto& blk = soa_fn.blocks_[last];
+        const auto want = static_cast<std::uint32_t>(soa_fn.size());
+        if (blk.end_idx != want) {
+            g_lowering_alloc_block_unsealed_total_atomic().fetch_add(1, std::memory_order_relaxed);
+            module_v2.seal_block(v2_idx, last);
+        }
+    }
+
+    // Issue #2820: seal the last block of every SoA function in module_v2.
+    // Contract: call before publishing snapshot / reading SoA columns.
+    // Idempotent when last blocks are already sealed (end_idx == size).
+    void finalize_soa_module() noexcept {
+        if (!dual_emit_soa)
+            return;
+        // Prefer module-level helper so free-function / cache paths share
+        // one seal+metric implementation.
+        (void)module_v2.finalize_last_blocks();
+    }
+
     // ── Issue #254: dual-emit helper for switching cur_func ──
     // Replaces direct `state.cur_func = &func` assignments.
     // When dual_emit_soa is true, also creates a corresponding
     // IRFunctionSoA in module_v2 and updates cur_func_v2_idx.
     // When dual_emit_soa is false, just sets cur_func (no-op
     // for the SoA path).
+    // Issue #2820: seals the previous function's last block before
+    // allocating the new V2 function so multi-function modules never
+    // leave a stale last-block end_idx.
     void set_cur_function(aura::ir::IRFunction* f) {
+        if (dual_emit_soa && !module_v2.functions.empty())
+            seal_soa_function_last_block(cur_func_v2_idx);
         cur_func = f;
         if (dual_emit_soa) {
             // Find or create the V2 function. In practice, the
