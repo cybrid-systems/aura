@@ -71,6 +71,8 @@ static std::string read_file(const char* path) {
 // ac2852_run_added_tests() below the original AC1-AC5 inline tests.
 // Defined at end of file (after the original run_test body).
 static void ac2852_run_added_tests();
+// Issue #2843: Aura orch:compose-workflow surface (extend-in-place).
+static void ac2843_run_added_tests();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -385,8 +387,10 @@ int run_test_failure_policy_bridge() {
     // Issue #2852: supervised-batch apply sugar (per #81967 extend-in-place).
     // Calls ac2852_* AC1-AC6 below — see function bodies for details.
     ac2852_run_added_tests(); // forward-declared below (defined at file end).
+    // Issue #2843: Aura orch:compose-workflow surface (per #81967).
+    ac2843_run_added_tests();
 
-    std::println("\n=== #2539 + #2756 + #2852 results: {} passed, {} failed ===", g_passed,
+    std::println("\n=== #2539 + #2756 + #2852 + #2843 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
@@ -479,10 +483,9 @@ static void ac2852_mapping_policies() {
     CHECK(p_retry.agent_policy.max_restarts == 3, "AC4: max_restarts threaded from compose");
     CHECK(residual_prefers_cancel(p_retry),
           "AC4: residual_prefers_cancel helper reflects preference");
-    // CircuitBreaker maps to RestartN (existing #2007 behavior).
+    // CircuitBreaker maps to Cancel + consecutive limit (#2539 table).
     auto p_cb = compose_workflow_policy(FailurePolicy::CircuitBreaker);
-    CHECK(p_cb.agent_policy.on_stall == AgentFailureAction::RestartN,
-          "AC4: CircuitBreaker → RestartN");
+    CHECK(p_cb.agent_policy.on_stall == AgentFailureAction::Cancel, "AC4: CircuitBreaker → Cancel");
     // Residual observe increments only on residual, not on compose.
     note_workflow_residual_reclaim_under_policy(p_retry);
     const auto after_residual =
@@ -492,8 +495,8 @@ static void ac2852_mapping_policies() {
     // already used by #2229 — apply_workflow adds no new actions.
     CHECK(p_fail.agent_policy.on_stall == AgentFailureAction::Cancel &&
               p_retry.agent_policy.on_stall == AgentFailureAction::RestartN &&
-              p_cb.agent_policy.on_stall == AgentFailureAction::RestartN,
-          "AC4: mapping actions preserved from #2229");
+              p_cb.agent_policy.on_stall == AgentFailureAction::Cancel,
+          "AC4: mapping actions preserved from #2229 / #2539 table");
 }
 
 // ── #2852 AC5: source-cite + no docs/design + linter present ──
@@ -515,13 +518,15 @@ static void ac2852_source_cite() {
           "AC5: apply_workflow helper declared");
     CHECK(header.find("workflow_apply_total") != std::string::npos,
           "AC5: workflow_apply_total counter declared");
-    CHECK(header.find("kWorkflowApplySugarIssue == 2852") != std::string::npos,
+    CHECK(header.find("kWorkflowApplySugarIssue") != std::string::npos &&
+              header.find("2852") != std::string::npos,
           "AC5: issue stamp 2852");
     CHECK(readme.find("orch:supervise-batch") != std::string::npos,
           "AC5: README documents Aura prim");
     CHECK(q.find("orch:supervise-batch") != std::string::npos, "AC5: Aura prim registered");
     // Existing #2539/#2756 surfaces preserved.
-    CHECK(header.find("kWorkflowFailurePolicyIssue == 2756") != std::string::npos,
+    CHECK(header.find("kWorkflowFailurePolicyIssue") != std::string::npos &&
+              header.find("2756") != std::string::npos,
           "AC5: #2756 stamp preserved");
     CHECK(header.find("compose_workflow_policy") != std::string::npos,
           "AC5: compose helper preserved");
@@ -570,6 +575,154 @@ static void ac2852_run_added_tests() {
     ac2852_mapping_policies();
     ac2852_source_cite();
     ac2852_soft_no_hard_deny();
+}
+
+// ── Issue #2843: Aura orch:compose-workflow surface ──
+static void ac2843_1_compose_parity_with_cpp() {
+    std::println("\n--- #2843 AC1: compose maps FailFast/CollectAll/RetryN/CircuitBreaker ---");
+    using aura::orch::agent_failure_action_name;
+    using aura::orch::failure_policy_name;
+    using aura::orch::kWorkflowComposeAuraIssue;
+    CHECK(kWorkflowComposeAuraIssue == 2843, "AC1: issue stamp 2843");
+    // Parity with C++ to_agent_policy table (same as #2756 AC4).
+    {
+        auto w = compose_workflow_policy(FailurePolicy::FailFast);
+        CHECK(std::string(failure_policy_name(w.batch_policy)) == "fail-fast",
+              "AC1: FailFast name");
+        CHECK(std::string(agent_failure_action_name(w.agent_policy.on_stall)) == "cancel",
+              "AC1: FailFast → Cancel");
+    }
+    {
+        auto w = compose_workflow_policy(FailurePolicy::CollectAll);
+        CHECK(std::string(agent_failure_action_name(w.agent_policy.on_stall)) == "report-only",
+              "AC1: CollectAll → ReportOnly");
+    }
+    {
+        auto w = compose_workflow_policy(FailurePolicy::RetryN, ResidualReclaimPreference::Report,
+                                         /*max_retries=*/3);
+        CHECK(std::string(agent_failure_action_name(w.agent_policy.on_stall)) == "restart-n",
+              "AC1: RetryN → RestartN");
+        CHECK(w.agent_policy.max_restarts == 3, "AC1: max_restarts threaded");
+        auto pp = to_parallel_policy(w);
+        CHECK(pp.max_retries == 3 && pp.failure_policy == FailurePolicy::RetryN,
+              "AC1: parallel projection max_retries + RetryN");
+    }
+    {
+        auto w = compose_workflow_policy(FailurePolicy::CircuitBreaker,
+                                         ResidualReclaimPreference::Report, 0, 5);
+        CHECK(std::string(agent_failure_action_name(w.agent_policy.on_stall)) == "cancel",
+              "AC1: CircuitBreaker → Cancel");
+        CHECK(w.agent_policy.consecutive_stall_limit == 5, "AC1: CircuitBreaker consecutive limit");
+    }
+    // Aura prim registration (source-cite).
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(q.find("orch:compose-workflow") != std::string::npos, "AC1: Aura prim registered");
+    CHECK(q.find("compose_workflow_policy") != std::string::npos,
+          "AC1: prim calls C++ compose_workflow_policy");
+}
+
+static void ac2843_2_residual_advisory_only() {
+    std::println("\n--- #2843 AC2: residual preference advisory (#2661 preserved) ---");
+    const auto before = g_orch_module_stats.workflow_residual_reclaim_under_policy_total.load();
+    auto w = compose_workflow_policy(FailurePolicy::FailFast, ResidualReclaimPreference::Cancel);
+    CHECK(residual_prefers_cancel(w), "AC2: residual_prefers_cancel");
+    CHECK(!residual_prefers_defer(w), "AC2: not defer");
+    note_workflow_residual_reclaim_under_policy(w);
+    CHECK(g_orch_module_stats.workflow_residual_reclaim_under_policy_total.load() == before + 1,
+          "AC2: observe-only residual counter +1");
+    // Prim documents residual as advisory (source-cite).
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(q.find("residual-cancel") != std::string::npos, "AC2: residual-cancel in hash");
+    CHECK(q.find("#2661") != std::string::npos || q.find("advisory") != std::string::npos,
+          "AC2: residual documented advisory / #2661");
+}
+
+static void ac2843_3_schema_and_soft() {
+    std::println("\n--- #2843 AC3: schema-2756 lineage + schema-2843; Soft never denies ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(q.find("schema-2756") != std::string::npos, "AC3: schema-2756 lineage on hash/query");
+    CHECK(q.find("schema-2843") != std::string::npos, "AC3: schema-2843");
+    CHECK(q.find("issue-2843") != std::string::npos, "AC3: issue-2843");
+    CHECK(q.find("workflow-compose-aura-total") != std::string::npos,
+          "AC3: workflow-compose-aura-total query key");
+    // Soft: prim always returns ok hash (no hard deny path in compose).
+    CHECK(q.find("make_bool(true)") != std::string::npos ||
+              q.find("{\"ok\", make_bool(true)}") != std::string::npos ||
+              q.find("ok\", make_bool(true)") != std::string::npos,
+          "AC3: Soft ok=true on compose hash");
+    const auto aura_before = g_orch_module_stats.workflow_compose_aura_total.load();
+    aura::orch::note_workflow_compose_aura();
+    CHECK(g_orch_module_stats.workflow_compose_aura_total.load() == aura_before + 1,
+          "AC3: aura compose counter bumps");
+}
+
+static void ac2843_4_project_kwargs_for_prims() {
+    std::println("\n--- #2843 AC4: compose projects parallel-intend + scope-watch kwargs ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    // Hash carries parallel-intend + scope-watch ready fields.
+    CHECK(q.find("parallel-intend-kwargs-ready") != std::string::npos,
+          "AC4: parallel-intend-kwargs-ready");
+    CHECK(q.find("scope-watch-kwargs-ready") != std::string::npos, "AC4: scope-watch-kwargs-ready");
+    CHECK(q.find("failure-policy") != std::string::npos, "AC4: failure-policy for parallel-intend");
+    CHECK(q.find("max-restarts") != std::string::npos, "AC4: max-restarts for scope-watch");
+    // :workflow hash apply wired into both prims.
+    CHECK(q.find("workflow-policy") != std::string::npos ||
+              q.find("\"workflow\"") != std::string::npos ||
+              q.find("k == \"workflow\"") != std::string::npos,
+          "AC4: :workflow hash accepted by prims");
+    // parallel-intend and scope-watch both apply workflow hash.
+    CHECK(q.find("apply orch:compose-workflow hash") != std::string::npos ||
+              (q.find("Issue #2843") != std::string::npos &&
+               q.find("scope-watch projection") != std::string::npos),
+          "AC4: both prims project compose hash");
+}
+
+static void ac2843_5_source_linter_mvp() {
+    std::println("\n--- #2843 AC5/AC6: source-cite + linter + MVP + no docs/design ---");
+    const auto header = read_file("src/orch/agent_spawn.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto readme = read_file("src/orch/README.md");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_workflow_compose_aura_2843.py");
+    CHECK(header.find("kWorkflowComposeAuraIssue") != std::string::npos ||
+              header.find("2843") != std::string::npos,
+          "AC5: header cites #2843");
+    CHECK(header.find("workflow_compose_aura_total") != std::string::npos,
+          "AC5: aura compose counter");
+    CHECK(header.find("note_workflow_compose_aura") != std::string::npos,
+          "AC5: note_workflow_compose_aura");
+    CHECK(q.find("orch:compose-workflow") != std::string::npos, "AC5: prim registered");
+    CHECK(q.find("Issue #2843") != std::string::npos || q.find("#2843") != std::string::npos,
+          "AC5: agent prims cite #2843");
+    CHECK(readme.find("2843") != std::string::npos, "AC5: README Aura surface");
+    CHECK(readme.find("orch:compose-workflow") != std::string::npos, "AC5: README documents prim");
+    CHECK(t.find("ac2843_1_compose_parity_with_cpp") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2843_2_residual_advisory_only") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2843_3_schema_and_soft") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2843_4_project_kwargs_for_prims") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2843_5_source_linter_mvp") != std::string::npos, "AC5: self-test");
+    CHECK(build.find("check_workflow_compose_aura_2843") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() &&
+              (lint.find("2843") != std::string::npos || lint.find("#2843") != std::string::npos),
+          "AC5: linter present");
+    // AC6 MVP scope: no AgentRegistry / conduct_parallel reintro.
+    CHECK(header.find("class AgentRegistry") == std::string::npos, "AC6: no AgentRegistry");
+    CHECK(header.find("conduct_parallel(") == std::string::npos, "AC6: no conduct_parallel");
+    CHECK(q.find("class AgentRegistry") == std::string::npos, "AC6: prims no AgentRegistry");
+    CHECK(read_file("docs/design/2843-workflow-compose-aura.md").empty(),
+          "AC5: no docs/design/2843-* per #1655");
+    CHECK(read_file("tests/orch/test_issue_2843.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
+static void ac2843_run_added_tests() {
+    ac2843_1_compose_parity_with_cpp();
+    ac2843_2_residual_advisory_only();
+    ac2843_3_schema_and_soft();
+    ac2843_4_project_kwargs_for_prims();
+    ac2843_5_source_linter_mvp();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

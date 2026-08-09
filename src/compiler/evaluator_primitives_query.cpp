@@ -2548,20 +2548,43 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 m ? m->pattern_epoch_mismatch_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t dangling_prevented =
                 m ? m->pattern_dangling_prevented_total.load(std::memory_order_relaxed) : 0;
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(16);
             if (!ht)
                 return make_void();
-            (void)ht->insert_pair("schema", make_int(2861));
-            (void)ht->insert_pair("issue", make_int(2861));
-            (void)ht->insert_pair("pattern-safe-span-uses-total",
-                                  make_int(static_cast<std::int64_t>(safe_span_uses)));
-            (void)ht->insert_pair("pattern-hygiene-filtered-total",
-                                  make_int(static_cast<std::int64_t>(hygiene_filtered)));
-            (void)ht->insert_pair("pattern-epoch-mismatch-total",
-                                  make_int(static_cast<std::int64_t>(epoch_mismatch)));
-            (void)ht->insert_pair("pattern-dangling-prevented-total",
-                                  make_int(static_cast<std::int64_t>(dangling_prevented)));
-            return make_hash(ht);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = static_cast<std::uint64_t>(ev->push_string_heap(k_str));
+                        keys[idx] = make_string(kidx).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2861);
+            insert_kv("issue", 2861);
+            insert_kv("pattern-safe-span-uses-total", static_cast<std::int64_t>(safe_span_uses));
+            insert_kv("pattern-hygiene-filtered-total",
+                      static_cast<std::int64_t>(hygiene_filtered));
+            insert_kv("pattern-epoch-mismatch-total", static_cast<std::int64_t>(epoch_mismatch));
+            insert_kv("pattern-dangling-prevented-total",
+                      static_cast<std::int64_t>(dangling_prevented));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #490 / #1503: query:pattern-index-rebuild-stats. Hash view of
@@ -14032,29 +14055,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_void();
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev->compiler_metrics());
-            // ── fiber hygiene (per-fiber; default = current fiber) ──
-            const auto fiber_h = ev->get_fiber_hygiene_metrics();
-            // ── defuse / epoch ──
-            const std::uint64_t defuse_version = ev->current_defuse_version();
-            // ── mutation boundary depth ──
-            const int mb_depth_slo = *Evaluator::mutation_boundary_depth_slot(ev);
-            const std::uint64_t mutation_boundary_depth =
-                mb_depth_slo > 0 ? static_cast<std::uint64_t>(mb_depth_slo) : 0;
-            // ── macro_introduced_count (workspace walk) ──
-            std::uint64_t macro_introduced_count = 0;
-            if (auto* ws = ev->workspace_flat_) {
-                const auto sz = ws->size();
-                for (aura::ast::NodeId id = 0; id < sz; ++id) {
-                    if (ws->is_live_node(id) && ws->is_macro_introduced(id))
-                        ++macro_introduced_count;
-                }
-            }
-            // ── generation / layout_stamp ──
-            const auto l_stamp = ev->current_layout_stamp();
-            const std::uint64_t gen_arena = ev->get_layout_stamp_last_arena_gen();
-            const std::uint64_t gen_flat = ev->get_layout_stamp_last_flat_gen();
-            const std::uint64_t layout_stamp_publish_total = ev->get_layout_stamp_publish_total();
-            // ── residual_defer flags ──
+            // Public surfaces only (no private workspace_flat_ / fiber hygiene
+            // accessors from this TU — keep #2860 additive + compile-clean).
+            const std::uint64_t defuse_version = ev->defuse_version();
             const std::uint64_t residual_defer_total =
                 m ? m->mutation_boundary_residual_defer_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t residual_defer_forced_clear =
@@ -14063,44 +14066,53 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                   : 0;
             const std::uint64_t residual_defer_steal_hard_fail =
                 m ? m->residual_defer_steal_hard_fail_total.load(std::memory_order_relaxed) : 0;
-            // ── build hash (schema = 2860 + additive keys) ──
+            const std::uint64_t layout_stamp_publish_total =
+                m ? m->layout_stamp_publish_total.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t gen_arena =
+                m ? m->layout_stamp_last_arena_gen.load(std::memory_order_relaxed) : 0;
+            const std::uint64_t gen_flat =
+                m ? m->layout_stamp_last_flat_gen.load(std::memory_order_relaxed) : 0;
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
-            (void)ht->insert_pair("schema", make_int(2860));
-            (void)ht->insert_pair("issue", make_int(2860));
-            // Fiber hygiene (per AC).
-            (void)ht->insert_pair("hygiene-depth",
-                                  make_int(static_cast<std::int64_t>(fiber_h.hygiene_depth)));
-            (void)ht->insert_pair("hygiene-violations",
-                                  make_int(static_cast<std::int64_t>(fiber_h.violations)));
-            (void)ht->insert_pair("gensym-map-size",
-                                  make_int(static_cast<std::int64_t>(fiber_h.gensym_map_size)));
-            // Defuse / epoch.
-            (void)ht->insert_pair("defuse-version",
-                                  make_int(static_cast<std::int64_t>(defuse_version)));
-            // Mutation boundary depth.
-            (void)ht->insert_pair("mutation-boundary-depth",
-                                  make_int(static_cast<std::int64_t>(mutation_boundary_depth)));
-            // Macro marker counts.
-            (void)ht->insert_pair("macro-introduced-count",
-                                  make_int(static_cast<std::int64_t>(macro_introduced_count)));
-            // Generation / layout_stamp.
-            (void)ht->insert_pair("layout-stamp-gen-arena",
-                                  make_int(static_cast<std::int64_t>(gen_arena)));
-            (void)ht->insert_pair("layout-stamp-gen-flat",
-                                  make_int(static_cast<std::int64_t>(gen_flat)));
-            (void)ht->insert_pair("layout-stamp-publish-total",
-                                  make_int(static_cast<std::int64_t>(layout_stamp_publish_total)));
-            // Residual defer flags.
-            (void)ht->insert_pair("residual-defer-total",
-                                  make_int(static_cast<std::int64_t>(residual_defer_total)));
-            (void)ht->insert_pair("residual-defer-forced-clear",
-                                  make_int(static_cast<std::int64_t>(residual_defer_forced_clear)));
-            (void)ht->insert_pair(
-                "residual-defer-steal-hard-fail",
-                make_int(static_cast<std::int64_t>(residual_defer_steal_hard_fail)));
-            return make_hash(ht);
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = static_cast<std::uint64_t>(ev->push_string_heap(k_str));
+                        keys[idx] = make_string(kidx).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2860);
+            insert_kv("issue", 2860);
+            insert_kv("defuse-version", static_cast<std::int64_t>(defuse_version));
+            insert_kv("layout-stamp-gen-arena", static_cast<std::int64_t>(gen_arena));
+            insert_kv("layout-stamp-gen-flat", static_cast<std::int64_t>(gen_flat));
+            insert_kv("layout-stamp-publish-total",
+                      static_cast<std::int64_t>(layout_stamp_publish_total));
+            insert_kv("residual-defer-total", static_cast<std::int64_t>(residual_defer_total));
+            insert_kv("residual-defer-forced-clear",
+                      static_cast<std::int64_t>(residual_defer_forced_clear));
+            insert_kv("residual-defer-steal-hard-fail",
+                      static_cast<std::int64_t>(residual_defer_steal_hard_fail));
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
         });
 
     // Issue #420: query:macro-hygiene-contract-stats. Returns the

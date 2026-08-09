@@ -3405,6 +3405,21 @@ def cmd_workflow_failure_policy_2756_coverage():
     return 0
 
 
+def cmd_workflow_compose_aura_2843_coverage():
+    """Issue #2843: Aura orch:compose-workflow surface for #2756 WorkflowFailurePolicy."""
+    print(f"{B}=== workflow compose Aura surface (#2843) coverage ==={N}")
+    script = COVERAGE_CHECKS / "check_workflow_compose_aura_2843.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("workflow compose Aura surface (#2843) coverage contract rows failed")
+        return 1
+    ok("workflow compose Aura surface (#2843) coverage clean")
+    return 0
+
+
 def cmd_aot_env_linear_stamp():
     """Issue #2091 / #2168: forbid literal (0,0) env/linear on production mangle/emit.
 
@@ -10061,6 +10076,7 @@ def cmd_gate():
         or cmd_mutation_guard_coverage()
         or cmd_orch_mvp_scope()
         or cmd_workflow_failure_policy_2756_coverage()
+        or cmd_workflow_compose_aura_2843_coverage()
         or cmd_aot_env_linear_stamp()
         or cmd_legacy_test_inventory()
         or cmd_source_to_ir_strict()
