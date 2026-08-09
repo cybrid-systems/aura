@@ -42,7 +42,12 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
 
     cascade = mut.find("push_post_mutate_incremental_cascade")
-    win = mut[cascade : cascade + 5500] if cascade >= 0 else ""
+    # Window must cover #2813 re-lower block (after #2815 multi-define expand).
+    win = mut[cascade : cascade + 8000] if cascade >= 0 else ""
+    # Prefer the dedicated #2813 block if present (more stable than fixed length).
+    p2813 = mut.find("Issue #2813", cascade if cascade >= 0 else 0)
+    if p2813 >= 0:
+        win = mut[p2813 : p2813 + 2500]
 
     # AC1
     must("Issue #2813", "AC1", win)
