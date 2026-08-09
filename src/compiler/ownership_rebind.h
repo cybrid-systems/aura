@@ -110,6 +110,66 @@ inline std::atomic<std::uint64_t> g_ownership_rebind_nonempty_span_total{0};
 // from dirty/pin secondary path under densify × steal production load.
 inline std::atomic<std::uint64_t> g_ownership_rebind_dirty_fallback_total{0};
 inline constexpr int kOwnershipRebindDirtyFallbackIssue = 2742;
+
+// Issue #2854: same-transaction order — the boundary needs a structured
+// rebind outcome to stamp TypeLinearCommitProof after rebind + scan (no
+// success proof may outlive a failed rebind on the same exit). Mirrors
+// the #2372 production-lock file-scope pattern (atomic state for
+// cross-call-site visibility from save_hygiene_checkpoint / steal resume).
+//
+// Field semantics:
+//   - rebind_ok: true if the per-root walk passed (or span was empty →
+//     zero-cost short-circuit preserved, AC4 #2723). false on
+//     production / Full mismatch (caller triggers force_linear_rollback
+//     per #2563 contract).
+//   - root_count: number of remapped roots in the span (== post-remap
+//     collect for the proof's linear_root_count).
+//   - had_mismatch: true if Soft mismatch was observed (counter bumps
+//     but function still returns true — distinct from rebind_ok which
+//     is the function return).
+//   - reason: which RemapReason the last call used.
+//   - had_rebind: true if rebind was attempted (vs empty span quiet
+//     short-circuit). Lets Phase-5 stamp distinguish "no rebind needed"
+//     (Quiet, AC4) from "rebind ran + ok" (Stamped).
+struct OwnershipRebindReport {
+    bool rebind_ok;
+    std::size_t root_count;
+    bool had_mismatch;
+    RemapReason reason;
+    bool had_rebind;
+};
+
+// File-scope atomics — the per-root walk sets them at function exit;
+// Phase-5 densify block + steal resume + save_hygiene_checkpoint read
+// them. Reset on every call (so a stale value from a previous exit
+// never leaks into a quiet path).
+inline std::atomic<std::uint8_t> g_ownership_rebind_last_ok{1}; // default rebind_ok=true
+inline std::atomic<std::size_t> g_ownership_rebind_last_root_count{0};
+inline std::atomic<std::uint8_t> g_ownership_rebind_last_had_mismatch{0};
+inline std::atomic<std::uint8_t> g_ownership_rebind_last_reason{0}; // RemapReason::Densify=0
+inline std::atomic<std::uint8_t> g_ownership_rebind_last_had_rebind{0};
+inline constexpr int kOwnershipRebindSameTransactionOrderIssue = 2854;
+
+[[nodiscard]] inline OwnershipRebindReport last_ownership_rebind_report_v_read() noexcept {
+    OwnershipRebindReport r{};
+    r.rebind_ok = g_ownership_rebind_last_ok.load(std::memory_order_acquire) != 0;
+    r.root_count = g_ownership_rebind_last_root_count.load(std::memory_order_acquire);
+    r.had_mismatch = g_ownership_rebind_last_had_mismatch.load(std::memory_order_acquire) != 0;
+    r.reason =
+        static_cast<RemapReason>(g_ownership_rebind_last_reason.load(std::memory_order_acquire));
+    r.had_rebind = g_ownership_rebind_last_had_rebind.load(std::memory_order_acquire) != 0;
+    return r;
+}
+
+// Test reset — clears the last-rebind file-scope atomics to the quiet
+// default so back-to-back tests don't observe stale state.
+inline void clear_last_ownership_rebind_report_for_test() noexcept {
+    g_ownership_rebind_last_ok.store(1, std::memory_order_release);
+    g_ownership_rebind_last_root_count.store(0, std::memory_order_release);
+    g_ownership_rebind_last_had_mismatch.store(0, std::memory_order_release);
+    g_ownership_rebind_last_reason.store(0, std::memory_order_release);
+    g_ownership_rebind_last_had_rebind.store(0, std::memory_order_release);
+}
 // Test-injected mismatch sentinel. ~0u is the "no mismatch" sentinel —
 // chosen because NodeId 0xFFFFFFFF is reserved (NULL_NODE / out-of-range).
 // Atomic so a concurrent test injector + the walk TU don't race on plain

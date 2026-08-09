@@ -78,12 +78,25 @@ namespace {
 
 bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remapped_roots,
                                   RemapReason why) noexcept {
+    // Issue #2854: structured outcome for same-transaction proof stamp.
+    // Empty span → Quiet (ok=true, had_rebind=false, root_count=0).
+    // Non-empty span → Stamped (or Rejected on production mismatch).
+    // Stamped at function exit so save_hygiene_checkpoint / Phase-5
+    // densify block / steal resume can read the final state.
+    const std::size_t span_count = remapped_roots.size();
+
     // AC3: zero-cost short-circuit when no roots were remapped. Likely
     // path on the steady-state (quiet self-evo) — no densify / steal /
     // explicit-rebind in the window. Also covers the existing call sites
     // (#2708: call sites pass {} since they don't have a direct NodeId
     // span in scope; the walk only runs when a non-empty span is passed).
     if (remapped_roots.empty()) [[likely]] {
+        g_ownership_rebind_last_ok.store(1, std::memory_order_release);
+        g_ownership_rebind_last_root_count.store(0, std::memory_order_release);
+        g_ownership_rebind_last_had_mismatch.store(0, std::memory_order_release);
+        g_ownership_rebind_last_reason.store(static_cast<std::uint8_t>(why),
+                                             std::memory_order_release);
+        g_ownership_rebind_last_had_rebind.store(0, std::memory_order_release);
         return true;
     }
 
@@ -122,25 +135,45 @@ bool ownership_rebind_after_remap(std::span<const OwnershipRebindNodeId> remappe
     //   - Soft → continue, observe only (counter bumps for dashboards)
     const auto injected = g_ownership_rebind_test_injected_root.load(std::memory_order_relaxed);
     const bool injected_active = (injected != ~0u);
+    bool walk_mismatch = false;
     if (injected_active) {
         for (OwnershipRebindNodeId root : remapped_roots) {
             if (root == injected) {
                 g_ownership_rebind_fail_total.fetch_add(1, std::memory_order_relaxed);
                 if (reason_fail_total)
                     reason_fail_total->fetch_add(1, std::memory_order_relaxed);
+                walk_mismatch = true;
                 // Production path: caller triggers force_linear_rollback.
-                // Soft path: observe only — continue the walk, return true
-                // at the end (Soft callers downstream validate catches
-                // residual drift under #2545 / #2673).
                 if (production_active_for_rebind()) {
+                    // Stamp REJECT outcome before returning false so
+                    // #2854 same-transaction proof stamp sees the final
+                    // state and stamps would_allow_commit=false +
+                    // linear_ok=false (no success proof outlives a
+                    // failed rebind on the same exit — AC2).
+                    g_ownership_rebind_last_ok.store(0, std::memory_order_release);
+                    g_ownership_rebind_last_root_count.store(span_count, std::memory_order_release);
+                    g_ownership_rebind_last_had_mismatch.store(1, std::memory_order_release);
+                    g_ownership_rebind_last_reason.store(static_cast<std::uint8_t>(why),
+                                                         std::memory_order_release);
+                    g_ownership_rebind_last_had_rebind.store(1, std::memory_order_release);
                     return false;
                 }
                 // Soft: keep walking — subsequent roots may also be
                 // injected (test only), but counter bumps already
-                // surfaced the mismatch.
+                // surfaced the mismatch. had_mismatch stays true so the
+                // stamp site can document the Soft mismatch in the proof.
             }
         }
     }
+
+    // Issue #2854: stamp final outcome. Non-empty walk + no production
+    // mismatch → Stamped (ok=true, had_rebind=true, root_count=span_size,
+    // had_mismatch=walk_mismatch for Soft observability).
+    g_ownership_rebind_last_ok.store(1, std::memory_order_release);
+    g_ownership_rebind_last_root_count.store(span_count, std::memory_order_release);
+    g_ownership_rebind_last_had_mismatch.store(walk_mismatch ? 1 : 0, std::memory_order_release);
+    g_ownership_rebind_last_reason.store(static_cast<std::uint8_t>(why), std::memory_order_release);
+    g_ownership_rebind_last_had_rebind.store(1, std::memory_order_release);
     return true;
 }
 

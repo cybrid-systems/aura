@@ -862,6 +862,335 @@ static void ac2742_6_source_and_linter() {
           "AC6: no docs/design/2742-* per #1655");
 }
 
+// ── Issue #2854: ownership densify/steal rebind + TypeLinearCommitProof
+//   stamp must be same-transaction ordered. Extends #2609/#2723/#2742
+//   test file per #81967. No docs/design/* per #1655.
+//
+// AC1: production densify → rebind runs → success proof stamped with
+//      post-remap linear_root_count.
+// AC2: inject densify scan mismatch under production → force rollback +
+//      last proof stamped Reject (would_allow_commit=false, linear_ok=false).
+//      No success proof outlives the failed rebind on the same exit.
+// AC3: Soft inject → observe path; success proof stamped (no production
+//      lock regression); no force_linear_rollback under Soft.
+// AC4: quiet (no linear roots) → zero-cost short-circuit preserved
+//      (#2723 AC3); outcome sentinel stays Quiet.
+// AC5: query surface additive (schema-2854 / issue-2854 /
+//      type-linear-proof-stamped-after-rebind-total / -reject /
+//      ownership-rebind-last-ok / -root-count / -had-mismatch / -reason).
+// AC6: source-cite ordering in emb + fiber_mutation + ownership_rebind
+//      + typed_mutation_audit; coverage linter; no docs/design/.
+
+// Helper: stash a copy of the typed_audit + ownership_rebind outcome
+// counters at function entry so each AC reads from a known baseline.
+// Test reset before each AC keeps the cumulative counters monotonic
+// across AC1..AC3 (they all bump the same counter on different paths).
+struct ProofCounterBaseline {
+    std::uint64_t stamped_total;
+    std::uint64_t reject_total;
+    std::uint8_t last_outcome;
+    aura::compiler::OwnershipRebindReport rebind_report;
+    ProofCounterBaseline() noexcept
+        : stamped_total(
+              aura::compiler::typed_audit::type_linear_proof_stamped_after_rebind_total_v_read())
+        , reject_total(aura::compiler::typed_audit::
+                           type_linear_proof_reject_after_rebind_fail_total_v_read())
+        , last_outcome(aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read())
+        , rebind_report(aura::compiler::last_ownership_rebind_report_v_read()) {}
+};
+inline void reset_2854_proof_counters_for_test() noexcept {
+    aura::compiler::typed_audit::reset_type_linear_proof_same_transaction_counters_for_test();
+}
+
+// AC1: production densify (rebind + scan both pass) → success proof
+// stamped after rebind; outcome sentinel = Stamped; linear_root_count
+// reflects post-remap collect via last_ownership_rebind_report_v_read.
+static void ac2854_1_production_densify_rebind_stamps_success_proof() {
+    std::println("\n--- #2854 AC1: production densify rebind → success proof ---");
+    reset_2854_proof_counters_for_test();
+    aura::compiler::clear_ownership_rebind_mismatch_for_test();
+    aura::compiler::clear_last_ownership_rebind_report_for_test();
+    set_env("AURA_SANDBOX", "off");
+    soft_mode_on();
+    modes_off();
+    hard_mode_on();
+    const ProofCounterBaseline base;
+
+    // Direct rebind call (no Guard) — verifies the file-scope atomics
+    // are populated correctly on the success path. The Phase-5 dtor
+    // stamp is exercised by tests/compiler/test_densify_ownership_scan_fail_gate.cpp
+    // (which sets up actual densify × linear scenarios); here we just
+    // verify the helper layer.
+    std::vector<std::uint32_t> rebind_roots{1, 2, 3, 5, 7};
+    const bool rebind_ok_2854 = aura::compiler::ownership_rebind_after_remap(
+        rebind_roots, aura::compiler::RemapReason::Densify);
+    const auto post_rebind = aura::compiler::last_ownership_rebind_report_v_read();
+    const auto post_stamped =
+        aura::compiler::typed_audit::type_linear_proof_stamped_after_rebind_total_v_read();
+    const auto post_outcome = aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read();
+    CHECK(rebind_ok_2854, "AC1: rebind returns true on clean path");
+    CHECK(post_rebind.had_rebind, "AC1: had_rebind=true (rebind attempted)");
+    CHECK(post_rebind.rebind_ok, "AC1: rebind_ok=true (clean path)");
+    CHECK(post_rebind.root_count == rebind_roots.size(),
+          "AC1: root_count reflects post-remap collect (matches span size)");
+    CHECK(!post_rebind.had_mismatch, "AC1: had_mismatch=false (no inject)");
+    CHECK(post_rebind.reason == aura::compiler::RemapReason::Densify,
+          "AC1: reason field preserved (Densify)");
+    // Source-cite: file-scope atomics drive the query keys
+    // ownership-rebind-last-{ok,root-count,had-mismatch,had-rebind,reason}.
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("ownership_rebind_last_root_count") != std::string::npos,
+          "AC1: query exposes ownership_rebind_last_root_count (post-remap collect)");
+    CHECK(q.find("ownership_rebind_last_had_rebind") != std::string::npos,
+          "AC1: query exposes ownership_rebind_last_had_rebind (Quiet short-circuit sentinel)");
+    modes_off();
+    unsetenv("AURA_SANDBOX");
+}
+
+// AC2: inject densify scan mismatch under production → force rollback +
+// last proof stamped Reject. outcome sentinel = Reject (2).
+static void ac2854_2_production_mismatch_stamps_reject_proof() {
+    std::println("\n--- #2854 AC2: production mismatch → force rollback + Reject proof ---");
+    reset_2854_proof_counters_for_test();
+    aura::compiler::clear_ownership_rebind_mismatch_for_test();
+    aura::compiler::clear_last_ownership_rebind_report_for_test();
+    set_env("AURA_SANDBOX", "off");
+    hard_mode_on();
+    const ProofCounterBaseline base;
+    aura::compiler::inject_ownership_rebind_mismatch_for_test(0xdeadbeefu);
+    // Production mismatch → rebind returns false, file-scope atomics
+    // populated for Reject outcome (rebind_ok=false, had_mismatch=true).
+    std::vector<std::uint32_t> rebind_roots_mismatch{0xdeadbeefu, 1, 2};
+    const bool rebind_result_2854 = aura::compiler::ownership_rebind_after_remap(
+        rebind_roots_mismatch, aura::compiler::RemapReason::Densify);
+    const auto post_reject =
+        aura::compiler::typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read();
+    const auto post_outcome = aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read();
+    const auto rebind_report = aura::compiler::last_ownership_rebind_report_v_read();
+    // Production mismatch → rebind_ok=false (ownership_rebind_after_remap
+    // returns false under production). The Phase-5 stamp uses this to
+    // build REJECT proof (would_allow_commit=false, linear_ok=false).
+    CHECK(!rebind_result_2854,
+          "AC2: production mismatch → rebind returns false (force_linear_rollback contract)");
+    CHECK(rebind_report.had_rebind, "AC2: rebind attempted (non-empty span via helper)");
+    CHECK(!rebind_report.rebind_ok,
+          "AC2: production mismatch → rebind_ok=false (Phase-5 stamps Reject)");
+    CHECK(rebind_report.had_mismatch, "AC2: had_mismatch=true (Soft/prod mismatch surfaced)");
+    CHECK(rebind_report.root_count == rebind_roots_mismatch.size(),
+          "AC2: root_count still reflects span size (post-remap collect)");
+    CHECK(post_reject > base.reject_total,
+          "AC2: reject_after_rebind_fail_total bumped under production mismatch");
+    CHECK(post_outcome == aura::compiler::typed_audit::kTypeLinearProofOutcomeReject,
+          "AC2: outcome sentinel = Reject (2)");
+    aura::compiler::clear_ownership_rebind_mismatch_for_test();
+    modes_off();
+    unsetenv("AURA_SANDBOX");
+}
+
+// AC3: Soft inject → observe path; no production lock regression.
+static void ac2854_3_soft_inject_observes_with_stamped_proof() {
+    std::println("\n--- #2854 AC3: Soft inject → observe path ---");
+    reset_2854_proof_counters_for_test();
+    aura::compiler::clear_ownership_rebind_mismatch_for_test();
+    aura::compiler::clear_last_ownership_rebind_report_for_test();
+    // Soft mode (AURA_SANDBOX=off simulates Soft; steal-snapshot soft
+    // path is the analog). No production lock.
+    set_env("AURA_SANDBOX", "off");
+    soft_mode_on();
+    const ProofCounterBaseline base;
+    aura::compiler::inject_ownership_rebind_mismatch_for_test(0xdeadbeefu);
+    // Soft mismatch → rebind returns true (observe-only per #2673),
+    // had_mismatch=true, outcome = Stamped (no force, no Reject).
+    std::vector<std::uint32_t> soft_mismatch_roots{0xdeadbeefu, 1};
+    const bool soft_rebind_2854 = aura::compiler::ownership_rebind_after_remap(
+        soft_mismatch_roots, aura::compiler::RemapReason::Densify);
+    const auto post_stamped =
+        aura::compiler::typed_audit::type_linear_proof_stamped_after_rebind_total_v_read();
+    const auto post_outcome = aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read();
+    const auto rebind_report = aura::compiler::last_ownership_rebind_report_v_read();
+    CHECK(soft_rebind_2854,
+          "AC3: Soft mismatch observed but rebind returns true (per #2673 contract)");
+    CHECK(rebind_report.had_rebind, "AC3: rebind attempted");
+    CHECK(rebind_report.rebind_ok,
+          "AC3: Soft mismatch observed but rebind_ok=true (per #2673 contract)");
+    CHECK(rebind_report.had_mismatch, "AC3: Soft mismatch surfaces via had_mismatch=true");
+    CHECK(post_stamped > base.stamped_total,
+          "AC3: stamped_after_rebind_total bumped (Soft success proof)");
+    CHECK(post_outcome == aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped,
+          "AC3: outcome = Stamped (no production lock regression)");
+    aura::compiler::clear_ownership_rebind_mismatch_for_test();
+    modes_off();
+    unsetenv("AURA_SANDBOX");
+}
+
+// AC4: quiet (no linear roots) → zero-cost short-circuit preserved.
+// Ownership rebind reports had_rebind=false + root_count=0; outcome
+// sentinel stays Quiet.
+static void ac2854_4_quiet_path_zero_cost_short_circuit() {
+    std::println("\n--- #2854 AC4: quiet (no linear roots) → zero-cost preserved ---");
+    reset_2854_proof_counters_for_test();
+    aura::compiler::clear_ownership_rebind_mismatch_for_test();
+    aura::compiler::clear_last_ownership_rebind_report_for_test();
+    set_env("AURA_SANDBOX", "off");
+    hard_mode_on();
+    modes_off();
+    // Empty span collector (no linear roots injected) — the helper
+    // returns an empty span, ownership_rebind_after_remap short-circuits
+    // to Quiet, no stamp, no counter bump.
+    const auto roots = aura::compiler::collect_linear_or_dirty_roots_for_rebind();
+    CHECK(roots.empty(), "AC4: empty span collector (no linear roots in this suite)");
+    const auto rebind_result =
+        aura::compiler::ownership_rebind_after_remap(roots, aura::compiler::RemapReason::Densify);
+    CHECK(rebind_result, "AC4: empty span short-circuit returns true");
+    const auto rebind_report = aura::compiler::last_ownership_rebind_report_v_read();
+    CHECK(!rebind_report.had_rebind, "AC4: had_rebind=false (no walk entered)");
+    CHECK(rebind_report.root_count == 0, "AC4: root_count=0");
+    CHECK(rebind_report.rebind_ok, "AC4: rebind_ok=true (short-circuit defaults)");
+    const auto post_stamped =
+        aura::compiler::typed_audit::type_linear_proof_stamped_after_rebind_total_v_read();
+    CHECK(post_stamped == 0,
+          "AC4: stamped_after_rebind_total=0 (no stamp on quiet path; AC4 #2723 preserved)");
+    unsetenv("AURA_SANDBOX");
+}
+
+// AC5: query surface additive (schema-2854 / issue-2854 / counters).
+static void ac2854_5_query_schema_2854() {
+    std::println("\n--- #2854 AC5: query surface additive ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "AC5: warm");
+    // schema-2854 + issue-2854 + counters + ownership-rebind last-report
+    // keys (camelCase + kebab) live in query:mutation-boundary-hold-stats.
+    CHECK(href(cs, "schema-2854") == 2854, "AC5: schema-2854 live");
+    CHECK(href(cs, "issue-2854") == 2854, "AC5: issue-2854 live");
+    CHECK(href(cs, "ownership-rebind-same-tx-wired") == 1,
+          "AC5: ownership_rebind_same_tx_wired sentinel live");
+    CHECK(href(cs, "ownership_rebind_same_tx_wired") == 1,
+          "AC5: ownership_rebind_same_tx_wired camelCase live");
+    CHECK(href(cs, "ownership-rebind-last-ok") >= 0, "AC5: ownership_rebind_last_ok key live");
+    CHECK(href(cs, "ownership-rebind-last-root-count") >= 0,
+          "AC5: ownership_rebind_last_root_count key live");
+    CHECK(href(cs, "ownership-rebind-last-had-mismatch") >= 0,
+          "AC5: ownership_rebind_last_had_mismatch key live");
+    CHECK(href(cs, "ownership-rebind-last-had-rebind") >= 0,
+          "AC5: ownership_rebind_last_had_rebind key live");
+    CHECK(href(cs, "ownership-rebind-last-reason") >= 0,
+          "AC5: ownership_rebind_last_reason key live");
+    CHECK(href(cs, "type-linear-proof-stamped-after-rebind-total") >= 0,
+          "AC5: type_linear_proof_stamped_after_rebind_total key live");
+    CHECK(href(cs, "type_linear_proof_stamped_after_rebind_total") >= 0,
+          "AC5: type_linear_proof_stamped_after_rebind_total camelCase live");
+    CHECK(href(cs, "type-linear-proof-reject-after-rebind-fail-total") >= 0,
+          "AC5: type_linear_proof_reject_after_rebind_fail_total key live");
+    CHECK(href(cs, "type_linear_proof_reject_after_rebind_fail_total") >= 0,
+          "AC5: type_linear_proof_reject_after_rebind_fail_total camelCase live");
+    CHECK(href(cs, "last-type-linear-proof-outcome") >= 0,
+          "AC5: last_type_linear_proof_outcome key live (0/1/2 sentinel)");
+    CHECK(href(cs, "last_type_linear_proof_outcome") >= 0,
+          "AC5: last_type_linear_proof_outcome camelCase live");
+    // Prior surfaces preserved (additive).
+    CHECK(href(cs, "schema-2853") == 2853, "AC5: schema-2853 preserved (regression)");
+    CHECK(href(cs, "schema-2758") == 2758, "AC5: schema-2758 preserved (regression)");
+    CHECK(href(cs, "schema-2717") == 2717, "AC5: schema-2717 preserved (regression)");
+}
+
+// AC6: source-cite ordering in emb + fiber_mutation + ownership_rebind +
+// typed_mutation_audit; coverage linter; no docs/design/.
+static void ac2854_6_source_cite_and_no_design() {
+    std::println("\n--- #2854 AC6: source-cite + no docs/design/ ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto hdr = read_file("src/compiler/ownership_rebind.h");
+    const auto cpp = read_file("src/compiler/ownership_rebind.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto t = read_file("tests/serve/test_steal_densify_linear_type_hard_and.cpp");
+
+    // emb (Phase-5 densify block) cites #2854 — same-transaction order
+    // sequencing in Phase-5 (rebind + scan + stamp with explicit outcome).
+    CHECK(emb.find("Issue #2854") != std::string::npos,
+          "AC6: evaluator_mutation_boundary.cpp cites #2854 (Phase-5 same-tx order)");
+    CHECK(emb.find("build_type_linear_commit_proof_from_live_with_outcome") != std::string::npos,
+          "AC6: emb uses with-outcome overload (explicit outcome for stamp)");
+    CHECK(emb.find("kTypeLinearProofOutcomeReject") != std::string::npos,
+          "AC6: emb publishes Reject outcome under production mismatch");
+    CHECK(emb.find("kTypeLinearProofOutcomeStamped") != std::string::npos,
+          "AC6: emb publishes Stamped outcome under success path");
+    // save_hygiene_checkpoint respects the outcome sentinel — skips stamp
+    // if Phase-5 already stamped (no success proof can outlive a failed
+    // rebind on the same exit).
+    CHECK(emb.find("last_type_linear_proof_outcome_v_read") != std::string::npos,
+          "AC6: save_hygiene_checkpoint reads outcome sentinel before stamp");
+    CHECK(emb.find("kTypeLinearProofOutcomeQuiet") != std::string::npos,
+          "AC6: save_hygiene_checkpoint skips stamp when Quiet (Phase-5 didn't run)");
+
+    // fiber_mutation (steal resume) cites #2854.
+    CHECK(fm.find("Issue #2854") != std::string::npos,
+          "AC6: evaluator_fiber_mutation.cpp cites #2854 (steal resume same-tx order)");
+    CHECK(fm.find("last_ownership_rebind_report_v_read") != std::string::npos,
+          "AC6: fiber_mutation reads last rebind report (rebind_ok drives stamp outcome)");
+    CHECK(fm.find("build_type_linear_commit_proof_from_live_with_outcome") != std::string::npos,
+          "AC6: fiber_mutation uses with-outcome overload");
+
+    // ownership_rebind.h/.cpp add OwnershipRebindReport + atomics + populate.
+    CHECK(hdr.find("OwnershipRebindReport") != std::string::npos,
+          "AC6: ownership_rebind.h exposes OwnershipRebindReport struct");
+    CHECK(hdr.find("last_ownership_rebind_report_v_read") != std::string::npos,
+          "AC6: ownership_rebind.h exposes last_ownership_rebind_report_v_read accessor");
+    CHECK(hdr.find("kOwnershipRebindSameTransactionOrderIssue = 2854") != std::string::npos,
+          "AC6: ownership_rebind.h cites #2854");
+    CHECK(hdr.find("g_ownership_rebind_last_ok") != std::string::npos,
+          "AC6: ownership_rebind.h declares last_ok atomic");
+    CHECK(hdr.find("g_ownership_rebind_last_root_count") != std::string::npos,
+          "AC6: ownership_rebind.h declares last_root_count atomic");
+    CHECK(cpp.find("Issue #2854") != std::string::npos, "AC6: ownership_rebind.cpp cites #2854");
+    CHECK(cpp.find("g_ownership_rebind_last_ok.store") != std::string::npos,
+          "AC6: ownership_rebind.cpp populates last_ok atomic");
+
+    // typed_mutation_audit.h adds 2 metrics + outcome sentinel + overload.
+    CHECK(tma.find("g_type_linear_proof_stamped_after_rebind_total") != std::string::npos,
+          "AC6: typed_mutation_audit.h declares stamped_after_rebind_total");
+    CHECK(tma.find("g_type_linear_proof_reject_after_rebind_fail_total") != std::string::npos,
+          "AC6: typed_mutation_audit.h declares reject_after_rebind_fail_total");
+    CHECK(tma.find("g_last_type_linear_proof_outcome") != std::string::npos,
+          "AC6: typed_mutation_audit.h declares outcome sentinel atomic");
+    CHECK(tma.find("kTypeLinearProofSameTransactionOrderIssue = 2854") != std::string::npos,
+          "AC6: typed_mutation_audit.h cites #2854");
+    CHECK(tma.find("kTypeLinearProofOutcomeStamped") != std::string::npos,
+          "AC6: typed_mutation_audit.h defines Stamped outcome constant");
+    CHECK(tma.find("kTypeLinearProofOutcomeReject") != std::string::npos,
+          "AC6: typed_mutation_audit.h defines Reject outcome constant");
+    CHECK(tma.find("build_type_linear_commit_proof_from_live_with_outcome") != std::string::npos,
+          "AC6: typed_mutation_audit.h defines with-outcome overload");
+
+    // obs_eval adds schema-2854 / issue-2854 + outcome + counters.
+    CHECK(obs.find("schema-2854") != std::string::npos, "AC6: obs_eval schema-2854");
+    CHECK(obs.find("issue-2854") != std::string::npos, "AC6: obs_eval issue-2854");
+    CHECK(obs.find("type-linear-proof-stamped-after-rebind-total") != std::string::npos,
+          "AC6: obs_eval exposes type-linear-proof-stamped-after-rebind-total");
+    CHECK(obs.find("type-linear-proof-reject-after-rebind-fail-total") != std::string::npos,
+          "AC6: obs_eval exposes type-linear-proof-reject-after-rebind-fail-total");
+
+    // Self-test presence.
+    CHECK(t.find("ac2854_1_production_densify_rebind_stamps_success_proof") != std::string::npos,
+          "AC6: AC1 test present");
+    CHECK(t.find("ac2854_2_production_mismatch_stamps_reject_proof") != std::string::npos,
+          "AC6: AC2 test present");
+    CHECK(t.find("ac2854_3_soft_inject_observes_with_stamped_proof") != std::string::npos,
+          "AC6: AC3 test present");
+    CHECK(t.find("ac2854_4_quiet_path_zero_cost_short_circuit") != std::string::npos,
+          "AC6: AC4 test present");
+    CHECK(t.find("ac2854_5_query_schema_2854") != std::string::npos, "AC6: AC5 test present");
+    CHECK(t.find("ac2854_6_source_cite_and_no_design") != std::string::npos, "AC6: AC6 self-test");
+    // Prior surfaces preserved (regression).
+    CHECK(t.find("ac2723_6_source_and_linter") != std::string::npos, "AC6: #2723 tests preserved");
+    CHECK(t.find("ac2742_6_source_and_linter") != std::string::npos, "AC6: #2742 tests preserved");
+    // No docs/design/ per #1655 (silent ship — close comment + commit
+    // message carry design rationale; no per-issue plan docs).
+    const std::string design_path = "docs/design/2854-";
+    CHECK(read_file((design_path + "same-transaction-order.md").c_str()).empty(),
+          "AC6: no docs/design/2854-* per #1655");
+}
+
 } // namespace
 
 int run_test_steal_densify_linear_type_hard_and() {
@@ -897,6 +1226,14 @@ int run_test_steal_densify_linear_type_hard_and() {
     ac2742_4_single_source_of_truth();
     ac2742_5_additive_observability();
     ac2742_6_source_and_linter();
+    std::println("\n=== Issue #2854: densify/steal rebind + TypeLinearCommitProof stamp "
+                 "same-transaction order (extends test file per #81967) ===");
+    ac2854_1_production_densify_rebind_stamps_success_proof();
+    ac2854_2_production_mismatch_stamps_reject_proof();
+    ac2854_3_soft_inject_observes_with_stamped_proof();
+    ac2854_4_quiet_path_zero_cost_short_circuit();
+    ac2854_5_query_schema_2854();
+    ac2854_6_source_cite_and_no_design();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

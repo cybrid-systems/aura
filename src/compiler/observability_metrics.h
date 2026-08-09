@@ -7973,6 +7973,15 @@ struct CompilerMetrics {
     // CompilerMetrics wired still bump the file-scope counter via the
     // MutationBoundaryGuard dtor.
     std::atomic<std::uint64_t> production_residual_policy_lock_active_total{0}; // #2853
+    // Issue #2854: same-transaction-order counters. Bumped by Phase-5
+    // densify block + steal resume after rebind + scan complete (one
+    // bump per Phase-5 exit on the densify/steal-affecting path). The
+    // file-scope atomics in typed_audit.h (#2854 g_type_linear_proof_*)
+    // mirror these for light binaries without CompilerMetrics wired.
+    // cumulative stamp counter (#2717) continues to fire for the legacy
+    // live-stamp path; the same-transaction-order counters are additive.
+    std::atomic<std::uint64_t> type_linear_proof_stamped_after_rebind_total{0};     // #2854
+    std::atomic<std::uint64_t> type_linear_proof_reject_after_rebind_fail_total{0}; // #2854
     // Issue #2215: RenderFastExit (outermost success under render hotpath).
     // Skips Full TypedMutationAudit + full linear/dual-path; defers reemit.
     // Exposed via query:mutation-boundary-hold-stats schema-2215.

@@ -2931,17 +2931,95 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // ac2673_chaos_soak_and_linter test
             // (tests/compiler/test_densify_ownership_scan_fail_gate.cpp). 64 fibers × mutate linear
             // × densify — every prod-path scan forces force_linear_rollback (no silent continue).
+            //
+            // Issue #2854: same-transaction order — rebind + scan + stamp must
+            // be one atomic story. Read the rebind report (file-scope atomic
+            // populated by ownership_rebind_after_remap at #2708 call site
+            // line 845 above), then decide outcome:
+            //   - rebind_fail (production mismatch — #2708 returns false under
+            //     production_lock; the had_mismatch Soft flag is set on the
+            //     report but Soft does not fail the function call) → Reject
+            //   - scan_mismatch + prod_lock → Reject (force_linear_rollback +
+            //     stamp REJECT proof)
+            //   - scan_mismatch + Soft → Stamped (observe only — no force,
+            //     proof can remain success per Soft contract; #2854 AC3)
+            //   - all good → Stamped (success proof with post-remap
+            //     linear_root_count via the new
+            //     build_type_linear_commit_proof_from_live_with_outcome
+            //     overload).
+            // Quiet (no rebind attempted, had_rebind=false) → no counter
+            // bump; save_hygiene_checkpoint's stamp reads current state and
+            // stays additive (AC4 zero-cost short-circuit preserved).
             const bool densify_scan_mismatch =
                 ev_->scan_linear_roots_after_densify(linear_ops_present_local);
-            if (densify_scan_mismatch) {
+            const auto rebind_report_2854 = aura::compiler::last_ownership_rebind_report_v_read();
+            const bool rebind_fail_2854 =
+                rebind_report_2854.had_rebind && !rebind_report_2854.rebind_ok;
+            const bool prod_lock_2854 = typed_audit::production_defaults_active();
+            const char* sandbox_2854 = std::getenv("AURA_SANDBOX");
+            const bool dev_off_2854 =
+                sandbox_2854 && *sandbox_2854 && std::string_view(sandbox_2854) == "off";
+            const bool prod_lock_eff_2854 = prod_lock_2854 && !dev_off_2854;
+            const bool reject_path_2854 =
+                rebind_fail_2854 || (densify_scan_mismatch && prod_lock_eff_2854);
+            if (reject_path_2854) {
                 // Mismatch detected → force_linear_rollback bumps
                 // linear_densify_scan_mismatch_total and sets
                 // deny_kind=linear-densify-root-mismatch. Do NOT advance
-                // Phase 5 success metrics below.
+                // Phase 5 success metrics below. Stamp REJECT proof
+                // (would_allow_commit=false, linear_ok=false) so no
+                // success proof can outlive this failed rebind on the
+                // same exit (#2854 AC2).
                 ev_->force_linear_rollback("densify-phase5-linear-scan");
-            } else if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
-                m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
+                (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    ev_->defuse_version_.load(std::memory_order_acquire),
+                    /*would_allow_commit=*/false, /*linear_ok=*/false);
+                typed_audit::g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                if (auto* gm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    gm->type_linear_proof_reject_after_rebind_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            } else if (!densify_scan_mismatch) {
+                // Success path (rebind ok + scan pass — AC1): stamp
+                // success proof with post-remap linear_root_count via
+                // the new overload. Bump cumulative stamp counter +
+                // same-transaction-order success counter. Advance Phase-5
+                // success metrics.
+                (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    ev_->defuse_version_.load(std::memory_order_acquire),
+                    /*would_allow_commit=*/true, /*linear_ok=*/true);
+                typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeStamped);
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
+                    m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
+                    m->type_linear_proof_stamped_after_rebind_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            } else {
+                // Soft scan mismatch (no production lock) → observe only
+                // (no force_linear_rollback per #2673 contract). Stamp
+                // success proof with the explicit outcome (would_allow_commit=true,
+                // linear_ok=true) — #2854 AC3 Soft inject → observe path
+                // (no production lock regression; Soft mismatch is
+                // documented in the g_ownership_rebind_last_had_mismatch
+                // atomic from #2708, not in the proof). Bump success
+                // counter so dashboards see the ordered stamp.
+                (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    ev_->defuse_version_.load(std::memory_order_acquire),
+                    /*would_allow_commit=*/true, /*linear_ok=*/true);
+                typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeStamped);
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    m->type_linear_proof_stamped_after_rebind_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
             }
             // Issue #2507: Moving densify success → invalidate escape /
             // MoveOp elision gate for this eval. Remap may invalidate
@@ -3450,11 +3528,28 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
     // visible dual-epoch proof). Use saved_defuse_version (HygieneCheckpoint
     // has no .version field — that is MutationCheckpoint).
     // #2758: fill live_goal_count from commit TypeChecker CS when present.
+    //
+    // Issue #2854 same-transaction order: if Phase-5 densify already
+    // stamped the proof (Reject or Stamped outcome sentinel), SKIP the
+    // default stamp here — the live version would re-read would_allow_commit
+    // + linear_ok from current state and overwrite the explicit outcome,
+    // letting a success proof outlive a failed rebind (AC2 violation).
+    // Quiet path (no Phase-5) still gets the default live stamp so
+    // simple mutations (no densify/steal) still surface a proof.
     {
-        std::uint64_t goals = 0;
-        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle()))
-            goals = static_cast<std::uint64_t>(tc->constraint_system().occurrence_goals_size());
-        (void)typed_audit::build_type_linear_commit_proof_from_live(cp.saved_defuse_version, goals);
+        const auto prior_outcome_2854 = typed_audit::last_type_linear_proof_outcome_v_read();
+        if (prior_outcome_2854 == typed_audit::kTypeLinearProofOutcomeQuiet) {
+            std::uint64_t goals = 0;
+            if (auto* tc = static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle()))
+                goals = static_cast<std::uint64_t>(tc->constraint_system().occurrence_goals_size());
+            (void)typed_audit::build_type_linear_commit_proof_from_live(cp.saved_defuse_version,
+                                                                        goals);
+        }
+        // Non-Quiet (Reject / Stamped) → Phase-5 already stamped with
+        // the explicit outcome (would_allow_commit + linear_ok derived
+        // from rebind + scan). Do NOT re-stamp — that would reset to
+        // live state and violate #2854 AC2 (no success proof may
+        // outlive a failed rebind on the same exit).
     }
     return cp;
 }

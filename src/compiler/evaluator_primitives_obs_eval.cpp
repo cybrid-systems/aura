@@ -6251,6 +6251,67 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"production_residual_policy_lock_wired", make_int(1)},
                 {"schema-2853", make_int(2853)},
                 {"issue-2853", make_int(2853)},
+                // Issue #2854: same-transaction order — rebind + scan + proof
+                // stamp is one atomic story on densify/steal. Additive
+                // cumulative counters + last outcome sentinel + ownership
+                // rebind last report (mirror #2853 additive schema key
+                // pattern — no break of schema-2853 / schema-2758 / #2717
+                // lineage). Agents read these to assert no success proof
+                // outlives a failed rebind on the same exit.
+                {"type-linear-proof-stamped-after-rebind-total",
+                 make_int(static_cast<std::int64_t>(
+                     typed_audit::type_linear_proof_stamped_after_rebind_total_v_read()))},
+                {"type_linear_proof_stamped_after_rebind_total",
+                 make_int(static_cast<std::int64_t>(
+                     typed_audit::type_linear_proof_stamped_after_rebind_total_v_read()))},
+                {"type-linear-proof-reject-after-rebind-fail-total",
+                 make_int(static_cast<std::int64_t>(
+                     typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read()))},
+                {"type_linear_proof_reject_after_rebind_fail_total",
+                 make_int(static_cast<std::int64_t>(
+                     typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read()))},
+                // Last outcome sentinel: 0=Quiet, 1=Stamped, 2=Reject.
+                // Surfaced for Agent drift detect (a #2854 reject should
+                // be followed by force_linear_rollback + #2296 path).
+                {"last-type-linear-proof-outcome",
+                 make_int(typed_audit::last_type_linear_proof_outcome_v_read())},
+                {"last_type_linear_proof_outcome",
+                 make_int(typed_audit::last_type_linear_proof_outcome_v_read())},
+                // Ownership rebind last report (file-scope atomics from
+                // #2708 walk, surfaced for Agent dashboards to distinguish
+                // pre-#2854 success stamps from post-#2854 ordered stamps).
+                {"ownership-rebind-last-ok",
+                 make_int(aura::compiler::last_ownership_rebind_report_v_read().rebind_ok ? 1 : 0)},
+                {"ownership_rebind_last_ok",
+                 make_int(aura::compiler::last_ownership_rebind_report_v_read().rebind_ok ? 1 : 0)},
+                {"ownership-rebind-last-root-count",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::last_ownership_rebind_report_v_read().root_count))},
+                {"ownership_rebind_last_root_count",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::last_ownership_rebind_report_v_read().root_count))},
+                {"ownership-rebind-last-had-mismatch",
+                 make_int(aura::compiler::last_ownership_rebind_report_v_read().had_mismatch ? 1
+                                                                                             : 0)},
+                {"ownership_rebind_last_had_mismatch",
+                 make_int(aura::compiler::last_ownership_rebind_report_v_read().had_mismatch ? 1
+                                                                                             : 0)},
+                {"ownership-rebind-last-had-rebind",
+                 make_int(aura::compiler::last_ownership_rebind_report_v_read().had_rebind ? 1
+                                                                                           : 0)},
+                {"ownership_rebind_last_had_rebind",
+                 make_int(aura::compiler::last_ownership_rebind_report_v_read().had_rebind ? 1
+                                                                                           : 0)},
+                {"ownership-rebind-last-reason",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::last_ownership_rebind_report_v_read().reason))},
+                {"ownership_rebind_last_reason",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::last_ownership_rebind_report_v_read().reason))},
+                {"ownership-rebind-same-tx-wired", make_int(1)},
+                {"ownership_rebind_same_tx_wired", make_int(1)},
+                {"schema-2854", make_int(2854)},
+                {"issue-2854", make_int(2854)},
                 // Issue #2405: predictive estimate surface (separate pure query);
                 // discovery key here so Agents find hold-estimate from hold-stats.
                 {"hold-estimate-wired", make_int(1)},

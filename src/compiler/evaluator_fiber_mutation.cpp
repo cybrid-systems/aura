@@ -2142,6 +2142,42 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
     (void)aura::compiler::ownership_rebind_after_remap(
         aura::compiler::collect_linear_or_dirty_roots_for_rebind(),
         aura::compiler::RemapReason::Steal);
+    // Issue #2854: same-transaction order — rebind + stamp must be one
+    // atomic story on steal resume (mirror densify Phase-5 exit). Read
+    // the rebind report (file-scope atomic populated above) and stamp
+    // the TypeLinearCommitProof with the explicit outcome so no success
+    // proof can outlive a failed rebind (AC2). Production mismatch
+    // (rebind_ok=false) → Reject proof (would_allow_commit=false,
+    // linear_ok=false). Otherwise → Stamped (success with post-remap
+    // linear_root_count via the new with-outcome overload).
+    {
+        const auto steal_rebind_report_2854 = aura::compiler::last_ownership_rebind_report_v_read();
+        const bool steal_rebind_fail_2854 =
+            steal_rebind_report_2854.had_rebind && !steal_rebind_report_2854.rebind_ok;
+        if (steal_rebind_fail_2854) {
+            (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                defuse_version_.load(std::memory_order_acquire),
+                /*would_allow_commit=*/false, /*linear_ok=*/false);
+            typed_audit::g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(
+                1, std::memory_order_relaxed);
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            if (auto* sm = static_cast<CompilerMetrics*>(compiler_metrics()))
+                sm->type_linear_proof_reject_after_rebind_fail_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        } else {
+            (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                defuse_version_.load(std::memory_order_acquire),
+                /*would_allow_commit=*/true, /*linear_ok=*/true);
+            typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
+                1, std::memory_order_relaxed);
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeStamped);
+            if (auto* sm = static_cast<CompilerMetrics*>(compiler_metrics()))
+                sm->type_linear_proof_stamped_after_rebind_total.fetch_add(
+                    1, std::memory_order_relaxed);
+        }
+    }
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
         m->linear_join_enforcement_total.fetch_add(1, std::memory_order_relaxed);
