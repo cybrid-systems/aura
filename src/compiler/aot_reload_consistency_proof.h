@@ -8,6 +8,12 @@
 //   - multi-writer seqlock: CAS even→odd claim, release odd→even;
 //     readers spin until even and re-check so they never observe a torn
 //     {table_epoch, bridge_epoch, defuse, masks, …} set.
+//
+// Issue #2845: every non-Ok terminal reload/reemit recovery outcome must
+// publish a consistent proof with would_allow_native=false (rollback +
+// force-JIT demotion). Single helper stamp_aot_reload_consistency_proof_fail
+// is the sole fail-publish entry; success commit still uses stamp() with
+// would_allow_native derived from fail==0 && force mask==0.
 #ifndef AURA_COMPILER_AOT_RELOAD_CONSISTENCY_PROOF_H
 #define AURA_COMPILER_AOT_RELOAD_CONSISTENCY_PROOF_H
 
@@ -32,6 +38,8 @@ struct AotReloadConsistencyProof {
 inline constexpr int kAotReloadConsistencyProofIssue = 2753;
 // Issue #2776: concurrent stamp discipline.
 inline constexpr int kAotReloadConsistencyStampConcurrentIssue = 2776;
+// Issue #2845: fail-path stamp sole gate (would_allow_native=false).
+inline constexpr int kAotReloadConsistencyProofFailStampIssue = 2845;
 
 // Process-wide last stamped proof (seqlock-protected writers; readers use
 // load_aot_reload_consistency_proof_snapshot / build_*_from_live).
@@ -44,6 +52,8 @@ inline std::atomic<std::uint8_t> g_aot_reload_proof_last_fail{0};
 inline std::atomic<std::uint64_t> g_aot_reload_proof_force_jit_mask{0};
 inline std::atomic<int> g_aot_reload_proof_would_allow_native{1};
 inline std::atomic<std::uint64_t> g_aot_reload_proof_stamped_total{0};
+// Issue #2845: additive counter — only fail-path stamps (not success commit).
+inline std::atomic<std::uint64_t> g_aot_reload_proof_stamped_on_fail_total{0};
 // Issue #2776: multi-writer seqlock — even = stable, odd = writer holds claim.
 inline std::atomic<std::uint64_t> g_aot_reload_proof_seq{0};
 // Soft metric: reader retried due to concurrent stamp (observability only).
@@ -130,6 +140,34 @@ inline void stamp_aot_reload_consistency_proof(const AotReloadConsistencyProof& 
     g_aot_reload_proof_seq.fetch_add(1, std::memory_order_release);
 }
 
+// Issue #2845: sole fail-path publish entry. Always forces
+// would_allow_native=false, advances stamp_epoch under seqlock (#2776),
+// and bumps stamped_on_fail_total (additive; does not break schema-2753/2776).
+// Call from:
+//   - note_reload_rollback / per-reason AotReloadFail (staging discard)
+//   - on_force_jit_for_reason after demotion (mask + reason must match registry)
+// Soft/quiet idle paths must NOT call this (no extra stamp cost — AC5).
+inline void stamp_aot_reload_consistency_proof_fail(AotReloadConsistencyProof p) noexcept {
+    p.would_allow_native = false;
+    p.schema = kAotReloadConsistencyProofIssue;
+    stamp_aot_reload_consistency_proof(p);
+    g_aot_reload_proof_stamped_on_fail_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2845: re-stamp after force-JIT demotion. Keeps last table/bridge/
+// defuse/region from the seqlock snapshot; overwrites last_fail_reason +
+// force_jit_regions_mask to match HotUpdateRegistry after fetch_or.
+// Ensures Agents never see would_allow_native=true with a non-zero force mask.
+inline void stamp_aot_reload_consistency_proof_fail_after_force_jit(
+    std::uint8_t last_fail_reason, std::uint64_t force_jit_regions_mask) noexcept {
+    AotReloadConsistencyProof p = load_aot_reload_consistency_proof_snapshot();
+    p.last_fail_reason = last_fail_reason;
+    p.force_jit_regions_mask = force_jit_regions_mask;
+    // stamp_aot_reload_consistency_proof_fail is the sole fail enqueue gate
+    // (wire-in marker for coverage linter #2845).
+    stamp_aot_reload_consistency_proof_fail(p);
+}
+
 // Individual field accessors — for multi-field decisions prefer
 // load_aot_reload_consistency_proof_snapshot() (#2776).
 inline std::uint64_t aura_last_aot_reload_consistency_stamp_epoch(void) noexcept {
@@ -158,6 +196,10 @@ inline int aura_last_aot_reload_consistency_would_allow_native(void) noexcept {
 }
 inline std::uint64_t aura_aot_reload_consistency_proof_stamped_total(void) noexcept {
     return g_aot_reload_proof_stamped_total.load(std::memory_order_relaxed);
+}
+// Issue #2845: fail-path stamp counter (additive).
+inline std::uint64_t aura_aot_reload_consistency_proof_stamped_on_fail_total(void) noexcept {
+    return g_aot_reload_proof_stamped_on_fail_total.load(std::memory_order_relaxed);
 }
 inline int aura_aot_reload_consistency_proof_wired(void) noexcept {
     return 1;

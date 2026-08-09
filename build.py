@@ -837,6 +837,21 @@ def cmd_lint():
             "Issue #2776 AOT reload stamp concurrent linter failed — run python3 scripts/coverage/checks/check_aot_reload_consistency_stamp_concurrent_2776.py"
         )
         return r
+    # Issue #2845: every non-Ok terminal reload/reemit recovery stamps
+    # AotReloadConsistencyProof with would_allow_native=false (sole fail
+    # helper). Closes #2753/#2776 residual: force-JIT demotion + rollback
+    # never leave a stale success allow-native proof. ac2845_* in
+    # test_reload_recovery_query per #81967.
+    arpf_script = COVERAGE_CHECKS / "check_aot_reload_proof_fail_stamp_2845.py"
+    if not arpf_script.exists():
+        fail(f"missing {arpf_script}")
+        return 1
+    r = run([sys.executable, str(arpf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2845 AOT reload fail-proof stamp linter failed — run python3 scripts/coverage/checks/check_aot_reload_proof_fail_stamp_2845.py"
+        )
+        return r
     # Issue #2777: AgentScope read APIs ScopeEnterGuard (#2399 residual).
     # directory_snapshot / handles / child_at / size concurrent with
     # ~AgentScope no longer silent; directory_snapshot_concurrent_total

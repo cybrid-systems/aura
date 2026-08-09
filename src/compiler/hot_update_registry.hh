@@ -167,6 +167,8 @@ public:
     // JIT-only fall-back without a silent partial success. Slot-level
     // AOT invalidation is a future follow-up; this is the visible
     // registry callback + counter contract for #2232.
+    // Issue #2232 / #2845: fall-back to JIT-only + re-stamp
+    // AotReloadConsistencyProof (would_allow_native=false, force mask).
     void on_force_jit_for_reason(AotReloadFail reason) noexcept;
     // Issue #2544: seed a minimal dirty recovery signal after force-JIT
     // exhaust (region-mask bit for the fail reason + cascade reemit

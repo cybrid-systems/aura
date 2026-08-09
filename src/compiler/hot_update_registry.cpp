@@ -3,6 +3,7 @@
 
 #include "compiler/hot_update_registry.hh"
 
+#include "compiler/aot_reload_consistency_proof.h" // Issue #2845: fail-proof stamp on force-JIT
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/lock_order_audit.h"      // Issue #2316: lock-order audit wire
 #include "compiler/observability_metrics.h" // CompilerMetrics for #2604 auto-drain bumps
@@ -480,9 +481,10 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     // (bit N = reason N in the AotReloadFail enum). Agents query the
     // mask via query:reload-recovery-state to know which regions
     // are currently in force-JIT mode without OR'ing per-reason counters.
-    force_jit_regions_mask_.fetch_or(static_cast<std::uint64_t>(1)
-                                         << static_cast<std::uint8_t>(reason),
-                                     std::memory_order_relaxed);
+    const auto new_mask = force_jit_regions_mask_.fetch_or(static_cast<std::uint64_t>(1)
+                                                               << static_cast<std::uint8_t>(reason),
+                                                           std::memory_order_relaxed) |
+                          (static_cast<std::uint64_t>(1) << static_cast<std::uint8_t>(reason));
     // attempts_left exhausted on fall-back (matches the policy_for()
     // loop terminal condition in aura_jit_bridge.cpp).
     attempts_left_.store(0, std::memory_order_relaxed);
@@ -491,6 +493,12 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     // Issue #2502: new force-JIT reason resets the re-promote streak
     // (window must rebuild after demotion recurrence).
     force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+    // Issue #2845: re-stamp AotReloadConsistencyProof so Agents never
+    // observe would_allow_native=true (or a stale pre-demotion force
+    // mask) after Env/Linear/Version exhaust → force-JIT. Uses the sole
+    // fail-path helper (would_allow_native=false + matching mask).
+    stamp_aot_reload_consistency_proof_fail_after_force_jit(static_cast<std::uint8_t>(reason),
+                                                            new_mask);
 }
 
 void HotUpdateRegistry::on_exhausted_min_dirty_queue(AotReloadFail reason) noexcept {

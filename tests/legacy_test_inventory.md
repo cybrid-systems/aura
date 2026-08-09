@@ -1665,7 +1665,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_reemit_production_default_defer.cpp` (—) [domain_suite, theme_compiler] — AC1: Production default (reset / process init) → policy Defer;
 - `tests/compiler/test_reemit_production_default_defer_v2.cpp` (—) [domain_suite, theme_compiler] — AC1: Default policy is Defer; SoftEnter requires explicit set.
 - `tests/compiler/test_region_priority_deopt_throttle.cpp` (—) [domain_suite, theme_compiler] — AC1: should_throttle_reemit(region) vs no-arg global decision
-- `tests/compiler/test_reload_recovery_query.cpp` (—) [domain_suite, theme_compiler] — AC1: soft empty path — idle recovery → recovery-active=0, zeros free
+- `tests/compiler/test_reload_recovery_query.cpp` (—) [large, domain_suite, theme_compiler] — AC1: soft empty path — idle recovery → recovery-active=0, zeros free
 - `tests/compiler/test_relower_fallback_reason.cpp` (—) [domain_suite, theme_compiler] — AC1: RelowerFallbackReason enum defined
 - `tests/compiler/test_relower_strategy_cache_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1855 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape_storm_partial_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: When StormLevel has Shape bit, partial is preferred for a wider
