@@ -4060,19 +4060,25 @@ private:
 //      arg i in 0..arg_count-1 (only needed if arg_base != 0;
 //      the common case for tail-recursion has arg_base = 0 so
 //      the args are already in the callee's param slots).
-//   2. Replace the Call with a Branch to the callee's entry
+//   2. Replace the Call with a Jump to the callee's entry
 //      block (the first block in callee.blocks).
-//   3. Remove the Return (the Branch is the new terminator).
+//      Issue #2833: terminator is Jump (unconditional tail),
+//      not Branch — single assignment, no mid-edit dual write.
+//   3. Remove the Return (Jump is the new terminator).
 //
 // Limitations (deferred to follow-up):
 // - Caller's arg_base must be 0 (args are already in the
 //   callee's param slots) for the simplest path. Non-zero
-//   arg_base is handled by emitting Local copies first.
-// - No inter-block TCO (only Call+Return within the same block).
+//   arg_base is handled by emitting Local copies first
+//   (with #2832 OOB guard).
 // - Mutual recursion not detected (would need call-graph
-//   analysis).
+//   analysis). Inter-block TCO: see run_inter_block_tco (#202).
 export class TCOPass {
 public:
+    // Issue #2833: design intent — tail-call terminator is Jump.
+    static constexpr int kTcoJumpTerminatorIssue = 2833;
+    static constexpr bool kTcoTerminatorIsJump = true;
+
     void run(aura::ir::IRModule& module) {
         tco_count_ = 0;
         tco_inter_block_count_ = 0;
@@ -4245,15 +4251,16 @@ private:
             // so the original pointer is dangling).
             call_instr = &block.instructions[call_idx + arg_count];
         }
-        // Transform: replace Call with Jump to callee's entry,
-        // remove Return. The Jump takes no args (callee's
-        // params are already at slots 0..arg_count-1, after the
-        // Local copies above for non-zero arg_base).
+        // Issue #2833: single Jump assignment (not Branch).
+        // Unconditional tail → Jump once, then pop Return.
+        // (Prior mid-edit left a duplicate opcode write and mixed
+        // Jump/Branch commentary; keep exactly one assign.)
         call_instr->opcode = aura::ir::IROpcode::Jump;
         call_instr->operands[0] = callee_entry_id;
-        // Remove the Return (Jump is the new terminator)
+        // Remove the Return (Jump is the new terminator).
         block.instructions.pop_back();
         ++tco_count_;
+        static_assert(kTcoTerminatorIsJump, "Issue #2833: TCO terminator must be Jump");
     }
 
     // Issue #202: inter-block TCO. Detects the pattern

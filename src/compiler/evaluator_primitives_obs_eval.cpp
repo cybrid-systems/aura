@@ -17183,6 +17183,13 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"tco-arg-base-oob-wired", make_int(1)},
                 {"schema-2832", make_int(2832)},
                 {"issue-2832", make_int(2832)},
+                // Issue #2833: TCO tail terminator is Jump (single assign).
+                {"tco-jump-terminator-wired",
+                 make_int(aura::compiler::TCOPass::kTcoTerminatorIsJump ? 1 : 0)},
+                {"tco-jump-terminator-issue",
+                 make_int(aura::compiler::TCOPass::kTcoJumpTerminatorIssue)},
+                {"schema-2833", make_int(2833)},
+                {"issue-2833", make_int(2833)},
                 // lineage 1576 + #2025 + #2106 + #2130 dirty peel
                 {"schema", make_int(2130)},
             };
