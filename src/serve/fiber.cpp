@@ -106,6 +106,13 @@ std::atomic<std::uint64_t> Fiber::join_linear_enforcement_total_{0};
 std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_total_{0};
 // Issue #2839: production hard-face mismatch total.
 std::atomic<std::uint64_t> Fiber::static_tenant_scope_mismatch_hard_total_{0};
+// Issue #2883: process-wide counter for hard-deny at side-effect entry
+// when the current fiber resume had a hard principal mismatch under
+// production/Restricted. Distinct from the existing hard-mismatch
+// counter (which fires on detection); this one fires only when a
+// require_effect* / check_and_record_effect / grant_effect_* call
+// actually denies. Agent dashboards chart both.
+std::atomic<std::uint64_t> Fiber::static_fiber_principal_mismatch_hard_deny_total_{0};
 // Issue #2498: process-wide orphan-root drops on Reclaimed (summed
 // across all fibers). Accessor Fiber::orphan_roots_dropped_on_reclaim_total().
 // HWM tracks the peak count of pending orphan roots across all fibers

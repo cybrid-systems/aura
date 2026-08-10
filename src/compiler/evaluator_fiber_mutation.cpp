@@ -2582,6 +2582,13 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
             aura::serve::Fiber::bump_tenant_scope_mismatch_hard();
             if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
                 m->tenant_scope_mismatch_hard_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2883: set per-Fiber hard-face flag so side-effect entry
+            // points (`require_effect*`, `check_and_record_effect`,
+            // `grant_effect_*`) under production defaults deny the call
+            // with SE reason `fiber-principal-mismatch` rather than
+            // silently letting an ambient principal escape through.
+            // TenantScope still installs below so principal is re-bound.
+            f->set_resume_had_mismatch(true);
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
             const auto epoch = ::aura::core::current_mutation_epoch();
@@ -2612,6 +2619,12 @@ extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept {
     if (g_fiber_tenant_scope)
         g_fiber_tenant_scope->release();
     g_fiber_tenant_scope.reset();
+    // Issue #2883: clear per-resume hard-face flag on the yielding
+    // fiber so a subsequent resume on a matching principal can run
+    // side-effects without spurious deny from the previous resume's
+    // mismatch state.
+    if (g_current_fiber)
+        g_current_fiber->set_resume_had_mismatch(false);
 }
 
 // Issue #2397: Fiber reclaim still-running / body-retired → OrchModuleStats.

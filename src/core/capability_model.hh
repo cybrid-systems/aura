@@ -195,6 +195,14 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_mutation_bridge_split_total{0};
     // Issue #2151: hard-deny on grant_fiber_id mismatch (when policy on).
     std::atomic<std::uint64_t> capability_fiber_hard_deny_total{0};
+    // Issue #2883: side-effect entry-point hard deny when the current
+    // fiber resume had a hard principal mismatch under production.
+    // Distinct from capability_fiber_hard_deny_total (which fires on
+    // grant_fiber_id mismatch in provenance_ok) and from
+    // tenant_scope_mismatch_hard_total (which fires on detection).
+    // This counter fires only on actual side-effect denial at
+    // require_effect* / check_and_record_effect / grant_effect_*.
+    std::atomic<std::uint64_t> capability_fiber_principal_mismatch_hard_deny_total{0};
     // Issue #2154: sliding grant_min_valid window advanced on epoch bump.
     std::atomic<std::uint64_t> capability_grant_epoch_window_advance_total{0};
     // Issue #2688: production-default hard_fiber_isolation + grant epoch
@@ -995,6 +1003,9 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_epoch_fence_hit_total.store(0, std::memory_order_relaxed);
     m.capability_mutation_bridge_split_total.store(0, std::memory_order_relaxed);
     m.capability_fiber_hard_deny_total.store(0, std::memory_order_relaxed);
+    // Issue #2883: reset side-effect hard-deny counter for the
+    // residual fiber-principal-mismatch hard face.
+    m.capability_fiber_principal_mismatch_hard_deny_total.store(0, std::memory_order_relaxed);
     m.capability_grant_epoch_window_advance_total.store(0, std::memory_order_relaxed);
     m.capability_single_use_consumed_total.store(0, std::memory_order_relaxed); // #2586
     // Issue #2882: reset production-default single-use override counters
@@ -1032,6 +1043,9 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t mutation_bridge_split = 0;
     // Issue #2151
     std::uint64_t fiber_hard_deny = 0;
+    // Issue #2883: side-effect entry-point hard deny when current fiber
+    // resume had a hard principal mismatch under production.
+    std::uint64_t fiber_principal_mismatch_hard_deny = 0;
     int hard_fiber_isolation = 0;
     // Issue #2154
     std::uint64_t grant_min_valid_epoch = 0;
@@ -1084,6 +1098,10 @@ struct CapabilityEffectStatsSnapshot {
         s.mutation_bridge_split =
             m.capability_mutation_bridge_split_total.load(std::memory_order_acquire);
         s.fiber_hard_deny = m.capability_fiber_hard_deny_total.load(std::memory_order_acquire);
+        // Issue #2883: hard-deny at side-effect entry on fiber principal
+        // mismatch under production/Restricted.
+        s.fiber_principal_mismatch_hard_deny =
+            m.capability_fiber_principal_mismatch_hard_deny_total.load(std::memory_order_acquire);
         s.hard_fiber_isolation = reg.hard_fiber_isolation() ? 1 : 0;
         s.grant_min_valid_epoch = reg.grant_min_valid_epoch();
         s.grant_epoch_retain_window = reg.grant_epoch_retain_window();
