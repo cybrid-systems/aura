@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**69** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**71** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -52,6 +52,7 @@
 | `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
 | `std/process` | `sh` `sh-ok?` `which` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
+| `std/pso` | `pso:init` `pso:step!` `pso:best` `pso:report` `pso:export` `pso:help` `swarm:init` `swarm:step!` … (+3) | lib/std/pso.aura — Issue #2874 particle swarm backend (thin surface) |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
 | `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` `query:calls-by-marker` … (+2) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
@@ -67,6 +68,7 @@
 | `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+10) | Aura standard string library |
 | `std/struct` | — | Aura struct library — define-struct as a macro |
 | `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+81) | lib/std/surface.aura — recommended public convenience surface (P3) |
+| `std/swarm` | `swarm:init` `swarm:step!` `swarm:best` `swarm:report` `swarm:export` `swarm:kind` `swarm:gen` `swarm:parallel!` … (+1) | lib/std/swarm.aura — Issue #2874 pluggable swarm intelligence control family |
 | `std/synthesize-v2` | `synthesize:test-driven` `synthesize:debug` `synthesize:project` `synthesize:compose` `synthesize:run-tests` `synthesize:eval-test` | lib/std/synthesize-v2.aura -- Synthesize Pipeline v2 |
 | `std/synthesize` | `synthesize:list-templates` `synthesize:list-help` | lib/std/synthesize.aura — synthesize: namespace stdlib wrappers |
 | `std/test` | — | Aura Testing Framework |
