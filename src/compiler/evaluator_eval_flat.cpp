@@ -4998,6 +4998,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 existing = by_sym;
                         }
                     }
+                    // Issue #2872: only commit the cell after RHS succeeds.
+                    // Re-define: leave prior cell untouched on failure.
                     if (existing && is_cell(*existing)) {
                         auto ci = as_cell_id(*existing);
                         auto vv = eval_flat(*f, *p, val_id, eval_env);
@@ -5007,15 +5009,45 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         return *vv;
                     }
 
-                    // Create new cell binding (SymId primary when available)
+                    // Issue #2872: Lambda RHS needs a pre-bound cell so
+                    // `(define f (lambda () f))` / `(define (f) …)` capture
+                    // the name for self-reference. Non-lambda RHS must NOT
+                    // pre-bind: a failed RHS (recursion depth, etc.) used to
+                    // leave `name` bound to void — later forms read `()` or
+                    // a stale alias, and multi-define chains looked wiped.
+                    const bool rhs_is_lambda = val_id != aura::ast::NULL_NODE &&
+                                               val_id < f->size() &&
+                                               f->get(val_id).tag == aura::ast::NodeTag::Lambda;
+
+                    if (!rhs_is_lambda) {
+                        // Eval first; bind only on success.
+                        auto vv = (val_id == aura::ast::NULL_NODE)
+                                      ? EvalResult(make_void())
+                                      : eval_flat(*f, *p, val_id, eval_env);
+                        if (!vv)
+                            return vv;
+                        auto ci = alloc_cell(*vv);
+                        if (v.sym_id != aura::ast::INVALID_SYM)
+                            me.bind_symid(v.sym_id, make_cell(ci));
+                        else
+                            me.bind(std::string(name), make_cell(ci));
+                        return *vv;
+                    }
+
+                    // Lambda: pre-bind void cell, eval, commit or roll back.
                     auto ci = alloc_cell(make_void());
                     if (v.sym_id != aura::ast::INVALID_SYM)
                         me.bind_symid(v.sym_id, make_cell(ci));
                     else
                         me.bind(std::string(name), make_cell(ci));
                     auto vv = eval_flat(*f, *p, val_id, eval_env);
-                    if (!vv)
+                    if (!vv) {
+                        // Roll back so name is unbound (not void cell).
+                        if (v.sym_id != aura::ast::INVALID_SYM)
+                            me.unbind_local_symid(v.sym_id);
+                        me.unbind_local(std::string(name));
                         return vv;
+                    }
                     cells_[ci] = *vv;
                     return *vv;
                 }
@@ -5195,6 +5227,25 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         // Pure sequential multi-define broke module private
                         // free-vars when a non-Lambda (*agents*) forced that
                         // path — export filtering then stripped parent env.
+                        // Issue #2872: on RHS failure, unbind every name in this
+                        // multi-define batch whose cell is still void (failed
+                        // name + not-yet-evaluated siblings). Successfully
+                        // committed cells keep their bindings.
+                        auto rollback_still_void_defs = [&]() {
+                            auto& mutable_env = const_cast<Env&>(eval_env);
+                            for (std::size_t i = 0; i < cell_ids.size() && i < letrec_defs.size();
+                                 ++i) {
+                                auto ci = cell_ids[i];
+                                if (ci < cells_.size() && is_void(cells_[ci])) {
+                                    mutable_env.unbind_local(letrec_defs[i].first);
+                                    if (p) {
+                                        auto s = const_cast<aura::ast::StringPool*>(p)->intern(
+                                            letrec_defs[i].first);
+                                        mutable_env.unbind_local_symid(s);
+                                    }
+                                }
+                            }
+                        };
                         for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
                             auto& d = letrec_defs[i];
                             if (d.second == aura::ast::NULL_NODE)
@@ -5202,8 +5253,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             if (f->get(d.second).tag != aura::ast::NodeTag::Lambda)
                                 continue;
                             auto val = eval_flat(*f, *p, d.second, eval_env);
-                            if (!val)
+                            if (!val) {
+                                rollback_still_void_defs();
                                 return val;
+                            }
                             cells_[cell_ids[i]] = *val;
                         }
                         for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
@@ -5213,8 +5266,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             if (f->get(d.second).tag == aura::ast::NodeTag::Lambda)
                                 continue;
                             auto val = eval_flat(*f, *p, d.second, eval_env);
-                            if (!val)
+                            if (!val) {
+                                rollback_still_void_defs();
                                 return val;
+                            }
                             cells_[cell_ids[i]] = *val;
                         }
                         // Phase 3: remaining non-define / non-prologue exprs

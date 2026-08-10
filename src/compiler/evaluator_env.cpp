@@ -488,6 +488,41 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
     }
 }
 
+// Issue #2872: drop the most recent local string binding for `n`.
+// Rebuilds binding_index_ after erase. Does not touch bindings_symid_
+// (call unbind_local_symid separately so dual-write bind can roll back both).
+bool Env::unbind_local(std::string_view n) {
+    bool removed = false;
+    for (std::size_t i = bindings_.size(); i > 0; --i) {
+        if (bindings_[i - 1].first == n) {
+            bindings_.erase(bindings_.begin() + static_cast<std::ptrdiff_t>(i - 1));
+            removed = true;
+            break;
+        }
+    }
+    if (removed) {
+        binding_index_.clear();
+        for (std::size_t j = 0; j < bindings_.size(); ++j)
+            binding_index_[bindings_[j].first] = j;
+    }
+    return removed;
+}
+
+bool Env::unbind_local_symid(aura::ast::SymId s) {
+    bool removed = false;
+    for (std::size_t i = bindings_symid_.size(); i > 0; --i) {
+        if (bindings_symid_[i - 1].first == s) {
+            bindings_symid_.erase(bindings_symid_.begin() + static_cast<std::ptrdiff_t>(i - 1));
+            if (i - 1 < bindings_linear_ownership_state_.size())
+                bindings_linear_ownership_state_.erase(bindings_linear_ownership_state_.begin() +
+                                                       static_cast<std::ptrdiff_t>(i - 1));
+            removed = true;
+            break;
+        }
+    }
+    return removed;
+}
+
 aura::core::VoidResult Env::set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state) {
     for (std::size_t i = bindings_symid_.size(); i > 0; --i) {
         const std::size_t idx = i - 1;
