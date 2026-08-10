@@ -28,7 +28,7 @@ This module only searches individuals.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `"kind"` | `"grid"` | `"grid"` \| `"pso"` \| `"ant"` \| `"abc"` |
+| `"kind"` | `"grid"` | `"grid"` \| `"pso"` \| `"ant"` \| `"abc"` \| `"boids"` |
 | `"dim"` | `1` | Parameter dimension |
 | `"pop"` | `8` (`16` for pso) | Population / window size |
 | `"bounds"` | `((-1.0 1.0))` | Per-dim `(lo hi)` lists |
@@ -36,7 +36,9 @@ This module only searches individuals.
 | `"w"` / `"c1"` / `"c2"` | `0.7` / `1.4` / `1.4` | PSO coefficients (#2877) |
 | `"ops"` / `"evaporate"` | defaults | ant operator list / ρ (#2876) |
 | `"limit"` / `"neighbor"` | `5` / `"gaussian"` | ABC abandon limit / neighbor mode (#2878) |
-| `"seed"` | `424242` | PRNG seed (pso/abc) |
+| `"sep"` / `"align"` / `"cohere"` | `1.0` / `0.5` / `0.3` | Boids weights (#2879) |
+| `"radius"` / `"max-speed"` | `0.5` / `0.25` | Boids neighborhood / speed clamp |
+| `"seed"` | `424242` | PRNG seed (pso/abc/boids init) |
 | `"parallel"` | `#f` | If `#t`, evaluate fitness with flat `fiber:spawn` then main-thread joins |
 
 ### Individual representation
@@ -73,6 +75,12 @@ use **grid** for discrete scans, **ant** for mutation-type ranking.
 Artificial bee colony: employed + onlooker local search, scout after
 `limit` failed improvements. Continuous food sources. Surface: [`std/abc`](abc.md).
 Prefer multi-cand exploit/abandon; PSO for velocity memory; grid for discrete scan.
+
+### `kind: "boids"` (#2879)
+
+Flocking coordination (separation / alignment / cohesion) on param vectors
+via [`std/boids`](boids.md). **Not** a sole optimizer — multi-agent diversity
+and shared search direction; high `sep` increases diversity.
 
 ### `kind: "ant"` (#2876 bridge)
 

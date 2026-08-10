@@ -156,6 +156,8 @@
        "=== std/pso (require \"std/pso\" all:) ===  Issue #2877 continuous PSO\n(pso:init dim pop bounds [seed]) -> kind\n(pso:init-hash opts)      -> kind   opts: dim,pop,bounds,w,c1,c2,seed,parallel\n(pso:step! fitness-fn)    -> gen    fitness: list-of-nums→number (higher better)\n(pso:best) (pso:population) (pso:report) (pso:export) (pso:defaults) (pso:help)\n  Defaults w=0.7 c1=c2=1.4 pop=16. Prefer continuous knobs; grid=discrete scan; ant=op ranking.\n")
       ((string=? mod "std/abc")
        "=== std/abc (require \"std/abc\" all:) ===  Issue #2878 artificial bee colony\n(abc:init dim pop bounds [limit [seed]]) -> kind\n(abc:init-hash opts)      -> kind   opts: dim,pop,bounds,limit,neighbor,seed,parallel\n(abc:step! fitness-fn)    -> gen    employ+onlooker+scout; fitness higher better\n(abc:best) (abc:population) (abc:report) (abc:export) (abc:defaults) (abc:help)\n  Defaults pop=12 limit=5 neighbor=gaussian. Prefer multi-cand exploit/abandon vs PSO velocity.\n")
+      ((string=? mod "std/boids")
+       "=== std/boids (require \"std/boids\" all:) ===  Issue #2879 flocking (not physics)\n(boids:separation pos i radius) -> vec\n(boids:alignment pos vel i radius) -> vec\n(boids:cohesion pos i radius) -> vec\n(boids:step pos vel opts) -> (list new-pos new-vel)  opts: sep,align,cohere,radius,bounds,max-speed\n(boids:diversity pos)     -> num    mean pairwise distance\n(boids:defaults) (boids:help)\n  Use with orch multi-agent / swarm kind:boids — not a sole optimizer.\n")
       ((string=? mod "std/maybe")
        "=== std/maybe (require \"std/maybe\" all:) ===\n(make-some val)          -> (some val)  Wrapper for Maybe values\n(make-none)              -> (none)  Nothing wrapper\n(maybe? x)               -> bool   Check if Maybe value\n(from-maybe default mb)  -> val    Unwrap or default\n")
       ((string=? mod "std/data")
@@ -172,7 +174,7 @@
                          "std/llm" "std/socket" "std/string" "std/math"
                          "std/vector-math" "std/rule" "std/pipeline"
                          "std/agent" "std/ant" "std/swarm" "std/pso" "std/abc"
-                         "std/maybe" "std/data"))
+                         "std/boids" "std/maybe" "std/data"))
          (ref (get-api-ref all-mods)))
     ref))
 (define pid:analyze

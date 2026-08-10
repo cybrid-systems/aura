@@ -9,9 +9,10 @@
 ;   (swarm:step! (lambda (ind) (- 0.0 (fitness-of ind))))  ; higher better
 ;   (swarm:best) (swarm:population) (swarm:report) (swarm:export)
 ;
-; kinds: "grid" | "pso" | "ant" | "abc"
+; kinds: "grid" | "pso" | "ant" | "abc" | "boids"
 ;   grid (#2875 baseline): discrete linspace product (Unify policy-scan shape)
 ;   abc  (#2878): employ / onlooker / scout continuous neighborhood search
+;   boids (#2879): separation / alignment / cohesion coordination
 ; Optional: "parallel" #t → flat fiber:spawn all then join on caller (no join-in-worker)
 ;
 ; Form order (#2769): export before require.
@@ -22,6 +23,7 @@
         swarm:help)
 
 (require "std/ant" all:)
+(require "std/boids" all:)
 
 ; ── Process-local swarm state ───────────────────────────────────
 (define *swarm-kind* "grid")
@@ -51,6 +53,12 @@
 (define *swarm-abc-trials* (list)) ; trial counters per food source
 (define *swarm-abc-limit* 5)       ; abandon after this many fails
 (define *swarm-abc-neighbor* "gaussian") ; or "classic"
+; kind:boids (#2879) — flocking weights
+(define *swarm-boids-sep* 1.0)
+(define *swarm-boids-align* 0.5)
+(define *swarm-boids-cohere* 0.3)
+(define *swarm-boids-radius* 0.5)
+(define *swarm-boids-max-speed* 0.25)
 
 ; ── Tiny PRNG (inline; avoid std/random internal-define footgun) ──
 (define (swarm-rand!)
@@ -339,6 +347,24 @@
               (if (null? vs) (list) (cdr vs))
               (cons nx acc))))))
 
+; ── Boids (#2879): wrap std/boids pure step + fitness ───────────
+(define (swarm-step-boids! fitness-fn)
+  (let* ((opts (hash "sep" *swarm-boids-sep*
+                     "align" *swarm-boids-align*
+                     "cohere" *swarm-boids-cohere*
+                     "radius" *swarm-boids-radius*
+                     "max-speed" *swarm-boids-max-speed*
+                     "bounds" *swarm-bounds*))
+         (res (boids:step *swarm-inds* *swarm-vels* opts))
+         (npos (car res))
+         (nvel (car (cdr res)))
+         (fits (swarm-eval-pop fitness-fn npos)))
+    (set! *swarm-inds* npos)
+    (set! *swarm-vels* nvel)
+    (set! *swarm-fits* fits)
+    (swarm-note-best! npos fits)
+    #t))
+
 ; ── ABC (#2878): employed / onlooker / scout ───────────────────
 ; Food source = continuous individual (list of numbers). Nectar = fitness
 ; (higher better). Neighbor: classic ABC one-dim phi mix, or gaussian.
@@ -542,7 +568,12 @@
          (c1 (swarm-opt opts "c1" 1.4))
          (c2 (swarm-opt opts "c2" 1.4))
          (limit (swarm-opt opts "limit" 5))
-         (neighbor (swarm-opt opts "neighbor" "gaussian")))
+         (neighbor (swarm-opt opts "neighbor" "gaussian"))
+         (sep (swarm-opt opts "sep" 1.0))
+         (align (swarm-opt opts "align" 0.5))
+         (cohere (swarm-opt opts "cohere" 0.3))
+         (radius (swarm-opt opts "radius" 0.5))
+         (max-speed (swarm-opt opts "max-speed" 0.25)))
     (set! *swarm-kind* kind)
     (set! *swarm-dim* dim)
     (set! *swarm-pop* pop)
@@ -560,6 +591,12 @@
     (set! *swarm-abc-limit* (if (number? limit) limit 5))
     (set! *swarm-abc-neighbor*
           (if (string? neighbor) neighbor "gaussian"))
+    (set! *swarm-boids-sep* (if (number? sep) sep 1.0))
+    (set! *swarm-boids-align* (if (number? align) align 0.5))
+    (set! *swarm-boids-cohere* (if (number? cohere) cohere 0.3))
+    (set! *swarm-boids-radius* (if (number? radius) radius 0.5))
+    (set! *swarm-boids-max-speed*
+          (if (number? max-speed) max-speed 0.25))
     (cond
       ((string=? kind "pso")
        (set! *swarm-inds*
@@ -582,6 +619,17 @@
                (if (>= k pop) (reverse acc)
                  (loop (+ k 1) (cons (swarm-rand-ind) acc)))))
        (set! *swarm-abc-trials* (swarm-abc-zeros pop))
+       (set! *swarm-fits* (list)))
+      ((string=? kind "boids")
+       ; #2879 flocking coordination on param vectors
+       (set! *swarm-inds*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1) (cons (swarm-rand-ind) acc)))))
+       (set! *swarm-vels*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1) (cons (swarm-rand-vel) acc)))))
        (set! *swarm-fits* (list)))
       ((string=? kind "ant")
        ; mutation-type ranking (#2876) — ops list or default pheromone types
@@ -614,6 +662,7 @@
   (cond
     ((string=? *swarm-kind* "pso") (swarm-step-pso! fitness-fn))
     ((string=? *swarm-kind* "abc") (swarm-step-abc! fitness-fn))
+    ((string=? *swarm-kind* "boids") (swarm-step-boids! fitness-fn))
     ((string=? *swarm-kind* "ant") (swarm-step-ant! fitness-fn))
     (#t (swarm-step-grid! fitness-fn)))
   (set! *swarm-gen* (+ *swarm-gen* 1))
@@ -657,4 +706,4 @@
       "}")))
 
 (define (swarm:help)
-  "std/swarm (#2874–#2878): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant|abc. abc opts: limit,neighbor(gaussian|classic). pso: w,c1,c2. ant: ops,evaporate.")
+  "std/swarm (#2874–#2879): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant|abc|boids. boids opts: sep,align,cohere,radius,max-speed. abc: limit,neighbor. pso: w,c1,c2. ant: ops,evaporate.")
