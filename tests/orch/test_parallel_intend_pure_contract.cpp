@@ -899,7 +899,6 @@ int run_test_parallel_intend_pure_contract() {
     {
         std::println("\n--- #2886 AC1+AC3+AC4: isolation-level=region-concurrent on disjoint "
                      "region_keys ---");
-        reset_all_counters();
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(
@@ -1006,9 +1005,9 @@ int run_test_parallel_intend_pure_contract() {
                                     :max-concurrency 2
                                     :collect-errors #t
                                     :timeout-ms 2000)))
-              (hash-ref h "isolation-level"))
+              (if (eq? (hash-ref h "isolation-level") "serialized") 1 0))
         )");
-            CHECK(iso.has_value() && *iso == "serialized",
+            CHECK(iso.has_value() && as_int(*iso) == 1,
                   "2886 AC4: isolation-level=serialized with zero region_keys (no false claim)");
             auto elig = cs.eval(R"(
             (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))

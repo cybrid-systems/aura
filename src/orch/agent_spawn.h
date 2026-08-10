@@ -132,6 +132,10 @@ inline constexpr std::size_t kMailboxBpScopeMapCap = 256;
 inline constexpr int kMailboxBpScopeGaugeIssue = 2633;
 inline constexpr int kMailboxBpScopeMapLifecycleIssue = 2778;
 inline constexpr int kMailboxBpScopeDecayRaceIssue = 2780;
+// Issue #2887: AgentScope::watch_all on_backpressure degrade (Cancel /
+// Throttle / optional RestartN) for BP-hot producers — complements
+// admit soft-reject of new attach_mailbox spawns (#2228/#2535).
+inline constexpr int kAgentBpDegradeIssue = 2887;
 
 // Issue #2228 / #2535: env resolution for the BP admit threshold.
 // Returns the configured threshold (0 = admit control off). Parses
@@ -383,6 +387,15 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> agent_restart_total{0};
     std::atomic<std::uint64_t> agent_restart_exhausted_total{0};
     std::atomic<std::uint64_t> agent_consecutive_stall_total{0};
+    // Issue #2887: BP-storm producer degrade under AgentScope::watch_all
+    // (on_backpressure != ReportOnly + scope/process recent ≥ thr).
+    // agent_bp_degrade_total: any applied non-ReportOnly action (Cancel /
+    // Throttle / RestartN). agent_bp_cancel_total: request_cancel path.
+    // agent_bp_throttle_total: cooperative helper_stop-only path.
+    // Default policy is ReportOnly → these stay 0 (AC1).
+    std::atomic<std::uint64_t> agent_bp_degrade_total{0};
+    std::atomic<std::uint64_t> agent_bp_cancel_total{0};
+    std::atomic<std::uint64_t> agent_bp_throttle_total{0};
     // Issue #2756: workflow-level FailurePolicy composition counters.
     // Bumped by compose_workflow_policy / note_workflow_residual_reclaim_
     // under_policy. Additive — #2007/#2229/#2539 surfaces unchanged.
@@ -2411,6 +2424,10 @@ enum class AgentFailureAction : std::uint8_t {
     ReportOnly = 0, // aggregate counts only; no cancel, no restart
     Cancel = 1,     // request_cancel the stalled body + helper
     RestartN = 2,   // re-spawn body under the same AgentSpec / name rules
+    // Issue #2887: cooperative producer degrade under BP storm —
+    // helper_stop / yield-budget tighten only; no forced body kill
+    // beyond existing reclaim protocol (AC3).
+    Throttle = 3,
 };
 
 struct AgentFailurePolicy {
@@ -2425,6 +2442,18 @@ struct AgentFailurePolicy {
     // fiber lifecycle; a separate restart hook on join_fail is
     // out of scope for #2229).
     AgentFailureAction on_join_fail = AgentFailureAction::ReportOnly;
+    // Issue #2887: response when scope-local (or process) mailbox BP
+    // recent ≥ bp_threshold during watch_all. Default ReportOnly —
+    // no behaviour change for callers that never set the policy (AC1).
+    // Cancel → request_cancel scope handles with mailboxes.
+    // Throttle → cooperative helper_stop only (no body kill).
+    // RestartN → same re-spawn path as on_stall RestartN (capped).
+    AgentFailureAction on_backpressure = AgentFailureAction::ReportOnly;
+    // Issue #2887: BP recent threshold for on_backpressure. 0 = use
+    // process admit threshold (resolve_mailbox_bp_admit_threshold /
+    // #2535 default 32). Explicit N>0 overrides. When both resolve to
+    // 0 (admit opt-out + no override), BP degrade is a no-op.
+    std::uint64_t bp_threshold = 0;
     // RestartN cap. 0 = restart disabled (Cancel-only behaviour).
     std::uint32_t max_restarts = 0;
     // Circuit-like threshold: after this many consecutive
@@ -2640,6 +2669,8 @@ failure_policy_name(serve::parallel_orch::FailurePolicy p) noexcept {
             return "report-only";
         case AgentFailureAction::RestartN:
             return "restart-n";
+        case AgentFailureAction::Throttle:
+            return "throttle";
         case AgentFailureAction::Cancel:
         default:
             return "cancel";

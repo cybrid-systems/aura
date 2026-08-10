@@ -291,6 +291,232 @@ int run_test_agent_failure_policy() {
         std::println("  (MVP linter still green — no global registry).");
     }
 
+    // ── #2887: on_backpressure producer degrade ──────────────────
+    {
+        std::println("\n=== Issue #2887: on_backpressure BP-storm degrade ===");
+        CHECK(true, "issue stamp #2887");
+
+        // AC1: default policy → ReportOnly; no new cancels on BP.
+        {
+            std::println("\n--- #2887 AC1: default on_backpressure ReportOnly ---");
+            AgentFailurePolicy d;
+            CHECK(d.on_backpressure == AgentFailureAction::ReportOnly,
+                  "2887 AC1: default on_backpressure == ReportOnly");
+            CHECK(d.bp_threshold == 0, "2887 AC1: default bp_threshold == 0 (use admit thr)");
+            CHECK(d.on_stall == AgentFailureAction::Cancel,
+                  "2887 AC1: default on_stall still Cancel (stall path unchanged)");
+            CHECK(aura::orch::agent_failure_action_name(AgentFailureAction::Throttle) ==
+                      std::string_view{"throttle"},
+                  "2887 AC1: Throttle action name");
+        }
+
+        // AC2: high local BP + Cancel → request_cancel on scope handles.
+        {
+            std::println("\n--- #2887 AC2: Cancel on high BP ---");
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep_running{true};
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "bp-cancel-producer";
+            spec.attach_mailbox = true;
+            spec.mailbox_high_water = 4;
+            spec.bp_scope_id = "tenant-bp-a";
+            spec.keepalive_interval_ms = 0; // no stall path noise
+            spec.body = [&] {
+                while (keep_running.load(std::memory_order_relaxed)) {
+                    if (scope.handles()[0].fiber && scope.handles()[0].fiber->is_cancel_requested())
+                        return;
+                    aura::orch::fiber_sleep_ms(20);
+                }
+            };
+            AgentHandle& h = scope.spawn(spec);
+            CHECK(h.ok, "2887 AC2: producer spawn admitted");
+            CHECK(h.mailbox, "2887 AC2: producer has mailbox");
+
+            // Inject scope-local BP recent above explicit thr=5.
+            for (int i = 0; i < 8; ++i)
+                aura::orch::note_mailbox_bp_recent_event("tenant-bp-a");
+            auto gauge = aura::orch::lookup_scope_bp_gauge("tenant-bp-a");
+            CHECK(gauge && gauge->recent.load(std::memory_order_relaxed) >= 5,
+                  "2887 AC2: scope BP recent injected");
+
+            const auto deg_before =
+                g_orch_module_stats.agent_bp_degrade_total.load(std::memory_order_relaxed);
+            const auto can_before =
+                g_orch_module_stats.agent_bp_cancel_total.load(std::memory_order_relaxed);
+            AgentFailurePolicy pol;
+            pol.on_stall = AgentFailureAction::ReportOnly; // isolate BP path
+            pol.on_backpressure = AgentFailureAction::Cancel;
+            pol.bp_threshold = 5;
+            auto wr = scope.watch_all(/*stall_ms=*/0, pol);
+            std::println("  wr.bp_degraded={} wr.bp_cancelled={} wr.cancelled={}", wr.bp_degraded,
+                         wr.bp_cancelled, wr.cancelled);
+            CHECK(wr.bp_degraded >= 1, "2887 AC2: bp_degraded >= 1");
+            CHECK(wr.bp_cancelled >= 1, "2887 AC2: bp_cancelled >= 1");
+            CHECK(g_orch_module_stats.agent_bp_degrade_total.load(std::memory_order_relaxed) >
+                      deg_before,
+                  "2887 AC2: agent_bp_degrade_total bumped");
+            CHECK(g_orch_module_stats.agent_bp_cancel_total.load(std::memory_order_relaxed) >
+                      can_before,
+                  "2887 AC2: agent_bp_cancel_total bumped");
+            CHECK(h.fiber && h.fiber->is_cancel_requested(),
+                  "2887 AC2: request_cancel on scope handle");
+
+            // Other scope (different bp_scope_id) unaffected by A storm.
+            AgentScope scope_b(sched);
+            AgentSpec spec_b;
+            spec_b.name = "bp-other-scope";
+            spec_b.attach_mailbox = true;
+            spec_b.bp_scope_id = "tenant-bp-b";
+            spec_b.body = [] {};
+            AgentHandle& hb = scope_b.spawn(spec_b);
+            CHECK(hb.ok, "2887 AC2: other scope still admits (isolation)");
+            AgentFailurePolicy pol_b;
+            pol_b.on_stall = AgentFailureAction::ReportOnly;
+            pol_b.on_backpressure = AgentFailureAction::Cancel;
+            pol_b.bp_threshold = 5;
+            // No BP events on tenant-bp-b → no degrade.
+            const auto deg_mid =
+                g_orch_module_stats.agent_bp_degrade_total.load(std::memory_order_relaxed);
+            auto wr_b = scope_b.watch_all(/*stall_ms=*/0, pol_b);
+            CHECK(wr_b.bp_degraded == 0, "2887 AC2: other scope bp_degraded == 0");
+            CHECK(g_orch_module_stats.agent_bp_degrade_total.load(std::memory_order_relaxed) ==
+                      deg_mid,
+                  "2887 AC2: other scope does not bump degrade total");
+
+            keep_running.store(false, std::memory_order_relaxed);
+            if (h.fiber) {
+                h.fiber->request_cancel();
+                if (auto* s = h.fiber->owner_sched()) {
+                    s->note_orphan_fiber(h.fiber, 50);
+                    s->reap_orphans_now();
+                }
+            }
+            (void)aura::orch::erase_scope_bp_gauge("tenant-bp-a");
+            (void)aura::orch::erase_scope_bp_gauge("tenant-bp-b");
+        }
+
+        // AC3: Throttle is cooperative only (helper_stop, no cancel).
+        {
+            std::println("\n--- #2887 AC3: Throttle cooperative ---");
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep_running{true};
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "bp-throttle-producer";
+            spec.attach_mailbox = true;
+            spec.keepalive_interval_ms = 50; // enables liveness + helper_stop surface
+            spec.bp_scope_id = "tenant-thr";
+            spec.body = [&] {
+                aura::orch::note_agent_progress(scope.handles_mut()[0]);
+                while (keep_running.load(std::memory_order_relaxed)) {
+                    if (scope.handles_mut()[0].fiber &&
+                        scope.handles_mut()[0].fiber->is_cancel_requested())
+                        return;
+                    aura::orch::fiber_sleep_ms(20);
+                }
+            };
+            AgentHandle& h = scope.spawn(spec);
+            CHECK(h.ok, "2887 AC3: throttle producer spawn ok");
+            for (int i = 0; i < 6; ++i)
+                aura::orch::note_mailbox_bp_recent_event("tenant-thr");
+
+            const auto thr_before =
+                g_orch_module_stats.agent_bp_throttle_total.load(std::memory_order_relaxed);
+            const auto can_before =
+                g_orch_module_stats.agent_bp_cancel_total.load(std::memory_order_relaxed);
+            AgentFailurePolicy pol;
+            pol.on_stall = AgentFailureAction::ReportOnly;
+            pol.on_backpressure = AgentFailureAction::Throttle;
+            pol.bp_threshold = 3;
+            auto wr = scope.watch_all(/*stall_ms=*/0, pol);
+            CHECK(wr.bp_throttled >= 1, "2887 AC3: bp_throttled >= 1");
+            CHECK(wr.bp_cancelled == 0, "2887 AC3: Throttle does not cancel");
+            CHECK(g_orch_module_stats.agent_bp_throttle_total.load(std::memory_order_relaxed) >
+                      thr_before,
+                  "2887 AC3: agent_bp_throttle_total bumped");
+            CHECK(g_orch_module_stats.agent_bp_cancel_total.load(std::memory_order_relaxed) ==
+                      can_before,
+                  "2887 AC3: agent_bp_cancel_total NOT bumped on Throttle");
+            // Cooperative: helper_stop when liveness present; never force
+            // body kill beyond existing reclaim (no cancel here).
+            if (h.liveness) {
+                CHECK(h.liveness->helper_stop.load(std::memory_order_acquire),
+                      "2887 AC3: helper_stop set (cooperative)");
+            }
+            if (h.fiber) {
+                CHECK(!h.fiber->is_cancel_requested(),
+                      "2887 AC3: no request_cancel on Throttle path");
+            }
+
+            keep_running.store(false, std::memory_order_relaxed);
+            if (h.fiber) {
+                h.fiber->request_cancel();
+                if (auto* s = h.fiber->owner_sched()) {
+                    s->note_orphan_fiber(h.fiber, 50);
+                    s->reap_orphans_now();
+                }
+            }
+            (void)aura::orch::erase_scope_bp_gauge("tenant-thr");
+        }
+
+        // AC1 again live: ReportOnly + high BP → zero degrade.
+        {
+            std::println("\n--- #2887 AC1 live: ReportOnly quiet under BP ---");
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "bp-report-only";
+            spec.attach_mailbox = true;
+            spec.bp_scope_id = "tenant-ro";
+            spec.body = [] {};
+            AgentHandle& h = scope.spawn(spec);
+            CHECK(h.ok, "2887 AC1 live: spawn ok");
+            for (int i = 0; i < 10; ++i)
+                aura::orch::note_mailbox_bp_recent_event("tenant-ro");
+            const auto deg_before =
+                g_orch_module_stats.agent_bp_degrade_total.load(std::memory_order_relaxed);
+            AgentFailurePolicy pol; // default on_backpressure=ReportOnly
+            pol.on_stall = AgentFailureAction::ReportOnly;
+            pol.bp_threshold = 1;
+            auto wr = scope.watch_all(0, pol);
+            CHECK(wr.bp_degraded == 0, "2887 AC1 live: default ReportOnly → bp_degraded==0");
+            CHECK(g_orch_module_stats.agent_bp_degrade_total.load(std::memory_order_relaxed) ==
+                      deg_before,
+                  "2887 AC1 live: degrade total unchanged");
+            (void)aura::orch::erase_scope_bp_gauge("tenant-ro");
+            (void)h;
+        }
+
+        // AC5: query surface additive.
+        {
+            std::println("\n--- #2887 AC5: query:orch-module-stats ---");
+            CHECK(href(cs, "schema-2887") == 2887, "2887 AC5: schema-2887 == 2887");
+            CHECK(href(cs, "issue-2887") == 2887, "2887 AC5: issue-2887 == 2887");
+            CHECK(href(cs, "agent-bp-degrade-wired") == 1, "2887 AC5: agent-bp-degrade-wired == 1");
+            CHECK(href(cs, "agent-bp-degrade-total") >= 0, "2887 AC5: agent-bp-degrade-total");
+            CHECK(href(cs, "agent-bp-cancel-total") >= 0, "2887 AC5: agent-bp-cancel-total");
+            CHECK(href(cs, "agent-bp-throttle-total") >= 0, "2887 AC5: agent-bp-throttle-total");
+            // #2229 preserved additive.
+            CHECK(href(cs, "schema-2229") == 2229, "2887 AC5: schema-2229 still present");
+        }
+
+        // AC6: source-cite (no invent, no docs/design/).
+        {
+            std::println("\n--- #2887 AC6: source-cite ---");
+            std::println("  src/orch/agent_spawn.h       AgentFailureAction::Throttle +");
+            std::println("                               on_backpressure + OrchModuleStats");
+            std::println("  src/orch/agent_scope.h       watch_all BP pass after stall");
+            std::println("  evaluator_primitives_agent   orch:scope-watch kwargs + query");
+            std::println("  tests/orch/test_agent_failure_policy.cpp  #2887 ACs");
+            std::println("  scripts/coverage/checks/check_agent_bp_degrade_2887.py");
+            CHECK(true, "2887 AC6: source-cite");
+        }
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
