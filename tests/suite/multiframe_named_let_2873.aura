@@ -1,0 +1,78 @@
+; Issue #2873 — multi-frame named-let past former early depth caps.
+;
+; Before #2871 TW TCO, pure named-let failed ~700 and multi-frame
+; (string-append + cons / kv-like) work-per-step failed ~200. Nested
+; recursive append-1 cache-put failed ~120. Also: named-let names that
+; collide with list prims (take/drop/map) used the prim fast-path and
+; never entered the loop (#2873 load-sim `let take`).
+(require "std/test" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+; AC1: pure named-let well past 700
+(display "AC1 pure named-let\n")
+(define (deep-add n)
+  (let loop ((i 0) (acc 0))
+    (if (>= i n) acc (loop (+ i 1) (+ acc 1)))))
+(assert! (= (deep-add 2000) 2000) "deep-add 2000")
+
+; AC2: multi-frame work per step (map-build / load-sim shape)
+(display "AC2 multi-frame string+cons\n")
+(define (deep-map n)
+  (let loop ((i 0) (s (quote ())))
+    (if (>= i n) (length s)
+      (loop (+ i 1)
+            (cons (string-append "k" (number->string i)) s)))))
+(assert! (= (deep-map 200) 200) "deep-map 200")
+(assert! (= (deep-map 2000) 2000) "deep-map 2000")
+
+; AC3: named-let name shadows list prim `take` (not prim fast-path)
+(display "AC3 named-let take shadows prim\n")
+(define take-rev
+  (let take ((ys (list 1 2 3)) (n 0) (out (quote ())))
+    (if (or (null? ys) (>= n 10)) out
+      (take (cdr ys) (+ n 1) (cons (car ys) out)))))
+(assert! (equal? take-rev (list 3 2 1)) "take-rev (3 2 1)")
+; bare prim still works
+(assert! (equal? (take 2 (list 9 8 7 6)) (list 9 8)) "prim take still works")
+
+; AC4: cache-put with append-1 + let take (issue Repro B)
+(display "AC4 cache-put fill with let take\n")
+(define (append-1 xs x)
+  (if (null? xs) (list x) (cons (car xs) (append-1 (cdr xs) x))))
+(define (cache-put cache k v cap)
+  (let* ((stripped
+           (let loop ((xs cache) (acc (quote ())))
+             (if (null? xs) acc
+               (let ((p (car xs)))
+                 (if (and (pair? p) (equal? (car p) k))
+                   (loop (cdr xs) acc)
+                   (loop (cdr xs) (append-1 acc p)))))))
+         (grown (cons (cons k v) stripped)))
+    (let take ((ys grown) (n 0) (out (quote ())))
+      (if (or (null? ys) (>= n cap)) out
+        (take (cdr ys) (+ n 1) (append-1 out (car ys)))))))
+(define (fill n)
+  (let loop ((i 0) (c (quote ())))
+    (if (>= i n) (length c)
+      (loop (+ i 1)
+            (cache-put c (string-append "k" (number->string i)) i 1000)))))
+(assert! (= (fill 50) 50) "fill 50")
+(assert! (= (fill 120) 120) "fill 120 (was early fail)")
+(assert! (= (fill 200) 200) "fill 200")
+
+(if (= *fails* 0)
+    (begin (display "OK-2873 multiframe named-let\n"))
+    (begin
+      (display "FAIL-2873 fails=")
+      (display *fails*)
+      (newline)
+      (error "2873 suite failed")))
