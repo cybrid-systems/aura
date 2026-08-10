@@ -55,13 +55,25 @@ def main() -> int:
 
     # ── AC1: helper defined + takes optional Evaluator* + returns HandoffRequired ─
     must("agent_send_safe", "AC1", agent_spawn)
-    must("struct Evaluator*", "AC1", agent_spawn)
+    # Opaque void* ABI with Evaluator* source-cite (no module import / no
+    # forward-decl that collides with evaluator module export).
+    must("Evaluator*", "AC1", agent_spawn)
+    must("void* ev", "AC1", agent_spawn)
     must("HandoffRequired", "AC1", agent_spawn)
     must("agent_send_safe_handoff_required_total", "AC1", agent_spawn)
     must("agent_send_safe_total", "AC1", agent_spawn)
-    # import aura.compiler.evaluator makes Evaluator visible to the inline
-    # body that calls make_stamped_ref + handoff_ref.
-    must("import aura.compiler.evaluator;", "AC1", agent_spawn)
+    # Handoff path via extern "C" hook (NOT import aura.compiler.evaluator in
+    # this header — that re-import broke evaluator_ctor.cpp asan ddi scan).
+    must("aura_orch_agent_send_handoff", "AC1", agent_spawn)
+    if "import aura.compiler.evaluator;" in agent_spawn:
+        fails.append(
+            "AC1: agent_spawn.h must not import aura.compiler.evaluator "
+            "(module already imported when included from evaluator_ctor.cpp)"
+        )
+    efm = _read("src/compiler/evaluator_fiber_mutation.cpp")
+    must("aura_orch_agent_send_handoff", "AC1", efm)
+    must("make_stamped_ref", "AC1", efm)
+    must("handoff_ref", "AC1", efm)
     # PushStatus::HandoffRequired enum value defined in multi_fiber_mailbox.h.
     must("HandoffRequired = 3", "AC1", mf_mailbox)
 

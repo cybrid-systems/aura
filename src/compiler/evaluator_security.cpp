@@ -20,6 +20,8 @@ module;
 #include "core/security_event.hh"     // #2075: shared SecurityEvent surface
 #include "core/security_event_wal.hh" // #2225: durable SecurityEvent side-car WAL
 #include "observability_metrics.h"
+// Issue #2883: resume_had_mismatch / g_current_fiber for hard principal deny.
+#include "serve/fiber.h"
 
 module aura.compiler.evaluator;
 
@@ -196,12 +198,14 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     // never flips the flag so the existing soft metric-only behaviour
     // is preserved.
     if (sandbox_mode_ != 0 || effect_sandbox_mode() != 0) {
-        if (auto* f = g_current_fiber) {
+        // Issue #2883: live TLS fiber (serve::g_current_fiber). Metric lives on
+        // CapabilityEffectMetrics (capability_model.hh), not CompilerMetrics.
+        if (auto* f = ::aura::serve::g_current_fiber) {
             if (f->resume_had_mismatch()) {
                 // Bump hard-deny counter distinct from mismatch-detected.
                 f->bump_fiber_principal_mismatch_hard_deny();
-                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                    m->capability_fiber_principal_mismatch_hard_deny_total.fetch_add(
+                g_capability_effect_metrics()
+                    .capability_fiber_principal_mismatch_hard_deny_total.fetch_add(
                         1, std::memory_order_relaxed);
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;
@@ -210,6 +214,9 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                                      ? provenance_mutation_id
                                      : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
                 const auto fid = static_cast<std::int64_t>(f->id());
+                // Tenant: prefer caller's tenant_id; fall back to evaluator ambient.
+                const auto tenant =
+                    tenant_id != 0 ? tenant_id : static_cast<std::uint64_t>(capability_tenant_id_);
                 // SE reason: 'fiber-principal-mismatch' (same shape as the
                 // resume-time SE so Agent dashboards chart a single reason).
                 emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,

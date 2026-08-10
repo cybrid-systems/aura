@@ -72,9 +72,11 @@ def main() -> int:
     must("mark_reclaimed_steady_clock_ns", "AC1", test_drain)
     must("mark_reclaimed", "AC1", test_drain)
     must("note_body_exit_if_reclaimed", "AC1", test_drain)
-    # Aura surface reads per-fiber state at join return.
-    must("h.fiber->still_running_after_reclaim_counted", "AC1", posture)
-    must("h.fiber->mark_reclaimed_steady_clock_ns", "AC1", posture)
+    # Aura surface reads per-fiber state at join return via name-table
+    # AgentHandle* (hp). Was incorrectly `h.fiber` in the original #2885
+    # commit (undefined); fixed to hp->fiber.
+    must("hp->fiber->still_running_after_reclaim_counted", "AC1", posture)
+    must("hp->fiber->mark_reclaimed_steady_clock_ns", "AC1", posture)
 
     # ── AC2: Ok / Timeout / Cancelled zero-cost (no new keys) ──
     # The new keys (still-running, reclaim-age-ms, deferred-cleanup,

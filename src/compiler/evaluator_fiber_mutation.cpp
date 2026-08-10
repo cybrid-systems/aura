@@ -2365,6 +2365,25 @@ namespace {
     }
 } // namespace
 
+// Issue #2884: agent_send_safe auto handoff_ref path. Lives here (not in
+// agent_spawn.h) so orch headers never import aura.compiler.evaluator —
+// that import broke evaluator_ctor.cpp ddi scan ("module already imported").
+extern "C" int aura_orch_agent_send_handoff(void* evaluator, std::uint64_t node_id,
+                                            std::uint64_t* out_token) noexcept {
+    if (!evaluator || !out_token)
+        return 0;
+    auto* ev = static_cast<Evaluator*>(evaluator);
+    // Issue #2839 / #2689 lineage: make_stamped_ref rehydrates the
+    // StableNodeRef (id + current workspace gen + fiber stamp) so
+    // handoff_ref has the right handle to re-export.
+    auto held = ev->make_stamped_ref(static_cast<ast::NodeId>(node_id));
+    auto out = ev->handoff_ref(std::move(held));
+    if (!out)
+        return 0;
+    *out_token = static_cast<std::uint64_t>(out->id);
+    return 1;
+}
+
 extern "C" int aura_orch_agent_body_try_acquire() {
     return aura_orch_agent_body_try_acquire_ex(/*register_soft_boundary=*/1);
 }
@@ -2623,8 +2642,8 @@ extern "C" void aura_fiber_release_tenant_scope_after_yield() noexcept {
     // fiber so a subsequent resume on a matching principal can run
     // side-effects without spurious deny from the previous resume's
     // mismatch state.
-    if (g_current_fiber)
-        g_current_fiber->set_resume_had_mismatch(false);
+    if (aura::serve::g_current_fiber)
+        aura::serve::g_current_fiber->set_resume_had_mismatch(false);
 }
 
 // Issue #2397: Fiber reclaim still-running / body-retired → OrchModuleStats.
