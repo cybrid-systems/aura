@@ -618,6 +618,154 @@ static void ac2839_6_linter_and_no_invent() {
     CHECK(!invent.good(), "2839 AC6: no test_issue_2839.cpp");
 }
 
+// ── #2881: residual NodeId-only workspace side-effect coverage ──
+// Issue #2881 forces require_effect_for_node_id coverage on all remaining
+// NodeId-only workspace side-effect prims. Expands the #2839 linter scope
+// by 6 prim files, adds 2 documented exempt 2-arg ops (git-commit,
+// deny_sys), and exposes the inventory via query:security-posture so
+// Agent dashboards can verify the residual coverage from observability.
+static void ac2881_1_residual_scope_expanded() {
+    std::println("\n--- #2881 AC1: residual scope expanded (6 new prim files) ---");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+    CHECK(!linter.empty() && linter.find("Issue #2881") != std::string::npos,
+          "2881 AC1: #2881 contract block in linter");
+    // 6 new prim files added to SCOPE_FILES for #2881 coverage.
+    const char* new_files[] = {
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        "src/compiler/evaluator_primitives_diagnostic.cpp",
+        "src/compiler/evaluator_primitives_memory.cpp",
+        "src/compiler/evaluator_primitives_module.cpp",
+        "src/compiler/evaluator_primitives_obs_jit.cpp",
+        "src/compiler/evaluator_primitives_json.cpp",
+    };
+    for (const auto* f : new_files) {
+        CHECK(linter.find(f) != std::string::npos,
+              std::string("2881 AC1: linter scope includes ") + f);
+        // Each file must exist on disk (no dangling scope entry).
+        std::ifstream disk(f);
+        if (!disk.good())
+            disk.open(std::string("../") + f);
+        CHECK(disk.good(), std::string("2881 AC1: scope file exists on disk: ") + f);
+    }
+}
+
+static void ac2881_2_residual_exempt_ops_documented() {
+    std::println("\n--- #2881 AC2: residual exempt ops documented (git-commit, deny_sys) ---");
+    const auto linter =
+        read_file("scripts/coverage/checks/check_side_effect_fiber_principal_2839.py");
+    const auto io_cpp = read_file("src/compiler/evaluator_primitives_io.cpp");
+    // 2 new EXEMPT_2ARG_OPS entries for #2881.
+    CHECK(linter.find("git-commit") != std::string::npos,
+          "2881 AC2: git-commit documented as non-workspace 2-arg exempt op");
+    CHECK(linter.find("deny_sys") != std::string::npos,
+          "2881 AC2: deny_sys documented as non-workspace 2-arg exempt op");
+    // Source-cite for both exempt ops must exist in io.cpp.
+    CHECK(io_cpp.find("git-commit") != std::string::npos,
+          "2881 AC2: git-commit site present in io.cpp");
+    CHECK(io_cpp.find("deny_sys") != std::string::npos,
+          "2881 AC2: deny_sys site present in io.cpp");
+    // 3 existing #2839 exempt ops must remain preserved.
+    CHECK(linter.find("write-file") != std::string::npos,
+          "2881 AC2: #2839 exempt write-file preserved");
+    CHECK(linter.find("mutation-log-compact") != std::string::npos,
+          "2881 AC2: #2839 exempt mutation-log-compact preserved");
+    CHECK(linter.find("security:check-effect") != std::string::npos,
+          "2881 AC2: #2839 exempt security:check-effect preserved");
+}
+
+static void ac2881_3_inventory_constants_wired() {
+    std::println("\n--- #2881 AC3: residual inventory constants wired + schema-2881 ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+    // 3 inventory constants are defined in the module interface
+    // (evaluator.ixx) so generic lambda template-body two-phase lookup
+    // can resolve them across all module TUs. Evaluator_security.cpp
+    // may carry a forward reference comment but the canonical
+    // definition is evaluator.ixx (export inline constexpr).
+    CHECK(ixx.find("kResidualNodeIdExemptOpsCount") != std::string::npos,
+          "2881 AC3: kResidualNodeIdExemptOpsCount defined in evaluator.ixx");
+    CHECK(ixx.find("kResidualNodeIdScopeFilesCount") != std::string::npos,
+          "2881 AC3: kResidualNodeIdScopeFilesCount defined in evaluator.ixx");
+    CHECK(ixx.find("kResidualNodeIdInventoryCount") != std::string::npos,
+          "2881 AC3: kResidualNodeIdInventoryCount defined in evaluator.ixx");
+    // Values must equal the actual inventory counts.
+    // Note: must match the declaration (e.g. "kResidualNodeIdExemptOpsCount = 5;")
+    // not the documentation comment that precedes it — search for the
+    // constant name + trailing " = " so we land on the actual assignment
+    // instead of the comment header.
+    const auto m_exempt = [&]() {
+        const auto p = ixx.find("kResidualNodeIdExemptOpsCount = ");
+        return p == std::string::npos ? std::string{} : ixx.substr(p, 60);
+    }();
+    const auto m_scope = [&]() {
+        const auto p = ixx.find("kResidualNodeIdScopeFilesCount = ");
+        return p == std::string::npos ? std::string{} : ixx.substr(p, 60);
+    }();
+    const auto m_inv = [&]() {
+        const auto p = ixx.find("kResidualNodeIdInventoryCount = ");
+        return p == std::string::npos ? std::string{} : ixx.substr(p, 60);
+    }();
+    CHECK(m_exempt.find("= 5") != std::string::npos,
+          "2881 AC3: kResidualNodeIdExemptOpsCount = 5 (3 #2839 + 2 #2881)");
+    CHECK(m_scope.find("= 17") != std::string::npos,
+          "2881 AC3: kResidualNodeIdScopeFilesCount = 17 (11 #2839 + 6 #2881)");
+    CHECK(m_inv.find("= 22") != std::string::npos,
+          "2881 AC3: kResidualNodeIdInventoryCount = 22 (5 exempt + 17 scope)");
+    // Schema-2881 exposed in posture prim (query:security-posture / side-effect-stats).
+    CHECK(posture.find("schema-2881") != std::string::npos,
+          "2881 AC3: schema-2881 field in posture prim");
+    CHECK(posture.find("issue-2881") != std::string::npos,
+          "2881 AC3: issue-2881 field in posture prim");
+    CHECK(posture.find("residual-node-id-side-effect-coverage-wired") != std::string::npos,
+          "2881 AC3: residual coverage wired field");
+    CHECK(posture.find("residual-node-id-exempt-ops-count") != std::string::npos,
+          "2881 AC3: residual exempt-ops-count field");
+    CHECK(posture.find("residual-node-id-scope-files-count") != std::string::npos,
+          "2881 AC3: residual scope-files-count field");
+    CHECK(posture.find("residual-node-id-inventory-count") != std::string::npos,
+          "2881 AC3: residual inventory-count field");
+}
+
+static void ac2881_4_cross_source_cite() {
+    std::println("\n--- #2881 AC4: cross-source-cite #2881 ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+    const auto compile = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    // #2881 source-cite must appear in all three lineage TUs.
+    CHECK(sec.find("Issue #2881") != std::string::npos,
+          "2881 AC4: evaluator_security.cpp cites Issue #2881");
+    CHECK(posture.find("#2881") != std::string::npos,
+          "2881 AC4: evaluator_primitives_security.cpp cites #2881");
+    CHECK(compile.find("#2881") != std::string::npos,
+          "2881 AC4: evaluator_primitives_compile.cpp cites #2881 (lineage preserved)");
+}
+
+static void ac2881_5_linter_self_test_and_no_invent() {
+    std::println("\n--- #2881 AC5: linter self-test + no invent + no docs/design ---");
+    // build.py still wires the linter.
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_side_effect_fiber_principal_2839") != std::string::npos,
+          "2881 AC5: build.py wires #2839 linter (covers #2881 ACs)");
+    // No new test_issue_2881.cpp (lineage goes through existing
+    // test_require_effect_auto_isolation.cpp per #81967).
+    std::ifstream invent("tests/compiler/test_issue_2881.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_2881.cpp");
+    CHECK(!invent.good(), "2881 AC5: no test_issue_2881.cpp (forbidden per #81967)");
+    // No docs/design/2881-* (per #1655 — agent repo, no design docs).
+    const std::filesystem::path docs_design = "docs/design";
+    std::error_code ec;
+    if (std::filesystem::is_directory(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("2881-") == std::string::npos,
+                  std::string("2881 AC5: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_require_effect_auto_isolation() {
@@ -648,6 +796,12 @@ int run_test_require_effect_auto_isolation() {
     ac2839_1_node_id_helper_and_inventory();
     ac2839_2_for_node_id_restricted_unset_denies();
     ac2839_6_linter_and_no_invent();
+    std::println("\n=== Issue #2881: residual NodeId-only workspace coverage ===");
+    ac2881_1_residual_scope_expanded();
+    ac2881_2_residual_exempt_ops_documented();
+    ac2881_3_inventory_constants_wired();
+    ac2881_4_cross_source_cite();
+    ac2881_5_linter_self_test_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

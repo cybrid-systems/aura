@@ -372,6 +372,16 @@ bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view o
 // this over 2-arg require_effect when the op mutates a concrete NodeId.
 // Exempt: non-workspace side effects (file/io/network) remain 2-arg with
 // documented rationale in the coverage linter inventory.
+//
+// Issue #2881: residual NodeId-only workspace side-effect coverage. Every
+// prim that mutates a concrete NodeId must go through this helper (or
+// require_effect_on_ref with a stamped ref). Bare 2-arg require_effect is
+// only allowed for non-workspace ops (file/io/network/exec with no NodeId
+// target). The coverage linter inventory lives in
+// scripts/coverage/checks/check_side_effect_fiber_principal_2839.py and
+// tracks both exempt ops and per-file scope. New mutating prims MUST use
+// this helper; refactor sites that hit the late-isolation-deny window are
+// not allowed after #2881.
 bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_view op,
                                            ast::NodeId node_id) noexcept {
     // make_stamped_ref stamps capability_tenant_id_ + fiber so ref_tenant
