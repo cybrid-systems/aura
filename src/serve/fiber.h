@@ -830,6 +830,21 @@ public:
     // Issue #2397: body returned after reclaimed — still-running −1,
     // body-retired +1. Safe to call when not reclaimed (no-op).
     void note_body_exit_if_reclaimed() noexcept;
+    // Issue #2885: per-Fiber still-running flag (true between
+    // mark_reclaimed and body-retired). Set in mark_reclaimed (per
+    // #2636 sample-window protocol), cleared in body-exit. Read by the
+    // Aura (orch:agent-join) hash to surface still-running=1 while the
+    // body is alive under hard-reclaim.
+    [[nodiscard]] bool still_running_after_reclaim_counted() const noexcept {
+        return still_running_after_reclaim_counted_.load(std::memory_order_acquire);
+    }
+    // Issue #2885: per-Fiber reclaim timestamp (steady_clock ns at
+    // mark_reclaimed, 0 if not reclaimed). Read by the Aura
+    // (orch:agent-join) hash to surface reclaim-age-ms = best-effort
+    // from mark_reclaimed → now.
+    [[nodiscard]] std::int64_t mark_reclaimed_steady_clock_ns() const noexcept {
+        return mark_reclaimed_steady_clock_ns_.load(std::memory_order_acquire);
+    }
 
     // Process-wide join metrics (#1584 / #1595).
     [[nodiscard]] static std::uint64_t join_total() noexcept;
