@@ -1490,7 +1490,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_string_heap_corruption_guard.cpp` (—) [domain_suite, theme_compiler] — AC1: concurrent hash-set! with string keys (stats-bump class) no crash
 - `tests/core/test_structural_metadata_lock_order.cpp` (—) [domain_suite, theme_core] — AC1: documented order + CombinedStructuralMetadataWriteGuard
 - `tests/compiler/test_tcp_listen_accept.cpp` (—) [domain_suite, theme_compiler] — membership per #81967 (no test_issue_2771.cpp).
-- `tests/compiler/test_tenant_scope_fiber_mandate.cpp` (—) [domain_suite, theme_compiler] — AC1: Fiber with assigned_tenant_id=42 → body capability_tenant_id()
+- `tests/compiler/test_tenant_scope_fiber_mandate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Fiber with assigned_tenant_id=42 → body capability_tenant_id()
 - `tests/core/test_transaction_guard.cpp` (—) [domain_suite, theme_core] — AC1: Scaffold simulation removed; host try_acquire/release required
 - `tests/compiler/test_type_freshness_steal_densify.cpp` (—) [domain_suite, theme_compiler] — AC1: Steal success + old-epoch goals → stale_vs_epoch(new)==0 after fence
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
@@ -1504,7 +1504,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (23)
 
-- `tests/core/test_capability_single_use_consume.cpp` (—) [domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
+- `tests/core/test_capability_single_use_consume.cpp` (—) [large, domain_suite, theme_core] — tests/core/test_capability_single_use_consume.cpp
 - `tests/compiler/test_commit_readiness_score.cpp` (—) [domain_suite, theme_compiler] — AC1: Clean SOLVED + linear + blame + !trunc → bp=10000, ok, allow
 - `tests/compiler/test_compiler_service_ownership.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1837/#1839 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_densify_last_call_axes.cpp` (—) [domain_suite, theme_compiler] — for envframe + closure remount axes (seal #2361/#2365 last-call contract).
