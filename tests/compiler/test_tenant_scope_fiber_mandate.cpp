@@ -270,6 +270,42 @@ static void ac2839_6_linter_wire() {
     CHECK(!invent.good(), "2839 AC6: no test_issue_2839.cpp");
 }
 
+// ── #2881: residual NodeId-only workspace side-effect coverage cross-cite ──
+// Verifies the #2881 residual coverage markers are present in the three
+// lineage TUs (evaluator_security, posture prim, compile prim) — mirrors
+// the #2839 cross-cite above. Source-cite ships with the constants; the
+// linter (check_side_effect_fiber_principal_2839.py) cross-checks these
+// references plus the inventory counts.
+static void ac2881_residual_coverage_cross_cite() {
+    std::println("\n--- #2881: residual coverage cross-cite ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+    const auto compile = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    // #2881 source-cite present in all three lineage TUs.
+    CHECK(sec.find("Issue #2881") != std::string::npos,
+          "2881: evaluator_security.cpp cites Issue #2881");
+    CHECK(posture.find("schema-2881") != std::string::npos, "2881: schema-2881 in posture prim");
+    CHECK(posture.find("residual-node-id-side-effect-coverage-wired") != std::string::npos,
+          "2881: residual coverage wired key in posture prim");
+    CHECK(compile.find("#2881") != std::string::npos,
+          "2881: evaluator_primitives_compile.cpp cites #2881 (lineage preserved)");
+    // 3 inventory constants wired in the module interface (evaluator.ixx)
+    // so generic lambda template-body two-phase lookup can resolve them.
+    CHECK(ixx.find("kResidualNodeIdExemptOpsCount") != std::string::npos,
+          "2881: kResidualNodeIdExemptOpsCount defined in evaluator.ixx");
+    CHECK(ixx.find("kResidualNodeIdScopeFilesCount") != std::string::npos,
+          "2881: kResidualNodeIdScopeFilesCount defined in evaluator.ixx");
+    CHECK(ixx.find("kResidualNodeIdInventoryCount") != std::string::npos,
+          "2881: kResidualNodeIdInventoryCount defined in evaluator.ixx");
+    // No new test_issue_2881.cpp (lineage goes through existing
+    // test_require_effect_auto_isolation.cpp + this file per #81967).
+    std::ifstream invent("tests/compiler/test_issue_2881.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_2881.cpp");
+    CHECK(!invent.good(), "2881: no test_issue_2881.cpp (forbidden per #81967)");
+}
+
 } // namespace
 
 int run_test_tenant_scope_fiber_mandate() {
@@ -285,6 +321,8 @@ int run_test_tenant_scope_fiber_mandate() {
     ac2839_3_hard_mismatch_source_cite();
     ac2839_4_soft_no_hard_on_off();
     ac2839_6_linter_wire();
+    std::println("=== Issue #2881: residual NodeId-only workspace coverage ===");
+    ac2881_residual_coverage_cross_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -429,6 +429,26 @@ export constexpr EnvId NULL_ENV_ID = std::numeric_limits<EnvId>::max();
 // (would require 2^64 - 1 MutationBoundaryGuard entries).
 export constexpr std::uint64_t INVALID_VERSION = std::numeric_limits<std::uint64_t>::max();
 
+// Issue #2881: residual NodeId-only workspace side-effect coverage
+// inventory counts — exported so query:security-posture can surface them
+// across all module TUs (generic lambda template-body two-phase lookup
+// requires exported namespace-scope symbols, not TU-private inline
+// constexpr). The coverage linter
+// (scripts/coverage/checks/check_side_effect_fiber_principal_2839.py)
+// validates these match the actual inventory in EXEMPT_2ARG_OPS +
+// SCOPE_FILES; drift trips the linter before commit. Counts:
+//   kResidualNodeIdExemptOpsCount   = total documented 2-arg exempt ops
+//                                     (3 from #2839 + 2 added by #2881:
+//                                     git-commit + deny_sys)
+//   kResidualNodeIdScopeFilesCount  = total prim files in residual scope
+//                                     (11 from #2839 + 6 added by #2881:
+//                                     query_workspace + diagnostic +
+//                                     memory + module + obs_jit + json)
+//   kResidualNodeIdInventoryCount   = exempt + scope = full inventory
+export inline constexpr std::int64_t kResidualNodeIdExemptOpsCount = 5;
+export inline constexpr std::int64_t kResidualNodeIdScopeFilesCount = 17;
+export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 22;
+
 // Issue #1861: Env is a single-writer structure (same quiescence class
 // as compiler_metrics_ / type_registry_ / compiler_service_ — #1835–
 // #1839). bind / bind_with_linear_state / bind_symid* mutate

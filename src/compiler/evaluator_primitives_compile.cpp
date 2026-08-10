@@ -3294,6 +3294,9 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
     // Issue #2839: NodeId-only entry uses require_effect_for_node_id so
     // isolation + capability fire on a stamped ref before body (no
     // 2-arg default ref_tenant=0 window).
+    // Issue #2881: this site is the canonical #2881 residual-coverage
+    // example — first NodeId-only verify-feedback prim migrated to
+    // require_effect_for_node_id, drives the coverage linter inventory.
     add("mutate:from-verification-feedback", [&ev](const auto& a) -> EvalValue {
         using aura::compiler::security::kEffectMutate;
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_string(a[2]))

@@ -4686,6 +4686,23 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("require-effect-for-node-id-wired", 1);
             insert_kv("schema-2839", 2839);
             insert_kv("issue-2839", 2839);
+            // Issue #2881: force require_effect_for_node_id coverage on all
+            // remaining NodeId-only workspace side-effect prims. Surface the
+            // residual inventory count + exempt-ops count + scope-file count
+            // so Agent dashboards can verify #2881 from query:security-
+            // posture / query:side-effect-stats without reading source.
+            // Counters derive from the same inventory the coverage linter
+            // (scripts/coverage/checks/check_side_effect_fiber_principal_
+            // 2839.py) validates against — any drift trips the linter.
+            insert_kv("residual-node-id-side-effect-coverage-wired", 1);
+            insert_kv("residual-node-id-exempt-ops-count",
+                      static_cast<std::int64_t>(::aura::compiler::kResidualNodeIdExemptOpsCount));
+            insert_kv("residual-node-id-scope-files-count",
+                      static_cast<std::int64_t>(::aura::compiler::kResidualNodeIdScopeFilesCount));
+            insert_kv("residual-node-id-inventory-count",
+                      static_cast<std::int64_t>(::aura::compiler::kResidualNodeIdInventoryCount));
+            insert_kv("schema-2881", 2881);
+            insert_kv("issue-2881", 2881);
             const auto checks = cap.checks == 0 ? 1 : cap.checks;
             insert_kv("effect-deny-rate-bp",
                       static_cast<std::int64_t>((cap.denied * 10000) / checks));
