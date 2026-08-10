@@ -150,6 +150,10 @@
        "=== std/agent (require \"std/agent\" all:) ===\n(my-id)                   -> str     Current session ID\n(session-active? id)   -> bool    Check if session exists\n(mailbox-count)        -> int     Messages in mailbox\n(send target msg)      -> bool    Send message to agent\n(recv)                 -> msg | () Receive message (non-blocking)\n(recv-timeout sec)     -> msg | () Receive with timeout\n")
       ((string=? mod "std/ant")
        "=== std/ant (require \"std/ant\" all:) ===\n(pheromone:init)           -> void  Initialize pheromone system\n(pheromone:update k v)    -> void  Update pheromone trail\n(pheromone:rank)          -> list  Ranked pheromone trails\n(pheromone:score k)       -> num   Score for key\n(colony:search expected limit) -> (#t output msg) | (#f \"...\")\n   Locally mutate workspace and test against expected output.\n")
+      ((string=? mod "std/swarm")
+       "=== std/swarm (require \"std/swarm\" all:) ===  Issue #2874\n(swarm:init opts-hash)    -> kind   opts: kind grid|pso|ant, dim, pop, bounds, parallel, seed\n(swarm:step! fitness-fn)  -> gen    fitness: individual(list nums)->number (higher better)\n(swarm:best)              -> ind    best individual so far\n(swarm:report)            -> hash   gen, best-fit, diversity, kind\n(swarm:export)            -> string JSON-ish journal line\n(swarm:parallel! flag)    -> bool   flat fiber fitness fanout (no join-in-worker)\n(swarm:help)              -> string\n")
+      ((string=? mod "std/pso")
+       "=== std/pso (require \"std/pso\" all:) ===  Issue #2874\n(pso:init dim pop bounds) -> kind   thin surface over swarm kind:pso\n(pso:step! fitness-fn)    -> gen\n(pso:best) (pso:report) (pso:export) (pso:help)\n")
       ((string=? mod "std/maybe")
        "=== std/maybe (require \"std/maybe\" all:) ===\n(make-some val)          -> (some val)  Wrapper for Maybe values\n(make-none)              -> (none)  Nothing wrapper\n(maybe? x)               -> bool   Check if Maybe value\n(from-maybe default mb)  -> val    Unwrap or default\n")
       ((string=? mod "std/data")
@@ -165,7 +169,8 @@
   (let* ((all-mods (list "core" "std/hash" "std/list" "std/iter" "std/json"
                          "std/llm" "std/socket" "std/string" "std/math"
                          "std/vector-math" "std/rule" "std/pipeline"
-                         "std/agent" "std/ant" "std/maybe" "std/data"))
+                         "std/agent" "std/ant" "std/swarm" "std/pso"
+                         "std/maybe" "std/data"))
          (ref (get-api-ref all-mods)))
     ref))
 (define pid:analyze

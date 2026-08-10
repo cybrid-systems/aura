@@ -1,0 +1,75 @@
+; Issue #2874 — pluggable swarm intelligence (grid + pso + ant)
+;
+; Pure fitness: maximize -||x||^2 (sphere). No network.
+(require "std/test" all:)
+(require "std/swarm" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (sphere ind)
+  (let loop ((xs ind) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (l2 ind)
+  (let loop ((xs ind) (s 0.0))
+    (if (null? xs) s
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+; AC1: grid backend improves toward origin
+(display "AC1 grid sphere\n")
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 10
+                  "bounds" (list (list -2.0 2.0)) "seed" 11))
+(let loop ((i 0))
+  (if (>= i 12) #t (begin (swarm:step! sphere) (loop (+ i 1)))))
+(assert! (= (swarm:gen) 12) "grid gen=12")
+(assert! (< (l2 (swarm:best)) 0.25) "grid best near 0")
+(assert! (string? (swarm:export)) "grid export string")
+
+; AC2: pso backend
+(display "AC2 pso sphere\n")
+(swarm:init (hash "kind" "pso" "dim" 2 "pop" 12
+                  "bounds" (list (list -2.0 2.0) (list -2.0 2.0))
+                  "seed" 22))
+(let loop ((i 0))
+  (if (>= i 20) #t (begin (swarm:step! sphere) (loop (+ i 1)))))
+(assert! (string=? (swarm:kind) "pso") "kind pso")
+(assert! (< (l2 (swarm:best)) 0.5) "pso best near 0")
+
+; AC3: ant backend (std/ant pheromone bridge)
+(display "AC3 ant sphere\n")
+(swarm:init (hash "kind" "ant" "dim" 1 "pop" 10
+                  "bounds" (list (list -2.0 2.0))
+                  "seed" 33 "bins" 8))
+(let loop ((i 0))
+  (if (>= i 15) #t (begin (swarm:step! sphere) (loop (+ i 1)))))
+(assert! (string=? (swarm:kind) "ant") "kind ant")
+(assert! (< (l2 (swarm:best)) 1.0) "ant best in bounds near 0")
+
+; AC4: optional parallel fitness (flat join)
+(display "AC4 parallel grid\n")
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 6
+                  "bounds" (list (list -1.0 1.0))
+                  "seed" 44 "parallel" #t))
+(swarm:step! sphere)
+(assert! (hash-ref (swarm:report) "parallel") "parallel flag")
+(assert! (number? (hash-ref (swarm:report) "best-fit")) "parallel best-fit")
+
+; AC5: help surface
+(assert! (not (= (string-index (swarm:help) "2874" 0) -1)) "help mentions 2874")
+
+(if (= *fails* 0)
+    (begin (display "OK-2874 swarm\n"))
+    (begin
+      (display "FAIL-2874 fails=")
+      (display *fails*)
+      (newline)
+      (error "2874 suite failed")))

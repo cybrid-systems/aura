@@ -55,6 +55,13 @@
     (list "agent"
       (list "EDSL closed-loop auto-grow + decision-metrics (#1460)"
             "(auto-grow \"task\" :source \"(define (f x) x)\" :rebind \"f\" \"(lambda (x) (* x 2))\")"))
+    ; Issue #2874: pluggable swarm intelligence (grid|pso|ant) next to std/ant
+    (list "swarm"
+      (list "Pluggable swarm search: grid / pso / ant backends + flat fiber fitness"
+            "(require \"std/swarm\" all:)(swarm:init (hash \"kind\" \"pso\" \"dim\" 2 \"pop\" 12))"))
+    (list "pso"
+      (list "Particle swarm surface (std/swarm kind:pso)"
+            "(require \"std/pso\" all:)(pso:init 2 12 (list (list -1.0 1.0) (list -1.0 1.0)))"))
     (list "algorithm"
       (list "Algorithm utilities (sort, group, partition)"
             "(partition (lambda (x) (> x 0)) (list -1 2 -3))"))
