@@ -1851,6 +1851,23 @@ def cmd_lint():
             "Issue #2885 join cleanup report linter failed — run python3 scripts/coverage/checks/check_join_cleanup_report_2885.py"
         )
         return r
+    # Issue #2886: region-concurrent promoted as recommended multi-agent
+    # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
+    # value ("region-concurrent") when ≥2 distinct region_keys are
+    # supplied + per-batch force-lock-applied mirror (#2838 preserved).
+    # Default :pure #f remains serialized (regression #2081). Extends
+    # test_parallel_intend_pure_contract.cpp (#81967); no docs/design/
+    # (#1655).
+    pir_script = COVERAGE_CHECKS / "check_parallel_intend_region_concurrent_2886.py"
+    if not pir_script.exists():
+        fail(f"missing {pir_script}")
+        return 1
+    r = run([sys.executable, str(pir_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2886 parallel_intend region-concurrent linter failed — run python3 scripts/coverage/checks/check_parallel_intend_region_concurrent_2886.py"
+        )
+        return r
     # Issue #2840: GeneralObjectPin required densify fail-closed residual
     # (#2597/#2665: pref locked but callers void-cast wire + densify
     # unguarded). Sticky breach + Moving gate + required-fail callers.
