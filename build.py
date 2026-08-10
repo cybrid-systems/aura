@@ -965,6 +965,16 @@ def cmd_lint():
     if r != 0:
         fail("Issue #2879 boids linter failed — run python3 scripts/coverage/checks/check_boids_2879.py")
         return r
+    # Issue #2880: std/fss fish school search (feeding + volitive)
+    # Suite fss_2880.aura + docs/stdlib/fss.md per #81967.
+    fss_script = COVERAGE_CHECKS / "check_fss_2880.py"
+    if not fss_script.exists():
+        fail(f"missing {fss_script}")
+        return 1
+    r = run([sys.executable, str(fss_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #2880 fss linter failed — run python3 scripts/coverage/checks/check_fss_2880.py")
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +
