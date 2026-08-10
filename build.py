@@ -875,6 +875,19 @@ def cmd_lint():
             "Issue #2871 named-let TCO linter failed — run python3 scripts/coverage/checks/check_named_let_tco_2871.py"
         )
         return r
+    # Issue #2872: define RHS failure must not leave void/stale binding.
+    # Non-lambda eval-then-bind; Lambda pre-bind + unbind rollback; multi-define
+    # rolls back still-void cells. Suite define_rhs_fail_bind_2872.aura.
+    drfb_script = COVERAGE_CHECKS / "check_define_rhs_fail_bind_2872.py"
+    if not drfb_script.exists():
+        fail(f"missing {drfb_script}")
+        return 1
+    r = run([sys.executable, str(drfb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2872 define RHS fail bind linter failed — run python3 scripts/coverage/checks/check_define_rhs_fail_bind_2872.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +

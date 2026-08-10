@@ -502,6 +502,12 @@ public:
     // Issue #1539: bind with linear ownership state (defaults via bind_symid = Untracked).
     void bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, std::uint8_t state);
     void bind_with_linear_state(std::string_view n, types::EvalValue v, std::uint8_t state);
+    // Issue #2872: remove most-recent local binding for name (and dual SymId
+    // mirror). Used to roll back a define that pre-bound a void cell then
+    // failed on RHS (depth overflow / error) so the name is unbound — not a
+    // silent void or stale alias — and siblings stay intact.
+    bool unbind_local(std::string_view n);
+    bool unbind_local_symid(aura::ast::SymId s);
     aura::core::VoidResult set_linear_ownership_state(aura::ast::SymId s, std::uint8_t state);
     aura::core::VoidResult set_linear_ownership_state_by_name(std::string_view n,
                                                               std::uint8_t state);
