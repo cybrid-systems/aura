@@ -683,6 +683,29 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(snap.capability_single_use_consumed));
                 insert_kv("capability-single-use-consumed-wired", 1);
             }
+            // Issue #2882: production default single-use for high-risk
+            // grants (Mutate | MacroSelfEvo | TenantAdmin | Syscall) under
+            // Restricted/Strict. Default `grant_effect_capability` surface
+            // force-promotes high-risk grants to single_use=true; explicit
+            // `grant_effect_durable` admin path stays sticky (audited via
+            // capability_durable_high_risk_grant counter).
+            {
+                using aura::compiler::security::kEffectMacroSelfEvo;
+                using aura::compiler::security::kEffectMutate;
+                using aura::compiler::security::kEffectSyscall;
+                using aura::compiler::security::kEffectTenantAdmin;
+                constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
+                    kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+                insert_kv("schema-2882", 2882);
+                insert_kv("issue-2882", 2882);
+                insert_kv("production-default-single-use-wired", 1);
+                insert_kv("high-risk-default-single-use-mask",
+                          static_cast<std::int64_t>(kHighRiskMask));
+                insert_kv("capability-high-risk-forced-single-use-total",
+                          static_cast<std::int64_t>(snap.capability_high_risk_forced_single_use));
+                insert_kv("capability-durable-high-risk-grant-total",
+                          static_cast<std::int64_t>(snap.capability_durable_high_risk_grant));
+            }
             // Issue #2152: dispatch-level non-bypassable required_effects
             {
                 using aura::compiler::kDispatchRequiredEffectsIssue;

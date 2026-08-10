@@ -6083,6 +6083,14 @@ public:
                                  std::uint16_t effect_bits,
                                  std::uint64_t provenance_mutation_id = 0,
                                  bool single_use = false) noexcept;
+    // Issue #2882: explicit durable admin path. Bypasses the production-
+    // default single-use override for high-risk effects (Mutate /
+    // MacroSelfEvo / TenantAdmin / Syscall) and bumps the durable override
+    // counter (capability_durable_high_risk_grant_total) for audit. Use
+    // only when a privilege-sticky long-lived grant is intentional.
+    void grant_effect_durable(std::uint64_t tenant_id, std::string_view name,
+                              std::uint16_t effect_bits,
+                              std::uint64_t provenance_mutation_id = 0) noexcept;
     // Issue #2055: revoke with WorkspaceEpoch Mutation stamp for audit.
     void revoke_effect_capability(std::uint64_t tenant_id, std::string_view name) noexcept;
     void set_effect_sandbox_mode(std::uint8_t mode) noexcept; // 0 Off, 1 Restricted, 2 Strict

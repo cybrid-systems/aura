@@ -207,6 +207,14 @@ struct CapabilityEffectMetrics {
     // capability_revoke_total for histogram breakdown of revoke reasons —
     // auto-revoke vs operator-revoke).
     std::atomic<std::uint64_t> capability_single_use_consumed_total{0};
+    // Issue #2882: production default single-use overrides for high-risk
+    // (Mutate / MacroSelfEvo / TenantAdmin / Syscall) under Restricted/Strict.
+    // Counts (a) forced single_use on the default `grant_effect_capability`
+    // surface and (b) explicit `grant_effect_durable` admin overrides —
+    // Agent dashboards chart privilege-sticky risk separately from the
+    // common-case auto-revoke path (#2586).
+    std::atomic<std::uint64_t> capability_high_risk_forced_single_use_total{0};
+    std::atomic<std::uint64_t> capability_durable_high_risk_grant_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -989,6 +997,10 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_fiber_hard_deny_total.store(0, std::memory_order_relaxed);
     m.capability_grant_epoch_window_advance_total.store(0, std::memory_order_relaxed);
     m.capability_single_use_consumed_total.store(0, std::memory_order_relaxed); // #2586
+    // Issue #2882: reset production-default single-use override counters
+    // (forced-on + durable admin overrides).
+    m.capability_high_risk_forced_single_use_total.store(0, std::memory_order_relaxed);
+    m.capability_durable_high_risk_grant_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -1027,6 +1039,10 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t grant_epoch_window_advance = 0;
     // Issue #2586
     std::uint64_t capability_single_use_consumed = 0;
+    // Issue #2882: production default single-use overrides for high-risk
+    // (Mutate / MacroSelfEvo / TenantAdmin / Syscall) under Restricted/Strict.
+    std::uint64_t capability_high_risk_forced_single_use = 0;
+    std::uint64_t capability_durable_high_risk_grant = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -1075,6 +1091,11 @@ struct CapabilityEffectStatsSnapshot {
             m.capability_grant_epoch_window_advance_total.load(std::memory_order_acquire);
         s.capability_single_use_consumed =
             m.capability_single_use_consumed_total.load(std::memory_order_acquire); // #2586
+        // Issue #2882: production default single-use override counters.
+        s.capability_high_risk_forced_single_use =
+            m.capability_high_risk_forced_single_use_total.load(std::memory_order_acquire);
+        s.capability_durable_high_risk_grant =
+            m.capability_durable_high_risk_grant_total.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&

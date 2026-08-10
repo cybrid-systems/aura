@@ -29,24 +29,36 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
+import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerService;
+using aura::compiler::security::kEffectMacroSelfEvo;
+using aura::compiler::security::kEffectMutate;
+using aura::compiler::security::kEffectSyscall;
+using aura::compiler::security::kEffectTenantAdmin;
 using aura::core::capability::check_and_record_effect;
 using aura::core::capability::Effect;
 using aura::core::capability::EffectProvenance;
 using aura::core::capability::EffectSandboxMode;
+using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::capability::snapshot_capability_effect_stats;
@@ -58,6 +70,18 @@ using aura::core::security_event::reset_security_event_ring_for_test;
 using aura::core::security_event::SecurityEvent;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Helper for AC6 source-cite checks (test path + ../ test path).
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (in)
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 
 // Walk back through the SE ring looking for an event whose reason matches
 // `needle`. Bounded lookback so wrap storms don't scan forever. Returns the
@@ -288,6 +312,204 @@ int run_test_capability_single_use_consume() {
         std::println("  - tests/core/test_capability_single_use_consume.cpp (this file).");
         std::println("  - no docs/design/ (per #1655 #1485 ship philosophy).");
         CHECK(true, "AC6: source-cite listed above (no docs/design)");
+    }
+
+    // ── #2882 AC1: production default forces single_use for high-risk ───────────
+    {
+        std::println("\n--- #2882 AC1: production default single-use for high-risk ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+        // Use the production default surface (grant_effect_capability with
+        // single_use=false default). Under Restricted + Mutate, the force
+        // logic must promote single_use=true — first allow consumes, second
+        // denies with the existing #2586 'single-use-consumed' reason.
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+        const auto epoch_before =
+            g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+        // Call the production default API with single_use=false (the default).
+        ev.grant_effect_capability(/*tenant=*/7, "mut-2882-default", kEffectMutate, /*mid=*/1,
+                                   /*single_use=*/false);
+        const auto epoch_after =
+            g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+        CHECK(epoch_after == epoch_before + 1,
+              "AC1: capability_high_risk_forced_single_use_total bumps under Restricted");
+
+        // 1st allow — Mutate bit satisfied by the grant.
+        const bool ok1 = check_and_record_effect(Effect::Mutate, Effect::Mutate, EffectProvenance{},
+                                                 /*tenant=*/7, "2882-default-1");
+        CHECK(ok1, "AC1: 1st allow under production default high-risk grant");
+
+        // 2nd deny — single_use consumed by 1st allow.
+        const bool ok2 = check_and_record_effect(Effect::Mutate, Effect::Mutate, EffectProvenance{},
+                                                 /*tenant=*/7, "2882-default-2");
+        CHECK(!ok2, "AC1: 2nd deny (forced single_use consumed)");
+    }
+
+    // ── #2882 AC2: explicit grant_effect_durable admin path bypasses force ──────
+    {
+        std::println("\n--- #2882 AC2: explicit grant_effect_durable admin path ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(8);
+
+        const auto durable_before =
+            g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+        const auto forced_before =
+            g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+
+        // grant_effect_durable MUST bypass the force and stay single_use=false.
+        ev.grant_effect_durable(/*tenant=*/8, "mut-2882-durable", kEffectMutate, /*mid=*/2);
+
+        const auto durable_after =
+            g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+        const auto forced_after =
+            g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+        CHECK(durable_after == durable_before + 1,
+              "AC2: capability_durable_high_risk_grant_total bumps for high-risk durable override");
+        CHECK(forced_after == forced_before,
+              "AC2: capability_high_risk_forced_single_use_total NOT bumped by durable override");
+
+        // Multiple allows — durable grants stay sticky.
+        for (int i = 0; i < 3; ++i) {
+            const std::string op = "2882-durable-" + std::to_string(i);
+            const bool ok = check_and_record_effect(Effect::Mutate, Effect::Mutate,
+                                                    EffectProvenance{}, /*tenant=*/8, op);
+            CHECK(ok,
+                  std::string("AC2: durable admin grant 3x allow (run ") + std::to_string(i) + ")");
+        }
+        const auto snap = snapshot_capability_effect_stats();
+        CHECK(snap.capability_single_use_consumed == 0,
+              "AC2: durable admin grant bypasses single_use (consumed=0)");
+    }
+
+    // ── #2882 AC3: Off / Soft path no force applied ───────────────────────────────
+    {
+        std::println("\n--- #2882 AC3: Off / Soft path no force ---");
+        reset_all();
+        set_mode(SandboxMode::Off);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0); // Off
+        ev.set_capability_tenant_id(9);
+
+        const auto forced_before =
+            g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+
+        // Under Off, the production default surface must NOT force single_use.
+        ev.grant_effect_capability(/*tenant=*/9, "mut-2882-off", kEffectMutate, /*mid=*/3,
+                                   /*single_use=*/false);
+
+        const auto forced_after =
+            g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+        CHECK(forced_after == forced_before,
+              "AC3: Off mode does NOT bump capability_high_risk_forced_single_use_total");
+
+        // Multiple allows — caller intent (single_use=false) preserved.
+        for (int i = 0; i < 3; ++i) {
+            const std::string op = "2882-off-" + std::to_string(i);
+            const bool ok = check_and_record_effect(Effect::Mutate, Effect::Mutate,
+                                                    EffectProvenance{}, /*tenant=*/9, op);
+            CHECK(ok, std::string("AC3: Off mode multi-use (run ") + std::to_string(i) + ")");
+        }
+        const auto snap = snapshot_capability_effect_stats();
+        CHECK(snap.capability_single_use_consumed == 0, "AC3: Off mode multi-use (consumed=0)");
+    }
+
+    // ── #2882 AC5: snapshot + posture prim additive surface ────────────────────
+    {
+        std::println("\n--- #2882 AC5: snapshot exposes #2882 counters ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(10);
+
+        // Trigger both counters under production defaults (Restricted).
+        ev.grant_effect_capability(/*tenant=*/10, "mut-2882-q", kEffectMutate, /*mid=*/4, false);
+        ev.grant_effect_durable(/*tenant=*/11, "mac-2882-q", kEffectMacroSelfEvo, /*mid=*/5);
+        ev.grant_effect_durable(/*tenant=*/12, "adm-2882-q", kEffectTenantAdmin, /*mid=*/6);
+        ev.grant_effect_durable(/*tenant=*/13, "sys-2882-q", kEffectSyscall, /*mid=*/7);
+
+        // Verify the CapabilityEffectStatsSnapshot struct exposes the 2 new
+        // #2882 counters (compile-time member access check) and that the
+        // counter snapshot reflects the grants. The posture prim
+        // (query:capability-effect-stats) hash surface is verified separately
+        // in AC6 source-cite check (the prim inserts schema-2882 /
+        // high-risk-default-single-use-mask / forced + durable totals).
+        const auto snap = snapshot_capability_effect_stats();
+        CHECK(snap.capability_high_risk_forced_single_use == 1,
+              "AC5: forced-single-use counter reflects 1 forced grant");
+        CHECK(snap.capability_durable_high_risk_grant == 3,
+              "AC5: durable-high-risk-grant counter reflects 3 durable grants");
+        CHECK(snap.capability_single_use_consumed == 0,
+              "AC5: durable grants do not consume single_use");
+
+        // Posture prim must reference kHighRiskMask — the linter (AC5 in
+        // check_production_default_single_use_2882.py) cross-checks both
+        // sides (evaluator_security.cpp + evaluator_primitives_security.cpp).
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(posture.find("kHighRiskMask") != std::string::npos,
+              "AC5: posture prim references kHighRiskMask");
+    }
+
+    // ── #2882 AC6: source-cite + no invent + no docs/design/ ────────────────────
+    {
+        std::println("\n--- #2882 AC6: source-cite + no invent + no docs/design/ ---");
+        const auto cap_model = read_file("src/core/capability_model.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto ixx = read_file("src/compiler/evaluator.ixx");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto build = read_file("build.py");
+
+        // #2882 source-cite in cap_model + sec + ixx + posture.
+        CHECK(cap_model.find("Issue #2882") != std::string::npos,
+              "AC6: capability_model.hh cites Issue #2882");
+        CHECK(sec.find("Issue #2882") != std::string::npos,
+              "AC6: evaluator_security.cpp cites Issue #2882");
+        CHECK(ixx.find("#2882") != std::string::npos, "AC6: evaluator.ixx cites #2882");
+        CHECK(posture.find("schema-2882") != std::string::npos,
+              "AC6: evaluator_primitives_security.cpp cites schema-2882");
+
+        // build.py wires the new linter.
+        CHECK(build.find("check_production_default_single_use_2882") != std::string::npos,
+              "AC6: build.py wires #2882 linter");
+
+        // No new test_issue_2882.cpp (per #81967).
+        std::ifstream invent_c("tests/core/test_issue_2882.cpp");
+        if (!invent_c.good())
+            invent_c.open("../tests/core/test_issue_2882.cpp");
+        CHECK(!invent_c.good(), "AC6: no tests/core/test_issue_2882.cpp (forbidden per #81967)");
+        std::ifstream invent_cp("tests/compiler/test_issue_2882.cpp");
+        if (!invent_cp.good())
+            invent_cp.open("../tests/compiler/test_issue_2882.cpp");
+        CHECK(!invent_cp.good(),
+              "AC6: no tests/compiler/test_issue_2882.cpp (forbidden per #81967)");
+
+        // No docs/design/2882-* (per #1655).
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("2882-") == std::string::npos,
+                      std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
