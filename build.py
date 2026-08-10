@@ -945,6 +945,16 @@ def cmd_lint():
     if r != 0:
         fail("Issue #2877 pso linter failed — run python3 scripts/coverage/checks/check_pso_2877.py")
         return r
+    # Issue #2878: std/abc artificial bee colony (employ/onlooker/scout)
+    # Suite abc_2878.aura + docs/stdlib/abc.md per #81967.
+    abc_script = COVERAGE_CHECKS / "check_abc_2878.py"
+    if not abc_script.exists():
+        fail(f"missing {abc_script}")
+        return 1
+    r = run([sys.executable, str(abc_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #2878 abc linter failed — run python3 scripts/coverage/checks/check_abc_2878.py")
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +

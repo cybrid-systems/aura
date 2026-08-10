@@ -1,0 +1,66 @@
+; lib/std/abc.aura — Issue #2878 Artificial Bee Colony surface
+;
+; Employed / onlooker / scout continuous neighborhood search backend
+; for std/swarm (kind "abc"). Prefer when multi-cand exploit+abandon
+; fits denseness better than pure grid; use PSO for velocity-style
+; continuous params, ant for mutation-type ranking.
+;
+;   (require "std/abc" all:)
+;   (abc:init 2 12 (list (list -5.0 5.0) (list -5.0 5.0)))
+;   (abc:step! fitness)  ; higher better
+;   (abc:best)
+;
+; Form order (#2769): export before require.
+
+(export abc:init abc:init-hash abc:step! abc:best abc:population
+        abc:report abc:export abc:help abc:defaults
+        swarm:init swarm:step! swarm:best swarm:report swarm:export
+        swarm:population)
+
+(require "std/swarm" all:)
+
+(define (abc:defaults)
+  (hash "kind" "abc"
+        "pop" 12
+        "dim" 1
+        "limit" 5
+        "neighbor" "gaussian"
+        "bounds" (list (list -1.0 1.0))
+        "seed" 424242
+        "parallel" #f))
+
+; (abc:init dim pop bounds [limit [seed]])
+(define (abc:init dim pop bounds . rest)
+  (let* ((limit (if (null? rest) 5 (car rest)))
+         (seed (if (or (null? rest) (null? (cdr rest))) 424242
+                 (car (cdr rest)))))
+    (swarm:init (hash "kind" "abc"
+                      "dim" dim
+                      "pop" pop
+                      "bounds" bounds
+                      "limit" limit
+                      "neighbor" "gaussian"
+                      "seed" seed))))
+
+(define (abc:init-hash opts)
+  (swarm:init
+    (hash "kind" "abc"
+          "dim" (let ((v (hash-ref opts "dim"))) (if (null? v) 1 v))
+          "pop" (let ((v (hash-ref opts "pop"))) (if (null? v) 12 v))
+          "bounds" (let ((v (hash-ref opts "bounds")))
+                     (if (null? v) (list (list -1.0 1.0)) v))
+          "limit" (let ((v (hash-ref opts "limit"))) (if (null? v) 5 v))
+          "neighbor" (let ((v (hash-ref opts "neighbor")))
+                       (if (null? v) "gaussian" v))
+          "seed" (let ((v (hash-ref opts "seed"))) (if (null? v) 424242 v))
+          "parallel" (let ((v (hash-ref opts "parallel")))
+                       (if (null? v) #f v)))))
+
+(define (abc:step! fitness-fn) (swarm:step! fitness-fn))
+(define (abc:best) (swarm:best))
+(define (abc:population) (swarm:population))
+(define (abc:report) (swarm:report))
+(define (abc:export) (swarm:export))
+
+(define (abc:help)
+  "std/abc (#2878): artificial bee colony. (abc:init dim pop bounds) or (abc:init-hash h) with limit/neighbor/seed/parallel. Employed+onlooker local search, scout after limit fails. Prefer multi-cand exploit/abandon; PSO=velocity continuous; grid=discrete scan; ant=op ranking.")

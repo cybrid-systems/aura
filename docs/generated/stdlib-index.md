@@ -2,11 +2,12 @@
 
 # Standard library index (generated)
 
-**71** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**72** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
 | `std/INDEX` | `stdlib:list` `stdlib:help` `stdlib:examples` `stdlib:by-prefix` `stdlib:by-tag` | lib/std/INDEX.aura — Stdlib discoverability index (Issue #565) |
+| `std/abc` | `abc:init` `abc:init-hash` `abc:step!` `abc:best` `abc:population` `abc:report` `abc:export` `abc:help` … (+7) | lib/std/abc.aura — Issue #2878 Artificial Bee Colony surface |
 | `std/adaptive` | `string-index` `string-contains?` `string-trim` `measure-distance` `structured-diagnosis` `pid:analyze` `get-api-ref` `get-full-api-ref` | lib/std/adaptive.aura -- adaptive intend decision module |
 | `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `extract-code` `agent:decision-metrics` `agent:decide` `agent:loop-stats` … (+2) | agent.aura — Self-growing AI agent library (Issue #1460) |
 | `std/algorithm` | `sort-stable` `sort-by` `binary-search` `merge-sorted` `merge` `sorted?` `unique` `min-by` … (+3) | Aura standard algorithm library |

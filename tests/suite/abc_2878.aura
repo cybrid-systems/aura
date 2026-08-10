@@ -1,0 +1,92 @@
+; Issue #2878 — std/abc artificial bee colony
+(require "std/test" all:)
+(require "std/abc" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (sphere-fit x)
+  (let loop ((xs x) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (l2 x)
+  (let loop ((xs x) (s 0.0))
+    (if (null? xs) s
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (in-bounds? ind bounds)
+  (let loop ((xs ind) (bs bounds))
+    (if (null? xs) #t
+      (if (null? bs) #t
+        (let ((lo (car (car bs)))
+              (hi (car (cdr (car bs))))
+              (x (car xs)))
+          (if (and (>= x lo) (<= x hi))
+              (loop (cdr xs)
+                    (if (null? (cdr bs)) bs (cdr bs)))
+              #f))))))
+
+; AC1: sphere improves over steps
+(display "AC1 sphere improve\n")
+(abc:init 2 12 (list (list -3.0 3.0) (list -3.0 3.0)) 5 77)
+(assert! (string=? (hash-ref (abc:report) "kind") "abc") "kind abc")
+(assert! (= (length (abc:population)) 12) "pop 12")
+(abc:step! sphere-fit)
+(define e0 (l2 (abc:best)))
+(let loop ((i 0))
+  (if (>= i 20) #t (begin (abc:step! sphere-fit) (loop (+ i 1)))))
+(assert! (< (l2 (abc:best)) e0) "error decreased")
+(assert! (< (l2 (abc:best)) 1.0) "near origin")
+
+; AC2: bounds after many steps
+(display "AC2 bounds\n")
+(define bds (list (list -1.0 1.0) (list -1.0 1.0)))
+(abc:init 2 10 bds 4 3)
+(let loop ((i 0))
+  (if (>= i 15) #t (begin (abc:step! sphere-fit) (loop (+ i 1)))))
+(assert! (in-bounds? (abc:best) bds) "best in bounds")
+
+; AC3: classic neighbor mode + init-hash
+(display "AC3 classic neighbor\n")
+(abc:init-hash (hash "dim" 1 "pop" 10 "limit" 3
+                     "neighbor" "classic"
+                     "bounds" (list (list -2.0 2.0))
+                     "seed" 11))
+(let loop ((i 0))
+  (if (>= i 12) #t (begin (abc:step! sphere-fit) (loop (+ i 1)))))
+(assert! (string=? (hash-ref (abc:report) "kind") "abc") "classic kind")
+(assert! (number? (hash-ref (abc:report) "best-fit")) "classic best-fit")
+
+; AC4: fixed seed deterministic
+(display "AC4 seed\n")
+(abc:init 1 8 (list (list -2.0 2.0)) 5 999)
+(let loop ((i 0))
+  (if (>= i 6) #t (begin (abc:step! sphere-fit) (loop (+ i 1)))))
+(define bf (hash-ref (abc:report) "best-fit"))
+(define bi (abc:best))
+(abc:init 1 8 (list (list -2.0 2.0)) 5 999)
+(let loop ((i 0))
+  (if (>= i 6) #t (begin (abc:step! sphere-fit) (loop (+ i 1)))))
+(assert! (= (hash-ref (abc:report) "best-fit") bf) "same seed fit")
+(assert! (equal? (abc:best) bi) "same seed best")
+
+; AC5: help / defaults
+(display "AC5 help\n")
+(assert! (not (= (string-index (abc:help) "2878" 0) -1)) "help 2878")
+(assert! (= (hash-ref (abc:defaults) "limit") 5) "default limit 5")
+
+(if (= *fails* 0)
+    (begin (display "OK-2878 abc\n"))
+    (begin
+      (display "FAIL-2878 fails=")
+      (display *fails*)
+      (newline)
+      (error "2878 suite failed")))
