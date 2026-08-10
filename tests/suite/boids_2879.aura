@@ -1,0 +1,77 @@
+; Issue #2879 — std/boids flocking coordination
+(require "std/test" all:)
+(require "std/boids" all:)
+(require "std/swarm" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+; AC1: pure three rules return vectors
+(display "AC1 pure rules\n")
+(define pos0 (list (list 0.0 0.0)
+                   (list 0.05 0.0)
+                   (list 0.1 0.0)
+                   (list 1.0 1.0)))
+(define vel0 (list (list 0.1 0.0)
+                   (list 0.1 0.0)
+                   (list 0.0 0.1)
+                   (list -0.1 0.0)))
+(assert! (list? (boids:separation pos0 0 0.5)) "separation list")
+(assert! (list? (boids:alignment pos0 vel0 0 0.5)) "alignment list")
+(assert! (list? (boids:cohesion pos0 0 0.5)) "cohesion list")
+(assert! (= (length (boids:separation pos0 0 0.5)) 2) "sep dim 2")
+
+; AC2: high separation increases diversity on clustered start
+(display "AC2 separation diversity\n")
+(define d0 (boids:diversity pos0))
+(define r1 (boids:step pos0 vel0
+  (hash "sep" 2.5 "align" 0.0 "cohere" 0.0
+        "radius" 0.6 "max-speed" 0.4
+        "bounds" (list (list -2.0 2.0) (list -2.0 2.0)))))
+(define pos1 (car r1))
+(define d1 (boids:diversity pos1))
+; run a few more high-sep steps
+(define r2 (boids:step pos1 (car (cdr r1))
+  (hash "sep" 2.5 "align" 0.0 "cohere" 0.0
+        "radius" 0.6 "max-speed" 0.4
+        "bounds" (list (list -2.0 2.0) (list -2.0 2.0)))))
+(define d2 (boids:diversity (car r2)))
+(assert! (> d1 d0) "diversity after sep step")
+(assert! (>= d2 d1) "diversity non-decreasing under high sep")
+
+; AC3: swarm kind boids
+(display "AC3 swarm kind boids\n")
+(define (sphere-fit x)
+  (let loop ((xs x) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+(swarm:init (hash "kind" "boids" "dim" 2 "pop" 10
+                  "sep" 1.0 "align" 0.3 "cohere" 0.2
+                  "radius" 0.5 "max-speed" 0.2
+                  "bounds" (list (list -2.0 2.0) (list -2.0 2.0))
+                  "seed" 42))
+(assert! (string=? (swarm:kind) "boids") "kind boids")
+(swarm:step! sphere-fit)
+(assert! (= (swarm:gen) 1) "gen 1")
+(assert! (number? (hash-ref (swarm:report) "best-fit")) "best-fit")
+(assert! (= (length (swarm:population)) 10) "pop 10")
+
+; AC4: help / defaults
+(display "AC4 help\n")
+(assert! (not (= (string-index (boids:help) "2879" 0) -1)) "help 2879")
+(assert! (number? (hash-ref (boids:defaults) "sep")) "defaults sep")
+
+(if (= *fails* 0)
+    (begin (display "OK-2879 boids\n"))
+    (begin
+      (display "FAIL-2879 fails=")
+      (display *fails*)
+      (newline)
+      (error "2879 suite failed")))

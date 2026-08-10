@@ -1,0 +1,190 @@
+; lib/std/boids.aura — Issue #2879 Boids-style coordination (not physics sim)
+;
+; Pure functions on abstract state vectors for multi-agent / strategy
+; populations: separation (diversity), alignment (shared search dir),
+; cohesion (promising region). Use with orch multi-agent or as
+; std/swarm kind "boids" — not a sole global optimizer.
+;
+;   (require "std/boids" all:)
+;   (boids:step positions velocities
+;     (hash "sep" 1.0 "align" 0.5 "cohere" 0.3 "radius" 0.5
+;           "bounds" (list (list -1.0 1.0) (list -1.0 1.0))
+;           "max-speed" 0.2))
+;   ; → (list new-positions new-velocities)
+;
+; Form order (#2769): export first; no require (pure).
+
+(export boids:vec-add boids:vec-sub boids:vec-scale boids:vec-len
+        boids:distance boids:separation boids:alignment boids:cohesion
+        boids:step boids:diversity boids:defaults boids:help)
+
+; ── Vector helpers ──────────────────────────────────────────────
+(define (boids-list-ref lst i)
+  (let loop ((xs lst) (k i))
+    (if (null? xs) #f
+      (if (= k 0) (car xs) (loop (cdr xs) (- k 1))))))
+
+(define (boids-length lst)
+  (let loop ((xs lst) (n 0))
+    (if (null? xs) n (loop (cdr xs) (+ n 1)))))
+
+(define (boids-map f lst)
+  (if (null? lst) (list)
+    (cons (f (car lst)) (boids-map f (cdr lst)))))
+
+(define (boids-abs x) (if (< x 0.0) (- 0.0 x) x))
+
+(define (boids:vec-add a b)
+  (let loop ((xs a) (ys b) (acc (list)))
+    (if (null? xs) (reverse acc)
+      (loop (cdr xs)
+            (if (null? ys) (list) (cdr ys))
+            (cons (+ (car xs) (if (null? ys) 0.0 (car ys))) acc)))))
+
+(define (boids:vec-sub a b)
+  (let loop ((xs a) (ys b) (acc (list)))
+    (if (null? xs) (reverse acc)
+      (loop (cdr xs)
+            (if (null? ys) (list) (cdr ys))
+            (cons (- (car xs) (if (null? ys) 0.0 (car ys))) acc)))))
+
+(define (boids:vec-scale v s)
+  (boids-map (lambda (x) (* x s)) v))
+
+(define (boids:vec-len v)
+  (let loop ((xs v) (s 0.0))
+    (if (null? xs) (sqrt s)
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (boids:distance a b)
+  (boids:vec-len (boids:vec-sub a b)))
+
+(define (boids-zero-like v)
+  (boids-map (lambda (x) 0.0) v))
+
+(define (boids-clip-vec v bounds)
+  (let loop ((d 0) (xs v) (acc (list)))
+    (if (null? xs) (reverse acc)
+      (let* ((bh (if (and (list? bounds) (< d (boids-length bounds)))
+                     (boids-list-ref bounds d)
+                     (if (and (list? bounds) (not (null? bounds)))
+                         (car bounds)
+                         (list -1.0 1.0))))
+             (lo (car bh))
+             (hi (car (cdr bh)))
+             (x (car xs))
+             (cx (if (< x lo) lo (if (> x hi) hi x))))
+        (loop (+ d 1) (cdr xs) (cons cx acc))))))
+
+(define (boids-limit-speed v max-speed)
+  (if (or (not (number? max-speed)) (<= max-speed 0.0)) v
+    (let ((len (boids:vec-len v)))
+      (if (<= len max-speed) v
+        (boids:vec-scale v (/ max-speed len))))))
+
+; ── Neighborhood: indices j != i within radius (or all if none) ──
+(define (boids-neighbors positions i radius)
+  (let* ((xi (boids-list-ref positions i))
+         (n (boids-length positions)))
+    (let loop ((j 0) (near (list)) (all-other (list)))
+      (if (>= j n)
+          (if (null? near) all-other near)
+        (if (= j i)
+            (loop (+ j 1) near all-other)
+          (let ((d (boids:distance xi (boids-list-ref positions j))))
+            (loop (+ j 1)
+                  (if (<= d radius) (cons j near) near)
+                  (cons j all-other))))))))
+
+; ── Three rules (pure; return force vectors for agent i) ────────
+; Separation: steer away from neighbors (diversity)
+(define (boids:separation positions i radius)
+  (let* ((xi (boids-list-ref positions i))
+         (nbrs (boids-neighbors positions i radius)))
+    (if (null? nbrs) (boids-zero-like xi)
+      (let loop ((js nbrs) (acc (boids-zero-like xi)) (cnt 0))
+        (if (null? js)
+            (if (= cnt 0) acc (boids:vec-scale acc (/ 1.0 cnt)))
+          (let* ((xj (boids-list-ref positions (car js)))
+                 (diff (boids:vec-sub xi xj))
+                 (d (boids:vec-len diff))
+                 (push (if (<= d 0.000001)
+                           (boids:vec-scale diff 1.0)
+                           (boids:vec-scale diff (/ 1.0 d)))))
+            (loop (cdr js) (boids:vec-add acc push) (+ cnt 1))))))))
+
+; Alignment: match average neighbor velocity
+(define (boids:alignment positions velocities i radius)
+  (let* ((vi (boids-list-ref velocities i))
+         (nbrs (boids-neighbors positions i radius)))
+    (if (null? nbrs) (boids-zero-like vi)
+      (let loop ((js nbrs) (acc (boids-zero-like vi)) (cnt 0))
+        (if (null? js)
+            (let ((avg (if (= cnt 0) acc (boids:vec-scale acc (/ 1.0 cnt)))))
+              (boids:vec-sub avg vi))
+          (loop (cdr js)
+                (boids:vec-add acc (boids-list-ref velocities (car js)))
+                (+ cnt 1)))))))
+
+; Cohesion: pull toward neighborhood centroid
+(define (boids:cohesion positions i radius)
+  (let* ((xi (boids-list-ref positions i))
+         (nbrs (boids-neighbors positions i radius)))
+    (if (null? nbrs) (boids-zero-like xi)
+      (let loop ((js nbrs) (acc (boids-zero-like xi)) (cnt 0))
+        (if (null? js)
+            (let ((cent (if (= cnt 0) xi (boids:vec-scale acc (/ 1.0 cnt)))))
+              (boids:vec-sub cent xi))
+          (loop (cdr js)
+                (boids:vec-add acc (boids-list-ref positions (car js)))
+                (+ cnt 1)))))))
+
+; ── Diversity: mean pairwise distance ───────────────────────────
+(define (boids:diversity positions)
+  (let ((n (boids-length positions)))
+    (if (< n 2) 0.0
+      (let loop ((i 0) (sum 0.0) (cnt 0))
+        (if (>= i n) (if (= cnt 0) 0.0 (/ sum cnt))
+          (let jloop ((j (+ i 1)) (s sum) (c cnt))
+            (if (>= j n) (loop (+ i 1) s c)
+              (jloop (+ j 1)
+                     (+ s (boids:distance (boids-list-ref positions i)
+                                          (boids-list-ref positions j)))
+                     (+ c 1)))))))))
+
+; ── Combined step ───────────────────────────────────────────────
+(define (boids-opt opts key default)
+  (let ((v (hash-ref opts key)))
+    (if (null? v) default v)))
+
+(define (boids:defaults)
+  (hash "sep" 1.0 "align" 0.5 "cohere" 0.3
+        "radius" 0.5 "max-speed" 0.25
+        "bounds" (list (list -1.0 1.0) (list -1.0 1.0))))
+
+; (boids:step positions velocities opts)
+; → (list new-positions new-velocities)
+(define (boids:step positions velocities opts)
+  (let* ((sep-w (boids-opt opts "sep" 1.0))
+         (align-w (boids-opt opts "align" 0.5))
+         (cohere-w (boids-opt opts "cohere" 0.3))
+         (radius (boids-opt opts "radius" 0.5))
+         (max-speed (boids-opt opts "max-speed" 0.25))
+         (bounds (boids-opt opts "bounds" (list (list -1.0 1.0))))
+         (n (boids-length positions)))
+    (let loop ((i 0) (npos (list)) (nvel (list)))
+      (if (>= i n)
+          (list (reverse npos) (reverse nvel))
+        (let* ((xi (boids-list-ref positions i))
+               (vi (boids-list-ref velocities i))
+               (fs (boids:vec-scale (boids:separation positions i radius) sep-w))
+               (fa (boids:vec-scale (boids:alignment positions velocities i radius) align-w))
+               (fc (boids:vec-scale (boids:cohesion positions i radius) cohere-w))
+               (vi2 (boids-limit-speed
+                      (boids:vec-add vi (boids:vec-add fs (boids:vec-add fa fc)))
+                      max-speed))
+               (xi2 (boids-clip-vec (boids:vec-add xi vi2) bounds)))
+          (loop (+ i 1) (cons xi2 npos) (cons vi2 nvel)))))))
+
+(define (boids:help)
+  "std/boids (#2879): flocking coordination (not physics). (boids:step pos vel opts) with sep/align/cohere/radius/bounds/max-speed. Pure rules for multi-agent diversity+align+cohere; use as swarm kind:boids or standalone. Not a sole optimizer.")

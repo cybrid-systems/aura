@@ -955,6 +955,16 @@ def cmd_lint():
     if r != 0:
         fail("Issue #2878 abc linter failed — run python3 scripts/coverage/checks/check_abc_2878.py")
         return r
+    # Issue #2879: std/boids flocking + swarm kind:boids
+    # Suite boids_2879.aura + docs/stdlib/boids.md per #81967.
+    boids_script = COVERAGE_CHECKS / "check_boids_2879.py"
+    if not boids_script.exists():
+        fail(f"missing {boids_script}")
+        return 1
+    r = run([sys.executable, str(boids_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #2879 boids linter failed — run python3 scripts/coverage/checks/check_boids_2879.py")
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +
