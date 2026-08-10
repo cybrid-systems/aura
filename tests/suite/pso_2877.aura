@@ -1,0 +1,112 @@
+; Issue #2877 — std/pso continuous particle swarm
+(require "std/test" all:)
+(require "std/pso" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (sphere-fit x)
+  (let loop ((xs x) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (l2 x)
+  (let loop ((xs x) (s 0.0))
+    (if (null? xs) s
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+; Rastrigin-like: -sum(x^2 - cos(2πx)) style without cos — use
+; -sum(x^2 + 10*(1 - 1/(1+x^2))) as multimodal-ish pure poly surrogate
+(define (rastrigin-surrogate-fit x)
+  (let loop ((xs x) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (let ((xi (car xs)))
+        (loop (cdr xs)
+              (+ s (+ (* xi xi)
+                      (* 10.0 (- 1.0 (/ 1.0 (+ 1.0 (* xi xi))))))))))))
+
+(define (in-bounds? ind bounds)
+  (let loop ((xs ind) (bs bounds))
+    (if (null? xs) #t
+      (if (null? bs) #t
+        (let ((lo (car (car bs)))
+              (hi (car (cdr (car bs))))
+              (x (car xs)))
+          (if (and (>= x lo) (<= x hi))
+              (loop (cdr xs)
+                    (if (null? (cdr bs)) bs (cdr bs)))
+              #f))))))
+
+; AC1: sphere error decreases over steps (fixed seed)
+(display "AC1 sphere improves\n")
+(pso:init 2 16 (list (list -3.0 3.0) (list -3.0 3.0)) 99)
+(assert! (string=? (hash-ref (pso:report) "kind") "pso") "kind pso")
+(assert! (= (length (pso:population)) 16) "default pop 16")
+(pso:step! sphere-fit)
+(define err0 (l2 (pso:best)))
+(let loop ((i 0))
+  (if (>= i 24) #t (begin (pso:step! sphere-fit) (loop (+ i 1)))))
+(define err1 (l2 (pso:best)))
+(assert! (< err1 err0) "sphere error decreased")
+(assert! (< err1 0.5) "sphere near origin")
+
+; AC2: bounds respected after many steps
+(display "AC2 bounds\n")
+(define bds (list (list -1.0 1.0) (list -1.0 1.0)))
+(pso:init 2 12 bds 7)
+(let loop ((i 0))
+  (if (>= i 20) #t (begin (pso:step! sphere-fit) (loop (+ i 1)))))
+(assert! (in-bounds? (pso:best) bds) "best in bounds")
+(assert! (let loop ((xs (pso:population)))
+           (if (null? xs) #t
+             (if (in-bounds? (car xs) bds)
+                 (loop (cdr xs))
+                 #f)))
+         "all particles in bounds")
+
+; AC3: deterministic seed — two runs with same seed match best-fit path
+(display "AC3 deterministic seed\n")
+(pso:init 1 8 (list (list -2.0 2.0)) 12345)
+(let loop ((i 0))
+  (if (>= i 5) #t (begin (pso:step! sphere-fit) (loop (+ i 1)))))
+(define bf-a (hash-ref (pso:report) "best-fit"))
+(define best-a (pso:best))
+(pso:init 1 8 (list (list -2.0 2.0)) 12345)
+(let loop ((i 0))
+  (if (>= i 5) #t (begin (pso:step! sphere-fit) (loop (+ i 1)))))
+(assert! (= (hash-ref (pso:report) "best-fit") bf-a) "same seed same best-fit")
+(assert! (equal? (pso:best) best-a) "same seed same best")
+
+; AC4: rastrigin-surrogate improves; init-hash w/c1/c2
+(display "AC4 rastrigin-surrogate + init-hash\n")
+(pso:init-hash (hash "dim" 2 "pop" 16
+                     "bounds" (list (list -2.0 2.0) (list -2.0 2.0))
+                     "w" 0.7 "c1" 1.4 "c2" 1.4 "seed" 55))
+(pso:step! rastrigin-surrogate-fit)
+(define e0 (l2 (pso:best)))
+(let loop ((i 0))
+  (if (>= i 20) #t
+    (begin (pso:step! rastrigin-surrogate-fit) (loop (+ i 1)))))
+(assert! (<= (l2 (pso:best)) e0) "rastrigin-surrogate non-worse L2")
+(assert! (string? (pso:export)) "export string")
+(assert! (not (= (string-index (pso:help) "2877" 0) -1)) "help 2877")
+
+; AC5: defaults hash
+(display "AC5 defaults\n")
+(assert! (= (hash-ref (pso:defaults) "pop") 16) "defaults pop 16")
+(assert! (= (hash-ref (pso:defaults) "w") 0.7) "defaults w")
+
+(if (= *fails* 0)
+    (begin (display "OK-2877 pso\n"))
+    (begin
+      (display "FAIL-2877 fails=")
+      (display *fails*)
+      (newline)
+      (error "2877 suite failed")))

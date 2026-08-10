@@ -35,6 +35,9 @@
 (define *swarm-vels* (list))
 (define *swarm-pbest* (list))
 (define *swarm-pbest-fit* (list))
+(define *swarm-pso-w* 0.7)   ; #2877 inertia
+(define *swarm-pso-c1* 1.4)  ; cognitive
+(define *swarm-pso-c2* 1.4)  ; social
 (define *swarm-parallel* #f)
 (define *swarm-seed* 424242)
 (define *swarm-bins* 8) ; grid discrete bins per dim
@@ -262,7 +265,10 @@
                 (swarm-grid-window *swarm-grid-cursor* *swarm-pop*))
           #t)))))
 
-; pso: classical velocity update, inertia 0.7, c1=c2=1.4
+; pso (#2877): classical velocity update
+;   v ← w·v + c1·r1·(pbest−x) + c2·r2·(gbest−x)
+;   x ← clamp(x+v, bounds)
+; Defaults: w=0.7, c1=c2=1.4 (overridable via swarm:init opts).
 (define (swarm-step-pso! fitness-fn)
   (let* ((fits (swarm-eval-pop fitness-fn *swarm-inds*))
          (_ (set! *swarm-fits* fits))
@@ -297,25 +303,25 @@
           (loop (+ i 1) (cons nx new-inds) (cons nv new-vels)))))))
 
 (define (swarm-pso-vel v x pb gb)
-  (let loop ((vs v) (xs x) (ps pb) (gs gb) (acc (list)))
-    (if (null? vs) (reverse acc)
-      (let* ((w 0.7)
-             (c1 1.4)
-             (c2 1.4)
-             (r1 (swarm-rand-float!))
-             (r2 (swarm-rand-float!))
-             (vi (car vs))
-             (xi (car xs))
-             (pi (if (null? ps) xi (car ps)))
-             (gi (if (null? gs) xi (car gs)))
-             (nvi (+ (* w vi)
-                     (* c1 r1 (- pi xi))
-                     (* c2 r2 (- gi xi)))))
-        (loop (cdr vs)
-              (cdr xs)
-              (if (null? ps) (list) (cdr ps))
-              (if (null? gs) (list) (cdr gs))
-              (cons nvi acc))))))
+  (let ((w *swarm-pso-w*)
+        (c1 *swarm-pso-c1*)
+        (c2 *swarm-pso-c2*))
+    (let loop ((vs v) (xs x) (ps pb) (gs gb) (acc (list)))
+      (if (null? vs) (reverse acc)
+        (let* ((r1 (swarm-rand-float!))
+               (r2 (swarm-rand-float!))
+               (vi (car vs))
+               (xi (car xs))
+               (pi (if (null? ps) xi (car ps)))
+               (gi (if (null? gs) xi (car gs)))
+               (nvi (+ (* w vi)
+                       (* c1 r1 (- pi xi))
+                       (* c2 r2 (- gi xi)))))
+          (loop (cdr vs)
+                (cdr xs)
+                (if (null? ps) (list) (cdr ps))
+                (if (null? gs) (list) (cdr gs))
+                (cons nvi acc)))))))
 
 (define (swarm-pso-pos x v)
   (let loop ((d 0) (xs x) (vs v) (acc (list)))
@@ -392,13 +398,18 @@
 (define (swarm:init opts)
   (let* ((kind (swarm-opt opts "kind" "grid"))
          (dim (swarm-opt opts "dim" 1))
-         (pop (swarm-opt opts "pop" 8))
+         ; #2877: PSO default pop=16; other kinds default 8
+         (pop-default (if (string=? kind "pso") 16 8))
+         (pop (swarm-opt opts "pop" pop-default))
          (bounds (swarm-opt opts "bounds" (list (list -1.0 1.0))))
          (par (swarm-opt opts "parallel" #f))
          (seed (swarm-opt opts "seed" 424242))
          (bins (swarm-opt opts "bins" 8))
          (ops (swarm-opt opts "ops" (list)))
-         (evap (swarm-opt opts "evaporate" 0.95)))
+         (evap (swarm-opt opts "evaporate" 0.95))
+         (w (swarm-opt opts "w" 0.7))
+         (c1 (swarm-opt opts "c1" 1.4))
+         (c2 (swarm-opt opts "c2" 1.4)))
     (set! *swarm-kind* kind)
     (set! *swarm-dim* dim)
     (set! *swarm-pop* pop)
@@ -410,6 +421,9 @@
     (set! *swarm-bins* bins)
     (set! *swarm-parallel* (if par #t #f))
     (set! *swarm-ant-evap* (if (number? evap) evap 0.95))
+    (set! *swarm-pso-w* (if (number? w) w 0.7))
+    (set! *swarm-pso-c1* (if (number? c1) c1 1.4))
+    (set! *swarm-pso-c2* (if (number? c2) c2 1.4))
     (cond
       ((string=? kind "pso")
        (set! *swarm-inds*
@@ -498,4 +512,4 @@
       "}")))
 
 (define (swarm:help)
-  "std/swarm (#2874/#2875/#2876): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant. ant = mutation-type ranking via std/ant (ops, evaporate). report: kind,gen,best-fit,mean-fit,pop,dim,diversity,parallel,best.")
+  "std/swarm (#2874–#2877): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant. pso opts: w,c1,c2,pop(default 16). ant: ops,evaporate. report: kind,gen,best-fit,mean-fit,pop,dim,diversity,parallel,best.")
