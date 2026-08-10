@@ -228,7 +228,108 @@ int run_test_orch_obs_facade() {
               "AC5: force-safepoint-on-orphan-wired sentinel = 1");
     }
 
-    std::println("\n=== #2589+#2636: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    // ── #2884: C++ helper agent_send_safe unifies #2663 / #2848 contract ──
+    {
+        std::println("\n--- #2884 AC1+AC5: helper exists + schema-2884 in posture prim ---");
+        const auto agent_spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto posture_prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+
+        // AC1: helper defined in agent_spawn.h (unifies C++ / language path).
+        CHECK(agent_spawn_src.find("agent_send_safe") != std::string::npos,
+              "2884 AC1: agent_send_safe helper exists in agent_spawn.h");
+        CHECK(agent_spawn_src.find("struct Evaluator*") != std::string::npos,
+              "2884 AC1: agent_send_safe takes optional Evaluator* parameter");
+        CHECK(agent_spawn_src.find("Status::HandoffRequired") != std::string::npos,
+              "2884 AC1: agent_send_safe returns PushStatus::HandoffRequired on handoff fail");
+        CHECK(agent_spawn_src.find("agent_send_safe_handoff_required_total") != std::string::npos,
+              "2884 AC1: agent_send_safe bumps agent_send_safe_handoff_required_total");
+        CHECK(agent_spawn_src.find("agent_send_safe_total") != std::string::npos,
+              "2884 AC1: agent_send_safe bumps agent_send_safe_total");
+
+        // AC5: schema-2884 + new counters exposed via query:orch-module-stats.
+        CHECK(posture_prim_src.find("schema-2884") != std::string::npos,
+              "2884 AC5: schema-2884 inserted in posture prim");
+        CHECK(posture_prim_src.find("issue-2884") != std::string::npos,
+              "2884 AC5: issue-2884 inserted in posture prim");
+        CHECK(posture_prim_src.find("agent-send-safe-wired") != std::string::npos,
+              "2884 AC5: agent-send-safe-wired sentinel inserted");
+        CHECK(posture_prim_src.find("agent-send-safe-total") != std::string::npos,
+              "2884 AC5: agent-send-safe-total counter exposed");
+        CHECK(posture_prim_src.find("agent-send-safe-handoff-required-total") != std::string::npos,
+              "2884 AC5: agent-send-safe-handoff-required-total exposed");
+
+        // Live runtime counters exposed via hash (query:orch-module-stats).
+        CHECK(href(cs, "schema-2884") == 2884, "2884 AC5: schema-2884 == 2884 (live posture prim)");
+        CHECK(href(cs, "issue-2884") == 2884, "2884 AC5: issue-2884 == 2884 (live posture prim)");
+        CHECK(href(cs, "agent-send-safe-wired") == 1,
+              "2884 AC5: agent-send-safe-wired sentinel = 1");
+        CHECK(href(cs, "agent-send-safe-total") >= 0,
+              "2884 AC5: agent-send-safe-total counter queryable (initial 0)");
+        CHECK(href(cs, "agent-send-safe-handoff-required-total") >= 0,
+              "2884 AC5: agent-send-safe-handoff-required-total queryable (initial 0)");
+
+        // AC4: language (orch:agent-send) behaviour preserved (#2848 source-cite
+        // still present — no regression in the auto-handoff path).
+        CHECK(posture_prim_src.find("schema-2848") != std::string::npos,
+              "2884 AC4: schema-2848 still wired (language auto-handoff preserved)");
+        CHECK(posture_prim_src.find("agent-send-auto-handoff-wired") != std::string::npos,
+              "2884 AC4: agent-send-auto-handoff-wired still present");
+    }
+
+    // ── #2884 AC2/AC3: PushStatus::HandoffRequired distinct from Closed ──
+    {
+        std::println("\n--- #2884 AC2/AC3: HandoffRequired distinct from Closed ---");
+        const auto mf_mailbox_src = read_file("src/serve/multi_fiber_mailbox.h");
+        // AC3: Closed (=2) still gates raw push (defense in depth per #2663).
+        CHECK(mf_mailbox_src.find("Closed = 2") != std::string::npos,
+              "2884 AC3: PushStatus::Closed = 2 still defined (raw push gate intact)");
+        // AC2/AC3: HandoffRequired (=3) is the distinct typed fail for the safe helper.
+        CHECK(mf_mailbox_src.find("HandoffRequired = 3") != std::string::npos,
+              "2884 AC2/AC3: PushStatus::HandoffRequired = 3 distinct from Closed");
+        CHECK(mf_mailbox_src.find("never silent Closed") != std::string::npos,
+              "2884 AC2/AC3: HandoffRequired source-cite documents no-ambiguous-Closed contract");
+    }
+
+    // ── #2884 AC6: source-cite + no invent + no docs/design/ ──
+    {
+        std::println("\n--- #2884 AC6: source-cite + no invent + no docs/design/ ---");
+        const auto agent_spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto mf_mailbox_src = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto posture_prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+
+        // #2884 source-cite in all three lineage TUs.
+        CHECK(agent_spawn_src.find("Issue #2884") != std::string::npos,
+              "2884 AC6: agent_spawn.h cites Issue #2884");
+        CHECK(mf_mailbox_src.find("Issue #2884") != std::string::npos,
+              "2884 AC6: multi_fiber_mailbox.h cites Issue #2884 (HandoffRequired enum)");
+        CHECK(posture_prim_src.find("schema-2884") != std::string::npos,
+              "2884 AC6: evaluator_primitives_agent.cpp surfaces schema-2884");
+
+        // No new test_issue_2884.cpp (per #81967).
+        std::ifstream invent_c("tests/core/test_issue_2884.cpp");
+        if (!invent_c.good())
+            invent_c.open("../tests/core/test_issue_2884.cpp");
+        CHECK(!invent_c.good(),
+              "2884 AC6: no tests/core/test_issue_2884.cpp (forbidden per #81967)");
+        std::ifstream invent_op("tests/orch/test_issue_2884.cpp");
+        if (!invent_op.good())
+            invent_op.open("../tests/orch/test_issue_2884.cpp");
+        CHECK(!invent_op.good(),
+              "2884 AC6: no tests/orch/test_issue_2884.cpp (forbidden per #81967)");
+
+        // No docs/design/2884-* (per #1655).
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("2884-") == std::string::npos,
+                      std::string("2884 AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
+    std::println("\n=== #2589+#2636+2884: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
