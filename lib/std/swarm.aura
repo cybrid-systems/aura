@@ -9,8 +9,9 @@
 ;   (swarm:step! (lambda (ind) (- 0.0 (fitness-of ind))))  ; higher better
 ;   (swarm:best) (swarm:population) (swarm:report) (swarm:export)
 ;
-; kinds: "grid" | "pso" | "ant"
+; kinds: "grid" | "pso" | "ant" | "abc"
 ;   grid (#2875 baseline): discrete linspace product (Unify policy-scan shape)
+;   abc  (#2878): employ / onlooker / scout continuous neighborhood search
 ; Optional: "parallel" #t → flat fiber:spawn all then join on caller (no join-in-worker)
 ;
 ; Form order (#2769): export before require.
@@ -46,6 +47,10 @@
 ; kind:ant (#2876) — mutation-type ranking, not continuous bins
 (define *swarm-ant-ops* (list))   ; candidate operator type names
 (define *swarm-ant-evap* 0.95)    ; evaporation rho per step (1.0 = off)
+; kind:abc (#2878) — artificial bee colony
+(define *swarm-abc-trials* (list)) ; trial counters per food source
+(define *swarm-abc-limit* 5)       ; abandon after this many fails
+(define *swarm-abc-neighbor* "gaussian") ; or "classic"
 
 ; ── Tiny PRNG (inline; avoid std/random internal-define footgun) ──
 (define (swarm-rand!)
@@ -334,6 +339,132 @@
               (if (null? vs) (list) (cdr vs))
               (cons nx acc))))))
 
+; ── ABC (#2878): employed / onlooker / scout ───────────────────
+; Food source = continuous individual (list of numbers). Nectar = fitness
+; (higher better). Neighbor: classic ABC one-dim phi mix, or gaussian.
+; After `limit` failed improvements, scout replaces with random.
+
+(define (swarm-abc-zeros n)
+  (let loop ((k 0) (acc (list)))
+    (if (>= k n) (reverse acc) (loop (+ k 1) (cons 0 acc)))))
+
+(define (swarm-abc-min-fit fits)
+  (if (null? fits) 0.0
+    (let loop ((xs (cdr fits)) (m (car fits)))
+      (if (null? xs) m
+        (loop (cdr xs) (if (< (car xs) m) (car xs) m))))))
+
+; Shift fitness to positive weights for roulette.
+(define (swarm-abc-weights fits)
+  (let ((mn (swarm-abc-min-fit fits)))
+    (swarm-map (lambda (f) (+ (- f mn) 0.01)) fits)))
+
+(define (swarm-abc-roulette weights)
+  (let* ((sum (let loop ((xs weights) (s 0.0))
+                (if (null? xs) s (loop (cdr xs) (+ s (car xs))))))
+         (r (* (swarm-rand-float!) (if (<= sum 0.0) 1.0 sum))))
+    (let loop ((xs weights) (i 0) (acc 0.0))
+      (if (null? xs) 0
+        (let ((acc2 (+ acc (car xs))))
+          (if (>= acc2 r) i
+            (loop (cdr xs) (+ i 1) acc2)))))))
+
+; Classic ABC neighbor: random dim j, random other source k, phi in [-1,1]
+(define (swarm-abc-neighbor-classic x sources i)
+  (let* ((dim *swarm-dim*)
+         (j (swarm-rand-int! (if (<= dim 1) 1 dim)))
+         (n (swarm-length sources))
+         (k (let loop ((t 0))
+              (let ((kk (swarm-rand-int! (if (<= n 1) 1 n))))
+                (if (or (not (= kk i)) (<= n 1) (>= t 8)) kk
+                  (loop (+ t 1))))))
+         (xk (swarm-list-ref sources k))
+         (phi (- (* 2.0 (swarm-rand-float!)) 1.0)))
+    (let loop ((d 0) (xs x) (ys (if (list? xk) xk x)) (acc (list)))
+      (if (null? xs) (reverse acc)
+        (let* ((xi (car xs))
+               (yi (if (null? ys) xi (car ys)))
+               (bh (swarm-bound-for d))
+               (lo (car bh))
+               (hi (car (cdr bh)))
+               (nv (if (= d j)
+                       (swarm-clip (+ xi (* phi (- xi yi))) lo hi)
+                       xi)))
+          (loop (+ d 1) (cdr xs)
+                (if (null? ys) (list) (cdr ys))
+                (cons nv acc)))))))
+
+; Gaussian neighbor: all dims small noise
+(define (swarm-abc-neighbor-gauss x)
+  (let loop ((d 0) (xs x) (acc (list)))
+    (if (null? xs) (reverse acc)
+      (let* ((bh (swarm-bound-for d))
+             (lo (car bh))
+             (hi (car (cdr bh)))
+             (span (- hi lo))
+             (noise (swarm-rand-range! (- 0.0 (* 0.1 span)) (* 0.1 span)))
+             (nv (swarm-clip (+ (car xs) noise) lo hi)))
+        (loop (+ d 1) (cdr xs) (cons nv acc))))))
+
+(define (swarm-abc-neighbor x sources i)
+  (if (string=? *swarm-abc-neighbor* "classic")
+      (swarm-abc-neighbor-classic x sources i)
+      (swarm-abc-neighbor-gauss x)))
+
+; One local search on source i: try neighbor; update if better.
+(define (swarm-abc-try-improve! fitness-fn i)
+  (let* ((x (swarm-list-ref *swarm-inds* i))
+         (f0 (swarm-list-ref *swarm-fits* i))
+         (xn (swarm-abc-neighbor x *swarm-inds* i))
+         (fn (swarm-eval-one fitness-fn xn))
+         (tr (swarm-list-ref *swarm-abc-trials* i)))
+    (if (> fn f0)
+        (begin
+          (set! *swarm-inds* (swarm-list-set *swarm-inds* i xn))
+          (set! *swarm-fits* (swarm-list-set *swarm-fits* i fn))
+          (set! *swarm-abc-trials* (swarm-list-set *swarm-abc-trials* i 0))
+          #t)
+        (begin
+          (set! *swarm-abc-trials*
+                (swarm-list-set *swarm-abc-trials* i (+ tr 1)))
+          #f))))
+
+(define (swarm-step-abc! fitness-fn)
+  (let ((n (swarm-length *swarm-inds*)))
+    ; ensure fitnesses current
+    (if (or (null? *swarm-fits*)
+            (not (= (swarm-length *swarm-fits*) n)))
+        (set! *swarm-fits* (swarm-eval-pop fitness-fn *swarm-inds*))
+        #f)
+    (swarm-note-best! *swarm-inds* *swarm-fits*)
+    ; Employed bees: each source tries one neighbor
+    (let loop ((i 0))
+      (if (>= i n) #t
+        (begin (swarm-abc-try-improve! fitness-fn i) (loop (+ i 1)))))
+    ; Onlooker bees: pop roulette-selected local searches
+    (let ((w (swarm-abc-weights *swarm-fits*)))
+      (let loop ((k 0))
+        (if (>= k n) #t
+          (let ((i (swarm-abc-roulette w)))
+            (swarm-abc-try-improve! fitness-fn i)
+            (loop (+ k 1))))))
+    ; Scout: abandon exhausted sources
+    (let loop ((i 0))
+      (if (>= i n) #t
+        (let ((tr (swarm-list-ref *swarm-abc-trials* i)))
+          (if (> tr *swarm-abc-limit*)
+              (let ((xn (swarm-rand-ind)))
+                (set! *swarm-inds* (swarm-list-set *swarm-inds* i xn))
+                (set! *swarm-fits*
+                      (swarm-list-set *swarm-fits* i
+                                      (swarm-eval-one fitness-fn xn)))
+                (set! *swarm-abc-trials*
+                      (swarm-list-set *swarm-abc-trials* i 0)))
+              #f)
+          (loop (+ i 1)))))
+    (swarm-note-best! *swarm-inds* *swarm-fits*)
+    #t))
+
 ; ant (#2876): mutation-type ranking via std/ant pheromone table.
 ; Individuals are operator type *names* (strings). Population = ranked
 ; (or score-sampled) ops. Fitness feedback → pheromone:update; optional
@@ -409,7 +540,9 @@
          (evap (swarm-opt opts "evaporate" 0.95))
          (w (swarm-opt opts "w" 0.7))
          (c1 (swarm-opt opts "c1" 1.4))
-         (c2 (swarm-opt opts "c2" 1.4)))
+         (c2 (swarm-opt opts "c2" 1.4))
+         (limit (swarm-opt opts "limit" 5))
+         (neighbor (swarm-opt opts "neighbor" "gaussian")))
     (set! *swarm-kind* kind)
     (set! *swarm-dim* dim)
     (set! *swarm-pop* pop)
@@ -424,6 +557,9 @@
     (set! *swarm-pso-w* (if (number? w) w 0.7))
     (set! *swarm-pso-c1* (if (number? c1) c1 1.4))
     (set! *swarm-pso-c2* (if (number? c2) c2 1.4))
+    (set! *swarm-abc-limit* (if (number? limit) limit 5))
+    (set! *swarm-abc-neighbor*
+          (if (string? neighbor) neighbor "gaussian"))
     (cond
       ((string=? kind "pso")
        (set! *swarm-inds*
@@ -439,6 +575,14 @@
              (let loop ((k 0) (acc (list)))
                (if (>= k pop) (reverse acc)
                  (loop (+ k 1) (cons -1000000000.0 acc))))))
+      ((string=? kind "abc")
+       ; #2878 artificial bee colony — continuous food sources
+       (set! *swarm-inds*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1) (cons (swarm-rand-ind) acc)))))
+       (set! *swarm-abc-trials* (swarm-abc-zeros pop))
+       (set! *swarm-fits* (list)))
       ((string=? kind "ant")
        ; mutation-type ranking (#2876) — ops list or default pheromone types
        (pheromone:init)
@@ -469,6 +613,7 @@
 (define (swarm:step! fitness-fn)
   (cond
     ((string=? *swarm-kind* "pso") (swarm-step-pso! fitness-fn))
+    ((string=? *swarm-kind* "abc") (swarm-step-abc! fitness-fn))
     ((string=? *swarm-kind* "ant") (swarm-step-ant! fitness-fn))
     (#t (swarm-step-grid! fitness-fn)))
   (set! *swarm-gen* (+ *swarm-gen* 1))
@@ -512,4 +657,4 @@
       "}")))
 
 (define (swarm:help)
-  "std/swarm (#2874–#2877): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant. pso opts: w,c1,c2,pop(default 16). ant: ops,evaporate. report: kind,gen,best-fit,mean-fit,pop,dim,diversity,parallel,best.")
+  "std/swarm (#2874–#2878): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant|abc. abc opts: limit,neighbor(gaussian|classic). pso: w,c1,c2. ant: ops,evaporate.")
