@@ -237,8 +237,15 @@ int run_test_orch_obs_facade() {
         // AC1: helper defined in agent_spawn.h (unifies C++ / language path).
         CHECK(agent_spawn_src.find("agent_send_safe") != std::string::npos,
               "2884 AC1: agent_send_safe helper exists in agent_spawn.h");
-        CHECK(agent_spawn_src.find("struct Evaluator*") != std::string::npos,
-              "2884 AC1: agent_send_safe takes optional Evaluator* parameter");
+        CHECK(agent_spawn_src.find("Evaluator*") != std::string::npos,
+              "2884 AC1: agent_send_safe takes optional Evaluator* parameter (opaque void*)");
+        CHECK(agent_spawn_src.find("void* ev") != std::string::npos,
+              "2884 AC1: agent_send_safe uses void* ABI (no evaluator module import)");
+        CHECK(agent_spawn_src.find("aura_orch_agent_send_handoff") != std::string::npos,
+              "2884 AC1: handoff via extern C hook (no module import in orch header)");
+        CHECK(agent_spawn_src.find("import aura.compiler.evaluator;") == std::string::npos,
+              "2884 AC1: agent_spawn.h must not import evaluator (asan ddi / module already "
+              "imported)");
         CHECK(agent_spawn_src.find("Status::HandoffRequired") != std::string::npos,
               "2884 AC1: agent_send_safe returns PushStatus::HandoffRequired on handoff fail");
         CHECK(agent_spawn_src.find("agent_send_safe_handoff_required_total") != std::string::npos,

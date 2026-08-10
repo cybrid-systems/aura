@@ -27,13 +27,6 @@
 #include "serve/parallel_orch.h"
 #include "serve/scheduler.h"
 
-// Issue #2884: agent_send_safe inline fn (auto handoff_ref path) calls
-////// Evaluator::make_stamped_ref + Evaluator::handoff_ref — import the
-////// module so the full class declaration is in scope. All TUs that
-////// include this header (compiler/orch module TUs + serve/parallel_orch.h)
-////// already have access to aura.compiler.evaluator via their own module
-////// imports; this surface declaration makes the dependency explicit.
-import aura.compiler.evaluator;
 // Issue #2852: forward declare AgentScope (full definition lives in
 // agent_scope.h which includes this header — circular include avoided by
 // declaring here). apply_workflow body is defined in agent_scope.h right
@@ -41,6 +34,15 @@ import aura.compiler.evaluator;
 namespace aura::orch {
 class AgentScope;
 } // namespace aura::orch
+
+// Issue #2884: agent_send_safe takes an optional opaque Evaluator* (as
+// void*) for the auto handoff_ref path. DO NOT import or forward-declare
+// aura.compiler.evaluator / aura::compiler::Evaluator from this header —
+// it is included from evaluator_ctor.cpp's global module fragment:
+//   * import → GCC "module already imported" during ddi/dyndep scan
+//   * forward-decl in aura::compiler → ambiguous Evaluator vs module export
+// Method calls go through aura_orch_agent_send_handoff (extern "C" hook;
+// strong def in evaluator_fiber_mutation.cpp, weak no-op in fiber_bridge.cpp).
 
 #include <atomic>
 #include <optional>
@@ -68,6 +70,11 @@ extern "C" void aura_evaluator_on_fiber_join(void* joined_fiber);
 extern "C" int aura_orch_agent_body_try_acquire();
 extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary);
 extern "C" void aura_orch_agent_body_release_guard();
+// Issue #2884: make_stamped_ref + handoff_ref for agent_send_safe.
+// Returns 1 on success (*out_token = exported id), 0 on handoff fail /
+// missing evaluator / null args. Never throws.
+extern "C" int aura_orch_agent_send_handoff(void* evaluator, std::uint64_t node_id,
+                                            std::uint64_t* out_token) noexcept;
 
 namespace aura::orch {
 
@@ -1971,6 +1978,10 @@ inline void stamp_mail_message_handoff_completed(serve::mf_mailbox::MailMessage&
     msg.handoff_completed = true;
 }
 
+// Forward decl — agent_send_safe falls through to agent_send (defined below).
+[[nodiscard]] inline serve::mf_mailbox::PushStatus agent_send(AgentHandle& h,
+                                                              serve::mf_mailbox::MailMessage msg);
+
 // Issue #2884: unified C++ helper that auto-runs the #2848 handoff_ref
 // path for StableNodeRef-bearing payloads. Mirrors the language
 // (orch:agent-send) auto-handoff surface but for C++ callers
@@ -1992,25 +2003,27 @@ inline void stamp_mail_message_handoff_completed(serve::mf_mailbox::MailMessage&
 //     hits #2663 Closed (defense in depth per AC3).
 //
 // Caller rules:
-//   - ev must outlive the call (raw pointer, not owned).
+//   - ev must outlive the call (raw pointer, not owned). Real type is
+//     aura::compiler::Evaluator* — pass as void* so this header never
+//     imports or forward-declares the evaluator module (see top comment).
 //   - MailMessage held_ref_token must hold the StableNodeRef.id value
-//     (per the #2848 stamp convention); the helper looks up the current
+//     (per the #2848 stamp convention); the hook looks up the current
 //     gen via make_stamped_ref + tries handoff_ref.
+// AC1 source-cite: optional Evaluator* parameter (opaque void* ABI).
 [[nodiscard]] inline serve::mf_mailbox::PushStatus
 agent_send_safe(AgentHandle& h, serve::mf_mailbox::MailMessage msg,
-                struct Evaluator* ev = nullptr) noexcept {
+                void* ev /* Evaluator* */ = nullptr) noexcept {
     using Status = serve::mf_mailbox::PushStatus;
     // AC2: zero-cost fall through when no held_ref_token / already stamped
     // / no evaluator pointer — C++ callers passing string/int/bool or
     // already-stamped messages pay nothing.
     if (ev && msg.held_ref_token.has_value() && !msg.handoff_completed) {
-        const auto id = static_cast<aura::ast::NodeId>(*msg.held_ref_token);
-        // Issue #2839 / #2689 lineage: make_stamped_ref rehydrates the
-        // StableNodeRef (id + current workspace gen + fiber stamp) so
-        // handoff_ref has the right handle to re-export.
-        auto held = ev->make_stamped_ref(id);
-        auto out = ev->handoff_ref(std::move(held));
-        if (!out) {
+        // Issue #2839 / #2689 lineage (via aura_orch_agent_send_handoff):
+        // make_stamped_ref rehydrates StableNodeRef then handoff_ref
+        // re-exports. Hook keeps this header free of module imports.
+        std::uint64_t out_token = 0;
+        const int rc = aura_orch_agent_send_handoff(ev, *msg.held_ref_token, &out_token);
+        if (rc != 1) {
             // Structured typed failure — NOT Closed. C++ callers can
             // disambiguate mailbox-closed from export-stale /
             // handoff-required via the distinct HandoffRequired status.
@@ -2023,7 +2036,7 @@ agent_send_safe(AgentHandle& h, serve::mf_mailbox::MailMessage msg,
                 1, std::memory_order_relaxed);
             return Status::HandoffRequired;
         }
-        stamp_mail_message_handoff_completed(msg, static_cast<std::uint64_t>(out->id));
+        stamp_mail_message_handoff_completed(msg, out_token);
         g_orch_module_stats.agent_send_auto_handoff_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Bump the total helper-call counter (covers both paths).

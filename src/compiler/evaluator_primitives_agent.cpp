@@ -3358,9 +3358,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             if (jr.status == aura::serve::JoinStatus::Reclaimed) {
                 bool still_running = false;
                 std::int64_t reclaim_age_ms = 0;
-                if (h.fiber) {
-                    still_running = h.fiber->still_running_after_reclaim_counted();
-                    const auto reclaimed_ns = h.fiber->mark_reclaimed_steady_clock_ns();
+                // hp is the name-table AgentHandle* looked up above.
+                if (hp->fiber) {
+                    still_running = hp->fiber->still_running_after_reclaim_counted();
+                    const auto reclaimed_ns = hp->fiber->mark_reclaimed_steady_clock_ns();
                     if (reclaimed_ns > 0) {
                         const auto now_ns =
                             std::chrono::steady_clock::now().time_since_epoch().count();

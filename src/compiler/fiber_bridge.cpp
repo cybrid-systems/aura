@@ -165,6 +165,15 @@ __attribute__((weak, used)) int aura_orch_agent_body_try_acquire_ex(int /*regist
 __attribute__((weak, used)) void aura_orch_agent_body_release_guard() {}
 __attribute__((weak, used)) void aura_orch_note_agent_steal_skipped_boundary() {}
 
+// Issue #2884: agent_send_safe handoff hook (strong def in
+// evaluator_fiber_mutation.cpp). Weak no-op: without an evaluator, treat
+// handoff as failed so callers still get HandoffRequired (not silent Ok).
+__attribute__((weak, used)) int
+aura_orch_agent_send_handoff(void* /*evaluator*/, std::uint64_t /*node_id*/,
+                             std::uint64_t* /*out_token*/) noexcept {
+    return 0;
+}
+
 // Issue #2010: mailbox backpressure → orch dashboard (strong def in
 // evaluator_fiber_mutation.cpp when evaluator/orch is linked).
 __attribute__((weak, used)) void aura_orch_note_mailbox_backpressure() {}

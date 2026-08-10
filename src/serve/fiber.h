@@ -839,11 +839,12 @@ public:
         return still_running_after_reclaim_counted_.load(std::memory_order_acquire);
     }
     // Issue #2885: per-Fiber reclaim timestamp (steady_clock ns at
-    // mark_reclaimed, 0 if not reclaimed). Read by the Aura
-    // (orch:agent-join) hash to surface reclaim-age-ms = best-effort
-    // from mark_reclaimed → now.
+    // mark_reclaimed, 0 if not reclaimed). Backed by body_reclaim_start_ns_
+    // (#2636) — set in mark_reclaimed, cleared on body-exit / abandon.
+    // Read by the Aura (orch:agent-join) hash to surface reclaim-age-ms =
+    // best-effort from mark_reclaimed → now.
     [[nodiscard]] std::int64_t mark_reclaimed_steady_clock_ns() const noexcept {
-        return mark_reclaimed_steady_clock_ns_.load(std::memory_order_acquire);
+        return static_cast<std::int64_t>(body_reclaim_start_ns_.load(std::memory_order_acquire));
     }
 
     // Process-wide join metrics (#1584 / #1595).
@@ -1241,7 +1242,9 @@ private:
     // Issue #2839: production hard-face mismatch total (see bump_tenant_
     // scope_mismatch_hard). Soft path never bumps this.
     static std::atomic<std::uint64_t> static_tenant_scope_mismatch_hard_total_;
-    static std::atomic<std::uint64_t> static_fiber_principal_mismatch_hard_deny_total_{0};
+    // Out-of-line init in fiber.cpp (static non-integral member — no
+    // in-class initializer; GCC rejects under -fpermissive/asan rebuild).
+    static std::atomic<std::uint64_t> static_fiber_principal_mismatch_hard_deny_total_;
     // Issue #2397: true iff this fiber contributed +1 to the
     // still-running gauge (mark_reclaimed while !Done). Cleared by
     // note_body_exit_if_reclaimed or ~Fiber (abandon without retired).
