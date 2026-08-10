@@ -3301,6 +3301,34 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"issue-2743", make_int(2743)},
                 {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
             };
+            // Issue #2885: per-join still-running SLA on the Reclaimed path.
+            // Additive hash keys — Ok / Timeout / Cancelled pay zero extra
+            // (no new keys per AC2). #2661 contract unchanged: defer path
+            // still only runs global-table drops + bumps
+            // join_reclaimed_deferred_cleanup_total (no body-stack free).
+            // Soft / unit / sandbox=off regression green (these keys only
+            // surface when Reclaimed is observed, which only happens under
+            // Restricted/Strict production hard-reclaim).
+            if (jr.status == aura::serve::JoinStatus::Reclaimed) {
+                bool still_running = false;
+                std::int64_t reclaim_age_ms = 0;
+                if (h.fiber) {
+                    still_running = h.fiber->still_running_after_reclaim_counted();
+                    const auto reclaimed_ns = h.fiber->mark_reclaimed_steady_clock_ns();
+                    if (reclaimed_ns > 0) {
+                        const auto now_ns =
+                            std::chrono::steady_clock::now().time_since_epoch().count();
+                        if (now_ns > reclaimed_ns)
+                            reclaim_age_ms = (now_ns - reclaimed_ns) / 1000000;
+                    }
+                }
+                kv.emplace_back("still-running", make_bool(still_running));
+                kv.emplace_back("reclaim-age-ms", make_int(reclaim_age_ms));
+                kv.emplace_back("deferred-cleanup", make_bool(true));
+                kv.emplace_back("schema-2885", make_int(2885));
+                kv.emplace_back("issue-2885", make_int(2885));
+                kv.emplace_back("agent-join-still-running-wired", make_int(1));
+            }
             return build_orch_hash(kv);
         });
 

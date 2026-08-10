@@ -1835,6 +1835,22 @@ def cmd_lint():
             "Issue #2884 agent_send_safe linter failed — run python3 scripts/coverage/checks/check_agent_send_safe_2884.py"
         )
         return r
+    # Issue #2885: per-join still-running SLA on Reclaimed path
+    # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
+    # deferred-cleanup). Surface change only on the Reclaimed branch —
+    # Ok / Timeout / Cancelled pay zero extra (AC2). #2661 contract
+    # preserved (no body-stack free on Reclaimed per AC3). Extends
+    # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655).
+    jcr_script = COVERAGE_CHECKS / "check_join_cleanup_report_2885.py"
+    if not jcr_script.exists():
+        fail(f"missing {jcr_script}")
+        return 1
+    r = run([sys.executable, str(jcr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2885 join cleanup report linter failed — run python3 scripts/coverage/checks/check_join_cleanup_report_2885.py"
+        )
+        return r
     # Issue #2840: GeneralObjectPin required densify fail-closed residual
     # (#2597/#2665: pref locked but callers void-cast wire + densify
     # unguarded). Sticky breach + Moving gate + required-fail callers.

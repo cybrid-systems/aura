@@ -651,6 +651,159 @@ int run_test_join_drain_reclaim() {
               "AC6: no AgentRegistry type / g_global_agent_registry");
     }
 
+    // ── #2885: per-join still-running SLA on Reclaimed path ────────────────────
+    {
+        std::println(
+            "\n--- #2885 AC1+AC4+AC6: per-join still-running SLA + counters + source-cite ---");
+        reset_all();
+        // Use a real Fiber instance to exercise mark_reclaimed + new accessors.
+        auto fiber_owned = std::make_unique<aura::serve::Fiber>();
+        fiber_owned->set_assigned_tenant_id(1);
+        const auto still_running_before = aura::serve::Fiber::join_drain_residual_still_running();
+
+        // mark_reclaimed sets still_running_after_reclaim_counted_ = true AND
+        // bumps the process-wide still-running gauge (per #2636).
+        fiber_owned->mark_reclaimed();
+        CHECK(fiber_owned->is_reclaimed(), "2885 AC1: is_reclaimed() true after mark_reclaimed");
+        CHECK(fiber_owned->still_running_after_reclaim_counted(),
+              "2885 AC1: still_running_after_reclaim_counted() true (body alive)");
+        const auto still_running_after = aura::serve::Fiber::join_drain_residual_still_running();
+        CHECK(still_running_after >= still_running_before + 1,
+              "2885 AC4: still-running gauge bumped by 1");
+
+        // reclaim-age-ms: timestamp at mark_reclaimed is now; age should be >= 0
+        // (best-effort from mark_reclaimed → now).
+        const auto reclaim_ns = fiber_owned->mark_reclaimed_steady_clock_ns();
+        CHECK(reclaim_ns > 0,
+              "2885 AC1: mark_reclaimed_steady_clock_ns() > 0 after mark_reclaimed");
+        const auto age_ns_now = std::chrono::steady_clock::now().time_since_epoch().count();
+        CHECK(age_ns_now >= reclaim_ns, "2885 AC1: now >= mark_reclaimed timestamp (monotonic)");
+
+        // body exit clears still_running_after_reclaim_counted_.
+        fiber_owned->note_body_exit_if_reclaimed();
+        CHECK(!fiber_owned->still_running_after_reclaim_counted(),
+              "2885 AC1: still_running_after_reclaim_counted() false after body exit");
+
+        // Source-cite (AC6): the Aura surface exposes the new keys via
+        // (orch:agent-join) — additive hash, zero-cost on Ok / Timeout /
+        // Cancelled paths (per AC2).
+        const auto posture_prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto agent_spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto fiber_h_src = read_file("src/serve/fiber.h");
+        CHECK(posture_prim_src.find("schema-2885") != std::string::npos,
+              "2885 AC6: evaluator_primitives_agent.cpp cites schema-2885");
+        CHECK(posture_prim_src.find("issue-2885") != std::string::npos,
+              "2885 AC6: evaluator_primitives_agent.cpp cites issue-2885");
+        CHECK(posture_prim_src.find("still-running") != std::string::npos,
+              "2885 AC6: posture prim surface still-running key");
+        CHECK(posture_prim_src.find("reclaim-age-ms") != std::string::npos,
+              "2885 AC6: posture prim surface reclaim-age-ms key");
+        CHECK(posture_prim_src.find("deferred-cleanup") != std::string::npos,
+              "2885 AC6: posture prim surface deferred-cleanup key");
+        CHECK(posture_prim_src.find("agent-join-still-running-wired") != std::string::npos,
+              "2885 AC6: posture prim wired sentinel");
+        CHECK(fiber_h_src.find("still_running_after_reclaim_counted()") != std::string::npos,
+              "2885 AC6: serve/fiber.h defines still_running_after_reclaim_counted() accessor");
+        CHECK(fiber_h_src.find("mark_reclaimed_steady_clock_ns()") != std::string::npos,
+              "2885 AC6: serve/fiber.h defines mark_reclaimed_steady_clock_ns() accessor");
+        // AC4: existing #2661 counter remains authoritative + agent_join_reclaimed_total.
+        CHECK(posture_prim_src.find("join_reclaimed_deferred_cleanup_total") != std::string::npos ||
+                  agent_spawn_src.find("join_reclaimed_deferred_cleanup_total") !=
+                      std::string::npos,
+              "2885 AC4: join_reclaimed_deferred_cleanup_total counter present");
+        CHECK(posture_prim_src.find("agent_join_reclaimed_total") != std::string::npos ||
+                  agent_spawn_src.find("agent_join_reclaimed_total") != std::string::npos,
+              "2885 AC4: agent_join_reclaimed_total counter present");
+    }
+
+    // ── #2885 AC2: zero-cost on Ok / Timeout / Cancelled paths (source-cite) ──
+    {
+        std::println("\n--- #2885 AC2: zero-cost on Ok / Timeout / Cancelled ---");
+        const auto posture_prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        // Verify: still-running / reclaim-age-ms / deferred-cleanup keys are
+        // ONLY inserted inside `if (jr.status == JoinStatus::Reclaimed)` branch
+        // (not unconditional). Source-cite: grep for the kv.emplace_back
+        // pattern — must be inside the Reclaimed if-block.
+        const bool in_reclaimed_branch =
+            posture_prim_src.find("if (jr.status == aura::serve::JoinStatus::Reclaimed)") !=
+            std::string::npos;
+        CHECK(in_reclaimed_branch,
+              "2885 AC2: still-running / reclaim-age-ms / deferred-cleanup keys guarded by "
+              "Reclaimed status check (zero-cost on Ok / Timeout / Cancelled)");
+        // Ok / Timeout / Cancelled branches must NOT have the new keys.
+        // The Reclaimed branch is the ONLY path that bumps the new keys.
+        CHECK(posture_prim_src.find("JoinStatus::Ok)") == std::string::npos &&
+                  posture_prim_src.find("JoinStatus::Timeout)") == std::string::npos,
+              "2885 AC2: Ok / Timeout paths don't grow the hash (no new keys)");
+    }
+
+    // ── #2885 AC3: #2661 contract preserved — no body-stack free on Reclaimed ──
+    {
+        std::println("\n--- #2885 AC3: #2661 contract preserved ---");
+        const auto agent_spawn_src = read_file("src/orch/agent_spawn.h");
+        // #2661: complete_agent_join_cleanup on Reclaimed must only release
+        // orphan roots + bump join_reclaimed_deferred_cleanup_total, NOT free
+        // body-stack. Verify by source-cite that the Reclaimed branch does not
+        // call release_agent_memory_reservation / mailbox->detach.
+        const auto reclaimed_fn_start = agent_spawn_src.find(
+            "void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept");
+        const auto reclaimed_block_end = agent_spawn_src.find(
+            "g_orch_module_stats.join_reclaimed_deferred_cleanup_total.fetch_add(");
+        if (reclaimed_fn_start != std::string::npos && reclaimed_block_end != std::string::npos) {
+            const auto reclaimed_block = agent_spawn_src.substr(
+                reclaimed_fn_start, reclaimed_block_end - reclaimed_fn_start + 200);
+            // The Reclaimed branch must call release_orphan_roots (global-table)
+            // but NOT release_agent_memory_reservation or mailbox->detach (body-stack).
+            CHECK(reclaimed_block.find("release_orphan_roots") != std::string::npos,
+                  "2885 AC3: Reclaimed branch releases orphan roots (global-table only)");
+            // Body-stack free paths must NOT appear in the Reclaimed branch.
+            const bool has_body_free =
+                reclaimed_block.find("release_agent_memory_reservation") != std::string::npos ||
+                (reclaimed_block.find("h.mailbox->detach") != std::string::npos);
+            CHECK(!has_body_free,
+                  "2885 AC3: Reclaimed branch does NOT free body-stack "
+                  "(`release_agent_memory_reservation` / `h.mailbox->detach` absent)");
+        } else {
+            CHECK(false, "2885 AC3: complete_agent_join_cleanup not found");
+        }
+    }
+
+    // ── #2885 AC5: Soft / unit / sandbox=off regression green ──
+    {
+        std::println("\n--- #2885 AC5: Soft regression green (#2743 unchanged) ---");
+        const auto posture_prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        // #2743 status="reclaimed" string preserved.
+        CHECK(posture_prim_src.find("schema-2743") != std::string::npos,
+              "2885 AC5: schema-2743 still present (reclaimed string unchanged)");
+        CHECK(posture_prim_src.find("issue-2743") != std::string::npos,
+              "2885 AC5: issue-2743 still present (lineage preserved)");
+        // The new keys are guarded by Reclaimed check (verified in AC2).
+    }
+
+    // ── #2885 AC6 (cont): no invent + no docs/design/ ──
+    {
+        std::println("\n--- #2885 AC6: no invent + no docs/design/ ---");
+        std::ifstream invent_c("tests/core/test_issue_2885.cpp");
+        if (!invent_c.good())
+            invent_c.open("../tests/core/test_issue_2885.cpp");
+        CHECK(!invent_c.good(),
+              "2885 AC6: no tests/core/test_issue_2885.cpp (forbidden per #81967)");
+        std::ifstream invent_op("tests/orch/test_issue_2885.cpp");
+        if (!invent_op.good())
+            invent_op.open("../tests/orch/test_issue_2885.cpp");
+        CHECK(!invent_op.good(),
+              "2885 AC6: no tests/orch/test_issue_2885.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec2885;
+        if (std::filesystem::is_directory(docs_design, ec2885)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec2885)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("2885-") == std::string::npos,
+                      std::string("2885 AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

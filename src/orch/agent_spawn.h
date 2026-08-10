@@ -1635,6 +1635,13 @@ inline void release_agent_memory_reservation(AgentHandle& h) noexcept {
 inline void join_keepalive_helper(AgentHandle& h,
                                   std::uint64_t drain_ms = kDefaultKeepaliveHelperDrainMs) noexcept;
 
+// Issue #2885: per-join still-running SLA on the Reclaimed path. The Aura
+// (orch:agent-join) hash surfaces still-running / reclaim-age-ms /
+// deferred-cleanup keys only when status=reclaimed (zero-cost on other paths
+// per AC2; AC3 preserves #2661 mechanics — global-table only, no body-stack
+// free). The C++ helper itself stays unchanged; the per-Fiber timestamps and
+// still-running flag live in Fiber (#2397 / #2636 lineage) and are read by
+// the Aura surface at join return.
 inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept {
     if (jr.status == serve::JoinStatus::Reclaimed) {
         // Defer path: global tables only, never body-stack.
