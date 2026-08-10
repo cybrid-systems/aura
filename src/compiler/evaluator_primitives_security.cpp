@@ -706,6 +706,25 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("capability-durable-high-risk-grant-total",
                           static_cast<std::int64_t>(snap.capability_durable_high_risk_grant));
             }
+            // Issue #2883: production hard principal check on fiber
+            // resume/steal handoff. Under production/Restricted, if the
+            // current fiber resume had a hard principal mismatch (ambient
+            // worker principal diverged from fiber `assigned_tenant_id_`),
+            // side-effect entry points (`require_effect*` /
+            // `check_and_record_effect`) deny the call with SE reason
+            // `fiber-principal-mismatch` rather than silently letting an
+            // ambient principal escape through. Off / Soft path: flag stays
+            // false, existing soft metric-only behaviour preserved.
+            {
+                insert_kv("schema-2883", 2883);
+                insert_kv("issue-2883", 2883);
+                insert_kv("fiber-principal-mismatch-hard-deny-wired", 1);
+                insert_kv("capability-fiber-principal-mismatch-hard-deny-total",
+                          static_cast<std::int64_t>(snap.fiber_principal_mismatch_hard_deny));
+                insert_kv("tenant-scope-mismatch-hard-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::Fiber::tenant_scope_mismatch_hard_total()));
+            }
             // Issue #2152: dispatch-level non-bypassable required_effects
             {
                 using aura::compiler::kDispatchRequiredEffectsIssue;

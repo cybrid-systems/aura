@@ -1006,8 +1006,31 @@ public:
         return static_tenant_scope_mismatch_hard_total_.load(std::memory_order_relaxed);
     }
 
+    // Issue #2883: per-resume hard-face flag. Set in the install hook when
+    // a production/Restricted hard mismatch is detected (ambient worker
+    // principal diverges from assigned_tenant_id_). Cleared in the release
+    // hook on yield. Side-effect entry points (require_effect*, check_and_-
+    // record_effect_for_test, grant_effect_*) consult this flag under
+    // production defaults and deny the call with SE reason
+    // 'fiber-principal-mismatch' rather than silently letting an ambient
+    // principal escape through. Per-Fiber (not static) because the flag is
+    // per-resume, per-fiber-instance.
+    void set_resume_had_mismatch(bool on) noexcept {
+        current_resume_had_mismatch_.store(on, std::memory_order_release);
+    }
+    [[nodiscard]] bool resume_had_mismatch() const noexcept {
+        return current_resume_had_mismatch_.load(std::memory_order_acquire);
+    }
+    static void bump_fiber_principal_mismatch_hard_deny() noexcept {
+        static_fiber_principal_mismatch_hard_deny_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] static std::uint64_t fiber_principal_mismatch_hard_deny_total() noexcept {
+        return static_fiber_principal_mismatch_hard_deny_total_.load(std::memory_order_acquire);
+    }
+
 private:
     uint64_t id_;
+    std::atomic<bool> current_resume_had_mismatch_{false};
     std::atomic<FiberState> state_{FiberState::Ready};
     std::atomic<YieldReason> last_yield_reason_{YieldReason::Explicit};
 
@@ -1203,6 +1226,7 @@ private:
     // Issue #2839: production hard-face mismatch total (see bump_tenant_
     // scope_mismatch_hard). Soft path never bumps this.
     static std::atomic<std::uint64_t> static_tenant_scope_mismatch_hard_total_;
+    static std::atomic<std::uint64_t> static_fiber_principal_mismatch_hard_deny_total_{0};
     // Issue #2397: true iff this fiber contributed +1 to the
     // still-running gauge (mark_reclaimed while !Done). Cleared by
     // note_body_exit_if_reclaimed or ~Fiber (abandon without retired).

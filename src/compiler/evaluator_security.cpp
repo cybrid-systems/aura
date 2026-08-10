@@ -185,6 +185,42 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     // Issue #2151: effect_fiber_id_or lets tests simulate fiber A vs B;
     // production leaves override at 0 → live TLS fiber id.
     prov.fiber_id = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
+
+    // Issue #2883: production hard principal check on side-effect entry.
+    // If the current fiber resume had a hard principal mismatch under
+    // production/Restricted (ambient worker principal diverged from
+    // fiber `assigned_tenant_id`), deny the side-effect at entry with SE
+    // reason `fiber-principal-mismatch` rather than silently letting an
+    // ambient principal escape through. Soft / Off path: the flag stays
+    // false (set only by hard path), so this check is a no-op. Off path
+    // never flips the flag so the existing soft metric-only behaviour
+    // is preserved.
+    if (sandbox_mode_ != 0 || effect_sandbox_mode() != 0) {
+        if (auto* f = g_current_fiber) {
+            if (f->resume_had_mismatch()) {
+                // Bump hard-deny counter distinct from mismatch-detected.
+                f->bump_fiber_principal_mismatch_hard_deny();
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->capability_fiber_principal_mismatch_hard_deny_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = provenance_mutation_id != 0
+                                     ? provenance_mutation_id
+                                     : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+                const auto fid = static_cast<std::int64_t>(f->id());
+                // SE reason: 'fiber-principal-mismatch' (same shape as the
+                // resume-time SE so Agent dashboards chart a single reason).
+                emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                            /*effect_bits=*/required_effect_bits,
+                                            /*op=*/op,
+                                            /*reason=*/"fiber-principal-mismatch",
+                                            /*denied=*/true, fid);
+                return false; // hard deny — no partial mutate, no mid auto-bump.
+            }
+        }
+    }
     // Issue #2149: security provenance uses WorkspaceEpoch Mutation only
     // (same vocabulary as make_grant_provenance / grant_epoch). Bridge is
     // AOT/JIT/closure — never the capability fence key. Pre-#2149 this
