@@ -1,0 +1,84 @@
+; Issue #2875 — std/swarm common API + discrete grid baseline
+(require "std/test" all:)
+(require "std/swarm" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (sphere ind)
+  (let loop ((xs ind) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (l2 ind)
+  (let loop ((xs ind) (s 0.0))
+    (if (null? xs) s
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+; AC1: module API surface
+(display "AC1 API surface\n")
+(assert! (string? (swarm:help)) "help string")
+(assert! (not (= (string-index (swarm:help) "2875" 0) -1)) "help 2875")
+
+; AC2: grid discrete population + step improves / finds near-zero bin
+(display "AC2 discrete grid baseline\n")
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 8
+                  "bounds" (list (list -2.0 2.0)) "bins" 8 "seed" 1))
+(assert! (string=? (swarm:kind) "grid") "kind grid")
+(assert! (= (length (swarm:population)) 8) "population size 8")
+; first window is linspace bin centers
+(assert! (number? (car (car (swarm:population)))) "ind is number list")
+(swarm:step! sphere)
+(assert! (= (swarm:gen) 1) "gen 1")
+(assert! (< (l2 (swarm:best)) 0.1) "grid best near 0 (bin center)")
+(assert! (number? (hash-ref (swarm:report) "best-fit")) "best-fit number")
+(assert! (number? (hash-ref (swarm:report) "mean-fit")) "mean-fit number")
+(assert! (< (hash-ref (swarm:report) "mean-fit") 0.0) "mean-fit negative for sphere")
+
+; AC3: stable report / export schema keys
+(display "AC3 report/export schema\n")
+(let ((r (swarm:report))
+      (e (swarm:export)))
+  (assert! (string=? (hash-ref r "kind") "grid") "report kind")
+  (assert! (number? (hash-ref r "gen")) "report gen")
+  (assert! (number? (hash-ref r "best-fit")) "report best-fit")
+  (assert! (number? (hash-ref r "mean-fit")) "report mean-fit")
+  (assert! (number? (hash-ref r "pop")) "report pop")
+  (assert! (number? (hash-ref r "dim")) "report dim")
+  (assert! (number? (hash-ref r "diversity")) "report diversity")
+  (assert! (string? e) "export string")
+  (assert! (not (= (string-index e "mean-fit" 0) -1)) "export has mean-fit")
+  (assert! (not (= (string-index e "best-fit" 0) -1)) "export has best-fit"))
+
+; AC4: multi-gen grid scan keeps best
+(display "AC4 multi-gen grid scan\n")
+(let ((bf0 (hash-ref (swarm:report) "best-fit")))
+  (swarm:step! sphere)
+  (swarm:step! sphere)
+  (assert! (>= (hash-ref (swarm:report) "best-fit") bf0) "best-fit non-decreasing")
+  (assert! (= (length (swarm:population)) 8) "population still 8"))
+
+; AC5: optional parallel path
+(display "AC5 parallel grid\n")
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 6
+                  "bounds" (list (list -1.0 1.0)) "bins" 6
+                  "parallel" #t))
+(swarm:step! sphere)
+(assert! (hash-ref (swarm:report) "parallel") "parallel #t")
+(assert! (number? (hash-ref (swarm:report) "best-fit")) "parallel best-fit")
+(assert! (> (length (swarm:population)) 0) "parallel population")
+
+(if (= *fails* 0)
+    (begin (display "OK-2875 swarm interface\n"))
+    (begin
+      (display "FAIL-2875 fails=")
+      (display *fails*)
+      (newline)
+      (error "2875 suite failed")))

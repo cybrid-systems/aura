@@ -1,20 +1,22 @@
-; lib/std/swarm.aura — Issue #2874 pluggable swarm intelligence control family
+; lib/std/swarm.aura — Issue #2874 / #2875 pluggable swarm control family
 ;
 ; Pure-Aura population search next to std/ant. Callers own fitness and apply;
 ; this module only searches parameter individuals (list of numbers / genes).
 ;
 ;   (require "std/swarm" all:)
-;   (swarm:init (hash "kind" "pso" "dim" 2 "pop" 12
+;   (swarm:init (hash "kind" "grid" "dim" 2 "pop" 16
 ;                     "bounds" (list (list -5.0 5.0) (list -5.0 5.0))))
 ;   (swarm:step! (lambda (ind) (- 0.0 (fitness-of ind))))  ; higher better
-;   (swarm:best) (swarm:report) (swarm:export)
+;   (swarm:best) (swarm:population) (swarm:report) (swarm:export)
 ;
 ; kinds: "grid" | "pso" | "ant"
+;   grid (#2875 baseline): discrete linspace product (Unify policy-scan shape)
 ; Optional: "parallel" #t → flat fiber:spawn all then join on caller (no join-in-worker)
 ;
 ; Form order (#2769): export before require.
 
-(export swarm:init swarm:step! swarm:best swarm:report swarm:export
+(export swarm:init swarm:step! swarm:best swarm:population
+        swarm:report swarm:export
         swarm:kind swarm:gen swarm:parallel!
         swarm:help)
 
@@ -35,7 +37,9 @@
 (define *swarm-pbest-fit* (list))
 (define *swarm-parallel* #f)
 (define *swarm-seed* 424242)
-(define *swarm-bins* 8) ; ant discrete bins per dim
+(define *swarm-bins* 8) ; ant / grid discrete bins per dim
+(define *swarm-grid-full* (list)) ; full discrete grid (kind:grid)
+(define *swarm-grid-cursor* 0)    ; window start into *swarm-grid-full*
 
 ; ── Tiny PRNG (inline; avoid std/random internal-define footgun) ──
 (define (swarm-rand!)
@@ -179,33 +183,69 @@
       (loop (cdr xs) (cdr ys) (+ s (swarm-abs (- (car xs) (car ys))))))))
 
 ; ── Backends ────────────────────────────────────────────────────
-; grid: keep elite, reseed rest in bounds (random grid baseline)
+; grid (#2875): discrete linspace product (Unify policy-scan baseline).
+; Full grid stored in *swarm-grid-full*; each step evaluates a window of
+; size pop, advances cursor, keeps global best across the scan.
+
+(define (swarm-grid-point d g bins)
+  (let* ((bh (swarm-bound-for d))
+         (lo (car bh))
+         (hi (car (cdr bh)))
+         (t (if (<= bins 1) 0.5 (/ (+ g 0.5) bins))))
+    (+ lo (* t (- hi lo)))))
+
+; bins^remaining after dim d (for row-major index decode)
+(define (swarm-grid-stride d bins)
+  (let loop ((k (+ d 1)) (v 1))
+    (if (>= k *swarm-dim*) v
+      (loop (+ k 1) (* v bins)))))
+
+; Decode linear index i → continuous individual (row-major over dims).
+(define (swarm-grid-ind-at i bins)
+  (let loop ((d 0) (rest i) (coords (list)))
+    (if (>= d *swarm-dim*) (reverse coords)
+      (let* ((str (swarm-grid-stride d bins))
+             (g (if (<= str 1) (modulo rest bins)
+                  (modulo (floor (/ rest str)) bins)))
+             (r (if (<= str 1) 0
+                  (- rest (* g str)))))
+        (loop (+ d 1) r
+              (cons (swarm-grid-point d g bins) coords))))))
+
+; Full discrete grid: product of bins per dim, capped at max-n.
+(define (swarm-build-grid-full bins max-n)
+  (let* ((total (let loop ((d 0) (t 1))
+                  (if (>= d *swarm-dim*) t
+                    (loop (+ d 1) (* t bins)))))
+         (n (if (< total max-n) total max-n)))
+    (let loop ((i 0) (out (list)))
+      (if (>= i n) (reverse out)
+        (loop (+ i 1)
+              (cons (swarm-grid-ind-at i bins) out))))))
+
+(define (swarm-grid-window start n)
+  (let ((full *swarm-grid-full*)
+        (flen (swarm-length *swarm-grid-full*)))
+    (if (= flen 0) (list)
+      (let loop ((k 0) (acc (list)))
+        (if (>= k n) (reverse acc)
+          (let ((idx (modulo (+ start k) flen)))
+            (loop (+ k 1)
+                  (cons (swarm-list-ref full idx) acc))))))))
+
 (define (swarm-step-grid! fitness-fn)
-  (let* ((fits (swarm-eval-pop fitness-fn *swarm-inds*))
-         (bi (swarm-argmax fits))
-         (elite (swarm-list-ref *swarm-inds* bi)))
+  (let* ((fits (swarm-eval-pop fitness-fn *swarm-inds*)))
     (set! *swarm-fits* fits)
     (swarm-note-best! *swarm-inds* fits)
-    (set! *swarm-inds*
-          (cons elite
-                (let loop ((k 1) (acc (list)))
-                  (if (>= k *swarm-pop*) (reverse acc)
-                    (loop (+ k 1)
-                          (cons (swarm-jitter elite) acc))))))
-    #t))
-
-(define (swarm-jitter ind)
-  (let loop ((d 0) (xs ind) (acc (list)))
-    (if (null? xs) (reverse acc)
-      (let* ((bh (swarm-bound-for d))
-             (lo (car bh))
-             (hi (car (cdr bh)))
-             (span (- hi lo))
-             (x (car xs))
-             (nx (swarm-clip (+ x (swarm-rand-range! (- 0.0 (* 0.15 span))
-                                                     (* 0.15 span)))
-                             lo hi)))
-        (loop (+ d 1) (cdr xs) (cons nx acc))))))
+    ; advance window for next generation (full scan over gens)
+    (let ((flen (swarm-length *swarm-grid-full*)))
+      (if (= flen 0) #t
+        (begin
+          (set! *swarm-grid-cursor*
+                (modulo (+ *swarm-grid-cursor* *swarm-pop*) flen))
+          (set! *swarm-inds*
+                (swarm-grid-window *swarm-grid-cursor* *swarm-pop*))
+          #t)))))
 
 ; pso: classical velocity update, inertia 0.7, c1=c2=1.4
 (define (swarm-step-pso! fitness-fn)
@@ -374,11 +414,15 @@
                (if (>= k pop) (reverse acc)
                  (loop (+ k 1)
                        (cons (swarm-genes->ind (swarm-rand-genes)) acc))))))
-      (#t ; grid
-       (set! *swarm-inds*
-             (let loop ((k 0) (acc (list)))
-               (if (>= k pop) (reverse acc)
-                 (loop (+ k 1) (cons (swarm-rand-ind) acc)))))))
+      (#t ; grid — discrete linspace product (#2875)
+       (let* ((max-n (* pop 4)) ; keep full grid modestly larger than pop
+              (full (swarm-build-grid-full bins max-n)))
+         (set! *swarm-grid-full* full)
+         (set! *swarm-grid-cursor* 0)
+         (set! *swarm-inds*
+               (swarm-grid-window 0 (if (< (swarm-length full) pop)
+                                        (swarm-length full)
+                                        pop))))))
     (set! *swarm-fits* (list))
     *swarm-kind*))
 
@@ -392,10 +436,23 @@
 
 (define (swarm:best) *swarm-best-ind*)
 
+; Issue #2875: expose current population (list of individuals).
+(define (swarm:population) *swarm-inds*)
+
+(define (swarm-mean-fit)
+  (let ((n (swarm-length *swarm-fits*)))
+    (if (= n 0) 0.0
+      (let loop ((xs *swarm-fits*) (s 0.0))
+        (if (null? xs) (/ s n)
+          (loop (cdr xs) (+ s (car xs))))))))
+
+; Stable report schema (#2875): kind, gen, best-fit, mean-fit, pop, dim,
+; diversity, parallel, best (individual).
 (define (swarm:report)
   (hash "kind" *swarm-kind*
         "gen" *swarm-gen*
         "best-fit" *swarm-best-fit*
+        "mean-fit" (swarm-mean-fit)
         "best" *swarm-best-ind*
         "pop" *swarm-pop*
         "dim" *swarm-dim*
@@ -408,10 +465,11 @@
       "{\"kind\":\"" (swarm-opt r "kind" "?") "\""
       ",\"gen\":" (number->string (swarm-opt r "gen" 0))
       ",\"best-fit\":" (number->string (swarm-opt r "best-fit" 0))
+      ",\"mean-fit\":" (number->string (swarm-opt r "mean-fit" 0))
       ",\"pop\":" (number->string (swarm-opt r "pop" 0))
       ",\"dim\":" (number->string (swarm-opt r "dim" 0))
       ",\"diversity\":" (number->string (swarm-opt r "diversity" 0))
       "}")))
 
 (define (swarm:help)
-  "std/swarm (#2874): pluggable swarm search (grid|pso|ant). (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:report) (swarm:export). Optional hash key parallel:#t for flat fiber fitness fanout.")
+  "std/swarm (#2874/#2875): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant. report keys: kind,gen,best-fit,mean-fit,pop,dim,diversity,parallel,best. Optional parallel:#t flat fiber fitness.")
