@@ -546,6 +546,29 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     // Issue #2151: stamp grant with effect_fiber_id_or (override for tests).
     const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
     auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+    // Issue #2882: production default single-use override. Under production
+    // defaults (sandbox_mode_ != 0 || effect_sandbox_mode() != 0) any grant
+    // touching a high-risk effect (Mutate | MacroSelfEvo | TenantAdmin |
+    // Syscall) is force-promoted to single_use=true regardless of caller
+    // intent. Privilege-sticky Mutate / MacroSelfEvo / TenantAdmin grants
+    // are the practical bypass vector for epoch-fenced self-modify in
+    // commercial multi-tenant loads after #2586; the production surface
+    // must close this. Explicit durable admin path goes through
+    // grant_effect_durable() which is auditable and bumps a separate
+    // counter (capability_durable_high_risk_grant_total).
+    using aura::compiler::security::kEffectMacroSelfEvo;
+    using aura::compiler::security::kEffectMutate;
+    using aura::compiler::security::kEffectSyscall;
+    using aura::compiler::security::kEffectTenantAdmin;
+    constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
+        kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+    const bool production_defaults = force_bind;
+    const bool is_high_risk = (effect_bits & kHighRiskMask) != 0;
+    if (production_defaults && is_high_risk && !single_use) {
+        single_use = true;
+        g_capability_effect_metrics().capability_high_risk_forced_single_use_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
     // Issue #2586: single_use flag forwarded to registry grant (auto-revoke
     // after first successful check_and_record_effect that uses the bits).
     g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov,
@@ -557,6 +580,45 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
             m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Also string-grant for legacy has_capability path.
+    if (!name.empty())
+        grant_capability(std::string(name));
+}
+
+// Issue #2882: explicit durable admin path for high-risk grants. Bypasses
+// the production-default single-use override (capability_high_risk_
+//
+// forced_single_use_total stays at 0) and bumps the durable override
+// counter so Agent dashboards can chart privilege-sticky admin grants
+// separately from the auto-revoke common-case. Use only when audit
+// rationale is established — long-lived Mutate / MacroSelfEvo /
+// TenantAdmin / Syscall grants remain sticky for the lifetime of the
+// grant even with epoch binding (#2074) and retain windows.
+void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view name,
+                                     std::uint16_t effect_bits,
+                                     std::uint64_t provenance_mutation_id) noexcept {
+    using namespace ::aura::core::capability;
+    const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+    const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
+    auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+    // Bump the durable high-risk counter when this durable override touches
+    // a high-risk effect bit (Mutate / MacroSelfEvo / TenantAdmin / Syscall).
+    // Non-high-risk durable grants are tracked only via capability_grant_total.
+    using aura::compiler::security::kEffectMacroSelfEvo;
+    using aura::compiler::security::kEffectMutate;
+    using aura::compiler::security::kEffectSyscall;
+    using aura::compiler::security::kEffectTenantAdmin;
+    constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
+        kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+    if ((effect_bits & kHighRiskMask) != 0) {
+        g_capability_effect_metrics().capability_durable_high_risk_grant_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov,
+                                  /*single_use=*/false);
+    if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
+    }
     if (!name.empty())
         grant_capability(std::string(name));
 }

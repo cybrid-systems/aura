@@ -1803,6 +1803,22 @@ def cmd_lint():
             "Issue #2839 side-effect + fiber principal linter failed — run python3 scripts/coverage/checks/check_side_effect_fiber_principal_2839.py"
         )
         return r
+    # Issue #2882: production default single-use for high-risk grants
+    # (Mutate / MacroSelfEvo / TenantAdmin / Syscall) under Restricted/Strict.
+    # grant_effect_capability force-promotes single_use=true; explicit
+    # grant_effect_durable admin path is audited via separate counter.
+    # Extends test_capability_single_use_consume.cpp (#81967); no
+    # docs/design/ (#1655).
+    pdsu_script = COVERAGE_CHECKS / "check_production_default_single_use_2882.py"
+    if not pdsu_script.exists():
+        fail(f"missing {pdsu_script}")
+        return 1
+    r = run([sys.executable, str(pdsu_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2882 production default single-use linter failed — run python3 scripts/coverage/checks/check_production_default_single_use_2882.py"
+        )
+        return r
     # Issue #2840: GeneralObjectPin required densify fail-closed residual
     # (#2597/#2665: pref locked but callers void-cast wire + densify
     # unguarded). Sticky breach + Moving gate + required-fail callers.
