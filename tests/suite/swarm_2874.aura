@@ -44,15 +44,17 @@
 (assert! (string=? (swarm:kind) "pso") "kind pso")
 (assert! (< (l2 (swarm:best)) 0.5) "pso best near 0")
 
-; AC3: ant backend (std/ant pheromone bridge)
-(display "AC3 ant sphere\n")
-(swarm:init (hash "kind" "ant" "dim" 1 "pop" 10
-                  "bounds" (list (list -2.0 2.0))
-                  "seed" 33 "bins" 8))
+; AC3: ant backend — mutation-type ranking (#2876; not continuous sphere)
+(display "AC3 ant mutation-type ranking\n")
+(define ant-ops (list "edsl-lit-tweak" "edsl-op-swap" "edsl-disp-ref"))
+(define (ant-fit op)
+  (if (string=? op "edsl-lit-tweak") 1.0 0.1))
+(swarm:init (hash "kind" "ant" "pop" 3 "ops" ant-ops
+                  "evaporate" 0.95 "seed" 33))
 (let loop ((i 0))
-  (if (>= i 15) #t (begin (swarm:step! sphere) (loop (+ i 1)))))
+  (if (>= i 6) #t (begin (swarm:step! ant-fit) (loop (+ i 1)))))
 (assert! (string=? (swarm:kind) "ant") "kind ant")
-(assert! (< (l2 (swarm:best)) 1.0) "ant best in bounds near 0")
+(assert! (string=? (swarm:best) "edsl-lit-tweak") "ant best lit-tweak")
 
 ; AC4: optional parallel fitness (flat join)
 (display "AC4 parallel grid\n")

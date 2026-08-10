@@ -37,9 +37,12 @@
 (define *swarm-pbest-fit* (list))
 (define *swarm-parallel* #f)
 (define *swarm-seed* 424242)
-(define *swarm-bins* 8) ; ant / grid discrete bins per dim
+(define *swarm-bins* 8) ; grid discrete bins per dim
 (define *swarm-grid-full* (list)) ; full discrete grid (kind:grid)
 (define *swarm-grid-cursor* 0)    ; window start into *swarm-grid-full*
+; kind:ant (#2876) — mutation-type ranking, not continuous bins
+(define *swarm-ant-ops* (list))   ; candidate operator type names
+(define *swarm-ant-evap* 0.95)    ; evaporation rho per step (1.0 = off)
 
 ; ── Tiny PRNG (inline; avoid std/random internal-define footgun) ──
 (define (swarm-rand!)
@@ -164,23 +167,35 @@
           (set! *swarm-best-ind* bind))
         #f)))
 
-; ── Diversity (mean pairwise L1 / dim / pop^2 proxy) ────────────
+; ── Diversity (mean pairwise L1; string ops → distinct fraction) ─
 (define (swarm-diversity)
   (let ((n (swarm-length *swarm-inds*)))
     (if (< n 2) 0.0
-      (let loop ((i 0) (sum 0.0) (cnt 0))
-        (if (>= i n) (if (= cnt 0) 0.0 (/ sum cnt))
-          (let ((ai (swarm-list-ref *swarm-inds* i)))
-            (let jloop ((j (+ i 1)) (s sum) (c cnt))
-              (if (>= j n) (loop (+ i 1) s c)
-                (let* ((bj (swarm-list-ref *swarm-inds* j))
-                       (d (swarm-l1 ai bj)))
-                  (jloop (+ j 1) (+ s d) (+ c 1)))))))))))
+      (if (string=? *swarm-kind* "ant")
+          ; unique names / n
+          (let loop ((xs *swarm-inds*) (seen (list)) (u 0))
+            (if (null? xs) (/ u n)
+              (if (swarm-member? (car xs) seen)
+                  (loop (cdr xs) seen u)
+                  (loop (cdr xs) (cons (car xs) seen) (+ u 1)))))
+          (let loop ((i 0) (sum 0.0) (cnt 0))
+            (if (>= i n) (if (= cnt 0) 0.0 (/ sum cnt))
+              (let ((ai (swarm-list-ref *swarm-inds* i)))
+                (let jloop ((j (+ i 1)) (s sum) (c cnt))
+                  (if (>= j n) (loop (+ i 1) s c)
+                    (let* ((bj (swarm-list-ref *swarm-inds* j))
+                           (d (swarm-l1 ai bj)))
+                      (jloop (+ j 1) (+ s d) (+ c 1))))))))))))
+
+(define (swarm-member? x lst)
+  (if (null? lst) #f
+    (if (equal? x (car lst)) #t (swarm-member? x (cdr lst)))))
 
 (define (swarm-l1 a b)
-  (let loop ((xs a) (ys b) (s 0.0))
-    (if (or (null? xs) (null? ys)) s
-      (loop (cdr xs) (cdr ys) (+ s (swarm-abs (- (car xs) (car ys))))))))
+  (if (or (not (list? a)) (not (list? b))) 0.0
+    (let loop ((xs a) (ys b) (s 0.0))
+      (if (or (null? xs) (null? ys)) s
+        (loop (cdr xs) (cdr ys) (+ s (swarm-abs (- (car xs) (car ys)))))))))
 
 ; ── Backends ────────────────────────────────────────────────────
 ; grid (#2875): discrete linspace product (Unify policy-scan baseline).
@@ -313,53 +328,53 @@
               (if (null? vs) (list) (cdr vs))
               (cons nx acc))))))
 
-; ant: discrete construction biased by pheromone trails (std/ant bridge)
-(define (swarm-ant-key d g)
-  (string-append "d" (number->string d) "-g" (number->string g)))
+; ant (#2876): mutation-type ranking via std/ant pheromone table.
+; Individuals are operator type *names* (strings). Population = ranked
+; (or score-sampled) ops. Fitness feedback → pheromone:update; optional
+; evaporate each step. Not classical graph ACO / continuous bins.
+
+(define (swarm-ant-default-ops)
+  (list "edsl-disp-ref" "full-hash-wrap" "full-disp-bool"
+        "edsl-body-wrap" "full-disp-ref" "edsl-lit-tweak" "edsl-op-swap"))
+
+; Build population: top-k by pheromone:rank, pad by cycling if pop > |ops|.
+(define (swarm-ant-population-from-rank)
+  (let* ((ranked (pheromone:rank *swarm-ant-ops*))
+         (n (swarm-length ranked)))
+    (if (= n 0) (list)
+      (let loop ((k 0) (acc (list)))
+        (if (>= k *swarm-pop*) (reverse acc)
+          (loop (+ k 1)
+                (cons (swarm-list-ref ranked (modulo k n)) acc)))))))
+
+; Fitness → delta: reward above mean, mild penalty below (higher better).
+(define (swarm-ant-delta fit mean)
+  (let ((d (- fit mean)))
+    (if (> d 0.0) d -0.05)))
 
 (define (swarm-step-ant! fitness-fn)
-  ; convert current continuous inds → genes near bins for eval population
-  (let* ((genes-pop
-           (let loop ((k 0) (acc (list)))
-             (if (>= k *swarm-pop*) (reverse acc)
-               (loop (+ k 1) (cons (swarm-construct-genes) acc)))))
-         (inds (swarm-map swarm-genes->ind genes-pop))
-         (fits (swarm-eval-pop fitness-fn inds)))
-    (set! *swarm-inds* inds)
+  ; 1) optional global evaporation
+  (if (and (number? *swarm-ant-evap*) (< *swarm-ant-evap* 1.0))
+      (pheromone:evaporate! *swarm-ant-evap*)
+      #f)
+  ; 2) order candidates by trail strength
+  (set! *swarm-inds* (swarm-ant-population-from-rank))
+  ; 3) evaluate fitness on each operator type (string individual)
+  (let* ((fits (swarm-eval-pop fitness-fn *swarm-inds*))
+         (mean (let ((n (swarm-length fits)))
+                 (if (= n 0) 0.0
+                   (let loop ((xs fits) (s 0.0))
+                     (if (null? xs) (/ s n)
+                       (loop (cdr xs) (+ s (car xs)))))))))
     (set! *swarm-fits* fits)
-    (swarm-note-best! inds fits)
-    ; deposit on best genes
-    (let* ((bi (swarm-argmax fits))
-           (bg (swarm-list-ref genes-pop bi))
-           (bf (swarm-list-ref fits bi)))
-      (let loop ((d 0) (gs bg))
-        (if (null? gs) #t
-          (begin
-            (pheromone:update (swarm-ant-key d (car gs))
-                              (if (> bf 0.0) bf 0.1))
-            (loop (+ d 1) (cdr gs))))))
+    (swarm-note-best! *swarm-inds* fits)
+    ; 4) deposit / penalize trails from fitness feedback
+    (let loop ((ops *swarm-inds*) (fs fits))
+      (if (or (null? ops) (null? fs)) #t
+        (begin
+          (pheromone:update (car ops) (swarm-ant-delta (car fs) mean))
+          (loop (cdr ops) (cdr fs)))))
     #t))
-
-(define (swarm-construct-genes)
-  (let loop ((d 0) (acc (list)))
-    (if (>= d *swarm-dim*) (reverse acc)
-      (let* ((scores
-               (let gloop ((g 0) (acc2 (list)))
-                 (if (>= g *swarm-bins*) (reverse acc2)
-                   (gloop (+ g 1)
-                          (cons (pheromone:score (swarm-ant-key d g)) acc2)))))
-             (pick (swarm-roulette scores)))
-        (loop (+ d 1) (cons pick acc))))))
-
-(define (swarm-roulette scores)
-  (let* ((sum (let loop ((xs scores) (s 0.0))
-                (if (null? xs) s (loop (cdr xs) (+ s (swarm-max 0.01 (car xs)))))))
-         (r (* (swarm-rand-float!) sum)))
-    (let loop ((xs scores) (i 0) (acc 0.0))
-      (if (null? xs) 0
-        (let ((acc2 (+ acc (swarm-max 0.01 (car xs)))))
-          (if (>= acc2 r) i
-            (loop (cdr xs) (+ i 1) acc2)))))))
 
 ; ── Public API ──────────────────────────────────────────────────
 (define (swarm:kind) *swarm-kind*)
@@ -381,7 +396,9 @@
          (bounds (swarm-opt opts "bounds" (list (list -1.0 1.0))))
          (par (swarm-opt opts "parallel" #f))
          (seed (swarm-opt opts "seed" 424242))
-         (bins (swarm-opt opts "bins" 8)))
+         (bins (swarm-opt opts "bins" 8))
+         (ops (swarm-opt opts "ops" (list)))
+         (evap (swarm-opt opts "evaporate" 0.95)))
     (set! *swarm-kind* kind)
     (set! *swarm-dim* dim)
     (set! *swarm-pop* pop)
@@ -392,6 +409,7 @@
     (set! *swarm-seed* seed)
     (set! *swarm-bins* bins)
     (set! *swarm-parallel* (if par #t #f))
+    (set! *swarm-ant-evap* (if (number? evap) evap 0.95))
     (cond
       ((string=? kind "pso")
        (set! *swarm-inds*
@@ -408,12 +426,20 @@
                (if (>= k pop) (reverse acc)
                  (loop (+ k 1) (cons -1000000000.0 acc))))))
       ((string=? kind "ant")
+       ; mutation-type ranking (#2876) — ops list or default pheromone types
        (pheromone:init)
-       (set! *swarm-inds*
-             (let loop ((k 0) (acc (list)))
-               (if (>= k pop) (reverse acc)
-                 (loop (+ k 1)
-                       (cons (swarm-genes->ind (swarm-rand-genes)) acc))))))
+       (set! *swarm-ant-ops*
+             (if (and (list? ops) (not (null? ops))) ops
+               (swarm-ant-default-ops)))
+       ; ensure each op has a trail entry
+       (let loop ((xs *swarm-ant-ops*))
+         (if (null? xs) #t
+           (begin
+             (pheromone:update (car xs) 0.0)
+             (loop (cdr xs)))))
+       (set! *swarm-inds* (swarm-ant-population-from-rank))
+       ; dim unused for ant individuals (strings); keep for report schema
+       (set! *swarm-dim* 0))
       (#t ; grid — discrete linspace product (#2875)
        (let* ((max-n (* pop 4)) ; keep full grid modestly larger than pop
               (full (swarm-build-grid-full bins max-n)))
@@ -472,4 +498,4 @@
       "}")))
 
 (define (swarm:help)
-  "std/swarm (#2874/#2875): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant. report keys: kind,gen,best-fit,mean-fit,pop,dim,diversity,parallel,best. Optional parallel:#t flat fiber fitness.")
+  "std/swarm (#2874/#2875/#2876): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant. ant = mutation-type ranking via std/ant (ops, evaporate). report: kind,gen,best-fit,mean-fit,pop,dim,diversity,parallel,best.")

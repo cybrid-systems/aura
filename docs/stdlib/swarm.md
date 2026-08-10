@@ -62,10 +62,28 @@ the full grid so multi-generation scans cover the product without nested joins.
 
 Classical particle swarm (inertia 0.7, c1=c2=1.4). Thin surface: `std/pso`.
 
-### `kind: "ant"`
+### `kind: "ant"` (#2876 bridge)
 
-Discrete construction biased by `std/ant` pheromone trails (`pheromone:score` /
-`pheromone:update` keys `d{dim}-g{bin}`).
+**Not** classical graph ACO. Uses `std/ant` mutation-type pheromone table
+(same model as #444 strategy trails):
+
+| Piece | Role |
+|-------|------|
+| Individual | Operator type **name** (string), e.g. `"edsl-lit-tweak"` |
+| Population | `pheromone:rank` over `ops` (default: ant default trails) |
+| Step | optional `pheromone:evaporate!`, eval fitness, `pheromone:update` ±delta |
+| `colony:search` | **Unchanged** — local workspace search still available |
+
+```aura
+(swarm:init (hash "kind" "ant"
+                  "pop" 7
+                  "ops" (list "edsl-lit-tweak" "edsl-op-swap" "edsl-disp-ref")
+                  "evaporate" 0.95))
+(swarm:step! (lambda (op)
+  ;; synthetic / denseness fitness: higher = prefer this mutation type
+  (if (string=? op "edsl-lit-tweak") 1.0 0.1)))
+(swarm:best)   ; → preferred operator name
+```
 
 ## Parallel fitness (safe)
 

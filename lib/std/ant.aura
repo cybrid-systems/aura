@@ -1,6 +1,14 @@
-; lib/std/ant.aura -- ant colony pheromone system + colony:search
+; lib/std/ant.aura -- mutation-type pheromone ranking + colony:search
 ;
-(export pheromone:init pheromone:update pheromone:rank pheromone:score pheromone:export
+; Model (Issue #2876 / #444): **not** classical graph ACO. Trails score
+; *mutation operator types* (edsl-lit-tweak, …) for denseness / strategy
+; control. colony:search still does local workspace search.
+;
+; Swarm bridge: (require "std/swarm") with kind "ant" uses pheromone:rank
+; + pheromone:update from fitness feedback; optional pheromone:evaporate!.
+;
+(export pheromone:init pheromone:update pheromone:rank pheromone:score
+        pheromone:export pheromone:evaporate! pheromone:types
         colony:search)
 
 ; ── Local utility functions (no external deps) ───────────────────
@@ -50,7 +58,9 @@
   (set! *pheromone-table* (*default-pheromones*)))
 
 (define (pheromone:score type-name)
-  (or (hash-ref *pheromone-table* type-name) 0.1))
+  ; hash-ref missing → () which is truthy; treat null as default 0.1
+  (let ((v (hash-ref *pheromone-table* type-name)))
+    (if (or (null? v) (not (number? v))) 0.1 v)))
 
 (define (pheromone:update type-name delta)
   (let ((current (pheromone:score type-name)))
@@ -58,28 +68,44 @@
                (+ (* current 0.95)
                   (if (> delta 0.0) delta -0.05)))))
 
-(define (sort-descending lst)
-  (if (null? lst) (list)
-    (let ((pivot (car lst))
-          (rest (cdr lst)))
-      (append
-        (sort-descending (filter (lambda (x) (> (pheromone:score x) (pheromone:score pivot))) rest))
-        (list pivot)
-        (sort-descending (filter (lambda (x) (<= (pheromone:score x) (pheromone:score pivot))) rest))))))
+; Global evaporation (Issue #2876): multiply all trails by rho in (0,1].
+(define (pheromone:evaporate! rho)
+  (let ((r (if (and (number? rho) (> rho 0.0) (<= rho 1.0)) rho 0.95))
+        (ks (hash-keys *pheromone-table*)))
+    (let loop ((xs ks))
+      (if (null? xs) #t
+        (begin
+          (hash-set! *pheromone-table* (car xs)
+                     (* (pheromone:score (car xs)) r))
+          (loop (cdr xs)))))))
 
+; Registered mutation-type names (for swarm kind:ant default ops).
+(define (pheromone:types)
+  (hash-keys *pheromone-table*))
+
+; Iterative insertion sort by score (avoid recursive filter quicksort hang
+; on large/equal lists under multi-define load paths).
 (define (pheromone:rank mutation-type-list)
-  (sort-descending mutation-type-list))
+  (let insert-all ((xs mutation-type-list) (acc (list)))
+    (if (null? xs) acc
+      (let ((x (car xs)))
+        (insert-all (cdr xs)
+                    (let insert ((ys acc))
+                      (cond
+                        ((null? ys) (list x))
+                        ((>= (pheromone:score x) (pheromone:score (car ys)))
+                         (cons x ys))
+                        (#t (cons (car ys) (insert (cdr ys)))))))))))
 
 (define (pheromone:export)
-  (let ((keys (hash-keys *pheromone-table*))
-        (values (hash-values *pheromone-table*)))
+  (let ((keys (hash-keys *pheromone-table*)))
     (string-append "{"
-      (let build ((ks keys) (vs values) (first #t))
+      (let build ((ks keys) (first #t))
         (if (null? ks) ""
           (string-append
             (if first "" ",")
-            "\"" (car ks) "\":" (number->string (car vs))
-            (build (cdr ks) (cdr vs) #f))))
+            "\"" (car ks) "\":" (number->string (pheromone:score (car ks)))
+            (build (cdr ks) #f))))
       "}")))
 
 ; ── Colony Search (pure Aura, Phase 2) ───────────────────────────
