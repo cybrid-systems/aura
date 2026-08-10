@@ -1,0 +1,64 @@
+; Issue #2876 — std/ant as swarm kind:ant (mutation-type ranking)
+(require "std/test" all:)
+(require "std/swarm" all:)
+(require "std/ant" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define ops
+  (list "edsl-lit-tweak" "edsl-op-swap" "edsl-disp-ref" "edsl-body-wrap"))
+
+(define (op-fit op)
+  (cond
+    ((string=? op "edsl-lit-tweak") 1.0)
+    ((string=? op "edsl-body-wrap") 0.5)
+    (#t 0.1)))
+
+; AC1: kind ant + step + best is preferred op
+(display "AC1 ant step ranks preferred op\n")
+(swarm:init (hash "kind" "ant" "pop" 4 "ops" ops "evaporate" 0.95 "seed" 1))
+(assert! (string=? (swarm:kind) "ant") "kind ant")
+(assert! (= (length (swarm:population)) 4) "pop size")
+(assert! (string? (car (swarm:population))) "individual is string op")
+(let loop ((i 0))
+  (if (>= i 8) #t (begin (swarm:step! op-fit) (loop (+ i 1)))))
+(assert! (string=? (swarm:best) "edsl-lit-tweak") "best is lit-tweak")
+(assert! (> (pheromone:score "edsl-lit-tweak")
+            (pheromone:score "edsl-op-swap")) "trail prefers lit-tweak")
+
+; AC2: pheromone:rank order
+(display "AC2 pheromone:rank\n")
+(let ((r (pheromone:rank ops)))
+  (assert! (string=? (car r) "edsl-lit-tweak") "rank head lit-tweak"))
+
+; AC3: evaporate! exists and reduces scores
+(display "AC3 evaporate\n")
+(let ((s0 (pheromone:score "edsl-lit-tweak")))
+  (pheromone:evaporate! 0.5)
+  (assert! (< (pheromone:score "edsl-lit-tweak") s0) "score dropped"))
+
+; AC4: colony:search still exported (compat)
+(display "AC4 colony:search compat\n")
+(assert! (procedure? colony:search) "colony:search bound")
+(assert! (procedure? pheromone:types) "pheromone:types bound")
+
+; AC5: report schema still stable
+(display "AC5 report\n")
+(assert! (number? (hash-ref (swarm:report) "mean-fit")) "mean-fit")
+(assert! (string=? (hash-ref (swarm:report) "kind") "ant") "report kind")
+
+(if (= *fails* 0)
+    (begin (display "OK-2876 swarm ant bridge\n"))
+    (begin
+      (display "FAIL-2876 fails=")
+      (display *fails*)
+      (newline)
+      (error "2876 suite failed")))

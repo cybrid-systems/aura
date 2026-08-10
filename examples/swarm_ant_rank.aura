@@ -1,0 +1,49 @@
+; Example (#2876): rank mutation types under synthetic fitness via kind:ant
+;
+;   ./build/aura --load examples/swarm_ant_rank.aura
+
+(require "std/swarm" all:)
+(require "std/ant" all:)
+
+; Synthetic denseness fitness: prefer lit-tweak, then body-wrap, rest low.
+(define (op-fitness op)
+  (cond
+    ((string=? op "edsl-lit-tweak") 1.0)
+    ((string=? op "edsl-body-wrap") 0.6)
+    ((string=? op "edsl-op-swap") 0.3)
+    (#t 0.05)))
+
+(define ops
+  (list "edsl-disp-ref" "edsl-body-wrap" "edsl-lit-tweak"
+        "edsl-op-swap" "full-disp-ref" "full-hash-wrap" "full-disp-bool"))
+
+(swarm:init (hash "kind" "ant"
+                  "pop" 7
+                  "ops" ops
+                  "evaporate" 0.97
+                  "seed" 2876))
+
+(display "swarm ant mutation-type ranking\n")
+(display "initial rank: ")
+(display (pheromone:rank ops)) (newline)
+
+(let loop ((i 0))
+  (if (>= i 12) #t
+    (begin
+      (swarm:step! op-fitness)
+      (if (= (modulo i 4) 0)
+          (begin
+            (display "  gen=") (display (swarm:gen))
+            (display " best=") (display (swarm:best))
+            (display " fit=") (display (hash-ref (swarm:report) "best-fit"))
+            (newline))
+          #f)
+      (loop (+ i 1)))))
+
+(display "final best: ") (display (swarm:best)) (newline)
+(display "final rank: ") (display (pheromone:rank ops)) (newline)
+(display "pheromone export: ") (display (pheromone:export)) (newline)
+; colony:search still bound (compat)
+(display "colony:search bound? ")
+(display (procedure? colony:search)) (newline)
+(display "OK swarm ant rank example\n")

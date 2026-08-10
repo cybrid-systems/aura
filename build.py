@@ -923,6 +923,18 @@ def cmd_lint():
             "Issue #2875 swarm interface linter failed — run python3 scripts/coverage/checks/check_swarm_interface_2875.py"
         )
         return r
+    # Issue #2876: std/ant mutation-type ranking as swarm kind:ant
+    # Suite swarm_ant_bridge_2876.aura + examples/swarm_ant_rank.aura
+    sab_script = COVERAGE_CHECKS / "check_swarm_ant_bridge_2876.py"
+    if not sab_script.exists():
+        fail(f"missing {sab_script}")
+        return 1
+    r = run([sys.executable, str(sab_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2876 swarm ant bridge linter failed — run python3 scripts/coverage/checks/check_swarm_ant_bridge_2876.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +
