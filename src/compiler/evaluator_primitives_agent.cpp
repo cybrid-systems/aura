@@ -4656,6 +4656,26 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2848", aura::orch::kAgentSendAutoHandoffIssue);
             insert_kv("issue-2848", aura::orch::kAgentSendAutoHandoffIssue);
             insert_kv("agent-send-auto-handoff-wired", 1);
+            // Issue #2884: C++ helper agent_send_safe unifies the contract
+            // split between (a) the Aura prim (orch:agent-send, #2848) and
+            // (b) raw C++ agent_send / mailbox->push callers. Mirrors the
+            // #2848 auto handoff_ref flow but with typed PushStatus::
+            // HandoffRequired failure distinct from mailbox-Closed
+            // (never silent Closed conflation per AC1). Counters additive
+            // to #2848's language-path metrics; Soft regression green
+            // per AC5.
+            {
+                using aura::orch::kAgentSendAutoHandoffIssue;
+                insert_kv("schema-2884", 2884);
+                insert_kv("issue-2884", 2884);
+                insert_kv("agent-send-safe-wired", 1);
+                insert_kv("agent-send-safe-total",
+                          static_cast<std::int64_t>(
+                              os.agent_send_safe_total.load(std::memory_order_relaxed)));
+                insert_kv("agent-send-safe-handoff-required-total",
+                          static_cast<std::int64_t>(os.agent_send_safe_handoff_required_total.load(
+                              std::memory_order_relaxed)));
+            }
             insert_kv("recv-empty", static_cast<std::int64_t>(
                                         os.recv_empty_total.load(std::memory_order_relaxed)));
             insert_kv("join-ok",

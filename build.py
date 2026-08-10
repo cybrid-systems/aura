@@ -1819,6 +1819,22 @@ def cmd_lint():
             "Issue #2882 production default single-use linter failed — run python3 scripts/coverage/checks/check_production_default_single_use_2882.py"
         )
         return r
+    # Issue #2884: agent_send_safe — unify C++/language handoff_ref path for
+    # StableNodeRef payloads (close #2663 / #2848 contract split). Closes
+    # the largest orch-layer contract split for StableNodeRef cross-fiber
+    # delivery — distinct PushStatus::HandoffRequired typed failure,
+    # additive orch-module-stats surface. Extends test_orch_obs_facade.cpp
+    # (#81967); no docs/design/ (#1655).
+    ass_script = COVERAGE_CHECKS / "check_agent_send_safe_2884.py"
+    if not ass_script.exists():
+        fail(f"missing {ass_script}")
+        return 1
+    r = run([sys.executable, str(ass_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2884 agent_send_safe linter failed — run python3 scripts/coverage/checks/check_agent_send_safe_2884.py"
+        )
+        return r
     # Issue #2840: GeneralObjectPin required densify fail-closed residual
     # (#2597/#2665: pref locked but callers void-cast wire + densify
     # unguarded). Sticky breach + Moving gate + required-fail callers.

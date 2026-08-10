@@ -26,6 +26,14 @@
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
 #include "serve/scheduler.h"
+
+// Issue #2884: agent_send_safe inline fn (auto handoff_ref path) calls
+////// Evaluator::make_stamped_ref + Evaluator::handoff_ref — import the
+////// module so the full class declaration is in scope. All TUs that
+////// include this header (compiler/orch module TUs + serve/parallel_orch.h)
+////// already have access to aura.compiler.evaluator via their own module
+////// imports; this surface declaration makes the dependency explicit.
+import aura.compiler.evaluator;
 // Issue #2852: forward declare AgentScope (full definition lives in
 // agent_scope.h which includes this header — circular include avoided by
 // declaring here). apply_workflow body is defined in agent_scope.h right
@@ -302,6 +310,14 @@ struct OrchModuleStats {
     // for raw C++ MultiFiberMailbox::push callers.
     std::atomic<std::uint64_t> agent_send_auto_handoff_total{0};
     std::atomic<std::uint64_t> agent_send_handoff_fail_total{0};
+    // Issue #2884: agent_send_safe C++ helper observability. Total calls
+    // (covers both auto-handoff path + zero-cost fall-through). Plus a
+    // dedicated counter for the distinct PushStatus::HandoffRequired
+    // return value so Agent dashboards can chart 'C++ caller asked us
+    // to push, handoff_ref refused' separately from the underlying
+    // handoff_reject (#2663 mailbox) counter.
+    std::atomic<std::uint64_t> agent_send_safe_total{0};
+    std::atomic<std::uint64_t> agent_send_safe_handoff_required_total{0};
     std::atomic<std::uint64_t> recv_empty_total{0};
     std::atomic<std::uint64_t> join_wait_us_total{0};
     std::atomic<std::uint64_t> join_ok_total{0};
@@ -1946,6 +1962,66 @@ inline void stamp_mail_message_handoff_completed(serve::mf_mailbox::MailMessage&
                                                  std::uint64_t held_token) noexcept {
     msg.held_ref_token = held_token;
     msg.handoff_completed = true;
+}
+
+// Issue #2884: unified C++ helper that auto-runs the #2848 handoff_ref
+// path for StableNodeRef-bearing payloads. Mirrors the language
+// (orch:agent-send) auto-handoff surface but for C++ callers
+// (agent_send / direct mailbox->push). Unifies the contract split
+// between (a) the Aura prim and (b) raw C++ helper — both now route
+// through the same handoff_ref + stamp + bump metric flow.
+//
+// Behaviour:
+//   - If msg.held_ref_token has value + handoff_completed is false +
+//     ev != nullptr → call make_stamped_ref + handoff_ref; on success
+//     stamp handoff_completed + bump agent_send_auto_handoff_total and
+//     proceed to raw agent_send (Ok / Backpressure path); on fail bump
+//     agent_send_handoff_fail_total + return PushStatus::HandoffRequired
+//     (distinct from Closed — never ambiguous Closed conflation per
+//     AC1).
+//   - Otherwise (string / int / bool payload, no held_ref_token, no
+//     ev pointer, or already-stamped) → zero-cost fall through to raw
+//     agent_send. Raw agent_send with un-stamped held_ref_token still
+//     hits #2663 Closed (defense in depth per AC3).
+//
+// Caller rules:
+//   - ev must outlive the call (raw pointer, not owned).
+//   - MailMessage held_ref_token must hold the StableNodeRef.id value
+//     (per the #2848 stamp convention); the helper looks up the current
+//     gen via make_stamped_ref + tries handoff_ref.
+[[nodiscard]] inline serve::mf_mailbox::PushStatus
+agent_send_safe(AgentHandle& h, serve::mf_mailbox::MailMessage msg,
+                struct Evaluator* ev = nullptr) noexcept {
+    using Status = serve::mf_mailbox::PushStatus;
+    // AC2: zero-cost fall through when no held_ref_token / already stamped
+    // / no evaluator pointer — C++ callers passing string/int/bool or
+    // already-stamped messages pay nothing.
+    if (ev && msg.held_ref_token.has_value() && !msg.handoff_completed) {
+        const auto id = static_cast<aura::ast::NodeId>(*msg.held_ref_token);
+        // Issue #2839 / #2689 lineage: make_stamped_ref rehydrates the
+        // StableNodeRef (id + current workspace gen + fiber stamp) so
+        // handoff_ref has the right handle to re-export.
+        auto held = ev->make_stamped_ref(id);
+        auto out = ev->handoff_ref(std::move(held));
+        if (!out) {
+            // Structured typed failure — NOT Closed. C++ callers can
+            // disambiguate mailbox-closed from export-stale /
+            // handoff-required via the distinct HandoffRequired status.
+            g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            // Issue #2884: dedicated counter for the distinct typed fail
+            // return value so Agent dashboards can chart C++ helper
+            // handoff_required independently of mailbox-closed.
+            g_orch_module_stats.agent_send_safe_handoff_required_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return Status::HandoffRequired;
+        }
+        stamp_mail_message_handoff_completed(msg, static_cast<std::uint64_t>(out->id));
+        g_orch_module_stats.agent_send_auto_handoff_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Bump the total helper-call counter (covers both paths).
+    g_orch_module_stats.agent_send_safe_total.fetch_add(1, std::memory_order_relaxed);
+    return agent_send(h, std::move(msg));
 }
 
 // Issue #2848 lineage: schema / query surface for auto handoff metrics.
