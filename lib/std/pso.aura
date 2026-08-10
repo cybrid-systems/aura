@@ -1,0 +1,27 @@
+; lib/std/pso.aura — Issue #2874 particle swarm backend (thin surface)
+;
+; PSO lives in std/swarm as kind "pso". This module re-exports the swarm
+; API and documents the PSO-specific init shape for discoverability.
+;
+;   (require "std/pso" all:)
+;   (pso:init dim pop bounds)  ; → calls swarm:init kind:pso
+;   (pso:step! fitness-fn)
+;   (pso:best)
+
+(export pso:init pso:step! pso:best pso:report pso:export pso:help
+        swarm:init swarm:step! swarm:best swarm:report swarm:export)
+
+(require "std/swarm" all:)
+
+(define (pso:init dim pop bounds)
+  (swarm:init (hash "kind" "pso"
+                    "dim" dim
+                    "pop" pop
+                    "bounds" bounds)))
+
+(define (pso:step! fitness-fn) (swarm:step! fitness-fn))
+(define (pso:best) (swarm:best))
+(define (pso:report) (swarm:report))
+(define (pso:export) (swarm:export))
+(define (pso:help)
+  "std/pso (#2874): (pso:init dim pop bounds) (pso:step! fit) (pso:best). Backend of std/swarm kind:pso.")

@@ -901,6 +901,16 @@ def cmd_lint():
             "Issue #2873 multiframe named-let linter failed — run python3 scripts/coverage/checks/check_multiframe_named_let_2873.py"
         )
         return r
+    # Issue #2874: pluggable swarm intelligence (grid|pso|ant) stdlib family.
+    # Suite swarm_2874.aura + examples/swarm_sphere_search.aura per #81967.
+    sw_script = COVERAGE_CHECKS / "check_swarm_2874.py"
+    if not sw_script.exists():
+        fail(f"missing {sw_script}")
+        return 1
+    r = run([sys.executable, str(sw_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #2874 swarm stdlib linter failed — run python3 scripts/coverage/checks/check_swarm_2874.py")
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +

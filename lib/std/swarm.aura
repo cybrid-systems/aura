@@ -1,0 +1,417 @@
+; lib/std/swarm.aura — Issue #2874 pluggable swarm intelligence control family
+;
+; Pure-Aura population search next to std/ant. Callers own fitness and apply;
+; this module only searches parameter individuals (list of numbers / genes).
+;
+;   (require "std/swarm" all:)
+;   (swarm:init (hash "kind" "pso" "dim" 2 "pop" 12
+;                     "bounds" (list (list -5.0 5.0) (list -5.0 5.0))))
+;   (swarm:step! (lambda (ind) (- 0.0 (fitness-of ind))))  ; higher better
+;   (swarm:best) (swarm:report) (swarm:export)
+;
+; kinds: "grid" | "pso" | "ant"
+; Optional: "parallel" #t → flat fiber:spawn all then join on caller (no join-in-worker)
+;
+; Form order (#2769): export before require.
+
+(export swarm:init swarm:step! swarm:best swarm:report swarm:export
+        swarm:kind swarm:gen swarm:parallel!
+        swarm:help)
+
+(require "std/ant" all:)
+
+; ── Process-local swarm state ───────────────────────────────────
+(define *swarm-kind* "grid")
+(define *swarm-dim* 1)
+(define *swarm-pop* 8)
+(define *swarm-bounds* (list (list -1.0 1.0)))
+(define *swarm-gen* 0)
+(define *swarm-inds* (list))
+(define *swarm-fits* (list))
+(define *swarm-best-ind* (list))
+(define *swarm-best-fit* -1000000000.0)
+(define *swarm-vels* (list))
+(define *swarm-pbest* (list))
+(define *swarm-pbest-fit* (list))
+(define *swarm-parallel* #f)
+(define *swarm-seed* 424242)
+(define *swarm-bins* 8) ; ant discrete bins per dim
+
+; ── Tiny PRNG (inline; avoid std/random internal-define footgun) ──
+(define (swarm-rand!)
+  (set! *swarm-seed*
+        (modulo (+ (* *swarm-seed* 1103515245) 12345) 2147483647))
+  *swarm-seed*)
+
+(define (swarm-rand-float!)
+  (/ (swarm-rand!) 2147483647.0))
+
+(define (swarm-rand-range! lo hi)
+  (+ lo (* (swarm-rand-float!) (- hi lo))))
+
+(define (swarm-rand-int! n)
+  (if (<= n 1) 0 (modulo (swarm-rand!) n)))
+
+; ── List helpers (iterative where hot) ──────────────────────────
+(define (swarm-list-ref lst i)
+  (let loop ((xs lst) (k i))
+    (if (null? xs) #f
+      (if (= k 0) (car xs) (loop (cdr xs) (- k 1))))))
+
+(define (swarm-list-set lst i val)
+  (if (null? lst) (list)
+    (if (= i 0) (cons val (cdr lst))
+      (cons (car lst) (swarm-list-set (cdr lst) (- i 1) val)))))
+
+(define (swarm-map f lst)
+  (if (null? lst) (list)
+    (cons (f (car lst)) (swarm-map f (cdr lst)))))
+
+(define (swarm-length lst)
+  (let loop ((xs lst) (n 0))
+    (if (null? xs) n (loop (cdr xs) (+ n 1)))))
+
+(define (swarm-iota n)
+  (let loop ((i 0) (acc (list)))
+    (if (>= i n) (reverse acc) (loop (+ i 1) (cons i acc)))))
+
+(define (swarm-max a b) (if (> a b) a b))
+(define (swarm-min a b) (if (< a b) a b))
+(define (swarm-abs x) (if (< x 0.0) (- 0.0 x) x))
+
+(define (swarm-bound-for d)
+  (let ((b *swarm-bounds*))
+    (if (null? b) (list -1.0 1.0)
+      (if (< d (swarm-length b))
+          (swarm-list-ref b d)
+          (car b)))))
+
+(define (swarm-clip x lo hi)
+  (if (< x lo) lo (if (> x hi) hi x)))
+
+; ── Individual construction ─────────────────────────────────────
+(define (swarm-rand-ind)
+  (let loop ((d 0) (acc (list)))
+    (if (>= d *swarm-dim*) (reverse acc)
+      (let ((bh (swarm-bound-for d)))
+        (loop (+ d 1)
+              (cons (swarm-rand-range! (car bh) (car (cdr bh))) acc))))))
+
+(define (swarm-zero-ind)
+  (let loop ((d 0) (acc (list)))
+    (if (>= d *swarm-dim*) (reverse acc)
+      (loop (+ d 1) (cons 0.0 acc)))))
+
+(define (swarm-rand-vel)
+  (let loop ((d 0) (acc (list)))
+    (if (>= d *swarm-dim*) (reverse acc)
+      (let* ((bh (swarm-bound-for d))
+             (span (- (car (cdr bh)) (car bh)))
+             (v (swarm-rand-range! (- 0.0 (* 0.1 span)) (* 0.1 span))))
+        (loop (+ d 1) (cons v acc))))))
+
+; ant: discrete genes 0..bins-1
+(define (swarm-rand-genes)
+  (let loop ((d 0) (acc (list)))
+    (if (>= d *swarm-dim*) (reverse acc)
+      (loop (+ d 1) (cons (swarm-rand-int! *swarm-bins*) acc)))))
+
+(define (swarm-genes->ind genes)
+  (let loop ((d 0) (gs genes) (acc (list)))
+    (if (null? gs) (reverse acc)
+      (let* ((bh (swarm-bound-for d))
+             (lo (car bh))
+             (hi (car (cdr bh)))
+             (g (car gs))
+             (t (/ (+ g 0.5) *swarm-bins*))
+             (x (+ lo (* t (- hi lo)))))
+        (loop (+ d 1) (cdr gs) (cons x acc))))))
+
+; ── Fitness evaluation (optional flat fiber fanout) ─────────────
+(define (swarm-eval-one fitness-fn ind)
+  (let ((f (fitness-fn ind)))
+    (if (number? f) f -1000000000.0)))
+
+(define (swarm-eval-pop fitness-fn inds)
+  (if (and *swarm-parallel* (not (null? inds)))
+      ;; Flat fanout: spawn all on caller, join all on caller — never
+      ;; fiber:join inside a worker (#2869 residual).
+      (let ((fids (swarm-map
+                    (lambda (ind)
+                      (fiber:spawn (lambda () (swarm-eval-one fitness-fn ind))))
+                    inds)))
+        (swarm-map (lambda (fid) (fiber:join fid)) fids))
+      (swarm-map (lambda (ind) (swarm-eval-one fitness-fn ind)) inds)))
+
+(define (swarm-argmax fits)
+  (let loop ((xs fits) (i 0) (best-i 0) (best-v -1000000000.0))
+    (if (null? xs) best-i
+      (if (> (car xs) best-v)
+          (loop (cdr xs) (+ i 1) i (car xs))
+          (loop (cdr xs) (+ i 1) best-i best-v)))))
+
+(define (swarm-note-best! inds fits)
+  (let* ((bi (swarm-argmax fits))
+         (bf (swarm-list-ref fits bi))
+         (bind (swarm-list-ref inds bi)))
+    (if (> bf *swarm-best-fit*)
+        (begin
+          (set! *swarm-best-fit* bf)
+          (set! *swarm-best-ind* bind))
+        #f)))
+
+; ── Diversity (mean pairwise L1 / dim / pop^2 proxy) ────────────
+(define (swarm-diversity)
+  (let ((n (swarm-length *swarm-inds*)))
+    (if (< n 2) 0.0
+      (let loop ((i 0) (sum 0.0) (cnt 0))
+        (if (>= i n) (if (= cnt 0) 0.0 (/ sum cnt))
+          (let ((ai (swarm-list-ref *swarm-inds* i)))
+            (let jloop ((j (+ i 1)) (s sum) (c cnt))
+              (if (>= j n) (loop (+ i 1) s c)
+                (let* ((bj (swarm-list-ref *swarm-inds* j))
+                       (d (swarm-l1 ai bj)))
+                  (jloop (+ j 1) (+ s d) (+ c 1)))))))))))
+
+(define (swarm-l1 a b)
+  (let loop ((xs a) (ys b) (s 0.0))
+    (if (or (null? xs) (null? ys)) s
+      (loop (cdr xs) (cdr ys) (+ s (swarm-abs (- (car xs) (car ys))))))))
+
+; ── Backends ────────────────────────────────────────────────────
+; grid: keep elite, reseed rest in bounds (random grid baseline)
+(define (swarm-step-grid! fitness-fn)
+  (let* ((fits (swarm-eval-pop fitness-fn *swarm-inds*))
+         (bi (swarm-argmax fits))
+         (elite (swarm-list-ref *swarm-inds* bi)))
+    (set! *swarm-fits* fits)
+    (swarm-note-best! *swarm-inds* fits)
+    (set! *swarm-inds*
+          (cons elite
+                (let loop ((k 1) (acc (list)))
+                  (if (>= k *swarm-pop*) (reverse acc)
+                    (loop (+ k 1)
+                          (cons (swarm-jitter elite) acc))))))
+    #t))
+
+(define (swarm-jitter ind)
+  (let loop ((d 0) (xs ind) (acc (list)))
+    (if (null? xs) (reverse acc)
+      (let* ((bh (swarm-bound-for d))
+             (lo (car bh))
+             (hi (car (cdr bh)))
+             (span (- hi lo))
+             (x (car xs))
+             (nx (swarm-clip (+ x (swarm-rand-range! (- 0.0 (* 0.15 span))
+                                                     (* 0.15 span)))
+                             lo hi)))
+        (loop (+ d 1) (cdr xs) (cons nx acc))))))
+
+; pso: classical velocity update, inertia 0.7, c1=c2=1.4
+(define (swarm-step-pso! fitness-fn)
+  (let* ((fits (swarm-eval-pop fitness-fn *swarm-inds*))
+         (_ (set! *swarm-fits* fits))
+         (_2 (swarm-note-best! *swarm-inds* fits))
+         (n (swarm-length *swarm-inds*)))
+    ; update personal bests
+    (let loop ((i 0))
+      (if (>= i n) #t
+        (let ((f (swarm-list-ref fits i))
+              (pf (swarm-list-ref *swarm-pbest-fit* i)))
+          (if (> f pf)
+              (begin
+                (set! *swarm-pbest-fit* (swarm-list-set *swarm-pbest-fit* i f))
+                (set! *swarm-pbest*
+                      (swarm-list-set *swarm-pbest* i
+                                      (swarm-list-ref *swarm-inds* i))))
+              #f)
+          (loop (+ i 1)))))
+    ; move particles
+    (let loop ((i 0) (new-inds (list)) (new-vels (list)))
+      (if (>= i n)
+          (begin
+            (set! *swarm-inds* (reverse new-inds))
+            (set! *swarm-vels* (reverse new-vels))
+            #t)
+        (let* ((x (swarm-list-ref *swarm-inds* i))
+               (v (swarm-list-ref *swarm-vels* i))
+               (pb (swarm-list-ref *swarm-pbest* i))
+               (gb *swarm-best-ind*)
+               (nv (swarm-pso-vel v x pb gb))
+               (nx (swarm-pso-pos x nv)))
+          (loop (+ i 1) (cons nx new-inds) (cons nv new-vels)))))))
+
+(define (swarm-pso-vel v x pb gb)
+  (let loop ((vs v) (xs x) (ps pb) (gs gb) (acc (list)))
+    (if (null? vs) (reverse acc)
+      (let* ((w 0.7)
+             (c1 1.4)
+             (c2 1.4)
+             (r1 (swarm-rand-float!))
+             (r2 (swarm-rand-float!))
+             (vi (car vs))
+             (xi (car xs))
+             (pi (if (null? ps) xi (car ps)))
+             (gi (if (null? gs) xi (car gs)))
+             (nvi (+ (* w vi)
+                     (* c1 r1 (- pi xi))
+                     (* c2 r2 (- gi xi)))))
+        (loop (cdr vs)
+              (cdr xs)
+              (if (null? ps) (list) (cdr ps))
+              (if (null? gs) (list) (cdr gs))
+              (cons nvi acc))))))
+
+(define (swarm-pso-pos x v)
+  (let loop ((d 0) (xs x) (vs v) (acc (list)))
+    (if (null? xs) (reverse acc)
+      (let* ((bh (swarm-bound-for d))
+             (nx (swarm-clip (+ (car xs) (if (null? vs) 0.0 (car vs)))
+                             (car bh) (car (cdr bh)))))
+        (loop (+ d 1)
+              (cdr xs)
+              (if (null? vs) (list) (cdr vs))
+              (cons nx acc))))))
+
+; ant: discrete construction biased by pheromone trails (std/ant bridge)
+(define (swarm-ant-key d g)
+  (string-append "d" (number->string d) "-g" (number->string g)))
+
+(define (swarm-step-ant! fitness-fn)
+  ; convert current continuous inds → genes near bins for eval population
+  (let* ((genes-pop
+           (let loop ((k 0) (acc (list)))
+             (if (>= k *swarm-pop*) (reverse acc)
+               (loop (+ k 1) (cons (swarm-construct-genes) acc)))))
+         (inds (swarm-map swarm-genes->ind genes-pop))
+         (fits (swarm-eval-pop fitness-fn inds)))
+    (set! *swarm-inds* inds)
+    (set! *swarm-fits* fits)
+    (swarm-note-best! inds fits)
+    ; deposit on best genes
+    (let* ((bi (swarm-argmax fits))
+           (bg (swarm-list-ref genes-pop bi))
+           (bf (swarm-list-ref fits bi)))
+      (let loop ((d 0) (gs bg))
+        (if (null? gs) #t
+          (begin
+            (pheromone:update (swarm-ant-key d (car gs))
+                              (if (> bf 0.0) bf 0.1))
+            (loop (+ d 1) (cdr gs))))))
+    #t))
+
+(define (swarm-construct-genes)
+  (let loop ((d 0) (acc (list)))
+    (if (>= d *swarm-dim*) (reverse acc)
+      (let* ((scores
+               (let gloop ((g 0) (acc2 (list)))
+                 (if (>= g *swarm-bins*) (reverse acc2)
+                   (gloop (+ g 1)
+                          (cons (pheromone:score (swarm-ant-key d g)) acc2)))))
+             (pick (swarm-roulette scores)))
+        (loop (+ d 1) (cons pick acc))))))
+
+(define (swarm-roulette scores)
+  (let* ((sum (let loop ((xs scores) (s 0.0))
+                (if (null? xs) s (loop (cdr xs) (+ s (swarm-max 0.01 (car xs)))))))
+         (r (* (swarm-rand-float!) sum)))
+    (let loop ((xs scores) (i 0) (acc 0.0))
+      (if (null? xs) 0
+        (let ((acc2 (+ acc (swarm-max 0.01 (car xs)))))
+          (if (>= acc2 r) i
+            (loop (cdr xs) (+ i 1) acc2)))))))
+
+; ── Public API ──────────────────────────────────────────────────
+(define (swarm:kind) *swarm-kind*)
+(define (swarm:gen) *swarm-gen*)
+
+; hash-ref missing → () which is truthy; use null? for defaults.
+(define (swarm-opt opts key default)
+  (let ((v (hash-ref opts key)))
+    (if (null? v) default v)))
+
+(define (swarm:parallel! flag)
+  (set! *swarm-parallel* (if flag #t #f))
+  *swarm-parallel*)
+
+(define (swarm:init opts)
+  (let* ((kind (swarm-opt opts "kind" "grid"))
+         (dim (swarm-opt opts "dim" 1))
+         (pop (swarm-opt opts "pop" 8))
+         (bounds (swarm-opt opts "bounds" (list (list -1.0 1.0))))
+         (par (swarm-opt opts "parallel" #f))
+         (seed (swarm-opt opts "seed" 424242))
+         (bins (swarm-opt opts "bins" 8)))
+    (set! *swarm-kind* kind)
+    (set! *swarm-dim* dim)
+    (set! *swarm-pop* pop)
+    (set! *swarm-bounds* bounds)
+    (set! *swarm-gen* 0)
+    (set! *swarm-best-fit* -1000000000.0)
+    (set! *swarm-best-ind* (list))
+    (set! *swarm-seed* seed)
+    (set! *swarm-bins* bins)
+    (set! *swarm-parallel* (if par #t #f))
+    (cond
+      ((string=? kind "pso")
+       (set! *swarm-inds*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1) (cons (swarm-rand-ind) acc)))))
+       (set! *swarm-vels*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1) (cons (swarm-rand-vel) acc)))))
+       (set! *swarm-pbest* *swarm-inds*)
+       (set! *swarm-pbest-fit*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1) (cons -1000000000.0 acc))))))
+      ((string=? kind "ant")
+       (pheromone:init)
+       (set! *swarm-inds*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1)
+                       (cons (swarm-genes->ind (swarm-rand-genes)) acc))))))
+      (#t ; grid
+       (set! *swarm-inds*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1) (cons (swarm-rand-ind) acc)))))))
+    (set! *swarm-fits* (list))
+    *swarm-kind*))
+
+(define (swarm:step! fitness-fn)
+  (cond
+    ((string=? *swarm-kind* "pso") (swarm-step-pso! fitness-fn))
+    ((string=? *swarm-kind* "ant") (swarm-step-ant! fitness-fn))
+    (#t (swarm-step-grid! fitness-fn)))
+  (set! *swarm-gen* (+ *swarm-gen* 1))
+  *swarm-gen*)
+
+(define (swarm:best) *swarm-best-ind*)
+
+(define (swarm:report)
+  (hash "kind" *swarm-kind*
+        "gen" *swarm-gen*
+        "best-fit" *swarm-best-fit*
+        "best" *swarm-best-ind*
+        "pop" *swarm-pop*
+        "dim" *swarm-dim*
+        "diversity" (swarm-diversity)
+        "parallel" *swarm-parallel*))
+
+(define (swarm:export)
+  (let ((r (swarm:report)))
+    (string-append
+      "{\"kind\":\"" (swarm-opt r "kind" "?") "\""
+      ",\"gen\":" (number->string (swarm-opt r "gen" 0))
+      ",\"best-fit\":" (number->string (swarm-opt r "best-fit" 0))
+      ",\"pop\":" (number->string (swarm-opt r "pop" 0))
+      ",\"dim\":" (number->string (swarm-opt r "dim" 0))
+      ",\"diversity\":" (number->string (swarm-opt r "diversity" 0))
+      "}")))
+
+(define (swarm:help)
+  "std/swarm (#2874): pluggable swarm search (grid|pso|ant). (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:report) (swarm:export). Optional hash key parallel:#t for flat fiber fitness fanout.")
