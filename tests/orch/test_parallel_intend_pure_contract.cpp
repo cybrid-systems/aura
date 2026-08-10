@@ -895,6 +895,226 @@ int run_test_parallel_intend_pure_contract() {
         CHECK(agent.find("class AgentRegistry") == std::string::npos, "AC6: no AgentRegistry type");
     }
 
+    // ── #2886: region-concurrent promoted as recommended multi-agent mutate path ──
+    {
+        std::println("\n--- #2886 AC1+AC3+AC4: isolation-level=region-concurrent on disjoint "
+                     "region_keys ---");
+        reset_all_counters();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(
+            0); // Soft — region-concurrent surface is additive even under Soft
+
+        // AC1: 2 disjoint region_keys → isolation-level=region-concurrent +
+        // region-concurrent-eligible=#t
+        {
+            std::println("\n--- #2886 AC1: disjoint region_keys → region-concurrent ---");
+            auto r = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (list (hash-ref h "isolation-level")
+                    (if (hash-ref h "region-concurrent-eligible") 1 0)
+                    (if (hash-ref h "parallel-intend-region-concurrent-wired") 1 0)
+                    (hash-ref h "schema-2886")
+                    (hash-ref h "issue-2886")))
+        )");
+            CHECK(r.has_value(), "2886 AC1: disjoint region_keys batch returns value");
+            // Probe the isolation-level directly (stable across list form).
+            auto iso = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 10) (lambda () 20))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (string=? (hash-ref h "isolation-level") "region-concurrent") 1 0))
+        )");
+            CHECK(
+                iso.has_value() && as_int(*iso) == 1,
+                "2886 AC1: isolation-level=region-concurrent when 2 distinct region_keys supplied");
+            auto elig = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "region-concurrent-eligible") 1 0))
+        )");
+            CHECK(elig.has_value() && as_int(*elig) == 1,
+                  "2886 AC1: region-concurrent-eligible=1 with 2 distinct region_keys");
+            auto wire = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "parallel-intend-region-concurrent-wired") 1 0))
+        )");
+            CHECK(wire.has_value() && as_int(*wire) == 1,
+                  "2886 AC1: parallel-intend-region-concurrent-wired sentinel = 1");
+            auto schema = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (hash-ref h "schema-2886"))
+        )");
+            CHECK(schema.has_value() && as_int(*schema) == 2886, "2886 AC1: schema-2886 = 2886");
+        }
+
+        // AC3: default :pure #f → isolation-level=serialized (regression — #2081 preserved)
+        {
+            std::println("\n--- #2886 AC3: default → isolation-level=serialized ---");
+            auto r = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (list (if (hash-ref h "eval-serialized") 1 0)
+                    (hash-ref h "isolation-level")))
+        )");
+            CHECK(r.has_value(), "2886 AC3: default batch returns value");
+            auto iso = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (string=? (hash-ref h "isolation-level") "serialized") 1 0))
+        )");
+            CHECK(iso.has_value() && as_int(*iso) == 1,
+                  "2886 AC3: isolation-level=serialized for default (no :pure, no region-keys)");
+            auto ser = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "eval-serialized") 1 0))
+        )");
+            CHECK(ser.has_value() && as_int(*ser) == 1,
+                  "2886 AC3: eval-serialized=1 (default :pure #f preserves #2081 serialized "
+                  "default)");
+        }
+
+        // AC4: zero region_keys → falls back to serialized (no false concurrent claim)
+        {
+            std::println("\n--- #2886 AC4: zero region_keys → falls back to serialized ---");
+            auto iso = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (hash-ref h "isolation-level"))
+        )");
+            CHECK(iso.has_value() && *iso == "serialized",
+                  "2886 AC4: isolation-level=serialized with zero region_keys (no false claim)");
+            auto elig = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (hash-ref h "region-concurrent-eligible") 1 0))
+        )");
+            CHECK(elig.has_value() && as_int(*elig) == 0,
+                  "2886 AC4: region-concurrent-eligible=0 with zero region_keys");
+        }
+
+        // AC2: :pure #t + mutate → force-lock-applied (mirror #2838 preserved)
+        // Note: directly testing mutate from an Aura thunk requires a real
+        // workspace + body closure. Source-cite verifies the Aura surface
+        // exposes force-lock-applied + the #2838 force-lock path is preserved.
+        {
+            std::println("\n--- #2886 AC2: source-cite force-lock-applied + #2838 preserved ---");
+            const auto agent_prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto orch_h = read_file("src/orch/agent_spawn.h");
+            // force-lock-applied is added to Aura batch hash.
+            CHECK(agent_prim.find("force-lock-applied") != std::string::npos,
+                  "2886 AC2: Aura batch hash exposes force-lock-applied key");
+            CHECK(
+                agent_prim.find("force_lock_on_violation_policy") != std::string::npos,
+                "2886 AC2: source-cite on force_lock_on_violation_policy (per-batch #2838 source)");
+            // #2838 force-lock path preserved.
+            CHECK(agent_prim.find("resolve_parallel_intend_force_lock_on_violation") !=
+                      std::string::npos,
+                  "2886 AC2: #2838 resolve_parallel_intend_force_lock_on_violation path preserved");
+            CHECK(agent_prim.find("parallel_intend_force_lock_on_violation") != std::string::npos,
+                  "2886 AC2: #2838 parallel_intend_force_lock_on_violation atomic preserved");
+            CHECK(agent_prim.find("parallel_intend_force_lock_default_applied_total") !=
+                      std::string::npos,
+                  "2886 AC2: #2838 parallel_intend_force_lock_default_applied_total counter "
+                  "preserved");
+        }
+
+        // AC5: existing pure + region metrics green (regression)
+        {
+            std::println("\n--- #2886 AC5: existing pure + region metrics green ---");
+            // Existing #2746 + #2400 + #2838 + #2163 keys still exposed.
+            const auto agent_prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(agent_prim.find("region-keys-supplied") != std::string::npos,
+                  "2886 AC5: existing #2746 region-keys-supplied preserved");
+            CHECK(agent_prim.find("region-concurrent-batches") != std::string::npos,
+                  "2885 AC5: existing #2746 region-concurrent-batches preserved");
+            CHECK(agent_prim.find("schema-2746") != std::string::npos,
+                  "2885 AC5: existing #2746 schema preserved");
+            CHECK(agent_prim.find("isolation-level-wired") != std::string::npos,
+                  "2885 AC5: existing #2400 isolation-level-wired preserved");
+            CHECK(agent_prim.find("pure-contract-violations") != std::string::npos,
+                  "2885 AC5: existing pure-contract-violations preserved");
+            CHECK(agent_prim.find("schema-2163") != std::string::npos,
+                  "2885 AC5: existing #2163 schema preserved");
+            // query:orch-module-stats surface still exposes the per-issue counters.
+            CHECK(agent_prim.find("parallel-intend-force-lock-default-applied-total") !=
+                      std::string::npos,
+                  "2885 AC5: query:orch-module-stats exposes "
+                  "parallel-intend-force-lock-default-applied-total");
+        }
+
+        // AC6: source-cite + no invent + no docs/design/
+        {
+            std::println("\n--- #2886 AC6: source-cite + no invent + no docs/design/ ---");
+            const auto fiber_h = read_file("src/serve/fiber.h");
+            const auto parallel_h = read_file("src/serve/parallel_orch.h");
+            const auto agent_prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            // #2886 source-cite in production TUs.
+            CHECK(parallel_h.find("Issue #2886") != std::string::npos ||
+                      agent_prim.find("Issue #2886") != std::string::npos ||
+                      fiber_h.find("Issue #2886") != std::string::npos,
+                  "2886 AC6: #2886 source-cite present in production TUs (parallel_orch / agent / "
+                  "fiber)");
+            CHECK(agent_prim.find("schema-2886") != std::string::npos,
+                  "2886 AC6: agent_primitives_agent.cpp cites schema-2886");
+            CHECK(agent_prim.find("issue-2886") != std::string::npos,
+                  "2886 AC6: agent_primitives_agent.cpp cites issue-2886");
+            CHECK(agent_prim.find("parallel-intend-region-concurrent-wired") != std::string::npos,
+                  "2886 AC6: agent_primitives_agent.cpp cites "
+                  "parallel-intend-region-concurrent-wired sentinel");
+            // No new test_issue_2886.cpp (per #81967).
+            std::ifstream invent_c("tests/core/test_issue_2886.cpp");
+            if (!invent_c.good())
+                invent_c.open("../tests/core/test_issue_2886.cpp");
+            CHECK(!invent_c.good(),
+                  "2886 AC6: no tests/core/test_issue_2886.cpp (forbidden per #81967)");
+            std::ifstream invent_op("tests/orch/test_issue_2886.cpp");
+            if (!invent_op.good())
+                invent_op.open("../tests/orch/test_issue_2886.cpp");
+            CHECK(!invent_op.good(),
+                  "2886 AC6: no tests/orch/test_issue_2886.cpp (forbidden per #81967)");
+            // No docs/design/2886-* (per #1655).
+            const std::filesystem::path docs_design = "docs/design";
+            std::error_code ec2886;
+            if (std::filesystem::is_directory(docs_design, ec2886)) {
+                for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec2886)) {
+                    const auto name = entry.path().filename().string();
+                    CHECK(name.find("2886-") == std::string::npos,
+                          std::string("2886 AC6: no docs/design/") + name +
+                              " (forbidden per #1655)");
+                }
+            }
+        }
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

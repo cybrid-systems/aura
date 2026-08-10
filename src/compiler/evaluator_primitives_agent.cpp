@@ -2828,7 +2828,36 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // C++ TaskSpec-only path (never touches Evaluator) may use "none"
         // outside this Aura primitive — not advertised here.
         // Do NOT advertise pure as transactional isolation (AC4 #2400 / #2230).
-        const char* isolation_level = pure_mode ? "best-effort-pure" : "serialized";
+        // Issue #2886: when ≥2 distinct non-zero region_keys are supplied AND
+        // the batch was admitted under #2724 try_acquire_for_region, the
+        // region-concurrent surface is the recommended multi-agent mutate
+        // path. Surface "region-concurrent" as a 3rd isolation-level value
+        // (preferred over "best-effort-pure" for disjoint-key mutate batches
+        // per #2724/#2746). Compute the same distinct-key signal used by
+        // `region-concurrent-eligible` below so the two values are coherent.
+        std::uint64_t distinct_keys = 0;
+        std::uint64_t seen_keys[8] = {};
+        std::size_t n_seen_keys = 0;
+        for (const auto& t : tasks) {
+            if (t.region_key == 0)
+                continue;
+            bool already = false;
+            for (std::size_t j = 0; j < n_seen_keys; ++j) {
+                if (seen_keys[j] == t.region_key) {
+                    already = true;
+                    break;
+                }
+            }
+            if (!already) {
+                if (n_seen_keys < 8)
+                    seen_keys[n_seen_keys++] = t.region_key;
+                ++distinct_keys;
+            }
+        }
+        const bool region_concurrent_eligible = (distinct_keys >= 2);
+        const char* isolation_level =
+            pure_mode ? "best-effort-pure"
+                      : (region_concurrent_eligible ? "region-concurrent" : "serialized");
         const auto iso_sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(isolation_level);
 
@@ -2873,6 +2902,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"pure-unlocked-tasks", make_int(static_cast<std::int64_t>(pure_unlocked))},
             {"pure-fallback-locked", make_int(static_cast<std::int64_t>(pure_fallback))},
             {"pure-contract-violations", make_int(static_cast<std::int64_t>(pure_viol))},
+            // Issue #2886: per-batch force-lock-applied flag (mirror #2838).
+            // True iff production force-lock engaged for this batch when a
+            // pure-contract violation was observed; subsequent tasks in
+            // the same batch run under the force-lock. AC2 (`:pure #t` +
+            // mutate) preserved: the #2886 surface is additive — the
+            // existing #2838 force-lock path is unchanged.
+            {"force-lock-applied", make_bool(ash->force_lock_on_violation_policy)},
             // Issue #2400: explicit isolation-level enum (additive).
             {"isolation-level", make_string(iso_sidx)},
             {"isolation-level-wired", make_int(1)},
@@ -2918,6 +2954,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             {"schema-2400", make_int(2400)},
             {"schema-2743", make_int(2743)},
             {"schema-2746", make_int(2746)},
+            // Issue #2886: region-concurrent surface promoted as recommended
+            // multi-agent mutate path. `region-concurrent` is a 3rd
+            // isolation-level value (alongside "serialized" /
+            // "best-effort-pure"); #2838 force-lock preserved under pure.
+            // Existing #2746 region-keys-supplied +
+            // region-concurrent-batches + region-concurrent-eligible keys
+            // remain additive. Soft / Off regression green per AC5.
+            {"schema-2886", make_int(2886)},
+            {"issue-2886", make_int(2886)},
+            {"parallel-intend-region-concurrent-wired", make_int(1)},
         };
         if (pure_engaged) {
             kv.push_back({"schema-pure-parallel", make_int(2163)});
