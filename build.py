@@ -911,6 +911,18 @@ def cmd_lint():
     if r != 0:
         fail("Issue #2874 swarm stdlib linter failed — run python3 scripts/coverage/checks/check_swarm_2874.py")
         return r
+    # Issue #2875: swarm common API + discrete grid baseline + docs/stdlib/swarm.md
+    # Suite swarm_interface_2875.aura per #81967.
+    swi_script = COVERAGE_CHECKS / "check_swarm_interface_2875.py"
+    if not swi_script.exists():
+        fail(f"missing {swi_script}")
+        return 1
+    r = run([sys.executable, str(swi_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2875 swarm interface linter failed — run python3 scripts/coverage/checks/check_swarm_interface_2875.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +

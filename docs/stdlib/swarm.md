@@ -1,0 +1,97 @@
+# std/swarm — pluggable population search (Issues #2874 / #2875)
+
+Pure-Aura control-layer module next to `std/ant`. Callers supply **fitness**
+and own **apply** (policy knobs, `hot-strategy:swap!`, `mutate:rebind`, …).
+This module only searches individuals.
+
+## Require
+
+```aura
+(require "std/swarm" all:)
+```
+
+## API (v1 — #2875)
+
+| Form | Role |
+|------|------|
+| `(swarm:init opts-hash)` | Reset state; opts: `kind`, `pop`, `dim`, `bounds`, `seed`, `bins`, `parallel` |
+| `(swarm:step! fitness-fn)` | One generation; `fitness-fn`: individual → number (**higher better**) |
+| `(swarm:best)` | Best individual so far |
+| `(swarm:population)` | Current population (list of individuals) |
+| `(swarm:report)` | Hash snapshot (stable schema below) |
+| `(swarm:export)` | JSON-ish string for journals |
+| `(swarm:parallel! flag)` | Toggle flat fiber fitness fanout |
+| `(swarm:kind)` / `(swarm:gen)` | Current backend / generation counter |
+| `(swarm:help)` | One-line help |
+
+### `opts-hash` keys
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `"kind"` | `"grid"` | `"grid"` \| `"pso"` \| `"ant"` |
+| `"dim"` | `1` | Parameter dimension |
+| `"pop"` | `8` | Population / window size |
+| `"bounds"` | `((-1.0 1.0))` | Per-dim `(lo hi)` lists |
+| `"bins"` | `8` | Discrete bins per dim (grid + ant) |
+| `"seed"` | `424242` | PRNG seed (pso / ant / jitter paths) |
+| `"parallel"` | `#f` | If `#t`, evaluate fitness with flat `fiber:spawn` then main-thread joins |
+
+### Individual representation
+
+- **Continuous** (grid centers, pso): list of numbers, length = `dim`
+- **Discrete genes** (ant internal): bin indices; mapped to continuous via bin midpoints
+- **Opaque code body**: out of scope — pass strings into fitness yourself; apply via mutate outside
+
+### Report schema (stable)
+
+```
+kind, gen, best-fit, mean-fit, best, pop, dim, diversity, parallel
+```
+
+`swarm:export` serializes: `kind`, `gen`, `best-fit`, `mean-fit`, `pop`, `dim`, `diversity`.
+
+## Backends
+
+### `kind: "grid"` (#2875 baseline)
+
+Discrete linspace product over `bounds` × `bins` (Unify-style policy scan).
+Each step evaluates a **window** of size `pop` and advances the cursor through
+the full grid so multi-generation scans cover the product without nested joins.
+
+### `kind: "pso"`
+
+Classical particle swarm (inertia 0.7, c1=c2=1.4). Thin surface: `std/pso`.
+
+### `kind: "ant"`
+
+Discrete construction biased by `std/ant` pheromone trails (`pheromone:score` /
+`pheromone:update` keys `d{dim}-g{bin}`).
+
+## Parallel fitness (safe)
+
+```aura
+(swarm:init (hash "kind" "grid" "parallel" #t ...))
+;; or (swarm:parallel! #t)
+```
+
+Implementation: **spawn all** fitness fibers on the caller, then **join all** on
+the caller. Never `fiber:join` inside a worker (nested-join host residual).
+
+## Example
+
+```aura
+(require "std/swarm" all:)
+(define (sphere ind)
+  (let loop ((xs ind) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(swarm:init (hash "kind" "grid" "dim" 1 "pop" 8
+                  "bounds" (list (list -2.0 2.0)) "bins" 8))
+(swarm:step! sphere)
+(swarm:best)                 ; → e.g. (-0.25)
+(hash-ref (swarm:report) "mean-fit")
+(swarm:population)
+```
+
+See also: `examples/swarm_sphere_search.aura` (PSO), epic #2874.
