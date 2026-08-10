@@ -6,12 +6,14 @@ Continuous parameter search backend for [`std/swarm`](swarm.md) (`kind: "pso"`).
 
 | Backend | Use when | Individual |
 |---------|----------|------------|
-| **PSO** | Continuous / real-valued knobs (thresholds, cache sizes as reals, kernel hyperparams) | list of numbers |
+| **PSO** | Continuous / real-valued knobs with velocity memory | list of numbers |
+| **ABC** | Multi-cand exploit/abandon/scout neighborhoods ([`std/abc`](abc.md)) | list of numbers |
 | **grid** | Discrete policy scan, enumerate known bins (Unify-style) | grid point (numbers) |
 | **ant** | Rank **mutation operator types** / discrete strategy names via pheromone | type name (string) |
 
 PSO is **not** for ranking string operators — use `kind: "ant"`.  
-PSO is **not** a full combinatorial grid — use `kind: "grid"` when you need exhaustive bin coverage.
+PSO is **not** a full combinatorial grid — use `kind: "grid"` when you need exhaustive bin coverage.  
+For multi-cand abandon/scout without velocity, prefer **ABC**.
 
 ## Algorithm (v1)
 
