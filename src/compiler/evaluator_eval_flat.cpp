@@ -4187,7 +4187,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         }
                     }
 
-                    // Primitive call (all arg evals are recursive)
+                    // Primitive call (all arg evals are recursive).
+                    // Issue #2873: only take the prim fast-path when the name is
+                    // not shadowed by an env binding. Env::lookup returns a
+                    // PrimitiveRef for bare prim names (fallback) and cells/
+                    // closures for user bindings — so `(let take …)` / named-let
+                    // loop names that collide with list prims (take/drop/map/…)
+                    // must fall through to the closure TCO path, not invoke the
+                    // prim. Multi-frame load-sim patterns used `let take` and
+                    // silently returned empty instead of iterating.
                     if (callee.tag == aura::ast::NodeTag::Variable) {
                         auto cname = std::string(p->resolve(callee.sym_id));
                         // #223 follow-up: skip primitive lookup when
@@ -4197,7 +4205,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         // names gracefully via nullopt.
                         std::optional<PrimFn> prim;
                         if (!cname.empty()) {
-                            prim = eval_env.lookup_primitive(cname);
+                            auto bound = eval_env.lookup(cname);
+                            // PrimitiveRef ⇒ unbound prim name (lookup fallback)
+                            // or explicit prim value — use fast path.
+                            // Cell / closure / other ⇒ user shadow — skip prim.
+                            if (!bound || is_primitive(*bound))
+                                prim = eval_env.lookup_primitive(cname);
                         }
                         if (prim) {
                             std::vector<EvalValue> args;

@@ -888,6 +888,19 @@ def cmd_lint():
             "Issue #2872 define RHS fail bind linter failed — run python3 scripts/coverage/checks/check_define_rhs_fail_bind_2872.py"
         )
         return r
+    # Issue #2873: multi-frame named-let past early depth caps + prim shadow.
+    # TW TCO (#2871) + Call env binding shadows take/map/drop prims.
+    # Suite multiframe_named_let_2873.aura per #81967.
+    mfn_script = COVERAGE_CHECKS / "check_multiframe_named_let_2873.py"
+    if not mfn_script.exists():
+        fail(f"missing {mfn_script}")
+        return 1
+    r = run([sys.executable, str(mfn_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2873 multiframe named-let linter failed — run python3 scripts/coverage/checks/check_multiframe_named_let_2873.py"
+        )
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +
