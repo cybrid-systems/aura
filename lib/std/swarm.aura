@@ -9,10 +9,11 @@
 ;   (swarm:step! (lambda (ind) (- 0.0 (fitness-of ind))))  ; higher better
 ;   (swarm:best) (swarm:population) (swarm:report) (swarm:export)
 ;
-; kinds: "grid" | "pso" | "ant" | "abc" | "boids"
+; kinds: "grid" | "pso" | "ant" | "abc" | "boids" | "fss"
 ;   grid (#2875 baseline): discrete linspace product (Unify policy-scan shape)
 ;   abc  (#2878): employ / onlooker / scout continuous neighborhood search
 ;   boids (#2879): separation / alignment / cohesion coordination
+;   fss  (#2880): fish school search — feeding + collective + volitive step
 ; Optional: "parallel" #t → flat fiber:spawn all then join on caller (no join-in-worker)
 ;
 ; Form order (#2769): export before require.
@@ -58,6 +59,13 @@
 (define *swarm-boids-align* 0.5)
 (define *swarm-boids-cohere* 0.3)
 (define *swarm-boids-radius* 0.5)
+; kind:fss (#2880) — fish school search
+(define *swarm-fss-step* 0.1)       ; base individual swim step (fraction of span)
+(define *swarm-fss-volitive* 1.0)   ; exploratory scale (expands on stagnation)
+(define *swarm-fss-weights* (list)) ; feeding weights per fish
+(define *swarm-fss-prev-sum* -1000000000.0)
+(define *swarm-fss-vol-min* 0.25)
+(define *swarm-fss-vol-max* 4.0)
 (define *swarm-boids-max-speed* 0.25)
 
 ; ── Tiny PRNG (inline; avoid std/random internal-define footgun) ──
@@ -347,6 +355,130 @@
               (if (null? vs) (list) (cdr vs))
               (cons nx acc))))))
 
+; ── FSS (#2880): fish school search ────────────────────────────
+; Individual swim (local), feeding (weight ↑ on improvement),
+; collective drift to weighted barycenter, volitive expand/contract
+; of step scale: stagnation → larger exploration; success → contract.
+
+(define (swarm-fss-ones n)
+  (let loop ((k 0) (acc (list)))
+    (if (>= k n) (reverse acc) (loop (+ k 1) (cons 1.0 acc)))))
+
+(define (swarm-fss-sum-fits fits)
+  (let loop ((xs fits) (s 0.0))
+    (if (null? xs) s (loop (cdr xs) (+ s (car xs))))))
+
+(define (swarm-fss-sum-weights)
+  (let loop ((xs *swarm-fss-weights*) (s 0.0))
+    (if (null? xs) s (loop (cdr xs) (+ s (car xs))))))
+
+; Mean span across dims for step scaling.
+(define (swarm-fss-mean-span)
+  (let loop ((d 0) (s 0.0) (c 0))
+    (if (>= d *swarm-dim*) (if (= c 0) 1.0 (/ s c))
+      (let* ((bh (swarm-bound-for d))
+             (span (- (car (cdr bh)) (car bh))))
+        (loop (+ d 1) (+ s (if (<= span 0.0) 1.0 span)) (+ c 1))))))
+
+; Individual movement: random-direction swim scaled by step*volitive*span.
+(define (swarm-fss-swim x)
+  (let* ((scale (* *swarm-fss-step* *swarm-fss-volitive* (swarm-fss-mean-span))))
+    (let loop ((d 0) (xs x) (acc (list)))
+      (if (null? xs) (reverse acc)
+        (let* ((bh (swarm-bound-for d))
+               (lo (car bh))
+               (hi (car (cdr bh)))
+               (delta (swarm-rand-range! (- 0.0 scale) scale))
+               (nx (swarm-clip (+ (car xs) delta) lo hi)))
+          (loop (+ d 1) (cdr xs) (cons nx acc)))))))
+
+; Weighted barycenter of school.
+(define (swarm-fss-barycenter)
+  (let ((wsum (swarm-fss-sum-weights))
+        (n (swarm-length *swarm-inds*)))
+    (if (or (= n 0) (<= wsum 0.0))
+        (if (= n 0) (list) (swarm-list-ref *swarm-inds* 0))
+      (let loop ((d 0) (acc (list)))
+        (if (>= d *swarm-dim*) (reverse acc)
+          (let ((coord
+                  (let iloop ((i 0) (s 0.0))
+                    (if (>= i n) (/ s wsum)
+                      (let* ((xi (swarm-list-ref *swarm-inds* i))
+                             (wi (swarm-list-ref *swarm-fss-weights* i))
+                             (xd (swarm-list-ref xi d)))
+                        (iloop (+ i 1) (+ s (* wi (if xd xd 0.0)))))))))
+            (loop (+ d 1) (cons coord acc))))))))
+
+; Drift all fish a fraction toward barycenter.
+(define (swarm-fss-collective! frac)
+  (let ((bary (swarm-fss-barycenter))
+        (n (swarm-length *swarm-inds*)))
+    (let loop ((i 0) (npos (list)))
+      (if (>= i n)
+          (set! *swarm-inds* (reverse npos))
+        (let* ((xi (swarm-list-ref *swarm-inds* i))
+               (pulled
+                 (let dloop ((d 0) (xs xi) (bs bary) (acc (list)))
+                   (if (null? xs) (reverse acc)
+                     (let* ((bh (swarm-bound-for d))
+                            (lo (car bh))
+                            (hi (car (cdr bh)))
+                            (bi (if (null? bs) (car xs) (car bs)))
+                            (nx (swarm-clip
+                                  (+ (car xs) (* frac (- bi (car xs))))
+                                  lo hi)))
+                       (dloop (+ d 1) (cdr xs)
+                              (if (null? bs) (list) (cdr bs))
+                              (cons nx acc)))))))
+          (loop (+ i 1) (cons pulled npos)))))))
+
+(define (swarm-step-fss! fitness-fn)
+  (let ((n (swarm-length *swarm-inds*)))
+    ; ensure weights
+    (if (or (null? *swarm-fss-weights*)
+            (not (= (swarm-length *swarm-fss-weights*) n)))
+        (set! *swarm-fss-weights* (swarm-fss-ones n))
+        #f)
+    ; evaluate current if needed
+    (if (or (null? *swarm-fits*) (not (= (swarm-length *swarm-fits*) n)))
+        (set! *swarm-fits* (swarm-eval-pop fitness-fn *swarm-inds*))
+        #f)
+    ; 1) Individual movement + feeding
+    (let loop ((i 0))
+      (if (>= i n) #t
+        (let* ((xi (swarm-list-ref *swarm-inds* i))
+               (fi (swarm-list-ref *swarm-fits* i))
+               (xn (swarm-fss-swim xi))
+               (fn (swarm-eval-one fitness-fn xn))
+               (wi (swarm-list-ref *swarm-fss-weights* i)))
+          (if (> fn fi)
+              (begin
+                (set! *swarm-inds* (swarm-list-set *swarm-inds* i xn))
+                (set! *swarm-fits* (swarm-list-set *swarm-fits* i fn))
+                ; feeding: weight grows with improvement
+                (set! *swarm-fss-weights*
+                      (swarm-list-set *swarm-fss-weights* i
+                                      (swarm-min 10.0 (+ wi (+ 0.1 (- fn fi)))))))
+              ; mild weight decay when no improvement
+              (set! *swarm-fss-weights*
+                    (swarm-list-set *swarm-fss-weights* i
+                                    (swarm-max 0.1 (* wi 0.98)))))
+          (loop (+ i 1)))))
+    ; 2) Collective movement toward weighted barycenter
+    (swarm-fss-collective! 0.15)
+    ; re-eval after collective (cheap re-eval of all)
+    (set! *swarm-fits* (swarm-eval-pop fitness-fn *swarm-inds*))
+    (swarm-note-best! *swarm-inds* *swarm-fits*)
+    ; 3) Volitive: expand exploration on stagnation, contract on success
+    (let ((sumf (swarm-fss-sum-fits *swarm-fits*)))
+      (if (> sumf *swarm-fss-prev-sum*)
+          (set! *swarm-fss-volitive*
+                (swarm-max *swarm-fss-vol-min* (* *swarm-fss-volitive* 0.9)))
+          (set! *swarm-fss-volitive*
+                (swarm-min *swarm-fss-vol-max* (* *swarm-fss-volitive* 1.15))))
+      (set! *swarm-fss-prev-sum* sumf))
+    #t))
+
 ; ── Boids (#2879): wrap std/boids pure step + fitness ───────────
 (define (swarm-step-boids! fitness-fn)
   (let* ((opts (hash "sep" *swarm-boids-sep*
@@ -573,7 +705,8 @@
          (align (swarm-opt opts "align" 0.5))
          (cohere (swarm-opt opts "cohere" 0.3))
          (radius (swarm-opt opts "radius" 0.5))
-         (max-speed (swarm-opt opts "max-speed" 0.25)))
+         (max-speed (swarm-opt opts "max-speed" 0.25))
+         (step (swarm-opt opts "step" 0.1)))
     (set! *swarm-kind* kind)
     (set! *swarm-dim* dim)
     (set! *swarm-pop* pop)
@@ -597,6 +730,9 @@
     (set! *swarm-boids-radius* (if (number? radius) radius 0.5))
     (set! *swarm-boids-max-speed*
           (if (number? max-speed) max-speed 0.25))
+    (set! *swarm-fss-step* (if (number? step) step 0.1))
+    (set! *swarm-fss-volitive* 1.0)
+    (set! *swarm-fss-prev-sum* -1000000000.0)
     (cond
       ((string=? kind "pso")
        (set! *swarm-inds*
@@ -631,6 +767,14 @@
                (if (>= k pop) (reverse acc)
                  (loop (+ k 1) (cons (swarm-rand-vel) acc)))))
        (set! *swarm-fits* (list)))
+      ((string=? kind "fss")
+       ; #2880 fish school search
+       (set! *swarm-inds*
+             (let loop ((k 0) (acc (list)))
+               (if (>= k pop) (reverse acc)
+                 (loop (+ k 1) (cons (swarm-rand-ind) acc)))))
+       (set! *swarm-fss-weights* (swarm-fss-ones pop))
+       (set! *swarm-fits* (list)))
       ((string=? kind "ant")
        ; mutation-type ranking (#2876) — ops list or default pheromone types
        (pheromone:init)
@@ -663,6 +807,7 @@
     ((string=? *swarm-kind* "pso") (swarm-step-pso! fitness-fn))
     ((string=? *swarm-kind* "abc") (swarm-step-abc! fitness-fn))
     ((string=? *swarm-kind* "boids") (swarm-step-boids! fitness-fn))
+    ((string=? *swarm-kind* "fss") (swarm-step-fss! fitness-fn))
     ((string=? *swarm-kind* "ant") (swarm-step-ant! fitness-fn))
     (#t (swarm-step-grid! fitness-fn)))
   (set! *swarm-gen* (+ *swarm-gen* 1))
@@ -691,7 +836,10 @@
         "pop" *swarm-pop*
         "dim" *swarm-dim*
         "diversity" (swarm-diversity)
-        "parallel" *swarm-parallel*))
+        "parallel" *swarm-parallel*
+        ; #2880 FSS exploratory scale (1.0 for other kinds)
+        "volitive" (if (string=? *swarm-kind* "fss") *swarm-fss-volitive* 1.0)
+        "step" (if (string=? *swarm-kind* "fss") *swarm-fss-step* 0.0)))
 
 (define (swarm:export)
   (let ((r (swarm:report)))
@@ -706,4 +854,4 @@
       "}")))
 
 (define (swarm:help)
-  "std/swarm (#2874–#2879): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant|abc|boids. boids opts: sep,align,cohere,radius,max-speed. abc: limit,neighbor. pso: w,c1,c2. ant: ops,evaporate.")
+  "std/swarm (#2874–#2880): (swarm:init h) (swarm:step! fit) (swarm:best) (swarm:population) (swarm:report) (swarm:export). kinds: grid|pso|ant|abc|boids|fss. fss opts: step (base swim). report volitive expands on stagnation. abc: limit,neighbor. pso: w,c1,c2. ant: ops,evaporate. boids: sep,align,cohere.")

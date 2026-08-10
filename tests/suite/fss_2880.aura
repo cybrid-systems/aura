@@ -1,0 +1,69 @@
+; Issue #2880 — std/fss fish school search
+(require "std/test" all:)
+(require "std/fss" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (sphere-fit x)
+  (let loop ((xs x) (s 0.0))
+    (if (null? xs) (- 0.0 s)
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (l2 x)
+  (let loop ((xs x) (s 0.0))
+    (if (null? xs) s
+      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+; AC1: sphere improves
+(display "AC1 sphere improve\n")
+(fss:init 2 12 (list (list -3.0 3.0) (list -3.0 3.0)) 0.12 11)
+(assert! (string=? (hash-ref (fss:report) "kind") "fss") "kind fss")
+(assert! (= (length (fss:population)) 12) "pop 12")
+(fss:step! sphere-fit)
+(define e0 (l2 (fss:best)))
+(let loop ((i 0))
+  (if (>= i 18) #t (begin (fss:step! sphere-fit) (loop (+ i 1)))))
+(assert! (< (l2 (fss:best)) e0) "error decreased")
+(assert! (< (l2 (fss:best)) 1.5) "near origin")
+
+; AC2: stagnation increases volitive (exploratory step)
+(display "AC2 volitive expands on flat fitness\n")
+(fss:init 1 10 (list (list -2.0 2.0)) 0.1 5)
+(define v0 (fss:volitive))
+(define (flat x) 0.0)
+(let loop ((i 0))
+  (if (>= i 8) #t (begin (fss:step! flat) (loop (+ i 1)))))
+(define v1 (fss:volitive))
+(assert! (> v1 v0) "volitive grew under stagnation")
+(assert! (number? (hash-ref (fss:report) "step")) "report step")
+
+; AC3: init-hash + report schema
+(display "AC3 init-hash\n")
+(fss:init-hash (hash "dim" 1 "pop" 8 "step" 0.08
+                     "bounds" (list (list -1.0 1.0)) "seed" 2))
+(fss:step! sphere-fit)
+(assert! (string=? (hash-ref (fss:report) "kind") "fss") "hash kind")
+(assert! (number? (hash-ref (fss:report) "volitive")) "report volitive")
+(assert! (number? (hash-ref (fss:report) "best-fit")) "best-fit")
+
+; AC4: defaults / help
+(display "AC4 defaults\n")
+(assert! (= (hash-ref (fss:defaults) "pop") 16) "default pop 16")
+(assert! (= (hash-ref (fss:defaults) "step") 0.1) "default step")
+(assert! (not (= (string-index (fss:help) "2880" 0) -1)) "help 2880")
+
+(if (= *fails* 0)
+    (begin (display "OK-2880 fss\n"))
+    (begin
+      (display "FAIL-2880 fails=")
+      (display *fails*)
+      (newline)
+      (error "2880 suite failed")))

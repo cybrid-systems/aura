@@ -1,0 +1,63 @@
+; lib/std/fss.aura — Issue #2880 Fish School Search surface
+;
+; Feeding-driven continuous search for std/swarm (kind "fss"). Complements
+; PSO (fixed velocity rules) with volitive step size: expand exploration
+; when the school stagnates, contract when sum-fitness improves.
+;
+;   (require "std/fss" all:)
+;   (fss:init 2 16 (list (list -5.0 5.0) (list -5.0 5.0)))
+;   (fss:step! fitness)  ; higher better
+;   (fss:best)
+;
+; Form order (#2769): export before require.
+
+(export fss:init fss:init-hash fss:step! fss:best fss:population
+        fss:report fss:export fss:help fss:defaults fss:volitive
+        swarm:init swarm:step! swarm:best swarm:report swarm:export
+        swarm:population)
+
+(require "std/swarm" all:)
+
+(define (fss:defaults)
+  (hash "kind" "fss"
+        "pop" 16
+        "dim" 1
+        "step" 0.1
+        "bounds" (list (list -1.0 1.0))
+        "seed" 424242
+        "parallel" #f))
+
+; (fss:init dim pop bounds [step [seed]])
+(define (fss:init dim pop bounds . rest)
+  (let* ((step (if (null? rest) 0.1 (car rest)))
+         (seed (if (or (null? rest) (null? (cdr rest))) 424242
+                 (car (cdr rest)))))
+    (swarm:init (hash "kind" "fss"
+                      "dim" dim
+                      "pop" pop
+                      "bounds" bounds
+                      "step" step
+                      "seed" seed))))
+
+(define (fss:init-hash opts)
+  (swarm:init
+    (hash "kind" "fss"
+          "dim" (let ((v (hash-ref opts "dim"))) (if (null? v) 1 v))
+          "pop" (let ((v (hash-ref opts "pop"))) (if (null? v) 16 v))
+          "bounds" (let ((v (hash-ref opts "bounds")))
+                     (if (null? v) (list (list -1.0 1.0)) v))
+          "step" (let ((v (hash-ref opts "step"))) (if (null? v) 0.1 v))
+          "seed" (let ((v (hash-ref opts "seed"))) (if (null? v) 424242 v))
+          "parallel" (let ((v (hash-ref opts "parallel")))
+                       (if (null? v) #f v)))))
+
+(define (fss:step! fitness-fn) (swarm:step! fitness-fn))
+(define (fss:best) (swarm:best))
+(define (fss:population) (swarm:population))
+(define (fss:report) (swarm:report))
+(define (fss:export) (swarm:export))
+(define (fss:volitive)
+  (hash-ref (swarm:report) "volitive"))
+
+(define (fss:help)
+  "std/fss (#2880): fish school search. (fss:init dim pop bounds) or (fss:init-hash h) with step/seed/parallel. Individual swim + feeding weights + collective barycenter + volitive expand on stagnation. Prefer load-adaptive explore/contract; PSO=velocity; ABC=abandon/scout; grid=discrete; ant=op ranking.")

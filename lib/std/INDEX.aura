@@ -57,7 +57,7 @@
             "(auto-grow \"task\" :source \"(define (f x) x)\" :rebind \"f\" \"(lambda (x) (* x 2))\")"))
     ; Issue #2874: pluggable swarm intelligence (grid|pso|ant) next to std/ant
     (list "swarm"
-      (list "Pluggable swarm search: grid / pso / ant / abc / boids + flat fiber fitness"
+      (list "Pluggable swarm search: grid / pso / ant / abc / boids / fss + flat fiber fitness"
             "(require \"std/swarm\" all:)(swarm:init (hash \"kind\" \"pso\" \"dim\" 2 \"pop\" 12))"))
     (list "pso"
       (list "Particle swarm surface (std/swarm kind:pso)"
@@ -68,6 +68,9 @@
     (list "boids"
       (list "Boids flocking coordination (sep/align/cohere); swarm kind:boids"
             "(require \"std/boids\" all:)(boids:step positions velocities (hash \"sep\" 1.0))"))
+    (list "fss"
+      (list "Fish school search (feeding + volitive expand/contract); swarm kind:fss"
+            "(require \"std/fss\" all:)(fss:init 2 16 (list (list -1.0 1.0) (list -1.0 1.0)))"))
     (list "algorithm"
       (list "Algorithm utilities (sort, group, partition)"
             "(partition (lambda (x) (> x 0)) (list -1 2 -3))"))

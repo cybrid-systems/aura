@@ -28,7 +28,7 @@ This module only searches individuals.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `"kind"` | `"grid"` | `"grid"` \| `"pso"` \| `"ant"` \| `"abc"` \| `"boids"` |
+| `"kind"` | `"grid"` | `"grid"` \| `"pso"` \| `"ant"` \| `"abc"` \| `"boids"` \| `"fss"` |
 | `"dim"` | `1` | Parameter dimension |
 | `"pop"` | `8` (`16` for pso) | Population / window size |
 | `"bounds"` | `((-1.0 1.0))` | Per-dim `(lo hi)` lists |
@@ -38,7 +38,8 @@ This module only searches individuals.
 | `"limit"` / `"neighbor"` | `5` / `"gaussian"` | ABC abandon limit / neighbor mode (#2878) |
 | `"sep"` / `"align"` / `"cohere"` | `1.0` / `0.5` / `0.3` | Boids weights (#2879) |
 | `"radius"` / `"max-speed"` | `0.5` / `0.25` | Boids neighborhood / speed clamp |
-| `"seed"` | `424242` | PRNG seed (pso/abc/boids init) |
+| `"step"` | `0.1` | FSS base individual swim step (#2880) |
+| `"seed"` | `424242` | PRNG seed (pso/abc/boids/fss init) |
 | `"parallel"` | `#f` | If `#t`, evaluate fitness with flat `fiber:spawn` then main-thread joins |
 
 ### Individual representation
@@ -81,6 +82,13 @@ Prefer multi-cand exploit/abandon; PSO for velocity memory; grid for discrete sc
 Flocking coordination (separation / alignment / cohesion) on param vectors
 via [`std/boids`](boids.md). **Not** a sole optimizer — multi-agent diversity
 and shared search direction; high `sep` increases diversity.
+
+### `kind: "fss"` (#2880)
+
+Fish school search: individual swim + feeding weights + collective barycenter
++ **volitive** expand/contract of step size. Surface: [`std/fss`](fss.md).
+Stagnation increases `report.volitive`; fitness improvement contracts it.
+Prefer load-adaptive explore/contract vs PSO’s fixed velocity rules.
 
 ### `kind: "ant"` (#2876 bridge)
 
