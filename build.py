@@ -1868,6 +1868,21 @@ def cmd_lint():
             "Issue #2886 parallel_intend region-concurrent linter failed — run python3 scripts/coverage/checks/check_parallel_intend_region_concurrent_2886.py"
         )
         return r
+    # Issue #2887: mailbox BP storm — producer degrade hook on
+    # AgentScope::watch_all (on_backpressure Cancel/Throttle/RestartN;
+    # default ReportOnly). Complements admit soft-reject of new spawns
+    # (#2228/#2535). Extends test_agent_failure_policy.cpp (#81967);
+    # no docs/design/ (#1655).
+    abp_script = COVERAGE_CHECKS / "check_agent_bp_degrade_2887.py"
+    if not abp_script.exists():
+        fail(f"missing {abp_script}")
+        return 1
+    r = run([sys.executable, str(abp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2887 agent BP degrade linter failed — run python3 scripts/coverage/checks/check_agent_bp_degrade_2887.py"
+        )
+        return r
     # Issue #2840: GeneralObjectPin required densify fail-closed residual
     # (#2597/#2665: pref locked but callers void-cast wire + densify
     # unguarded). Sticky breach + Moving gate + required-fail callers.

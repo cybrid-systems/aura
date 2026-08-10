@@ -3567,8 +3567,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
     // Issue #2588 AC1 + AC4: orch:scope-watch — scope-level liveness + optional
     // RestartN. Maps to AgentScope::watch_all(stall_timeout_ms, AgentFailurePolicy).
+    // Issue #2887: optional :on-backpressure / :bp-threshold for BP-storm
+    // producer degrade (default ReportOnly — no behaviour change).
     // Returns hash {ok, alive, stalled, cancelled, done, closed,
-    //                restart-count, exhausted, schema=2588}.
+    //                restart-count, bp-degraded, bp-cancelled, bp-throttled,
+    //                schema=2588, schema-2887}.
     add("orch:scope-watch",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             orch_sched.ensure(2);
@@ -3581,6 +3584,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             aura::orch::AgentFailurePolicy policy{};
             std::uint32_t stall_ms = 0;
+            auto parse_action =
+                [](std::string_view pol) -> std::optional<aura::orch::AgentFailureAction> {
+                if (pol == "cancel")
+                    return aura::orch::AgentFailureAction::Cancel;
+                if (pol == "report-only" || pol == "report_only")
+                    return aura::orch::AgentFailureAction::ReportOnly;
+                if (pol == "restart-n" || pol == "restart_n")
+                    return aura::orch::AgentFailureAction::RestartN;
+                if (pol == "throttle")
+                    return aura::orch::AgentFailureAction::Throttle;
+                return std::nullopt;
+            };
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -3590,12 +3605,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 } else if ((k == "policy" || k == "on-stall" || k == "on_stall") &&
                            types::is_string(val)) {
                     auto pol = heap_str_from(ev.string_heap_, val);
-                    if (pol == "cancel")
-                        policy.on_stall = aura::orch::AgentFailureAction::Cancel;
-                    else if (pol == "report-only" || pol == "report_only")
-                        policy.on_stall = aura::orch::AgentFailureAction::ReportOnly;
-                    else if (pol == "restart-n" || pol == "restart_n")
-                        policy.on_stall = aura::orch::AgentFailureAction::RestartN;
+                    if (auto a2 = parse_action(pol))
+                        policy.on_stall = *a2;
+                } else if ((k == "on-backpressure" || k == "on_backpressure") &&
+                           types::is_string(val)) {
+                    // Issue #2887: BP-storm producer degrade action.
+                    auto pol = heap_str_from(ev.string_heap_, val);
+                    if (auto a2 = parse_action(pol))
+                        policy.on_backpressure = *a2;
+                } else if ((k == "bp-threshold" || k == "bp_threshold") && types::is_int(val)) {
+                    policy.bp_threshold =
+                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
                     policy.max_restarts =
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
@@ -3630,12 +3650,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             auto ks = heap_str_from(ev.string_heap_, ke);
                             if ((ks == "policy" || ks == "on-stall") && types::is_string(ve)) {
                                 auto pol = heap_str_from(ev.string_heap_, ve);
-                                if (pol == "cancel")
-                                    policy.on_stall = aura::orch::AgentFailureAction::Cancel;
-                                else if (pol == "report-only")
-                                    policy.on_stall = aura::orch::AgentFailureAction::ReportOnly;
-                                else if (pol == "restart-n")
-                                    policy.on_stall = aura::orch::AgentFailureAction::RestartN;
+                                if (auto a2 = parse_action(pol))
+                                    policy.on_stall = *a2;
+                            } else if ((ks == "on-backpressure" || ks == "on_backpressure") &&
+                                       types::is_string(ve)) {
+                                auto pol = heap_str_from(ev.string_heap_, ve);
+                                if (auto a2 = parse_action(pol))
+                                    policy.on_backpressure = *a2;
+                            } else if ((ks == "bp-threshold" || ks == "bp_threshold") &&
+                                       types::is_int(ve)) {
+                                policy.bp_threshold = static_cast<std::uint64_t>(
+                                    std::max<std::int64_t>(0, types::as_int(ve)));
                             } else if (ks == "max-restarts" && types::is_int(ve)) {
                                 policy.max_restarts = static_cast<std::uint32_t>(
                                     std::max<std::int64_t>(0, types::as_int(ve)));
@@ -3671,26 +3696,29 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"done", make_int(static_cast<std::int64_t>(wr.done))},
                 {"closed", make_int(static_cast<std::int64_t>(wr.closed))},
                 {"restart-count", make_int(static_cast<std::int64_t>(restart_count))},
+                // Issue #2887: BP degrade snapshot from this watch pass.
+                {"bp-degraded", make_int(static_cast<std::int64_t>(wr.bp_degraded))},
+                {"bp-cancelled", make_int(static_cast<std::int64_t>(wr.bp_cancelled))},
+                {"bp-throttled", make_int(static_cast<std::int64_t>(wr.bp_throttled))},
+                {"on-backpressure",
+                 [&] {
+                     auto s = ev.string_heap_.size();
+                     ev.string_heap_.push_back(
+                         aura::orch::agent_failure_action_name(policy.on_backpressure));
+                     return make_string(s);
+                 }()},
                 {"policy",
                  [&] {
-                     const char* p = "cancel";
-                     switch (policy.on_stall) {
-                         case aura::orch::AgentFailureAction::ReportOnly:
-                             p = "report-only";
-                             break;
-                         case aura::orch::AgentFailureAction::RestartN:
-                             p = "restart-n";
-                             break;
-                         default:
-                             break;
-                     }
                      auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back(p);
+                     ev.string_heap_.push_back(
+                         aura::orch::agent_failure_action_name(policy.on_stall));
                      return make_string(s);
                  }()},
                 {"schema", make_int(2588)},
                 {"schema-2161", make_int(2161)},
                 {"schema-2229", make_int(2229)},
+                {"schema-2887", make_int(2887)},
+                {"issue-2887", make_int(2887)},
             };
             return build_orch_hash(kv);
         });
@@ -4869,6 +4897,21 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2229", 2229);
             insert_kv("issue-2229", 2229);
             insert_kv("agent-failure-policy-wired", 1);
+            // Issue #2887: BP-storm producer degrade under AgentScope::watch_all
+            // (on_backpressure). Additive — #2228/#2535 admit reject keys
+            // and #2229 restart keys preserved (AC5).
+            insert_kv("schema-2887", 2887);
+            insert_kv("issue-2887", 2887);
+            insert_kv("agent-bp-degrade-wired", 1);
+            insert_kv("agent-bp-degrade-total",
+                      static_cast<std::int64_t>(
+                          os.agent_bp_degrade_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-bp-cancel-total",
+                      static_cast<std::int64_t>(
+                          os.agent_bp_cancel_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-bp-throttle-total",
+                      static_cast<std::int64_t>(
+                          os.agent_bp_throttle_total.load(std::memory_order_relaxed)));
             // Issue #2756: workflow-level FailurePolicy composition
             // (batch + AgentScope + residual preference). Additive —
             // #2007/#2229/#2539 surfaces above preserved.

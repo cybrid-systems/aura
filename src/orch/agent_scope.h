@@ -113,12 +113,17 @@ enum class StallPolicy : std::uint8_t {
 
 // Issue #2161: aggregated liveness snapshot for one watch_all pass.
 // Counts map 1:1 to KeepaliveWatchStatus (+ cancelled when stall cancel fired).
+// Issue #2887: bp_* counts are additive from the on_backpressure pass
+// (0 when policy.on_backpressure == ReportOnly / BP below threshold).
 struct ScopeWatchResult {
     std::size_t alive = 0;
     std::size_t stalled = 0;
     std::size_t done = 0;
     std::size_t closed = 0;
-    std::size_t cancelled = 0; // subset of stalled that got request_cancel
+    std::size_t cancelled = 0;    // subset of stalled that got request_cancel
+    std::size_t bp_degraded = 0;  // #2887: handles that got a BP action
+    std::size_t bp_cancelled = 0; // #2887: subset with request_cancel
+    std::size_t bp_throttled = 0; // #2887: subset with helper_stop only
 };
 
 // Scoped multi-agent supervision root. Owns its handles via std::vector
@@ -446,6 +451,96 @@ public:
                 case KeepaliveWatchStatus::Closed:
                     ++r.closed;
                     break;
+            }
+        }
+
+        // Issue #2887: after stall pass, optionally degrade BP-hot
+        // producers already in this scope. Admit gate still soft-rejects
+        // *new* attach_mailbox spawns (#2228/#2535); this path converges
+        // existing producers. Default on_backpressure=ReportOnly → no-op
+        // (AC1). Scope-local only — no process-global registry (AC4).
+        if (policy.on_backpressure != AgentFailureAction::ReportOnly) {
+            const auto thr = policy.bp_threshold != 0 ? policy.bp_threshold
+                                                      : resolve_mailbox_bp_admit_threshold();
+            if (thr > 0) {
+                // Scope BP recent: max across handle specs' bp_scope_id
+                // gauges; empty ids fall back to process bucket. Multi-
+                // tenant isolation: a hot gauge for scope A does not
+                // force degrade on a different AgentScope whose handles
+                // only use scope B (AC verification: inject BP on one
+                // scope → other scopes unaffected).
+                std::uint64_t scope_bp_recent = 0;
+                bool any_named_scope = false;
+                for (const auto& sp : specs_) {
+                    if (sp.bp_scope_id.empty())
+                        continue;
+                    any_named_scope = true;
+                    if (auto gauge = lookup_scope_bp_gauge(sp.bp_scope_id)) {
+                        const auto v = gauge->recent.load(std::memory_order_relaxed);
+                        if (v > scope_bp_recent)
+                            scope_bp_recent = v;
+                    }
+                }
+                if (!any_named_scope) {
+                    scope_bp_recent =
+                        g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+                }
+                if (scope_bp_recent >= thr) {
+                    for (std::size_t i = 0; i < handles_.size(); ++i) {
+                        auto& h = handles_[i];
+                        // Only mailbox-holding live handles (producers /
+                        // consumers that already admit-passed). Done /
+                        // invalid / no-mailbox skip — zero cost.
+                        if (!h.ok || !h.mailbox)
+                            continue;
+                        if (h.fiber && h.fiber->is_done())
+                            continue;
+                        // Apply action. Throttle is cooperative only
+                        // (helper_stop; no request_cancel) per AC3.
+                        if (policy.on_backpressure == AgentFailureAction::Throttle) {
+                            stop_keepalive_helper(h);
+                            g_orch_module_stats.agent_bp_throttle_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            g_orch_module_stats.agent_bp_degrade_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            ++r.bp_throttled;
+                            ++r.bp_degraded;
+                            continue;
+                        }
+                        // Cancel / RestartN: stop helper + request_cancel.
+                        stop_keepalive_helper(h);
+                        if (h.fiber && !h.fiber->is_done()) {
+                            h.fiber->request_cancel();
+                            if (auto* sched = h.fiber->owner_sched()) {
+                                sched->note_orphan_fiber(h.fiber, /*hard_deadline_ms=*/50);
+                            }
+                        }
+                        g_orch_module_stats.agent_bp_cancel_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        g_orch_module_stats.agent_bp_degrade_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        ++r.bp_cancelled;
+                        ++r.bp_degraded;
+                        ++r.cancelled;
+
+                        // Optional RestartN (capped like on_stall path).
+                        if (policy.on_backpressure == AgentFailureAction::RestartN) {
+                            const bool within_max = restart_counts_[i] < policy.max_restarts;
+                            if (within_max && sched_) {
+                                if (policy.restart_backoff_ms > 0)
+                                    fiber_sleep_ms(policy.restart_backoff_ms);
+                                handles_[i] = spawn_agent_with_mailbox(*sched_, specs_[i]);
+                                consecutive_stall_counts_[i] = 0;
+                                ++restart_counts_[i];
+                                g_orch_module_stats.agent_restart_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            } else if (!within_max) {
+                                g_orch_module_stats.agent_restart_exhausted_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                        }
+                    }
+                }
             }
         }
         return r;
