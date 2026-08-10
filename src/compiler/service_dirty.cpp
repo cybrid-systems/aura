@@ -706,9 +706,17 @@ void CompilerService::invalidate_function(const std::string& name) {
     // epoch publish but before dep_graph_ cleanup, producing
     // non-deterministic cascade topology. Epoch still uses
     // memory_order_release; readers load acquire (L739/L966/L1013).
+    //
+    // Issue #2812 + ubsan-smoke: when drain_cascade_bfs_invalidate runs
+    // from ~MutationBoundaryGuard while typed_mutate already holds
+    // mutate_mtx_ (lock order: mutate FIRST, then workspace), a
+    // recursive unique_lock throws std::system_error "Resource deadlock
+    // avoided" (test_ir exit -6). Use acquire_if_needed so nested
+    // outer ownership is skipped (same pattern as typed_mutate).
     using aura::compiler::lock_order::Level;
     using aura::compiler::lock_order::OrderedUniqueLock;
-    OrderedUniqueLock<std::shared_mutex> mutate_lock(mutate_mtx_, Level::Mutate);
+    OrderedUniqueLock<std::shared_mutex> mutate_lock =
+        OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
     sync_lock_order_metrics_();
 
     // Issue #2131: GcCoordScope PrePin → Cascade → PostAudit (hard path).
