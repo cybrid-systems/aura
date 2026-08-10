@@ -935,6 +935,16 @@ def cmd_lint():
             "Issue #2876 swarm ant bridge linter failed — run python3 scripts/coverage/checks/check_swarm_ant_bridge_2876.py"
         )
         return r
+    # Issue #2877: std/pso continuous particle swarm (w/c1/c2, pop=16 defaults)
+    # Suite pso_2877.aura + docs/stdlib/pso.md per #81967.
+    pso_script = COVERAGE_CHECKS / "check_pso_2877.py"
+    if not pso_script.exists():
+        fail(f"missing {pso_script}")
+        return 1
+    r = run([sys.executable, str(pso_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #2877 pso linter failed — run python3 scripts/coverage/checks/check_pso_2877.py")
+        return r
     # Issue #2772: denseness multi-process AURA_BIN export footgun (#2767
     # residual). Seed process environ from self path when AURA_BIN unset;
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +

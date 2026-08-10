@@ -30,10 +30,12 @@ This module only searches individuals.
 |-----|---------|---------|
 | `"kind"` | `"grid"` | `"grid"` \| `"pso"` \| `"ant"` |
 | `"dim"` | `1` | Parameter dimension |
-| `"pop"` | `8` | Population / window size |
+| `"pop"` | `8` (`16` for pso) | Population / window size |
 | `"bounds"` | `((-1.0 1.0))` | Per-dim `(lo hi)` lists |
-| `"bins"` | `8` | Discrete bins per dim (grid + ant) |
-| `"seed"` | `424242` | PRNG seed (pso / ant / jitter paths) |
+| `"bins"` | `8` | Discrete bins per dim (grid) |
+| `"w"` / `"c1"` / `"c2"` | `0.7` / `1.4` / `1.4` | PSO coefficients (#2877) |
+| `"ops"` / `"evaporate"` | defaults | ant operator list / ρ (#2876) |
+| `"seed"` | `424242` | PRNG seed (pso) |
 | `"parallel"` | `#f` | If `#t`, evaluate fitness with flat `fiber:spawn` then main-thread joins |
 
 ### Individual representation
@@ -58,9 +60,12 @@ Discrete linspace product over `bounds` × `bins` (Unify-style policy scan).
 Each step evaluates a **window** of size `pop` and advances the cursor through
 the full grid so multi-generation scans cover the product without nested joins.
 
-### `kind: "pso"`
+### `kind: "pso"` (#2877)
 
-Classical particle swarm (inertia 0.7, c1=c2=1.4). Thin surface: `std/pso`.
+Classical particle swarm: \(v ← w v + c_1 r_1 (pbest-x) + c_2 r_2 (gbest-x)\),
+then clamp \(x+v\) to bounds. Defaults `w=0.7`, `c1=c2=1.4`, `pop=16`.
+Dedicated surface: [`std/pso`](pso.md). Prefer for **continuous** knobs;
+use **grid** for discrete scans, **ant** for mutation-type ranking.
 
 ### `kind: "ant"` (#2876 bridge)
 

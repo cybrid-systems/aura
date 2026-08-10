@@ -1,27 +1,69 @@
-; lib/std/pso.aura — Issue #2874 particle swarm backend (thin surface)
+; lib/std/pso.aura — Issue #2877 Particle Swarm Optimization surface
 ;
-; PSO lives in std/swarm as kind "pso". This module re-exports the swarm
-; API and documents the PSO-specific init shape for discoverability.
+; Canonical continuous backend for std/swarm (kind "pso"). Pure numeric
+; loops; fitness is caller-supplied (higher better). Apply best knobs
+; outside this module (hot-strategy / policy write / mutate).
 ;
 ;   (require "std/pso" all:)
-;   (pso:init dim pop bounds)  ; → calls swarm:init kind:pso
-;   (pso:step! fitness-fn)
+;   (pso:init 3 16 (list (list 0 64) (list 0 64) (list 1 128)))
+;   ; or full opts:
+;   (pso:init-hash (hash "dim" 2 "pop" 16 "bounds" ... "w" 0.7 "c1" 1.4 "c2" 1.4 "seed" 1))
+;   (pso:step! (lambda (x) (- 0.0 (sphere x))))
 ;   (pso:best)
+;
+; Form order (#2769): export before require.
 
-(export pso:init pso:step! pso:best pso:report pso:export pso:help
-        swarm:init swarm:step! swarm:best swarm:report swarm:export)
+(export pso:init pso:init-hash pso:step! pso:best pso:population
+        pso:report pso:export pso:help pso:defaults
+        swarm:init swarm:step! swarm:best swarm:report swarm:export
+        swarm:population)
 
 (require "std/swarm" all:)
 
-(define (pso:init dim pop bounds)
-  (swarm:init (hash "kind" "pso"
-                    "dim" dim
-                    "pop" pop
-                    "bounds" bounds)))
+; Defaults from issue #2877: w=0.7, c1=c2=1.4, pop=16
+(define (pso:defaults)
+  (hash "kind" "pso"
+        "w" 0.7
+        "c1" 1.4
+        "c2" 1.4
+        "pop" 16
+        "dim" 1
+        "bounds" (list (list -1.0 1.0))
+        "seed" 424242
+        "parallel" #f))
+
+; Convenience: (pso:init dim pop bounds [seed])
+(define (pso:init dim pop bounds . rest)
+  (let ((seed (if (null? rest) 424242 (car rest))))
+    (swarm:init (hash "kind" "pso"
+                      "dim" dim
+                      "pop" pop
+                      "bounds" bounds
+                      "w" 0.7
+                      "c1" 1.4
+                      "c2" 1.4
+                      "seed" seed))))
+
+; Full opts hash (merges kind:pso). Keys: dim,pop,bounds,w,c1,c2,seed,parallel
+(define (pso:init-hash opts)
+  (swarm:init
+    (hash "kind" "pso"
+          "dim" (let ((v (hash-ref opts "dim"))) (if (null? v) 1 v))
+          "pop" (let ((v (hash-ref opts "pop"))) (if (null? v) 16 v))
+          "bounds" (let ((v (hash-ref opts "bounds")))
+                     (if (null? v) (list (list -1.0 1.0)) v))
+          "w" (let ((v (hash-ref opts "w"))) (if (null? v) 0.7 v))
+          "c1" (let ((v (hash-ref opts "c1"))) (if (null? v) 1.4 v))
+          "c2" (let ((v (hash-ref opts "c2"))) (if (null? v) 1.4 v))
+          "seed" (let ((v (hash-ref opts "seed"))) (if (null? v) 424242 v))
+          "parallel" (let ((v (hash-ref opts "parallel")))
+                       (if (null? v) #f v)))))
 
 (define (pso:step! fitness-fn) (swarm:step! fitness-fn))
 (define (pso:best) (swarm:best))
+(define (pso:population) (swarm:population))
 (define (pso:report) (swarm:report))
 (define (pso:export) (swarm:export))
+
 (define (pso:help)
-  "std/pso (#2874): (pso:init dim pop bounds) (pso:step! fit) (pso:best). Backend of std/swarm kind:pso.")
+  "std/pso (#2877): continuous particle swarm. (pso:init dim pop bounds) or (pso:init-hash h) with w/c1/c2/seed/parallel. (pso:step! fit) fit: list-of-nums→number higher-better. Use for continuous knobs; prefer grid for discrete scans, ant for mutation-type ranking.")
