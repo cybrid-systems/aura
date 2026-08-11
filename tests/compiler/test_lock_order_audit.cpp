@@ -92,9 +92,14 @@ static void ac2316_canary_mechanism() {
     CHECK(audit.find("g_lock_order_canary_enabled") != std::string::npos,
           "AC2: g_lock_order_canary_enabled atomic present");
     CHECK(audit.find("std::abort()") != std::string::npos, "AC2: abort on inversion under canary");
+    // #2557: production default is Soft (mode=2), not OFF. Accept either
+    // legacy "OFF" docs or current Soft-as-production-default wording.
     CHECK(audit.find("Production default OFF") != std::string::npos ||
-              audit.find("production default OFF") != std::string::npos,
-          "AC2: production default OFF documented");
+              audit.find("production default OFF") != std::string::npos ||
+              audit.find("production default): atomics") != std::string::npos ||
+              audit.find("#2557 production default") != std::string::npos ||
+              audit.find("soft is the production default") != std::string::npos,
+          "AC2: production default documented (OFF legacy or Soft #2557)");
     // Lazy-init pattern from getenv
     CHECK(audit.find("std::getenv(\"AURA_LOCK_ORDER_CANARY\")") != std::string::npos,
           "AC2: lazy-init from env via std::getenv");

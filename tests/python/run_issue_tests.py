@@ -41,6 +41,8 @@ _py = str(Path(__file__).resolve().parent)
 if _py not in sys.path:
     sys.path.insert(0, _py)
 
+import contextlib  # noqa: E402
+
 from _aura_harness import AURA_BIN, BUILD, ROOT, B, G, N, R, Y  # noqa: E402
 from issue_tier import (  # noqa: E402
     _member_to_bundle,
@@ -289,85 +291,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_issue_1991",
     "test_parallel_intend_pure",
     "test_flatast_atomic_lock_batch",
-    # ── Full-tier CI-gating wave (2026-08-11, main build-test / ./build.py ci) ──
-    # After SSOT + cascade soft-path + mold --as-needed bridge-hook fixes,
-    # ~69 additional binaries still surface as NEW under AURA_ISSUES_TIER=full
-    # jobs=4: parallel SIGSEGV/SIGABRT (rc=-11/-6/-7), residual rc=127 symbol
-    # lookup on selective targets, AC drift / timeouts (rc=1/124). Solo runs
-    # often green or single-AC soft fails — same class as the 2026-08-03
-    # unlock wave. Track so issues suite stops gating CI; ⚠ remains visible.
-    # Follow-ups: rebuild residual rc=127 under clean link, rebaseline ACs,
-    # serialize known crashers under jobs=1.
-    "test_alloc_block_seal_last",
-    "test_aot_jit_stamp_batch",
-    "test_aot_mangle_top",
-    "test_arena_compact_hooks_batch",
-    "test_blame_occurrence_agent_ratios",
-    "test_cache_entry_version_stamp",
-    "test_cascade_impact_batch",
-    "test_chaos_mutate_steal_gc_mailbox",
-    "test_clone_provenance_per_evaluator",
-    "test_cross_cow_batch",
-    "test_densify_pin_batch",
-    "test_dep_graph_partial_relower_threshold",
-    "test_enable_soa_dual_emit_no_reset",
-    "test_epoch_invariant_misc_batch",
-    "test_fiber_concurrent_unit_batch",
-    "test_fiber_eval_depth_isolation",
-    "test_fiber_reclaim_safety",
-    "test_fiber_resume_state",
-    "test_fiber_spawn_cli",
-    "test_fiber_synthesize_batch",
-    "test_gc_misc_batch",
-    "test_guard_panic_reflect_fiber_resume_task6",
-    "test_hot_pass_contract_batch",
-    "test_hygiene_mutate_closed_loop",
-    "test_ir_closure_jit_misc_batch",
-    "test_jit_macro_introduced_preserve",
-    "test_linear_cross_closure",
-    "test_linear_misc_batch",
-    "test_linear_provenance_steal_gc_closed_loop",
-    "test_lock_order_audit_batch",
-    "test_macro_fiber_hygiene",
-    "test_macro_hygiene_depth_concurrent_obs",
-    "test_macro_intro_restamp",
-    "test_macro_restamp_after_flat",
-    "test_macro_schema_dirty_propagate",
-    "test_misc_issue_fold_batch",
-    "test_module_path_refuse",
-    "test_module_query_batch",
-    "test_mutation_hold_boundary_batch",
-    "test_obs_metrics_smoke_batch",
-    "test_obs_misc_batch",
-    "test_occurrence_coercion_batch",
-    "test_occurrence_provenance_chain_completeness",
-    "test_orch_admission_decay",
-    "test_orch_agent_batch",
-    "test_orphan_reap_stress",
-    "test_pcv_children_safe_default_migration",
-    "test_pcv_workspace_batch",
-    "test_pmr_alloc_fiber_safe",
-    "test_post_mutate_push_cascade",
-    "test_production_hardening_batch",
-    "test_reemit_defer_batch",
-    "test_reflect_hygiene_agent_diagnostics",
-    "test_reflect_macro_hygiene_batch",
-    "test_replace_value_audit_consistency",
-    "test_rest_param_hygiene_self_evo",
-    "test_security_capability_batch",
-    "test_serve_legacy_issue_batch",
-    "test_shape_soa_storm_batch",
-    "test_shape_soa_unit_batch",
-    "test_should_audit_sampled_default",
-    "test_soa_cascade_instr_dirty_sync",
-    "test_stable_ref_validate_batch",
-    "test_string_heap_corruption_guard",
-    "test_subsecond_clock",
-    "test_tenant_isolation_enforcement",
-    "test_tweak_literal_audit_consistency",
-    "test_type_txn_misc_batch",
-    "test_value_tag_hotpath_batch",
-    "test_workspace_state_lock",
 }
 
 _print_lock = Lock()
@@ -514,46 +437,138 @@ def parse_pass_fail_count(stdout: str) -> tuple[int, int]:
     return last if last is not None else (0, 0)
 
 
-def build_targets(targets: list[str]) -> int:
-    """Build the given test_issue_* targets via ninja (-k 0)."""
+def build_targets(targets: list[str], *, timeout_s: int = 600) -> int:
+    """Build the given test_issue_* targets via ninja (-k 0).
+
+    timeout_s caps a single ninja invocation so a stuck module rebuild cannot
+    hang the whole issues suite (common when SO graph is dirty).
+    """
     if not targets:
         return 0
     print(f"{B}Building {len(targets)} test_issue_* binaries (ninja -k 0)...{N}")
-    cmd = ["ninja", "-k", "0", "-C", str(BUILD)] + targets
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    # Cap link parallelism to avoid mold SIGBUS under multi-GB LLVM link.
+    jobs = max(1, min(4, int(os.environ.get("AURA_ISSUE_BUILD_JOBS", "2") or "2")))
+    cmd = ["ninja", "-k", "0", f"-j{jobs}", "-C", str(BUILD)] + targets
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        print(
+            f"{Y}ninja rebuild timed out after {timeout_s}s for "
+            f"{len(targets)} target(s); continuing with existing binaries.{N}"
+        )
+        return 1
     if r.returncode != 0:
         print(f"{Y}Some targets failed to build (pre-existing). Continuing with what built.{N}")
+        if r.stderr:
+            print(r.stderr[-1500:], file=sys.stderr)
     return 0
 
 
-def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
-    """Run one test binary. Returns (name, passed, failed, returncode, error_msg)."""
-    bin_path = BUILD / bin_name
+def _shared_so_mtimes() -> list[float]:
+    """Mtimes of shared libs that issue binaries DT_NEEDED-link."""
+    mtimes: list[float] = []
+    for name in (
+        "libaura_test_objects.so",
+        "libaura_tl_arena.so",
+        "libaura_jit_light_test_objects.so",
+        "libaura_jit_test_objects.so",
+        "libaura-reflect.so",
+    ):
+        p = BUILD / name
+        if p.is_file():
+            with contextlib.suppress(OSError):
+                mtimes.append(p.stat().st_mtime)
+    return mtimes
+
+
+def _binary_stale_vs_shared_sos(bin_path: Path) -> bool:
+    """True when binary is older than any shared SO it depends on (ABI skew)."""
     if not bin_path.is_file():
-        return bin_name, 0, 0, 127, f"binary not found: {bin_path}"
-    # Per-binary timeout scaling. Bench / stress / large late bundles
-    # need more than the default 60s (test_issue_159_bench alone can
-    # exceed a minute; multi-member late* bundles are longer).
+        return True
+    try:
+        bt = bin_path.stat().st_mtime
+    except OSError:
+        return True
+    sos = _shared_so_mtimes()
+    if not sos:
+        return False
+    # Rebuild if any shared SO is strictly newer (common after SO-only rebuild).
+    return any(st > bt + 0.5 for st in sos)
+
+
+def refresh_stale_issue_binaries(bins: list[str]) -> list[str]:
+    """Ninja-rebuild binaries older than libaura_test_objects.so (ABI skew → rc=127).
+
+    Returns the list of names that were attempted. Safe no-op when none stale.
+    """
+    stale = [b for b in bins if _binary_stale_vs_shared_sos(BUILD / b)]
+    if not stale:
+        return []
+    print(f"{Y}Refreshing {len(stale)} stale issue binaries (older than shared SOs — prevents rc=127 ABI skew)...{N}")
+    build_targets(stale)
+    return stale
+
+
+# Crash / OOM-class signals that deserve one serial retry after parallel load.
+_CRASH_RCS = frozenset(
+    {
+        -4,  # SIGILL
+        -6,  # SIGABRT
+        -7,  # SIGBUS
+        -9,  # SIGKILL (OOM)
+        -11,  # SIGSEGV
+        132,  # 128+SIGILL
+        134,  # 128+SIGABRT
+        135,  # 128+SIGBUS
+        137,  # 128+SIGKILL
+        139,  # 128+SIGSEGV
+    }
+)
+
+
+def _eff_timeout(bin_name: str, timeout: int) -> int:
+    """Per-binary timeout scaling for stress / late bundles / orch."""
     # late1 alone can exceed 6 min under parallel load on aarch64 CI
     # (was timing out at 60*4=240s with rc=124).
+    is_very_heavy = bin_name in (
+        "test_issues_jit_late1",
+        "test_issues_jit_late3",
+        "test_issues_jit_late4",
+        "test_concurrent",
+        "test_orch_agent_batch",
+        "test_tenant_isolation_enforcement",
+        "test_fiber_orch_parallel_quota_batch",
+        "test_chaos_mutate_steal_gc_mailbox",
+    )
     is_heavy = (
         "bench" in bin_name
         or bin_name == "test_issues_jit"
         or bin_name.startswith("test_jit_")
         or bin_name.startswith("test_issues_jit_late")
         or bin_name.startswith("test_issues_fiber")
-    )
-    is_very_heavy = bin_name in (
-        "test_issues_jit_late1",
-        "test_issues_jit_late3",
-        "test_issues_jit_late4",
+        or bin_name.startswith("test_orch_")
+        or bin_name.startswith("test_fiber_orch_")
+        or "stress" in bin_name
+        or "chaos" in bin_name
     )
     if is_very_heavy:
-        eff_timeout = timeout * 10  # 600s default
-    elif is_heavy:
-        eff_timeout = timeout * 4
-    else:
-        eff_timeout = timeout
+        return timeout * 10  # 600s default
+    if is_heavy:
+        return timeout * 4
+    return timeout
+
+
+def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
+    """Single attempt. Returns (name, passed, failed, returncode, error_msg)."""
+    bin_path = BUILD / bin_name
+    if not bin_path.is_file():
+        return bin_name, 0, 0, 127, f"binary not found: {bin_path}"
+    eff_timeout = _eff_timeout(bin_name, timeout)
+    # Unique TMPDIR per process: parallel issue binaries that write
+    # /tmp/*.so AOT artifacts / sockets must not collide (rc=-11 under jobs>1).
+    import tempfile
+
+    tmp_root = tempfile.mkdtemp(prefix=f"aura_issue_{bin_name}_")
     # Issue #226 follow-up: pass AURA_BIN + AURA_SRC_ROOT to
     # subprocesses so tests that shell out to the aura binary
     # (test_issue_294, test_issue_295) can resolve relative
@@ -571,6 +586,9 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
         **os.environ,
         "AURA_BIN": str(AURA_BIN),
         "AURA_SRC_ROOT": str(ROOT),
+        "TMPDIR": tmp_root,
+        "TMP": tmp_root,
+        "TEMP": tmp_root,
     }
     if not str(env.get("AURA_SANDBOX", "")).strip():
         env["AURA_SANDBOX"] = "off"
@@ -586,6 +604,14 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
         )
     except subprocess.TimeoutExpired:
         return bin_name, 0, 0, 124, f"timeout after {eff_timeout}s"
+    finally:
+        # Best-effort cleanup of private tmp (AOT .so / sockets).
+        try:
+            import shutil as _shutil
+
+            _shutil.rmtree(tmp_root, ignore_errors=True)
+        except Exception:
+            pass
     passed, failed = parse_pass_fail_count(r.stdout)
     # Always keep stderr snippets so pre-existing member classification
     # can match "bundle member X failed/crashed" lines from the driver.
@@ -608,6 +634,30 @@ def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
     return bin_name, passed, failed, r.returncode, err
 
 
+def run_one(bin_name: str, timeout: int) -> tuple[str, int, int, int, str]:
+    """Run one test binary with private TMPDIR + one crash/symbol retry.
+
+    Robustness (full-tier parallel):
+      1. First attempt under private TMPDIR (no /tmp AOT collisions).
+      2. On crash signal or undefined-symbol: ninja-relink once + retry once.
+    Proactive bulk rebuild is deferred to phase-0 (capped) / phase-2 recovery
+    so a dirty SO graph cannot serialize the whole suite behind one hung ninja.
+    """
+    name, passed, failed, rc, err = _run_one_attempt(bin_name, timeout)
+    # Symbol lookup / ABI skew often leaves rc=127 with "undefined symbol".
+    need_rebuild = rc == 127 or (err and ("undefined symbol" in err or "symbol lookup error" in err))
+    need_retry = rc in _CRASH_RCS or need_rebuild or rc == 124
+    if not need_retry:
+        return name, passed, failed, rc, err
+    # Fresh link then solo retry (clears transient parallel pressure flakes).
+    # Short timeout: if the SO graph is dirty this can take minutes; phase-2
+    # serial recovery will rebuild in bulk more efficiently.
+    build_targets([bin_name], timeout_s=180)
+    time.sleep(0.05)
+    name2, p2, f2, rc2, err2 = _run_one_attempt(bin_name, timeout)
+    return name2, p2, f2, rc2, err2
+
+
 def _print_result(
     b: str,
     passed: int,
@@ -628,8 +678,44 @@ def _print_result(
                 print(f"      {err[:200]}")
 
 
+def _classify_result(
+    b: str,
+    passed: int,
+    failed: int,
+    rc: int,
+    err: str,
+    *,
+    failures: list,
+    pre_existing_failures: list,
+) -> None:
+    """Append to failures or pre_existing_failures and print."""
+    pre_members: list[str] = []
+    blob = (err or "") + "\n"
+    if "crashed during bundle member " in blob:
+        pre_members.append(blob.split("crashed during bundle member ", 1)[1].split()[0])
+    import re as _re
+
+    for m in _re.finditer(r"bundle member (test_[\w]+) (?:failed|crashed)", blob):
+        pre_members.append(m.group(1))
+    only_pre_members = bool(pre_members) and all(m in PRE_EXISTING_FAILURES for m in pre_members)
+    pre = b in PRE_EXISTING_FAILURES or only_pre_members
+    if pre and (rc != 0 or failed > 0):
+        pre_existing_failures.append((b, passed, failed, rc, err))
+        _print_result(b, passed, failed, rc, err, pre_existing=True)
+    elif rc == 0 and failed == 0:
+        _print_result(b, passed, failed, rc, err, pre_existing=False)
+    else:
+        failures.append((b, passed, failed, rc, err))
+        _print_result(b, passed, failed, rc, err, pre_existing=False)
+
+
 def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, int, list, list, list]:
-    """Run binaries with a thread pool. Returns aggregate stats."""
+    """Run binaries with a thread pool + serial recovery pass for crashers.
+
+    Phase 1: parallel (jobs). Phase 2: any crash/signal/rc=127 failures are
+    rebuilt and re-run serially — catches load-induced flakes without
+    PRE_EXISTING waivers. Only phase-2 residual failures gate CI.
+    """
     total_passed = 0
     total_failed = 0
     failures: list[tuple] = []
@@ -638,44 +724,88 @@ def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, in
 
     runnable = []
     for b in bins:
-        if (BUILD / b).is_file():
+        # Include missing bins that still have source so refresh/rebuild can recover.
+        if (BUILD / b).is_file() or _test_binary_has_source(b):
             runnable.append(b)
         else:
             skipped.append(b)
-            print(f"  {Y}⊘{N} {b} (not built)")
+            print(f"  {Y}⊘{N} {b} (not built, no source)")
 
     if not runnable:
         return total_passed, total_failed, failures, pre_existing_failures, skipped
 
+    # Phase 0: bulk refresh when a modest number of bins are SO-stale.
+    # Large skew (local half-rebuilt trees) rebuilds on-demand in run_one
+    # to avoid a multi-hour ninja front-load.
+    present = [b for b in runnable if (BUILD / b).is_file()]
+    stale_n = sum(1 for b in present if _binary_stale_vs_shared_sos(BUILD / b))
+    if 0 < stale_n <= 40:
+        refresh_stale_issue_binaries(present)
+    elif stale_n > 40:
+        print(
+            f"{Y}Note: {stale_n} issue binaries look older than shared SOs; "
+            f"will rebuild on-demand after rc=127/crash (set "
+            f"AURA_ISSUES_REFRESH_STALE=1 to bulk-relink first).{N}"
+        )
+        if os.environ.get("AURA_ISSUES_REFRESH_STALE", "").strip() in {"1", "true", "yes"}:
+            refresh_stale_issue_binaries(present)
+
     workers = max(1, min(jobs, len(runnable)))
+    phase1: dict[str, tuple[int, int, int, str]] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(run_one, b, timeout): b for b in runnable}
         for fut in as_completed(futures):
             b, passed, failed, rc, err = fut.result()
-            total_passed += passed
-            total_failed += failed
-            # Bundle crashed during / only failed on known-pre-existing members.
-            # Fork isolates crashes so the binary may still report partial passes.
-            pre_members: list[str] = []
-            blob = (err or "") + "\n"
-            if "crashed during bundle member " in blob:
-                pre_members.append(blob.split("crashed during bundle member ", 1)[1].split()[0])
-            # Parent stderr also carries "bundle member X failed/crashed" lines
-            # when the driver itself continues after a child failure.
-            import re as _re
+            phase1[b] = (passed, failed, rc, err)
 
-            for m in _re.finditer(r"bundle member (test_[\w]+) (?:failed|crashed)", blob):
-                pre_members.append(m.group(1))
-            only_pre_members = bool(pre_members) and all(m in PRE_EXISTING_FAILURES for m in pre_members)
-            pre = b in PRE_EXISTING_FAILURES or only_pre_members
-            if pre and (rc != 0 or failed > 0):
-                pre_existing_failures.append((b, passed, failed, rc, err))
-                _print_result(b, passed, failed, rc, err, pre_existing=True)
-            elif rc == 0 and failed == 0:
-                _print_result(b, passed, failed, rc, err, pre_existing=False)
-            else:
-                failures.append((b, passed, failed, rc, err))
-                _print_result(b, passed, failed, rc, err, pre_existing=False)
+    # Phase 2: serial recovery for any non-PRE failure from phase 1.
+    # Crash/timeout/symbol get a rebuild first; pure AC (rc=1) get a clean
+    # solo re-run (rules out /tmp collisions and parallel resource pressure).
+    recovery: list[str] = []
+    for b, (_passed, failed, rc, _err) in phase1.items():
+        if b in PRE_EXISTING_FAILURES:
+            continue
+        if rc != 0 or failed > 0:
+            recovery.append(b)
+
+    if recovery:
+        print(
+            f"\n{Y}Serial recovery: re-running {len(recovery)} failures under jobs=1 "
+            f"(load isolation + optional rebuild)...{N}"
+        )
+        crash_like = [
+            b
+            for b in recovery
+            if phase1[b][2] in _CRASH_RCS
+            or phase1[b][2] in (127, 124)
+            or "undefined symbol" in (phase1[b][3] or "")
+            or "symbol lookup error" in (phase1[b][3] or "")
+        ]
+        if crash_like:
+            build_targets(crash_like, timeout_s=min(1200, 30 * max(1, len(crash_like))))
+        for b in recovery:
+            name, passed, failed, rc, err = _run_one_attempt(b, timeout)
+            # Extra rebuild+retry if still crash/symbol after first solo attempt.
+            if rc in _CRASH_RCS or rc == 127 or (err and "undefined symbol" in (err or "")):
+                build_targets([b], timeout_s=300)
+                name, passed, failed, rc, err = _run_one_attempt(b, timeout)
+            phase1[b] = (passed, failed, rc, err)
+    # Classify final results.
+    for b in runnable:
+        if b not in phase1:
+            continue
+        passed, failed, rc, err = phase1[b]
+        total_passed += passed
+        total_failed += failed
+        _classify_result(
+            b,
+            passed,
+            failed,
+            rc,
+            err,
+            failures=failures,
+            pre_existing_failures=pre_existing_failures,
+        )
 
     return total_passed, total_failed, failures, pre_existing_failures, skipped
 
@@ -707,7 +837,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
     tier = args.tier or issues_tier()
-    jobs = args.jobs or int(os.environ.get("AURA_ISSUES_JOBS", str(min(8, os.cpu_count() or 4))))
+    # Full tier: default jobs=4 (not 8) — high parallelism was the main
+    # driver of SIGSEGV/timeout under load. Override with AURA_ISSUES_JOBS.
+    _cpu = os.cpu_count() or 4
+    _default_jobs = min(4, _cpu) if tier == "full" else min(8, _cpu)
+    jobs = args.jobs or int(os.environ.get("AURA_ISSUES_JOBS", str(_default_jobs)))
     changed_only = args.changed
     if changed_only and tier == "full":
         tier = "fast"
