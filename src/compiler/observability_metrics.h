@@ -8863,6 +8863,9 @@ struct CompilerMetrics {
     // delta / Soft default) is zero-cost — counter not bumped.
     std::atomic<std::uint64_t> composite_commit_log_forces_partial_total{0};
     std::atomic<std::uint64_t> composite_commit_log_forces_partial_observe_total{0};
+    // Issue #2898: required TypeId invariant set on composite commit.
+    std::atomic<std::uint64_t> composite_required_type_fail_total{0};
+    std::atomic<std::uint64_t> composite_required_type_observe_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_limited_total{0};
     std::atomic<std::uint64_t> solve_delta_worklist_soft_cap{256};
     // Issue #1528: O(delta) re-inference observability.

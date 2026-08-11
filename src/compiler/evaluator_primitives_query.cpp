@@ -8486,6 +8486,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           6);
                 insert_kv("schema-2610", 2610);
                 insert_kv("issue-2610", 2610);
+                // Issue #2898: explicit required TypeId invariant set
+                // on composite_txn_commit (anti under-mark false-green).
+                insert_kv(
+                    "composite-required-type-fail-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.composite_required_type_fail_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "composite-required-type-observe-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.composite_required_type_observe_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "composite-required-type-checked-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.composite_required_type_checked_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv("composite-required-type-wired", 1);
+                insert_kv("commit-readiness-force-reason-required-type", 14);
+                insert_kv("schema-2898", 2898);
+                insert_kv("issue-2898", 2898);
             }
             // Issue #2458: truncate-commit Soft observe / Hard
             // full-solve-or-reject. Additive keys on
