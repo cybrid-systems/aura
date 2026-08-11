@@ -173,6 +173,19 @@ extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_default();
 extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
                                                           std::uint64_t* ok_count,
                                                           std::uint64_t* skip_budget_count);
+// Issue #2893: adaptive pure-anon budget + pressure signal (refine #2850).
+// budget_default becomes adaptive when env AURA_SYNC_REMOUNT_PURE_ANON_BUDGET
+// is unset (production base 64 scaled by pressure to ceiling 256); env exact
+// value still forces fixed. budget_base returns the fixed base (used by the
+// bridge to shrink under storm throttle). note_walk_outcome feeds skip
+// pressure after each walk; observe_deopt_window adds read-only
+// HotUpdateRegistry deopt-window pressure. budget_current / pressure_bp are
+// the query-surface signals (0-10000 bp).
+extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept;
+extern "C" void aura_pure_anon_note_walk_outcome(std::uint64_t ok, std::uint64_t skip) noexcept;
+extern "C" void aura_pure_anon_observe_deopt_window(std::uint64_t deopt_window_count) noexcept;
+extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_current() noexcept;
+extern "C" std::uint64_t aura_pure_anon_pressure_bp() noexcept;
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);

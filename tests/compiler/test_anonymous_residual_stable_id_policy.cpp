@@ -583,6 +583,122 @@ static void ac2666_4_query_keys_added() {
           "2666 AC4: obs_eval.cpp issue-2666 sentinel");
 }
 
+// ── Issue #2893: adaptive pure-anon remount budget + pressure signal ──
+// (refine #2850). AC1 budget expands within ceiling under pressure;
+// AC2 Soft / budget=0 / low pressure -> fixed or zero path; AC3 named +
+// captured filters unchanged; AC4 additive query keys; AC5 source-cite +
+// linter + no docs/design.
+static void ac2893_1_adaptive_budget() {
+    std::println("\n--- #2893 AC1: adaptive budget + pressure signal ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(rt.find("Issue #2893") != std::string::npos, "2893 AC1: runtime cites #2893");
+    CHECK(rt.find("g_pure_anon_pressure_bp") != std::string::npos, "2893 AC1: pressure bp state");
+    CHECK(rt.find("g_pure_anon_budget_current") != std::string::npos,
+          "2893 AC1: budget current state");
+    CHECK(rt.find("kPureAnonBudgetCeiling") != std::string::npos, "2893 AC1: ceiling constant");
+    CHECK(rt.find("aura_pure_anon_note_walk_outcome") != std::string::npos,
+          "2893 AC1: walk-outcome feed helper");
+    CHECK(rt.find("aura_pure_anon_note_walk_outcome(ok, skip)") != std::string::npos,
+          "2893 AC1: walk tail feeds outcome");
+    CHECK(rt.find("aura_pure_anon_observe_deopt_window") != std::string::npos,
+          "2893 AC1: deopt-window pressure helper");
+    CHECK(br.find("aura_pure_anon_observe_deopt_window") != std::string::npos,
+          "2893 AC1: bridge feeds deopt-window pressure");
+    CHECK(br.find("deopt_window_count()") != std::string::npos,
+          "2893 AC1: bridge reads deopt-window count");
+}
+
+static void ac2893_2_soft_zero_cost() {
+    std::println("\n--- #2893 AC2: Soft / budget=0 / low pressure zero path ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(rt.find("production_defaults_active()") != std::string::npos,
+          "2893 AC2: Soft gated on production defaults");
+    CHECK(rt.find("Soft / sandbox / tests → 0") != std::string::npos,
+          "2893 AC2: Soft budget 0 documented");
+    CHECK(rt.find("return 0; // zero-cost when budget off") != std::string::npos ||
+              rt.find("budget == 0") != std::string::npos,
+          "2893 AC2: budget==0 short-circuit");
+    CHECK(rt.find("aura_sync_remount_pure_anon_budget_base") != std::string::npos,
+          "2893 AC2: fixed base function present");
+    CHECK(br.find("should_throttle_reemit()") != std::string::npos,
+          "2893 AC2: storm throttle shrink path");
+    CHECK(br.find("aura_sync_remount_pure_anon_budget_base()") != std::string::npos,
+          "2893 AC2: storm uses fixed base");
+}
+
+static void ac2893_3_named_captured_unchanged() {
+    std::println("\n--- #2893 AC3: named + captured filters unchanged ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    // Opposite-sid invariants preserved: named (sid!=0) and captured
+    // (sid==0 && has env/linear) still filtered out of the pure-anon walk.
+    CHECK(rt.find("if (sid != 0)") != std::string::npos, "2893 AC3: sid!=0 skip");
+    CHECK(rt.find("aura_closure_has_env_or_linear_captures_unlocked") != std::string::npos,
+          "2893 AC3: captured skip preserved");
+    CHECK(rt.find("Opposite of named (sid!=0) and captured") != std::string::npos,
+          "2893 AC3: opposite-sid invariant documented");
+    // Named (#2602) + captured (#2691) still have their own remount paths.
+    CHECK(rt.find("aura_sync_remount_anon_captured_live_closures") != std::string::npos,
+          "2893 AC3: captured walk preserved");
+}
+
+static void ac2893_4_query_additive() {
+    std::println("\n--- #2893 AC4: additive query keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto sh = read_file("src/compiler/runtime_shared.h");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    CHECK(q.find("live-closure-sync-remount-pure-anon-budget-current") != std::string::npos,
+          "2893 AC4: budget-current key");
+    CHECK(q.find("live-closure-sync-remount-pure-anon-pressure-bp") != std::string::npos,
+          "2893 AC4: pressure-bp key");
+    CHECK(q.find("live-closure-sync-remount-pure-anon-adaptive-wired") != std::string::npos,
+          "2893 AC4: adaptive-wired key");
+    CHECK(q.find("schema-2893") != std::string::npos, "2893 AC4: schema-2893");
+    CHECK(q.find("issue-2893") != std::string::npos, "2893 AC4: issue-2893");
+    // schema-2850 preserved (additive).
+    CHECK(q.find("schema-2850") != std::string::npos, "2893 AC4: schema-2850 preserved");
+    CHECK(q.find("issue-2850") != std::string::npos, "2893 AC4: issue-2850 preserved");
+    // C ABI declared in runtime_shared.h + weak stubs for light-link.
+    CHECK(sh.find("aura_sync_remount_pure_anon_budget_base") != std::string::npos,
+          "2893 AC4: budget_base declared");
+    CHECK(sh.find("aura_pure_anon_note_walk_outcome") != std::string::npos,
+          "2893 AC4: note_walk_outcome declared");
+    CHECK(sh.find("aura_pure_anon_observe_deopt_window") != std::string::npos,
+          "2893 AC4: observe_deopt_window declared");
+    CHECK(sh.find("aura_sync_remount_pure_anon_budget_current") != std::string::npos,
+          "2893 AC4: budget_current declared");
+    CHECK(sh.find("aura_pure_anon_pressure_bp") != std::string::npos,
+          "2893 AC4: pressure_bp declared");
+    CHECK(stub.find("aura_sync_remount_pure_anon_budget_base") != std::string::npos,
+          "2893 AC4: stub budget_base");
+    CHECK(stub.find("aura_pure_anon_note_walk_outcome") != std::string::npos,
+          "2893 AC4: stub note_walk_outcome");
+}
+
+static void ac2893_5_source_and_linter() {
+    std::println("\n--- #2893 AC5: source-cite + linter + no docs/design ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_pure_anon_adaptive_budget_2893.py");
+    CHECK(rt.find("Issue #2893") != std::string::npos, "2893 AC5: runtime cites #2893");
+    CHECK(br.find("Issue #2893") != std::string::npos, "2893 AC5: bridge cites #2893");
+    CHECK(q.find("Issue #2893") != std::string::npos, "2893 AC5: obs_jit cites #2893");
+    for (const auto& fn : {"ac2893_1_adaptive_budget", "ac2893_2_soft_zero_cost",
+                           "ac2893_3_named_captured_unchanged", "ac2893_4_query_additive",
+                           "ac2893_5_source_and_linter"})
+        CHECK(t.find(fn) != std::string::npos, "2893 AC5: test fn " + std::string(fn));
+    CHECK(!lint.empty() && lint.find("Issue #2893") != std::string::npos,
+          "2893 AC5: linter present and cites #2893");
+    CHECK(build.find("check_pure_anon_adaptive_budget_2893") != std::string::npos,
+          "2893 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/2893-pure-anon-adaptive-budget.md").empty(),
+          "2893 AC5: no docs/design/2893-* per #1655");
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
@@ -914,8 +1030,18 @@ int run_test_anonymous_residual_stable_id_policy() {
         }
         CHECK(true, "2850 AC6: extend test_anonymous_residual_stable_id_policy per #81967");
     }
+    // Issue #2893: adaptive pure-anon remount budget + pressure signal
+    // (refine #2850). AC1 adaptive budget expands within ceiling under
+    // pressure; AC2 Soft/budget=0/low-pressure fixed or zero path; AC3
+    // named + captured filters unchanged; AC4 additive query keys; AC5
+    // source-cite + linter + no docs/design.
+    ac2893_1_adaptive_budget();
+    ac2893_2_soft_zero_cost();
+    ac2893_3_named_captured_unchanged();
+    ac2893_4_query_additive();
+    ac2893_5_source_and_linter();
 
-    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850: {} passed, {} failed ===",
+    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

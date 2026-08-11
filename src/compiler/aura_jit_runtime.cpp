@@ -2110,29 +2110,114 @@ extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_
         *fail_count = fail;
 }
 
+// Issue #2893: fixed budget base (non-adaptive) — used by the bridge to
+// shrink back under storm throttle. Env exact value wins; unset →
+// production 64 / Soft 0 (the #2850 fixed semantics).
+extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept {
+    const char* e = std::getenv("AURA_SYNC_REMOUNT_PURE_ANON_BUDGET");
+    if (e && *e) {
+        const std::string s(e);
+        if (s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF")
+            return 0;
+        try {
+            return static_cast<std::uint64_t>(std::stoull(s));
+        } catch (const std::invalid_argument&) {
+            return 0;
+        } catch (const std::out_of_range&) {
+            return 0;
+        }
+    }
+    return aura::compiler::typed_audit::production_defaults_active() ? 64ull : 0ull;
+}
+
+// Issue #2893: adaptive pressure + current-budget state. Pressure bp is
+// 0-10000, updated after each pure-anon walk: skip pressure raises it
+// (proportional to skipped slots over the budget), full-ok walks decay it
+// (low pressure → budget returns toward base). deopt-window pressure
+// (HotUpdateRegistry, read-only) also feeds the signal via
+// aura_pure_anon_observe_deopt_window().
+static std::atomic<std::uint64_t> g_pure_anon_pressure_bp{0};
+static std::atomic<std::uint64_t> g_pure_anon_budget_current{0};
+
 // Issue #2850: pure-anon budget default. Default 64 under production
 // defaults (bounded first-call tax close); 0 under Soft / sandbox=off /
 // tests (preserve #2637/#2666 Soft). Env AURA_SYNC_REMOUNT_PURE_ANON_BUDGET
-// overrides (0 = off / today's pure-anon touch-time policy). Cached once.
+// overrides (0 = off / today's pure-anon touch-time policy).
+// Issue #2893: when the env override is UNSET, the budget becomes adaptive
+// under production — base 64 scaled by recent pure-anon skip pressure up to
+// a ceiling (256), so sustained agent/EDSL denseness closes more of the
+// residual first-call native-hole window without unbounded work. Soft /
+// budget=0 remains zero-cost. Env exact value still forces fixed.
 extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_default() {
-    static const std::uint64_t cached = []() -> std::uint64_t {
-        const char* e = std::getenv("AURA_SYNC_REMOUNT_PURE_ANON_BUDGET");
-        if (e && *e) {
-            const std::string s(e);
-            if (s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF")
-                return 0;
-            try {
-                return static_cast<std::uint64_t>(std::stoull(s));
-            } catch (const std::invalid_argument&) {
-                return 0;
-            } catch (const std::out_of_range&) {
-                return 0;
-            }
+    // Env override wins (exact value forces fixed — AC2 no adaptation).
+    const char* e = std::getenv("AURA_SYNC_REMOUNT_PURE_ANON_BUDGET");
+    if (e && *e) {
+        const std::string s(e);
+        if (s == "0" || s == "off" || s == "false" || s == "Off" || s == "OFF")
+            return 0;
+        try {
+            return static_cast<std::uint64_t>(std::stoull(s));
+        } catch (const std::invalid_argument&) {
+            return 0;
+        } catch (const std::out_of_range&) {
+            return 0;
         }
-        // Env unset: production → 64; Soft / sandbox / tests → 0.
-        return aura::compiler::typed_audit::production_defaults_active() ? 64ull : 0ull;
-    }();
-    return cached;
+    }
+    // Env unset: Soft / sandbox / tests → 0 (zero-cost, #2637/#2666).
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return 0;
+    // Adaptive (production, env unset): base 64 scaled by pressure to
+    // ceiling 256. Pressure bp (0-10000) is updated after each pure-anon
+    // walk from skip pressure + deopt-window pressure (Issue #2893).
+    constexpr std::uint64_t kPureAnonBudgetBase = 64;
+    constexpr std::uint64_t kPureAnonBudgetCeiling = 256;
+    const std::uint64_t pressure_bp = g_pure_anon_pressure_bp.load(std::memory_order_relaxed);
+    const std::uint64_t headroom = kPureAnonBudgetCeiling - kPureAnonBudgetBase;
+    const std::uint64_t budget = kPureAnonBudgetBase + (headroom * pressure_bp) / 10000u;
+    g_pure_anon_budget_current.store(budget, std::memory_order_relaxed);
+    return budget;
+}
+
+
+// Called after each pure-anon walk. ok = remounted within budget, skip =
+// pure-anon slots past budget (still on touch-time MustDeopt policy).
+// Raises pressure when skip > 0 (more headroom next reemit); decays when
+// the walk was fully satisfied (all pure-anon remounted, no skip).
+extern "C" void aura_pure_anon_note_walk_outcome(std::uint64_t ok, std::uint64_t skip) noexcept {
+    const std::uint64_t cur = g_pure_anon_pressure_bp.load(std::memory_order_relaxed);
+    if (skip > 0) {
+        // Each skipped slot adds pressure; cap at 10000.
+        const std::uint64_t inc = skip > 100 ? 10000u : skip * 100u;
+        const std::uint64_t next = cur > 10000u - inc ? 10000u : cur + inc;
+        g_pure_anon_pressure_bp.store(next, std::memory_order_relaxed);
+    } else if (ok > 0) {
+        // Fully satisfied walk: decay pressure (budget drifts back to base).
+        const std::uint64_t next = cur / 2;
+        g_pure_anon_pressure_bp.store(next, std::memory_order_relaxed);
+    }
+    // ok == 0 && skip == 0 (quiet / empty) → pressure unchanged.
+}
+
+// Issue #2893: deopt-window pressure input (read-only, from
+// HotUpdateRegistry). Bumps pressure bp when the window count is high.
+extern "C" void aura_pure_anon_observe_deopt_window(std::uint64_t deopt_window_count) noexcept {
+    if (deopt_window_count == 0)
+        return;
+    const std::uint64_t cur = g_pure_anon_pressure_bp.load(std::memory_order_relaxed);
+    // Saturating add: each deopt in the window adds ~100 bp up to 10000.
+    const std::uint64_t inc = deopt_window_count > 100 ? 10000u : deopt_window_count * 100u;
+    const std::uint64_t next = cur > 10000u - inc ? 10000u : cur + inc;
+    g_pure_anon_pressure_bp.store(next, std::memory_order_relaxed);
+}
+
+// Issue #2893: current adaptive budget (query surface key).
+extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_current() noexcept {
+    return g_pure_anon_budget_current.load(std::memory_order_relaxed);
+}
+
+// Issue #2893: current pressure signal 0-10000 (query surface key).
+extern "C" std::uint64_t aura_pure_anon_pressure_bp() noexcept {
+    return g_pure_anon_pressure_bp.load(std::memory_order_relaxed);
 }
 
 // Issue #2850: bounded pure-anon sync remount on reemit success
@@ -2211,6 +2296,13 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
     }
 
     aura_bump_live_closure_sync_remount_pure_anon_totals(ok, skip);
+
+    // Issue #2893: feed this walk's outcome into the adaptive pressure
+    // signal (skip > 0 raises pressure → next reemit budget expands toward
+    // the ceiling; fully-satisfied walk decays pressure → budget drifts
+    // back to base). Quiet/empty walk (ok==0 && skip==0) leaves pressure
+    // unchanged (zero extra work).
+    aura_pure_anon_note_walk_outcome(ok, skip);
 
     if (ok_count)
         *ok_count = ok;

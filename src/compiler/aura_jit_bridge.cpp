@@ -3794,8 +3794,23 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         // default 64 under production; 0 Soft / env override. Soft /
         // budget=0 / non-production → zero extra work (preserve #2637/#2666).
         // Named + captured filter opposite sets — no double remount.
+        // Issue #2893: budget is adaptive under production (base 64 scaled by
+        // pure-anon skip pressure + deopt-window pressure to ceiling 256;
+        // env exact value still forces fixed). Storm throttle (read-only
+        // HotUpdateRegistry) shrinks back to base so the walk does not expand
+        // during reemit storms (AC2 scale-down path).
         {
-            const std::uint64_t pure_budget = aura_sync_remount_pure_anon_budget_default();
+            // Issue #2893: feed deopt-window pressure (read-only signal) into
+            // the adaptive budget before the walk. Zero extra work when the
+            // window is empty (helper no-ops).
+            aura_pure_anon_observe_deopt_window(
+                aura::compiler::hot_update_registry().deopt_window_count());
+            std::uint64_t pure_budget = aura_sync_remount_pure_anon_budget_default();
+            if (pure_budget > 0 && aura::compiler::hot_update_registry().should_throttle_reemit()) {
+                // Storm: shrink to the fixed base (env or production default)
+                // — no adaptive expansion during reemit storms (AC2).
+                pure_budget = aura_sync_remount_pure_anon_budget_base();
+            }
             if (pure_budget > 0) {
                 std::uint64_t pure_ok = 0;
                 std::uint64_t pure_skip = 0;
