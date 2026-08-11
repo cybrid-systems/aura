@@ -1173,6 +1173,75 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         }
     }
 
+    // Issue #2898: explicit required TypeId invariant set (anti under-mark
+    // false-green). Agents stage TypeIds via set_composite_required_solved
+    // that MUST be concrete after SDO (UF binding not a free var). Empty
+    // span → zero cost (no walk). Production/Full/Strict: hard reject +
+    // composite_required_type_fail_total. Soft: observe-only allow.
+    // Does not replace empty-CS / truncate / linear / blame faces.
+    {
+        const auto required = typed_audit::composite_required_solved_pending();
+        if (!required.empty()) {
+            c.composite_required_type_checked_total.fetch_add(
+                static_cast<std::uint64_t>(required.size()), std::memory_order_relaxed);
+            std::uint32_t fail_n = 0;
+            ConstraintSystem* cs_req = nullptr;
+            aura::core::TypeRegistry* reg_req =
+                type_registry_ ? static_cast<aura::core::TypeRegistry*>(type_registry_) : nullptr;
+            if (commit_type_checker_opaque_) {
+                auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+                cs_req = &ctc->constraint_system();
+            }
+            if (!cs_req || !reg_req) {
+                // No live CS / registry: cannot prove any required TypeId concrete.
+                fail_n = static_cast<std::uint32_t>(required.size());
+            } else {
+                for (const auto& rid : required) {
+                    const aura::core::TypeId id{rid.index, rid.generation};
+                    if (!id.valid()) {
+                        ++fail_n;
+                        continue;
+                    }
+                    // find() returns concrete binding when UF root is bound;
+                    // free unbound var roots remain is_var → fail.
+                    const auto found = cs_req->find(id);
+                    if (!found.valid() || reg_req->is_var(found))
+                        ++fail_n;
+                }
+            }
+            typed_audit::clear_composite_required_solved(); // consume after check
+            cr.required_type_fail_count = fail_n;
+            if (fail_n > 0) {
+                cr.required_type_ok = false;
+                const bool hard_req = production_defaults_active() ||
+                                      get_strategy() == AuditStrategy::Full ||
+                                      aura::core::sandbox::is_strict();
+                if (hard_req) {
+                    // AC1 / AC3 production: hard reject (reuse solve face).
+                    // Early return mirrors #2644 type_scheme_drift — Full
+                    // partial recovery must not re-green an explicit required
+                    // TypeId miss (Agent declared invariant).
+                    cr.solve_ok = false;
+                    cr.rejected = true;
+                    cr.committed = false;
+                    c.composite_required_type_fail_total.fetch_add(1, std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                        m->composite_required_type_fail_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    c.composite_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                    if (out_commit)
+                        *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+                    return false;
+                }
+                // AC3 Soft: observe only — commit may still succeed.
+                c.composite_required_type_observe_total.fetch_add(1, std::memory_order_relaxed);
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->composite_required_type_observe_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            }
+        }
+    }
+
     // 2) Linear ownership revalidate (dirty/full sweep + boundary consistency).
     // Issue #2559: type-layer inventory site — three-layer linear wire gate.
     {
@@ -2433,6 +2502,66 @@ void Evaluator::force_partial_cone_truncate_for_test(std::uint64_t dropped_count
     try {
         aura::compiler::typed_audit::publish_partial_cone_truncate(/*truncated=*/true,
                                                                    dropped_count, /*fanout=*/0);
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
+// Issue #2898: stage free unbound TypeVar as required_solved (AC1 fail path).
+void Evaluator::stage_composite_required_unbound_var_for_test() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto& cs = tc->constraint_system();
+        const auto t = cs.fresh_var(); // unbound free var
+        typed_audit::CompositeRequiredTypeId rid{t.index, t.generation};
+        typed_audit::set_composite_required_solved(
+            std::span<const typed_audit::CompositeRequiredTypeId>(&rid, 1));
+        commit_cs_live_ = true;
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
+// Issue #2898: stage TypeVar bound to int as required_solved (green path).
+void Evaluator::stage_composite_required_bound_var_for_test() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto& cs = tc->constraint_system();
+        const auto t = cs.fresh_var();
+        cs.add_delta({Constraint::EQUAL, t, reg->int_type()});
+        (void)cs.solve_delta();
+        typed_audit::CompositeRequiredTypeId rid{t.index, t.generation};
+        typed_audit::set_composite_required_solved(
+            std::span<const typed_audit::CompositeRequiredTypeId>(&rid, 1));
+        commit_cs_live_ = true;
     } catch (...) {
         // [SILENCE-PRIM] test helper
     }

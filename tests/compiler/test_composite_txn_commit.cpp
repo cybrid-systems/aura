@@ -99,8 +99,9 @@ static void ac1_commit_order() {
     auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
     auto pos_fn = tc.find("Evaluator::composite_txn_commit");
     CHECK(pos_fn != std::string::npos, "composite_txn_commit defined");
-    // Window covers #2180 CS-reuse expansion of the commit body.
-    auto body = pos_fn != std::string::npos ? tc.substr(pos_fn, 8000) : std::string{};
+    // Window covers #2180 CS-reuse + #2898 required-TypeId expansion of the
+    // commit body (body grew past the original 8k slice).
+    auto body = pos_fn != std::string::npos ? tc.substr(pos_fn, 48000) : std::string{};
     auto pos_solve = body.find("solve_delta_occurrence");
     auto pos_lin = body.find("linear_post_mutate_enforce_all");
     auto pos_audit = body.find("run_typed_mutation_invariant_audit");
@@ -196,6 +197,158 @@ static void ac6_source() {
     CHECK(q.find("txn-dirty") != std::string::npos, "txn-dirty key");
 }
 
+// ── Issue #2898: required TypeId invariant set on composite_txn_commit ──
+
+static std::int64_t fidelity_href(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:type-incremental-fidelity-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static void ac2898_1_production_required_miss_rejects() {
+    std::println("\n--- #2898 AC1: production + unbound required TypeId → reject ---");
+    reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    seed(cs);
+    const auto fail0 = load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total);
+    const auto checked0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total);
+    cs.evaluator().stage_composite_required_unbound_var_for_test();
+    CompositeTxnCommitResult cr{};
+    const bool committed = cs.evaluator().composite_txn_commit(
+        /*mid=*/28981, "required-type-ac1", 0, 0, 1, /*nested=*/true, /*batch=*/true, &cr);
+    CHECK(!committed, "2898 AC1: commit rejected under production");
+    CHECK(cr.rejected || !cr.solve_ok || !cr.required_type_ok, "2898 AC1: reject surface");
+    CHECK(!cr.required_type_ok, "2898 AC1: required_type_ok false");
+    CHECK(cr.required_type_fail_count >= 1, "2898 AC1: fail_count >= 1");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total) > fail0,
+          "2898 AC1: fail_total bumps");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total) >
+              checked0,
+          "2898 AC1: checked_total advances");
+    // Pending consumed after check.
+    CHECK(aura::compiler::typed_audit::composite_required_solved_pending().empty(),
+          "2898 AC1: pending cleared after commit");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac2898_2_empty_required_zero_cost() {
+    std::println("\n--- #2898 AC2: empty required set → no extra work ---");
+    reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::clear_composite_required_solved();
+    CompilerService cs;
+    seed(cs);
+    const auto fail0 = load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total);
+    const auto obs0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_observe_total);
+    const auto checked0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total);
+    CompositeTxnCommitResult cr{};
+    (void)cs.evaluator().composite_txn_commit(/*mid=*/28982, "required-type-ac2", 0, 0, 1,
+                                              /*nested=*/true, /*batch=*/true, &cr);
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total) == fail0,
+          "2898 AC2: fail_total unchanged (empty span)");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_observe_total) == obs0,
+          "2898 AC2: observe_total unchanged");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total) ==
+              checked0,
+          "2898 AC2: checked_total unchanged (zero cost)");
+    CHECK(cr.required_type_ok, "2898 AC2: required_type_ok true when span empty");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac2898_3_soft_observe_only() {
+    std::println("\n--- #2898 AC3: Soft + required miss → observe, not hard fail ---");
+    reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    seed(cs);
+    const auto fail0 = load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total);
+    const auto obs0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_observe_total);
+    cs.evaluator().stage_composite_required_unbound_var_for_test();
+    CompositeTxnCommitResult cr{};
+    (void)cs.evaluator().composite_txn_commit(/*mid=*/28983, "required-type-ac3", 0, 0, 1,
+                                              /*nested=*/true, /*batch=*/true, &cr);
+    CHECK(!cr.required_type_ok, "2898 AC3: required_type_ok false on miss");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_observe_total) > obs0,
+          "2898 AC3: observe_total bumps under Soft");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total) == fail0,
+          "2898 AC3: fail_total unchanged under Soft (not hard)");
+}
+
+static void ac2898_4_additive_query() {
+    std::println("\n--- #2898 AC4: additive query keys + prior surfaces ---");
+    CompilerService cs;
+    CHECK(fidelity_href(cs, "schema-2898") == 2898, "2898 AC4: schema-2898");
+    CHECK(fidelity_href(cs, "issue-2898") == 2898, "2898 AC4: issue-2898");
+    CHECK(fidelity_href(cs, "composite-required-type-wired") == 1, "2898 AC4: wired");
+    CHECK(fidelity_href(cs, "composite-required-type-fail-total") >= 0,
+          "2898 AC4: fail-total queryable");
+    CHECK(fidelity_href(cs, "composite-required-type-observe-total") >= 0,
+          "2898 AC4: observe-total queryable");
+    CHECK(fidelity_href(cs, "composite-required-type-checked-total") >= 0,
+          "2898 AC4: checked-total queryable");
+    CHECK(fidelity_href(cs, "commit-readiness-force-reason-required-type") == 14,
+          "2898 AC4: force reason code 14");
+    // Prior lineage preserved on same surface.
+    CHECK(fidelity_href(cs, "schema-2610") == 2610, "2898 AC4: schema-2610 preserved");
+    CHECK(fidelity_href(cs, "composite-auto-partial-from-cone-wired") == 1,
+          "2898 AC4: #2610 wired preserved");
+    CHECK(aura::compiler::typed_audit::commit_readiness_reason_code("required_type") == 14,
+          "2898 AC4: reason_code required_type → 14");
+    CHECK(aura::compiler::typed_audit::commit_readiness_reason_code("auto_partial") == 6,
+          "2898 AC4: auto_partial → 6 preserved");
+    CHECK(aura::compiler::typed_audit::commit_readiness_reason_code("log_forces_partial") == 12,
+          "2898 AC4: log_forces_partial → 12 preserved");
+    CHECK(aura::compiler::typed_audit::kCompositeRequiredTypeIssue == 2898,
+          "2898 AC4: issue constant");
+}
+
+static void ac2898_5_source_cite() {
+    std::println("\n--- #2898 AC5: source-cite + no docs/design ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto om = read_file("src/compiler/observability_metrics.h");
+    const auto t = read_file("tests/compiler/test_composite_txn_commit.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_composite_required_type_2898.py");
+    const auto build = read_file("build.py");
+    CHECK(aud.find("2898") != std::string::npos, "2898 AC5: audit cites #2898");
+    CHECK(aud.find("composite_required_type_fail_total") != std::string::npos,
+          "2898 AC5: fail counter");
+    CHECK(aud.find("set_composite_required_solved") != std::string::npos, "2898 AC5: set API");
+    CHECK(tc.find("2898") != std::string::npos, "2898 AC5: typecheck cites #2898");
+    CHECK(tc.find("composite_required_type_fail_total") != std::string::npos,
+          "2898 AC5: body bumps fail");
+    CHECK(tc.find("stage_composite_required_unbound_var_for_test") != std::string::npos,
+          "2898 AC5: stage helper");
+    CHECK(q.find("schema-2898") != std::string::npos, "2898 AC5: query schema-2898");
+    CHECK(q.find("composite-required-type-fail-total") != std::string::npos,
+          "2898 AC5: query fail key");
+    CHECK(om.find("composite_required_type_fail_total") != std::string::npos,
+          "2898 AC5: metrics dual-write");
+    CHECK(t.find("ac2898_1_production_required_miss_rejects") != std::string::npos,
+          "2898 AC5: AC1 test");
+    CHECK(t.find("ac2898_2_empty_required_zero_cost") != std::string::npos, "2898 AC5: AC2 test");
+    CHECK(t.find("ac2898_3_soft_observe_only") != std::string::npos, "2898 AC5: AC3 test");
+    CHECK(t.find("ac2898_4_additive_query") != std::string::npos, "2898 AC5: AC4 test");
+    CHECK(!lint.empty() && lint.find("2898") != std::string::npos, "2898 AC5: linter present");
+    CHECK(build.find("check_composite_required_type_2898") != std::string::npos,
+          "2898 AC5: build.py gate");
+    CHECK(read_file("docs/design/2898-composite-required-type.md").empty(),
+          "2898 AC5: no docs/design/2898-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2898.cpp").empty(),
+          "2898 AC5: no new test file per #81967");
+    // Prior #2105 surfaces preserved.
+    CHECK(aud.find("CompositeTxnCommitResult") != std::string::npos, "2898 AC5: #2105 result");
+    CHECK(tc.find("composite_txn_commit") != std::string::npos, "2898 AC5: commit body");
+}
+
 } // namespace
 
 int run_test_composite_txn_commit() {
@@ -206,7 +359,13 @@ int run_test_composite_txn_commit() {
     ac4_lineage();
     ac5_location();
     ac6_source();
-    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2898: required TypeId invariant set ===");
+    ac2898_1_production_required_miss_rejects();
+    ac2898_2_empty_required_zero_cost();
+    ac2898_3_soft_observe_only();
+    ac2898_4_additive_query();
+    ac2898_5_source_cite();
+    std::println("\n=== #2105 + #2898 Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -8529,6 +8529,25 @@ def cmd_type_linear_evolution_snapshot_2897_coverage():
     return 0
 
 
+def cmd_composite_required_type_2898_coverage():
+    """Issue #2898: required TypeId invariant set on composite_txn_commit.
+
+    Agents hard-require TypeIds concrete before composite commit; Soft
+    observe; empty span zero cost; schema-2898.
+    """
+    print(f"{B}=== composite required TypeId coverage (#2898) ==={N}")
+    script = COVERAGE_CHECKS / "check_composite_required_type_2898.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("composite required TypeId (#2898) coverage contract rows failed")
+        return 1
+    ok("composite required TypeId (#2898) coverage clean")
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -10850,6 +10869,7 @@ def cmd_gate():
         or cmd_castop_typed_meta_coverage()
         or cmd_type_linear_commit_health_coverage()
         or cmd_type_linear_evolution_snapshot_2897_coverage()
+        or cmd_composite_required_type_2898_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()

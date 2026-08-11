@@ -3412,6 +3412,12 @@ public:
     // reject based on typed_audit::production_defaults_active().
     // Hermetic — no production cost outside test builds.
     void inject_commit_occurrence_drift_for_test() noexcept;
+    // Issue #2898: stage a free unbound TypeVar as required_solved for the
+    // next composite_txn_commit (AC1 hard reject under production). Also
+    // creates commit CS + live flag so find() can evaluate the var.
+    void stage_composite_required_unbound_var_for_test() noexcept;
+    // Issue #2898: stage a TypeVar bound to int as required_solved (green).
+    void stage_composite_required_bound_var_for_test() noexcept;
     // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
     // invalidate. Test-only helper — forces the per-engine partial-cone
     // truncate state (last_partial_cone_truncated_ +

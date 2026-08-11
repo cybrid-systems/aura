@@ -32,8 +32,10 @@ namespace aura::compiler {
 #include <cstring>
 #include <format>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace aura::compiler::typed_audit {
 
@@ -305,6 +307,13 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_commit_log_forces_partial_total{0};         // #2851
     std::atomic<std::uint64_t> composite_commit_log_forces_partial_observe_total{0}; // #2851
     std::atomic<std::uint32_t> composite_commit_log_forces_partial_wired{1};         // #2851
+    // Issue #2898: explicit required TypeId invariant set on composite_txn_commit
+    // (anti under-mark false-green). Empty span → zero cost. Production/Full/
+    // Strict hard-reject on miss; Soft observe-only allow.
+    std::atomic<std::uint64_t> composite_required_type_fail_total{0};    // #2898 hard
+    std::atomic<std::uint64_t> composite_required_type_observe_total{0}; // #2898 Soft
+    std::atomic<std::uint64_t> composite_required_type_checked_total{0}; // #2898 ids scanned
+    std::atomic<std::uint32_t> composite_required_type_wired{1};         // #2898
     // Issue #2458: outermost commit gate on truncated reverify / incomplete
     // blame (non-empty under-scanned CS — residual half-green after #2345).
     // Soft/Sampled: observe only (commit may still succeed).
@@ -505,6 +514,31 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
 // log delta since last composite commit.
 inline std::atomic<std::uint64_t> g_composite_commit_log_forces_partial_pending_log_delta{0};
 inline constexpr int kCompositeCommitLogForcesPartialIssue = 2851;
+
+// Issue #2898: pending required TypeId set for the next composite_txn_commit.
+// Agents / language wrappers stage TypeIds that MUST be concrete (UF binding
+// not a free var) before allow-commit. Empty → current behavior (zero cost).
+// Consumed (cleared) inside composite_txn_commit after the check runs.
+// Thread-local: one producer (Agent/test) / one consumer (commit body).
+struct CompositeRequiredTypeId {
+    std::uint32_t index = 0;
+    std::uint32_t generation = 0;
+};
+inline thread_local std::vector<CompositeRequiredTypeId> g_composite_required_solved_pending{};
+inline constexpr int kCompositeRequiredTypeIssue = 2898;
+
+inline void set_composite_required_solved(std::span<const CompositeRequiredTypeId> ids) noexcept {
+    g_composite_required_solved_pending.assign(ids.begin(), ids.end());
+}
+
+inline void clear_composite_required_solved() noexcept {
+    g_composite_required_solved_pending.clear();
+}
+
+[[nodiscard]] inline std::span<const CompositeRequiredTypeId>
+composite_required_solved_pending() noexcept {
+    return g_composite_required_solved_pending;
+}
 
 // Issue #2621: process-wide last partial cone truncate (Agents + pure tests).
 // Stamped by TypeChecker::infer_flat_partial after #2560 soft/hard truncate.
@@ -1342,6 +1376,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
         return 11; // #2704 / #2716
     if (r == "region_type_cross_talk")
         return 13; // #2847
+    if (r == "required_type")
+        return 14; // #2898
     return 0;      // ok
 }
 
@@ -1938,6 +1974,10 @@ struct CompositeTxnCommitResult {
     // Issue #2221: blame-complete gate result (true when not checked,
     // vacuous empty CS, or last_blame_chain.is_complete()).
     bool blame_ok = true;
+    // Issue #2898: required TypeId set all concrete (true when span empty
+    // or every required id has a non-var UF binding after solve).
+    bool required_type_ok = true;
+    std::uint32_t required_type_fail_count = 0;
     InvariantAuditResult audit{};
 };
 
@@ -2316,6 +2356,14 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_commit_log_forces_partial_observe_total.store(
         0, std::memory_order_relaxed);
+    // Issue #2898
+    g_typed_mutation_audit_counters.composite_required_type_fail_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_observe_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_checked_total.store(
+        0, std::memory_order_relaxed);
+    clear_composite_required_solved();
     // Issue #2458
     g_typed_mutation_audit_counters.truncate_commit_observe_total.store(0,
                                                                         std::memory_order_relaxed);
