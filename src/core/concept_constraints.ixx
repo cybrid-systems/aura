@@ -131,11 +131,11 @@ concept IncrementalPass =
 //
 // Issue #381: load-bearing property for incremental hot paths.
 //
-// Issue #2143: IRModuleV2 dirty-only fold uses a separate concept
+// Issue #2143 / #2907: IRModuleV2 dirty-only fold uses a separate concept
 // `SoaDirtyAwarePass` (void run_dirty(IRModuleV2&)) in pass_manager.ixx
 // so this block-level hook stays ABI-stable. Production DirtyAware kinds
-// should grow run_dirty + for_each_block(dirty_only) and migrate off
-// hot-path to_aos_view (see run_dirty_pipeline / SoAtoAoSBridgePass note).
+// implement run_dirty + for_each_block(dirty_only) via
+// run_production_soa_dirty_hot_pack; SoAtoAoSBridgePass is test-only (#2907).
 template <typename P>
 concept DirtyAwarePass = Pass<P> && requires(const P& p, std::uint32_t block_id) {
     { p.is_block_dirty(block_id) } -> std::convertible_to<bool>;
@@ -247,6 +247,11 @@ concept RequiresSoAViewPass =
 //   skip removed). Prefer SoAViewAware + kPureWrap; explicit kLegacyPass
 //   only with a documented sunset. Production config keeps
 //   pass_pipeline_concept_rejection_total == 0.
+//
+// Issue #2907 contract:
+//   Production packs contain zero SoAtoAoSBridgePass. Hot DirtyAware +
+//   SoAViewAware stages implement run_dirty(IRModuleV2&) (SoaDirtyAwarePass)
+//   or DirtySoAEntryPass; sparse re-lower uses run_production_soa_dirty_hot_pack.
 template <typename P>
 concept HotPassDodCompliant = SoAViewAwarePass<P> || LegacyPass<P>;
 

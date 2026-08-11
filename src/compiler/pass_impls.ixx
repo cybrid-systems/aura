@@ -4638,6 +4638,7 @@ static_assert(PureWrapPass<MonomorphizePass>, "MonomorphizePass PureWrapPass (#2
 // Full eval pack: TypeSpec → TypeProp → ComputeKind → Arity → ConstFold → DeadCoercion
 // Incremental dirty suite: ComputeKind → ConstFold → TypeProp → Shape
 // Classic opt stages: DCE / LinearOwnership / Inline / TCO / Monomorphize
+// Issue #2907: packs below never include SoAtoAoSBridgePass.
 consteval void check_production_pipeline_packs_2434() {
     check_pipeline_dod_compliance<TypeSpecializationWrap, TypePropagationPass, ComputeKindWrap,
                                   ArityWrap, ConstantFoldingWrap, DeadCoercionEliminationPass>();
@@ -4648,6 +4649,40 @@ consteval void check_production_pipeline_packs_2434() {
 }
 static_assert((check_production_pipeline_packs_2434(), true),
               "production pipeline packs HotPassDodCompliant (#2434)");
+
+// Issue #2907: production SoA dirty hot pack — CF + TP + DCE must provide
+// run_dirty(IRModuleV2&); remaining hot DirtyAware stages provide DirtySoAEntry.
+// SoAtoAoSBridgePass is deliberately absent (test-only kTestOnlyAosBridge).
+consteval void check_production_soa_dirty_pack_2907() {
+    static_assert(SoaDirtyAwarePass<ConstantFoldingWrap>, "#2907 ConstantFoldingWrap run_dirty");
+    static_assert(SoaDirtyAwarePass<TypePropagationPass>, "#2907 TypePropagationPass run_dirty");
+    static_assert(SoaDirtyAwarePass<DeadCoercionEliminationPass>,
+                  "#2907 DeadCoercionEliminationPass run_dirty");
+    static_assert(DirtySoAEntryPass<ComputeKindWrap>, "#2907 ComputeKindWrap DirtySoAEntry");
+    static_assert(DirtySoAEntryPass<ConstantFoldingWrap>,
+                  "#2907 ConstantFoldingWrap DirtySoAEntry");
+    static_assert(DirtySoAEntryPass<TypePropagationPass>,
+                  "#2907 TypePropagationPass DirtySoAEntry");
+    // Hot pack inventory (no bridge type in fold list).
+    check_pipeline_dod_compliance<ConstantFoldingWrap, TypePropagationPass,
+                                  DeadCoercionEliminationPass>();
+}
+static_assert((check_production_soa_dirty_pack_2907(), true),
+              "production SoA dirty hot pack #2907");
+
+// Issue #2907: production hot SoA dirty pack — CF → TP → DCE on IRModuleV2
+// via run_dirty_pipeline (zero SoAtoAoSBridgePass / to_aos_view).
+// Call from CompilerService when entry.soa_mod is non-empty after dirty mark.
+// type_reg optional (DCE identity/type rules; nullptr keeps columnar path).
+export inline bool
+run_production_soa_dirty_hot_pack(IRModuleV2& mod,
+                                  const aura::core::TypeRegistry* type_reg = nullptr) {
+    production_soa_dirty_hot_pack_invocations_total.fetch_add(1, std::memory_order_relaxed);
+    ConstantFoldingWrap cf;
+    TypePropagationPass tp;
+    DeadCoercionEliminationPass dce(type_reg);
+    return run_dirty_pipeline(mod, cf, tp, dce);
+}
 
 // ── ShapeAwareFoldingPass — Issue #462 / #1661 ────────────────
 //
@@ -4842,16 +4877,20 @@ private:
 // the AoS side with a SoA-aware overload of the same Pass
 // (e.g. ConstantFoldingWrap::run_soa).
 //
-// Issue #2143 migration (DirtyAware kinds → run_dirty):
+// Issue #2143 / #2907: DirtyAware kinds → run_dirty is production default.
 // Prefer SoaDirtyAwarePass::run_dirty(IRModuleV2&) +
-// run_dirty_pipeline fold (for_each_block dirty_only) over
+// run_dirty_pipeline / run_production_soa_dirty_hot_pack over
 // hot-path to_aos_view for DeadCoercion / TypePropagation /
-// ConstantFolding. Keep this bridge only for legacy AoS-only
-// stages until dual-emit retires.
+// ConstantFolding. Issue #2907: this bridge is TEST-ONLY (sunset for
+// production packs). Production hot path never invokes it; dual-emit
+// tests opt in via aos_bridge_allowed / AURA_ALLOW_AOS_BRIDGE.
 export template <typename P> class SoAtoAoSBridgePass {
 public:
     // Issue #1517: bridge is SoAView-aware (columnar source of truth).
     static constexpr bool kRequireSoAView = true;
+    // Issue #2907: not a production pipeline stage — test dual-emit only.
+    static constexpr bool kTestOnlyAosBridge = true;
+    static constexpr int kAosBridgeSunsetIssue = 2907;
 
     explicit SoAtoAoSBridgePass(P& pass)
         : pass_(pass) {}
@@ -4862,16 +4901,17 @@ public:
     // Run the bridge: convert each SoA function to AoS, run
     // the wrapped AoS pass on the AoS view, bump counters.
     // Returns true if the wrapped pass returned no errors.
-    // Issue #1377 / #1629 / #2520: early-out when dual-emit flag off, empty
-    // SoA, or residual AoS bridge banned under AURA_IR_SOA_ONLY (production).
-    // No to_aos_view conversion cost on production single-emit path.
+    // Issue #1377 / #1629 / #2520 / #2907: early-out when dual-emit flag off,
+    // empty SoA, or residual AoS bridge banned under AURA_IR_SOA_ONLY
+    // (production). No to_aos_view conversion cost on production path.
     bool run(IRModuleV2& soa_mod) {
         if (!ir_soa_migration::soa_dual_emit_enabled() || soa_mod.functions.empty()) {
             aos_view_ = aura::ir::IRModule{};
             return true;
         }
-        // Issue #2520: refuse residual materialize on production SoA-only
-        // unless test opt-in (aos_bridge_allowed). Prefer run_dirty_pipeline.
+        // Issue #2520 / #2907: refuse residual materialize on production
+        // SoA-only unless test opt-in (aos_bridge_allowed). Prefer
+        // run_production_soa_dirty_hot_pack / run_dirty_pipeline.
         if (!aura::compiler::aos_bridge_allowed()) {
             aos_view_ = aura::ir::IRModule{};
             return true;

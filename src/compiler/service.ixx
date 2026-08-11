@@ -5325,6 +5325,7 @@ public:
         }
 
         // Run DirtyAware suite with instr-precision mask (mutates entry.irs).
+        // Issue #2907: also runs production SoA dirty hot pack on entry.soa_mod.
         {
             aura::ir::IRModule mod;
             mod.functions = entry.irs; // copy for pass mutability then write back
@@ -5334,7 +5335,7 @@ public:
             auto counts = build_block_instr_counts_(entry);
             define_mask.block_instr_counts = &counts;
             const DefineDirtyMaskView* mask_ptr = &define_mask;
-            const auto skipped = run_incremental_dirty_pass_suite_(mod, mask_ptr);
+            const auto skipped = run_incremental_dirty_pass_suite_(mod, mask_ptr, &entry.soa_mod);
             (void)skipped;
             metrics_.instr_level_pass_runs_total.fetch_add(1, std::memory_order_relaxed);
             // Mirror process atomics into CompilerMetrics.
@@ -6081,9 +6082,9 @@ public:
                                                           std::memory_order_relaxed);
         }
         // Run per-function passes on the new bundle.
-        // Issue #1574 / #2044: shared incremental dirty suite.
+        // Issue #1574 / #2044 / #2907: shared incremental dirty suite + SoA hot pack.
         {
-            const auto& entry = it->second;
+            auto& entry = it->second;
             DefineDirtyMaskView define_mask;
             std::vector<std::vector<std::uint32_t>> instr_counts;
             if (!entry.block_dirty_per_func_.empty()) {
@@ -6095,7 +6096,8 @@ public:
             }
             const DefineDirtyMaskView* mask_ptr =
                 define_mask.block_dirty_per_func ? &define_mask : nullptr;
-            const auto clean_blocks_skipped = run_incremental_dirty_pass_suite_(ir_mod, mask_ptr);
+            const auto clean_blocks_skipped =
+                run_incremental_dirty_pass_suite_(ir_mod, mask_ptr, &entry.soa_mod);
             if (!entry.block_dirty_per_func_.empty()) {
                 metrics_.linear_post_mutate_enforcements_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -9932,13 +9934,16 @@ private:
         metrics_.dead_coercion_narrow_mutation_wired.store(1, std::memory_order_relaxed);
     }
 
-    // Issue #2044 / #1574: full incremental dirty pass suite shared by
+    // Issue #2044 / #1574 / #2907: full incremental dirty pass suite shared by
     // relower_define_blocks full-fallback and invalidate_function cascade.
     // When mask_ptr is non-null, DirtyAware passes skip clean blocks;
     // when null, every block is treated as dirty (safe full re-opt).
+    // Issue #2907: when soa_mod is non-empty, also run production SoA dirty
+    // hot pack (CF+TP+DCE via run_dirty_pipeline) — zero SoAtoAoSBridgePass.
     // Returns clean blocks skipped (0 if no mask / all dirty).
     std::size_t run_incremental_dirty_pass_suite_(aura::ir::IRModule& ir_mod,
-                                                  const DefineDirtyMaskView* mask_ptr) {
+                                                  const DefineDirtyMaskView* mask_ptr,
+                                                  IRModuleV2* soa_mod = nullptr) {
         ComputeKindWrap ck_pass;
         ConstantFoldingWrap cf_pass;
         TypePropagationPass tp_pass;
@@ -9956,6 +9961,12 @@ private:
                 continue;
             // Issue #538 / #611: DCE after re-lower (full fn when no mask).
             run_coercion_elim_on_function(func);
+        }
+
+        // Issue #2907: force hot DirtyAware stages onto IRModuleV2 run_dirty
+        // when SoA module is present (production pack — no AoS bridge).
+        if (soa_mod && !soa_mod->functions.empty()) {
+            (void)aura::compiler::run_production_soa_dirty_hot_pack(*soa_mod, &type_registry_);
         }
 
         std::size_t clean_skipped = 0;
