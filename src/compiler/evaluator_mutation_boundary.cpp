@@ -3482,11 +3482,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_linear_revalidations.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #2608 / #2641: optional OccurrenceGoal persist for cross-delta
+        // Issue #2608 / #2641 / #2896: OccurrenceGoal persist for cross-delta
         // / multi-session replay after steal/densify prune. Soft default
-        // OFF (zero cost); production or AURA_OCCURRENCE_PERSIST=1 writes.
-        // Production-default ON when env unset (#2641). Via C ABI so tests
-        // can exercise the same path without dtor internals.
+        // OFF (zero cost); production defaults, Full audit strategy, or
+        // AURA_OCCURRENCE_PERSIST=1 write a snapshot on outermost success
+        // so densify×steal rehydrate restores priority roots (#2896).
+        // Via C ABI so tests can exercise the same path without dtor
+        // internals.
         {
             const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
             aura_outermost_success_persist_occurrence(ev_, mid);

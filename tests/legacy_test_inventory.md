@@ -34,12 +34,12 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 237 | 237 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 53 | 53 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 81 | 81 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 60 | 60 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1386,13 +1386,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (101)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (102)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (101)
+#### domain/ (102)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1446,6 +1446,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_mailbox_recv_mutation_boundary.cpp` (—) [large, domain_suite, theme_serve] — Issue #2347 — Strict/hard audit + optional Guard-window threshold
 - `tests/serve/test_mailbox_tenant_principal.cpp` (—) [domain_suite, theme_serve] — tests/serve/test_mailbox_tenant_principal.cpp
 - `tests/serve/test_mutation_safety_snapshot_steal.cpp` (—) [large, domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +
+- `tests/compiler/test_occurrence_goal_persist_rehydrate.cpp` (—) [domain_suite, theme_compiler] — Issue #2896 — production-default outermost success persist +
 - `tests/orch/test_orch_admission_decay.cpp` (—) [domain_suite, theme_orch] — AC1: decay window — BP event → counter > 0 → spawn denied
 - `tests/orch/test_orch_agent_batch.cpp` (—) [batch_driver, domain_suite, theme_orch] — test_orch_agent_batch.cpp — thematic multi-TU batch
 - `tests/serve/test_orch_agent_mutation_boundary.cpp` (—) [domain_suite, theme_serve] — AC1: soft-boundary agent body → depth>0, is_at_mutation_boundary_safe false
@@ -1742,13 +1743,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (136)
+### `observability` — Observability / metrics / query:*-stats (135)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (136)
+#### domain/ (135)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1824,7 +1825,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_obs_schema_matrix.cpp` (—) [domain_suite, theme_compiler] — test_obs_schema_matrix.cpp — Domain suite: observability + production schemas
 - `tests/compiler/test_observability_tier_table.cpp` (—) [obs_named, domain_suite, theme_compiler] — Issue #1670 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_occ_cache_stats_wired.cpp` (—) [domain_suite, theme_compiler] — Issue #1781 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_occurrence_goal_persist_rehydrate.cpp` (—) [domain_suite, theme_compiler] — AC1: persist + prune + rehydrate → goals non-empty; priority replay works
 - `tests/core/test_open_issues_meta_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — Issue #514/#515/#516/#517/#520 (#1978 renamed): issue# moved from filename to header.
 - `tests/orch/test_orch_obs_facade.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_orch_obs_facade.cpp
 - `tests/compiler/test_panic_defer_after_densify.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no densify / no panic → free path (zero clear/rearm)

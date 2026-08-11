@@ -2116,21 +2116,28 @@ export struct TypeChecker {
         // cannot leave memo stale_vs_epoch ahead of goals.
         last_predicate_memo_live_ = 0;
         last_predicate_memo_stale_vs_epoch_ = 0;
-        // Issue #2608: after steal/densify prune, try rehydrate from
-        // persist side buffer so priority roots stay non-empty when
-        // production/env snapshot was written on prior boundary exit.
-        // Soft: disabled path returns 0 (zero cost).
-        // Issue #2641: capture return value — if rehydrate returns 0
-        // under production (persist_enabled but no entries / wrong mid
-        // / buffer empty), bump occurrence_persist_rehydrate_miss_total
-        // so the empty-after-fence failure is Agent-visible, not silent.
+        // Issue #2608 / #2641 / #2896: after steal/densify prune, rehydrate
+        // from persist side buffer so priority roots stay non-empty when
+        // a prior outermost success wrote a snapshot. Soft: disabled path
+        // returns 0 (zero cost). On miss under production/Full, latch the
+        // #2704 occurrence_empty_after_fence face so commit_readiness
+        // hard-rejects (no half-green empty priority roots). Soft env=1
+        // miss bumps soft face only. Prefer CS truth for TypeLinearCommit
+        // Proof after successful rehydrate (#2842).
         if (goals_dropped > 0 && solve_delta_cs_.occurrence_goals_size() == 0) {
             const auto n_reh = solve_delta_cs_.rehydrate_occurrence_from_persist(
                 /*preferred_mid=*/0);
-            if (n_reh == 0 && solve_delta_cs_.occurrence_persist_enabled() &&
-                aura::compiler::typed_audit::production_defaults_active() && metrics_) {
-                auto* m = static_cast<CompilerMetrics*>(metrics_);
-                m->occurrence_persist_rehydrate_miss_total.fetch_add(1, std::memory_order_relaxed);
+            if (n_reh == 0 && solve_delta_cs_.occurrence_persist_enabled()) {
+                if (metrics_) {
+                    auto* m = static_cast<CompilerMetrics*>(metrics_);
+                    m->occurrence_persist_rehydrate_miss_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
+                // Issue #2896 / #2704: face latch (was surface-only until now).
+                const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                                  aura::compiler::typed_audit::get_strategy() ==
+                                      aura::compiler::typed_audit::AuditStrategy::Full;
+                aura::compiler::typed_audit::note_occurrence_empty_after_fence(hard);
             }
         }
         if (metrics_) {

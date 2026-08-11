@@ -533,8 +533,10 @@ std::size_t ConstraintSystem::drop_occurrence_goals_for_conds(
     return dropped;
 }
 
-// Issue #2608: soft default OFF. Production defaults OR explicit env=1.
-// AURA_OCCURRENCE_PERSIST=0 forces off even under production.
+// Issue #2608 / #2641 / #2896: Soft default OFF (zero cost quiet path).
+// Production defaults OR Full audit strategy OR explicit env=1 enable
+// persist so outermost success writes a snapshot for densify/steal
+// rehydrate. AURA_OCCURRENCE_PERSIST=0 forces off even under production.
 bool ConstraintSystem::occurrence_persist_enabled() noexcept {
     const char* e = std::getenv("AURA_OCCURRENCE_PERSIST");
     if (e && *e) {
@@ -543,7 +545,11 @@ bool ConstraintSystem::occurrence_persist_enabled() noexcept {
         if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
             return true;
     }
-    return aura::compiler::typed_audit::production_defaults_active();
+    // Issue #2896: production_defaults_active OR Full strategy (same
+    // family as composite_empty_cs_hard_reject_enabled / face hard).
+    return aura::compiler::typed_audit::production_defaults_active() ||
+           aura::compiler::typed_audit::get_strategy() ==
+               aura::compiler::typed_audit::AuditStrategy::Full;
 }
 
 std::size_t ConstraintSystem::occurrence_persist_cap() noexcept {

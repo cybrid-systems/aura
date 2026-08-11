@@ -2519,6 +2519,19 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept {
     g_occurrence_empty_after_fence_soft_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #2896: fence rehydrate miss → latch #2704 face so
+// commit_readiness_live_policy hard-rejects under production/Full.
+// Soft (hard=false) bumps soft_total only (observe). Call from
+// TypeChecker::note_steal_or_densify_epoch_fence after rehydrate
+// returns 0 while persist is enabled.
+inline void note_occurrence_empty_after_fence(bool production_hard) noexcept {
+    if (production_hard) {
+        g_occurrence_empty_after_fence_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_occurrence_empty_after_fence_soft_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2716: counter for the occurrence hard-face active branch
 // (production / Full + face hit). Bumped when commit_readiness_live_policy
 // detects a face hit under prod/Full — surface for Agent dashboards
