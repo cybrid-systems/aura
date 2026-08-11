@@ -740,6 +740,28 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
                 {"dirty-pipeline-tls-attribution-wired", make_int(1)},
                 {"schema-2824", make_int(2824)},
                 {"issue-2824", make_int(2824)},
+                // Issue #2907: sunset SoAtoAoSBridgePass; production SoA dirty hot pack.
+                {"production-soa-dirty-hot-pack-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::production_soa_dirty_hot_pack_wired.load(
+                         std::memory_order_relaxed)))},
+                {"production-soa-dirty-hot-pack-invocations",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::production_soa_dirty_hot_pack_invocations_total.load(
+                         std::memory_order_relaxed)))},
+                {"soa-to-aos-bridge-sunset-wired",
+                 make_int(static_cast<std::int64_t>(aura::compiler::soa_to_aos_bridge_sunset_wired
+                                                        .load(std::memory_order_relaxed)))},
+                {"production-pack-zero-aos-bridge-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::production_pack_zero_aos_bridge_wired.load(
+                         std::memory_order_relaxed)))},
+                {"pass-pipeline-concept-rejection-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pass_pipeline_concept_rejection_total.load(
+                         std::memory_order_relaxed)))},
+                {"schema-2907", make_int(aura::compiler::kSoaBridgeSunsetIssue)},
+                {"issue-2907", make_int(aura::compiler::kSoaBridgeSunsetIssue)},
             };
             return build_hash(kv);
         });

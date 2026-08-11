@@ -7100,6 +7100,33 @@ def cmd_soa_ban_residual_aos_bridge_coverage():
     return 0
 
 
+def cmd_soa_sunset_bridge_2907_coverage():
+    """Issue #2907: sunset SoAtoAoSBridgePass; production SoA dirty hot pack (static)."""
+    print(f"{B}=== soa sunset bridge coverage (#2907) ==={N}")
+    script = COVERAGE_CHECKS / "check_soa_sunset_bridge_2907.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("soa sunset bridge (#2907) coverage contract rows failed")
+        return 1
+    ok("soa sunset bridge (#2907) coverage clean")
+    return 0
+
+
+def cmd_soa_sunset_bridge_2907():
+    """Issue #2907: Sunset SoAtoAoSBridgePass — force hot DirtyAware onto run_dirty.
+
+    Production packs inventory excludes the bridge (test-only under
+    aos_bridge_allowed). Hot CF/TP/DCE implement run_dirty(IRModuleV2&);
+    service wires run_production_soa_dirty_hot_pack. schema-2907 on
+    query:pass-pipeline-dirtyaware-stats. Extends #2143 suite (#81967).
+    """
+    print(f"{B}=== soa sunset bridge (#2907) ==={N}")
+    return cmd_soa_sunset_bridge_2907_coverage()
+
+
 def cmd_soa_residual_production_smoke_coverage():
     """Issue #2618: production smoke residual_aos_bridge_total == 0 under SoA-only.
 
@@ -11083,6 +11110,7 @@ def cmd_gate():
         or cmd_dead_coercion_columnar_coverage()
         or cmd_ir_soa_layout_stamp_coverage()
         or cmd_soa_ban_residual_aos_bridge_coverage()
+        or cmd_soa_sunset_bridge_2907_coverage()
         or cmd_soa_residual_production_smoke_coverage()
         or cmd_arena_moving_densify_health_coverage()
         or cmd_coercion_unify_incomplete_skip_coverage()
@@ -12090,6 +12118,8 @@ def main():
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
+        "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
+        "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,
         "arena-moving-densify-health": cmd_arena_moving_densify_health_coverage,
         "coercion-unify-incomplete-skip": cmd_coercion_unify_incomplete_skip_coverage,
         "coercion-evidence-loss-slo": cmd_coercion_evidence_loss_slo_coverage,

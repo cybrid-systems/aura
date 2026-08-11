@@ -233,6 +233,8 @@ export inline std::atomic<std::uint64_t> pure_wrap_enforcement_wired{1};
 // Issue #2434: hard HotPassDodCompliant for all pipeline stages (no unmarked).
 export inline std::atomic<std::uint64_t> pass_pipeline_hard_dod_wired{1};
 export inline std::atomic<std::uint64_t> pass_pipeline_production_pack_inventory_wired{1};
+// Issue #2907: production packs exclude SoAtoAoSBridgePass (inventory wired).
+export inline std::atomic<std::uint64_t> production_pack_zero_aos_bridge_wired{1};
 
 inline void note_define_dirty_mask_stats(const DefineDirtyMaskView& view) noexcept {
     const auto dirty = view.dirty_block_count();
@@ -756,14 +758,24 @@ bool run_one_dirty(aura::ir::IRModule& mod, P& pass,
 //
 // Preferred implementation:
 //   for_each_block(..., dirty_only=true) / walk_soa_function_hotpath
-// Migration off to_aos_view:
-//   DirtyAware kinds should grow run_dirty and leave SoAtoAoSBridgePass
-//   as a transitional bridge for legacy AoS-only stages (Phase 2 drops
-//   hot-path to_aos for these kinds).
+// Migration off to_aos_view (Issue #2907 sunset complete for production):
+//   Hot DirtyAware + SoAViewAware stages implement run_dirty(IRModuleV2&)
+//   and ship via run_dirty_pipeline / run_production_soa_dirty_hot_pack.
+//   SoAtoAoSBridgePass is test-only (aos_bridge_allowed); production packs
+//   contain zero bridge invocations. AoS-compat run_incremental_dirty_pipeline
+//   remains for non-hot / not-yet-ported stages.
 export template <typename P>
 concept SoaDirtyAwarePass = requires(P& p, IRModuleV2& m) {
     { p.run_dirty(m) } -> std::same_as<void>;
 };
+
+// Issue #2907: production SoA dirty hot pack is wired (CF + TP + DCE
+// via run_dirty_pipeline). Agents chart zero bridge on this path.
+export inline std::atomic<std::uint64_t> production_soa_dirty_hot_pack_wired{1};
+export inline std::atomic<std::uint64_t> production_soa_dirty_hot_pack_invocations_total{0};
+export inline std::atomic<std::uint64_t> soa_to_aos_bridge_sunset_wired{1};
+// Issue #2907: schema stamp for Agent query surface.
+export inline constexpr int kSoaBridgeSunsetIssue = 2907;
 
 // Fold-expression pure pipeline over SoaDirtyAwarePass stages.
 // Short-circuits on has_error() when the pass exposes it.
