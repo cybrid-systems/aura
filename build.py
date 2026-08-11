@@ -438,6 +438,21 @@ def cmd_lint():
             "Issue #2667 steal-residual panic-checkpoint coverage linter failed — run python3 scripts/coverage/checks/check_2667_coverage.py"
         )
         return r
+    # Issue #2890: cross-fiber steal residual — previous-host PanicCheckpoint
+    # force-clear (production) vs same-eval transfer continuity on
+    # steal-complete. Extends the #2546/#2667/#2853 steal-residual suite
+    # (test_residual_defer_steal_hard_and.cpp, #81967); no docs/design/
+    # (#1655).
+    scr_script = COVERAGE_CHECKS / "check_steal_checkpoint_residual_2890.py"
+    if not scr_script.exists():
+        fail(f"missing {scr_script}")
+        return 1
+    r = run([sys.executable, str(scr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2890 steal-checkpoint residual linter failed — run python3 scripts/coverage/checks/check_steal_checkpoint_residual_2890.py"
+        )
+        return r
     # Issue #2668: event-driven epoch-invariant walk on table epoch bump
     # (extends #2640 periodic Soft with event-driven complement — closes
     # the burst-mutation window under reemit storms). aura_jit_bridge.cpp

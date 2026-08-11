@@ -606,6 +606,119 @@ static void ac2853_6_phase5_dtor_force_fail_hold_slo() {
     unsetenv("AURA_MUTATION_HOLD_SLO_US");
 }
 
+// ── Issue #2890: cross-fiber steal residual for PanicCheckpoint + GC defer ──
+// Residual after #2846 close_residual_defer_after_exit + #1727 discriminator
+// clear: under multi-fiber denseness a stolen fiber can leave a residual
+// GcDeferReason (Panic) or a stale checkpoint host on the PREVIOUS host
+// evaluator (prev_eval_id) that is never transferred/cleared → temporary GC
+// starvation until a later residual path fires. Fix: on steal-complete, if
+// the previous host holds a live PanicCheckpoint under production (#2853
+// policy lock / production defaults / panic hard) force-clear + release
+// defer; same-eval continuity counts a transfer instead of double-clearing.
+//
+//   AC1: steal-complete clears prev-host PanicCheckpoint under production
+//        (g_residual_defer_steal_checkpoint_cleared_total) — prev_eval_id
+//        is walked, not only the current scheduler eval.
+//   AC2: Soft / no checkpoint / opaque prev id → zero extra work (observe
+//        only; guarded by production_force + non-null checkpoint).
+//   AC3: same-eval continuity → transfer counter, no double-clear (#1727 /
+//        #2667 paths preserved).
+//   AC4: additive counters + query keys + schema-2890; #2846/#2667/#2710
+//        surfaces preserved.
+//   AC5: source-cite + linter + no docs/design/ per #1655.
+static void ac2890_1_prev_host_clear() {
+    std::println("\n--- #2890 AC1: prev-host PanicCheckpoint force-clear on steal ---");
+    const auto rt = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto gc = read_file("src/core/gc_hooks.h");
+    CHECK(rt.find("Issue #2890") != std::string::npos,
+          "2890 AC1: evaluator_fiber_mutation.cpp cites #2890");
+    CHECK(rt.find("g_residual_defer_steal_checkpoint_cleared_total") != std::string::npos,
+          "2890 AC1: cleared counter bumped on steal-complete");
+    CHECK(rt.find("static_cast<Evaluator*>(prev_eval_id)") != std::string::npos,
+          "2890 AC1: prev host evaluator is walked (not only current eval)");
+    CHECK(rt.find("production_residual_policy_locked") != std::string::npos,
+          "2890 AC1: #2853 policy lock consulted on steal path");
+    CHECK(rt.find("prev_ev->has_panic_checkpoint()") != std::string::npos,
+          "2890 AC1: prev-host checkpoint check present");
+    CHECK(rt.find("prev_ev->clear_panic_checkpoint()") != std::string::npos,
+          "2890 AC1: prev-host clear call present");
+    CHECK(gc.find("g_residual_defer_steal_checkpoint_cleared_total") != std::string::npos,
+          "2890 AC1: cleared counter declared in gc_hooks.h");
+    CHECK(gc.find("kResidualDeferStealCheckpointIssue = 2890") != std::string::npos,
+          "2890 AC1: issue stamp 2890");
+}
+
+static void ac2890_2_soft_zero_extra_work() {
+    std::println("\n--- #2890 AC2: Soft / no checkpoint → zero extra work ---");
+    const auto rt = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    // The #2890 block is gated on production_force AND a live prev-host
+    // checkpoint; Soft / opaque id / empty checkpoint skips both counters.
+    CHECK(rt.find("if (production_force && prev_addr > 0x100000ull)") != std::string::npos,
+          "2890 AC2: block gated on production + non-opaque prev id");
+    CHECK(rt.find("prev_ev->has_panic_checkpoint()") != std::string::npos,
+          "2890 AC2: checkpoint presence gate inside block");
+    CHECK(rt.find("Soft / no checkpoint / opaque non-Evaluator prev id: zero") != std::string::npos,
+          "2890 AC2: observe-only documented");
+}
+
+static void ac2890_3_no_double_clear() {
+    std::println("\n--- #2890 AC3: same-eval continuity → transfer, no double-clear ---");
+    const auto rt = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(rt.find("g_residual_defer_steal_checkpoint_transfer_total") != std::string::npos,
+          "2890 AC3: transfer counter bumped on same-eval continuity");
+    CHECK(rt.find("prev_ev == cur_ev && prev_ev->has_panic_checkpoint()") != std::string::npos,
+          "2890 AC3: same-eval branch present");
+    CHECK(rt.find("double-clear (AC3)") != std::string::npos,
+          "2890 AC3: no-double-clear documented");
+    const auto gc = read_file("src/core/gc_hooks.h");
+    CHECK(gc.find("g_residual_defer_steal_checkpoint_transfer_total") != std::string::npos,
+          "2890 AC3: transfer counter declared in gc_hooks.h");
+}
+
+static void ac2890_4_query_and_surface() {
+    std::println("\n--- #2890 AC4: additive query keys + schema ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto obs_eval = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(obs.find("residual-defer-steal-checkpoint-cleared-total") != std::string::npos,
+          "2890 AC4: cleared-total query key");
+    CHECK(obs.find("residual_defer_steal_checkpoint_cleared_total") != std::string::npos,
+          "2890 AC4: cleared-total snake alias");
+    CHECK(obs.find("residual-defer-steal-checkpoint-transfer-total") != std::string::npos,
+          "2890 AC4: transfer-total query key");
+    CHECK(obs.find("residual-defer-steal-checkpoint-wired") != std::string::npos,
+          "2890 AC4: wired sentinel");
+    CHECK(obs.find("schema-2890") != std::string::npos, "2890 AC4: schema-2890");
+    CHECK(obs.find("issue-2890") != std::string::npos, "2890 AC4: issue-2890");
+    // Prior surfaces preserved (#2846 / #2667 / #2710 — additive schema).
+    // #2846 residual-defer-after-exit keys live on obs_eval.cpp surface.
+    CHECK(obs_eval.find("residual-defer-after-exit-total") != std::string::npos ||
+              obs_eval.find("schema-2846") != std::string::npos,
+          "2890 AC4: #2846 surface preserved");
+    CHECK(obs.find("schema-2667") != std::string::npos, "2890 AC4: schema-2667 preserved");
+    CHECK(obs.find("schema-2710") != std::string::npos, "2890 AC4: schema-2710 preserved");
+}
+
+static void ac2890_5_linter_and_no_design() {
+    std::println("\n--- #2890 AC5: linter + no docs/design/ ---");
+    const auto t = read_file("tests/serve/test_residual_defer_steal_hard_and.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_checkpoint_residual_2890.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac2890_1_prev_host_clear") != std::string::npos, "2890 AC5: AC1 test");
+    CHECK(t.find("ac2890_2_soft_zero_extra_work") != std::string::npos, "2890 AC5: AC2 test");
+    CHECK(t.find("ac2890_3_no_double_clear") != std::string::npos, "2890 AC5: AC3 test");
+    CHECK(t.find("ac2890_4_query_and_surface") != std::string::npos, "2890 AC5: AC4 test");
+    CHECK(t.find("ac2890_5_linter_and_no_design") != std::string::npos, "2890 AC5: AC5 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2890") != std::string::npos,
+          "2890 AC5: coverage linter present and cites #2890");
+    CHECK(build.find("check_steal_checkpoint_residual_2890") != std::string::npos,
+          "2890 AC5: build.py gate entry");
+    std::ifstream design("docs/design/2890-steal-checkpoint-residual.md");
+    if (!design) {
+        design.open("../docs/design/2890-steal-checkpoint-residual.md");
+    }
+    CHECK(!design.good(), "2890 AC5: no docs/design/2890-* per #1655");
+}
+
 } // namespace
 
 int run_test_residual_defer_steal_hard_and() {
@@ -628,10 +741,18 @@ int run_test_residual_defer_steal_hard_and() {
     ac2853_4_sandbox_off_always_soft();
     ac2853_5_phase5_dtor_gauge_and_query_surface();
     ac2853_6_phase5_dtor_force_fail_hold_slo();
+    // Issue #2890: cross-fiber steal residual for PanicCheckpoint + GC
+    // defer (transfer or force-clear on steal-complete). Extends #2546 /
+    // #2667 / #2853 test file per #81967.
+    ac2890_1_prev_host_clear();
+    ac2890_2_soft_zero_extra_work();
+    ac2890_3_no_double_clear();
+    ac2890_4_query_and_surface();
+    ac2890_5_linter_and_no_design();
     modes_off();
     if (g_failed)
         return 1;
-    std::println("\n=== #2546+#2667+#2853: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2546+#2667+#2853+#2890: {} passed, {} failed ===", g_passed, g_failed);
     return 0;
 }
 

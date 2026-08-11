@@ -450,6 +450,17 @@ inline std::atomic<std::uint64_t> g_panic_checkpoint_cleared_on_steal_total{0}; 
 // unset: no action (preserve Soft ergonomics). Additive only — no
 // regression on #2667 / #2546 / #2314 / #2203 surfaces.
 inline std::atomic<std::uint64_t> g_panic_checkpoint_cleared_on_steal_ok_total{0}; // #2710
+// Issue #2890: cross-fiber steal residual — the stolen fiber's
+// PanicCheckpointHost lives on the PREVIOUS host evaluator
+// (prev_eval_id), not necessarily the current scheduler eval. Under
+// production (#2853 policy lock / production defaults / panic hard)
+// force-clear + release defer so GC is not permanently armed across the
+// steal boundary (transfer or clear on steal-complete). Soft / no
+// checkpoint: zero extra work (observe-only). Additive — no regression
+// on #2846 / #2667 / #2710 / #2314 / #2546 surfaces.
+inline std::atomic<std::uint64_t> g_residual_defer_steal_checkpoint_cleared_total{0};  // #2890
+inline std::atomic<std::uint64_t> g_residual_defer_steal_checkpoint_transfer_total{0}; // #2890
+inline constexpr int kResidualDeferStealCheckpointIssue = 2890;
 // Issue #2710: AURA_PANIC_CONTRACT=hard preference (process-wide).
 // -1 = env/default unset, 0 = off (Soft observe), 1 = hard (production).
 // Mirrors the AURA_GENERAL_OBJECT_PIN=required pattern (#2496 / #2597).
@@ -481,6 +492,18 @@ inline std::atomic<std::uint64_t> g_steal_complete_entry_missing_total{0}; // #2
 // Issue #2710: getter for panic-checkpoint cleared-on-steal Ok-path counter.
 [[nodiscard]] inline std::uint64_t panic_checkpoint_cleared_on_steal_ok_total() noexcept {
     return g_panic_checkpoint_cleared_on_steal_ok_total.load(std::memory_order_relaxed);
+}
+// Issue #2890: getters for steal-complete checkpoint residual counters.
+[[nodiscard]] inline std::uint64_t residual_defer_steal_checkpoint_cleared_total() noexcept {
+    return g_residual_defer_steal_checkpoint_cleared_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t residual_defer_steal_checkpoint_transfer_total() noexcept {
+    return g_residual_defer_steal_checkpoint_transfer_total.load(std::memory_order_relaxed);
+}
+// Issue #2890: test reset for steal-complete checkpoint residual counters.
+inline void reset_residual_defer_steal_checkpoint_for_test() noexcept {
+    g_residual_defer_steal_checkpoint_cleared_total.store(0, std::memory_order_relaxed);
+    g_residual_defer_steal_checkpoint_transfer_total.store(0, std::memory_order_relaxed);
 }
 // Issue #2710: getter for panic-contract-hard preference (process-wide).
 [[nodiscard]] inline int panic_contract_hard_pref_v_read() noexcept {
