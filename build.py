@@ -2241,6 +2241,17 @@ def cmd_lint():
             "Issue #2849 mailbox mid-mutation delivery linter failed — run python3 scripts/coverage/checks/check_mailbox_mid_mutation_delivery_2849.py"
         )
         return r
+    # Issue #2903: deferred-under-boundary wait histogram (p50/p99/max).
+    ubw_script = COVERAGE_CHECKS / "check_mailbox_under_boundary_wait_2903.py"
+    if not ubw_script.exists():
+        fail(f"missing {ubw_script}")
+        return 1
+    r = run([sys.executable, str(ubw_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2903 mailbox under-boundary wait linter failed — run python3 scripts/coverage/checks/check_mailbox_under_boundary_wait_2903.py"
+        )
+        return r
     # Issue #2646: cone-truncate outside-cone invalidate (anti ghost-narrow
     # after cone-truncated self-modify). Drops goals/memo for dirty Ifs
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +
@@ -5955,6 +5966,33 @@ def cmd_mailbox_hold_exit_drain_coverage():
         return 1
     ok("mailbox hold-exit drain (#2511) coverage clean")
     return 0
+
+
+def cmd_mailbox_under_boundary_wait_2903_coverage():
+    """Issue #2903: deferred-under-boundary wait histogram (static contract)."""
+    print(f"{B}=== mailbox under-boundary wait coverage (#2903) ==={N}")
+    script = COVERAGE_CHECKS / "check_mailbox_under_boundary_wait_2903.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox under-boundary wait (#2903) coverage contract rows failed")
+        return 1
+    ok("mailbox under-boundary wait (#2903) coverage clean")
+    return 0
+
+
+def cmd_mailbox_under_boundary_wait_2903():
+    """Issue #2903: deferred-under-boundary wait histogram + Agent metrics.
+
+    Records wait-us from first defer under MutationBoundary to Ok reopen
+    deliver (or hold-exit budget drop). Exposes p50/p99/max + 5-bucket hist
+    on query:mf-mailbox-stats (schema-2903). Soft / zero-defer stays single
+    relaxed load. Soft-feeds mutation-concurrency-health when wait max ≥ SLO.
+    """
+    print(f"{B}=== mailbox under-boundary wait (#2903) ==={N}")
+    return cmd_mailbox_under_boundary_wait_2903_coverage()
 
 
 def cmd_bidirectional_match_coverage():
@@ -10869,6 +10907,7 @@ def cmd_gate():
         or cmd_mutate_mailbox_strict_coverage()
         or cmd_mailbox_defer_drain_sla_coverage()
         or cmd_mailbox_hold_exit_drain_coverage()
+        or cmd_mailbox_under_boundary_wait_2903_coverage()
         or cmd_mailbox_hold_starvation_hard_coverage()
         or cmd_type_freshness_steal_densify_coverage()
         or cmd_commit_readiness_score_coverage()
@@ -11922,6 +11961,8 @@ def main():
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
         "chaos-release-blocker-2902": cmd_chaos_release_blocker_2902,
         "chaos-release-blocker-2902-coverage": cmd_chaos_release_blocker_2902_coverage,
+        "mailbox-under-boundary-wait-2903": cmd_mailbox_under_boundary_wait_2903,
+        "mailbox-under-boundary-wait-2903-coverage": cmd_mailbox_under_boundary_wait_2903_coverage,
         "chaos-soak-hard-gate-2722": cmd_chaos_soak_hard_gate_2722,
         "chaos-soak-hard-gate-2722-coverage": cmd_chaos_soak_hard_gate_2722_coverage,
         "chaos-soak-residual-zero-2755-coverage": cmd_chaos_soak_residual_zero_2755_coverage,

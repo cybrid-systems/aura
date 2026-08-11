@@ -65,6 +65,8 @@ struct MutationConcurrencyHealthSnapshot {
     std::uint64_t mailbox_hold_exit_starvation_total = 0;    // #2511
     std::uint64_t mailbox_hold_starvation_hard_total = 0;    // #2551
     std::uint64_t agent_throttle_for_mailbox_starvation = 0; // #2551 0/1
+    // Issue #2903: under-boundary wait max (µs). Soft signal when > SLO.
+    std::uint64_t mailbox_under_boundary_wait_us_max = 0; // #2903
 };
 
 struct MutationConcurrencyHealthResult {
@@ -103,12 +105,29 @@ struct MutationConcurrencyHealthResult {
 [[nodiscard]] inline bool has_hold_slo(const MutationConcurrencyHealthSnapshot& s) noexcept {
     return s.hold_slo_violation_total > 0 || s.hold_over_budget_total > 0;
 }
+// Issue #2903: default under-boundary wait SLO (µs). Override via
+// AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US (0 disables latency soft signal).
+[[nodiscard]] inline std::uint64_t mailbox_under_boundary_wait_slo_us() noexcept {
+    const char* e = std::getenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    if (e == nullptr || e[0] == '\0')
+        return 100'000; // 100 ms default — long-hold starvation visible
+    std::uint64_t v = 0;
+    for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
+        v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+    return v;
+}
+
 [[nodiscard]] inline bool
 has_mailbox_starvation(const MutationConcurrencyHealthSnapshot& s) noexcept {
     // #2511 hold-exit starvation + #2551 hard residual feed the same signal.
+    // #2903: long under-boundary wait (max > SLO) also soft-signals so Agents
+    // see silent starvation without stitching latency queries.
+    const auto slo = mailbox_under_boundary_wait_slo_us();
+    const bool wait_slo_breach = slo != 0 && s.mailbox_under_boundary_wait_us_max > 0 &&
+                                 s.mailbox_under_boundary_wait_us_max >= slo;
     return s.mailbox_defer_starvation_total > 0 || s.mailbox_deferred_depth > 0 ||
            s.mailbox_hold_exit_starvation_total > 0 || s.mailbox_hold_starvation_hard_total > 0 ||
-           s.agent_throttle_for_mailbox_starvation != 0;
+           s.agent_throttle_for_mailbox_starvation != 0 || wait_slo_breach;
 }
 
 // Pure score from a snapshot (no atomics — AC3 / AC4 read-only).

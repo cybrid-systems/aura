@@ -63,6 +63,7 @@ using aura::serve::mf_mailbox::g_mf_mailbox_stats;
 using aura::serve::mf_mailbox::g_recv_boundary_reject_window;
 using aura::serve::mf_mailbox::MailMessage;
 using aura::serve::mf_mailbox::MultiFiberMailbox;
+using aura::serve::mf_mailbox::MultiFiberMailboxStats;
 using aura::serve::mf_mailbox::note_mailbox_mutation_hold_defer;
 using aura::serve::mf_mailbox::note_mailbox_outermost_exit_drain;
 using aura::serve::mf_mailbox::note_mailbox_push_ok_drain_progress;
@@ -1011,6 +1012,186 @@ static void ac2700_6_no_docs_design() {
           "AC6: no docs/design/2700-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2903: deferred-under-boundary wait histogram ──
+// AC1 defer → exit + deliver → wait sample / hist / max updates
+// AC2 no-defer path → zero hist noise
+// AC3 schema-2903 query keys additive; #2849/#2511/#2378 preserved
+// AC4 chaos-lite long hold non-zero wait; short hold smaller wait
+// AC5 source-cite + no docs/design/*
+
+static void ac2903_1_wait_recorded_after_exit_deliver() {
+    std::println("\n--- #2903 AC1: defer → exit + deliver → wait histogram updates ---");
+    // Drain any open window.
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    const auto samples0 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed);
+    const auto total0 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_total.load(std::memory_order_relaxed);
+    const auto max0 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    // Open defer window (simulates push under Guard BP).
+    note_mailbox_mutation_hold_defer();
+    CHECK(g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) >= 1,
+          "AC1: depth open after defer");
+    // Simulate long hold under boundary.
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    note_mailbox_outermost_exit_drain();
+    // Drain → window close samples under-boundary wait.
+    std::uint64_t guard = 64;
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0 &&
+           guard-- > 0)
+        note_mailbox_push_ok_drain_progress();
+    const auto samples1 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed);
+    const auto total1 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_total.load(std::memory_order_relaxed);
+    const auto max1 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    CHECK(samples1 >= samples0 + 1, "AC1: wait samples +1 after deliver");
+    CHECK(total1 >= total0, "AC1: wait total non-decreasing");
+    CHECK(max1 >= max0, "AC1: wait max non-decreasing");
+    // Histogram has at least one bucket count across all 5.
+    std::uint64_t hist_sum = 0;
+    for (std::size_t i = 0; i < MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets; ++i)
+        hist_sum +=
+            g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[i].load(std::memory_order_relaxed);
+    CHECK(hist_sum >= samples1, "AC1: histogram buckets cover samples");
+    CHECK(g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p50.load(std::memory_order_relaxed) >=
+              0,
+          "AC1: p50 loadable");
+    CHECK(g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed) >=
+              0,
+          "AC1: p99 loadable");
+}
+
+static void ac2903_2_no_defer_zero_extra() {
+    std::println("\n--- #2903 AC2: no-defer Ok path → zero hist noise ---");
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    const auto samples0 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed);
+    const auto drop0 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_drop_total.load(std::memory_order_relaxed);
+    MultiFiberMailbox mb(8);
+    MailMessage msg;
+    msg.payload = "no-defer-2903";
+    CHECK(mb.push(std::move(msg)) == PushStatus::Ok, "AC2: push Ok");
+    CHECK(g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed) ==
+              samples0,
+          "AC2: wait samples unchanged on no-defer path");
+    CHECK(g_mf_mailbox_stats.mailbox_under_boundary_wait_drop_total.load(
+              std::memory_order_relaxed) == drop0,
+          "AC2: drop total unchanged on no-defer path");
+}
+
+static void ac2903_3_schema_query_additive() {
+    std::println("\n--- #2903 AC3: schema-2903 additive query keys ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2903") == 2903, "AC3: schema-2903");
+    CHECK(href(cs, "issue-2903") == 2903, "AC3: issue-2903");
+    CHECK(href(cs, "mailbox-under-boundary-wait-wired") == 1, "AC3: wait wired");
+    CHECK(href(cs, "mailbox-under-boundary-wait-us-total") >= 0, "AC3: wait total");
+    CHECK(href(cs, "mailbox-under-boundary-wait-samples") >= 0, "AC3: wait samples");
+    CHECK(href(cs, "mailbox-under-boundary-wait-us-max") >= 0, "AC3: wait max");
+    CHECK(href(cs, "mailbox-under-boundary-wait-us-p50") >= 0, "AC3: wait p50");
+    CHECK(href(cs, "mailbox-under-boundary-wait-us-p99") >= 0, "AC3: wait p99");
+    CHECK(href(cs, "mailbox-under-boundary-wait-drop-total") >= 0, "AC3: wait drop");
+    CHECK(href(cs, "mailbox-under-boundary-wait-hist-lt-100us") >= 0, "AC3: hist lt-100us");
+    CHECK(href(cs, "mailbox-under-boundary-wait-hist-lt-1ms") >= 0, "AC3: hist lt-1ms");
+    CHECK(href(cs, "mailbox-under-boundary-wait-hist-lt-10ms") >= 0, "AC3: hist lt-10ms");
+    CHECK(href(cs, "mailbox-under-boundary-wait-hist-lt-100ms") >= 0, "AC3: hist lt-100ms");
+    CHECK(href(cs, "mailbox-under-boundary-wait-hist-ge-100ms") >= 0, "AC3: hist ge-100ms");
+    // Preserved lineage surfaces.
+    CHECK(href(cs, "schema-2849") == 2849, "AC3: schema-2849 preserved");
+    CHECK(href(cs, "schema-2511") == 2511, "AC3: schema-2511 preserved");
+    CHECK(href(cs, "schema-2378") == 2378, "AC3: schema-2378 preserved");
+    CHECK(href(cs, "mailbox-under-boundary-gate-wired") == 1, "AC3: #2849 gate wired preserved");
+    CHECK(href(cs, "mailbox-defer-drain-sla-wired") == 1, "AC3: #2378 SLA wired preserved");
+}
+
+static void ac2903_4_chaos_lite_long_vs_short_hold() {
+    std::println("\n--- #2903 AC4: chaos-lite long hold → non-zero wait; short hold smaller ---");
+    using aura::serve::mf_mailbox::drain_deferred_under_budget;
+    using aura::serve::mf_mailbox::note_mailbox_under_boundary_wait_sample;
+
+    // Drain clean.
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+
+    // Short hold path.
+    const auto samples_a =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed);
+    note_mailbox_mutation_hold_defer();
+    note_mailbox_outermost_exit_drain();
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    const auto samples_b =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed);
+    CHECK(samples_b >= samples_a + 1, "AC4: short hold produced a wait sample");
+    const auto short_max =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+
+    // Long hold path (multi-fiber style: N holds + concurrent "send" defers).
+    note_mailbox_mutation_hold_defer();
+    note_mailbox_mutation_hold_defer();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    note_mailbox_outermost_exit_drain();
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    const auto samples_c =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed);
+    const auto long_max =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    CHECK(samples_c >= samples_b + 1, "AC4: long hold produced another wait sample");
+    CHECK(long_max >= short_max, "AC4: long hold max wait ≥ short hold max");
+    CHECK(long_max > 0, "AC4: long hold max wait non-zero");
+    // Direct sample inject proves hist edges accept long waits (no hang).
+    note_mailbox_under_boundary_wait_sample(/*us=*/25'000, /*dropped=*/false);
+    CHECK(g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[3].load(std::memory_order_relaxed) >=
+              1,
+          "AC4: 10ms–100ms hist bucket exercised");
+    (void)drain_deferred_under_budget(0); // free path; depth already 0
+}
+
+static void ac2903_5_source_cite_no_docs_design() {
+    std::println("\n--- #2903 AC5: source-cite + no docs/design ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto msg = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    const auto health = read_file("src/compiler/mutation_concurrency_health.hh");
+    const auto query = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mailbox_under_boundary_wait_2903.py");
+    CHECK(mb.find("Issue #2903") != std::string::npos || mb.find("#2903") != std::string::npos,
+          "AC5: mailbox cites #2903");
+    CHECK(mb.find("note_mailbox_under_boundary_wait_sample") != std::string::npos,
+          "AC5: wait sample helper");
+    CHECK(mb.find("mailbox_under_boundary_wait_hist") != std::string::npos, "AC5: hist array");
+    CHECK(mb.find("kUnderBoundaryWaitHistBuckets") != std::string::npos, "AC5: hist buckets");
+    CHECK(msg.find("schema-2903") != std::string::npos, "AC5: messaging schema-2903");
+    CHECK(msg.find("mailbox-under-boundary-wait-us-p50") != std::string::npos, "AC5: p50 key");
+    CHECK(msg.find("mailbox-under-boundary-wait-us-p99") != std::string::npos, "AC5: p99 key");
+    CHECK(health.find("mailbox_under_boundary_wait_us_max") != std::string::npos,
+          "AC5: health snapshot wait max");
+    CHECK(query.find("component-mailbox-under-boundary-wait-us-max") != std::string::npos,
+          "AC5: health query component key");
+    // Lineage preserved in header.
+    CHECK(mb.find("note_mailbox_deferred_under_boundary") != std::string::npos,
+          "AC5: #2849 helper preserved");
+    CHECK(mb.find("mailbox_deferred_flush_latency_us_total") != std::string::npos,
+          "AC5: #2378 flush latency preserved");
+    CHECK(mb.find("drain_deferred_under_budget") != std::string::npos,
+          "AC5: #2511 drain preserved");
+    CHECK(build.find("check_mailbox_under_boundary_wait_2903") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2903") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("docs/design/2903-mailbox-under-boundary-wait.md").empty(),
+          "AC5: no docs/design/2903-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_2903.cpp").empty(), "AC5: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_mailbox_recv_mutation_boundary() {
@@ -1053,6 +1234,14 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac2849_4_source_cite();
     ac2849_5_schema_query();
     ac2849_6_soft_never_weakens();
+    // Issue #2903: deferred-under-boundary wait histogram (Agent-visible
+    // p50/p99/max; Soft / zero-defer zero cost). Extends this suite per #81967.
+    std::println("\n=== Issue #2903: deferred-under-boundary wait histogram ===");
+    ac2903_1_wait_recorded_after_exit_deliver();
+    ac2903_2_no_defer_zero_extra();
+    ac2903_3_schema_query_additive();
+    ac2903_4_chaos_lite_long_vs_short_hold();
+    ac2903_5_source_cite_no_docs_design();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

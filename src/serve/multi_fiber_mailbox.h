@@ -16,6 +16,10 @@
 // #2378: defer drain SLA — deferred_depth / HWM, flush latency after
 //        outermost Guard exit, starvation signal if depth stays open.
 //        Zero cost when deferred_depth==0 (single relaxed load on Ok path).
+// #2903: deferred-under-boundary wait histogram — Agent-visible p50/p99/max
+//        wait-us from first defer decision to deliver (or budget drop).
+//        Closes silent starvation observability under long holds; Soft /
+//        zero-defer path stays single relaxed load (no hist noise).
 // #2511: outermost Guard exit forces deferred drain under budget
 //        (AURA_MAILBOX_HOLD_DRAIN_BUDGET_US, default 1000 µs). Soft: retain
 //        + starvation. Strict: force-resolve remaining depth + audit.
@@ -201,6 +205,20 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_under_boundary_deferred_total{0};              // #2849
     std::atomic<std::uint64_t> mailbox_under_boundary_deferred_hard_total{0};         // #2849
     std::atomic<std::uint64_t> mailbox_under_boundary_deferred_soft_observe_total{0}; // #2849
+    // Issue #2903: deferred-under-boundary wait latency (defer decision →
+    // first successful reopen deliver, or force-drop under hold-exit budget).
+    // Coarse 5-bucket histogram (µs edges: <100, <1k, <10k, <100k, ≥100k)
+    // + total/samples/max + p50/p99 edge approximations. Zero cost when
+    // deferred_depth==0 (happy Ok path never reaches note helper).
+    static constexpr std::size_t kUnderBoundaryWaitHistBuckets = 5;
+    std::atomic<std::uint64_t> mailbox_under_boundary_wait_us_total{0};   // #2903
+    std::atomic<std::uint64_t> mailbox_under_boundary_wait_samples{0};    // #2903
+    std::atomic<std::uint64_t> mailbox_under_boundary_wait_us_max{0};     // #2903
+    std::atomic<std::uint64_t> mailbox_under_boundary_wait_us_p50{0};     // #2903
+    std::atomic<std::uint64_t> mailbox_under_boundary_wait_us_p99{0};     // #2903
+    std::atomic<std::uint64_t> mailbox_under_boundary_wait_drop_total{0}; // #2903 budget drop
+    std::atomic<std::uint64_t>
+        mailbox_under_boundary_wait_hist[kUnderBoundaryWaitHistBuckets]{}; // #2903
     // Issue #2511: outermost Guard exit forced deferred drain under budget.
     // hold_exit_drain_total: drain path entered with open depth
     // hold_exit_drain_us_total / max: elapsed under budget
@@ -305,8 +323,74 @@ inline void clear_agent_throttle_for_mailbox_starvation() noexcept {
         1, std::memory_order_relaxed);
 }
 
+// Issue #2903: record one under-boundary wait sample (µs).
+// Called only from deferred reopen paths (window close Ok deliver, or
+// hold-exit budget force-drop) — never from the happy Ok path.
+// Coarse hist edges (µs): [0]<100 [1]<1k [2]<10k [3]<100k [4]≥100k.
+// p50/p99 are upper-edge approximations of the buckets covering the
+// cumulative 50th / 99th percentile (Agent-pollable without stitching).
+inline void note_mailbox_under_boundary_wait_sample(std::uint64_t us, bool dropped) noexcept {
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_total.fetch_add(us,
+                                                                      std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.fetch_add(1, std::memory_order_relaxed);
+    auto mx = g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    while (us > mx && !g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.compare_exchange_weak(
+                          mx, us, std::memory_order_relaxed)) {
+    }
+    std::size_t b = MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets - 1;
+    if (us < 100)
+        b = 0;
+    else if (us < 1'000)
+        b = 1;
+    else if (us < 10'000)
+        b = 2;
+    else if (us < 100'000)
+        b = 3;
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[b].fetch_add(1, std::memory_order_relaxed);
+    if (dropped)
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_drop_total.fetch_add(
+            1, std::memory_order_relaxed);
+    // Refresh p50/p99 edge approximations from the 5-bucket hist.
+    // Edges for bucket upper bounds (last is open-ended → use max-so-far).
+    static constexpr std::uint64_t kEdges[5] = {100, 1'000, 10'000, 100'000, 0};
+    std::uint64_t counts[5];
+    std::uint64_t total = 0;
+    for (std::size_t i = 0; i < 5; ++i) {
+        counts[i] =
+            g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[i].load(std::memory_order_relaxed);
+        total += counts[i];
+    }
+    if (total == 0)
+        return;
+    const auto target50 = (total + 1) / 2;         // ceil
+    const auto target99 = (total * 99 + 99) / 100; // ceil 99%
+    std::uint64_t cum = 0;
+    std::uint64_t p50 = 0;
+    std::uint64_t p99 = 0;
+    for (std::size_t i = 0; i < 5; ++i) {
+        cum += counts[i];
+        const auto edge = (i < 4) ? kEdges[i]
+                                  : g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(
+                                        std::memory_order_relaxed);
+        if (p50 == 0 && cum >= target50)
+            p50 = edge;
+        if (p99 == 0 && cum >= target99)
+            p99 = edge;
+        if (p50 != 0 && p99 != 0)
+            break;
+    }
+    if (p50 == 0)
+        p50 = g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    if (p99 == 0)
+        p99 = p50;
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p50.store(p50, std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(p99, std::memory_order_relaxed);
+}
+
 // Issue #2378: successful enqueue after possible open defer window.
 // AC3: when deferred_depth==0, single relaxed load then return (no maps).
+// Issue #2903: when window closes (1→0), also sample under-boundary wait
+// from first defer decision → deliver (full hold-visible latency).
 inline void note_mailbox_push_ok_drain_progress() noexcept {
     const auto depth = g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
     if (depth == 0)
@@ -340,6 +424,13 @@ inline void note_mailbox_push_ok_drain_progress() noexcept {
                    !g_mf_mailbox_stats.mailbox_deferred_flush_latency_us_max.compare_exchange_weak(
                        mx, us, std::memory_order_relaxed)) {
             }
+        }
+        // Issue #2903 AC1: full under-boundary wait = first defer → deliver.
+        // Distinct from #2378 flush latency (exit→deliver preferred): Agents
+        // need the long-hold wait visible even when exit is recent.
+        if (first != 0 && now >= first) {
+            const auto wait_us = (now - first) / 1000ull;
+            note_mailbox_under_boundary_wait_sample(wait_us, /*dropped=*/false);
         }
         // Issue #2551 AC3: window closed → clear Agent throttle.
         clear_agent_throttle_for_mailbox_starvation();
@@ -462,6 +553,11 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
             {
                 std::uint64_t resolved = 0;
                 std::uint64_t guard = d + 8;
+                // Issue #2903: sample under-boundary wait once for budget
+                // force-drop (defer decision → drop) before clearing stamp.
+                const auto drop_now = mailbox_steady_ns();
+                const auto drop_first =
+                    g_mailbox_first_open_defer_ns.load(std::memory_order_relaxed);
                 while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) >
                            0 &&
                        guard-- > 0) {
@@ -486,6 +582,11 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
                 if (resolved > 0) {
                     g_mf_mailbox_stats.mailbox_hold_exit_force_resolved_total.fetch_add(
                         resolved, std::memory_order_relaxed);
+                    // #2903 AC1 drop path: wait from first defer → budget drop.
+                    if (drop_first != 0 && drop_now >= drop_first) {
+                        note_mailbox_under_boundary_wait_sample((drop_now - drop_first) / 1000ull,
+                                                                /*dropped=*/true);
+                    }
                 }
             }
             // Issue #2551 AC1: production/Strict residual after budget →

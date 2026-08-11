@@ -10518,6 +10518,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             snap.agent_throttle_for_mailbox_starvation =
                 g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(
                     std::memory_order_relaxed);
+            // Issue #2903: under-boundary wait max for soft latency SLO.
+            snap.mailbox_under_boundary_wait_us_max =
+                g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(
+                    std::memory_order_relaxed);
 
             const auto scored = compute_mutation_concurrency_health(snap);
 
@@ -10607,6 +10611,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(snap.mailbox_hold_starvation_hard_total));
             insert_kv("component-agent-throttle-for-mailbox-starvation",
                       static_cast<std::int64_t>(snap.agent_throttle_for_mailbox_starvation));
+            // Issue #2903: under-boundary wait max component for soft latency SLO.
+            insert_kv("component-mailbox-under-boundary-wait-us-max",
+                      static_cast<std::int64_t>(snap.mailbox_under_boundary_wait_us_max));
             insert_kv("mutation-concurrency-health-wired", 1);
             insert_kv("schema-2379", 2379);
             insert_kv("issue-2379", 2379);
@@ -10620,6 +10627,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("issue-2511", 2511);
             insert_kv("schema-2551", 2551);
             insert_kv("issue-2551", 2551);
+            insert_kv("schema-2903", 2903);
+            insert_kv("issue-2903", 2903);
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
