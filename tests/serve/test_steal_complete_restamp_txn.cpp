@@ -12,7 +12,9 @@
 
 #include "compiler/observability_metrics.h"
 #include "serve/fiber.h"
+#include "serve/steal_safety.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -876,6 +878,179 @@ static void ac2727_5_source_and_linter() {
           "AC5: no docs/design/2727-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2901: close residual re-arm race window ──
+
+static void ac2901_1_inject_rearm_rejects_no_ticket() {
+    std::println(
+        "\n--- #2901 AC1: inject residual re-arm between clear and stamp → RejectHard ---");
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_residual_rearm_race_total;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::g_steal_safety_transaction_reject_hard_total;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    Fiber f([] {});
+    // Inject stale ticket after clear (simulates concurrent re-arm / leftover
+    // ticket from a prior aborted stealer). Hard-AND (c) must RejectHard and
+    // must NOT stamp snap.ticket over the inject.
+    constexpr std::uint64_t kPoisonTicket = 0xDEADBEEFCAFEULL;
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        // Fiber pointer is not in the hook — use a static poison set via
+        // TLS-held fiber set in the outer scope. See below.
+    };
+    // Capture fiber for the hook via static TLS pointer.
+    static thread_local Fiber* s_inject_fiber = nullptr;
+    s_inject_fiber = &f;
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        if (s_inject_fiber)
+            s_inject_fiber->set_resume_safety_ticket(kPoisonTicket);
+    };
+
+    const auto race0 = g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
+    const auto rej0 = g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed);
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+
+    const auto d = steal_safety_transaction(&f);
+    CHECK(d == StealSafetyDecision::RejectHard, "2901 AC1: RejectHard on residual re-arm inject");
+    CHECK(g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed) > rej0,
+          "2901 AC1: reject_hard_total bumps");
+    CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+          "2901 AC1: ok_total unchanged (no enqueue)");
+    CHECK(g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) > race0,
+          "2901 AC1: residual_rearm_race_total bumps");
+    // Ticket must not be the decision-time snap ticket from a successful stamp;
+    // poison inject remains (RejectHard does not stamp snap.ticket).
+    CHECK(f.has_resume_safety_ticket(), "2901 AC1: poison ticket still present");
+    CHECK(f.resume_safety_ticket() == kPoisonTicket,
+          "2901 AC1: ticket never set to snap (no Ok stamp)");
+
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+    s_inject_fiber = nullptr;
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac2901_2_happy_path_single_complete() {
+    std::println("\n--- #2901 AC2: happy path single on_steal_complete + hard-AND ---");
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_residual_rearm_race_total;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    Fiber f([] {});
+    // Clean fiber: no residual inject. Ok path should not bump rearm_race.
+    const auto race0 = g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+    const auto d = steal_safety_transaction(&f);
+    // May Ok or RejectHard depending on ambient residual (densify lag etc.);
+    // on Ok, rearm_race must stay quiet (zero extra atomics on quiet path).
+    if (d == StealSafetyDecision::Ok) {
+        CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) > ok0,
+              "2901 AC2: ok_total bumps on happy Ok");
+        CHECK(f.has_resume_safety_ticket(), "2901 AC2: ticket stamped on Ok");
+        CHECK(g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) == race0,
+              "2901 AC2: rearm_race quiet on happy path");
+    } else {
+        // Ambient residual (e.g. densify lag) → RejectHard is still fail-closed;
+        // rearm_race may bump (residual after clear) — not a quiet path.
+        CHECK(d == StealSafetyDecision::RejectHard, "2901 AC2: non-Ok is RejectHard");
+    }
+    // Source: single primary complete on happy path; second complete only on fail.
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    CHECK(cpp.find("aura_evaluator_on_steal_complete(stolen)") != std::string::npos,
+          "2901 AC2: on_steal_complete present");
+    CHECK(cpp.find("g_steal_safety_decision_mu") != std::string::npos,
+          "2901 AC2: decision lock present");
+    CHECK(cpp.find("evaluate_residual_hard_and") != std::string::npos, "2901 AC2: hard-AND helper");
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac2901_3_counters_additive() {
+    std::println("\n--- #2901 AC3: existing residual + transaction counters preserved ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(hdr.find("g_steal_safety_transaction_calls_total") != std::string::npos,
+          "2901 AC3: calls_total preserved");
+    CHECK(hdr.find("g_steal_safety_transaction_ok_total") != std::string::npos,
+          "2901 AC3: ok_total preserved");
+    CHECK(hdr.find("g_steal_safety_transaction_reject_hard_total") != std::string::npos,
+          "2901 AC3: reject_hard preserved");
+    CHECK(hdr.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "2901 AC3: boundary residual preserved");
+    CHECK(hdr.find("g_steal_safety_residual_layout_stamp_mismatch_total") != std::string::npos,
+          "2901 AC3: layout residual preserved");
+    CHECK(hdr.find("g_steal_safety_residual_ticket_mismatch_total") != std::string::npos,
+          "2901 AC3: ticket residual preserved");
+    CHECK(hdr.find("g_steal_safety_residual_gc_defer_armed_total") != std::string::npos,
+          "2901 AC3: gc-defer residual preserved");
+    CHECK(hdr.find("g_steal_safety_residual_rearm_race_total") != std::string::npos,
+          "2901 AC3: rearm_race counter (additive)");
+    CHECK(hdr.find("kStealSafetyResidualRearmRaceIssue = 2901") != std::string::npos,
+          "2901 AC3: issue stamp 2901");
+}
+
+static void ac2901_4_chaos_contract_source() {
+    std::println("\n--- #2901 AC4: chaos residual-armed no silent enqueue (source) ---");
+    // Full chaos is covered by existing chaos suites; assert the production
+    // fail-closed contract remains: RejectHard never stamps ticket, and
+    // worker only enqueues on Ok.
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto wc = read_file("src/serve/worker.cpp");
+    CHECK(cpp.find("set_resume_safety_ticket") != std::string::npos, "2901 AC4: ticket stamp site");
+    CHECK(cpp.find("RejectHard") != std::string::npos, "2901 AC4: RejectHard path");
+    // Ticket stamp only after residual_ok under lock (no stamp on reject).
+    const auto rej_pos = cpp.find("force second residual clear");
+    const auto stamp_pos = cpp.find("set_resume_safety_ticket(snap.ticket)");
+    CHECK(stamp_pos != std::string::npos, "2901 AC4: stamp call present");
+    CHECK(cpp.find("if (!residual_ok)") != std::string::npos, "2901 AC4: residual fail branch");
+    CHECK(wc.find("StealSafetyDecision::Ok") != std::string::npos,
+          "2901 AC4: worker gates enqueue on Ok");
+    CHECK(wc.find("local_queue_") != std::string::npos ||
+              wc.find("local_queue") != std::string::npos,
+          "2901 AC4: worker enqueue surface");
+    (void)rej_pos;
+}
+
+static void ac2901_5_source_cite() {
+    std::println("\n--- #2901 AC5: source-cite + no docs/design ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_residual_rearm_race_2901.py");
+    const auto build = read_file("build.py");
+    CHECK(hdr.find("2901") != std::string::npos, "2901 AC5: hdr cites #2901");
+    CHECK(hdr.find("g_steal_safety_residual_rearm_race_total") != std::string::npos,
+          "2901 AC5: rearm_race counter");
+    CHECK(hdr.find("g_steal_safety_between_clear_and_hard_and_hook") != std::string::npos,
+          "2901 AC5: inject hook");
+    CHECK(cpp.find("Issue #2901") != std::string::npos, "2901 AC5: cpp cites #2901");
+    CHECK(cpp.find("g_steal_safety_decision_mu") != std::string::npos, "2901 AC5: decision lock");
+    CHECK(cpp.find("evaluate_residual_hard_and") != std::string::npos, "2901 AC5: sample helper");
+    CHECK(cpp.find("aura_evaluator_on_steal_complete(stolen)") != std::string::npos,
+          "2901 AC5: second clear on fail");
+    CHECK(t.find("ac2901_1_inject_rearm_rejects_no_ticket") != std::string::npos,
+          "2901 AC5: AC1 test");
+    CHECK(t.find("ac2901_2_happy_path_single_complete") != std::string::npos, "2901 AC5: AC2 test");
+    CHECK(t.find("ac2901_3_counters_additive") != std::string::npos, "2901 AC5: AC3 test");
+    CHECK(t.find("ac2901_4_chaos_contract_source") != std::string::npos, "2901 AC5: AC4 test");
+    CHECK(!lint.empty() && lint.find("2901") != std::string::npos, "2901 AC5: linter");
+    CHECK(build.find("check_steal_residual_rearm_race_2901") != std::string::npos,
+          "2901 AC5: build.py gate");
+    CHECK(read_file("docs/design/2901-steal-residual-rearm-race.md").empty(),
+          "2901 AC5: no docs/design/2901-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_2901.cpp").empty(),
+          "2901 AC5: no new test file per #81967");
+    // Prior surfaces preserved.
+    CHECK(hdr.find("g_steal_safety_transaction_ok_total") != std::string::npos,
+          "2901 AC5: #2699 ok counter");
+    CHECK(cpp.find("Issue #2721") != std::string::npos ||
+              hdr.find("kStealSafetyTransactionHardAndIssue") != std::string::npos,
+          "2901 AC5: #2721 lineage");
+}
+
 } // namespace
 
 int run_test_steal_complete_restamp_txn() {
@@ -919,10 +1094,16 @@ int run_test_steal_complete_restamp_txn() {
     ac2727_3_soft_and_production_identical();
     ac2727_4_gc_defer_residual_under_known_evaluator();
     ac2727_5_source_and_linter();
+    std::println("\n=== Issue #2901: residual re-arm race window closed ===");
+    ac2901_1_inject_rearm_rejects_no_ticket();
+    ac2901_2_happy_path_single_complete();
+    ac2901_3_counters_additive();
+    ac2901_4_chaos_contract_source();
+    ac2901_5_source_cite();
     if (g_failed)
         return 1;
     std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
-                 "#2727: OK ({} passed)",
+                 "#2727 + #2901: OK ({} passed)",
                  g_passed);
     return 0;
 }

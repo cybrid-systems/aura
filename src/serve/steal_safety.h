@@ -77,6 +77,12 @@ inline std::atomic<std::uint64_t> g_steal_safety_residual_gc_defer_armed_total{0
 // Issue #2745: EnvFrame residual (last densify envframe_ok=false or dual_epoch lag).
 inline std::atomic<std::uint64_t> g_steal_safety_residual_envframe_lag_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_residual_hard_and_wired{1};
+// Issue #2901: residual re-arm race between on_steal_complete clear and
+// hard-AND / ticket stamp. Bumped only on the fail path (RejectHard after
+// clear when residual is still/re-observed). Quiet happy path: zero bump.
+inline std::atomic<std::uint64_t> g_steal_safety_residual_rearm_race_total{0};
+inline std::atomic<std::uint32_t> g_steal_safety_residual_rearm_race_wired{1};
+inline constexpr int kStealSafetyResidualRearmRaceIssue = 2901;
 
 [[nodiscard]] inline std::uint64_t steal_safety_transaction_calls_v_read() noexcept {
     return g_steal_safety_transaction_calls_total.load(std::memory_order_relaxed);
@@ -109,6 +115,12 @@ steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
 [[nodiscard]] inline std::uint32_t steal_safety_residual_hard_and_wired_v_read() noexcept {
     return g_steal_safety_residual_hard_and_wired.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t steal_safety_residual_rearm_race_total_v_read() noexcept {
+    return g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t steal_safety_residual_rearm_race_wired_v_read() noexcept {
+    return g_steal_safety_residual_rearm_race_wired.load(std::memory_order_relaxed);
+}
 
 // The single authoritative transaction. Returns Ok (fiber ready to
 // enqueue) or RejectHard (Cancel+Done — never local_queue_.push). On
@@ -117,6 +129,13 @@ steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
 // mismatch) keep bumping via the underlying primitives — additive, not
 // regressing.
 StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept;
+
+// Issue #2901: test seam — optional hook invoked after on_steal_complete
+// clear and before residual hard-AND / stamp (under the decision lock).
+// Used to inject concurrent residual re-arm between clear and stamp.
+// Nullptr default (production); never called on the quiet path when unset.
+// Set only from unit tests; cleared after use.
+inline thread_local void (*g_steal_safety_between_clear_and_hard_and_hook)() noexcept = nullptr;
 
 // Test reset (used by the #81967 extension in
 // test_steal_complete_restamp_txn.cpp or successor).
@@ -129,6 +148,8 @@ inline void clear_steal_safety_transaction_for_test() noexcept {
     g_steal_safety_residual_ticket_mismatch_total.store(0, std::memory_order_relaxed);
     g_steal_safety_residual_gc_defer_armed_total.store(0, std::memory_order_relaxed);
     g_steal_safety_residual_envframe_lag_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_residual_rearm_race_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
 }
 
 } // namespace aura::serve

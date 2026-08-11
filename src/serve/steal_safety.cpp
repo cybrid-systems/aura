@@ -35,6 +35,8 @@
 #include "core/densify_consistency_report.h" // #2745 last densify envframe/dual_epoch residual
 #include "core/gc_hooks.h" // aura::gc_hooks::force_clear_residual_defer_for_evaluator
 
+#include <mutex>
+
 // Forward declaration: aura_evaluator_on_steal_complete is declared
 // weak in worker.cpp (worker.cpp:41). We forward-declare strong here
 // so the link surface picks up either the strong (production) or weak
@@ -56,6 +58,72 @@ extern "C" int aura_evaluator_check_resume_layout_stamp(void* fiber_ptr) noexcep
 extern "C" void* aura_fiber_evaluator_id_for_steal_safety(void* fiber_ptr) noexcept;
 
 namespace aura::serve {
+
+namespace {
+
+    // Issue #2901: short exclusive recovery lock for residual hard-AND +
+    // ticket stamp. Held only for the decision window after the primary
+    // on_steal_complete clear — not across the whole transaction sample.
+    // Serializes concurrent re-arm observation vs stamp so a residual-armed
+    // fiber cannot reach Ok after RejectHard. Happy path: one complete +
+    // hard-AND + quiet re-sample under lock (no extra atomics when clean).
+    std::mutex g_steal_safety_decision_mu;
+
+    // Evaluate residual hard-AND arms (a–e). When bump_counters is true,
+    // increments the matching residual_* counters on each failing arm.
+    // When false (quiet re-sample), only returns the boolean — zero atomics
+    // on the clean path (AC2).
+    [[nodiscard]] bool evaluate_residual_hard_and(Fiber* stolen, const MutationSafetySnapshot& snap,
+                                                  bool bump_counters) noexcept {
+        bool residual_ok = true;
+        // (a) Per-fiber mutation boundary safety
+        if (!stolen->is_at_mutation_boundary_safe()) {
+            if (bump_counters)
+                g_steal_safety_residual_boundary_unsafe_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            residual_ok = false;
+        }
+        // (b) LayoutStamp match (Issue #2721)
+        if (aura_evaluator_check_resume_layout_stamp(stolen) != 0) {
+            if (bump_counters)
+                g_steal_safety_residual_layout_stamp_mismatch_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            residual_ok = false;
+        }
+        // (c) Resume-ticket consistency
+        if (stolen->has_resume_safety_ticket() && stolen->resume_safety_ticket() != snap.ticket) {
+            if (bump_counters)
+                g_steal_safety_residual_ticket_mismatch_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            residual_ok = false;
+        }
+        // (d) GC-defer arm state for the victim evaluator
+        // (#2721 hard-AND + #2727 per-Fiber durable evaluator_id identity)
+        {
+            void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
+            if (victim_eval_id != nullptr &&
+                aura::gc_hooks::gc_deferred_for_evaluator(victim_eval_id)) {
+                if (bump_counters)
+                    g_steal_safety_residual_gc_defer_armed_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                residual_ok = false;
+            }
+        }
+        // (e) Issue #2745: EnvFrame residual after densify — last densify left
+        // envframe_ok=false or dual_epoch lag. Quiet path (call_seq==0) skips.
+        if (aura::core::densify_consistency::last_densify_call_seq() > 0) {
+            if (!aura::core::densify_consistency::last_densify_envframe_ok() ||
+                !aura::core::densify_consistency::last_densify_dual_epoch_ok()) {
+                if (bump_counters)
+                    g_steal_safety_residual_envframe_lag_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                residual_ok = false;
+            }
+        }
+        return residual_ok;
+    }
+
+} // namespace
 
 StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
     if (!stolen) [[unlikely]] {
@@ -98,81 +166,59 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
     // fiber id — the earlier fiber_id() form was a type error).
     // Single-transaction contract: one call covers AC1 steps 3-6
     // (AC5 coverage linter asserts the call graph).
+    // Issue #2901: primary residual clear remains a single
+    // on_steal_complete on the happy path (AC2). Hard-AND + quiet
+    // re-sample + ticket stamp run under g_steal_safety_decision_mu so
+    // concurrent densify / Guard re-enter cannot re-arm residual between
+    // observation and stamp without being observed.
     aura_evaluator_on_steal_complete(stolen);
 
-    // AC1 #2721 — hard-AND residual safety checks INSIDE the transaction
-    // BEFORE the ticket stamp. #2699 stamped the ticket on the Ok path
-    // but residual predicates (per-fiber mutation boundary safety,
-    // LayoutStamp match, resume-ticket consistency, GC-defer arm state)
-    // were still consulted AFTER the transaction returned Ok in some
-    // resume / yield paths — opening a window for stale-ticket resume
-    // or concurrent MutationHold steal. #2721 hard-ANDs all 4 inside
-    // the transaction: if any fails → bump the matching counter +
-    // RejectHard WITHOUT stamping the ticket (no post-transaction escape
-    // hatch). Production fail-closed (soft / sandbox stays metric-only
-    // per #2699 contract).
-    bool residual_ok = true;
-    // (a) Per-fiber mutation boundary safety — re-check after the
-    // evaluator_on_steal_complete clear (AC1 step 3-6) to catch
-    // concurrent re-arm races between clear and stamp.
-    if (!stolen->is_at_mutation_boundary_safe()) {
-        g_steal_safety_residual_boundary_unsafe_total.fetch_add(1, std::memory_order_relaxed);
-        residual_ok = false;
-    }
-    // (b) LayoutStamp match — fresh-check via existing C-linkage shim
-    // (returns non-zero on mismatch). Mismatch here means the fiber's
-    // stored LayoutStamp drifted from the worker's current after the
-    // on_steal_complete dual-check — concurrent epoch bump + steal race.
-    if (aura_evaluator_check_resume_layout_stamp(stolen) != 0) {
-        g_steal_safety_residual_layout_stamp_mismatch_total.fetch_add(1, std::memory_order_relaxed);
-        residual_ok = false;
-    }
-    // (c) Resume-ticket consistency — if the victim already has a ticket
-    // stored from a prior steal that didn't complete (e.g., a different
-    // stealer's transaction that aborted but left a ticket), and the
-    // stored ticket differs from snap.ticket, reject. Closes the
-    // "ticket was set by steal-A, steal-B's transaction sees a stale
-    // ticket" window.
-    if (stolen->has_resume_safety_ticket() && stolen->resume_safety_ticket() != snap.ticket) {
-        g_steal_safety_residual_ticket_mismatch_total.fetch_add(1, std::memory_order_relaxed);
-        residual_ok = false;
-    }
-    // (d) GC-defer arm state for the VICTIM's evaluator (not the
-    // stealer's current thread-local). Uses a C-linkage getter to
-    // resolve the victim's evaluator_id (strong def in fiber.cpp; weak
-    // no-op stub in fiber_bridge.cpp returns nullptr for non-evaluator
-    // link units — GC defer check skipped in that case).
+    // AC1 #2721 + #2901 — residual hard-AND + stamp under exclusive
+    // decision lock. #2721 hard-ANDs residual predicates BEFORE ticket
+    // stamp. #2901 closes the re-arm window between clear and stamp:
+    //   - hard-AND under lock (with optional test inject hook)
+    //   - quiet re-sample under same lock (zero atomics when clean)
+    //   - on any residual fail: force second residual clear + rearm_race
+    //     counter + RejectHard WITHOUT stamping the ticket
     {
-        void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
-        if (victim_eval_id != nullptr &&
-            aura::gc_hooks::gc_deferred_for_evaluator(victim_eval_id)) {
-            g_steal_safety_residual_gc_defer_armed_total.fetch_add(1, std::memory_order_relaxed);
-            residual_ok = false;
-        }
-    }
-    // (e) Issue #2745: EnvFrame residual after densify — last densify left
-    // envframe_ok=false or dual_epoch lag. Quiet path (no densify yet,
-    // call_seq==0) skips. Counters always bump; RejectHard path matches
-    // arms (a–d) (production fail-closed / Soft metric via existing matrix).
-    if (aura::core::densify_consistency::last_densify_call_seq() > 0) {
-        if (!aura::core::densify_consistency::last_densify_envframe_ok() ||
-            !aura::core::densify_consistency::last_densify_dual_epoch_ok()) {
-            g_steal_safety_residual_envframe_lag_total.fetch_add(1, std::memory_order_relaxed);
-            residual_ok = false;
-        }
-    }
-    if (!residual_ok) {
-        // Reject WITHOUT stamping the ticket — no post-transaction
-        // escape hatch. Production fail-closed (soft / sandbox stays
-        // metric-only per #2699 contract; the counters above bump
-        // regardless so dashboards can attribute the miss).
-        g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
-        return StealSafetyDecision::RejectHard;
-    }
+        std::lock_guard<std::mutex> decision_lock(g_steal_safety_decision_mu);
 
-    // AC1 step 7 — stamp resume_safety_ticket only on Ok path
-    // (after the hard-AND passed).
-    stolen->set_resume_safety_ticket(snap.ticket);
+        // Test seam: inject residual re-arm between clear and hard-AND.
+        if (g_steal_safety_between_clear_and_hard_and_hook != nullptr) {
+            g_steal_safety_between_clear_and_hard_and_hook();
+        }
+
+        bool residual_ok = evaluate_residual_hard_and(stolen, snap, /*bump_counters=*/true);
+
+        // Quiet re-sample under the same lock — catches re-arm that
+        // landed after the first sample but before stamp. Clean path:
+        // no counter bumps (AC2 zero extra atomics).
+        if (residual_ok) {
+            if (!evaluate_residual_hard_and(stolen, snap, /*bump_counters=*/false)) {
+                // Re-arm race: attribute residual arms + race counter.
+                (void)evaluate_residual_hard_and(stolen, snap, /*bump_counters=*/true);
+                g_steal_safety_residual_rearm_race_total.fetch_add(1, std::memory_order_relaxed);
+                residual_ok = false;
+            }
+        } else {
+            // Residual observed after primary clear — treat as re-arm /
+            // incomplete clear window; force second clear below.
+            g_steal_safety_residual_rearm_race_total.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        if (!residual_ok) {
+            // Issue #2901: force second residual clear so a residual-armed
+            // fiber cannot leave residue for a later enqueue path after
+            // RejectHard. No ticket stamp (no post-transaction escape).
+            aura_evaluator_on_steal_complete(stolen);
+            g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+            return StealSafetyDecision::RejectHard;
+        }
+
+        // AC1 step 7 — stamp resume_safety_ticket only on Ok path
+        // (after hard-AND + quiet re-sample passed under the same lock).
+        stolen->set_resume_safety_ticket(snap.ticket);
+    }
 
     g_steal_safety_transaction_ok_total.fetch_add(1, std::memory_order_relaxed);
     return StealSafetyDecision::Ok;

@@ -8586,6 +8586,25 @@ def cmd_solver_budget_2900_coverage():
     return 0
 
 
+def cmd_steal_residual_rearm_race_2901_coverage():
+    """Issue #2901: residual re-arm race window in steal_safety_transaction.
+
+    Hard-AND + stamp under decision lock; re-arm inject → RejectHard;
+    second residual clear; rearm_race counter; no ticket on reject.
+    """
+    print(f"{B}=== steal residual re-arm race coverage (#2901) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_residual_rearm_race_2901.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal residual re-arm race (#2901) coverage contract rows failed")
+        return 1
+    ok("steal residual re-arm race (#2901) coverage clean")
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -10910,6 +10929,7 @@ def cmd_gate():
         or cmd_composite_required_type_2898_coverage()
         or cmd_linear_ir_fastpath_2899_coverage()
         or cmd_solver_budget_2900_coverage()
+        or cmd_steal_residual_rearm_race_2901_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()
