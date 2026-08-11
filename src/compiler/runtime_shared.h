@@ -42,6 +42,19 @@ extern std::vector<PairSlot*> g_owned_pair_slots_;
 // ── Flags ──
 extern bool g_use_arena;
 
+// ── Current-fiber-id hook (Issue #195) ──
+// SSOT definition lives in runtime_ssot.cpp (compiled into
+// libaura_tl_arena.so) so libaura_test_objects.so (which NEEDED-links
+// libaura_tl_arena.so) resolves aura_set_current_fiber_id_fn at load
+// time without depending on the JIT SOs. Same class of bug as
+// g_pair_slots: when the definition lives only in aura_jit_runtime.cpp
+// (JIT SOs), aura_test_objects has an undefined data symbol that
+// x86_64 glibc refuses to resolve from a later-loaded DSO at load
+// time (symbol lookup error, rc=127 under mold --as-needed).
+using aura_fiber_id_fn_t = std::uint64_t (*)();
+extern "C" void aura_set_current_fiber_id_fn(aura_fiber_id_fn_t fn);
+extern "C" aura_fiber_id_fn_t aura_get_current_fiber_id_fn();
+
 // ── Bridge-hook workspace write lock (Issue #1998 / B-024) ──
 // Acquiring before push to file-scope g_owned_pair_slots_ (and other
 // shared runtime state) prevents races with the static
