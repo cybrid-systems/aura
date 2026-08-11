@@ -629,6 +629,119 @@ static void ac2837_6_source_cite_and_surface() {
     CHECK(!design.good(), "2837 AC6: no docs/design/2837-*");
 }
 
+// ── Issue #2889: auto-register known intermediate + compiler external roots ──
+// Residual after #2749 / #2837: known intermediate buffers (workspace /
+// mutate-target / current flat+pool) and compiler roots (RootRemap stable +
+// closure capture slots) were never auto-registered into the Moving densify
+// window → counted as untracked → false sticky densify-off under production.
+// The densify entry walk (pre-compact, inside moving_compact_enabled())
+// auto-registers them via ArenaGroup::register_external_root_slot_for_densify_all.
+//
+//   AC1: walk registers known intermediate slots + RootRemap compiler roots
+//        before compact_all_moving_pinned (source-cite).
+//   AC2: additive counter g_moving_known_roots_auto_registered_total + reset.
+//   AC3: truly foreign pointers stay unregistered → fail-closed preserved.
+//   AC4: query:arena-moving-densify-health additive keys + schema-2889.
+//   AC5: linter wired in build.py + no docs/design/ per #1655.
+static void ac2889_1_auto_register_walk_source() {
+    std::println("\n--- #2889 AC1: densify entry auto-register walk ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto rrp = read_file("src/compiler/root_remap_pass.ixx");
+    CHECK(mb.find("Issue #2889") != std::string::npos, "AC1: boundary TU cites #2889");
+    CHECK(mb.find("register_external_root_slot_for_densify_all") != std::string::npos,
+          "AC1: auto-register walk calls all-arena slot registration");
+    CHECK(mb.find("root_remap_registered_slots_snapshot") != std::string::npos,
+          "AC1: walk feeds RootRemap compiler roots");
+    CHECK(mb.find("workspace_flat_") != std::string::npos ||
+              mb.find("mutate_target_flat_") != std::string::npos,
+          "AC1: known intermediate slots walked");
+    // Walk lives inside the moving_compact_enabled() block (AC3 zero-cost
+    // on Soft / no Moving — never reached).
+    const auto walk_pos = mb.find("register_external_root_slot_for_densify_all");
+    const auto moving_pos = mb.find("if (aura::ast::moving_compact_enabled())");
+    CHECK(walk_pos != std::string::npos && moving_pos != std::string::npos && walk_pos > moving_pos,
+          "AC1: walk inside moving_compact_enabled() block");
+    CHECK(arena.find("register_external_root_slot_for_densify_all") != std::string::npos,
+          "AC1: ArenaGroup all-arena helper present");
+    CHECK(rrp.find("root_remap_registered_slots_snapshot") != std::string::npos,
+          "AC1: RootRemap slot snapshot accessor present");
+}
+
+static void ac2889_2_counter_additive() {
+    std::println("\n--- #2889 AC2: additive known-roots counter ---");
+    const auto h = read_file("src/core/densify_consistency_report.h");
+    CHECK(h.find("g_moving_known_roots_auto_registered_total") != std::string::npos,
+          "AC2: known-roots auto-registered counter");
+    CHECK(h.find("kMovingKnownRootsAutoRegisterIssue = 2889") != std::string::npos,
+          "AC2: issue stamp 2889");
+    CHECK(h.find("moving_known_roots_auto_registered_total_v_read") != std::string::npos,
+          "AC2: read accessor");
+    CHECK(h.find("reset_moving_known_roots_auto_registered_for_test") != std::string::npos,
+          "AC2: reset helper");
+    // Existing #2749 split counters preserved (no regression).
+    CHECK(h.find("g_moving_auto_registered_remapped_total") != std::string::npos,
+          "AC2: #2749 auto-registered-remapped preserved");
+    CHECK(h.find("g_moving_still_untracked_incomplete_total") != std::string::npos,
+          "AC2: #2749 still-untracked preserved");
+}
+
+static void ac2889_3_fail_closed_preserved() {
+    std::println("\n--- #2889 AC3: fail-closed for unknown roots preserved ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Untracked fail-closed path untouched: unknown pointers still force
+    // incomplete_remap + pin_contract_held=false + sticky-off (AC2 #2889).
+    CHECK(arena.find("result.moving_incomplete_remap = true") != std::string::npos,
+          "AC3: incomplete_remap still set for untracked");
+    CHECK(arena.find("result.pin_contract_held = false") != std::string::npos,
+          "AC3: pin_contract_held=false still set");
+    CHECK(arena.find("g_moving_incomplete_remap_sticky_densify_off") != std::string::npos,
+          "AC3: sticky densify-off preserved");
+    CHECK(mb.find("densify_untracked_kept") != std::string::npos,
+          "AC3: Phase 5 still tracks untracked_kept");
+}
+
+static void ac2889_4_query_keys() {
+    std::println("\n--- #2889 AC4: additive query keys ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(obs.find("known-roots-auto-registered-total") != std::string::npos,
+          "AC4: known-roots-auto-registered-total key");
+    CHECK(obs.find("auto-registered-remapped-total") != std::string::npos,
+          "AC4: auto-registered-remapped-total key");
+    CHECK(obs.find("still-untracked-incomplete-total") != std::string::npos,
+          "AC4: still-untracked-incomplete-total key");
+    CHECK(obs.find("known-roots-auto-register-wired") != std::string::npos, "AC4: wired sentinel");
+    CHECK(obs.find("schema-2889") != std::string::npos, "AC4: schema-2889");
+    CHECK(obs.find("issue-2889") != std::string::npos, "AC4: issue-2889");
+    // Existing #2837 / #2619 / #2495 surfaces preserved (no regression).
+    CHECK(obs.find("schema-2837") != std::string::npos, "AC4: schema-2837 preserved");
+    CHECK(obs.find("schema-2619") != std::string::npos, "AC4: schema-2619 preserved");
+    CHECK(obs.find("schema-2495") != std::string::npos, "AC4: schema-2495 preserved");
+}
+
+static void ac2889_5_linter_and_no_design() {
+    std::println("\n--- #2889 AC5: linter + no docs/design/ ---");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_moving_known_roots_auto_register_2889.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac2889_1_auto_register_walk_source") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2889_2_counter_additive") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2889_3_fail_closed_preserved") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2889_4_query_keys") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2889_5_linter_and_no_design") != std::string::npos, "AC5: AC5 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2889") != std::string::npos,
+          "AC5: coverage linter present and cites #2889");
+    CHECK(build.find("check_moving_known_roots_auto_register_2889") != std::string::npos,
+          "AC5: build.py gate entry");
+    std::ifstream design("docs/design/2889-moving-known-roots-auto-register.md");
+    if (!design) {
+        design.open("../docs/design/2889-moving-known-roots-auto-register.md");
+    }
+    CHECK(!design.good(), "AC5: no docs/design/2889-* per #1655");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -673,6 +786,13 @@ int run_test_moving_densify_fail_closed() {
     ac2837_4_soft_no_sticky();
     ac2837_5_soft_no_move_zero_cost();
     ac2837_6_source_cite_and_surface();
+    // Issue #2889: auto-register known intermediate + compiler external roots
+    // into the Moving densify window (extends #2495 test file per #81967).
+    ac2889_1_auto_register_walk_source();
+    ac2889_2_counter_additive();
+    ac2889_3_fail_closed_preserved();
+    ac2889_4_query_keys();
+    ac2889_5_linter_and_no_design();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 
