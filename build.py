@@ -6120,6 +6120,32 @@ def cmd_pcv_tls_default_on_coverage():
     return 0
 
 
+def cmd_pcv_flatast_locked_exclusive_2906_coverage():
+    """Issue #2906: FlatAST locked mutate forces exclusive PCV via move-out (static)."""
+    print(f"{B}=== pcv flatast locked exclusive coverage (#2906) ==={N}")
+    script = COVERAGE_CHECKS / "check_pcv_flatast_locked_exclusive_2906.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pcv flatast locked exclusive (#2906) coverage contract rows failed")
+        return 1
+    ok("pcv flatast locked exclusive (#2906) coverage clean")
+    return 0
+
+
+def cmd_pcv_flatast_locked_exclusive_2906():
+    """Issue #2906: FlatAST locked mutate forces exclusive PCV via move-out.
+
+    Canonical pattern: move children_[id] out → cow_* (unique in-place) →
+    move back. SafePCVSpan / snapshot still force COW. query:pcv-hotpath-stats
+    exposes exclusive vs COW ratio (schema-2906). Extends #2140 suite (#81967).
+    """
+    print(f"{B}=== pcv flatast locked exclusive (#2906) ==={N}")
+    return cmd_pcv_flatast_locked_exclusive_2906_coverage()
+
+
 def cmd_batch_dirty_cascade_coverage():
     """Issue #2522: batch dirty cascade (mark_blocks_dirty + single bump).
 
@@ -11008,6 +11034,7 @@ def cmd_gate():
         or cmd_mutation_hold_live_coverage()
         or cmd_pcv_tls_scratch_coverage()
         or cmd_pcv_tls_default_on_coverage()
+        or cmd_pcv_flatast_locked_exclusive_2906_coverage()
         or cmd_batch_dirty_cascade_coverage()
         or cmd_batch_dirty_discipline_coverage()
         or cmd_moving_unified_success_2682_coverage()
@@ -12045,6 +12072,8 @@ def main():
         "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
         "moving-sticky-densify-off-2905": cmd_moving_sticky_densify_off_2905,
         "moving-sticky-densify-off-2905-coverage": cmd_moving_sticky_densify_off_2905_coverage,
+        "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,
+        "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,
