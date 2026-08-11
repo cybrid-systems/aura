@@ -8352,6 +8352,25 @@ def cmd_occurrence_goal_persist_rehydrate_coverage():
     return 0
 
 
+def cmd_occurrence_persist_production_default_2896_coverage():
+    """Issue #2896: production-default outermost success persist + fence face.
+
+    Production/Full enable persist without env; Soft zero cost; fence miss
+    latches #2704 face; schema-2896 fidelity keys.
+    """
+    print(f"{B}=== OccurrenceGoal production-default persist coverage (#2896) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_persist_production_default_2896.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("OccurrenceGoal production-default persist (#2896) coverage contract rows failed")
+        return 1
+    ok("OccurrenceGoal production-default persist (#2896) coverage clean")
+    return 0
+
+
 def cmd_occurrence_goal_vacuous_solve_prevent_coverage():
     """Issue #2647: live OccurrenceGoal + empty dirty must not vacuous-SOLVED.
 
@@ -10796,6 +10815,7 @@ def cmd_gate():
         or cmd_pereval_reemit_region_independence_coverage()
         or cmd_instance_constraint_depth_cap_coverage()
         or cmd_occurrence_goal_persist_rehydrate_coverage()
+        or cmd_occurrence_persist_production_default_2896_coverage()
         or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
         or cmd_coercion_evidence_loss_slo_coverage()
         or cmd_fiber_eval_depth_isolation_coverage()

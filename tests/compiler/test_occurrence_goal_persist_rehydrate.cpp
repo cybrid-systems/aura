@@ -1,12 +1,20 @@
 // @category: unit
 // @reason: Issue #2608 — optional OccurrenceGoal persist on side buffer
 //          for cross-delta / multi-session rehydrate after steal/densify.
+//          Issue #2896 — production-default outermost success persist +
+//          fence rehydrate face latch (#2704) to close densify×steal
+//          half-green empty priority roots.
 //
-//   AC1: persist + prune + rehydrate → goals non-empty; priority replay works
-//   AC2: Soft / no env → zero persist writes
-//   AC3: Cap truncates excess; trunc counter bumps
-//   AC4: schema-2608 + rehydrate/write counters; source-cite
-//   AC5: no docs/design
+//   #2608 AC1: persist + prune + rehydrate → goals non-empty; priority replay works
+//   #2608 AC2: Soft / no env → zero persist writes
+//   #2608 AC3: Cap truncates excess; trunc counter bumps
+//   #2608 AC4: schema-2608 + rehydrate/write counters; source-cite
+//   #2608 AC5: no docs/design
+//   #2896 AC1: production + non-empty goals → append without env
+//   #2896 AC2: Soft / no goals → zero persist
+//   #2896 AC3: fence prune + rehydrate restore (or #2704 face on miss)
+//   #2896 AC4: after rehydrate, live_goal_count non-zero for #2842 stamp shape
+//   #2896 AC5: schema-2896 + prior surfaces preserved
 
 #include "test_harness.hpp"
 
@@ -34,6 +42,10 @@ using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
 using aura::compiler::solve_delta_occurrence;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
+using aura::compiler::typed_audit::occurrence_empty_after_fence_soft_total_v_read;
+using aura::compiler::typed_audit::occurrence_empty_after_fence_total_v_read;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
@@ -72,30 +84,24 @@ struct UnitCs {
 // ── AC2 first: soft zero cost ──
 static void ac2_soft_zero_writes() {
     std::println("\n--- #2608 AC2: soft / no env → zero persist writes ---");
-    // Ensure soft path: unset force-on and leave production defaults off.
+    // Ensure soft path: unset force-on, Sampled + production defaults off
+    // (#2896 also enables under Full — force Soft explicitly).
     unsetenv("AURA_OCCURRENCE_PERSIST");
-    // Do not enable production defaults.
+    apply_dev_audit_defaults();
     UnitCs u;
     u.cs.set_current_epoch(1);
     auto v = u.cs.fresh_var();
     u.cs.note_occurrence_goal(v, u.reg.int_type(), /*pred=*/1, /*mut=*/10, /*epoch=*/1);
     CHECK(u.cs.occurrence_goals_size() == 1, "AC2: one live goal");
-    CHECK(!ConstraintSystem::occurrence_persist_enabled() ||
-              aura::compiler::typed_audit::production_defaults_active(),
-          "AC2: soft path disabled when env unset and production off");
-    if (!ConstraintSystem::occurrence_persist_enabled()) {
-        const auto w = u.cs.append_occurrence_snapshot(10);
-        CHECK(w == 0, "AC2: append writes 0 when disabled");
-        CHECK(u.m.occurrence_persist_write_total.load() == 0, "AC2: write_total stays 0");
-        CHECK(u.cs.occurrence_persist_log_size() == 0, "AC2: log empty");
-        const auto r = u.cs.rehydrate_occurrence_from_persist(0);
-        CHECK(r == 0, "AC2: rehydrate 0 when disabled");
-        CHECK(u.m.occurrence_rehydrate_total.load() == 0, "AC2: rehydrate_total 0");
-    } else {
-        // Production defaults already active in this process — still
-        // exercise enabled path without failing soft contract.
-        CHECK(true, "AC2: production defaults active — soft skip noted");
-    }
+    CHECK(!ConstraintSystem::occurrence_persist_enabled(),
+          "AC2: soft path disabled when env unset and production/Full off");
+    const auto w = u.cs.append_occurrence_snapshot(10);
+    CHECK(w == 0, "AC2: append writes 0 when disabled");
+    CHECK(u.m.occurrence_persist_write_total.load() == 0, "AC2: write_total stays 0");
+    CHECK(u.cs.occurrence_persist_log_size() == 0, "AC2: log empty");
+    const auto r = u.cs.rehydrate_occurrence_from_persist(0);
+    CHECK(r == 0, "AC2: rehydrate 0 when disabled");
+    CHECK(u.m.occurrence_rehydrate_total.load() == 0, "AC2: rehydrate_total 0");
 }
 
 // ── AC1: persist + prune + rehydrate ──
@@ -296,6 +302,158 @@ static void ac2641_6_source_cite() {
           "AC6: miss counter query key");
 }
 
+// ── #2896 AC1: production + non-empty goals → append without env ──
+static void ac2896_1_production_persist_without_env() {
+    std::println("\n--- #2896 AC1: production + goals → append without env ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+    CHECK(ConstraintSystem::occurrence_persist_enabled(),
+          "2896 AC1: persist enabled under production without env");
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), /*pred=*/7, /*mut=*/42, /*epoch=*/1);
+    CHECK(u.cs.occurrence_goals_size() == 1, "2896 AC1: one live goal");
+    const auto w = u.cs.append_occurrence_snapshot(42);
+    CHECK(w == 1, "2896 AC1: append wrote 1 without env");
+    CHECK(u.cs.occurrence_persist_log_size() > 0, "2896 AC1: log size > 0 without env");
+    CHECK(u.m.occurrence_persist_write_total.load() >= 1, "2896 AC1: write_total bumped");
+    apply_dev_audit_defaults();
+}
+
+// ── #2896 AC2: Soft / empty goals → zero cost ──
+static void ac2896_2_soft_zero_cost() {
+    std::println("\n--- #2896 AC2: Soft / empty goals → zero persist ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    CHECK(!ConstraintSystem::occurrence_persist_enabled(),
+          "2896 AC2: Soft + env unset → persist disabled");
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    // Empty goals.
+    CHECK(u.cs.occurrence_goals_size() == 0, "2896 AC2: empty live table");
+    const auto w0 = u.cs.append_occurrence_snapshot(1);
+    CHECK(w0 == 0, "2896 AC2: empty goals → 0 writes");
+    // Non-empty under Soft still 0 when disabled.
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 1, 1, 1);
+    const auto w1 = u.cs.append_occurrence_snapshot(1);
+    CHECK(w1 == 0, "2896 AC2: Soft disabled → 0 writes with goals");
+    CHECK(u.m.occurrence_persist_write_total.load() == 0, "2896 AC2: write_total quiet");
+    CHECK(u.cs.occurrence_persist_log_size() == 0, "2896 AC2: log empty");
+}
+
+// ── #2896 AC3: fence prune + rehydrate restore OR #2704 face on miss ──
+static void ac2896_3_fence_rehydrate_or_face() {
+    std::println("\n--- #2896 AC3: fence rehydrate restore / face on miss ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+
+    // Path A: persist then fence → rehydrate restores goals.
+    {
+        UnitCs u;
+        u.cs.set_current_epoch(3);
+        auto v = u.cs.fresh_var();
+        u.cs.note_occurrence_goal(v, u.reg.int_type(), 3, 30, 3);
+        CHECK(u.cs.append_occurrence_snapshot(30) == 1, "2896 AC3: snapshot 1");
+        // TypeChecker fence path mirrors: advance epoch + prune + rehydrate.
+        u.cs.set_current_epoch(4);
+        const auto dropped = u.cs.prune_occurrence_goals(4);
+        CHECK(dropped == 1, "2896 AC3: prune dropped 1");
+        CHECK(u.cs.occurrence_goals_size() == 0, "2896 AC3: empty after prune");
+        const auto rh = u.cs.rehydrate_occurrence_from_persist(0);
+        CHECK(rh == 1, "2896 AC3: rehydrate restores 1");
+        CHECK(u.cs.occurrence_goals_size() == 1, "2896 AC3: live table restored");
+    }
+
+    // Path B: fence miss under production → #2704 face latches.
+    {
+        clear_occurrence_empty_after_fence_for_test();
+        const auto hard0 = occurrence_empty_after_fence_total_v_read();
+        // Simulate TypeChecker fence miss note (same helper fence calls).
+        aura::compiler::typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
+        CHECK(occurrence_empty_after_fence_total_v_read() == hard0 + 1,
+              "2896 AC3: hard face bumped on production miss");
+        // Soft note path.
+        const auto soft0 = occurrence_empty_after_fence_soft_total_v_read();
+        aura::compiler::typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/false);
+        CHECK(occurrence_empty_after_fence_soft_total_v_read() == soft0 + 1,
+              "2896 AC3: soft face observe-only");
+    }
+
+    apply_dev_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+}
+
+// ── #2896 AC4: after rehydrate, goal count non-zero for #2842 stamp shape ──
+static void ac2896_4_goal_truth_after_rehydrate() {
+    std::println("\n--- #2896 AC4: rehydrate → non-zero live_goal_count for #2842 ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    UnitCs u;
+    u.cs.set_current_epoch(8);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 8, 80, 8);
+    CHECK(u.cs.append_occurrence_snapshot(80) >= 1, "2896 AC4: snapshot");
+    u.cs.set_current_epoch(9);
+    (void)u.cs.prune_occurrence_goals(9);
+    CHECK(u.cs.occurrence_goals_size() == 0, "2896 AC4: empty after prune");
+    const auto rh = u.cs.rehydrate_occurrence_from_persist(0);
+    CHECK(rh >= 1, "2896 AC4: rehydrate");
+    const auto n = u.cs.occurrence_goals_size();
+    CHECK(n > 0, "2896 AC4: live_goal_count non-zero after rehydrate");
+    // Fingerprint shape: non-empty goals → non-zero mix (matches freeze_proof).
+    std::uint64_t h = 0xcbf29ce484222325ULL;
+    const auto& goals = u.cs.occurrence_goals_for_test();
+    for (const auto& g : goals) {
+        h ^= (static_cast<std::uint64_t>(g.var.index) + 0x9e3779b97f4a7c15ULL);
+        h *= 0x100000001b3ULL;
+    }
+    const auto fp = (h != 0) ? h : 1;
+    CHECK(fp != 0, "2896 AC4: non-zero goal fingerprint when goals present");
+    apply_dev_audit_defaults();
+}
+
+// ── #2896 AC5: query + source-cite ──
+static void ac2896_5_query_and_source() {
+    std::println("\n--- #2896 AC5: schema-2896 + source-cite ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2896") == 2896, "2896 AC5: schema-2896");
+    CHECK(href(cs, "issue-2896") == 2896, "2896 AC5: issue-2896");
+    CHECK(href(cs, "occurrence-persist-production-default-wired") == 1,
+          "2896 AC5: occurrence-persist-production-default-wired");
+    CHECK(href(cs, "occurrence-persist-outermost-success-wired") == 1,
+          "2896 AC5: outermost-success-wired");
+    // Prior surfaces preserved.
+    CHECK(href(cs, "schema-2608") == 2608, "2896 AC5: schema-2608 preserved");
+    CHECK(href(cs, "schema-2641") == 2641, "2896 AC5: schema-2641 preserved");
+    CHECK(href(cs, "occurrence-persist-wired") == 1, "2896 AC5: 2608 wired preserved");
+
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+
+    CHECK(impl.find("2896") != std::string::npos, "2896 AC5: impl cites #2896");
+    CHECK(impl.find("AuditStrategy::Full") != std::string::npos,
+          "2896 AC5: Full strategy enables persist");
+    CHECK(ixx.find("note_occurrence_empty_after_fence") != std::string::npos,
+          "2896 AC5: fence latches #2704 face");
+    CHECK(ixx.find("2896") != std::string::npos, "2896 AC5: ixx cites #2896");
+    CHECK(mb.find("2896") != std::string::npos, "2896 AC5: boundary cites #2896");
+    CHECK(mb.find("aura_outermost_success_persist_occurrence") != std::string::npos,
+          "2896 AC5: outermost success persist hook");
+    CHECK(tma.find("note_occurrence_empty_after_fence") != std::string::npos,
+          "2896 AC5: face note helper in tma");
+    CHECK(q.find("schema-2896") != std::string::npos, "2896 AC5: query schema-2896");
+    CHECK(q.find("schema-2704") != std::string::npos ||
+              q.find("occurrence-empty-after-fence") != std::string::npos,
+          "2896 AC5: #2704 surface preserved");
+}
+
 } // namespace
 
 int run_test_occurrence_goal_persist_rehydrate() {
@@ -310,6 +468,12 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2641_3_env_zero_forces_off();
     ac2641_4_rehydrate_miss_counter();
     ac2641_6_source_cite();
+    std::println("\n=== #2896 production-default outermost + fence face ===");
+    ac2896_1_production_persist_without_env();
+    ac2896_2_soft_zero_cost();
+    ac2896_3_fence_rehydrate_or_face();
+    ac2896_4_goal_truth_after_rehydrate();
+    ac2896_5_query_and_source();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

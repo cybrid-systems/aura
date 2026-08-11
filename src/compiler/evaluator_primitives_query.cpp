@@ -6743,6 +6743,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("occurrence-persist-prod-default-wired", 1);
                 insert_kv("schema-2641", 2641);
                 insert_kv("issue-2641", 2641);
+                // Issue #2896: production-default outermost success persist
+                // + fence rehydrate face latch (#2704 wired). Additive;
+                // #2608/#2641/#2704/#2842 surfaces preserved.
+                insert_kv("occurrence-persist-production-default-wired", 1);
+                insert_kv("occurrence-persist-outermost-success-wired", 1);
+                insert_kv("schema-2896", 2896);
+                insert_kv("issue-2896", 2896);
             }
             // Issue #2307: sole-authority sentinel.
             // solve_delta_occurrence now seeds occurrence
