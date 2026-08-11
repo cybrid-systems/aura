@@ -10978,6 +10978,20 @@ public:
             &metrics_.cascade_skip_subtree_total) {
             aura::compiler::dirty::set_cascade_skip_subtree_metrics(nullptr);
         }
+        // Issue #1368: unwire the process-wide AOT metrics pointer if it
+        // still points at our metrics_ (wired at ctor via
+        // evaluator_.set_compiler_metrics(&metrics_) and again in
+        // register_jit_primitives). A stack-resident CompilerService that
+        // goes out of scope before a later Evaluator teardown must not
+        // leave g_aot_metrics dangling — aura_cleanup_aot_state →
+        // aura_aot_invalidate_all_stale_slots_for_eval bumps counters via
+        // aot_metrics() (ASan: stack-use-after-scope, test_ir.cpp 'cs'
+        // scope). Only clear our own wire — a sibling CompilerService
+        // that owns the live pointer is preserved (same pattern as
+        // aura_clear_jit_batch_deopt_target).
+        if (aura_get_aot_metrics() == static_cast<void*>(&metrics_)) {
+            aura_set_aot_metrics(nullptr);
+        }
     }
 
     // Issue #411 fu1 follow-up #2: per-DefUseIndex caller
