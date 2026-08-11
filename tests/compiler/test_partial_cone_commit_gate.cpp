@@ -32,11 +32,14 @@ static void ac2672_source_and_linter();
 using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test;
+using aura::compiler::typed_audit::clear_cone_truncate_force_closure_for_test;
 using aura::compiler::typed_audit::clear_partial_cone_truncate_for_test;
 using aura::compiler::typed_audit::commit_readiness;
 using aura::compiler::typed_audit::CommitReadinessInput;
 using aura::compiler::typed_audit::g_partial_cone_commit_observe_total;
 using aura::compiler::typed_audit::g_partial_cone_commit_reject_total;
+using aura::compiler::typed_audit::kConeTruncateForceClosureIssue;
 using aura::compiler::typed_audit::kPartialConeCommitGateIssue;
 using aura::compiler::typed_audit::last_partial_cone_dropped;
 using aura::compiler::typed_audit::last_partial_cone_truncated;
@@ -605,6 +608,170 @@ static void ac2750_4_source_and_no_design() {
           "AC4: no docs/design/2750-* per #1655");
 }
 
+// ── Issue #2909: force recover/reject on cone truncate + outside drop ──
+static void ac2909_1_production_force_recover_or_reject() {
+    std::println("\n--- #2909 AC1: production + truncate + outside drop → recover or reject ---");
+    CHECK(kConeTruncateForceClosureIssue == 2909, "AC1: issue stamp");
+    reset_2621();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    apply_production_audit_defaults();
+
+    // Hermetic: truncate + outside face + no recover hook → hard reject.
+    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    publish_partial_cone_truncate(/*truncated=*/true, /*dropped=*/4);
+    typed_audit::publish_cone_outside_goal_drop(2);
+    CommitReadinessInput in;
+    in.partial_cone_truncated = true;
+    in.truncate_hard = true;
+    in.occurrence_face_hard = true;
+    in.cone_outside_goal_drop_face = true;
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    auto r = commit_readiness(in);
+    CHECK(!r.would_allow_commit, "AC1: no silent green without recover");
+    CHECK(r.force_reason == "cone_outside_goal_drop" || r.force_reason == "cone_truncate",
+          "AC1: force_reason cone_outside_goal_drop or cone_truncate");
+    CHECK(typed_audit::cone_truncate_force_closure_attempt_total_v_read() >= 1,
+          "AC1: force-closure attempt counted");
+    CHECK(typed_audit::cone_truncate_force_closure_reject_total_v_read() >= 1,
+          "AC1: reject path counted when recover null");
+
+    // With recover hook that succeeds → allow + force_closure total.
+    clear_cone_outside_goal_drop_for_test();
+    clear_partial_cone_truncate_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    publish_partial_cone_truncate(true, 3);
+    typed_audit::publish_cone_outside_goal_drop(1);
+    typed_audit::install_occurrence_full_solve_recover([](void*) noexcept -> bool { return true; },
+                                                       nullptr);
+    in.partial_cone_truncated = true;
+    in.cone_outside_goal_drop_face = true;
+    r = commit_readiness(in);
+    CHECK(r.would_allow_commit, "AC1: recover success allows commit");
+    CHECK(r.force_reason == "ok", "AC1: recovered → ok");
+    CHECK(typed_audit::cone_truncate_force_closure_total_v_read() >= 1,
+          "AC1: force-closure success total");
+    CHECK(!last_partial_cone_truncated(), "AC1: truncate stamp cleared after recover");
+    CHECK(typed_audit::cone_outside_goal_drop_total_v_read() == 0,
+          "AC1: outside drop face consumed after recover");
+    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    reset_2621();
+}
+
+static void ac2909_2_soft_observe_only() {
+    std::println("\n--- #2909 AC2: Soft + truncate + outside → observe only ---");
+    reset_2621();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    apply_dev_audit_defaults(); // Soft
+    typed_audit::publish_cone_outside_goal_drop(2);
+    CHECK(typed_audit::cone_outside_goal_drop_soft_total_v_read() >= 2,
+          "AC2: soft counter advances");
+    CHECK(typed_audit::cone_outside_goal_drop_total_v_read() == 0,
+          "AC2: production face total stays flat under Soft");
+    CommitReadinessInput in;
+    in.partial_cone_truncated = true;
+    in.truncate_hard = false;
+    in.occurrence_face_hard = false;
+    in.cone_outside_goal_drop_face = false; // Soft does not arm face hard
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    const auto att0 = typed_audit::cone_truncate_force_closure_attempt_total_v_read();
+    auto r = commit_readiness(in);
+    CHECK(r.would_allow_commit, "AC2: Soft allows commit");
+    CHECK(r.force_reason == "cone_truncate", "AC2: Soft observe cone_truncate");
+    CHECK(typed_audit::cone_truncate_force_closure_attempt_total_v_read() == att0,
+          "AC2: no force-closure attempt under Soft");
+    reset_2621();
+}
+
+static void ac2909_3_quiet_zero_cost() {
+    std::println("\n--- #2909 AC3: quiet / no-truncate → zero cost ---");
+    reset_2621();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    apply_production_audit_defaults();
+    const auto att0 = typed_audit::cone_truncate_force_closure_attempt_total_v_read();
+    const auto drop0 = typed_audit::cone_outside_goal_drop_total_v_read();
+    CommitReadinessInput in;
+    in.partial_cone_truncated = false;
+    in.truncate_hard = true;
+    in.occurrence_face_hard = true;
+    in.cone_outside_goal_drop_face = false;
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    auto r = commit_readiness(in);
+    CHECK(r.would_allow_commit, "AC3: quiet allow");
+    CHECK(r.force_reason == "ok", "AC3: quiet ok");
+    CHECK(typed_audit::cone_truncate_force_closure_attempt_total_v_read() == att0,
+          "AC3: no force-closure attempt when no truncate");
+    CHECK(typed_audit::cone_outside_goal_drop_total_v_read() == drop0,
+          "AC3: no outside drop counter noise");
+    // publish with n=0 is no-op
+    typed_audit::publish_cone_outside_goal_drop(0);
+    CHECK(typed_audit::cone_outside_goal_drop_total_v_read() == drop0, "AC3: n=0 no-op");
+    reset_2621();
+}
+
+static void ac2909_4_schema_and_publish_wire() {
+    std::println("\n--- #2909 AC4: schema + publish wire + lineage preserved ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(tma.find("publish_cone_outside_goal_drop") != std::string::npos, "AC4: publish helper");
+    CHECK(tma.find("g_cone_truncate_force_closure_total") != std::string::npos,
+          "AC4: force-closure total");
+    CHECK(tma.find("kConeTruncateForceClosureIssue = 2909") != std::string::npos ||
+              tma.find("kConeTruncateForceClosureIssue") != std::string::npos,
+          "AC4: issue stamp");
+    CHECK(impl.find("publish_cone_outside_goal_drop") != std::string::npos,
+          "AC4: infer_flat_partial publishes outside drop");
+    CHECK(q.find("cone-truncate-force-closure-total") != std::string::npos,
+          "AC4: force-closure query key");
+    CHECK(q.find("schema-2909") != std::string::npos, "AC4: schema-2909");
+    // Lineage preserved
+    CHECK(q.find("schema-2703") != std::string::npos, "AC4: schema-2703 preserved");
+    CHECK(q.find("schema-2750") != std::string::npos, "AC4: schema-2750 preserved");
+    CHECK(q.find("schema-2621") != std::string::npos, "AC4: schema-2621 preserved");
+    CHECK(tma.find("g_cone_outside_goal_drop_total") != std::string::npos,
+          "AC4: #2703 face preserved");
+}
+
+static void ac2909_5_source_cite() {
+    std::println("\n--- #2909 AC5: source-cite extend suite ---");
+    const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
+    const auto tc = read_file("src/compiler/type_checker.ixx");
+    CHECK(t.find("ac2909_1_production_force_recover_or_reject") != std::string::npos,
+          "AC5: AC1 present");
+    CHECK(t.find("ac2909_2_soft_observe_only") != std::string::npos, "AC5: AC2 present");
+    CHECK(t.find("ac2909_3_quiet_zero_cost") != std::string::npos, "AC5: AC3 present");
+    CHECK(tc.find("#2909") != std::string::npos, "AC5: TypeChecker cites #2909");
+    CHECK(tc.find("try_goal_priority_reverify_before_full") != std::string::npos,
+          "AC5: recover reuses goal-priority reverify");
+}
+
+static void ac2909_6_linter_and_no_design() {
+    std::println("\n--- #2909 AC6: decision table + linter + no design doc ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_cone_truncate_force_closure_2909.py");
+    CHECK(tma.find("Soft vs production decision table") != std::string::npos ||
+              tma.find("Soft + truncate + outside drop") != std::string::npos,
+          "AC6: decision table in code comments");
+    CHECK(build.find("check_cone_truncate_force_closure_2909") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2909") != std::string::npos, "AC6: linter present");
+    CHECK(read_file("docs/design/2909-cone-force-closure.md").empty(),
+          "AC6: no docs/design/2909-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2909.cpp").empty(),
+          "AC6: no new test file per #81967");
+}
+
 } // namespace
 
 // File-scope forward decls for #2694 helpers defined after run_test (pre-existing
@@ -664,8 +831,17 @@ int run_test_partial_cone_commit_gate() {
     ac2750_2_typechecker_wires_recover();
     ac2750_3_query_keys();
     ac2750_4_source_and_no_design();
-    std::println("\n=== #2621 + #2646 + #2703 + #2704 + #2716: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // Issue #2909: force recover/reject on cone truncate + outside-If drop.
+    std::println("\n=== Issue #2909: cone truncate force-closure ===");
+    ac2909_1_production_force_recover_or_reject();
+    ac2909_2_soft_observe_only();
+    ac2909_3_quiet_zero_cost();
+    ac2909_4_schema_and_publish_wire();
+    ac2909_5_source_cite();
+    ac2909_6_linter_and_no_design();
+    std::println(
+        "\n=== #2621 + #2646 + #2703 + #2704 + #2716 + #2750 + #2909: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

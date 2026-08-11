@@ -5219,6 +5219,32 @@ def cmd_deferred_reemit_steal_sticky_2715_coverage():
     return 0
 
 
+def cmd_cone_truncate_force_closure_2909_coverage():
+    """Issue #2909: force recover/reject on cone truncate + outside drop (static)."""
+    print(f"{B}=== cone truncate force-closure coverage (#2909) ==={N}")
+    script = COVERAGE_CHECKS / "check_cone_truncate_force_closure_2909.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cone truncate force-closure (#2909) coverage contract rows failed")
+        return 1
+    ok("cone truncate force-closure (#2909) coverage clean")
+    return 0
+
+
+def cmd_cone_truncate_force_closure_2909():
+    """Issue #2909: production force dependency closure on cone truncate + outside drop.
+
+    Soft: observe only. Quiet no-truncate: zero cost. production/Full +
+    truncate + outside-If goal drop: full-solve recover (#2750 hook) or
+    hard reject (cone_outside_goal_drop). Extends #2621 suite (#81967).
+    """
+    print(f"{B}=== cone truncate force-closure (#2909) ==={N}")
+    return cmd_cone_truncate_force_closure_2909_coverage()
+
+
 def cmd_occurrence_hard_face_commit_2716_coverage():
     """Issue #2716: wire occurrence hard-faces into active commit path.
 
@@ -11012,6 +11038,7 @@ def cmd_gate():
         or cmd_captured_anon_sync_remount_prod_default_2714_coverage()
         or cmd_deferred_reemit_steal_sticky_2715_coverage()
         or cmd_occurrence_hard_face_commit_2716_coverage()
+        or cmd_cone_truncate_force_closure_2909_coverage()
         or cmd_type_linear_commit_proof_stamp_2717_coverage()
         or cmd_type_linear_commit_proof_counts_2758_coverage()
         or cmd_type_linear_commit_proof_goal_truth_2842_coverage()
@@ -12161,6 +12188,8 @@ def main():
         "subsecond-clock": cmd_subsecond_clock_coverage,
         "fiber-spawn-cli": cmd_fiber_spawn_cli_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
+        "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
+        "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
