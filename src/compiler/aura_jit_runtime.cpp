@@ -229,7 +229,8 @@ void tl_arena_pop(TLarena* arena) {
 }
 
 // ── Arena flag ──
-bool g_use_arena = true;
+// Definition: runtime_ssot.cpp (libaura_tl_arena.so) — do not re-define here
+// (x86_64 load-time resolve of data symbols from later DSOs fails).
 
 // ── Issue #157 Phase 0: bypass telemetry ──
 // Counts every entry into a runtime bridge that currently bypasses
@@ -734,43 +735,9 @@ extern "C" void aura_yield_mutation_boundary() {
 
 // ── Forward declarations ──
 
-// ── Shared pair storage (must be outside extern "C" for C++ type) ──
-std::vector<PairSlot*> g_pair_slots;
-
-// Heap-owned pair slots (subset of g_pair_slots allocated via malloc).
-// Tracked separately so process exit / session reset can free them
-// without touching the arena-allocated ones (which TL arena owns).
-// Pre-#131: these leaked silently. The static destructor below runs
-// at process exit and frees every entry, satisfying ASAN.
-std::vector<PairSlot*> g_owned_pair_slots_;
-
-// Issue #1998 / B-024: extern "C" accessor for the storage size. The
-// test (tests/test_issue_1998.cpp) uses `import std;` which makes
-// std::vector<PairSlot*> available, but a forward-declared
-// `extern std::vector<PairSlot*> g_owned_pair_slots_;` in the test
-// shadows the std::vector template with an incomplete-type binding --
-// the compiler then refuses to instantiate the .size() member, and
-// the chain reaction makes size_t / snapshot / now undeclared. The
-// accessor avoids the issue: the test calls a free function (extern "C"
-// for stable symbol name) and never names std::vector directly.
-extern "C" size_t aura_g_owned_pair_slots_size() {
-    return g_owned_pair_slots_.size();
-}
-
-namespace {
-struct PairSlotCleanup {
-    ~PairSlotCleanup() {
-        for (auto* p : g_owned_pair_slots_) {
-            std::free(p);
-        }
-        g_owned_pair_slots_.clear();
-    }
-};
-[[maybe_unused]] PairSlotCleanup g_pair_slot_cleanup;
-} // namespace
-
-// ── FlatHashTable index space (Phase 4c) ──
-std::vector<FlatHashTable*> g_hash_tables;
+// Shared pair / hash / arena-flag storage: runtime_ssot.cpp (libaura_tl_arena.so).
+// Declarations in runtime_shared.h. Do not re-define here — dual defs break
+// x86_64 load-time resolve for libaura_test_objects.so (CI issues suite).
 
 // ── FlatHashTable open addressing (Issue #136) ──
 //
