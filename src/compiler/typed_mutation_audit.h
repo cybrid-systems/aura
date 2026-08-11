@@ -200,6 +200,14 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> delta_timeout_full_solve_total{0};
     std::atomic<std::uint64_t> delta_timeout_reject_total{0};
     std::atomic<std::uint32_t> delta_timeout_hard_gate_wired{1};
+    // Issue #2900: SolverBudget surface (Agent-controlled delta TIMEOUT policy).
+    // timeout_export: Soft + allow_timeout_commit kept TIMEOUT (never SOLVED).
+    // full_escalate: production still escalated under non-default budget.
+    // instance_repair_prefer: prefer_instance_repair_before_full noted.
+    std::atomic<std::uint64_t> solver_budget_timeout_export_total{0};
+    std::atomic<std::uint64_t> solver_budget_full_escalate_total{0};
+    std::atomic<std::uint64_t> solver_budget_instance_repair_prefer_total{0};
+    std::atomic<std::uint32_t> solver_budget_wired{1};
     // Issue #2642: Phase 5 densify post-compact linear-root scan counters.
     // linear_densify_scan_mismatch_observe_total: Soft path bumps this
     //     counter (no force-rollback); Agents can watch the scan fire.

@@ -33,7 +33,10 @@ using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::Constraint;
 using aura::compiler::ConstraintSystem;
+using aura::compiler::kSolverBudgetDefault;
+using aura::compiler::kSolverBudgetIssue;
 using aura::compiler::solve_delta_occurrence;
+using aura::compiler::SolverBudget;
 using aura::compiler::SolveResult;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -541,11 +544,13 @@ static void ac2318_force_full_solve() {
     // AC2: check_truncate_anti_starve method declaration + implementation
     CHECK(tc.find("check_truncate_anti_starve") != std::string::npos,
           "AC2: check_truncate_anti_starve method present");
-    CHECK(tc.find("truncate_streak_ >= threshold") != std::string::npos,
+    // Streak gate body lives in type_checker_impl.cpp (not the ixx decl).
+    CHECK(tci.find("truncate_streak_") != std::string::npos &&
+              (tci.find("threshold") != std::string::npos),
           "AC2: streak >= threshold check present");
-    CHECK(tc.find("delta_truncate_force_full_solve_total") != std::string::npos,
+    CHECK(tci.find("delta_truncate_force_full_solve_total") != std::string::npos,
           "AC2: force_full_solve_total bump present");
-    CHECK(tc.find("return solve(unresolved_out);") != std::string::npos,
+    CHECK(tci.find("return solve(unresolved_out)") != std::string::npos,
           "AC2: full solve call present");
     // AC2: solve_delta modified to call streak check after solve_delta_impl
     CHECK(tci.find("last_reverify_truncated_") != std::string::npos,
@@ -609,6 +614,181 @@ static void ac2318_source_cite_rows() {
           "AC5: threshold accessor in type_checker.ixx");
 }
 
+// ── Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy ──
+
+static void ac2900_1_soft_allow_timeout_export() {
+    std::println("\n--- #2900 AC1: Soft + allow_timeout_commit + TIMEOUT → export ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.allow_timeout_commit = true;
+    b.prefer_instance_repair_before_full = true;
+    cs.set_solver_budget(b);
+    cs.force_next_delta_timeout_for_test(true);
+    // Dirty work so unresolved is non-empty on synthetic TIMEOUT.
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+
+    const auto exp0 = g_typed_mutation_audit_counters.solver_budget_timeout_export_total.load(
+        std::memory_order_relaxed);
+    const auto full0 = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+        std::memory_order_relaxed);
+
+    std::vector<Constraint> unresolved;
+    auto status = cs.solve_delta(&unresolved);
+    CHECK(status == SolveResult::TIMEOUT, "2900 AC1: solve_delta TIMEOUT");
+    CHECK(!unresolved.empty(), "2900 AC1: unresolved non-empty");
+    auto post = cs.escalate_if_production(status, &unresolved);
+    CHECK(post == SolveResult::TIMEOUT, "2900 AC1: Soft allow keeps TIMEOUT (not SOLVED)");
+    CHECK(post != SolveResult::SOLVED, "2900 AC1: never pretend SOLVED");
+    CHECK(g_typed_mutation_audit_counters.solver_budget_timeout_export_total.load(
+              std::memory_order_relaxed) > exp0,
+          "2900 AC1: timeout_export_total bumps");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+              std::memory_order_relaxed) == full0,
+          "2900 AC1: no full escalate under Soft allow");
+    CHECK(metrics.solver_budget_timeout_export_total.load() >= 1,
+          "2900 AC1: metrics mirror timeout_export");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2900_2_production_still_escalates() {
+    std::println("\n--- #2900 AC2: production + budget → still escalate ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.allow_timeout_commit = true; // must be ignored under production
+    b.max_delta_passes = 1;
+    b.prefer_instance_repair_before_full = true;
+    cs.set_solver_budget(b);
+
+    const auto esc0 = g_typed_mutation_audit_counters.solver_budget_full_escalate_total.load(
+        std::memory_order_relaxed);
+    const auto full0 = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+        std::memory_order_relaxed);
+
+    // Empty CS: escalate TIMEOUT → full solve SOLVED.
+    auto post = cs.escalate_if_production(SolveResult::TIMEOUT);
+    CHECK(post == SolveResult::SOLVED, "2900 AC2: production escalate reaches SOLVED on empty");
+    CHECK(g_typed_mutation_audit_counters.solver_budget_full_escalate_total.load(
+              std::memory_order_relaxed) > esc0,
+          "2900 AC2: full_escalate_total bumps under non-default budget");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+              std::memory_order_relaxed) > full0,
+          "2900 AC2: #2277 full_solve path still fires");
+    CHECK(metrics.solver_budget_full_escalate_total.load() >= 1,
+          "2900 AC2: metrics mirror full_escalate");
+
+    // allow_timeout_commit cannot soft-ship under production: still escalates.
+    CHECK(cs.solver_budget().allow_timeout_commit, "2900 AC2: budget field retained on CS");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2900_3_default_budget_unchanged() {
+    std::println("\n--- #2900 AC3: default/null budget → current behavior ---");
+    using aura::compiler::kSolverBudgetDefault;
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CHECK(cs.solver_budget().is_default(), "2900 AC3: default budget is_default");
+    CHECK(kSolverBudgetDefault.is_default(), "2900 AC3: kSolverBudgetDefault");
+    const auto exp0 = g_typed_mutation_audit_counters.solver_budget_timeout_export_total.load(
+        std::memory_order_relaxed);
+    const auto esc0 = g_typed_mutation_audit_counters.solver_budget_full_escalate_total.load(
+        std::memory_order_relaxed);
+    auto post = cs.escalate_if_production(SolveResult::TIMEOUT);
+    CHECK(post == SolveResult::TIMEOUT, "2900 AC3: Soft default TIMEOUT pass-through");
+    CHECK(g_typed_mutation_audit_counters.solver_budget_timeout_export_total.load(
+              std::memory_order_relaxed) == exp0,
+          "2900 AC3: no timeout_export under default budget");
+    CHECK(g_typed_mutation_audit_counters.solver_budget_full_escalate_total.load(
+              std::memory_order_relaxed) == esc0,
+          "2900 AC3: no full_escalate under Soft default");
+    cs.clear_solver_budget();
+    CHECK(cs.solver_budget().is_default(), "2900 AC3: clear restores default");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2900_4_additive_query() {
+    std::println("\n--- #2900 AC4: additive query + #2277 preserved ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "2900 AC4: warm");
+    CHECK(href(svc, "schema-2900") == 2900, "2900 AC4: schema-2900");
+    CHECK(href(svc, "issue-2900") == 2900, "2900 AC4: issue-2900");
+    CHECK(href(svc, "solver-budget-wired") == 1, "2900 AC4: wired");
+    CHECK(href(svc, "solver-budget-timeout-export-total") >= 0, "2900 AC4: timeout-export key");
+    CHECK(href(svc, "solver-budget-full-escalate-total") >= 0, "2900 AC4: full-escalate key");
+    CHECK(href(svc, "solver-budget-instance-repair-prefer-total") >= 0,
+          "2900 AC4: instance-repair key");
+    CHECK(href(svc, "schema-2277") == 2277, "2900 AC4: schema-2277 preserved");
+    CHECK(href(svc, "delta-timeout-hard-gate-wired") == 1, "2900 AC4: #2277 wired");
+    CHECK(aura::compiler::kSolverBudgetIssue == 2900, "2900 AC4: issue constant");
+}
+
+static void ac2900_5_source_cite() {
+    std::println("\n--- #2900 AC5: source-cite + no docs/design ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_solver_budget_2900.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("SolverBudget") != std::string::npos, "2900 AC5: SolverBudget struct");
+    CHECK(ixx.find("2900") != std::string::npos, "2900 AC5: ixx cites #2900");
+    CHECK(ixx.find("set_solver_budget") != std::string::npos, "2900 AC5: set API");
+    CHECK(impl.find("solver_budget_") != std::string::npos ||
+              impl.find("solver_budget") != std::string::npos,
+          "2900 AC5: impl uses budget");
+    CHECK(impl.find("allow_timeout_commit") != std::string::npos, "2900 AC5: Soft allow path");
+    CHECK(impl.find("escalate_if_production") != std::string::npos, "2900 AC5: #2277 preserved");
+    CHECK(aud.find("solver_budget_timeout_export_total") != std::string::npos,
+          "2900 AC5: audit counters");
+    CHECK(q.find("schema-2900") != std::string::npos, "2900 AC5: query schema-2900");
+    CHECK(q.find("schema-2277") != std::string::npos, "2900 AC5: schema-2277 retained");
+    CHECK(t.find("ac2900_1_soft_allow_timeout_export") != std::string::npos, "2900 AC5: AC1 test");
+    CHECK(t.find("ac2900_2_production_still_escalates") != std::string::npos, "2900 AC5: AC2 test");
+    CHECK(t.find("ac2900_3_default_budget_unchanged") != std::string::npos, "2900 AC5: AC3 test");
+    CHECK(t.find("ac2900_4_additive_query") != std::string::npos, "2900 AC5: AC4 test");
+    CHECK(!lint.empty() && lint.find("2900") != std::string::npos, "2900 AC5: linter");
+    CHECK(build.find("check_solver_budget_2900") != std::string::npos, "2900 AC5: build.py gate");
+    CHECK(read_file("docs/design/2900-solver-budget.md").empty(),
+          "2900 AC5: no docs/design/2900-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2900.cpp").empty(),
+          "2900 AC5: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -630,6 +810,12 @@ int run_test_solve_delta_unresolved_export() {
     ac2318_alt_truncate_clean();
     ac2318_query_keys();
     ac2318_source_cite_rows();
+    std::println("\n=== Issue #2900: SolverBudget Agent TIMEOUT policy ===");
+    ac2900_1_soft_allow_timeout_export();
+    ac2900_2_production_still_escalates();
+    ac2900_3_default_budget_unchanged();
+    ac2900_4_additive_query();
+    ac2900_5_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

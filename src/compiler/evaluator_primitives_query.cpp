@@ -6604,6 +6604,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("delta-timeout-hard-gate-wired", 1);
             insert_kv("schema-2277", 2277);
             insert_kv("issue-2277", 2277);
+            // Issue #2900: SolverBudget Agent TIMEOUT policy surface.
+            // Additive to #2277; production cannot disable escalate.
+            {
+                using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+                insert_kv(
+                    "solver-budget-timeout-export-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.solver_budget_timeout_export_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "solver-budget-full-escalate-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.solver_budget_full_escalate_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "solver-budget-instance-repair-prefer-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.solver_budget_instance_repair_prefer_total
+                            .load(std::memory_order_relaxed)));
+                insert_kv("solver-budget-wired", 1);
+                insert_kv("schema-2900", 2900);
+                insert_kv("issue-2900", 2900);
+            }
             // Issue #2278: epoch-scoped OccurrenceGoal table
             // metrics.
             //   - occurrence-goal-replay-total: live goals
