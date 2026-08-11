@@ -2484,6 +2484,24 @@ public:
         return true;
     }
 
+    // Issue #2889: register a known intermediate slot (void**) on EVERY
+    // arena in the group so the next Moving densify rewrites it via
+    // last_object_remap_ regardless of which arena owns the referent.
+    // Safe on all arenas: each arena's live_compact only rewrites slots
+    // whose *slot is a key in ITS last_object_remap_ (cross-arena
+    // registration is a no-op rewrite). No-op when slot == nullptr or
+    // *slot == nullptr. Soft / no Moving: callers only invoke this inside
+    // the moving_compact_enabled() block → zero extra work otherwise (AC3).
+    void register_external_root_slot_for_densify_all(void** slot) noexcept {
+        if (slot == nullptr || *slot == nullptr)
+            return;
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
+        for (auto& [_, arena] : arenas_) {
+            if (arena)
+                arena->register_external_root_slot_for_densify(slot);
+        }
+    }
+
     // Issue #187 (P0): compact a specific module's arena. Returns
     // bytes reclaimed, or 0 if the module isn't found.
     [[nodiscard]] std::size_t compact_module(const std::string& name) {

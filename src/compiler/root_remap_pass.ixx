@@ -137,6 +137,18 @@ namespace root_remap_detail {
 
 // ── Registry API (host / tests) ──────────────────────────────────
 
+// Issue #2889: snapshot the host-registered RootRemap slots (stable refs +
+// closure captures) so the densify entry walk can auto-register known
+// compiler external roots into the Moving densify window. Returns copies
+// under the registry lock; safe to walk without holding the lock.
+[[nodiscard]] inline std::vector<void**> root_remap_registered_slots_snapshot() noexcept {
+    std::lock_guard<std::mutex> lock(root_remap_detail::registry_mtx());
+    std::vector<void**> out = root_remap_detail::stable_slots();
+    const auto& cc = root_remap_detail::closure_capture_slots();
+    out.insert(out.end(), cc.begin(), cc.end());
+    return out;
+}
+
 inline void register_root_remap_stable_slot(void** slot) noexcept {
     if (!slot)
         return;

@@ -2756,6 +2756,45 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 aura::ast::g_moving_untracked_external_roots_total.load(std::memory_order_relaxed);
             panic_depth_baseline =
                 aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
+            // Issue #2889: auto-register known intermediate buffers + compiler
+            // external roots into the Moving densify window BEFORE compact runs.
+            // Previously these slots were never registered (#2837 API was
+            // test-only), so known intermediates (workspace / mutate-target /
+            // current flat+pool, RootRemap stable + closure capture slots) were
+            // counted as untracked → false sticky densify-off / incomplete_remap
+            // under production. Truly foreign pointers stay unregistered → hard
+            // fail-closed preserved (AC2). Soft / no Moving never reaches here
+            // → zero extra work (AC3). Additive counters only (AC4).
+            {
+                using aura::compiler::root_remap_registered_slots_snapshot;
+                std::vector<void**> known_slots;
+                known_slots.reserve(8);
+                if (ev_->workspace_flat_)
+                    known_slots.push_back(reinterpret_cast<void**>(&ev_->workspace_flat_));
+                if (ev_->workspace_pool_)
+                    known_slots.push_back(reinterpret_cast<void**>(&ev_->workspace_pool_));
+                if (ev_->mutate_target_flat_)
+                    known_slots.push_back(reinterpret_cast<void**>(&ev_->mutate_target_flat_));
+                if (ev_->mutate_target_pool_)
+                    known_slots.push_back(reinterpret_cast<void**>(&ev_->mutate_target_pool_));
+                if (ev_->current_flat_)
+                    known_slots.push_back(reinterpret_cast<void**>(&ev_->current_flat_));
+                if (ev_->current_pool_)
+                    known_slots.push_back(reinterpret_cast<void**>(&ev_->current_pool_));
+                // Compiler roots: RootRemap host-registered stable refs +
+                // closure captures are known compiler external roots.
+                for (void** slot : root_remap_registered_slots_snapshot()) {
+                    if (slot != nullptr && *slot != nullptr)
+                        known_slots.push_back(slot);
+                }
+                if (!known_slots.empty() && ev_->arena_group_) {
+                    for (void** slot : known_slots)
+                        ev_->arena_group_->register_external_root_slot_for_densify_all(slot);
+                    aura::core::densify_consistency::g_moving_known_roots_auto_registered_total
+                        .fetch_add(static_cast<std::uint64_t>(known_slots.size()),
+                                   std::memory_order_relaxed);
+                }
+            }
             const auto compact_r = ev_->arena_group_
                                        ? ev_->arena_group_->compact_all_moving_pinned()
                                        : aura::ast::AdaptiveCompactResult{};

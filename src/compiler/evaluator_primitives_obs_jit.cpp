@@ -11760,6 +11760,28 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("external-root-remap-wired", 1);
             insert_kv("schema-2837", 2837);
             insert_kv("issue-2837", 2837);
+            // Issue #2889: known intermediate + compiler external roots
+            // auto-registered into the Moving densify window on densify
+            // entry (auto-register walk). Pairs with #2749 split counters
+            // (auto-registered-remapped vs still-untracked) so Agents can
+            // verify the incomplete-remap surface shrank because known
+            // roots entered the window. Additive only — no gate change.
+            insert_kv(
+                "known-roots-auto-registered-total",
+                static_cast<std::int64_t>(aura::core::densify_consistency::
+                                              moving_known_roots_auto_registered_total_v_read()));
+            insert_kv(
+                "auto-registered-remapped-total",
+                static_cast<std::int64_t>(aura::core::densify_consistency::
+                                              moving_auto_registered_remapped_total_v_read()));
+            insert_kv(
+                "still-untracked-incomplete-total",
+                static_cast<std::int64_t>(aura::core::densify_consistency::
+                                              moving_still_untracked_incomplete_total_v_read()));
+            insert_kv("known-roots-auto-register-wired", 1);
+            insert_kv("schema-2889", 2889);
+            insert_kv("issue-2889",
+                      aura::core::densify_consistency::kMovingKnownRootsAutoRegisterIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

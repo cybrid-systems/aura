@@ -148,6 +148,19 @@ inline constexpr int kMovingIncompleteRemapResidualIssue = 2749;
 [[nodiscard]] inline std::uint64_t moving_still_untracked_incomplete_total_v_read() noexcept {
     return g_moving_still_untracked_incomplete_total.load(std::memory_order_relaxed);
 }
+// Issue #2889: known intermediate + compiler external root slots that the
+// densify entry walk auto-registered into the Moving densify window (via
+// ArenaGroup::register_external_root_slot_for_densify_all). Additive only —
+// does not gate; pairs with #2749 split counters so Agents can verify the
+// incomplete-remap surface shrank because known roots entered the window.
+inline std::atomic<std::uint64_t> g_moving_known_roots_auto_registered_total{0};
+inline constexpr int kMovingKnownRootsAutoRegisterIssue = 2889;
+[[nodiscard]] inline std::uint64_t moving_known_roots_auto_registered_total_v_read() noexcept {
+    return g_moving_known_roots_auto_registered_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_known_roots_auto_registered_for_test() noexcept {
+    g_moving_known_roots_auto_registered_total.store(0, std::memory_order_relaxed);
+}
 inline std::atomic<std::uint8_t> g_last_densify_envframe_fail_code{0};
 inline std::atomic<std::uint8_t> g_last_densify_closure_fail_code{0};
 

@@ -1789,6 +1789,21 @@ def cmd_lint():
             "Issue #2837 Moving external-root remap linter failed — run python3 scripts/coverage/checks/check_moving_external_root_remap_2837.py"
         )
         return r
+    # Issue #2889: auto-register known intermediate + compiler external roots
+    # into the Moving densify window so incomplete-remap surface shrinks under
+    # production (walk + additive counter + query keys). Extends the existing
+    # src/-aligned Moving suite (test_moving_densify_fail_closed.cpp, #81967);
+    # no docs/design/ (#1655).
+    mkra_script = COVERAGE_CHECKS / "check_moving_known_roots_auto_register_2889.py"
+    if not mkra_script.exists():
+        fail(f"missing {mkra_script}")
+        return 1
+    r = run([sys.executable, str(mkra_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2889 known-roots auto-register linter failed — run python3 scripts/coverage/checks/check_moving_known_roots_auto_register_2889.py"
+        )
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
