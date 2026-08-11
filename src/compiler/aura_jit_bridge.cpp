@@ -111,6 +111,42 @@ extern "C" std::uint8_t aura_aot_last_reload_fail_reason(void) {
     return g_last_reload_fail_reason.load(std::memory_order_acquire);
 }
 
+// Issue #2894: last remount fail reason (RemountFailReason as uint8_t).
+// Default Ok=0. Stamped only on fail paths (zero cost on remount ok).
+// Not cleared on success — Agents poll after remount_fail counter bumps.
+static std::atomic<std::uint8_t> g_last_remount_fail_reason{0};
+
+extern "C" std::uint8_t aura_last_remount_fail_reason(void) noexcept {
+    return g_last_remount_fail_reason.load(std::memory_order_acquire);
+}
+
+extern "C" const char* aura_remount_fail_reason_string(std::uint8_t v) noexcept {
+    switch (static_cast<RemountFailReason>(v)) {
+        case RemountFailReason::Ok:
+            return "ok";
+        case RemountFailReason::EnvGen:
+            return "env_gen";
+        case RemountFailReason::Defuse:
+            return "defuse";
+        case RemountFailReason::Linear:
+            return "linear";
+        case RemountFailReason::DensifyCell:
+            return "densify_cell";
+        case RemountFailReason::Other:
+            return "other";
+    }
+    return "other"; // defensive — out-of-range uint8
+}
+
+extern "C" void aura_note_remount_fail_reason(std::uint8_t v) noexcept {
+    g_last_remount_fail_reason.store(v, std::memory_order_release);
+}
+
+extern "C" void aura_test_reset_last_remount_fail_reason(void) noexcept {
+    g_last_remount_fail_reason.store(static_cast<std::uint8_t>(RemountFailReason::Ok),
+                                     std::memory_order_release);
+}
+
 // Issue #2753: proof accessors are header-inline in
 // aot_reload_consistency_proof.h. Stamp sites below call
 // stamp_aot_reload_consistency_proof after success/rollback.

@@ -1743,24 +1743,33 @@ static int remount_capture_cells_via_densify_(std::size_t cid) {
     return 1;
 }
 
-// Issue #2234 + #2272 + #2297: remount body. Caller must hold exclusive
+// Issue #2234 + #2272 + #2297 + #2894: remount body. Caller must hold exclusive
 // g_closure_table_mtx when densify remap may rewrite g_closure_envs
 // (or accept shared for fingerprint-only when densify empty).
+// #2894: stamp last RemountFailReason on every fail path (Ok never written
+// here — success is zero-cost, no store).
 static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
                                                   std::uint64_t live_env_gen,
                                                   std::uint8_t linear_fp) {
-    if (closure_id < 0)
+    if (closure_id < 0) {
+        aura_note_remount_fail_reason(static_cast<std::uint8_t>(RemountFailReason::Other));
         return 0;
+    }
     const auto cid = static_cast<std::size_t>(closure_id);
-    if (cid >= g_closure_func_ids.size())
+    if (cid >= g_closure_func_ids.size()) {
+        aura_note_remount_fail_reason(static_cast<std::uint8_t>(RemountFailReason::Other));
         return 0;
-    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+    }
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {
+        aura_note_remount_fail_reason(static_cast<std::uint8_t>(RemountFailReason::Other));
         return 0;
+    }
     // Issue #2272 PRIMARY axis: env_generation_ stamp vs live.
     // Cell remap only runs after env_gen OK (AC2).
     const auto cid_env_gen = cid < g_closure_env_gen.size() ? g_closure_env_gen[cid] : 0;
     if (cid_env_gen != 0 && cid_env_gen != live_env_gen) {
         aura_bump_closure_capture_env_gen_mismatch_total(1);
+        aura_note_remount_fail_reason(static_cast<std::uint8_t>(RemountFailReason::EnvGen));
         return 0;
     }
     const auto cid_defuse =
@@ -1768,11 +1777,21 @@ static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
     const auto cid_linear = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
     const bool env_ok = (cid_defuse == 0) || (cid_defuse == live_env_gen);
     const bool linear_ok = (cid_linear == 0) || (cid_linear == linear_fp);
-    if (!(env_ok && linear_ok))
+    // Issue #2894: split Defuse vs Linear so Agents can branch without
+    // correlating separate counters. Prefer Defuse when both drift.
+    if (!env_ok) {
+        aura_note_remount_fail_reason(static_cast<std::uint8_t>(RemountFailReason::Defuse));
         return 0;
+    }
+    if (!linear_ok) {
+        aura_note_remount_fail_reason(static_cast<std::uint8_t>(RemountFailReason::Linear));
+        return 0;
+    }
     // Issue #2297: structural capture-cell remount (after fingerprint OK).
-    if (remount_capture_cells_via_densify_(cid) == 0)
+    if (remount_capture_cells_via_densify_(cid) == 0) {
+        aura_note_remount_fail_reason(static_cast<std::uint8_t>(RemountFailReason::DensifyCell));
         return 0;
+    }
     return 1;
 }
 

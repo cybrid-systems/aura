@@ -106,6 +106,8 @@ extern "C" std::uint64_t aura_macro_schema_cache_rest_stamped_total_v_read() noe
 extern "C" std::uint64_t aura_cross_workspace_hot_update_rejected_total_v_read(void) noexcept;
 extern "C" std::uint8_t aura_last_cross_workspace_reject_reason_v_read(void) noexcept;
 extern "C" const char* aura_cross_workspace_reject_reason_string(std::uint8_t v) noexcept;
+// Issue #2894: last remount fail reason (aura_jit_bridge.cpp).
+extern "C" std::uint8_t aura_last_remount_fail_reason(void) noexcept;
 // Issue #2021: depth + concurrent peak readers / metrics snapshot.
 extern "C" std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_in_flight_v_read() noexcept;
@@ -17019,6 +17021,31 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("remount-or-force-deopt-wired", 1);
             insert_kv("schema-2503", 2503);
             insert_kv("issue-2503", 2503);
+            // Issue #2894: last remount fail reason + mapped axis totals.
+            // Additive only; #2503/#2234/#2272/#2297 surfaces preserved.
+            {
+                const std::uint8_t last_rr = aura_last_remount_fail_reason();
+                insert_kv("last-remount-fail-reason", static_cast<std::int64_t>(last_rr));
+                insert_kv("last_remount_fail_reason", static_cast<std::int64_t>(last_rr));
+                // Map existing counters so Agents get named totals without
+                // correlating env_gen_mismatch / cell_remap_fail themselves.
+                insert_kv("remount-fail-env-gen-total",
+                          qev ? static_cast<std::int64_t>(
+                                    qev->get_closure_capture_env_gen_mismatch_total())
+                              : 0);
+                {
+                    auto* m = static_cast<const CompilerMetrics*>(qev->compiler_metrics());
+                    const auto cell_fail =
+                        m ? m->closure_capture_cell_remap_fail_total.load(std::memory_order_relaxed)
+                          : 0;
+                    insert_kv("remount-fail-densify-cell-total",
+                              static_cast<std::int64_t>(cell_fail));
+                }
+                insert_kv("remount-fail-total", static_cast<std::int64_t>(capture_remount_fail));
+                insert_kv("remount-fail-reason-wired", 1);
+                insert_kv("schema-2894", 2894);
+                insert_kv("issue-2894", 2894);
+            }
             insert_kv("schema-2234", 2234);
             insert_kv("issue-2234", 2234);
             insert_kv("capture-remount-wired", 1);

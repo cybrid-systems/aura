@@ -16,6 +16,7 @@
 
 #include "aura_jit_bridge.h"
 #include "hot_update_registry.hh"
+#include "observability_metrics.h"
 
 #include <atomic>
 #include <cstdint>
@@ -252,12 +253,17 @@ extern "C" __attribute__((weak)) std::uint64_t aura_jit_closure_safe_fallbacks(v
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_set_jit_batch_deopt_target(void* /*jit*/) {}
-extern "C" __attribute__((weak)) std::size_t aura_jit_batch_deopt_for(const char* /*name*/,
+// Light-link counter so remount force-deopt tests (#2503/#2894) can observe
+// named batch_deopt invocations without the full AuraJIT Orc path.
+static std::atomic<std::uint64_t> g_batch_deopt_for_total_stub{0};
+extern "C" __attribute__((weak)) std::size_t aura_jit_batch_deopt_for(const char* name,
                                                                       std::uint64_t /*epoch*/) {
+    if (name && name[0] != '\0')
+        g_batch_deopt_for_total_stub.fetch_add(1, std::memory_order_relaxed);
     return 0;
 }
 extern "C" __attribute__((weak)) std::uint64_t aura_jit_batch_deopt_for_total(void) {
-    return 0;
+    return g_batch_deopt_for_total_stub.load(std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) std::uint64_t aura_jit_batch_deopt_entries_marked(void) {
     return 0;
@@ -1104,19 +1110,65 @@ aura_evaluator_bump_macro_provenance_repin_on_steal(void* /*ev_ptr*/) noexcept {
     return 0;
 }
 
+// Light-link remount metric bumps write through g_aot_metrics_stub when the
+// host calls aura_set_aot_metrics (same contract as full bridge). No-op when
+// metrics is null — zero cost hot path when tests don't wire metrics.
+static inline aura::compiler::CompilerMetrics* aot_metrics_stub_() noexcept {
+    return static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub);
+}
 extern "C" __attribute__((weak)) void
 aura_bump_live_closure_epoch_restamp_total(std::uint64_t /*n*/) {}
+extern "C" __attribute__((weak)) void aura_bump_closure_capture_remount_ok_total(std::uint64_t n) {
+    if (auto* m = aot_metrics_stub_())
+        m->closure_capture_remount_ok_total.fetch_add(n, std::memory_order_relaxed);
+}
 extern "C" __attribute__((weak)) void
-aura_bump_closure_capture_remount_ok_total(std::uint64_t /*n*/) {}
+aura_bump_closure_capture_cell_remap_ok_total(std::uint64_t n) {
+    if (auto* m = aot_metrics_stub_())
+        m->closure_capture_cell_remap_ok_total.fetch_add(n, std::memory_order_relaxed);
+}
 extern "C" __attribute__((weak)) void
-aura_bump_closure_capture_cell_remap_ok_total(std::uint64_t /*n*/) {}
-extern "C" __attribute__((weak)) void
-aura_bump_closure_capture_cell_remap_fail_total(std::uint64_t /*n*/) {}
+aura_bump_closure_capture_cell_remap_fail_total(std::uint64_t n) {
+    if (auto* m = aot_metrics_stub_())
+        m->closure_capture_cell_remap_fail_total.fetch_add(n, std::memory_order_relaxed);
+}
 // Issue #2503: remount + MustDeopt + batch_deopt shared fail path (stub: fail).
+// Strong definition lives in aura_jit_runtime.cpp (light + full).
 extern "C" __attribute__((weak)) int aura_remount_or_force_deopt(std::int64_t /*closure_id*/,
                                                                  std::uint64_t /*live_env_gen*/,
                                                                  std::uint8_t /*linear_fp*/) {
     return 0;
+}
+// Issue #2894: last remount fail reason (stub process atomic).
+// Strong definitions in aura_jit_bridge.cpp override when full bridge links.
+static std::atomic<std::uint8_t> g_last_remount_fail_reason_stub{0};
+extern "C" __attribute__((weak)) std::uint8_t aura_last_remount_fail_reason(void) noexcept {
+    return g_last_remount_fail_reason_stub.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) const char*
+aura_remount_fail_reason_string(std::uint8_t v) noexcept {
+    switch (v) {
+        case 0:
+            return "ok";
+        case 1:
+            return "env_gen";
+        case 2:
+            return "defuse";
+        case 3:
+            return "linear";
+        case 4:
+            return "densify_cell";
+        case 5:
+            return "other";
+        default:
+            return "other";
+    }
+}
+extern "C" __attribute__((weak)) void aura_note_remount_fail_reason(std::uint8_t v) noexcept {
+    g_last_remount_fail_reason_stub.store(v, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void aura_test_reset_last_remount_fail_reason(void) noexcept {
+    g_last_remount_fail_reason_stub.store(0, std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) void aura_set_densify_object_remap(const void* const* /*olds*/,
                                                                     const void* const* /*news*/,
@@ -1126,6 +1178,12 @@ extern "C" __attribute__((weak)) void aura_set_densify_candidates(const void* co
                                                                   std::size_t /*n*/) {}
 extern "C" __attribute__((weak)) void aura_clear_densify_candidates(void) {}
 extern "C" __attribute__((weak)) void
-aura_bump_closure_capture_remount_fail_total(std::uint64_t /*n*/) {}
+aura_bump_closure_capture_remount_fail_total(std::uint64_t n) {
+    if (auto* m = aot_metrics_stub_())
+        m->closure_capture_remount_fail_total.fetch_add(n, std::memory_order_relaxed);
+}
 extern "C" __attribute__((weak)) void
-aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t /*n*/) {}
+aura_bump_closure_capture_env_gen_mismatch_total(std::uint64_t n) {
+    if (auto* m = aot_metrics_stub_())
+        m->closure_capture_env_gen_mismatch_total.fetch_add(n, std::memory_order_relaxed);
+}
