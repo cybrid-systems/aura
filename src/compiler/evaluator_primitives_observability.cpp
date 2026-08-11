@@ -491,6 +491,7 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:dirty-propagation-cost-stats",
     // Issue #471 — SV-scale dirty propagation
     "query:dirty-propagation-stats",
+    "query:dirty-columnar", // #2904 (no *-stats freeze)
     // Issue #414 — Long-term generation_/epoch management
     "query:generation-epoch-stats",
     // Issue #416 — AST SoA column compaction observability

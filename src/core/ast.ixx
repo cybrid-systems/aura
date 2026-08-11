@@ -2189,6 +2189,18 @@ public:
     mutable std::atomic<std::uint64_t> mark_dirty_truncated_count_{0};
     // Issue #1345: stop-at Define/Interface/Module boundary prune hits.
     mutable std::atomic<std::uint64_t> mark_dirty_boundary_prune_count_{0};
+    // Issue #2904: columnar dirty propagation observability.
+    // dirty_column_writes_total_: RMW that actually changed dirty_ bits
+    //   (pure column write; no tree walk).
+    // dirty_upward_cascades_avoided_total_: parent-chain steps skipped
+    //   because the parent already held the target reason bits (fixed-point).
+    // dirty_scan_nodes_total_: nodes examined by scan_dirty_columns /
+    //   dirty_nodes_in_range (post-boundary dirty-column scan, not tree walk).
+    // dirty_legacy_tree_walk_total_: times the debug/legacy full BFS path ran.
+    mutable std::atomic<std::uint64_t> dirty_column_writes_total_{0};
+    mutable std::atomic<std::uint64_t> dirty_upward_cascades_avoided_total_{0};
+    mutable std::atomic<std::uint64_t> dirty_scan_nodes_total_{0};
+    mutable std::atomic<std::uint64_t> dirty_legacy_tree_walk_total_{0};
     // Issue #1651: calls to children_stable_span_view (zero-copy span-return alternative
     // to children_stable's std::vector allocation). Bumped in the new method below;
     // exposes the AI Agent hot-path `copy-avoided` count via (query:dirty-stats)
@@ -6483,8 +6495,29 @@ public:
         // Issue #1466: post-condition ensures the call counter is bumped
         // (every dirty cascade invocation is accounted for in metrics).
         // Zero release cost under observe semantic.
+        // Issue #2904: default path is columnar fixed-point cascade
+        // (parent bits only until already-dirty); full tree BFS only when
+        // AURA_DIRTY_LEGACY_TREE_WALK=1.
         pre(id < tag_.size())
             post(mark_dirty_upward_call_count_.load(std::memory_order_relaxed) > 0);
+
+    // Issue #2904: pure columnar dirty write — O(1) dirty_ RMW, no parent
+    // chain walk. Use when ImpactScope / pass peel already owns the cone.
+    void mark_dirty_columnar(const NodeId id, std::uint8_t reasons = kGeneralDirty,
+                             std::uint8_t ppa_reasons = 0) pre(id < tag_.size());
+
+    // Issue #2904: parent-cascade restricted to an admitted cone/ImpactScope
+    // mask (byte-per-node; non-zero = admitted). Nodes outside the mask are
+    // not marked and cascade stops at the first out-of-mask parent.
+    // mask == nullptr or mask_n == 0 → same as columnar fixed-point cascade.
+    void mark_dirty_upward_masked(const NodeId id, std::uint8_t reasons, const std::uint8_t* mask,
+                                  std::size_t mask_n, std::uint8_t ppa_reasons = 0)
+        pre(id < tag_.size());
+
+    // Issue #2904: scan dirty_ column only (no tree walk). reason_mask 0 =
+    // any non-zero dirty byte. Bumps dirty_scan_nodes_total by columns examined.
+    // Used by MutationBoundary / post-mutate health instead of full AST walks.
+    [[nodiscard]] std::size_t scan_dirty_columns(std::uint8_t reason_mask = 0) const noexcept;
 
     // Issue #336: optimized variant of mark_dirty_upward.
     // Early-exits the upward walk when a parent already
@@ -8238,6 +8271,19 @@ public:
     // Issue #1251: dirty propagation bound truncations + rollback compaction.
     [[nodiscard]] std::uint64_t mark_dirty_truncated_count() const noexcept {
         return mark_dirty_truncated_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #2904: columnar dirty observability accessors.
+    [[nodiscard]] std::uint64_t dirty_column_writes_total() const noexcept {
+        return dirty_column_writes_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t dirty_upward_cascades_avoided_total() const noexcept {
+        return dirty_upward_cascades_avoided_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t dirty_scan_nodes_total() const noexcept {
+        return dirty_scan_nodes_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t dirty_legacy_tree_walk_total() const noexcept {
+        return dirty_legacy_tree_walk_total_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t rollback_compaction_triggered() const noexcept {
         return rollback_compaction_triggered_.load(std::memory_order_relaxed);

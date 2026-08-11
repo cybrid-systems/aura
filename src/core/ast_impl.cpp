@@ -1,5 +1,6 @@
 module;
 #include <chrono>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <shared_mutex>
@@ -498,6 +499,8 @@ std::size_t FlatAST::dirty_nodes_in_range(NodeId start, NodeId end) const noexce
         return 0;
     // Issue #2424: cap against dirty_.size() under shared lock
     // (same Option B invariant as is_subtree_dirty_node).
+    // Issue #2904: this is a dirty-column scan (not a tree walk) —
+    // count examined columns for post-boundary observability.
     std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
     if (dirty_.empty())
         return 0;
@@ -508,9 +511,11 @@ std::size_t FlatAST::dirty_nodes_in_range(NodeId start, NodeId end) const noexce
     if (s >= hi)
         return 0;
     std::size_t count = 0;
+    const auto examined = hi - s;
     for (std::size_t i = s; i < hi; ++i)
         if (dirty_[i])
             ++count;
+    dirty_scan_nodes_total_.fetch_add(examined, std::memory_order_relaxed);
     return count;
 }
 
@@ -655,11 +660,15 @@ void FlatAST::mark_dirty(NodeId id, std::uint8_t reasons) {
     // dirty_[id]. Readers (is_subtree_dirty_node / dirty_nodes_in_range)
     // hold shared. Side effects outside dirty_ (cache clear, restamp
     // touch, occurrence stale, epoch bump) run after unlock.
+    // Issue #2904: count pure column writes when bits actually change.
     {
         std::unique_lock<std::shared_mutex> wlock(dirty_column_mtx_.mutable_get());
         if (id >= dirty_.size())
             dirty_.resize(id + 1, 0);
+        const auto before = dirty_[id];
         dirty_[id] |= reasons;
+        if (dirty_[id] != before)
+            dirty_column_writes_total_.fetch_add(1, std::memory_order_relaxed);
         // Issue #1519: post — requested reason bits are set after stamp.
         contract_assert(reasons == 0 || (dirty_[id] & reasons) == reasons);
     }
@@ -1111,6 +1120,13 @@ void FlatAST::bump_generation_on_rollback() {
 
 
 // --- multi-line signature dirty methods ---
+// Issue #2904: legacy full parent-chain BFS only when explicitly requested.
+// Default production path uses columnar fixed-point cascade (AC1).
+[[nodiscard]] static bool dirty_legacy_tree_walk_enabled() noexcept {
+    const char* e = std::getenv("AURA_DIRTY_LEGACY_TREE_WALK");
+    return e && e[0] == '1';
+}
+
 // --- FlatAST::mark_dirty_upward ---
 void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint8_t ppa_reasons) {
     // Issue #1620: dirty cascade is a core mutation hot path —
@@ -1123,6 +1139,11 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
     // the key metric for whether the std::meta refactor is
     // worth it.
     mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+
+    // Issue #2904 AC1: default = columnar fixed-point cascade.
+    // Full tree BFS only behind AURA_DIRTY_LEGACY_TREE_WALK=1.
+    const bool legacy = dirty_legacy_tree_walk_enabled();
+
     // Issue #693: SV structural / SVA feedback nodes propagate
     // verify_dirty_ upward for targeted sv_ir re-emit hints.
     bool propagate_sva_verify = false;
@@ -1139,39 +1160,79 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
         propagate_sva_verify = (verify_dirty(id) & kSvaDirty) != 0;
     std::uint64_t touched = 0;
     bool truncated = false;
-    std::deque<NodeId> queue;
-    queue.push_back(id);
-    while (!queue.empty()) {
-        // Issue #1251: bound depth/count to avoid p99 latency spikes
-        // on pathological parent chains / SoC-scale ASTs.
-        if (touched >= kMarkDirtyMaxDepth || touched >= kMarkDirtyCountThreshold) {
-            truncated = true;
-            mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
-            // Still stamp the current chain top so Define-level
-            // subtree_gen consumers observe invalidation.
-            if (!queue.empty()) {
-                auto top = queue.front();
-                mark_dirty(top, reasons);
-                if (top < tag_.size())
-                    bump_generation_subtree(top);
+
+    if (!legacy) {
+        // ── Columnar fixed-point path (#2904) ──
+        // Walk parent pointers only until a node already holds all
+        // target reason bits (fixed-point). Each step is a column
+        // write; no subtree/tree BFS. Sparse mutates touch O(depth)
+        // with early exit on re-dirty of an already-dirty cone.
+        auto cur = id;
+        while (cur != NULL_NODE) {
+            if (touched >= kMarkDirtyMaxDepth || touched >= kMarkDirtyCountThreshold) {
+                truncated = true;
+                mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
+                mark_dirty(cur, reasons);
+                if (cur < tag_.size())
+                    bump_generation_subtree(cur);
+                break;
             }
-            break;
+            if (is_dirty_for(cur, reasons) && cur != id) {
+                // Parent already dirty for all reasons → cascade avoided.
+                dirty_upward_cascades_avoided_total_.fetch_add(1, std::memory_order_relaxed);
+                mark_dirty_early_exit_count_.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+            mark_dirty(cur, reasons);
+            apply_ppa_dirty_bits(cur, ppa_reasons);
+            if (propagate_sva_verify)
+                apply_verify_dirty_bits(cur, kSvaDirty);
+            ++touched;
+            auto p = parent_[cur];
+            if (p == NULL_NODE)
+                break;
+            // Fixed-point on parent: if parent already has bits, stop
+            // without re-marking ancestors (they inherit via parent).
+            if (is_dirty_for(p, reasons)) {
+                dirty_upward_cascades_avoided_total_.fetch_add(1, std::memory_order_relaxed);
+                mark_dirty_early_exit_count_.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+            cur = p;
         }
-        auto nid = queue.front();
-        queue.pop_front();
-        mark_dirty(nid, reasons);
-        apply_ppa_dirty_bits(nid, ppa_reasons);
-        if (propagate_sva_verify)
-            apply_verify_dirty_bits(nid, kSvaDirty);
-        ++touched;
-        auto p = parent_[nid];
-        if (p != NULL_NODE)
-            queue.push_back(p);
+    } else {
+        // ── Legacy full tree-walk BFS (debug only) ──
+        dirty_legacy_tree_walk_total_.fetch_add(1, std::memory_order_relaxed);
+        std::deque<NodeId> queue;
+        queue.push_back(id);
+        while (!queue.empty()) {
+            // Issue #1251: bound depth/count to avoid p99 latency spikes
+            // on pathological parent chains / SoC-scale ASTs.
+            if (touched >= kMarkDirtyMaxDepth || touched >= kMarkDirtyCountThreshold) {
+                truncated = true;
+                mark_dirty_truncated_count_.fetch_add(1, std::memory_order_relaxed);
+                if (!queue.empty()) {
+                    auto top = queue.front();
+                    mark_dirty(top, reasons);
+                    if (top < tag_.size())
+                        bump_generation_subtree(top);
+                }
+                break;
+            }
+            auto nid = queue.front();
+            queue.pop_front();
+            mark_dirty(nid, reasons);
+            apply_ppa_dirty_bits(nid, ppa_reasons);
+            if (propagate_sva_verify)
+                apply_verify_dirty_bits(nid, kSvaDirty);
+            ++touched;
+            auto p = parent_[nid];
+            if (p != NULL_NODE)
+                queue.push_back(p);
+        }
     }
     (void)truncated;
-    // Issue #471: track max traversal depth. The
-    // max-depth is the deepest BFS level reached in
-    // this call. Atomic max — CAS loop.
+    // Issue #471: track max traversal depth.
     {
         const std::uint64_t depth = touched;
         std::uint64_t cur = mark_dirty_max_depth_observed_.load(std::memory_order_relaxed);
@@ -1192,38 +1253,14 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
         if (!tag_arity_index_.empty() && id < size())
             patch_tag_arity_index_node(id);
     }
-    // Issue #412: bump the type cache generation. Every
-    // mark_dirty_upward() call invalidates ALL cached
-    // type_id_ entries (they were computed against an
-    // older binding/predicate context). Cache entries
-    // captured at the current gen will be re-checked
-    // on the next hit and recomputed if the gen
-    // diverges. See set_type_with_gen() and
-    // synthesize_flat()'s cache hit path.
+    // Issue #412: bump the type cache generation.
     type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
-    // Issue #412 follow-up #1: per-binding gen. If the
-    // target node is a binding (Define/Let/LetRec)
-    // with a valid sym_id, bump THAT binding's gen
-    // (not just the global gen). This is the
-    // per-binding granular invalidation signal: the
-    // global gen invalidates ALL cache entries (over-
-    // invalidating), the per-binding gen only
-    // invalidates cache entries that depend on this
-    // specific binding. For non-binding targets (sub-
-    // expression mutations), only the global gen
-    // bumps (no binding to bump).
+    // Issue #412 follow-up #1: per-binding gen.
     if (id < tag_.size()) {
         auto tgv = get(id);
         if ((tgv.tag == NodeTag::Define || tgv.tag == NodeTag::Let || tgv.tag == NodeTag::LetRec) &&
             tgv.sym_id != INVALID_SYM) {
             bump_binding_gen(tgv.sym_id);
-            // Issue #413: record the (mutation_id,
-            // SymId) pair so users can trace
-            // invalidation back to the mutation.
-            // The most recent mutation_id is
-            // next_mutation_id_ - 1 (the counter
-            // was bumped in add_mutation / add_subtree
-            // before mark_dirty_upward was called).
             if (next_mutation_id_ > 1) {
                 const std::uint64_t mid = next_mutation_id_ - 1;
                 invalidation_trace_.push_back({
@@ -1240,6 +1277,95 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
     // predicate/if-context bindings downstream.
     (void)invalidate_narrowings_in_subtree(id,
                                            type_cache_generation_.load(std::memory_order_relaxed));
+}
+
+// --- FlatAST::mark_dirty_columnar (#2904) ---
+void FlatAST::mark_dirty_columnar(const NodeId id, std::uint8_t reasons, std::uint8_t ppa_reasons) {
+    // Pure column write — no parent walk. ImpactScope / pass peel own the cone.
+    mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+    mark_dirty(id, reasons);
+    apply_ppa_dirty_bits(id, ppa_reasons);
+    mark_dirty_total_nodes_.fetch_add(1, std::memory_order_relaxed);
+    type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+}
+
+// --- FlatAST::mark_dirty_upward_masked (#2904 ImpactScope cone) ---
+void FlatAST::mark_dirty_upward_masked(const NodeId id, std::uint8_t reasons,
+                                       const std::uint8_t* mask, std::size_t mask_n,
+                                       std::uint8_t ppa_reasons) {
+    mark_dirty_upward_call_count_.fetch_add(1, std::memory_order_relaxed);
+    if (mask == nullptr || mask_n == 0) {
+        // No mask → columnar fixed-point cascade (same as default upward).
+        // Avoid re-entry recursion: inline the fixed-point walk.
+        std::uint64_t touched = 0;
+        auto cur = id;
+        while (cur != NULL_NODE) {
+            if (touched >= kMarkDirtyMaxDepth)
+                break;
+            if (is_dirty_for(cur, reasons) && cur != id) {
+                dirty_upward_cascades_avoided_total_.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+            mark_dirty(cur, reasons);
+            apply_ppa_dirty_bits(cur, ppa_reasons);
+            ++touched;
+            auto p = parent_[cur];
+            if (p == NULL_NODE)
+                break;
+            if (is_dirty_for(p, reasons)) {
+                dirty_upward_cascades_avoided_total_.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+            cur = p;
+        }
+        mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+        type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    // Masked cascade: only mark nodes admitted by ImpactScope cone.
+    std::uint64_t touched = 0;
+    auto cur = id;
+    while (cur != NULL_NODE) {
+        if (static_cast<std::size_t>(cur) >= mask_n || mask[cur] == 0) {
+            // Outside admitted cone — stop cascade (do not dirtify outside).
+            dirty_upward_cascades_avoided_total_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        }
+        if (touched >= kMarkDirtyMaxDepth)
+            break;
+        if (is_dirty_for(cur, reasons) && cur != id) {
+            dirty_upward_cascades_avoided_total_.fetch_add(1, std::memory_order_relaxed);
+            break;
+        }
+        mark_dirty(cur, reasons);
+        apply_ppa_dirty_bits(cur, ppa_reasons);
+        ++touched;
+        cur = parent_[cur];
+    }
+    mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
+    type_cache_generation_.fetch_add(1, std::memory_order_relaxed);
+}
+
+// --- FlatAST::scan_dirty_columns (#2904) ---
+std::size_t FlatAST::scan_dirty_columns(std::uint8_t reason_mask) const noexcept {
+    // Column-only scan for MutationBoundary / post-mutate health (AC2).
+    // No parent_/children_ tree walk.
+    std::shared_lock<std::shared_mutex> rlock(dirty_column_mtx_.mutable_get());
+    if (dirty_.empty())
+        return 0;
+    const auto n = dirty_.size();
+    dirty_scan_nodes_total_.fetch_add(n, std::memory_order_relaxed);
+    std::size_t count = 0;
+    if (reason_mask == 0) {
+        for (std::size_t i = 0; i < n; ++i)
+            if (dirty_[i])
+                ++count;
+    } else {
+        for (std::size_t i = 0; i < n; ++i)
+            if ((dirty_[i] & reason_mask) != 0)
+                ++count;
+    }
+    return count;
 }
 
 // --- FlatAST::mark_dirty_upward_fast ---
@@ -1297,6 +1423,8 @@ void FlatAST::mark_dirty_upward_fast(const NodeId id, std::uint8_t reasons,
             // mark_dirty_early_exit_count_ for
             // (query:dirty-propagation-stats).
             mark_dirty_early_exit_count_.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2904: cascades avoided under fixed-point.
+            dirty_upward_cascades_avoided_total_.fetch_add(1, std::memory_order_relaxed);
             continue;
         }
         queue.push_back(p);

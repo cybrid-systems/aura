@@ -6014,12 +6014,14 @@ bool Evaluator::post_mutation_reflect_validate() const noexcept {
     // nodes specifically and tally three diagnostics. The walk
     // happens unconditionally (no early-out) so the counters
     // reflect the actual post-mutate state the Agent sees.
+    // Issue #2904 AC2: dirty_nodes from columnar scan only (no tree
+    // walk / no per-id is_dirty parent chain) — MutationBoundary /
+    // post-mutate health measures dirty columns, not AST depth.
+    health.dirty_nodes = static_cast<std::uint64_t>(ws->scan_dirty_columns());
     bool called_macro_validate = false;
     std::uint64_t macro_dirty = 0;
     std::uint64_t macro_marker_mismatches = 0;
     for (NodeId id = 0; id < ws->size(); ++id) {
-        if (ws->is_dirty(id))
-            ++health.dirty_nodes;
         if (ws->is_macro_introduced(id)) {
             ++health.macro_markers;
             if ((ws->macro_dirty(id) & kExpansion) == 0) {
