@@ -439,6 +439,21 @@ aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64_t /*ok*/,
 extern "C" __attribute__((weak)) std::uint64_t aura_sync_remount_pure_anon_budget_default() {
     return 0;
 }
+// Issue #2893: adaptive pure-anon budget weak stubs (light-link binaries
+// that don't compile aura_jit_runtime.cpp still resolve the C ABI).
+extern "C" __attribute__((weak)) std::uint64_t aura_sync_remount_pure_anon_budget_base() {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_pure_anon_note_walk_outcome(std::uint64_t /*ok*/,
+                                                                       std::uint64_t /*skip*/) {}
+extern "C" __attribute__((weak)) void
+aura_pure_anon_observe_deopt_window(std::uint64_t /*deopt_window_count*/) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_sync_remount_pure_anon_budget_current() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_pressure_bp() {
+    return 0;
+}
 extern "C" __attribute__((weak)) void
 aura_sync_remount_pure_anon_live_closures(std::uint64_t /*budget*/, std::uint64_t* ok_count,
                                           std::uint64_t* skip_budget_count) {

@@ -1100,6 +1100,16 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-sync-remount-pure-anon-wired", make_int(1)},
                 {"schema-2850", make_int(2850)},
                 {"issue-2850", make_int(2850)},
+                // Issue #2893: adaptive pure-anon budget + pressure signal
+                // (refine #2850). budget-current is the last adaptive budget;
+                // pressure-bp is the 0-10000 skip/deopt pressure signal.
+                {"live-closure-sync-remount-pure-anon-budget-current",
+                 make_int(static_cast<std::int64_t>(aura_sync_remount_pure_anon_budget_current()))},
+                {"live-closure-sync-remount-pure-anon-pressure-bp",
+                 make_int(static_cast<std::int64_t>(aura_pure_anon_pressure_bp()))},
+                {"live-closure-sync-remount-pure-anon-adaptive-wired", make_int(1)},
+                {"schema-2893", make_int(2893)},
+                {"issue-2893", make_int(2893)},
                 // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
                 // assert. Soft single-eval / process-default (filter
                 // eval = nullptr) keeps this at 0. Production hard

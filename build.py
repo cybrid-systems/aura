@@ -6288,6 +6288,29 @@ def cmd_pure_anon_sync_remount_budget_2850_coverage():
     return 0
 
 
+def cmd_pure_anon_adaptive_budget_2893_coverage():
+    """Issue #2893: adaptive pure-anon remount budget + pressure signal
+    (refine #2850).
+
+    #2850 shipped a FIXED pure-anon sync remount budget (default 64, env
+    AURA_SYNC_REMOUNT_PURE_ANON_BUDGET, 0 = off). #2893 makes the budget
+    adaptive under production (base 64 scaled by skip + deopt-window
+    pressure to ceiling 256; env exact value still forces fixed) and
+    exposes pure-anon-budget-current / pure-anon-pressure-bp query keys.
+    """
+    print(f"{B}=== pure-anon adaptive budget + pressure coverage (#2893) ==={N}")
+    script = COVERAGE_CHECKS / "check_pure_anon_adaptive_budget_2893.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pure-anon adaptive budget (#2893) coverage contract rows failed")
+        return 1
+    ok("pure-anon adaptive budget (#2893) coverage clean")
+    return 0
+
+
 def cmd_aot_slot_owner_consistency_2692_coverage():
     """Issue #2692: cross-eval sid ↔ AOT slot owner consistency assert.
 
@@ -10666,6 +10689,7 @@ def cmd_gate():
         or cmd_capability_production_default_2688_coverage()
         or cmd_closure_anon_captured_remount_2691_coverage()
         or cmd_pure_anon_sync_remount_budget_2850_coverage()
+        or cmd_pure_anon_adaptive_budget_2893_coverage()
         or cmd_aot_slot_owner_consistency_2692_coverage()
         or cmd_require_effect_on_ref_2689_coverage()
         or cmd_sole_require_effect_2706_coverage()
@@ -11682,6 +11706,7 @@ def main():
         "capability-production-default-2688": cmd_capability_production_default_2688_coverage,
         "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
         "pure-anon-sync-remount-budget-2850": cmd_pure_anon_sync_remount_budget_2850_coverage,
+        "pure-anon-adaptive-budget-2893": cmd_pure_anon_adaptive_budget_2893_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
