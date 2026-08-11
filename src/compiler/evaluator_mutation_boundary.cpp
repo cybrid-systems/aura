@@ -3183,8 +3183,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             const bool prod_lock_eff_2854 = prod_lock_2854 && !dev_off_2854;
             const bool reject_path_2854 =
                 rebind_fail_2854 || (densify_scan_mismatch && prod_lock_eff_2854);
-            // Issue #2842: freeze goal truth from commit TC before densify
-            // proof stamp (AC2: prune → next fingerprint differs).
+            // Issue #2910 / #2842: fence (prune + rehydrate) BEFORE freezing
+            // goal truth for TypeLinearCommitProof so green densify stamps
+            // see restored OccurrenceGoals when a prior outermost success
+            // persisted a snapshot. Same-epoch second fence below is free.
+            // Soft / no Moving: skip (zero cost).
+            if (had_moving_densify) {
+                if (void* m = ev_->compiler_metrics())
+                    aura::compiler::note_escape_gate_clear_on_densify(m);
+                ev_->note_type_freshness_after_steal_or_densify();
+            }
+            // Issue #2842 / #2910: freeze CS truth after rehydrate (prefer
+            // non-empty live_goal_count + fingerprint on green path).
             const auto densify_goal_truth_2842 =
                 freeze_proof_goal_truth_from_type_checker(ev_->commit_type_checker_handle());
             if (reject_path_2854) {
@@ -3279,21 +3289,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     aura::gc_hooks::residual_defer_after_exit_total(), efl.mutation_epoch);
                 stamp_lifetime_consistency_proof(proof);
             }
-            // Issue #2507: Moving densify success → invalidate escape /
-            // MoveOp elision gate for this eval. Remap may invalidate
-            // escape-clean assumptions under the same cache_epoch.
-            // Soft densify / no Moving: skip (zero cost). Clear by metrics*
-            // identity (all cow_gen) to preserve #2286 cross-eval isolation.
-            if (had_moving_densify) {
-                if (void* m = ev_->compiler_metrics())
-                    aura::compiler::note_escape_gate_clear_on_densify(m);
-                // Issue #2552 AC3: pair densify escape-clear with type
-                // OccurrenceGoal + type_dep epoch fence. Soft densify /
-                // no Moving: skip (zero cost).
-                // Issue #2609: fence is the type axis of the hard-AND;
-                // residual/linear already gated overall_ok above.
-                ev_->note_type_freshness_after_steal_or_densify();
-            }
+            // Issue #2507 / #2552 / #2910: escape-clear + type fence already
+            // ran above (before TypeLinearCommitProof freeze) under Moving
+            // densify success. Second fence would be same-epoch zero cost;
+            // omit to keep Phase-5 exit lean. Soft densify / no Moving: never
+            // entered the pre-stamp fence (zero cost preserved).
             // Issue #2360: the post-densify ownership-exit scan at the
             // Moving densify success site (Phase 5) is wired by #2361
             // (envframe_ok computation above) — single call site, no
@@ -3491,13 +3491,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_linear_revalidations.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #2608 / #2641 / #2896: OccurrenceGoal persist for cross-delta
-        // / multi-session replay after steal/densify prune. Soft default
-        // OFF (zero cost); production defaults, Full audit strategy, or
-        // AURA_OCCURRENCE_PERSIST=1 write a snapshot on outermost success
-        // so densify×steal rehydrate restores priority roots (#2896).
-        // Via C ABI so tests can exercise the same path without dtor
-        // internals.
+        // Issue #2608 / #2641 / #2896 / #2910: OccurrenceGoal persist for
+        // cross-delta / multi-session replay after steal/densify prune.
+        // Soft default OFF (zero cost); production/Full always write a
+        // snapshot on outermost success (no env required) so densify×steal
+        // rehydrate restores priority roots before green TypeLinearCommit
+        // stamps (#2910). Via C ABI so tests exercise the same path.
         {
             const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
             aura_outermost_success_persist_occurrence(ev_, mid);

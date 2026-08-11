@@ -37,7 +37,8 @@ module;
 module aura.compiler.evaluator;
 
 import std;
-import aura.core.lifetime_pin; // Issue #2888: unified proof pin axis
+import aura.core.lifetime_pin;     // Issue #2888: unified proof pin axis
+import aura.compiler.type_checker; // Issue #2910: rehydrate + CS goal freeze on steal stamp
 
 extern "C" {
 bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
@@ -2175,22 +2176,47 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
     (void)aura::compiler::ownership_rebind_after_remap(
         aura::compiler::collect_linear_or_dirty_roots_for_rebind(),
         aura::compiler::RemapReason::Steal);
-    // Issue #2854: same-transaction order — rebind + stamp must be one
-    // atomic story on steal resume (mirror densify Phase-5 exit). Read
-    // the rebind report (file-scope atomic populated above) and stamp
-    // the TypeLinearCommitProof with the explicit outcome so no success
-    // proof can outlive a failed rebind (AC2). Production mismatch
-    // (rebind_ok=false) → Reject proof (would_allow_commit=false,
-    // linear_ok=false). Otherwise → Stamped (success with post-remap
-    // linear_root_count via the new with-outcome overload).
+    // Issue #2854 / #2910: same-transaction order — rebind + stamp must be
+    // one atomic story on steal resume (mirror densify Phase-5 exit).
+    // Issue #2910: prefer CS OccurrenceGoal truth after steal fence
+    // rehydrate so green stamps do not publish empty live_goal_count when
+    // a prior outermost success persisted a snapshot.
     {
         const auto steal_rebind_report_2854 = aura::compiler::last_ownership_rebind_report_v_read();
         const bool steal_rebind_fail_2854 =
             steal_rebind_report_2854.had_rebind && !steal_rebind_report_2854.rebind_ok;
+        // Issue #2910: rehydrate if live table empty under production persist,
+        // then freeze CS goal truth (prefer non-empty live_goal_count on green).
+        typed_audit::ProofGoalTruth steal_goal_truth_2910{};
+        if (void* h = commit_type_checker_handle()) {
+            auto* tc = static_cast<TypeChecker*>(h);
+            if (tc->constraint_system().occurrence_goals_size() == 0 &&
+                tc->constraint_system().occurrence_persist_enabled()) {
+                (void)tc->constraint_system().rehydrate_occurrence_from_persist(0);
+            }
+            const auto& goals = tc->constraint_system().occurrence_goals_for_test();
+            steal_goal_truth_2910.live_goal_count = static_cast<std::uint64_t>(goals.size());
+            steal_goal_truth_2910.from_cs = true;
+            if (!goals.empty()) {
+                std::uint64_t hmix = 0xcbf29ce484222325ULL;
+                const std::size_t n = goals.size() < typed_audit::kProofGoalFingerprintMaxGoals
+                                          ? goals.size()
+                                          : typed_audit::kProofGoalFingerprintMaxGoals;
+                for (std::size_t i = 0; i < n; ++i) {
+                    const auto& g = goals[i];
+                    hmix = typed_audit::mix_occurrence_goal_into_fingerprint(
+                        hmix, g.var.index, g.refined.index, g.predicate_cond_node,
+                        g.source_mutation_id, g.epoch);
+                }
+                steal_goal_truth_2910.goal_fingerprint = (hmix != 0) ? hmix : 1;
+            }
+        }
         if (steal_rebind_fail_2854) {
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                 defuse_version_.load(std::memory_order_acquire),
-                /*would_allow_commit=*/false, /*linear_ok=*/false);
+                /*would_allow_commit=*/false, /*linear_ok=*/false,
+                steal_goal_truth_2910.live_goal_count, steal_goal_truth_2910.goal_fingerprint,
+                steal_goal_truth_2910.from_cs);
             typed_audit::g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(
                 1, std::memory_order_relaxed);
             typed_audit::publish_type_linear_proof_outcome(
@@ -2201,7 +2227,9 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         } else {
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                 defuse_version_.load(std::memory_order_acquire),
-                /*would_allow_commit=*/true, /*linear_ok=*/true);
+                /*would_allow_commit=*/true, /*linear_ok=*/true,
+                steal_goal_truth_2910.live_goal_count, steal_goal_truth_2910.goal_fingerprint,
+                steal_goal_truth_2910.from_cs);
             typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
                 1, std::memory_order_relaxed);
             typed_audit::publish_type_linear_proof_outcome(
