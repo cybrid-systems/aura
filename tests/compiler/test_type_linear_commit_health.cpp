@@ -15,6 +15,12 @@
 //   #2897 AC3: Soft quiet path cheap (zeros / no CS walk)
 //   #2897 AC4: #2613/#2697/#2842/#2854/#2860 surfaces preserved
 //   #2897 AC5: source-cite; no docs/design
+//   #2911 AC1: production + refined drift → would_allow_commit=false (refined_drift)
+//   #2911 AC2: Soft observe only; recover path clears face
+//   #2911 AC3: quiet path zero cost
+//   #2911 AC4: schema-2911 + counters; #2553/#2697/#2842 preserved
+//   #2911 AC5: extend this suite (#81967)
+//   #2911 AC6: decision table + linter; no docs/design/*
 
 #include "compiler/type_linear_commit_health.hh"
 #include "compiler/typed_mutation_audit.h"
@@ -39,13 +45,22 @@ using aura::compiler::compute_type_linear_commit_health;
 using aura::compiler::kTypeLinearCommitHealthIssue;
 using aura::compiler::kTypeLinearEvolutionSnapshotIssue;
 using aura::compiler::TypeLinearCommitHealthSnapshot;
+namespace typed_audit = aura::compiler::typed_audit;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::clear_refined_consistency_drift_for_test;
+using aura::compiler::typed_audit::commit_readiness;
 using aura::compiler::typed_audit::CommitReadinessInput;
+using aura::compiler::typed_audit::kRefinedConsistencyGateIssue;
 using aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read;
 using aura::compiler::typed_audit::last_proof_linear_root_count_v_read;
 using aura::compiler::typed_audit::last_proof_live_goal_count_v_read;
 using aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read;
+using aura::compiler::typed_audit::note_refined_consistency_drift;
 using aura::compiler::typed_audit::occurrence_empty_after_fence_total_v_read;
+using aura::compiler::typed_audit::refined_consistency_observe_total_v_read;
+using aura::compiler::typed_audit::refined_consistency_recover_total_v_read;
+using aura::compiler::typed_audit::refined_consistency_reject_total_v_read;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
@@ -822,6 +837,143 @@ static void ac2897_5_source_cite() {
           "2897 AC5: no new test file per #81967");
 }
 
+// ── Issue #2911: refined-consistency hard gate on commit_readiness ──
+static void ac2911_1_production_reject_on_drift() {
+    std::println("\n--- #2911 AC1: production + refined drift → reject ---");
+    CHECK(kRefinedConsistencyGateIssue == 2911, "2911 AC1: issue stamp");
+    reset_for_test();
+    clear_refined_consistency_drift_for_test();
+    apply_production_audit_defaults();
+    // Explicit latch under production hard.
+    note_refined_consistency_drift(/*production_hard=*/true);
+    CommitReadinessInput in;
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    in.refined_consistency_hard = true;
+    in.refined_consistency_drift = true;
+    // No recover hook → hard reject.
+    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    auto r = commit_readiness(in);
+    CHECK(!r.would_allow_commit, "2911 AC1: no silent green on refined drift");
+    CHECK(r.force_reason == "refined_drift", "2911 AC1: force_reason refined_drift");
+    CHECK(r.force_reason_code == 15, "2911 AC1: force_reason_code 15");
+    CHECK(refined_consistency_reject_total_v_read() >= 1, "2911 AC1: reject total");
+    // Multi-face inject (empty fence + outside drop) also arms drift via live_policy.
+    clear_refined_consistency_drift_for_test();
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac2911_2_soft_observe_and_recover() {
+    std::println("\n--- #2911 AC2: Soft observe; recover clears face ---");
+    reset_for_test();
+    clear_refined_consistency_drift_for_test();
+    apply_dev_audit_defaults();
+    note_refined_consistency_drift(/*production_hard=*/false);
+    CHECK(refined_consistency_observe_total_v_read() >= 1, "2911 AC2: soft observe total");
+    CommitReadinessInput soft;
+    soft.solve_status = 0;
+    soft.linear_ok = true;
+    soft.blame_ok = true;
+    soft.refined_consistency_hard = false;
+    soft.refined_consistency_drift = true;
+    auto r = commit_readiness(soft);
+    CHECK(r.would_allow_commit, "2911 AC2: Soft allows commit");
+    // Production hard + recover success → allow + recover total.
+    clear_refined_consistency_drift_for_test();
+    apply_production_audit_defaults();
+    note_refined_consistency_drift(true);
+    typed_audit::install_occurrence_full_solve_recover([](void*) noexcept -> bool { return true; },
+                                                       nullptr);
+    CommitReadinessInput hard;
+    hard.solve_status = 0;
+    hard.linear_ok = true;
+    hard.blame_ok = true;
+    hard.refined_consistency_hard = true;
+    hard.refined_consistency_drift = true;
+    r = commit_readiness(hard);
+    CHECK(r.would_allow_commit, "2911 AC2: recover success allows");
+    CHECK(r.force_reason == "ok", "2911 AC2: recovered → ok");
+    CHECK(refined_consistency_recover_total_v_read() >= 1, "2911 AC2: recover total");
+    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    clear_refined_consistency_drift_for_test();
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac2911_3_quiet_zero_cost() {
+    std::println("\n--- #2911 AC3: quiet path zero cost ---");
+    reset_for_test();
+    clear_refined_consistency_drift_for_test();
+    apply_production_audit_defaults();
+    const auto rej0 = refined_consistency_reject_total_v_read();
+    const auto rec0 = refined_consistency_recover_total_v_read();
+    CommitReadinessInput in;
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    in.refined_consistency_hard = true;
+    in.refined_consistency_drift = false; // quiet
+    auto r = commit_readiness(in);
+    CHECK(r.would_allow_commit, "2911 AC3: quiet allow");
+    CHECK(r.force_reason == "ok", "2911 AC3: quiet ok");
+    CHECK(refined_consistency_reject_total_v_read() == rej0, "2911 AC3: no reject noise");
+    CHECK(refined_consistency_recover_total_v_read() == rec0, "2911 AC3: no recover noise");
+    apply_dev_audit_defaults();
+    reset_for_test();
+}
+
+static void ac2911_4_schema_and_lineage() {
+    std::println("\n--- #2911 AC4: schema-2911 + lineage preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2911") == 2911, "2911 AC4: schema-2911");
+    CHECK(href(cs, "issue-2911") == 2911, "2911 AC4: issue-2911");
+    CHECK(href(cs, "refined-consistency-wired") == 1, "2911 AC4: wired");
+    CHECK(href(cs, "refined-consistency-observe-total") >= 0, "2911 AC4: observe key");
+    CHECK(href(cs, "refined-consistency-reject-total") >= 0, "2911 AC4: reject key");
+    CHECK(href(cs, "schema-2553") == 2553, "2911 AC4: schema-2553 preserved");
+    CHECK(href(cs, "commit-readiness-wired") == 1, "2911 AC4: commit-readiness preserved");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("refined_drift") != std::string::npos, "2911 AC4: force_reason refined_drift");
+    CHECK(tma.find("return 15; // #2911") != std::string::npos ||
+              tma.find("return 15;") != std::string::npos,
+          "2911 AC4: reason code 15");
+    CHECK(tma.find("kRefinedConsistencyGateIssue") != std::string::npos, "2911 AC4: issue stamp");
+}
+
+static void ac2911_5_source_cite() {
+    std::println("\n--- #2911 AC5: source-cite extend suite ---");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(t.find("ac2911_1_production_reject_on_drift") != std::string::npos, "2911 AC5: AC1");
+    CHECK(t.find("ac2911_2_soft_observe_and_recover") != std::string::npos, "2911 AC5: AC2");
+    CHECK(t.find("ac2911_3_quiet_zero_cost") != std::string::npos, "2911 AC5: AC3");
+    CHECK(tma.find("#2911") != std::string::npos, "2911 AC5: tma cites #2911");
+    CHECK(etc.find("note_refined_consistency_drift") != std::string::npos,
+          "2911 AC5: composite path notes refined drift");
+    CHECK(etc.find("#2911") != std::string::npos, "2911 AC5: evaluator_typecheck cites #2911");
+}
+
+static void ac2911_6_linter_and_decision_table() {
+    std::println("\n--- #2911 AC6: decision table + linter + no design ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_refined_consistency_commit_gate_2911.py");
+    CHECK(tma.find("Soft vs production decision table") != std::string::npos ||
+              tma.find("Soft + drift") != std::string::npos,
+          "2911 AC6: decision table in comments");
+    CHECK(build.find("check_refined_consistency_commit_gate_2911") != std::string::npos,
+          "2911 AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2911") != std::string::npos, "2911 AC6: linter present");
+    CHECK(read_file("docs/design/2911-refined-consistency.md").empty(),
+          "2911 AC6: no docs/design/2911-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2911.cpp").empty(),
+          "2911 AC6: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -871,8 +1023,17 @@ int run_test_type_linear_commit_health() {
     ac2897_3_quiet_cheap();
     ac2897_4_additive();
     ac2897_5_source_cite();
-    std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    // Issue #2911: refined consistency hard gate on commit_readiness.
+    std::println("\n=== Issue #2911: refined-consistency hard gate ===");
+    ac2911_1_production_reject_on_drift();
+    ac2911_2_soft_observe_and_recover();
+    ac2911_3_quiet_zero_cost();
+    ac2911_4_schema_and_lineage();
+    ac2911_5_source_cite();
+    ac2911_6_linter_and_decision_table();
+    std::println(
+        "\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
