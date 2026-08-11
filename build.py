@@ -1804,6 +1804,18 @@ def cmd_lint():
             "Issue #2837 Moving external-root remap linter failed — run python3 scripts/coverage/checks/check_moving_external_root_remap_2837.py"
         )
         return r
+    # Issue #2905: sticky densify-off auto-clear on clean Moving / Phase-5 green
+    # + Agent query visibility (schema-2905). Extends #2837 suite (#81967).
+    mst_script = COVERAGE_CHECKS / "check_moving_sticky_densify_off_2905.py"
+    if not mst_script.exists():
+        fail(f"missing {mst_script}")
+        return 1
+    r = run([sys.executable, str(mst_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2905 moving sticky densify-off linter failed — run python3 scripts/coverage/checks/check_moving_sticky_densify_off_2905.py"
+        )
+        return r
     # Issue #2889: auto-register known intermediate + compiler external roots
     # into the Moving densify window so incomplete-remap surface shrinks under
     # production (walk + additive counter + query keys). Extends the existing
@@ -6164,6 +6176,32 @@ def cmd_moving_unified_success_2682_coverage():
         return 1
     ok("moving densify unified success gate (#2682) coverage clean")
     return 0
+
+
+def cmd_moving_sticky_densify_off_2905_coverage():
+    """Issue #2905: sticky densify-off auto-clear + Agent visibility (static)."""
+    print(f"{B}=== moving sticky densify-off coverage (#2905) ==={N}")
+    script = COVERAGE_CHECKS / "check_moving_sticky_densify_off_2905.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving sticky densify-off (#2905) coverage contract rows failed")
+        return 1
+    ok("moving sticky densify-off (#2905) coverage clean")
+    return 0
+
+
+def cmd_moving_sticky_densify_off_2905():
+    """Issue #2905: clean Moving / Phase-5 green auto-clears sticky densify-off.
+
+    Production hard incomplete-remap still arms sticky; Soft never arms.
+    query:moving-densify-health + arena-live-compact expose sticky flag/total
+    (schema-2905). Agents chart densify-disabled-due-to-prior-incomplete-remap.
+    """
+    print(f"{B}=== moving sticky densify-off (#2905) ==={N}")
+    return cmd_moving_sticky_densify_off_2905_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -10973,6 +11011,7 @@ def cmd_gate():
         or cmd_batch_dirty_cascade_coverage()
         or cmd_batch_dirty_discipline_coverage()
         or cmd_moving_unified_success_2682_coverage()
+        or cmd_moving_sticky_densify_off_2905_coverage()
         or cmd_shape_storm_isolation_2683_coverage()
         or cmd_evaluator_capture_tenant_2687_coverage()
         or cmd_hard_capture_tenant_2705_coverage()
@@ -12004,6 +12043,8 @@ def main():
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
         "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
+        "moving-sticky-densify-off-2905": cmd_moving_sticky_densify_off_2905,
+        "moving-sticky-densify-off-2905-coverage": cmd_moving_sticky_densify_off_2905_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,

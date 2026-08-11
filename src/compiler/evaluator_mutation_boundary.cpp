@@ -3096,6 +3096,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 /*untracked_kept_count=*/static_cast<std::uint64_t>(densify_untracked_kept));
         if (moving_unified_success) {
             aura::ast::g_moving_unified_success_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2905 AC1: Phase-5 outermost aggregated green clears
+            // sticky densify-off (pairs with per-arena clean clear in
+            // live_compact(Moving) at arena.ixx). Do not clear when residual
+            // untracked / incomplete remain — unified_success already
+            // encodes that. Soft / no densify windows leave sticky alone
+            // (had_moving_densify gates recovery after a real green window).
+            if (had_moving_densify) {
+                aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+            }
         } else if (had_moving_densify) {
             // Only bump fail when densify actually ran (vacuous healthy on
             // Soft / no-densify windows stays out of the fail counter).
