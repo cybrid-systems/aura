@@ -663,6 +663,12 @@ add_library(aura_test_objects SHARED
     src/compiler/type_checker_impl.cpp
     # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
     src/compiler/typed_mutation_audit_hooks.cpp
+    # CI build-test (x86_64 mold --as-needed): weak bridge-hook stubs so
+    # libaura_test_objects.so resolves AuraJIT ctor / aura_cleanup_aot_state /
+    # aura_set_long_mutation_scheduler_hook / aura_macro_provenance_repin_on_steal
+    # at load time even when the JIT libs are stripped (same class as
+    # g_current_fiber_id_fn in runtime_ssot.cpp; JIT strong defs interpose).
+    src/compiler/runtime_bridge_stub.cpp
     src/compiler/arity_impl.cpp
     src/compiler/messaging_bridge_impl.cpp
     src/compiler/ffi_primitives_impl.cpp
