@@ -568,12 +568,15 @@ inline constexpr int kMovingExternalRootPrepRegisterIssue = 2775;
 // once per void** slot whose *slot value was rewritten via last_object_remap_.
 // Distinct from prep-register (#2775 value-only observability).
 export inline std::atomic<std::uint64_t> g_moving_external_root_slot_remap_total{0};
-// Issue #2837: sticky force densify-off after production hard incomplete-remap.
-// When set, moving_compact_enabled() returns 0 until clear (Agent must
-// re-register roots / clear sticky). Soft observe-only never arms sticky.
+// Issue #2837 / #2905: sticky force densify-off after production hard
+// incomplete-remap. When set, moving_compact_enabled() returns 0 until
+// clear (Agent re-registers roots, or a clean Moving densify / Phase-5
+// aggregated green auto-clears — #2905). Soft observe-only never arms sticky.
+// Never clear while residual untracked / incomplete remain (fail-closed).
 export inline std::atomic<std::uint8_t> g_moving_incomplete_remap_sticky_densify_off{0};
 export inline std::atomic<std::uint64_t> g_moving_incomplete_remap_sticky_densify_off_total{0};
 inline constexpr int kMovingExternalRootRemapIssue = 2837;
+inline constexpr int kMovingStickyDensifyOffAutoClearIssue = 2905;
 
 export inline void clear_moving_incomplete_remap_sticky_densify_off() noexcept {
     g_moving_incomplete_remap_sticky_densify_off.store(0, std::memory_order_release);
@@ -1613,9 +1616,12 @@ public:
 
             if (result.objects_moved > 0 && !result.moving_incomplete_remap &&
                 result.pin_contract_held) {
-                // Issue #2837: clean Moving densify clears sticky densify-off
-                // so Agents can resume densify after re-registering roots
-                // and completing a green window.
+                // Issue #2837 / #2905 AC1: clean Moving densify clears sticky
+                // densify-off so Agents resume densify after re-registering
+                // roots and completing a green window. Phase-5 outermost
+                // aggregated green also clears (evaluator_mutation_boundary).
+                // Do not clear while incomplete_remap / residual untracked
+                // (this predicate already requires !incomplete + pin held).
                 clear_moving_incomplete_remap_sticky_densify_off();
                 // Issue #2840: clean densify clears general-object pin breach.
                 aura::core::lifetime::clear_general_object_pin_required_breach();

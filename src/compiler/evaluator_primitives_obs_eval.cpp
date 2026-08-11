@@ -1797,6 +1797,21 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                                                     std::memory_order_relaxed)
                                               : moving_blocked));
             insert_kv("moving-compact-enabled", aura::ast::moving_compact_enabled());
+            // Issue #2905 AC2: sticky densify-off visibility on arena-live-compact
+            // surface (aliases match moving-densify-health schema-2905).
+            {
+                const auto sticky_on =
+                    aura::ast::moving_incomplete_remap_sticky_densify_off() ? 1 : 0;
+                const auto sticky_tot = static_cast<std::int64_t>(
+                    aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+                        std::memory_order_relaxed));
+                insert_kv("sticky-densify-off", sticky_on);
+                insert_kv("sticky-densify-off-total", sticky_tot);
+                insert_kv("moving-sticky-densify-off", sticky_on);
+                insert_kv("moving-sticky-densify-off-total", sticky_tot);
+                insert_kv("schema-2905", 2905);
+                insert_kv("issue-2905", 2905);
+            }
             insert_kv("schema-2166", aura::ast::kMovingCompactIssue);
             insert_kv("issue-2166", aura::ast::kMovingCompactIssue);
             insert_kv("moving-compact-wired", 1);

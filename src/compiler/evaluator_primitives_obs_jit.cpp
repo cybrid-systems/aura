@@ -11801,20 +11801,30 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2596", 2596);
             insert_kv("issue-2596", 2596);
             insert_kv("schema-2495", 2495);
-            // Issue #2837: external-root slot remap + sticky densify-off.
+            // Issue #2837 / #2905: external-root slot remap + sticky densify-off.
+            // Agents chart "densify disabled because of prior incomplete remap"
+            // via sticky flag + total (aliases + schema-2905 for AC2).
             insert_kv(
                 "external-root-slot-remap-total",
                 static_cast<std::int64_t>(aura::ast::g_moving_external_root_slot_remap_total.load(
                     std::memory_order_relaxed)));
-            insert_kv("sticky-densify-off",
-                      aura::ast::moving_incomplete_remap_sticky_densify_off() ? 1 : 0);
-            insert_kv("sticky-densify-off-total",
-                      static_cast<std::int64_t>(
-                          aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
-                              std::memory_order_relaxed)));
+            const auto sticky_on = aura::ast::moving_incomplete_remap_sticky_densify_off() ? 1 : 0;
+            const auto sticky_tot = static_cast<std::int64_t>(
+                aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+                    std::memory_order_relaxed));
+            insert_kv("sticky-densify-off", sticky_on);
+            insert_kv("sticky-densify-off-total", sticky_tot);
+            // Issue #2905 AC2: Agent-facing aliases (moving-sticky-*).
+            insert_kv("moving-sticky-densify-off", sticky_on);
+            insert_kv("moving-sticky-densify-off-total", sticky_tot);
+            insert_kv("moving-compact-enabled-now",
+                      static_cast<std::int64_t>(aura::ast::moving_compact_enabled()));
             insert_kv("external-root-remap-wired", 1);
             insert_kv("schema-2837", 2837);
             insert_kv("issue-2837", 2837);
+            insert_kv("schema-2905", 2905);
+            insert_kv("issue-2905", 2905);
+            insert_kv("moving-sticky-auto-clear-wired", 1);
             // Issue #2889: known intermediate + compiler external roots
             // auto-registered into the Moving densify window on densify
             // entry (auto-register walk). Pairs with #2749 split counters

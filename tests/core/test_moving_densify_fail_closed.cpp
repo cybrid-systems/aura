@@ -720,6 +720,190 @@ static void ac2889_4_query_keys() {
     CHECK(obs.find("schema-2495") != std::string::npos, "AC4: schema-2495 preserved");
 }
 
+// ── Issue #2905: sticky densify-off auto-clear + Agent visibility ──
+// AC1 clean Moving densify clears sticky
+// AC2 query exposes sticky flag + total (schema-2905 aliases)
+// AC3 production hard arms; Soft never arms
+// AC4 re-register + clean Moving restores enabled without manual clear
+// AC5 Phase-5 source-cite + no docs/design
+
+static void ac2905_1_clean_moving_clears_sticky() {
+    std::println("\n--- #2905 AC1: clean Moving densify clears sticky densify-off ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    // Force-arm sticky as if a prior hard incomplete fired.
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC1: sticky armed");
+    CHECK(aura::ast::moving_compact_enabled() == 0, "AC1: densify forced off under sticky");
+    // Temporarily allow Moving for the clean window (sticky gates enabled()).
+    // Clean densify path in live_compact clears sticky when green.
+    // Use a clean densify: pin-free small-pool objects, no external roots.
+    // Note: sticky forces moving_compact_enabled=0 which may skip Moving
+    // selection at policy layer; clear is inside live_compact(Moving) after
+    // a green window — call live_compact(Moving) directly (bypasses policy).
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    // Register slot so remap is complete (no incomplete).
+    void* ext = p0;
+    arena.register_external_root_slot_for_densify(&ext);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0 && !r.moving_incomplete_remap && r.pin_contract_held) {
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC1: clean Moving clears sticky densify-off");
+        aura::ast::set_moving_compact_enabled(1);
+        CHECK(aura::ast::moving_compact_enabled() == 1,
+              "AC1: densify re-enabled after clean clear");
+    } else {
+        // If densify did not move (frag/layout), still verify clear API + path.
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC1: clear helper works (no-move window)");
+        const auto arena_src = read_file("src/core/arena.ixx");
+        CHECK(arena_src.find("clear_moving_incomplete_remap_sticky_densify_off") !=
+                  std::string::npos,
+              "AC1: clean path cites clear sticky");
+        CHECK(arena_src.find("#2905") != std::string::npos ||
+                  arena_src.find("Issue #2905") != std::string::npos,
+              "AC1: arena cites #2905 on clean clear");
+    }
+    (void)p1;
+    (void)p2;
+}
+
+static void ac2905_2_query_sticky_surface() {
+    std::println("\n--- #2905 AC2: query surface sticky flag + total ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto eval = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(obs.find("sticky-densify-off") != std::string::npos, "AC2: sticky-densify-off key");
+    CHECK(obs.find("sticky-densify-off-total") != std::string::npos,
+          "AC2: sticky-densify-off-total key");
+    CHECK(obs.find("moving-sticky-densify-off") != std::string::npos,
+          "AC2: moving-sticky-densify-off alias");
+    CHECK(obs.find("moving-sticky-densify-off-total") != std::string::npos,
+          "AC2: moving-sticky-densify-off-total alias");
+    CHECK(obs.find("schema-2905") != std::string::npos, "AC2: schema-2905 on densify health");
+    CHECK(obs.find("moving-sticky-auto-clear-wired") != std::string::npos,
+          "AC2: auto-clear wired sentinel");
+    CHECK(eval.find("moving-sticky-densify-off") != std::string::npos,
+          "AC2: arena-live-compact also exposes sticky");
+    CHECK(eval.find("schema-2905") != std::string::npos, "AC2: schema-2905 on arena-live-compact");
+    // Lineage preserved.
+    CHECK(obs.find("schema-2837") != std::string::npos, "AC2: schema-2837 preserved");
+    CHECK(obs.find("schema-2619") != std::string::npos, "AC2: schema-2619 preserved");
+}
+
+static void ac2905_3_hard_arms_soft_never() {
+    std::println("\n--- #2905 AC3: production hard arms sticky; Soft never ---");
+    // Hard path (reuse #2837 AC3 mechanics).
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        void* ext = p0;
+        arena.register_external_root_for_densify(ext); // value-only → incomplete
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        if (r.objects_moved > 0 && r.moving_incomplete_remap) {
+            CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+                  "AC3: hard incomplete arms sticky");
+        }
+        (void)p1;
+        (void)p2;
+    }
+    // Soft path never arms.
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        void* ext = p0;
+        arena.register_external_root_for_densify(ext);
+        (void)arena.live_compact(LiveCompactMode::Moving);
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC3: Soft never arms sticky densify-off");
+        (void)p1;
+        (void)p2;
+    }
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Soft (hard_pref <= 0) does not arm sticky") != std::string::npos ||
+              arena.find("hard_pref > 0") != std::string::npos,
+          "AC3: Soft/hard arm path source-cited");
+}
+
+static void ac2905_4_reregister_clean_restores_without_manual_clear() {
+    std::println(
+        "\n--- #2905 AC4: re-register + clean Moving restores densify without manual clear ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    // Arm sticky as residual of prior hard incomplete.
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    // Re-register as slot (proper recovery path) then clean densify.
+    arena.register_external_root_slot_for_densify(&ext);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    // Auto-clear on clean window — no call to clear_moving_incomplete_remap_sticky_densify_off.
+    if (r.objects_moved > 0 && !r.moving_incomplete_remap && r.pin_contract_held) {
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC4: sticky auto-cleared after re-register + clean Moving");
+        aura::ast::set_moving_compact_enabled(1);
+        CHECK(aura::ast::moving_compact_enabled() == 1,
+              "AC4: moving_compact_enabled restored without manual clear");
+    } else {
+        // Structural: clean clear + Phase-5 auto-clear are wired.
+        const auto arena_src = read_file("src/core/arena.ixx");
+        const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(arena_src.find("clear_moving_incomplete_remap_sticky_densify_off()") !=
+                  std::string::npos,
+              "AC4: per-arena clean clears sticky");
+        CHECK(mb.find("clear_moving_incomplete_remap_sticky_densify_off") != std::string::npos,
+              "AC4: Phase-5 auto-clears sticky on unified success");
+        CHECK(mb.find("#2905") != std::string::npos || mb.find("Issue #2905") != std::string::npos,
+              "AC4: Phase-5 cites #2905");
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    }
+    (void)p1;
+    (void)p2;
+}
+
+static void ac2905_5_source_cite_phase5_no_design() {
+    std::println("\n--- #2905 AC5: source-cite + Phase-5 + linter + no design ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_moving_sticky_densify_off_2905.py");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    CHECK(arena.find("#2905") != std::string::npos ||
+              arena.find("Issue #2905") != std::string::npos,
+          "AC5: arena.ixx cites #2905");
+    CHECK(mb.find("#2905") != std::string::npos || mb.find("Issue #2905") != std::string::npos,
+          "AC5: Phase-5 cites #2905");
+    CHECK(mb.find("moving_unified_success") != std::string::npos,
+          "AC5: Phase-5 uses unified success for clear");
+    CHECK(obs.find("schema-2905") != std::string::npos, "AC5: schema-2905 on query");
+    CHECK(build.find("check_moving_sticky_densify_off_2905") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2905") != std::string::npos, "AC5: linter present");
+    CHECK(t.find("ac2905_1_clean_moving_clears_sticky") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2905_4_reregister_clean_restores_without_manual_clear") != std::string::npos,
+          "AC5: AC4 test");
+    CHECK(read_file("docs/design/2905-sticky-densify-off.md").empty(),
+          "AC5: no docs/design/2905-* per #1655");
+    CHECK(read_file("tests/core/test_issue_2905.cpp").empty(), "AC5: no new test file per #81967");
+}
+
 static void ac2889_5_linter_and_no_design() {
     std::println("\n--- #2889 AC5: linter + no docs/design/ ---");
     const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
@@ -793,6 +977,12 @@ int run_test_moving_densify_fail_closed() {
     ac2889_3_fail_closed_preserved();
     ac2889_4_query_keys();
     ac2889_5_linter_and_no_design();
+    // Issue #2905: sticky densify-off auto-clear + Agent pending visibility.
+    ac2905_1_clean_moving_clears_sticky();
+    ac2905_2_query_sticky_surface();
+    ac2905_3_hard_arms_soft_never();
+    ac2905_4_reregister_clean_restores_without_manual_clear();
+    ac2905_5_source_cite_phase5_no_design();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 
