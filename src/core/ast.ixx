@@ -4979,11 +4979,18 @@ public:
         }
     }
 
-    // Issue #2058: move children_[id] out so the PCV is typically unique
-    // (no snapshot/SafePCVSpan hold) → cow_set writes in place (zero alloc).
-    // When a snapshot still aliases storage, cow_* falls back to with_* COW.
+    // Issue #2058 / #2906: move children_[id] out so the PCV is typically
+    // unique (no snapshot/SafePCVSpan hold) → cow_set writes in place
+    // (zero alloc). Canonical pattern (never mutate while slot holds a
+    // shared view):
+    //   auto kids = std::move(children_[id]);
+    //   kids.cow_set(i, new_child);
+    //   children_[id] = std::move(kids);
+    // When a snapshot still aliases storage, cow_* falls back to with_* COW
+    // and flatast_locked_move_out_cow_total bumps (AC3 correctness).
     void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
         contract_assert(id < children_.size());
+        // Issue #2906 AC1: force exclusive ownership via move-out.
         auto list = std::move(children_[id]);
         if (idx >= list.size()) {
             children_[id] = std::move(list);
@@ -4993,7 +5000,14 @@ public:
         auto old_cid = list[idx];
         if (old_cid != NULL_NODE && old_cid < parent_.size())
             parent_[old_cid] = NULL_NODE;
+        const bool exclusive_before = list.is_unique();
         list.cow_set(idx, child);
+        if (exclusive_before)
+            g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.fetch_add(
+                1, std::memory_order_relaxed);
+        else
+            g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.fetch_add(
+                1, std::memory_order_relaxed);
         contract_assert(list.size() == old_size);
         children_[id] = std::move(list);
         if (child != NULL_NODE && child < parent_.size())
@@ -5016,9 +5030,17 @@ public:
         if (!incoming_parent_index_dirty_.load(std::memory_order_acquire) &&
             pos < children_[id].size())
             incoming_index_shift_parent_indices(id, pos, /*delta=*/+1);
-        // Issue #2058: move-out for unique-ish path (insert still allocates).
+        // Issue #2058 / #2906: move-out for exclusive ownership (insert still
+        // size-changes → allocates, but avoids shared-view mutation).
         auto list = std::move(children_[id]);
+        const bool exclusive_before = list.is_unique();
         list.cow_insert(pos, child);
+        if (exclusive_before)
+            g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.fetch_add(
+                1, std::memory_order_relaxed);
+        else
+            g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.fetch_add(
+                1, std::memory_order_relaxed);
         children_[id] = std::move(list);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
@@ -5042,9 +5064,17 @@ public:
         }
         if (cid != NULL_NODE && cid < parent_.size())
             parent_[cid] = NULL_NODE;
-        // Issue #2058: move-out + cow_erase (size-change always allocates).
+        // Issue #2058 / #2906: move-out + cow_erase (size-change always
+        // allocates; exclusive move still avoids shared-view mutation).
         auto list = std::move(children_[id]);
+        const bool exclusive_before = list.is_unique();
         list.cow_erase(idx);
+        if (exclusive_before)
+            g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.fetch_add(
+                1, std::memory_order_relaxed);
+        else
+            g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.fetch_add(
+                1, std::memory_order_relaxed);
         children_[id] = std::move(list);
         add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
         structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
@@ -8371,29 +8401,40 @@ private:
         const auto idx = rec.field_offset;
         const auto old_child = static_cast<NodeId>(rec.old_value);
         const auto new_child = static_cast<NodeId>(rec.new_value);
-        auto& list = children_[parent];
+        // Issue #2906: move-out so exclusive with_set / cow path can hit
+        // unique in-place (same discipline as set_child_locked).
+        auto list = std::move(children_[parent]);
 
         switch (*op) {
             case StructuralRollbackOp::SetChild:
-                if (idx >= list.size())
+                if (idx >= list.size()) {
+                    children_[parent] = std::move(list);
                     return std::unexpected(MutationError::OutOfRange);
+                }
                 if (new_child != NULL_NODE && new_child < parent_.size())
                     parent_[new_child] = NULL_NODE;
-                children_[parent] = list.with_set(idx, old_child);
+                list.cow_set(idx, old_child);
+                children_[parent] = std::move(list);
                 if (old_child != NULL_NODE && old_child < parent_.size())
                     parent_[old_child] = parent;
                 break;
             case StructuralRollbackOp::InsertChild:
-                if (idx > list.size())
+                if (idx > list.size()) {
+                    children_[parent] = std::move(list);
                     return std::unexpected(MutationError::OutOfRange);
+                }
                 if (new_child != NULL_NODE && new_child < parent_.size())
                     parent_[new_child] = NULL_NODE;
-                children_[parent] = list.with_erase(idx);
+                list.cow_erase(idx);
+                children_[parent] = std::move(list);
                 break;
             case StructuralRollbackOp::RemoveChild:
-                if (idx > list.size())
+                if (idx > list.size()) {
+                    children_[parent] = std::move(list);
                     return std::unexpected(MutationError::OutOfRange);
-                children_[parent] = list.with_insert(idx, old_child);
+                }
+                list.cow_insert(idx, old_child);
+                children_[parent] = std::move(list);
                 if (old_child != NULL_NODE && old_child < parent_.size())
                     parent_[old_child] = parent;
                 break;
@@ -8429,25 +8470,32 @@ private:
         const auto idx = rec.field_offset; // body slot (normally 0)
         const auto old_child = static_cast<NodeId>(rec.old_value);
         const auto new_child = static_cast<NodeId>(rec.new_value);
-        auto& list = children_[define_node];
-        if (idx >= list.size())
+        // Issue #2906: move-out before cow_set (exclusive PCV path).
+        auto list = std::move(children_[define_node]);
+        if (idx >= list.size()) {
+            children_[define_node] = std::move(list);
             return std::unexpected(MutationError::OutOfRange);
+        }
 
         // Issue #2795: validate body NodeIds before topology write.
         if (old_child != NULL_NODE) {
             if (old_child >= tag_.size() || is_free_slot(old_child) || !is_live_node(old_child)) {
+                children_[define_node] = std::move(list);
                 rebind_rollback_stale_nodeid_prevented_total_.fetch_add(1,
                                                                         std::memory_order_relaxed);
                 return std::unexpected(MutationError::InvalidTarget);
             }
         }
-        if (new_child != NULL_NODE && new_child >= parent_.size())
+        if (new_child != NULL_NODE && new_child >= parent_.size()) {
+            children_[define_node] = std::move(list);
             return std::unexpected(MutationError::OutOfRange);
+        }
 
         // Inverse of set_child: detach new body, reattach old body.
         if (new_child != NULL_NODE && new_child < parent_.size())
             parent_[new_child] = NULL_NODE;
-        children_[define_node] = list.with_set(idx, old_child);
+        list.cow_set(idx, old_child);
+        children_[define_node] = std::move(list);
         if (old_child != NULL_NODE && old_child < parent_.size())
             parent_[old_child] = define_node;
 
