@@ -8113,6 +8113,12 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             (void)engine.sync_occurrence_after_dirty(
                 std::span<const NodeId>(outside_cone_conds.data(), outside_cone_conds.size()),
                 &flat, &solve_delta_cs_);
+            // Issue #2703 / #2909: publish outside-If goal drop face so
+            // production commit_readiness can force full-solve recover
+            // (or hard reject) — Soft observes only. Quiet empty set
+            // never reaches here (zero cost).
+            aura::compiler::typed_audit::publish_cone_outside_goal_drop(
+                static_cast<std::uint64_t>(outside_cone_conds.size()));
             if (metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                 m->occurrence_cone_outside_invalidate_total.fetch_add(1, std::memory_order_relaxed);

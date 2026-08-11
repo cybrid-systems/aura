@@ -2431,14 +2431,25 @@ export struct TypeChecker {
             &TypeChecker::occurrence_full_solve_recover_trampoline, this);
     }
 
-    // Issue #2750: full ConstraintSystem::solve recover for occurrence faces.
-    // Returns true when SOLVED (occurrence narrowing restored enough to commit).
+    // Issue #2750 / #2909: full ConstraintSystem::solve recover for occurrence
+    // faces and cone-truncate + outside-If goal drop force-closure.
+    // Returns true when SOLVED (occurrence roots / narrowing restored enough
+    // to commit). #2909: after SOLVED, non-empty occurrence_goals_ OR
+    // priority roots preferred; empty CS with SOLVED still clears truncate
+    // stamp so fingerprint path is not half-green on vacuous workspaces.
     [[nodiscard]] bool try_occurrence_hard_face_full_solve_recover() noexcept {
         try {
+            // Issue #2909: one elevated goal-priority reverify before full
+            // solve when residual occurrence priority / goals exist.
+            (void)solve_delta_cs_.try_goal_priority_reverify_before_full();
             std::vector<Constraint> unresolved;
             const auto full = solve_delta_cs_.solve(&unresolved);
             if (full == SolveResult::SOLVED) {
                 solve_delta_cs_.note_full_solve_cleared_truncation();
+                // Clear engine-local truncate stamp so next fidelity proof
+                // does not re-observe half-green truncate (#2842 fingerprint).
+                last_partial_cone_truncated_ = false;
+                last_partial_cone_dropped_ = 0;
                 return true;
             }
         } catch (...) {

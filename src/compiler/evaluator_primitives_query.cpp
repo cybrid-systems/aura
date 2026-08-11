@@ -7485,6 +7485,24 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                                 occurrence_hard_face_recover_fail_total_v_read()));
                                         insert_kv("schema-2750", 2750);
                                         insert_kv("issue-2750", 2750);
+                                        // Issue #2909: cone truncate +
+                                        // outside drop force-closure.
+                                        insert_kv("cone-truncate-force-closure-total",
+                                                  static_cast<std::int64_t>(
+                                                      cone_truncate_force_closure_total_v_read()));
+                                        insert_kv(
+                                            "cone-truncate-force-closure-attempt-total",
+                                            static_cast<std::int64_t>(
+                                                cone_truncate_force_closure_attempt_total_v_read()));
+                                        insert_kv(
+                                            "cone-truncate-force-closure-reject-total",
+                                            static_cast<std::int64_t>(
+                                                cone_truncate_force_closure_reject_total_v_read()));
+                                        insert_kv("cone-truncate-force-closure-wired",
+                                                  static_cast<std::int64_t>(
+                                                      cone_truncate_force_closure_wired_v_read()));
+                                        insert_kv("schema-2909", kConeTruncateForceClosureIssue);
+                                        insert_kv("issue-2909", kConeTruncateForceClosureIssue);
                                     }
                                 }
                             }
