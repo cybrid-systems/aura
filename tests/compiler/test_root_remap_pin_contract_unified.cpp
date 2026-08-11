@@ -200,9 +200,10 @@ static void ac5_source_cite_unified_gate() {
     CHECK(rpx.find("root_remap_closure_capture_fail_total") != std::string::npos,
           "AC5: root_remap_pass.ixx writes root_remap_closure_capture_fail_total");
 
-    // Linter present + self-test mentions AC5.
+    // Linter present + self-test mentions the issue (thin wrapper
+    // delegating to runner.py --issue 2499; docstring cites #2499).
     CHECK(!linter.empty(), "AC5: linter script present");
-    CHECK(linter.find("AC5") != std::string::npos, "AC5: linter self-test mentions AC5");
+    CHECK(linter.find("Issue #2499") != std::string::npos, "AC5: linter self-test cites #2499");
 }
 
 } // namespace

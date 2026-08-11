@@ -11628,6 +11628,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2376", 2376);
             insert_kv("issue-2376", 2376);
             // Issue #2436: Arena × IR SoA × Shape × fiber post-compact lifecycle
+            insert_kv("post-compact-lifecycle-ran-total",
+                      static_cast<std::int64_t>(
+                          aura::core::post_compact_lifecycle::post_compact_lifecycle_ran_total.load(
+                              std::memory_order_relaxed)));
             insert_kv(
                 "post-compact-lifecycle-runs-total",
                 static_cast<std::int64_t>(
