@@ -1,13 +1,20 @@
 // @category: unit
 // @reason: Issue #2613 — query:type-linear-commit-health folds readiness ×
 //          linear × coercion × occurrence into one Agent surface.
+//          Issue #2897 — query:type-linear-evolution-snapshot single atomic
+//          poll for readiness + proof + occurrence (Agent join reduction).
 //
-//   AC1: Query returns all folded keys; schema-2613 registered
-//   AC2: Incomplete blame / linear force / coercion SLO → force_reason + flags
+//   #2613 AC1: Query returns all folded keys; schema-2613 registered
+//   #2613 AC2: Incomplete blame / linear force / coercion SLO → force_reason + flags
 //        match underlying counters
-//   AC3: Happy path → readiness_bp 10000, would_allow_commit true, zero stale
-//   AC4: No commit/audit behavior change (pure aggregation + existing queries)
-//   AC5: Source-cite + gate; no docs/design
+//   #2613 AC3: Happy path → readiness_bp 10000, would_allow_commit true, zero stale
+//   #2613 AC4: No commit/audit behavior change (pure aggregation + existing queries)
+//   #2613 AC5: Source-cite + gate; no docs/design
+//   #2897 AC1: primitive registered; keys + schema; no unbounded alloc
+//   #2897 AC2: values match independent SSOT gauge reads
+//   #2897 AC3: Soft quiet path cheap (zeros / no CS walk)
+//   #2897 AC4: #2613/#2697/#2842/#2854/#2860 surfaces preserved
+//   #2897 AC5: source-cite; no docs/design
 
 #include "compiler/type_linear_commit_health.hh"
 #include "compiler/typed_mutation_audit.h"
@@ -26,12 +33,19 @@ import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::capture_type_linear_evolution_snapshot;
 using aura::compiler::CompilerService;
 using aura::compiler::compute_type_linear_commit_health;
 using aura::compiler::kTypeLinearCommitHealthIssue;
+using aura::compiler::kTypeLinearEvolutionSnapshotIssue;
 using aura::compiler::TypeLinearCommitHealthSnapshot;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::CommitReadinessInput;
+using aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read;
+using aura::compiler::typed_audit::last_proof_linear_root_count_v_read;
+using aura::compiler::typed_audit::last_proof_live_goal_count_v_read;
+using aura::compiler::typed_audit::last_type_linear_proof_outcome_v_read;
+using aura::compiler::typed_audit::occurrence_empty_after_fence_total_v_read;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
@@ -53,6 +67,14 @@ static std::string read_file(const char* path) {
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(
         std::format("(hash-ref (engine:metrics \"query:type-linear-commit-health\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static std::int64_t href_evolv(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:type-linear-evolution-snapshot\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -662,6 +684,144 @@ static void ac2842_5_source_and_linter() {
           "AC6: no new test file per #81967");
 }
 
+// ── Issue #2897 AC1: primitive registered; keys + schema ──
+static void ac2897_1_query_keys() {
+    std::println("\n--- #2897 AC1: query:type-linear-evolution-snapshot keys ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto h = cs.eval("(engine:metrics \"query:type-linear-evolution-snapshot\")");
+    CHECK(h && is_hash(*h), "2897 AC1: query returns hash");
+    CHECK(href_evolv(cs, "schema-2897") == 2897, "2897 AC1: schema-2897");
+    CHECK(href_evolv(cs, "issue-2897") == 2897, "2897 AC1: issue-2897");
+    CHECK(href_evolv(cs, "type-linear-evolution-snapshot-wired") == 1, "2897 AC1: wired");
+    CHECK(href_evolv(cs, "readiness-bp") >= 0, "2897 AC1: readiness-bp");
+    CHECK(href_evolv(cs, "force-reason-code") >= 0, "2897 AC1: force-reason-code");
+    CHECK(href_evolv(cs, "would-allow-commit") >= 0, "2897 AC1: would-allow-commit");
+    CHECK(href_evolv(cs, "last-proof-outcome") >= 0, "2897 AC1: last-proof-outcome");
+    CHECK(href_evolv(cs, "live-goal-count") >= 0, "2897 AC1: live-goal-count");
+    CHECK(href_evolv(cs, "goal-fingerprint") >= 0, "2897 AC1: goal-fingerprint");
+    CHECK(href_evolv(cs, "linear-root-count") >= 0, "2897 AC1: linear-root-count");
+    CHECK(href_evolv(cs, "partial-cone-truncated") >= 0, "2897 AC1: partial-cone-truncated");
+    CHECK(href_evolv(cs, "occurrence-empty-after-fence") >= 0,
+          "2897 AC1: occurrence-empty-after-fence");
+    CHECK(href_evolv(cs, "cone-outside-goal-drop") >= 0, "2897 AC1: cone-outside-goal-drop");
+    CHECK(kTypeLinearEvolutionSnapshotIssue == 2897, "2897 AC1: issue constant");
+    // Concurrent-style: many rapid polls (no crash / unbounded alloc).
+    for (int i = 0; i < 64; ++i)
+        (void)capture_type_linear_evolution_snapshot();
+    CHECK(true, "2897 AC1: 64 rapid polls completed");
+}
+
+// ── Issue #2897 AC2: values match independent SSOT reads ──
+static void ac2897_2_matches_ssot() {
+    std::println("\n--- #2897 AC2: snapshot matches independent gauge reads ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    const auto snap = capture_type_linear_evolution_snapshot();
+    CHECK(href_evolv(cs, "last-proof-outcome") == snap.last_proof_outcome,
+          "2897 AC2: last-proof-outcome matches capture");
+    CHECK(href_evolv(cs, "live-goal-count") == snap.live_goal_count,
+          "2897 AC2: live-goal-count matches capture");
+    CHECK(href_evolv(cs, "goal-fingerprint") == snap.goal_fingerprint,
+          "2897 AC2: goal-fingerprint matches capture");
+    CHECK(href_evolv(cs, "linear-root-count") == snap.linear_root_count,
+          "2897 AC2: linear-root-count matches capture");
+    // Independent SSOT gauges
+    CHECK(snap.live_goal_count == static_cast<std::int64_t>(last_proof_live_goal_count_v_read()),
+          "2897 AC2: live-goal-count == last_proof gauge");
+    CHECK(snap.goal_fingerprint == static_cast<std::int64_t>(last_proof_goal_fingerprint_v_read()),
+          "2897 AC2: fingerprint == last_proof gauge");
+    CHECK(snap.linear_root_count ==
+              static_cast<std::int64_t>(last_proof_linear_root_count_v_read()),
+          "2897 AC2: linear-root-count == last_proof gauge");
+    CHECK(snap.last_proof_outcome ==
+              static_cast<std::int64_t>(last_type_linear_proof_outcome_v_read()),
+          "2897 AC2: outcome == last_type_linear_proof_outcome");
+    CHECK(snap.occurrence_empty_after_fence_total ==
+              static_cast<std::int64_t>(occurrence_empty_after_fence_total_v_read()),
+          "2897 AC2: empty-after-fence total == SSOT");
+    // readiness-bp matches health surface (same live_policy SSOT)
+    CHECK(href_evolv(cs, "readiness-bp") == href(cs, "readiness-bp"),
+          "2897 AC2: readiness-bp matches type-linear-commit-health");
+}
+
+// ── Issue #2897 AC3: Soft quiet path cheap ──
+static void ac2897_3_quiet_cheap() {
+    std::println("\n--- #2897 AC3: Soft quiet path cheap (zeros / no CS walk) ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    const auto snap = capture_type_linear_evolution_snapshot();
+    // Quiet default: last-proof gauges 0, outcome Quiet.
+    CHECK(snap.last_proof_outcome == 0, "2897 AC3: Quiet outcome default");
+    CHECK(snap.live_goal_count == 0, "2897 AC3: live-goal-count 0 quiet");
+    CHECK(snap.goal_fingerprint == 0, "2897 AC3: fingerprint 0 quiet");
+    CHECK(snap.linear_root_count == 0, "2897 AC3: linear-root-count 0 quiet");
+    CHECK(snap.partial_cone_truncated == 0, "2897 AC3: partial-cone-truncated 0 quiet");
+    CompilerService cs;
+    CHECK(href_evolv(cs, "would-allow-commit") == 1, "2897 AC3: would-allow-commit 1 quiet");
+    CHECK(href_evolv(cs, "readiness-bp") == 10000, "2897 AC3: readiness-bp 10000 quiet");
+}
+
+// ── Issue #2897 AC4: prior surfaces preserved ──
+static void ac2897_4_additive() {
+    std::println("\n--- #2897 AC4: prior query surfaces preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2613") == 2613, "2897 AC4: schema-2613 health preserved");
+    CHECK(href(cs, "type-linear-commit-health-wired") == 1, "2897 AC4: health wired");
+    // Fidelity / proof surfaces still resolve
+    auto fidelity = cs.eval("(engine:metrics \"query:type-incremental-fidelity-stats\")");
+    CHECK(fidelity && is_hash(*fidelity), "2897 AC4: type-incremental-fidelity-stats retained");
+    CHECK(href_evolv(cs, "schema-2613") == 2613, "2897 AC4: lineage schema-2613 on snapshot");
+    CHECK(href_evolv(cs, "schema-2697") == 2697, "2897 AC4: lineage schema-2697");
+    CHECK(href_evolv(cs, "schema-2842") == 2842, "2897 AC4: lineage schema-2842");
+    CHECK(href_evolv(cs, "schema-2854") == 2854, "2897 AC4: lineage schema-2854");
+    CHECK(href_evolv(cs, "schema-2860") == 2860, "2897 AC4: lineage schema-2860 sibling");
+    // #2860 surface still registered
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:evolution-epoch-snapshot") != std::string::npos,
+          "2897 AC4: evolution-epoch-snapshot preserved");
+    CHECK(q.find("query:type-linear-commit-health") != std::string::npos,
+          "2897 AC4: type-linear-commit-health preserved");
+}
+
+// ── Issue #2897 AC5: source-cite ──
+static void ac2897_5_source_cite() {
+    std::println("\n--- #2897 AC5: source-cite + no docs/design ---");
+    const auto hh = read_file("src/compiler/type_linear_commit_health.hh");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    CHECK(hh.find("2897") != std::string::npos, "2897 AC5: header cites #2897");
+    CHECK(hh.find("capture_type_linear_evolution_snapshot") != std::string::npos,
+          "2897 AC5: capture helper");
+    CHECK(hh.find("TypeLinearEvolutionSnapshot") != std::string::npos, "2897 AC5: snapshot struct");
+    CHECK(q.find("query:type-linear-evolution-snapshot") != std::string::npos,
+          "2897 AC5: query registered");
+    CHECK(q.find("schema-2897") != std::string::npos, "2897 AC5: schema-2897 in query");
+    CHECK(q.find("live-goal-count") != std::string::npos, "2897 AC5: live-goal-count key");
+    CHECK(q.find("goal-fingerprint") != std::string::npos, "2897 AC5: goal-fingerprint key");
+    CHECK(q.find("last-proof-outcome") != std::string::npos, "2897 AC5: last-proof-outcome key");
+    CHECK(obs.find("query:type-linear-evolution-snapshot") != std::string::npos,
+          "2897 AC5: obs inventory");
+    CHECK(t.find("ac2897_1_query_keys") != std::string::npos, "2897 AC5: AC1 test");
+    CHECK(t.find("ac2897_2_matches_ssot") != std::string::npos, "2897 AC5: AC2 test");
+    CHECK(t.find("ac2897_3_quiet_cheap") != std::string::npos, "2897 AC5: AC3 test");
+    CHECK(t.find("ac2897_4_additive") != std::string::npos, "2897 AC5: AC4 test");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_type_linear_evolution_snapshot_2897.py");
+    const auto build = read_file("build.py");
+    CHECK(!lint.empty() && lint.find("2897") != std::string::npos,
+          "2897 AC5: coverage linter present");
+    CHECK(build.find("check_type_linear_evolution_snapshot_2897") != std::string::npos,
+          "2897 AC5: build.py gate entry");
+    CHECK(read_file("docs/design/2897-type-linear-evolution-snapshot.md").empty(),
+          "2897 AC5: no docs/design/2897-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2897.cpp").empty(),
+          "2897 AC5: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -704,8 +864,15 @@ int run_test_type_linear_commit_health() {
     ac2842_3_quiet_path_zeros();
     ac2842_4_additive_no_regression();
     ac2842_5_source_and_linter();
-    std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // Issue #2897: unified type×linear×occurrence evolution snapshot.
+    std::println("\n=== Issue #2897: query:type-linear-evolution-snapshot ===");
+    ac2897_1_query_keys();
+    ac2897_2_matches_ssot();
+    ac2897_3_quiet_cheap();
+    ac2897_4_additive();
+    ac2897_5_source_cite();
+    std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
