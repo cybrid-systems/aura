@@ -37,6 +37,12 @@ namespace aura::compiler {
 #include <string_view>
 #include <vector>
 
+// Issue #2899: C bridges for IR fast-path eligibility (file scope — not
+// nested inside a function / namespace block). Defined in
+// evaluator_fiber_mutation.cpp / typed_mutation_audit_hooks.cpp.
+extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
+extern "C" int aura_escape_move_gate_active() noexcept;
+
 namespace aura::compiler::typed_audit {
 
 inline constexpr int kTypedMutationAuditPassPhase =
@@ -1021,6 +1027,15 @@ inline constexpr std::size_t kProofGoalFingerprintMaxGoals = 16;
 // File-scope atomics (mirror #2693/#2694/#2695/#2696 pattern).
 inline std::atomic<std::uint64_t> g_last_type_linear_commit_proof_stamp{0};
 inline std::atomic<std::uint32_t> g_type_linear_commit_proof_wired{1};
+// Issue #2899: last proof face bits for IR Move/Drop proven fast-path.
+// Quiet default 0 → fast-path disabled (zero cost full check).
+inline std::atomic<std::uint8_t> g_last_proof_would_allow_commit{0};
+inline std::atomic<std::uint8_t> g_last_proof_linear_ok{0};
+inline std::atomic<std::uint64_t> g_linear_ir_fastpath_skip_total{0};
+inline std::atomic<std::uint64_t> g_linear_ir_fastpath_skip_blocked_total{0};
+inline std::atomic<std::uint32_t> g_linear_ir_fastpath_wired{1};
+inline constexpr int kLinearIrFastpathIssue = 2899;
+inline thread_local std::int32_t g_linear_ir_fastpath_boundary_depth_override{-1};
 
 [[nodiscard]] inline std::uint64_t last_type_linear_commit_proof_stamp_v_read() noexcept {
     return g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed);
@@ -1033,8 +1048,19 @@ inline void stamp_type_linear_commit_proof(std::uint64_t current_epoch_or_defuse
     g_last_type_linear_commit_proof_stamp.store(current_epoch_or_defuse, std::memory_order_relaxed);
 }
 
+inline void clear_last_proof_face_for_test() noexcept {
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+}
+
 inline void clear_type_linear_commit_proof_for_test() noexcept {
     g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+    clear_last_proof_face_for_test();
+}
+
+inline void publish_last_proof_face(bool would_allow, bool linear_ok) noexcept {
+    g_last_proof_would_allow_commit.store(would_allow ? 1 : 0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(linear_ok ? 1 : 0, std::memory_order_relaxed);
 }
 
 // Issue #2717: active stamp inside boundary + composite commit. The
@@ -1127,6 +1153,76 @@ inline void reset_type_linear_proof_same_transaction_counters_for_test() noexcep
 }
 inline constexpr uint8_t kTypeLinearProofOutcomeQuiet = 0;
 inline constexpr uint8_t kTypeLinearProofOutcomeStamped = 1;
+// kTypeLinearProofOutcomeReject = 2 declared below with publish helpers.
+
+[[nodiscard]] inline std::uint8_t last_proof_would_allow_commit_v_read() noexcept {
+    return g_last_proof_would_allow_commit.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint8_t last_proof_linear_ok_v_read() noexcept {
+    return g_last_proof_linear_ok.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t linear_ir_fastpath_skip_total_v_read() noexcept {
+    return g_linear_ir_fastpath_skip_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t linear_ir_fastpath_skip_blocked_total_v_read() noexcept {
+    return g_linear_ir_fastpath_skip_blocked_total.load(std::memory_order_relaxed);
+}
+
+inline void reset_linear_ir_fastpath_counters_for_test() noexcept {
+    g_linear_ir_fastpath_skip_total.store(0, std::memory_order_relaxed);
+    g_linear_ir_fastpath_skip_blocked_total.store(0, std::memory_order_relaxed);
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+// Purpose: IR Move/Drop may skip redundant provenance re-sim when proof fresh
+// Pre: none (pure relaxed loads)
+// Post: true → caller may skip enforce provenance; counter bumped
+// Safety Class: P1 (performance; never weakens #2108/#2563 — escape/depth/reject block)
+// Issue: #2899
+// AI-Native Rationale: high-frequency mutate loops skip audit when proof says linear_ok
+[[nodiscard]] inline bool linear_ir_fastpath_try_skip() noexcept {
+    // AC3 / zero cost: no recent proof stamp → full check, no counter noise.
+    if (g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed) == 0)
+        return false;
+    // AC2: Reject outcome never skips.
+    if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
+        /*Reject*/ 2) {
+        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // (a) would_allow && linear_ok from last stamp
+    if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 ||
+        g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0) {
+        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // (c) mid MutationBoundary → foreign work; full check
+    {
+        std::size_t depth = 0;
+        if (g_linear_ir_fastpath_boundary_depth_override >= 0) {
+            depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
+        } else {
+            depth = aura_evaluator_mutation_boundary_depth();
+        }
+        if (depth > 0) {
+            g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+    // (b) escape-blocked set active → do not skip (AC2 inject escape)
+    if (aura_escape_move_gate_active() != 0) {
+        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Production must not skip when densify scan mismatch is pending
+    if (g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
+            std::memory_order_relaxed) > 0) {
+        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_linear_ir_fastpath_skip_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
 inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 
 [[nodiscard]] inline std::uint64_t last_proof_live_goal_count_v_read() noexcept {
@@ -1306,6 +1402,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     // existing query:last-type-linear-commit-proof path stays
     // additive — query path returns the latest stamp epoch.
     stamp_type_linear_commit_proof(current_epoch_or_defuse);
+    // Issue #2899: publish face bits for IR Move/Drop fast-path.
+    publish_last_proof_face(p.would_allow_commit, p.linear_ok);
     return p;
 }
 
@@ -1346,6 +1444,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     }
     g_type_linear_commit_proof_stamped_total.fetch_add(1, std::memory_order_relaxed);
     stamp_type_linear_commit_proof(current_epoch_or_defuse);
+    // Issue #2899: publish face bits for IR Move/Drop fast-path.
+    publish_last_proof_face(p.would_allow_commit, p.linear_ok);
     return p;
 }
 

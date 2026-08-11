@@ -19,7 +19,8 @@ module;
 #include "aura_jit_bridge.h" // #2129: aura_get_aot_live_linear_state_fingerprint
 #include "observability_logger.h"
 #include "shape_jit_pass_closedloop_stats.h"
-#include "core/provenance_tracker.hh" // Issue #2026: validate_linear_provenance
+#include "core/provenance_tracker.hh"      // Issue #2026: validate_linear_provenance
+#include "compiler/typed_mutation_audit.h" // Issue #2899: linear_ir_fastpath_try_skip
 module aura.compiler.ir_executor;
 import std;
 import aura.compiler.value;
@@ -162,6 +163,15 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
     // / use-after-move). Owned/Borrow gates are op-specific above.
     if (state == 0)
         return true;
+    // Issue #2899: proven Move/Drop fast-path — skip redundant provenance
+    // re-sim when last TypeLinearCommitProof is fresh (would_allow && linear_ok),
+    // not mid-boundary, escape gate inactive, no densify-pending. Heap
+    // double-move checks still run at the op site. Zero cost when no stamp.
+    // Does not weaken #2108 cross-batch escape or #2563 cross-closure force.
+    if ((op == LinearOpKind::Move || op == LinearOpKind::Drop) &&
+        aura::compiler::typed_audit::linear_ir_fastpath_try_skip()) {
+        return true;
+    }
     using aura::core::provenance::linear_enforce_require_complete;
     using aura::core::provenance::linear_enforce_require_complete_effective;
     using aura::core::provenance::validate_linear_provenance;
