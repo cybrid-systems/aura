@@ -15119,6 +15119,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"remount-or-force-deopt-wired", make_int(1)},
                 {"schema-2503", make_int(2503)},
                 {"issue-2503", make_int(2503)},
+                // Issue #2894: last remount fail reason (Agent recovery signal).
+                // Additive; preserves #2503/#2234/#2272/#2297 surfaces.
+                {"last-remount-fail-reason",
+                 make_int(static_cast<std::int64_t>(aura_last_remount_fail_reason()))},
+                {"last_remount_fail_reason",
+                 make_int(static_cast<std::int64_t>(aura_last_remount_fail_reason()))},
+                {"remount-fail-reason-wired", make_int(1)},
+                {"schema-2894", make_int(2894)},
+                {"issue-2894", make_int(2894)},
                 // Issue #2542: full live-closure epoch restamp on reemit success
                 // (backfill sid=0 named + anonymous MustDeopt; no silent skip).
                 {"live-closure-full-restamp-wired", make_int(1)},

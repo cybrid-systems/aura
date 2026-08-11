@@ -1,13 +1,20 @@
 // @category: unit
 // @reason: Issue #2503 — densify cell-remap fail shares MustDeopt +
 //          batch_deopt transaction with fingerprint remount failure.
+//          Issue #2894 — remount fail reason code (EnvGen / DensifyCell /
+//          Defuse / Linear / Other) stamped for Agent recovery.
 //
-//   AC1: Unmapped densify candidate → remount_or_force_deopt returns 0,
+//   #2503 AC1: Unmapped densify candidate → remount_or_force_deopt returns 0,
 //        MustDeopt set, cell_remap_fail bumped, batch_deopt when named
-//   AC2: env_gen fingerprint fail still MustDeopt + mismatch counter
-//   AC3: Empty densify context → no extra cell walk cost
-//   AC4: Source-cite all production remount sites use shared fail path
-//   AC5: Stress densify × remount cycles (ASan/TSan-friendly unit)
+//   #2503 AC2: env_gen fingerprint fail still MustDeopt + mismatch counter
+//   #2503 AC3: Empty densify context → no extra cell walk cost
+//   #2503 AC4: Source-cite all production remount sites use shared fail path
+//   #2503 AC5: Stress densify × remount cycles (ASan/TSan-friendly unit)
+//   #2894 AC1: env_gen mismatch → last-reason = EnvGen + MustDeopt
+//   #2894 AC2: densify cell miss → last-reason = DensifyCell
+//   #2894 AC3: success path leaves reason Ok/unchanged (no success store)
+//   #2894 AC4: query surface schema-2894 + last-remount-fail-reason
+//   #2894 AC5: source-cite all fail axes stamp reason
 
 #include "test_harness.hpp"
 
@@ -78,6 +85,7 @@ static void ac1_cell_remap_force_deopt() {
 
     aura_clear_densify_object_remap();
     aura_clear_densify_candidates();
+    aura_test_reset_last_remount_fail_reason();
 
     const auto cid = aura_alloc_closure(/*func_id=*/0);
     CHECK(cid >= 0, "AC1: alloc closure");
@@ -111,6 +119,10 @@ static void ac1_cell_remap_force_deopt() {
           "AC1: remount_fail bumped (shared outcome)");
     CHECK(aura_jit_batch_deopt_for_total() > batch0,
           "AC1: batch_deopt_for invoked for named closure");
+    // #2894 AC2 overlap: densify cell miss stamps DensifyCell.
+    CHECK(aura_last_remount_fail_reason() ==
+              static_cast<std::uint8_t>(RemountFailReason::DensifyCell),
+          "AC1/#2894: last-reason DensifyCell on cell remap fail");
 
     aura_clear_densify_object_remap();
     aura_clear_densify_candidates();
@@ -128,6 +140,7 @@ static void ac2_env_gen_force_deopt() {
 
     aura_clear_densify_object_remap();
     aura_clear_densify_candidates();
+    aura_test_reset_last_remount_fail_reason();
 
     const auto cid = aura_alloc_closure(0);
     CHECK(cid >= 0, "AC2: alloc");
@@ -156,6 +169,12 @@ static void ac2_env_gen_force_deopt() {
     CHECK(m->closure_capture_cell_remap_ok_total.load() == cell_ok0,
           "AC2: cell remap not run on env_gen fail");
     CHECK(aura_jit_batch_deopt_for_total() > batch0, "AC2: batch_deopt on named env_gen fail");
+    // #2894 AC1: env_gen mismatch stamps EnvGen.
+    CHECK(aura_last_remount_fail_reason() == static_cast<std::uint8_t>(RemountFailReason::EnvGen),
+          "AC2/#2894: last-reason EnvGen on env_gen mismatch");
+    CHECK(std::string(aura_remount_fail_reason_string(aura_last_remount_fail_reason())) ==
+              "env_gen",
+          "AC2/#2894: reason string env_gen");
 
     aura_clear_densify_object_remap();
     aura_set_aot_metrics(nullptr);
@@ -172,6 +191,9 @@ static void ac3_empty_densify_zero_cost() {
 
     aura_clear_densify_object_remap();
     aura_clear_densify_candidates();
+    aura_test_reset_last_remount_fail_reason();
+    CHECK(aura_last_remount_fail_reason() == static_cast<std::uint8_t>(RemountFailReason::Ok),
+          "AC3/#2894: reset → Ok before success path");
 
     const auto cid = aura_alloc_closure(0);
     CHECK(cid >= 0, "AC3: alloc");
@@ -190,16 +212,21 @@ static void ac3_empty_densify_zero_cost() {
     CHECK(m->closure_capture_cell_remap_fail_total.load() == fail0,
           "AC3: cell_remap_fail unchanged");
     CHECK(m->closure_capture_remount_ok_total.load() > remount_ok0, "AC3: remount_ok advanced");
+    // #2894 AC3: success does not store reason (stays Ok).
+    CHECK(aura_last_remount_fail_reason() == static_cast<std::uint8_t>(RemountFailReason::Ok),
+          "AC3/#2894: success leaves last-reason Ok (no success-path store)");
 
     aura_set_aot_metrics(nullptr);
 }
 
 // ── AC4: source-cite shared path at all production remount sites ──
 static void ac4_source_cite() {
-    std::println("\n--- #2503 AC4: source-cite shared remount_or_force_deopt sites ---");
+    std::println("\n--- #2503 AC4 / #2894 AC5: source-cite remount + reason stamp sites ---");
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto hh = read_file("src/compiler/aura_jit_bridge.h");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
     const auto cmake = read_file("CMakeLists.txt");
 
@@ -240,6 +267,47 @@ static void ac4_source_cite() {
     CHECK(stub.find("aura_remount_or_force_deopt") != std::string::npos, "AC4: weak stub present");
     CHECK(cmake.find("test_remount_force_deopt") != std::string::npos, "AC4: cmake target");
     CHECK(rt.find("2503") != std::string::npos, "AC4: #2503 cite in runtime");
+
+    // #2894 AC5: every fail axis stamps aura_note_remount_fail_reason.
+    CHECK(hh.find("RemountFailReason") != std::string::npos, "AC5/#2894: enum in bridge.h");
+    CHECK(hh.find("aura_last_remount_fail_reason") != std::string::npos,
+          "AC5/#2894: getter declared");
+    CHECK(bridge.find("g_last_remount_fail_reason") != std::string::npos,
+          "AC5/#2894: process atomic in bridge.cpp");
+    CHECK(bridge.find("aura_note_remount_fail_reason") != std::string::npos,
+          "AC5/#2894: note stamp in bridge.cpp");
+    {
+        // Prefer the definition body (not the forward decl). Search for the
+        // #2894 cite that opens the unlocked remount implementation.
+        auto body_pos = rt.find("#2894: stamp last RemountFailReason");
+        if (body_pos == std::string::npos)
+            body_pos = rt.find("RemountFailReason::EnvGen");
+        // Back up to the function start if we landed on a stamp line.
+        if (body_pos != std::string::npos && body_pos > 200)
+            body_pos -= 200;
+        const auto body = body_pos != std::string::npos ? rt.substr(body_pos, 4000) : std::string{};
+        CHECK(body.find("RemountFailReason::EnvGen") != std::string::npos,
+              "AC5/#2894: EnvGen stamp in remount body");
+        CHECK(body.find("RemountFailReason::Defuse") != std::string::npos,
+              "AC5/#2894: Defuse stamp in remount body");
+        CHECK(body.find("RemountFailReason::Linear") != std::string::npos,
+              "AC5/#2894: Linear stamp in remount body");
+        CHECK(body.find("RemountFailReason::DensifyCell") != std::string::npos,
+              "AC5/#2894: DensifyCell stamp in remount body");
+        CHECK(body.find("RemountFailReason::Other") != std::string::npos,
+              "AC5/#2894: Other stamp in remount body");
+        // Success path must not store Ok (zero cost on hot ok).
+        CHECK(body.find("RemountFailReason::Ok") == std::string::npos,
+              "AC5/#2894: no Ok store on success path in remount body");
+    }
+    CHECK(q.find("schema-2894") != std::string::npos, "AC5/#2894: schema-2894 query surface");
+    CHECK(q.find("last-remount-fail-reason") != std::string::npos,
+          "AC5/#2894: last-remount-fail-reason key");
+    CHECK(q.find("remount-fail-reason-wired") != std::string::npos,
+          "AC5/#2894: remount-fail-reason-wired sentinel");
+    CHECK(obs.find("schema-2894") != std::string::npos, "AC5/#2894: schema-2894 obs_eval surface");
+    CHECK(stub.find("aura_last_remount_fail_reason") != std::string::npos,
+          "AC5/#2894: weak stub for last reason");
 }
 
 // ── AC5: stress densify × remount (no half-success MustDeopt leak) ──
@@ -303,6 +371,64 @@ static void ac5_stress() {
     // Query lineage
     CHECK(href(cs, "schema-2503") == 2503, "AC5: schema-2503 query");
     CHECK(href(cs, "remount-or-force-deopt-wired") == 1, "AC5: remount-or-force-deopt-wired");
+    // #2894 AC4: query surface additive keys.
+    CHECK(href(cs, "schema-2894") == 2894, "AC5/#2894: schema-2894 query");
+    CHECK(href(cs, "remount-fail-reason-wired") == 1, "AC5/#2894: remount-fail-reason-wired");
+    CHECK(href(cs, "last-remount-fail-reason") >= 0,
+          "AC5/#2894: last-remount-fail-reason readable");
+    // Preserve prior lineage schemas.
+    CHECK(href(cs, "schema-2503") == 2503, "AC5/#2894: schema-2503 preserved");
+    aura_set_aot_metrics(nullptr);
+}
+
+// ── #2894 dedicated: Defuse axis + success leaves prior fail unchanged ──
+static void ac2894_defuse_and_unchanged_on_success() {
+    std::println("\n--- #2894: Defuse stamp + success leaves prior reason unchanged ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    aura_set_aot_metrics(m);
+    const auto live_linear = aura_get_aot_live_linear_state_fingerprint();
+
+    aura_clear_densify_object_remap();
+    aura_clear_densify_candidates();
+    aura_test_reset_last_remount_fail_reason();
+
+    // Defuse fail: env_gen PRIMARY skipped (0) so Defuse axis is reachable.
+    const auto cid = aura_alloc_closure(0);
+    CHECK(cid >= 0, "2894: alloc");
+    aura_closure_set_name(cid, "defuse_fail_2894");
+    aura_closure_set_must_deopt(cid, 0);
+    aura_closure_set_env_gen(cid, 0); // PRIMARY off
+    const auto defuse = aura_get_closure_defuse_version(cid);
+    // If defuse is 0, Defuse axis is also skipped — inject via remount
+    // with live_env_gen != 0 only works when cid_defuse != 0.
+    if (defuse != 0) {
+        const int r = aura_remount_or_force_deopt(cid, /*live=*/defuse + 99, live_linear);
+        CHECK(r == 0, "2894: remount fails on defuse mismatch");
+        CHECK(aura_closure_get_must_deopt(cid) == 1, "2894: MustDeopt on defuse fail");
+        CHECK(aura_last_remount_fail_reason() ==
+                  static_cast<std::uint8_t>(RemountFailReason::Defuse),
+              "2894: last-reason Defuse");
+        const auto after_fail = aura_last_remount_fail_reason();
+        // Success path on another closure must not clear prior reason.
+        const auto cid_ok = aura_alloc_closure(0);
+        CHECK(cid_ok >= 0, "2894: alloc ok closure");
+        aura_closure_set_must_deopt(cid_ok, 0);
+        const auto live = stamp_for_remount(cid_ok);
+        const int rok = aura_remount_or_force_deopt(cid_ok, live, live_linear);
+        CHECK(rok == 1, "2894: success remount");
+        CHECK(aura_last_remount_fail_reason() == after_fail,
+              "2894 AC3: success leaves prior fail reason unchanged");
+    } else {
+        // Soft environments may stamp defuse=0; still exercise Other axis.
+        const int r = aura_remount_or_force_deopt(/*closure_id=*/-1, 1, live_linear);
+        CHECK(r == 0, "2894: negative id fails");
+        CHECK(aura_last_remount_fail_reason() ==
+                  static_cast<std::uint8_t>(RemountFailReason::Other),
+              "2894: last-reason Other on invalid id");
+    }
+
     aura_set_aot_metrics(nullptr);
 }
 
@@ -315,9 +441,10 @@ int run_test_remount_force_deopt() {
     ac3_empty_densify_zero_cost();
     ac4_source_cite();
     ac5_stress();
+    ac2894_defuse_and_unchanged_on_success();
     if (g_failed)
         return 1;
-    std::println("remount force-deopt #2503: OK ({} passed)", g_passed);
+    std::println("remount force-deopt #2503/#2894: OK ({} passed)", g_passed);
     return 0;
 }
 

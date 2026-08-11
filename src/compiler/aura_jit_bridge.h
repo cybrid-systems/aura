@@ -129,6 +129,29 @@ int aura_remount_closure_captures(std::int64_t closure_id, std::uint64_t live_en
 // over bare aura_remount_closure_captures at production call sites.
 int aura_remount_or_force_deopt(std::int64_t closure_id, std::uint64_t live_env_gen,
                                 std::uint8_t linear_fp);
+// Issue #2894: remount fail reason code (stable ABI — do not reorder).
+// Agents branch via aura_last_remount_fail_reason / query
+// last-remount-fail-reason without log scraping. Diagnostic only —
+// #2503 MustDeopt + batch_deopt transaction is unchanged. Zero cost on
+// success (no store when remount returns ok). Stamped on every fail
+// path inside aura_remount_closure_captures_unlocked.
+enum class RemountFailReason : std::uint8_t {
+    Ok = 0,
+    EnvGen = 1,
+    Defuse = 2,
+    Linear = 3,
+    DensifyCell = 4,
+    Other = 5,
+};
+// Process-level last remount fail reason (file-scope atomic in
+// aura_jit_bridge.cpp). Thread-safe lock-free read. Returns
+// RemountFailReason as uint8_t for C ABI stability.
+extern "C" std::uint8_t aura_last_remount_fail_reason(void) noexcept;
+extern "C" const char* aura_remount_fail_reason_string(std::uint8_t v) noexcept;
+// Stamp last reason (production fail paths in aura_jit_runtime.cpp).
+extern "C" void aura_note_remount_fail_reason(std::uint8_t v) noexcept;
+// Test-only reset → Ok for hermetic isolation.
+extern "C" void aura_test_reset_last_remount_fail_reason(void) noexcept;
 // Issue #2234: capture detection helper. Returns true when the
 // closure has any env or linear capture to remount (proxied by
 // non-zero defuse_version or non-zero linear_state). The remap +
