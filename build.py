@@ -8567,6 +8567,25 @@ def cmd_linear_ir_fastpath_2899_coverage():
     return 0
 
 
+def cmd_solver_budget_2900_coverage():
+    """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
+
+    Soft allow_timeout_commit exports TIMEOUT; production still escalates;
+    default budget unchanged; schema-2900.
+    """
+    print(f"{B}=== SolverBudget coverage (#2900) ==={N}")
+    script = COVERAGE_CHECKS / "check_solver_budget_2900.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("SolverBudget (#2900) coverage contract rows failed")
+        return 1
+    ok("SolverBudget (#2900) coverage clean")
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -10890,6 +10909,7 @@ def cmd_gate():
         or cmd_type_linear_evolution_snapshot_2897_coverage()
         or cmd_composite_required_type_2898_coverage()
         or cmd_linear_ir_fastpath_2899_coverage()
+        or cmd_solver_budget_2900_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()

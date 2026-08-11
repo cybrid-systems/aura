@@ -2210,7 +2210,11 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             m->let_poly_regeneralize_check_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    std::size_t max_passes = 10;
+    // Issue #2900: Agent SolverBudget may tighten max_delta_passes.
+    // 0 = default (10). Production escalate path is independent (#2277).
+    std::size_t max_passes = solver_budget_.max_delta_passes > 0
+                                 ? static_cast<std::size_t>(solver_budget_.max_delta_passes)
+                                 : std::size_t{10};
     // Issue #383: worklist_restart detection. The
     // pre-#383 worklist was a single-pass per
     // worklist vector; if processing added new
@@ -2386,17 +2390,64 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
 // TypedMutationAuditCounters::delta_timeout_full_solve_total on each
 // escalation attempt and delta_timeout_reject_total when full solve did
 // not reach SOLVED (+ per-CompilerMetrics mirror when metrics_ is wired).
+// Issue #2900: SolverBudget interaction —
+//   production: always escalate (budget cannot disable / allow half-solved);
+//     non-default budget bumps solver_budget_full_escalate_total
+//   Soft + allow_timeout_commit: keep TIMEOUT (never SOLVED); bump
+//     solver_budget_timeout_export_total
+//   Soft + default: pass-through (unchanged)
+//   prefer_instance_repair_before_full: note counter (hints already exported
+//     by solve_delta_occurrence #2643 path); production still full-solves.
 SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
                                                      std::vector<Constraint>* unresolved_out) {
     if (prior != SolveResult::TIMEOUT)
         return prior;
-    if (!aura::compiler::typed_audit::production_defaults_active())
-        return prior;
+    auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const bool prod = aura::compiler::typed_audit::production_defaults_active();
+    const auto budget = solver_budget_;
+
+    // Soft + allow_timeout_commit: explicit TIMEOUT export, never SOLVED.
+    // Production ignores allow_timeout_commit (cannot ship half-solved).
+    if (!prod && budget.allow_timeout_commit) {
+        c.solver_budget_timeout_export_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->solver_budget_timeout_export_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (budget.prefer_instance_repair_before_full) {
+            c.solver_budget_instance_repair_prefer_total.fetch_add(1, std::memory_order_relaxed);
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->solver_budget_instance_repair_prefer_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+        }
+        return SolveResult::TIMEOUT; // AC1: not SOLVED; unresolved already exported
+    }
+
+    if (!prod)
+        return prior; // Soft default: pure pass-through (#2277 AC3)
+
+    // Production: always escalate (budget cannot disable).
+    if (!budget.is_default()) {
+        c.solver_budget_full_escalate_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->solver_budget_full_escalate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (budget.prefer_instance_repair_before_full) {
+            c.solver_budget_instance_repair_prefer_total.fetch_add(1, std::memory_order_relaxed);
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->solver_budget_instance_repair_prefer_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+        }
+    }
     // Issue #2308: mark the CS as production-escalated so the next
     // SolverSnapshot exposes production_escalated == true without
     // re-running escalate_if_production (which mutates state).
     production_escalated_ = true;
-    auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
     c.delta_timeout_full_solve_total.fetch_add(1, std::memory_order_relaxed);
     if (metrics_) {
         static_cast<struct CompilerMetrics*>(metrics_)->delta_timeout_full_solve_total.fetch_add(

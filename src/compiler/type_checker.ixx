@@ -248,6 +248,23 @@ export enum class SolveResult : std::uint8_t {
     TIMEOUT = 2,
 };
 
+// Issue #2900: Agent-controlled delta TIMEOUT policy (SolverBudget).
+// Default (all zero/false) → current behavior. Production never honors
+// allow_timeout_commit (always escalate / reject-on-unsolved via #2277).
+// Soft + allow_timeout_commit: keep TIMEOUT with unresolved export;
+// never pretend SOLVED.
+export struct SolverBudget {
+    std::uint32_t max_delta_passes = 0; // 0 = default (10)
+    bool prefer_instance_repair_before_full = false;
+    bool allow_timeout_commit = false; // Soft-only; production forces false
+    [[nodiscard]] constexpr bool is_default() const noexcept {
+        return max_delta_passes == 0 && !prefer_instance_repair_before_full &&
+               !allow_timeout_commit;
+    }
+};
+export inline constexpr SolverBudget kSolverBudgetDefault{};
+export inline constexpr int kSolverBudgetIssue = 2900;
+
 // Issue #2278: epoch-scoped OccurrenceGoal table — replaces
 // retained_*-only cross-delta stitch with durable replayable
 // records that survive `clear_blame_context` (AC1: live goals
@@ -429,6 +446,8 @@ private:
     std::size_t last_reverify_limit_used_ = kReverifyCleanScanLimit;
     // Issue #2107: one-shot test hook (see force_next_delta_timeout_for_test).
     bool force_next_delta_timeout_ = false;
+    // Issue #2900: Agent SolverBudget (default = current behavior).
+    SolverBudget solver_budget_{};
     // Issue #2146: test-only reverify limit pin (0 = adaptive).
     std::size_t force_reverify_limit_ = 0;
     void note_touched_var(aura::core::TypeId id);
@@ -506,8 +525,18 @@ public:
     // not reach SOLVED. Under sandbox/dev (production_defaults_active()==false)
     // this is a pure no-op pass-through, preserving the soft TIMEOUT + #2107
     // unresolved-export path (AC3 invariant).
+    // Issue #2900: when SolverBudget is non-default:
+    //   - production: still escalates (budget cannot disable / allow half-solved);
+    //     bumps solver_budget_full_escalate_total
+    //   - Soft + allow_timeout_commit: keep TIMEOUT (never SOLVED); bump
+    //     solver_budget_timeout_export_total
+    //   - Soft + default: pass-through (unchanged)
     SolveResult escalate_if_production(SolveResult prior,
                                        std::vector<Constraint>* unresolved_out = nullptr);
+    // Issue #2900: Agent SolverBudget surface (null/default = current behavior).
+    void set_solver_budget(SolverBudget b) noexcept { solver_budget_ = b; }
+    void clear_solver_budget() noexcept { solver_budget_ = kSolverBudgetDefault; }
+    [[nodiscard]] SolverBudget solver_budget() const noexcept { return solver_budget_; }
     // Issue #2107: synthetic over-limit for Agent tests — next solve_delta
     // returns TIMEOUT with the built worklist as unresolved (no process).
     // Auto-clears after one call. Production code must leave this false.
