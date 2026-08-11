@@ -15195,8 +15195,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             health_bp -= iso_pen;
             if (health_bp < 0)
                 health_bp = 0;
-            // Issue #2526 / #2617: capacity 32 for adaptive + compact-isolation keys.
-            auto* ht = FlatHashTable::create(32);
+            // Issue #2526 / #2617 / #2908: capacity 48 for adaptive + compact-
+            // isolation + PerEval no-global-bump keys.
+            auto* ht = FlatHashTable::create(48);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -15260,6 +15261,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("deopt-storm-compact-suppressed",
                       static_cast<std::int64_t>(
                           shape::deopt_storm_compact_suppressed.load(std::memory_order_relaxed)));
+            // Issue #2908: PerEval harden — compact must not bump process-global
+            // shape_version; LayoutStamp force-reason Threshold remains hard.
+            insert_kv("schema-2908", shape::kShapeCompactNoGlobalBumpIssue);
+            insert_kv("issue-2908", shape::kShapeCompactNoGlobalBumpIssue);
+            insert_kv("compact-no-global-bump-wired",
+                      static_cast<std::int64_t>(shape::shape_compact_no_global_bump_wired()));
+            insert_kv("compact-global-version-skipped-total",
+                      static_cast<std::int64_t>(
+                          shape::g_shape_compact_global_version_skipped_total_atomic().load(
+                              std::memory_order_relaxed)));
+            insert_kv("compact-global-version-bump-total",
+                      static_cast<std::int64_t>(
+                          shape::g_shape_compact_global_version_bump_total_atomic().load(
+                              std::memory_order_relaxed)));
+            insert_kv("shape-storm-per-eval-isolations-total",
+                      static_cast<std::int64_t>(
+                          shape::g_shape_storm_per_eval_isolations_total_atomic().load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "shape-storm-global-bump-total",
+                static_cast<std::int64_t>(shape::g_shape_storm_global_bump_total_atomic().load(
+                    std::memory_order_relaxed)));
+            insert_kv("shape-storm-isolation-default-per-eval", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

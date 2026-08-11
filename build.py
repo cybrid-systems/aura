@@ -7464,6 +7464,33 @@ def cmd_value_tag_hotpath_ban_coverage():
     return 0
 
 
+def cmd_shape_compact_no_global_bump_2908_coverage():
+    """Issue #2908: PerEval compact never bumps process-global shape_version (static)."""
+    print(f"{B}=== shape compact no-global-bump coverage (#2908) ==={N}")
+    script = COVERAGE_CHECKS / "check_shape_compact_no_global_bump_2908.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("shape compact no-global-bump (#2908) coverage contract rows failed")
+        return 1
+    ok("shape compact no-global-bump (#2908) coverage clean")
+    return 0
+
+
+def cmd_shape_compact_no_global_bump_2908():
+    """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
+
+    Production default PerEval keeps LayoutStamp / SpecJIT process fence put
+    under compact-only pressure; per-profile version still advances for local
+    dirty hooks. Mutation storm enter isolates per-eval (not global) unless
+    AURA_SHAPE_STORM_ISOLATION=global. Extends #2617 suite (#81967).
+    """
+    print(f"{B}=== shape compact no-global-bump (#2908) ==={N}")
+    return cmd_shape_compact_no_global_bump_2908_coverage()
+
+
 def cmd_shape_compact_storm_isolation_coverage():
     """Issue #2617: compact path must never feed deopt-storm ring as mutation.
 
@@ -11122,6 +11149,7 @@ def cmd_gate():
         or cmd_hot_children_columnar_coverage()
         or cmd_value_tag_hotpath_ban_coverage()
         or cmd_shape_compact_storm_isolation_coverage()
+        or cmd_shape_compact_no_global_bump_2908_coverage()
         or cmd_hot_contract_placement_coverage()
         or cmd_post_compact_lifecycle_coverage()
         or cmd_gc_defer_reconcile_cas_coverage()
@@ -12117,6 +12145,8 @@ def main():
         "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
+        "shape-compact-no-global-bump-2908": cmd_shape_compact_no_global_bump_2908,
+        "shape-compact-no-global-bump-2908-coverage": cmd_shape_compact_no_global_bump_2908_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,

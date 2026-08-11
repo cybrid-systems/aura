@@ -58,14 +58,16 @@ inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
 }
 
 // Issue #2257: bump the file-scope shape_version on deopt-storm
-// enter. AC1: shape_version advances on storm enter (and on compact
-// per #2256). AC2: high-frequency mutation + storm enter keeps
-// deopt rate bounded because every storm enter isolates the
-// speculative opt (next observation cycle must re-profile under
-// the new version).
-// Issue #2370: under StormIsolation::PerEval this must NOT be called
-// from ShapeProfiler storm enter — use per-eval SpecJIT isolation
-// epoch instead so concurrent evals are not cross-invalidated.
+// enter (Global isolation only). AC1: under Global, shape_version
+// advances on storm enter. AC2: high-frequency mutation + storm enter
+// keeps deopt rate bounded because every storm enter isolates the
+// speculative opt (next observation cycle must re-profile under the
+// new version).
+// Issue #2370 / #2683 / #2908: under StormIsolation::PerEval this must
+// NOT be called from ShapeProfiler storm enter — use per-eval SpecJIT
+// isolation epoch instead so concurrent evals are not cross-invalidated.
+// Issue #2908: on_arena_compact also must not call this under PerEval
+// (compact-only pressure is soft; process-global version stays put).
 inline void bump_shape_version_on_storm_enter() noexcept {
     extern std::atomic<std::uint64_t> shape_version_bump_count;
     shape_version_bump_count.fetch_add(1, std::memory_order_acq_rel);
@@ -163,9 +165,10 @@ inline std::atomic<std::uint64_t>& g_shape_storm_per_eval_isolations_total_atomi
     return v;
 }
 
-// Issue #2683: process-global shape_version bump counter. Stays 0 under
-// production default (PerEval). Only bumps when AURA_SHAPE_STORM_ISOLATION=global
-// restores the legacy process-global bump path for experiments / soak tests.
+// Issue #2683: process-global shape_version bump counter (storm enter
+// path only). Stays 0 under production default (PerEval). Only bumps
+// when AURA_SHAPE_STORM_ISOLATION=global restores the legacy process-
+// global bump path for experiments / soak tests.
 // Documented allow-list call sites must keep this 0 in production.
 inline std::atomic<std::uint64_t>& g_shape_storm_global_bump_total_atomic() noexcept {
     static std::atomic<std::uint64_t> v{0};
@@ -174,6 +177,30 @@ inline std::atomic<std::uint64_t>& g_shape_storm_global_bump_total_atomic() noex
 
 // Issue #2683: production default PerEval sentinel + env override path.
 inline constexpr int kShapeStormPerEvalDefaultIssue = 2683;
+
+// Issue #2908: harden PerEval — compact-only pressure must never advance
+// process-global shape_version under production. Per-profile version still
+// bumps for local dirty hooks; LayoutStamp / SpecJIT process fence stays put
+// unless AURA_SHAPE_STORM_ISOLATION=global. Mutation-induced storm enter
+// remains the hard Threshold fence (#2433 / #2526).
+inline constexpr int kShapeCompactNoGlobalBumpIssue = 2908;
+// Compact path skipped process-global version under PerEval (expected).
+inline std::atomic<std::uint64_t>& g_shape_compact_global_version_skipped_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+// Compact path advanced process-global version (only under Global isolation).
+inline std::atomic<std::uint64_t>& g_shape_compact_global_version_bump_total_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_shape_compact_no_global_bump_wired_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{1};
+    return v;
+}
+[[nodiscard]] inline std::uint64_t shape_compact_no_global_bump_wired() noexcept {
+    return g_shape_compact_no_global_bump_wired_atomic().load(std::memory_order_acquire);
+}
 
 class ShapeProfiler {
 public:

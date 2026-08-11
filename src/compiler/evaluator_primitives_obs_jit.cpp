@@ -998,6 +998,21 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2683", make_int(2683)},
                 {"issue-2683", make_int(2683)},
                 {"shape-storm-isolation-default-per-eval", make_int(1)},
+                // Issue #2908: compact-only never advances process-global
+                // shape_version under production PerEval (soft pressure).
+                {"compact-no-global-bump-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::shape::shape_compact_no_global_bump_wired()))},
+                {"compact-global-version-skipped-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::shape::g_shape_compact_global_version_skipped_total_atomic()
+                         .load(std::memory_order_relaxed)))},
+                {"compact-global-version-bump-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::shape::g_shape_compact_global_version_bump_total_atomic().load(
+                         std::memory_order_relaxed)))},
+                {"schema-2908", make_int(aura::compiler::shape::kShapeCompactNoGlobalBumpIssue)},
+                {"issue-2908", make_int(aura::compiler::shape::kShapeCompactNoGlobalBumpIssue)},
                 // Issue #2687: per-Evaluator isolation capture tenant accounting.
                 // Three counters distinguish the production multi-tenant path
                 // (Evaluator::stamp_stable_ref uses capability_tenant_id_)

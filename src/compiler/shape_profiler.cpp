@@ -652,16 +652,22 @@ void ShapeProfiler::invalidate_all() noexcept {
         (void)invalidate(fn);
 }
 
-// Issue #1521 / #2617: Arena compact soft coordination.
+// Issue #1521 / #2617 / #2908: Arena compact soft coordination.
 // Value-tag shapes (int/float/bool/string/ref-kind) do not depend on
 // arena addresses; full invalidate_all would clear history and feed
 // the deopt-storm ring, thrashing JIT under multi-round AI self-modify
-// + GC. Instead: version bump + compact-scoped deopt hook, keep stable.
+// + GC. Instead: per-profile version bump + compact-scoped deopt hook,
+// keep stable. Process-global shape_version is NOT advanced under
+// production PerEval (#2908) — LayoutStamp / SpecJIT process fence
+// stays put; compact-only is soft pressure.
 //
 // *** COMPACT ↛ STORM RING (#2617) ***
 // Do NOT call update_deopt_storm_state_ from this path. Compact pressure
 // is expected GC pressure, not mutation churn. Gate:
 // scripts/coverage/checks/check_shape_compact_storm_isolation_2617.py
+//
+// *** COMPACT ↛ PROCESS-GLOBAL shape_version UNDER PerEval (#2908) ***
+// Gate: scripts/coverage/checks/check_shape_compact_no_global_bump_2908.py
 std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
@@ -686,6 +692,13 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
         // mutation-induced invalidation counters.
         const auto ring_before = deopt_ring_count_;
         const auto mut_before = mutation_induced_invalidations_.load(std::memory_order_relaxed);
+        // Issue #2908: capture process-global version for PerEval contract.
+        const auto global_ver_before = shape_version_bump_count.load(std::memory_order_relaxed);
+        // Production default PerEval (2): do not advance process-global
+        // shape_version from compact-only events. Global (0) env override
+        // restores legacy process-wide fence (experiments / soak).
+        const int iso_mode = aura_get_storm_isolation_mode();
+        const bool allow_global_version_bump = (iso_mode != 2);
 
         if (profiles_.empty()) {
             deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
@@ -706,7 +719,17 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
             profile.version++;
             if (epoch > profile.version)
                 profile.version = epoch;
-            shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2908: per-profile version always advances (local dirty
+            // hooks / resume soft path). Process-global shape_version only
+            // under Global isolation (not production PerEval default).
+            if (allow_global_version_bump) {
+                shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+                g_shape_compact_global_version_bump_total_atomic().fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                g_shape_compact_global_version_skipped_total_atomic().fetch_add(
+                    1, std::memory_order_relaxed);
+            }
             ++touched;
 
             if (was_stable) {
@@ -726,8 +749,14 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
         contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) ==
                         mut_before);
         contract_assert(!last_storm_from_compact_.load(std::memory_order_relaxed));
+        // #2908: under PerEval, process-global shape_version must not advance.
+        if (!allow_global_version_bump) {
+            contract_assert(shape_version_bump_count.load(std::memory_order_relaxed) ==
+                            global_ver_before);
+        }
         (void)ring_before;
         (void)mut_before;
+        (void)global_ver_before;
     }
 
     for (const auto& h : hooks_to_fire) {

@@ -1,12 +1,21 @@
 // @category: unit
 // @reason: Issue #2617 — coverage linter: compact path must never feed
 //          deopt-storm ring as mutation (fail-closed gate + AC stress).
+//          Issue #2908 — PerEval harden: compact must not bump process-global
+//          shape_version under production.
 //
 //   AC1: Gate/linter — on_arena_compact never calls update_deopt_storm_state_
 //   AC2: Pure-compact stress — Threshold force-reason stays none; compact counters advance
 //   AC3: Mutation invalidate still trips storm logic
 //   AC4: on_arena_compact preserves is_stable + history
 //   AC5: Source-cite + schema-2617
+//
+// #2908 ACs (extend this suite per #81967):
+//   AC1: pure compact under PerEval → process-global shape_version unchanged
+//   AC2: mutation storm enter under PerEval bumps per-eval isolation, not global
+//   AC3: shape_compact_storm_isolation_wired + #2617 linter lineage green
+//   AC4: force-reason Threshold hard; compact soft; query keys
+//   AC5: schema-2908 + linter; no docs/design/*
 
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"
@@ -25,13 +34,20 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::shape::current_global_shape_version;
 using aura::compiler::shape::deopt_storm_compact_suppressed;
 using aura::compiler::shape::g_deopt_storm_isolations_total_atomic;
+using aura::compiler::shape::g_shape_compact_global_version_skipped_total_atomic;
+using aura::compiler::shape::g_shape_storm_global_bump_total_atomic;
+using aura::compiler::shape::g_shape_storm_per_eval_isolations_total_atomic;
+using aura::compiler::shape::kShapeCompactNoGlobalBumpIssue;
 using aura::compiler::shape::kShapeCompactStormIsolationIssue;
 using aura::compiler::shape::kShapeStormForceReasonNone;
 using aura::compiler::shape::kShapeStormForceReasonThreshold;
+using aura::compiler::shape::shape_compact_no_global_bump_wired;
 using aura::compiler::shape::shape_compact_storm_isolation_wired;
 using aura::compiler::shape::SHAPE_INT;
+using aura::compiler::shape::shape_storm_fence_hard;
 using aura::compiler::shape::shape_storm_force_reason;
 using aura::compiler::shape::ShapeProfiler;
 using aura::compiler::types::as_int;
@@ -246,6 +262,89 @@ static void ac5_source_cite() {
 
 } // namespace
 
+// ── Issue #2908: PerEval harden — compact ↛ process-global shape_version ──
+static void ac2908_compact_no_global_bump() {
+    std::println("\n=== Issue #2908: compact ↛ process-global shape_version (PerEval) ===");
+
+    // AC1: pure compact under default PerEval → process-global unchanged.
+    std::println("\n--- #2908 AC1: pure compact leaves process-global version flat ---");
+    CHECK(kShapeCompactNoGlobalBumpIssue == 2908, "AC1: issue stamp");
+    // Ensure production default (clear Global override for this process).
+    ::unsetenv("AURA_SHAPE_STORM_ISOLATION");
+    ShapeProfiler sp;
+    sp.apply_preset(ShapeProfiler::kLowMutationPreset);
+    seed_stable(sp, 6, 80);
+    const auto global0 = current_global_shape_version();
+    const auto skip0 = g_shape_compact_global_version_skipped_total_atomic().load();
+    for (int i = 0; i < 30; ++i)
+        (void)sp.on_arena_compact();
+    CHECK(current_global_shape_version() == global0,
+          "AC1: process-global shape_version unchanged under PerEval compact");
+    CHECK(g_shape_compact_global_version_skipped_total_atomic().load() > skip0,
+          "AC1: compact-global-version-skipped advanced");
+    CHECK(shape_compact_no_global_bump_wired() == 1, "AC1: wired sentinel");
+    // Per-profile version still advances (local soft path).
+    const auto fn = static_cast<aura::compiler::shape::FnKey>(6100);
+    CHECK(sp.current_snapshot(fn).version > 0, "AC1: per-profile version still live");
+
+    // AC2: mutation-induced storm under PerEval bumps per-eval, not global storm counter.
+    std::println("\n--- #2908 AC2: mutation storm enter → per-eval isolation ---");
+    ShapeProfiler sp2;
+    sp2.apply_preset(ShapeProfiler::kLowMutationPreset);
+    sp2.set_adaptive_threshold_boost(0);
+    seed_stable(sp2, 4, 40);
+    const auto per0 = g_shape_storm_per_eval_isolations_total_atomic().load();
+    const auto gbumps0 = g_shape_storm_global_bump_total_atomic().load();
+    const auto thr = sp2.deopt_storm_threshold();
+    for (std::uint32_t i = 0; i < thr + 3; ++i) {
+        const auto f = static_cast<aura::compiler::shape::FnKey>(9200 + i);
+        for (int s = 0; s < 5; ++s)
+            sp2.record_shape(f, SHAPE_INT);
+        sp2.invalidate(f);
+    }
+    CHECK(sp2.deopt_storm_active(), "AC2: storm active after mutation threshold");
+    CHECK(shape_storm_force_reason() == kShapeStormForceReasonThreshold,
+          "AC2: force-reason Threshold (hard fence)");
+    CHECK(shape_storm_fence_hard(), "AC2: LayoutStamp hard fence true");
+    CHECK(g_shape_storm_per_eval_isolations_total_atomic().load() > per0,
+          "AC2: per-eval isolations advanced under PerEval");
+    CHECK(g_shape_storm_global_bump_total_atomic().load() == gbumps0,
+          "AC2: storm global-bump total stays flat under PerEval");
+
+    // AC3: #2617 isolation wired still green.
+    std::println("\n--- #2908 AC3: compact storm isolation lineage ---");
+    CHECK(shape_compact_storm_isolation_wired() == 1, "AC3: compact-storm isolation wired");
+    CHECK(kShapeCompactStormIsolationIssue == 2617, "AC3: #2617 stamp retained");
+    const auto spc = read_file("src/compiler/shape_profiler.cpp");
+    CHECK(spc.find("update_deopt_storm_state_") != std::string::npos &&
+              spc.find("Explicitly do NOT call update_deopt_storm_state_") != std::string::npos,
+          "AC3: compact still bans storm ring");
+    CHECK(spc.find("#2908") != std::string::npos, "AC3: cpp cites #2908");
+
+    // AC4 + AC5: query + linter + no design doc.
+    std::println("\n--- #2908 AC4/AC5: query schema + linter ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2908") == 2908, "AC5: schema-2908");
+    CHECK(href(cs, "issue-2908") == 2908, "AC5: issue-2908");
+    CHECK(href(cs, "compact-no-global-bump-wired") == 1, "AC5: compact-no-global-bump-wired");
+    CHECK(href(cs, "compact-global-version-skipped-total") >= 0, "AC4: skipped-total queryable");
+    CHECK(href(cs, "force-reason-threshold") ==
+              static_cast<std::int64_t>(kShapeStormForceReasonThreshold),
+          "AC4: force-reason-threshold exposed");
+    CHECK(href(cs, "shape-storm-fence-hard") == 1 || href(cs, "shape-storm-fence-hard") == 0,
+          "AC4: fence-hard key present");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_shape_compact_no_global_bump_2908.py");
+    CHECK(build.find("check_shape_compact_no_global_bump_2908") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2908") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("docs/design/2908-shape-compact-no-global.md").empty(),
+          "AC5: no docs/design/2908-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2908.cpp").empty(),
+          "AC5: no new test file per #81967");
+}
+
 int run_test_shape_compact_storm_isolation() {
     std::println("=== Issue #2617: compact ↛ deopt-storm ring isolation ===");
     ac1_gate_compact_no_storm_ring();
@@ -253,7 +352,8 @@ int run_test_shape_compact_storm_isolation() {
     ac3_mutation_still_storms();
     ac4_stable_history_preserved();
     ac5_source_cite();
-    std::println("\n=== #2617: {} passed, {} failed ===", g_passed, g_failed);
+    ac2908_compact_no_global_bump();
+    std::println("\n=== #2617/#2908: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
