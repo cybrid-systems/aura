@@ -11,6 +11,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
+import aura.core.lifetime_pin; // Issue #2891: GeneralObjectPin adopt on check-form scratch create
 import aura.compiler.value;
 
 namespace aura::compiler::primitives_detail {
@@ -119,6 +120,19 @@ void register_test_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto alloc = ev.temp_arena_->allocator();
                 auto* cf_pool = ev.temp_arena_->create<aura::ast::StringPool>(alloc);
                 auto* cf_flat = ev.temp_arena_->create<aura::ast::FlatAST>(alloc);
+                // Issue #2891: GeneralObjectPin adopt on check-form scratch
+                // create (temp_arena_ intermediate, same class as eval-expr).
+                // Under production required mode, pin failure fails the
+                // check clause closed (count as failed) instead of
+                // evaluating an unpinned intermediate.
+                aura::core::lifetime::GeneralObjectPin cf_pool_pin;
+                aura::core::lifetime::GeneralObjectPin cf_flat_pin;
+                if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+                        cf_pool_pin, cf_flat_pin, static_cast<void*>(cf_pool),
+                        static_cast<void*>(cf_flat))) {
+                    sf++;
+                    continue;
+                }
                 auto ast_root = ev.data_to_flat(check_form, *cf_flat, *cf_pool, 0);
                 if (ast_root == aura::ast::NULL_NODE) {
                     sf++;

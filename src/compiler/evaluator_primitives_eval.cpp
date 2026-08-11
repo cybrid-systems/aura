@@ -129,6 +129,20 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             auto alloc = ev.arena_->allocator();
             auto* pool_ptr = ev.arena_->create<aura::ast::StringPool>(alloc);
             auto* flat_ptr = ev.arena_->create<aura::ast::FlatAST>(alloc);
+            // Issue #2891: GeneralObjectPin adopt on set-code create (agent
+            // self-modify path). The fresh pool/flat becomes the workspace
+            // (workspace_flat_ / workspace_pool_ below) — a densify-tracked
+            // intermediate. Under production required mode, pin failure must
+            // fail the create path closed, not just set sticky breach.
+            aura::core::lifetime::GeneralObjectPin set_pool_pin;
+            aura::core::lifetime::GeneralObjectPin set_flat_pin;
+            if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+                    set_pool_pin, set_flat_pin, static_cast<void*>(pool_ptr),
+                    static_cast<void*>(flat_ptr))) {
+                ok = false;
+                return mev("general-object-pin-required",
+                           "set-code: GeneralObjectPin required under production (#2891)");
+            }
             bool fresh_alloc = true;
 
             auto pr = aura::parser::parse_to_flat(ev.string_heap_[idx], *flat_ptr, *pool_ptr);
