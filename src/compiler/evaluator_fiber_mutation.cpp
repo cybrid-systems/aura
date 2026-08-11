@@ -3214,6 +3214,49 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                     // PanicDeferDensifyAudit #2598).
                 }
             }
+            // Issue #2890: cross-fiber steal residual — the stolen fiber's
+            // PanicCheckpointHost lives on the PREVIOUS host evaluator
+            // (prev_eval_id), not necessarily the current scheduler eval
+            // (which the #2667/#2710 block above clears). Under production
+            // (#2853 residual policy lock / production defaults / panic
+            // contract hard) force-clear the previous host's checkpoint +
+            // release panic defer so GC is not permanently armed across the
+            // steal boundary (no starvation until a later residual path).
+            // Soft / no checkpoint / opaque non-Evaluator prev id: zero
+            // extra work (AC2 observe-only). Transfer accounting: when the
+            // checkpoint survives because the prev host IS the current
+            // scheduler eval (same-eval steal continuity), bump the
+            // transfer counter instead of double-clearing (AC3 no
+            // double-clear — the #2667 block already handled that case).
+            {
+                const bool residual_policy_locked =
+                    aura::serve::production_residual_policy_locked();
+                const bool production_force =
+                    aura::compiler::typed_audit::production_defaults_active() ||
+                    aura::gc_hooks::panic_contract_hard_pref_v_read() == 1 ||
+                    residual_policy_locked;
+                const auto prev_addr = reinterpret_cast<std::uintptr_t>(prev_eval_id);
+                if (production_force && prev_addr > 0x100000ull) {
+                    auto* prev_ev = static_cast<Evaluator*>(prev_eval_id);
+                    auto* cur_ev = evaluator_for_scheduler_hooks();
+                    if (prev_ev != cur_ev && prev_ev->has_panic_checkpoint()) {
+                        prev_ev->clear_panic_checkpoint();
+                        aura::gc_hooks::g_residual_defer_steal_checkpoint_cleared_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (auto* sm = static_cast<CompilerMetrics*>(prev_ev->compiler_metrics()))
+                            sm->residual_defer_after_exit_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    } else if (prev_ev == cur_ev && prev_ev->has_panic_checkpoint()) {
+                        // Same-eval steal continuity: the #2667/#2710 block
+                        // above already cleared + accounted; do NOT
+                        // double-clear (AC3). Record the transfer so Agents
+                        // see the checkpoint crossed the steal boundary
+                        // intact (additive observability).
+                        aura::gc_hooks::g_residual_defer_steal_checkpoint_transfer_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            }
         }
     }
 

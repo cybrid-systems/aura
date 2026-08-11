@@ -11347,6 +11347,29 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                       aura::gc_hooks::panic_contract_hard_pref_v_read() > 0 ? 1 : 0);
             insert_kv("schema-2710", 2710);
             insert_kv("issue-2710", 2710);
+            // Issue #2890: cross-fiber steal residual — previous-host
+            // PanicCheckpoint force-clear (production) vs same-eval transfer
+            // continuity. Closes the residual where the stolen fiber's
+            // checkpoint host lives on prev_eval_id (not the current
+            // scheduler eval) and would otherwise arm GC defer across the
+            // steal boundary until a later residual path fires. Soft / no
+            // checkpoint: zero extra work (observe-only). Additive — no
+            // regression on #2846 / #2667 / #2710 / #2314 / #2546 surfaces.
+            insert_kv("residual-defer-steal-checkpoint-cleared-total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::residual_defer_steal_checkpoint_cleared_total()));
+            insert_kv("residual_defer_steal_checkpoint_cleared_total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::residual_defer_steal_checkpoint_cleared_total()));
+            insert_kv("residual-defer-steal-checkpoint-transfer-total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::residual_defer_steal_checkpoint_transfer_total()));
+            insert_kv("residual_defer_steal_checkpoint_transfer_total",
+                      static_cast<std::int64_t>(
+                          aura::gc_hooks::residual_defer_steal_checkpoint_transfer_total()));
+            insert_kv("residual-defer-steal-checkpoint-wired", 1);
+            insert_kv("schema-2890", 2890);
+            insert_kv("issue-2890", aura::gc_hooks::kResidualDeferStealCheckpointIssue);
             // Issue #2609: hard-AND residual + linear force + type fence.
             {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());

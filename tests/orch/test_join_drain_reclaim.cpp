@@ -655,9 +655,12 @@ int run_test_join_drain_reclaim() {
     {
         std::println(
             "\n--- #2885 AC1+AC4+AC6: per-join still-running SLA + counters + source-cite ---");
-        reset_all();
+        reset_between_acs(); // pre-existing fix: file defines reset_between_acs(), not reset_all()
         // Use a real Fiber instance to exercise mark_reclaimed + new accessors.
-        auto fiber_owned = std::make_unique<aura::serve::Fiber>();
+        // Note: Fiber has no default ctor (Fiber(Func, size_t) only) — pass a
+        // no-op body so the instance is constructible (pre-existing build fix
+        // for #2885 test; unrelated to #2890).
+        auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
         fiber_owned->set_assigned_tenant_id(1);
         const auto still_running_before = aura::serve::Fiber::join_drain_residual_still_running();
 
