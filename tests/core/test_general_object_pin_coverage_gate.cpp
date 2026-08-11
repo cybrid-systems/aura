@@ -464,6 +464,67 @@ static void ac2840_6_linter_and_no_invent() {
     CHECK(!invent.good(), "2840 AC6: no test_issue_2840.cpp");
 }
 
+// ── Issue #2891: force required-fail return check on intermediate create ──
+// Residual of #2840/#2709: helper + sticky breach exist, but some
+// mutate/agent/scratch intermediate create sites still void-cast the
+// return (or skip the wire), so pin failure under production required
+// only sets sticky densify-off without failing the create path. #2891
+// wires set-code (agent self-modify workspace swap) + check-form
+// (temp_arena_ scratch) and adds a void-cast linter.
+static void ac2891_1_set_code_and_check_form_wire() {
+    std::println("\n--- #2891 AC1: set-code + check-form required-fail wire ---");
+    const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    const auto tst = read_file("src/compiler/evaluator_primitives_test.cpp");
+    CHECK(ev.find("Issue #2891") != std::string::npos, "2891 AC1: eval.cpp cites #2891");
+    CHECK(ev.find("wire_general_object_create_pair_or_required_fail") != std::string::npos,
+          "2891 AC1: set-code uses required-fail wire");
+    CHECK(ev.find("set-code: GeneralObjectPin required under production (#2891)") !=
+              std::string::npos,
+          "2891 AC1: set-code fails closed under production required");
+    CHECK(tst.find("Issue #2891") != std::string::npos, "2891 AC1: test.cpp cites #2891");
+    CHECK(tst.find("wire_general_object_create_pair_or_required_fail") != std::string::npos,
+          "2891 AC1: check-form uses required-fail wire");
+    CHECK(tst.find("import aura.core.lifetime_pin") != std::string::npos,
+          "2891 AC1: test.cpp imports lifetime_pin");
+}
+
+static void ac2891_2_soft_observe_only() {
+    std::println("\n--- #2891 AC2: Soft observe-only retained ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(lp.find("Soft: observe-only") != std::string::npos ||
+              lp.find("return true;   // Soft") != std::string::npos ||
+              lp.find("return true; // Soft") != std::string::npos,
+          "2891 AC2: helper keeps Soft observe-only path");
+    // No new atomics on quiet path: helper body unchanged shape (single
+    // required_active check + return ok/true).
+    const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(ev.find("wire_general_object_create_pair_or_required_fail") != std::string::npos,
+          "2891 AC2: eval wire site retained");
+}
+
+static void ac2891_3_no_void_cast_linter() {
+    std::println("\n--- #2891 AC3: void-cast linter + src/-aligned + no invent ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_general_object_pin_required_2891") != std::string::npos,
+          "2891 AC3: build.py wires #2891 linter");
+    // No void-cast residual of the required-fail helper anywhere.
+    for (const char* f : {"src/compiler/evaluator_primitives_eval.cpp",
+                          "src/compiler/evaluator_primitives_test.cpp",
+                          "src/compiler/evaluator_primitives_mutate.cpp",
+                          "src/compiler/evaluator_primitives_query_workspace.cpp",
+                          "src/compiler/evaluator_eval_flat.cpp"}) {
+        const auto src = read_file(f);
+        CHECK(src.find(
+                  "(void)aura::core::lifetime::wire_general_object_create_pair_or_required_fail") ==
+                  std::string::npos,
+              "2891 AC3: no void-cast of or_required_fail in " + std::string(f));
+    }
+    std::ifstream invent("tests/core/test_issue_2891.cpp");
+    if (!invent)
+        invent.open("../tests/core/test_issue_2891.cpp");
+    CHECK(!invent.good(), "2891 AC3: no test_issue_2891.cpp (per #81967)");
+}
+
 int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
     std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
@@ -500,6 +561,9 @@ int run_test_general_object_pin_coverage_gate() {
     ac2840_2_callers_fail_closed();
     ac2840_3_query_and_defaults();
     ac2840_6_linter_and_no_invent();
+    ac2891_1_set_code_and_check_form_wire();
+    ac2891_2_soft_observe_only();
+    ac2891_3_no_void_cast_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
