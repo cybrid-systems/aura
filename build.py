@@ -6829,6 +6829,32 @@ def cmd_dirty_column_lock_coverage():
     return 0
 
 
+def cmd_dirty_columnar_2904_coverage():
+    """Issue #2904: FlatAST dirty → columnar bitmask + ImpactScope (static)."""
+    print(f"{B}=== dirty columnar + ImpactScope coverage (#2904) ==={N}")
+    script = COVERAGE_CHECKS / "check_dirty_columnar_2904.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dirty columnar (#2904) coverage contract rows failed")
+        return 1
+    ok("dirty columnar (#2904) coverage clean")
+    return 0
+
+
+def cmd_dirty_columnar_2904():
+    """Issue #2904: mark_dirty_upward columnar fixed-point + scan API + schema.
+
+    Default path writes dirty_ columns with fixed-point parent cascade
+    (no full tree BFS). Legacy BFS only when AURA_DIRTY_LEGACY_TREE_WALK=1.
+    Post-mutate health uses scan_dirty_columns. ImpactScope mask API.
+    """
+    print(f"{B}=== dirty columnar (#2904) ==={N}")
+    return cmd_dirty_columnar_2904_coverage()
+
+
 def cmd_subtree_dirty_bounds_coverage():
     """Issue #2424: is_subtree_dirty_node bounds via dirty_.size() (not size()).
 
@@ -10980,6 +11006,7 @@ def cmd_gate():
         or cmd_restamp_lazy_align_atomic_coverage()
         or cmd_subtree_gen_atomic_coverage()
         or cmd_dirty_column_lock_coverage()
+        or cmd_dirty_columnar_2904_coverage()
         or cmd_subtree_dirty_bounds_coverage()
         or cmd_capability_audit_publish_coverage()
         or cmd_capability_registry_snapshot_coverage()
@@ -11963,6 +11990,8 @@ def main():
         "chaos-release-blocker-2902-coverage": cmd_chaos_release_blocker_2902_coverage,
         "mailbox-under-boundary-wait-2903": cmd_mailbox_under_boundary_wait_2903,
         "mailbox-under-boundary-wait-2903-coverage": cmd_mailbox_under_boundary_wait_2903_coverage,
+        "dirty-columnar-2904": cmd_dirty_columnar_2904,
+        "dirty-columnar-2904-coverage": cmd_dirty_columnar_2904_coverage,
         "chaos-soak-hard-gate-2722": cmd_chaos_soak_hard_gate_2722,
         "chaos-soak-hard-gate-2722-coverage": cmd_chaos_soak_hard_gate_2722_coverage,
         "chaos-soak-residual-zero-2755-coverage": cmd_chaos_soak_residual_zero_2755_coverage,

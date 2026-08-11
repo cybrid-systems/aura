@@ -9,7 +9,7 @@
     "workspace": 17
   },
   "count": 481,
-  "frozen_count": 442,
+  "frozen_count": 443,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -124,6 +124,7 @@
     "query:defuse-infer-partial-stats",
     "query:defuse-version-stats",
     "query:deployment-stats",
+    "query:dirty-columnar",
     "query:dirty-epoch-marker-stats",
     "query:dirty-propagation-cost-stats",
     "query:dirty-propagation-stats",
@@ -940,7 +941,7 @@
   ],
   "public_stats_via_add": 0,
   "schema": 2,
-  "stats_count": 419,
+  "stats_count": 420,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1046,6 +1047,7 @@
     "query:defuse-infer-partial-stats",
     "query:defuse-version-stats",
     "query:deployment-stats",
+    "query:dirty-columnar",
     "query:dirty-epoch-marker-stats",
     "query:dirty-propagation-cost-stats",
     "query:dirty-propagation-stats",

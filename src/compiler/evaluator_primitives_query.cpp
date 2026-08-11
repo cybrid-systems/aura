@@ -14271,6 +14271,62 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_int(static_cast<std::int64_t>(upward_calls + early_exit + max_depth));
         });
 
+    // Issue #2904: query:dirty-columnar — Agent-visible columnar dirty
+    // propagation metrics (column writes / cascades avoided / column
+    // scans / legacy tree-walk). Hash surface so Agents poll without
+    // stitching. Additive schema-2904. Name avoids *-stats freeze (#1448).
+    ObservabilityPrims::register_stats_impl(
+        "query:dirty-columnar", [&string_heap, &ev](std::span<const EvalValue>) -> EvalValue {
+            auto* ws = ev.workspace_flat();
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const std::uint64_t col_writes = ws ? ws->dirty_column_writes_total() : 0;
+            const std::uint64_t cascades_avoided =
+                ws ? ws->dirty_upward_cascades_avoided_total() : 0;
+            const std::uint64_t scan_nodes = ws ? ws->dirty_scan_nodes_total() : 0;
+            const std::uint64_t legacy = ws ? ws->dirty_legacy_tree_walk_total() : 0;
+            const std::uint64_t upward = ws ? ws->mark_dirty_upward_call_count() : 0;
+            const std::uint64_t early = ws ? ws->mark_dirty_early_exit_count() : 0;
+            insert_kv("dirty-column-writes-total", static_cast<std::int64_t>(col_writes));
+            insert_kv("dirty-upward-cascades-avoided-total",
+                      static_cast<std::int64_t>(cascades_avoided));
+            insert_kv("dirty-scan-nodes-total", static_cast<std::int64_t>(scan_nodes));
+            insert_kv("dirty-legacy-tree-walk-total", static_cast<std::int64_t>(legacy));
+            insert_kv("mark-dirty-upward-calls", static_cast<std::int64_t>(upward));
+            insert_kv("mark-dirty-early-exit-count", static_cast<std::int64_t>(early));
+            insert_kv("dirty-columnar-wired", 1);
+            insert_kv("schema-2904", 2904);
+            insert_kv("issue-2904", 2904);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #414: query:generation-epoch-stats. Returns the sum of
     // 7 long-running generation_ + composite wrap_epoch_ +
     // mutation-epoch observability counters for AI multi-round

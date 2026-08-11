@@ -1214,7 +1214,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_depth_safe_mutation_boundary_steal.cpp` (—) [domain_suite, theme_serve] — AC1: Holding MutationBoundary (depth>0) fiber is never steal-safe
 - `tests/compiler/test_dirty_aware_shape_linear_passes.cpp` (—) [domain_suite, theme_compiler] — AC1: ShapeAwareFold with dirty mask only processes dirty blocks
 - `tests/compiler/test_dirty_cascade_optimize.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2063 — Dirty cascade subtree-skip (summary-dirty early-exit) test.
-- `tests/core/test_dirty_column_lock.cpp` (—) [domain_suite, theme_core] — AC1: concurrent mark_dirty + dirty_nodes_in_range (shared/exclusive lock)
+- `tests/core/test_dirty_column_lock.cpp` (—) [domain_suite, theme_core] — Issue #2904 — columnar dirty propagation (zero-overhead hot path).
 - `tests/compiler/test_dirty_pipeline_counter_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: source TLS enter/leave; contamination metric; cites #2824
 - `tests/compiler/test_dirty_propagation_cascade.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade_mark_dirty / propagate_closure BFS marks all dependents
 - `tests/compiler/test_dirty_propagation_cost_closed_loop.cpp` (—) [small, domain_suite, theme_compiler] — Issue #398/#399/#408/#415 (#1978 renamed): issue# moved from filename to header.
