@@ -134,15 +134,32 @@ Token Lexer::read_number() {
         pos_++;
     while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
         pos_++;
-    // Check for decimal point followed by digit
+    bool is_float = false;
+    // Decimal point followed by digit: 3.14
     if (pos_ < source_.size() && source_[pos_] == '.' && pos_ + 1 < source_.size() &&
         std::isdigit((unsigned char)source_[pos_ + 1])) {
         pos_++; // consume '.'
         while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
             pos_++;
-        return make_tok(TokenKind::Float, source_.substr(s, pos_ - s));
+        is_float = true;
     }
-    return make_tok(TokenKind::Integer, source_.substr(s, pos_ - s));
+    // Issue #2941: scientific notation — [eE][+-]?digits
+    // e.g. 1e-9, 1.0e-3, 2.5E+2, -1e2. If 'e' is not followed by a valid
+    // exponent, leave 'e' for the next token (identifier).
+    if (pos_ < source_.size() && (source_[pos_] == 'e' || source_[pos_] == 'E')) {
+        const std::size_t exp_mark = pos_;
+        pos_++; // consume e/E
+        if (pos_ < source_.size() && (source_[pos_] == '+' || source_[pos_] == '-'))
+            pos_++;
+        if (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_])) {
+            while (pos_ < source_.size() && std::isdigit((unsigned char)source_[pos_]))
+                pos_++;
+            is_float = true;
+        } else {
+            pos_ = exp_mark; // not a valid exponent — leave e/E for identifier
+        }
+    }
+    return make_tok(is_float ? TokenKind::Float : TokenKind::Integer, source_.substr(s, pos_ - s));
 }
 Token Lexer::read_identifier() {
     std::size_t s = pos_;

@@ -1,0 +1,27 @@
+; Issue #2941 — scientific notation float literals
+; 1e-9 / 1.0e-3 / 1E+2 must parse as floats (not unbound e-9).
+
+(define ok #t)
+(define (check label actual expected)
+  (if (< (abs (- actual expected)) 1e-12)
+      #t
+      (begin
+        (display "FAIL-2941 ") (display label)
+        (display " got=") (write actual)
+        (display " want=") (write expected)
+        (newline)
+        (set! ok #f))))
+
+(check "1e-9" 1e-9 0.000000001)
+(check "1.0e-3" 1.0e-3 0.001)
+(check "1E+2" 1E+2 100.0)
+(check "-2.5e0" -2.5e0 -2.5)
+(check "2.5E+2" 2.5E+2 250.0)
+(check "-1e2" -1e2 -100.0)
+; spaced form is NOT scientific notation (1 * e * -9 style) — leave alone
+; just ensure bare sci forms work after arith
+(check "arith" (* 1e3 1e-3) 1.0)
+
+(if ok
+    (begin (display "OK-2941 sci-notation") (newline))
+    (begin (display "FAIL-2941") (newline)))
