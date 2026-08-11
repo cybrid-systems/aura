@@ -1,12 +1,19 @@
 // @category: unit
 // @reason: Issue #2502 — auto re-promote force-JIT regions after stable
 //          recovery window (N clean reemits + StormLevel::None).
+//          Issue #2895 — last success coverage + partial re-promote knobs
+//          (refine #2502/#2601).
 //
-//   AC1: force-JIT Defuse → N successful reemits, no storm → bit cleared
-//   AC2: storm active or new fail reason in window → no re-promote
-//   AC3: on_reload_success still clears all (existing contract)
-//   AC4: additive metrics + query keys (schema-2502)
-//   AC5: source-cite + unit test isolation (reset helpers)
+//   #2502 AC1: force-JIT Defuse → N successful reemits, no storm → bit cleared
+//   #2502 AC2: storm active or new fail reason in window → no re-promote
+//   #2502 AC3: on_reload_success still clears all (existing contract)
+//   #2502 AC4: additive metrics + query keys (schema-2502)
+//   #2502 AC5: source-cite + unit test isolation (reset helpers)
+//   #2895 AC1: partial clear — covered bit N only; other force bits retained
+//   #2895 AC2: default policy preserves #2502 require-pending-idle / wholesale
+//   #2895 AC3: query last-reemit-success-region-mask + partial total
+//   #2895 AC4: storm active → no repromote (existing guards)
+//   #2895 AC5: source-cite coverage + knobs
 
 #include "test_harness.hpp"
 
@@ -232,6 +239,179 @@ static void ac5_source_and_gate() {
     CHECK(cmake.find("test_force_jit_repromote") != std::string::npos, "AC5: cmake target");
 }
 
+// ── #2895 AC1: partial re-promote clears only covered bits ──
+static void ac2895_partial_clear_covered_only() {
+    std::println("\n--- #2895 AC1: partial clear covered bit; retain uncovered ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto defuse_bit = static_cast<std::uint64_t>(1)
+                            << static_cast<unsigned>(AotReloadFail::Defuse);
+    const auto env_bit = static_cast<std::uint64_t>(1) << static_cast<unsigned>(AotReloadFail::Env);
+    const auto both = defuse_bit | env_bit;
+    CHECK((reg.reload_recovery_state().force_jit_regions_mask & both) == both,
+          "2895 AC1: Defuse+Env demoted");
+
+    // Agent/bridge: only Defuse recovered.
+    reg.note_reemit_success_coverage(defuse_bit);
+    CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
+          "2895 AC1: last success mask = Defuse");
+
+    const auto part0 = reg.force_jit_repromote_partial_total();
+    const auto full0 = reg.force_jit_repromote_total();
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1); // window=2 → partial clear
+
+    const auto mask = reg.reload_recovery_state().force_jit_regions_mask;
+    CHECK((mask & defuse_bit) == 0, "2895 AC1: Defuse bit cleared");
+    CHECK((mask & env_bit) != 0, "2895 AC1: Env bit retained (not covered)");
+    CHECK(reg.force_jit_repromote_partial_total() == part0 + 1, "2895 AC1: partial_total +1");
+    CHECK(reg.force_jit_repromote_total() == full0, "2895 AC1: full repromote_total unchanged");
+    CHECK(reg.force_jit_stable_successes() == 0, "2895 AC1: streak reset after partial");
+
+    clear_idle(reg);
+}
+
+// ── #2895 AC2: default policy preserves #2502 wholesale + require-pending-idle ──
+static void ac2895_default_preserves_2502() {
+    std::println("\n--- #2895 AC2: default knobs preserve #2502 wholesale clear ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    // Defaults after reset: only_covered=0, require_pending_idle=1.
+    CHECK(!reg.force_jit_repromote_only_covered_bits(), "2895 AC2: only_covered default off");
+    CHECK(reg.force_jit_repromote_require_pending_idle(),
+          "2895 AC2: require_pending_idle default on");
+
+    reg.set_force_jit_repromote_window(2);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    // Even with narrower coverage note, default wholesale still clears all.
+    const auto defuse_bit = static_cast<std::uint64_t>(1)
+                            << static_cast<unsigned>(AotReloadFail::Defuse);
+    reg.note_reemit_success_coverage(defuse_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK(reg.reload_recovery_state().force_jit_regions_mask == 0,
+          "2895 AC2: default wholesale clears all bits");
+    CHECK(reg.force_jit_repromote_partial_total() == 0,
+          "2895 AC2: partial_total stays 0 under default");
+
+    // require_pending_idle still blocks streak (no silent change).
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(3);
+    reg.on_force_jit_for_reason(AotReloadFail::Version);
+    reg.on_recovery_pending_dirty_inc();
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK(reg.force_jit_stable_successes() == 0, "2895 AC2: pending dirty still blocks streak");
+    reg.on_recovery_pending_dirty_dec();
+
+    clear_idle(reg);
+}
+
+// ── #2895 AC3: query surface ──
+static void ac2895_query_surface() {
+    std::println("\n--- #2895 AC3: query last-success mask + partial counter ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    CompilerService cs;
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Linear);
+    const auto defuse_bit = static_cast<std::uint64_t>(1)
+                            << static_cast<unsigned>(AotReloadFail::Defuse);
+    reg.note_reemit_success_coverage(defuse_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    reg.on_reemit_pipeline_call(1, 1);
+
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2895") == 2895, "2895 AC3: schema-2895");
+    CHECK(href(cs, "query:reload-recovery-state", "issue-2895") == 2895, "2895 AC3: issue-2895");
+    CHECK(href(cs, "query:reload-recovery-state", "last-reemit-success-region-mask") ==
+              static_cast<std::int64_t>(defuse_bit),
+          "2895 AC3: last-reemit-success-region-mask");
+    CHECK(href(cs, "query:reload-recovery-state", "force-jit-repromote-partial-total") >= 1,
+          "2895 AC3: force-jit-repromote-partial-total");
+    CHECK(href(cs, "query:reload-recovery-state", "force-jit-repromote-only-covered-bits") == 1,
+          "2895 AC3: only-covered-bits knob");
+    // Prior lineage preserved.
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2502") == 2502,
+          "2895 AC3: schema-2502 preserved");
+    CHECK(href(cs, "query:hot-update-registry-stats", "schema-2895") == 2895,
+          "2895 AC3: schema-2895 on hot-update surface");
+
+    aura_reload_recovery_snapshot snap{};
+    aura_hot_update_reload_recovery_get_snapshot(&snap);
+    CHECK(snap.schema_2895 == 2895, "2895 AC3: C snap schema_2895");
+    CHECK(snap.force_jit_repromote_partial_total >= 1, "2895 AC3: C snap partial total");
+    CHECK(static_cast<std::uint64_t>(snap.last_reemit_success_region_mask) == defuse_bit,
+          "2895 AC3: C snap last success mask");
+
+    clear_idle(reg);
+}
+
+// ── #2895 AC4: storm still blocks (existing guards) ──
+static void ac2895_storm_blocks() {
+    std::println("\n--- #2895 AC4: storm active → no partial/full repromote ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    reg.set_force_jit_repromote_window(2);
+    reg.set_force_jit_repromote_only_covered_bits(true);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    const auto defuse_bit = static_cast<std::uint64_t>(1)
+                            << static_cast<unsigned>(AotReloadFail::Defuse);
+    reg.note_reemit_success_coverage(defuse_bit);
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK(reg.force_jit_stable_successes() == 1, "2895 AC4: streak 1 pre-storm");
+    reg.set_shape_storm_active(true);
+    const auto part0 = reg.force_jit_repromote_partial_total();
+    const auto full0 = reg.force_jit_repromote_total();
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK(reg.force_jit_stable_successes() == 0, "2895 AC4: storm resets streak");
+    CHECK((reg.reload_recovery_state().force_jit_regions_mask & defuse_bit) != 0,
+          "2895 AC4: mask stays under storm");
+    CHECK(reg.force_jit_repromote_partial_total() == part0, "2895 AC4: no partial under storm");
+    CHECK(reg.force_jit_repromote_total() == full0, "2895 AC4: no full under storm");
+    reg.set_shape_storm_active(false);
+    clear_idle(reg);
+}
+
+// ── #2895 AC5: source-cite ──
+static void ac2895_source_cite() {
+    std::println("\n--- #2895 AC5: source-cite coverage + knobs ---");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(hh.find("last_reemit_success_region_mask") != std::string::npos,
+          "2895 AC5: last_reemit_success_region_mask in hh");
+    CHECK(hh.find("force_jit_repromote_only_covered_bits") != std::string::npos,
+          "2895 AC5: only_covered_bits in hh");
+    CHECK(hh.find("force_jit_repromote_partial_total") != std::string::npos,
+          "2895 AC5: partial_total in hh");
+    CHECK(hh.find("note_reemit_success_coverage") != std::string::npos,
+          "2895 AC5: note_reemit_success_coverage API");
+    CHECK(hh.find("2895") != std::string::npos, "2895 AC5: #2895 cite in hh");
+    CHECK(cpp.find("force_jit_repromote_partial_total_") != std::string::npos,
+          "2895 AC5: partial counter in cpp");
+    CHECK(cpp.find("repromote_only_covered_bits") != std::string::npos ||
+              cpp.find("force_jit_repromote_only_covered_bits_") != std::string::npos,
+          "2895 AC5: partial policy branch in cpp");
+    CHECK(cpp.find("last_reemit_success_region_mask_") != std::string::npos,
+          "2895 AC5: last success stamp in cpp");
+    CHECK(mut.find("last-reemit-success-region-mask") != std::string::npos,
+          "2895 AC5: query key last-reemit-success-region-mask");
+    CHECK(mut.find("force-jit-repromote-partial-total") != std::string::npos,
+          "2895 AC5: query key partial-total");
+    CHECK(mut.find("schema-2895") != std::string::npos, "2895 AC5: schema-2895 in mutate");
+    // Soft / no force-JIT: zero cost path still present.
+    CHECK(cpp.find("force_jit_regions_mask_") != std::string::npos &&
+              cpp.find("mask == 0") != std::string::npos,
+          "2895 AC5: zero-cost idle short-circuit retained");
+}
+
 } // namespace
 
 int run_test_force_jit_repromote() {
@@ -241,9 +421,14 @@ int run_test_force_jit_repromote() {
     ac3_reload_success_clears();
     ac4_query_keys();
     ac5_source_and_gate();
+    ac2895_partial_clear_covered_only();
+    ac2895_default_preserves_2502();
+    ac2895_query_surface();
+    ac2895_storm_blocks();
+    ac2895_source_cite();
     if (g_failed)
         return 1;
-    std::println("force-jit re-promote #2502: OK ({} passed)", g_passed);
+    std::println("force-jit re-promote #2502/#2895: OK ({} passed)", g_passed);
     return 0;
 }
 

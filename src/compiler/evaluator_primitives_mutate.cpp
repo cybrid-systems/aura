@@ -130,12 +130,16 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t last_region_mask_from_dirty;
     std::int64_t schema_2035;
     std::int64_t issue_2035;
-    // Issue #2114 / #2205 / #2208: MUST stay in lockstep with hot_update_registry.hh
+    // Issue #2114 / #2205 / #2208 / #2273: MUST stay in lockstep with
+    // hot_update_registry.hh field order (see aura_hot_update_registry_snapshot).
     std::int64_t reemit_outside_boundary_total;
     std::int64_t reemit_soft_boundary_entered_total;
     std::int64_t reemit_deferred_for_boundary_total;
     std::int64_t reemit_boundary_policy;
     std::int64_t reemit_deferred_pending;
+    // Issue #2273: steal-path observability fields (before #2205 reject total).
+    std::int64_t reemit_deferred_seen_on_steal_total;
+    std::int64_t reemit_deferred_seen_on_steal_last_fiber_id;
     std::int64_t reemit_rejected_require_real_total; // #2205
     std::int64_t schema_2114;
     std::int64_t issue_2114;
@@ -144,16 +148,25 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t schema_2208; // #2208
     std::int64_t issue_2208;  // #2208
     // Issue #2236: StormIsolation mode + per-region storm counters.
-    // MUST stay in lockstep with hot_update_registry.hh.
     std::int64_t storm_isolation_mode;
     std::int64_t deopt_storm_region_overflow_total; // #2274
     std::int64_t deopt_storm_region_detected_total;
     std::int64_t deopt_storm_region_last_id;
     std::int64_t schema_2236;
     std::int64_t issue_2236;
-    // Issue #2273: steal-path observability fields.
-    std::int64_t reemit_deferred_seen_on_steal_total;
-    std::int64_t reemit_deferred_seen_on_steal_last_fiber_id;
+    // Issue #2601: exhausted min-dirty retry closed loop (additive).
+    std::int64_t aot_exhausted_min_dirty_retry_total;
+    std::int64_t aot_exhausted_min_dirty_retry_success_total;
+    std::int64_t aot_exhausted_min_dirty_retry_storm_skip_total;
+    std::int64_t aot_exhausted_min_dirty_retry_cap_hit_total;
+    std::int64_t exhausted_min_dirty_retry_attempts_left;
+    std::int64_t exhausted_min_dirty_retry_attempts_cap;
+    std::int64_t exhausted_min_dirty_retry_backoff_ms;
+    std::int64_t exhausted_min_dirty_retry_last_at_ms;
+    std::int64_t exhausted_min_dirty_retry_last_reason;
+    std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered;
+    std::int64_t schema_2601;
+    std::int64_t issue_2601;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 // Issue #2748: deferred reemit age (C ABI).
@@ -163,6 +176,8 @@ extern "C" std::uint64_t aura_hot_update_deferred_reemit_deadline_hit_total(void
 
 // Issue #2367: ReloadRecovery agent snapshot (C ABI; no HotUpdateRegistry
 // class attach on module partitions — #1956 link discipline).
+// MUST stay in lockstep with hot_update_registry.hh — production
+// aura_hot_update_reload_recovery_get_snapshot() writes every field.
 struct aura_reload_recovery_snapshot {
     std::int64_t schema;
     std::int64_t issue;
@@ -192,6 +207,34 @@ struct aura_reload_recovery_snapshot {
     std::int64_t force_jit_repromote_window;
     std::int64_t force_jit_repromote_require_pending_idle;
     std::int64_t schema_2502;
+    // Issue #2895: last success coverage + partial re-promote
+    std::int64_t last_reemit_success_region_mask;
+    std::int64_t force_jit_repromote_only_covered_bits;
+    std::int64_t force_jit_repromote_partial_total;
+    std::int64_t schema_2895;
+    std::int64_t issue_2895;
+    // Issue #2601: exhausted min-dirty retry closed loop
+    std::int64_t aot_exhausted_min_dirty_retry_total;
+    std::int64_t aot_exhausted_min_dirty_retry_success_total;
+    std::int64_t aot_exhausted_min_dirty_retry_storm_skip_total;
+    std::int64_t aot_exhausted_min_dirty_retry_cap_hit_total;
+    std::int64_t exhausted_min_dirty_retry_attempts_left;
+    std::int64_t exhausted_min_dirty_retry_attempts_cap;
+    std::int64_t exhausted_min_dirty_retry_backoff_ms;
+    std::int64_t exhausted_min_dirty_retry_last_at_ms;
+    std::int64_t exhausted_min_dirty_retry_last_reason;
+    std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered;
+    std::int64_t schema_2601;
+    // Issue #2639: storm-clear health pass
+    std::int64_t reemit_storm_clear_health_pass_total;
+    std::int64_t reemit_storm_clear_health_pass_success_total;
+    std::int64_t reemit_storm_clear_health_pass_skipped_reentered_storm_total;
+    std::int64_t schema_2639;
+    std::int64_t issue_2639;
+    // Issue #2669: body-driven storm-clear pass
+    std::int64_t reemit_storm_clear_health_pass_reemit_driven_total;
+    std::int64_t schema_2669;
+    std::int64_t issue_2669;
     std::int64_t recovery_active;
     std::int64_t reload_recovery_wired;
 };
@@ -7971,6 +8014,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("force-jit-repromote-window", rs.force_jit_repromote_window);
                 insert_kv("force-jit-repromote-require-pending-idle",
                           rs.force_jit_repromote_require_pending_idle);
+                // Issue #2895: last success coverage + partial re-promote.
+                insert_kv("last-reemit-success-region-mask", rs.last_reemit_success_region_mask);
+                insert_kv("force-jit-repromote-only-covered-bits",
+                          rs.force_jit_repromote_only_covered_bits);
+                insert_kv("force-jit-repromote-partial-total",
+                          rs.force_jit_repromote_partial_total);
+                insert_kv("schema-2895", rs.schema_2895);
+                insert_kv("issue-2895", rs.issue_2895);
                 insert_kv("recovery-active", rs.recovery_active);
                 insert_kv("reload-recovery-wired", rs.reload_recovery_wired);
                 insert_kv("schema-2367", 2367);
@@ -8070,6 +8121,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("force-jit-repromote-window", rs.force_jit_repromote_window);
             insert_kv("force-jit-repromote-require-pending-idle",
                       rs.force_jit_repromote_require_pending_idle);
+            // Issue #2895: last success coverage + partial re-promote.
+            insert_kv("last-reemit-success-region-mask", rs.last_reemit_success_region_mask);
+            insert_kv("force-jit-repromote-only-covered-bits",
+                      rs.force_jit_repromote_only_covered_bits);
+            insert_kv("force-jit-repromote-partial-total", rs.force_jit_repromote_partial_total);
+            insert_kv("schema-2895", rs.schema_2895);
+            insert_kv("issue-2895", rs.issue_2895);
             insert_kv("recovery-active", rs.recovery_active);
             insert_kv("reload-recovery-wired", rs.reload_recovery_wired);
             // Policy enum sentinels (docs)
