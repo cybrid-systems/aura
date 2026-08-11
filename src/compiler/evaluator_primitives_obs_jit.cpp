@@ -10182,6 +10182,24 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(linear_move_elided_total()));
             insert_kv("schema-2263", 2263);
             insert_kv("issue-2263", 2263);
+            // Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
+            // Additive to #2263/#2854; zero cost when no recent proof stamp.
+            {
+                using aura::compiler::typed_audit::g_linear_ir_fastpath_skip_blocked_total;
+                using aura::compiler::typed_audit::g_linear_ir_fastpath_skip_total;
+                using aura::compiler::typed_audit::g_linear_ir_fastpath_wired;
+                insert_kv("linear-ir-fastpath-skip-total",
+                          static_cast<std::int64_t>(
+                              g_linear_ir_fastpath_skip_total.load(std::memory_order_relaxed)));
+                insert_kv("linear-ir-fastpath-skip-blocked-total",
+                          static_cast<std::int64_t>(g_linear_ir_fastpath_skip_blocked_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("linear-ir-fastpath-wired",
+                          static_cast<std::int64_t>(
+                              g_linear_ir_fastpath_wired.load(std::memory_order_relaxed)));
+                insert_kv("schema-2899", 2899);
+                insert_kv("issue-2899", 2899);
+            }
             // Issue #2286: per-(eval, cow_gen) gate scoping.
             insert_kv("schema-2286", 2286);
             insert_kv("issue-2286", 2286);

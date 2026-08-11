@@ -27,6 +27,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/ownership_escape_lowering_gate.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <cstdint>
@@ -504,6 +505,135 @@ static void ac16_schema_source_2344() {
     CHECK(q.find("schema-2286") != std::string::npos, "schema-2286 retained");
 }
 
+// ── Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof ──
+
+static void ac2899_1_proof_fresh_skips() {
+    std::println("\n--- #2899 AC1: proof linear_ok + no escape → fastpath skip ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    // Fresh success proof face.
+    stamp_type_linear_commit_proof(/*epoch=*/28991);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(/*would_allow=*/true, /*linear_ok=*/true);
+    const auto skip0 = linear_ir_fastpath_skip_total_v_read();
+    const auto blk0 = linear_ir_fastpath_skip_blocked_total_v_read();
+    CHECK(linear_ir_fastpath_try_skip(), "2899 AC1: try_skip true under fresh proof");
+    CHECK(linear_ir_fastpath_skip_total_v_read() > skip0, "2899 AC1: skip_total bumps");
+    CHECK(linear_ir_fastpath_skip_blocked_total_v_read() == blk0,
+          "2899 AC1: blocked not bumped on skip");
+    // No force_linear_rollback authority table entry needed — pure IR path.
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+}
+
+static void ac2899_2_escape_or_reject_blocks() {
+    std::println("\n--- #2899 AC2: escape active / proof Reject → no skip ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    stamp_type_linear_commit_proof(28992);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    // Escape gate active with blocked set → fast-path blocked.
+    set_escape_move_elision_gate(true, std::unordered_set<std::string>{"x"});
+    const auto blk0 = linear_ir_fastpath_skip_blocked_total_v_read();
+    CHECK(!linear_ir_fastpath_try_skip(), "2899 AC2: escape active blocks skip");
+    CHECK(linear_ir_fastpath_skip_blocked_total_v_read() > blk0,
+          "2899 AC2: blocked counter bumps on escape");
+    clear_escape_move_elision_gate();
+    // Reject outcome → no skip.
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    publish_last_proof_face(false, false);
+    const auto blk1 = linear_ir_fastpath_skip_blocked_total_v_read();
+    CHECK(!linear_ir_fastpath_try_skip(), "2899 AC2: Reject outcome blocks skip");
+    CHECK(linear_ir_fastpath_skip_blocked_total_v_read() > blk1,
+          "2899 AC2: blocked bumps on Reject");
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+}
+
+static void ac2899_3_no_proof_or_mid_boundary() {
+    std::println("\n--- #2899 AC3: no proof / mid-boundary → full check ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    // No stamp → zero cost, no skip, no blocked noise.
+    const auto skip0 = linear_ir_fastpath_skip_total_v_read();
+    const auto blk0 = linear_ir_fastpath_skip_blocked_total_v_read();
+    CHECK(!linear_ir_fastpath_try_skip(), "2899 AC3: no proof → no skip");
+    CHECK(linear_ir_fastpath_skip_total_v_read() == skip0, "2899 AC3: skip_total quiet");
+    CHECK(linear_ir_fastpath_skip_blocked_total_v_read() == blk0,
+          "2899 AC3: blocked quiet (zero cost)");
+    // Fresh proof but mid-boundary → full check.
+    stamp_type_linear_commit_proof(28993);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    g_linear_ir_fastpath_boundary_depth_override = 1;
+    const auto blk1 = linear_ir_fastpath_skip_blocked_total_v_read();
+    CHECK(!linear_ir_fastpath_try_skip(), "2899 AC3: mid-boundary blocks skip");
+    CHECK(linear_ir_fastpath_skip_blocked_total_v_read() > blk1,
+          "2899 AC3: blocked bumps mid-boundary");
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+}
+
+static void ac2899_4_additive_query() {
+    std::println("\n--- #2899 AC4: additive query keys + prior surfaces ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2899") == 2899, "2899 AC4: schema-2899");
+    CHECK(href(cs, "issue-2899") == 2899, "2899 AC4: issue-2899");
+    CHECK(href(cs, "linear-ir-fastpath-wired") == 1, "2899 AC4: wired");
+    CHECK(href(cs, "linear-ir-fastpath-skip-total") >= 0, "2899 AC4: skip-total queryable");
+    CHECK(href(cs, "linear-ir-fastpath-skip-blocked-total") >= 0,
+          "2899 AC4: skip-blocked queryable");
+    // Prior surfaces preserved.
+    CHECK(href(cs, "schema-2263") == 2263, "2899 AC4: schema-2263 preserved");
+    CHECK(href(cs, "linear-escape-move-gate-wired") == 1, "2899 AC4: #2263 wired");
+    CHECK(aura::compiler::typed_audit::kLinearIrFastpathIssue == 2899, "2899 AC4: issue constant");
+}
+
+static void ac2899_5_source_cite() {
+    std::println("\n--- #2899 AC5: source-cite + no docs/design ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_linear_ir_fastpath_2899.py");
+    const auto build = read_file("build.py");
+    CHECK(aud.find("2899") != std::string::npos, "2899 AC5: audit cites #2899");
+    CHECK(aud.find("linear_ir_fastpath_try_skip") != std::string::npos, "2899 AC5: try_skip");
+    CHECK(aud.find("g_linear_ir_fastpath_skip_total") != std::string::npos, "2899 AC5: skip total");
+    CHECK(ir.find("2899") != std::string::npos, "2899 AC5: ir_executor cites #2899");
+    CHECK(ir.find("linear_ir_fastpath_try_skip") != std::string::npos,
+          "2899 AC5: IR calls try_skip");
+    CHECK(q.find("schema-2899") != std::string::npos, "2899 AC5: query schema-2899");
+    CHECK(q.find("linear-ir-fastpath-skip-total") != std::string::npos, "2899 AC5: query key");
+    CHECK(q.find("schema-2263") != std::string::npos, "2899 AC5: #2263 preserved");
+    CHECK(q.find("schema-2854") != std::string::npos || aud.find("2854") != std::string::npos,
+          "2899 AC5: #2854 lineage retained");
+    CHECK(t.find("ac2899_1_proof_fresh_skips") != std::string::npos, "2899 AC5: AC1 test");
+    CHECK(t.find("ac2899_2_escape_or_reject_blocks") != std::string::npos, "2899 AC5: AC2 test");
+    CHECK(t.find("ac2899_3_no_proof_or_mid_boundary") != std::string::npos, "2899 AC5: AC3 test");
+    CHECK(t.find("ac2899_4_additive_query") != std::string::npos, "2899 AC5: AC4 test");
+    CHECK(!lint.empty() && lint.find("2899") != std::string::npos, "2899 AC5: linter");
+    CHECK(build.find("check_linear_ir_fastpath_2899") != std::string::npos,
+          "2899 AC5: build.py gate");
+    CHECK(read_file("docs/design/2899-linear-ir-fastpath.md").empty(),
+          "2899 AC5: no docs/design/2899-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2899.cpp").empty(),
+          "2899 AC5: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -525,6 +655,12 @@ int run_test_escape_move_elision_gate() {
     ac14_disjoint_names_isolation();
     ac15_happy_path_empty_blocked_elides();
     ac16_schema_source_2344();
+    std::println("\n=== Issue #2899: proven Move/Drop IR fast-path ===");
+    ac2899_1_proof_fresh_skips();
+    ac2899_2_escape_or_reject_blocks();
+    ac2899_3_no_proof_or_mid_boundary();
+    ac2899_4_additive_query();
+    ac2899_5_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
