@@ -3299,6 +3299,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // fences observe post-compact shape_version + ir_soa_generation
         // (lifecycle step 9). publish + set_resume stay adjacent
         // (#2250 Phase 5 ordering proximity) inside the orchestrator hooks.
+        // Issue #2892: single ordered post-compact close entry — all
+        // densify success paths route through run_post_compact_close
+        // (pin restamp → EnvFrame scan → rebind/stamp → residual audit
+        // → LayoutStamp publish); no out-of-band order drift.
         {
             using namespace aura::core::post_compact_lifecycle;
             PostCompactCloseInput close_in{};

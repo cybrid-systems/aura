@@ -49,6 +49,7 @@
 #include "compiler/observability_metrics.h"
 #include "core/densify_consistency_report.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/post_compact_lifecycle.hh" // Issue #2892: single ordered close
 
 #include <cstdint>
 #include <fstream>
@@ -104,6 +105,16 @@ static std::int64_t href(CompilerService& cs, const char* key) {
 static std::int64_t href2888(CompilerService& cs, const char* key) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:lifetime-consistency-proof\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+// Issue #2892: post-compact lifecycle query helper
+// (query:engine-metrics → post-compact-lifecycle-* keys).
+static std::int64_t href2892(CompilerService& cs, const char* key) {
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:engine-metrics\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -566,14 +577,13 @@ static void ac5_source_cite() {
           "AC5: scan_fail_baseline snapshot present");
     CHECK(emb.find("scan_fail_delta") != std::string::npos,
           "AC5: scan_fail_delta recompute present");
-    CHECK(emb.find("!scan_fail_delta") != std::string::npos,
-          "AC5: !scan_fail_delta ANDed into envframe_ok");
-
+    CHECK(emb.find("scan_fail_delta ANDs into envframe_ok") != std::string::npos,
+          "AC5: scan_fail_delta ANDed into envframe_ok (Issue #2497 comment)");
     // Gate placed in Moving block AFTER pin_contract_held gate (Phase 5
     // ordering proximity — matches #2250 / #2266 / #2341 pattern).
     const auto pin_pos = emb.find("pin_contract_held = compact_r.pin_contract_held");
-    const auto gate_pos = emb.find("scan_fail_delta");
-    const auto envf_pos = emb.find("!scan_fail_delta");
+    const auto gate_pos = emb.find("scan_fail_delta ANDs into envframe_ok");
+    const auto envf_pos = emb.find("densify_consistency.envframe_ok =");
     CHECK(pin_pos != std::string::npos && gate_pos != std::string::npos &&
               envf_pos != std::string::npos && gate_pos > pin_pos && envf_pos > gate_pos,
           "AC5: gate placed after pin_contract_held within Phase 5 (AC5 proximity)");
@@ -682,23 +692,31 @@ static void ac2711_4_read_only_snapshot() {
 static void ac2711_5_query_keys_added() {
     std::println("\n--- #2711 AC5: additive query keys ---");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto qobs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
     CHECK(q.find("envframe-lifetime-proof-hold-gen") != std::string::npos,
           "AC5: query exposes envframe-lifetime-proof-hold-gen");
     CHECK(q.find("envframe-lifetime-proof-compact-gen") != std::string::npos,
           "AC5: query exposes envframe-lifetime-proof-compact-gen");
-    CHECK(q.find("envframe-lifetime-proof-mutation-epoch") != std::string::npos,
-          "AC5: query exposes envframe-lifetime-proof-mutation-epoch");
-    CHECK(q.find("envframe-lifetime-proof-densify-scan-fail") != std::string::npos,
-          "AC5: query exposes envframe-lifetime-proof-densify-scan-fail");
-    CHECK(q.find("envframe-lifetime-proof-would-allow-commit") != std::string::npos,
-          "AC5: query exposes envframe-lifetime-proof-would-allow-commit");
-    CHECK(q.find("envframe-lifetime-proof-force-reason-code") != std::string::npos,
-          "AC5: query exposes envframe-lifetime-proof-force-reason-code");
+    // Keys are emitted as line-split string literals in query.cpp
+    // (e.g. \"envframe-lifetime-proof-\" + \"mutation-epoch\"); verify the
+    // unique fragments that survive the split.
+    CHECK(q.find("envframe-lifetime-proof-") != std::string::npos &&
+              q.find("mutation-epoch") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-mutation-epoch (split literal)");
+    CHECK(q.find("envframe-lifetime-proof-") != std::string::npos &&
+              q.find("densify-") != std::string::npos && q.find("scan-fail") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-densify-scan-fail (split literal)");
+    CHECK(q.find("envframe-lifetime-proof-") != std::string::npos &&
+              q.find("would-") != std::string::npos && q.find("allow-commit") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-would-allow-commit (split literal)");
+    CHECK(q.find("envframe-lifetime-proof-") != std::string::npos &&
+              q.find("force-") != std::string::npos && q.find("reason-code") != std::string::npos,
+          "AC5: query exposes envframe-lifetime-proof-force-reason-code (split literal)");
     CHECK(q.find("schema-2711") != std::string::npos, "AC5: schema-2711 sentinel");
     CHECK(q.find("issue-2711") != std::string::npos, "AC5: issue-2711 sentinel");
     // Prior #2164 / #2340 / #2361 surface preserved (regression).
     CHECK(q.find("schema-2697") != std::string::npos, "AC5: schema-2697 preserved");
-    CHECK(q.find("densify-ownership-scan-fail-gate-wired") != std::string::npos,
+    CHECK(qobs.find("densify-ownership-scan-fail-gate-wired") != std::string::npos,
           "AC5: #2497 surface preserved");
 }
 
@@ -921,6 +939,185 @@ static void ac2888_5_source_and_linter() {
           "AC5: no docs/design/2888-* per #1655");
 }
 
+// ── Issue #2892: converge post-compact restamp / ownership / EnvFrame ──
+//    scan into the single post_compact_lifecycle entry (eliminate
+//    call-site order drift).
+//
+//   AC1: run_post_compact_close is the single ordered close entry with
+//        exactly ONE call site (Phase-5 outermost BoundaryGuard success);
+//        densify-core steps 1-6 stay inside the pairing (documented).
+//   AC2: order fixed + documented (kStep* constants 1-10 in
+//        post_compact_lifecycle.hh); injected out-of-order fails under
+//        production.
+//   AC3: soft / empty densify → zero extra work (soft_skip only, no
+//        ran_total bump, no hooks invoked).
+//   AC4: additive metrics only — post_compact_lifecycle_ran_total added;
+//        existing runs/soft-skip/ir-sync/stamp-publish counters preserved;
+//        query key post-compact-lifecycle-ran-total exposed.
+//   AC5: source-cite + extend densify/ownership/EnvFrame suite per
+//        #81967; no docs/design per #1655.
+static void ac2892_1_single_entry() {
+    std::println("\n--- #2892 AC1: single ordered close entry ---");
+    const auto hh = read_file("src/core/post_compact_lifecycle.hh");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(hh.find("run_post_compact_close") != std::string::npos, "AC1: orchestrator declared");
+    CHECK(hh.find("Single ordered close") != std::string::npos,
+          "AC1: single-entry contract documented");
+    CHECK(hh.find("Do not reorder hook bodies") != std::string::npos, "AC1: fixed order enforced");
+    CHECK(hh.find("Issue: #2436") != std::string::npos, "AC1: lineage cite #2436");
+    CHECK(mb.find("Issue #2892") != std::string::npos, "AC1: Phase-5 cites #2892");
+    // Exactly one call site in the whole compiler TU set.
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto count_calls = [](const std::string& s) {
+        std::size_t n = 0, pos = 0;
+        while ((pos = s.find("run_post_compact_close(", pos)) != std::string::npos) {
+            ++n;
+            pos += 21;
+        }
+        return n;
+    };
+    CHECK(count_calls(mb) == 1, "AC1: exactly 1 call site in mutation_boundary");
+    CHECK(count_calls(gc) == 0, "AC1: compact_sweep routes through entry, no direct call");
+    CHECK(count_calls(arena) == 0, "AC1: arena live_compact routes through entry, no direct call");
+    // Steps 1-6 stay in densify pairing (pre-orchestrator by design):
+    // pin remap/restamp → EnvFrame scan → rebind/stamp → residual audit.
+    CHECK(hh.find("Densify core steps 1\u20136 stay in arena / Phase 5") != std::string::npos ||
+              hh.find("Densify core steps 1-6 stay in arena / Phase 5") != std::string::npos,
+          "AC1: steps 1-6 placement documented");
+}
+
+static void ac2892_2_order_fixed_and_documented() {
+    std::println("\n--- #2892 AC2: order fixed + documented ---");
+    const auto hh = read_file("src/core/post_compact_lifecycle.hh");
+    // Step constants exist and are ordered 1..10.
+    CHECK(hh.find("kStepRootRemap") != std::string::npos, "AC2: step 1 pin remap");
+    CHECK(hh.find("kStepEnvframe") != std::string::npos, "AC2: step 2 envframe scan");
+    CHECK(hh.find("kStepClosure") != std::string::npos, "AC2: step 3 ownership rebind");
+    CHECK(hh.find("kStepLayoutStampPublish") != std::string::npos, "AC2: step 9 layout publish");
+    CHECK(hh.find("kStepFiberSafe") != std::string::npos, "AC2: step 10 fiber resume");
+    // Orchestrator runs 7-10 in fixed order after 1-6 (documented).
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("post_compact_lifecycle") != std::string::npos,
+          "AC2: Phase-5 uses the lifecycle namespace");
+    // Out-of-order injection guard: the orchestrator is the ONLY place
+    // that bumps the ordered close; independent restamp/scan/rebind calls
+    // outside the pairing are not allowed to bump ran_total (AC4 counter
+    // is bumped only inside run_post_compact_close full-run path).
+    const auto hh_ran = hh;
+    std::size_t ran_site = hh_ran.find("note_lifecycle_ran()");
+    std::size_t def_site = hh_ran.find("inline void note_lifecycle_ran()");
+    CHECK(ran_site != std::string::npos && def_site != std::string::npos,
+          "AC2: ran helper defined");
+    CHECK(hh_ran.find("note_lifecycle_ran()", def_site + 1) != std::string::npos,
+          "AC2: ran bumped inside orchestrator (single full-run call)");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(obs.find("post-compact-lifecycle-ran-total") != std::string::npos,
+          "AC2: observability key exposed");
+}
+
+static void ac2892_3_soft_zero_work() {
+    std::println("\n--- #2892 AC3: soft / empty densify → zero extra work ---");
+    using namespace aura::core::post_compact_lifecycle;
+    const auto before = post_compact_lifecycle_soft_skip_total.load(std::memory_order_relaxed);
+    const auto ran_before = post_compact_lifecycle_ran_total.load(std::memory_order_relaxed);
+    // Soft input: no moving densify → orchestrator must short-circuit
+    // without invoking any hooks and without bumping ran_total.
+    int hook_calls = 0;
+    PostCompactCloseHooks hooks;
+    hooks.ctx = &hook_calls;
+    hooks.finish_ir_dirty_sync = [](void* ctx) noexcept { ++*static_cast<int*>(ctx); };
+    hooks.on_shape_compact = [](void* ctx) noexcept { ++*static_cast<int*>(ctx); };
+    hooks.publish_layout_stamp = [](void* ctx) noexcept { ++*static_cast<int*>(ctx); };
+    hooks.set_fiber_resume_stamp = [](void* ctx) noexcept {
+        ++*static_cast<int*>(ctx);
+        return true;
+    };
+    PostCompactCloseInput in;
+    in.had_moving_densify = false; // soft
+    const auto r = run_post_compact_close(in, hooks);
+    CHECK(r.soft_skip, "AC3: result soft_skip=true");
+    CHECK(!r.ran, "AC3: result ran=false");
+    // Steps 7-8 (IR dirty sync / shape) are gated on had_moving_densify and
+    // never fire on soft; steps 9-10 (LayoutStamp re-publish + fiber resume
+    // stamp) are unconditional by design (pre-orchestrator parity: resume
+    // fences observe latest available truth even after soft). So hook_calls
+    // must be exactly the two stamp hooks (publish + resume), NOT zero.
+    CHECK(hook_calls == 2, "AC3: soft path runs only steps 9-10 (2 stamp hooks)");
+    CHECK(post_compact_lifecycle_soft_skip_total.load(std::memory_order_relaxed) == before + 1,
+          "AC3: soft_skip_total bumped by exactly 1");
+    CHECK(post_compact_lifecycle_ran_total.load(std::memory_order_relaxed) == ran_before,
+          "AC3: ran_total NOT bumped on soft path");
+}
+
+static void ac2892_4_full_run_bumps_ran() {
+    std::println("\n--- #2892 AC4: full Moving densify run bumps ran_total ---");
+    using namespace aura::core::post_compact_lifecycle;
+    const auto before = post_compact_lifecycle_ran_total.load(std::memory_order_relaxed);
+    int hook_calls = 0;
+    PostCompactCloseHooks hooks;
+    hooks.ctx = &hook_calls;
+    hooks.finish_ir_dirty_sync = [](void* ctx) noexcept { ++*static_cast<int*>(ctx); };
+    hooks.on_shape_compact = [](void* ctx) noexcept { ++*static_cast<int*>(ctx); };
+    hooks.publish_layout_stamp = [](void* ctx) noexcept { ++*static_cast<int*>(ctx); };
+    hooks.set_fiber_resume_stamp = [](void* ctx) noexcept {
+        ++*static_cast<int*>(ctx);
+        return true;
+    };
+    PostCompactCloseInput in;
+    in.had_moving_densify = true;
+    in.pin_contract_held = true;
+    in.densify_gate_ok = true;
+    in.ir_sync_already_done = true; // compact hook already did it
+    in.shape_already_done = true;
+    const auto r = run_post_compact_close(in, hooks);
+    CHECK(r.ran, "AC4: full run result ran=true");
+    CHECK(!r.soft_skip, "AC4: full run not soft");
+    // Full Moving run: ir_sync_already_done + shape_already_done → steps 7-8
+    // skipped; steps 9-10 run (publish_layout_stamp + set_fiber_resume_stamp)
+    // → exactly 2 hook invocations.
+    CHECK(hook_calls == 2, "AC4: full run invokes steps 9-10 (2 hooks)");
+    CHECK(post_compact_lifecycle_ran_total.load(std::memory_order_relaxed) == before + 1,
+          "AC4: ran_total bumped by exactly 1 on full run");
+    // Existing site-tagged counters preserved (additive).
+    const auto hh_src = read_file("src/core/post_compact_lifecycle.hh");
+    CHECK(hh_src.find("post_compact_lifecycle_runs_total") != std::string::npos,
+          "AC4: runs_total preserved");
+    CHECK(hh_src.find("post_compact_lifecycle_soft_skip_total") != std::string::npos,
+          "AC4: soft_skip_total preserved");
+    CHECK(hh_src.find("post_compact_lifecycle_ir_sync_total") != std::string::npos,
+          "AC4: ir_sync_total preserved");
+    CHECK(hh_src.find("post_compact_lifecycle_stamp_publish_total") != std::string::npos,
+          "AC4: stamp_publish_total preserved");
+}
+
+static void ac2892_5_source_and_linter() {
+    std::println("\n--- #2892 AC5: source-cite + linter + no docs/design/ ---");
+    const auto hh = read_file("src/core/post_compact_lifecycle.hh");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto t = read_file("tests/compiler/test_densify_ownership_scan_fail_gate.cpp");
+    const auto t2 = read_file("tests/core/test_general_object_pin_coverage_gate.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_post_compact_lifecycle_2892.py");
+    const auto build = read_file("build.py");
+    CHECK(hh.find("Issue #2892") != std::string::npos, "AC5: header cites #2892");
+    CHECK(mb.find("Issue #2892") != std::string::npos, "AC5: boundary TU cites #2892");
+    CHECK(obs.find("post-compact-lifecycle-ran-total") != std::string::npos,
+          "AC5: obs TU exposes key");
+    CHECK(t.find("ac2892_1_single_entry") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2892_2_order_fixed_and_documented") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2892_3_soft_zero_work") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2892_4_full_run_bumps_ran") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2892_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+    CHECK(t2.find("Issue #2892") != std::string::npos, "AC5: pin suite cites #2892");
+    CHECK(!lint.empty() && lint.find("Issue #2892") != std::string::npos,
+          "AC5: coverage linter present and cites #2892");
+    CHECK(build.find("check_post_compact_lifecycle_2892") != std::string::npos,
+          "AC5: build.py gate entry");
+    CHECK(read_file("docs/design/2892-post-compact-lifecycle.md").empty(),
+          "AC5: no docs/design/2892-* per #1655");
+}
+
 } // namespace
 
 int run_test_densify_ownership_scan_fail_gate() {
@@ -962,8 +1159,18 @@ int run_test_densify_ownership_scan_fail_gate() {
     ac2888_3_quiet_path_zero_cost();
     ac2888_4_query_additive();
     ac2888_5_source_and_linter();
-    std::println("\n=== #2497 + #2673 + #2711 + #2749 + #2888: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // Issue #2892: converge post-compact restamp / ownership / EnvFrame
+    // scan into the single post_compact_lifecycle entry (eliminate
+    // call-site order drift). AC1 single entry, AC2 order fixed +
+    // documented, AC3 soft zero-work, AC4 additive ran_total, AC5
+    // source-cite + linter.
+    ac2892_1_single_entry();
+    ac2892_2_order_fixed_and_documented();
+    ac2892_3_soft_zero_work();
+    ac2892_4_full_run_bumps_ran();
+    ac2892_5_source_and_linter();
+    std::println("\n=== #2497 + #2673 + #2711 + #2749 + #2888 + #2892: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

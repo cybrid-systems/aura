@@ -1957,6 +1957,24 @@ def cmd_lint():
             "Issue #2891 required-fail return check linter failed — run python3 scripts/coverage/checks/check_general_object_pin_required_2891.py"
         )
         return r
+    # Issue #2892: converge post-compact restamp / ownership / EnvFrame
+    # scan into the single post_compact_lifecycle entry (refine #2436;
+    # eliminate call-site order drift). AC1 single ordered close entry
+    # (Phase-5 outermost BoundaryGuard success); AC2 order fixed +
+    # documented; AC3 soft zero-work; AC4 additive
+    # post_compact_lifecycle_ran_total counter + query key; AC5
+    # source-cite + extend src/-aligned densify/ownership/EnvFrame suite
+    # (#81967); no docs/design (#1655).
+    pcl_script = COVERAGE_CHECKS / "check_post_compact_lifecycle_2892.py"
+    if not pcl_script.exists():
+        fail(f"missing {pcl_script}")
+        return 1
+    r = run([sys.executable, str(pcl_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2892 post-compact lifecycle linter failed — run python3 scripts/coverage/checks/check_post_compact_lifecycle_2892.py"
+        )
+        return r
     # Issue #2841: multi-eval cascade defaults to owner-scoped epoch under
     # production (#2713/#2744 residual). Soft atomic_bump stamps owner TLS;
     # hard invalidate_function notes force-bump; Soft env opt-in preserved.

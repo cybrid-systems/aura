@@ -87,6 +87,12 @@ inline constexpr std::uint8_t kStepFiberSafe = 10;
 // ── Counters (process-global; soft path only bumps soft_skip) ───────────
 // Invocations that ran the full post-compact close (Moving + pin held).
 inline std::atomic<std::uint64_t> post_compact_lifecycle_runs_total{0};
+// Issue #2892: single observability counter for the full ordered
+// post-compact lifecycle entry (pin remap/restamp → EnvFrame densify
+// ownership scan → ownership_rebind + TypeLinear stamp → residual defer
+// audit → LayoutStamp publish). Bumped once per outermost densify
+// success path (AC4 additive; existing site-tagged counters preserved).
+inline std::atomic<std::uint64_t> post_compact_lifecycle_ran_total{0};
 // Soft / no-moving / empty densify early exits (AC5 zero-cost path).
 inline std::atomic<std::uint64_t> post_compact_lifecycle_soft_skip_total{0};
 // Step 7 completed (finish_dirty_sync called at least once this close).
@@ -108,6 +114,15 @@ inline void note_lifecycle_soft_skip() noexcept {
 
 inline void note_lifecycle_run() noexcept {
     post_compact_lifecycle_runs_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2892: bump the single full-lifecycle observability counter.
+// AC4 — additive; callers keep their own site-tagged counters. Called
+// on the outermost densify success path after the complete ordered
+// sequence (pin restamp → EnvFrame scan → rebind/stamp → residual audit
+// → LayoutStamp publish) has run.
+inline void note_lifecycle_ran() noexcept {
+    post_compact_lifecycle_ran_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 inline void note_lifecycle_ir_sync() noexcept {
@@ -209,6 +224,13 @@ run_post_compact_close(const PostCompactCloseInput& in,
         out.ir_dirty_synced = true; // vacuous on soft
     } else {
         note_lifecycle_run();
+        // Issue #2892 AC4: single full-lifecycle observability counter.
+        // Bumped once per outermost densify success path that ran the
+        // complete ordered sequence (pin restamp → EnvFrame scan →
+        // rebind/stamp → residual audit → LayoutStamp publish). Additive
+        // — existing site-tagged counters (runs_total / ir_sync_total /
+        // stamp_publish_total) are preserved.
+        note_lifecycle_ran();
         out.soft_skip = false;
         out.ran = true;
         out.ir_dirty_synced = in.ir_sync_already_done;

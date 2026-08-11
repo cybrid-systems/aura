@@ -471,6 +471,27 @@ static void ac2840_6_linter_and_no_invent() {
 // only sets sticky densify-off without failing the create path. #2891
 // wires set-code (agent self-modify workspace swap) + check-form
 // (temp_arena_ scratch) and adds a void-cast linter.
+// ── Issue #2892: post-compact lifecycle single-entry convergence ──
+// (refine #2436): the single ordered post-compact close entry
+// (run_post_compact_close) + AC4 observability counter
+// post_compact_lifecycle_ran_total must stay wired and additive.
+// Extends this suite per #81967; behavior covered in
+// tests/compiler/test_densify_ownership_scan_fail_gate.cpp
+// (ac2892_1..5); here we cite + verify the counters exist.
+static void ac2892_1_ran_counter_cite() {
+    std::println("\n--- #2892 AC1: ran_total counter present + additive ---");
+    const auto hh = read_file("src/core/post_compact_lifecycle.hh");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(hh.find("Issue #2892") != std::string::npos, "2892 AC1: header cites #2892");
+    CHECK(hh.find("post_compact_lifecycle_ran_total") != std::string::npos,
+          "2892 AC1: ran_total counter declared");
+    CHECK(hh.find("note_lifecycle_ran") != std::string::npos, "2892 AC1: ran helper declared");
+    CHECK(hh.find("post_compact_lifecycle_runs_total") != std::string::npos,
+          "2892 AC1: existing runs_total preserved (additive)");
+    CHECK(obs.find("post-compact-lifecycle-ran-total") != std::string::npos,
+          "2892 AC1: obs query key exposed");
+}
+
 static void ac2891_1_set_code_and_check_form_wire() {
     std::println("\n--- #2891 AC1: set-code + check-form required-fail wire ---");
     const auto ev = read_file("src/compiler/evaluator_primitives_eval.cpp");
@@ -564,6 +585,9 @@ int run_test_general_object_pin_coverage_gate() {
     ac2891_1_set_code_and_check_form_wire();
     ac2891_2_soft_observe_only();
     ac2891_3_no_void_cast_linter();
+    // Issue #2892 (refine #2436): post-compact lifecycle single entry +
+    // additive ran_total counter (extends suite per #81967).
+    ac2892_1_ran_counter_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
