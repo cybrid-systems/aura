@@ -780,6 +780,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
             const bool hard_drift = production_defaults_active() ||
                                     get_strategy() == AuditStrategy::Full ||
                                     aura::core::sandbox::is_strict();
+            // Issue #2911: also latch unified refined-consistency face so
+            // commit_readiness hard-gates half-green refined schemes even
+            // when composite_txn_commit is not the sole gate.
+            aura::compiler::typed_audit::note_refined_consistency_drift(hard_drift);
             if (hard_drift) {
                 // AC1: production/Full reject commit with type_scheme_drift.
                 c.composite_type_scheme_drift_reject_total.fetch_add(1, std::memory_order_relaxed);

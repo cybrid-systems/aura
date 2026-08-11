@@ -7613,6 +7613,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             {
                 using aura::compiler::typed_audit::commit_readiness;
                 using aura::compiler::typed_audit::commit_readiness_live_policy;
+                using aura::compiler::typed_audit::kRefinedConsistencyGateIssue;
+                using aura::compiler::typed_audit::refined_consistency_drift_face_hit;
+                using aura::compiler::typed_audit::refined_consistency_observe_total_v_read;
+                using aura::compiler::typed_audit::refined_consistency_recover_total_v_read;
+                using aura::compiler::typed_audit::refined_consistency_reject_total_v_read;
+                using aura::compiler::typed_audit::refined_consistency_wired_v_read;
                 auto in = commit_readiness_live_policy();
                 // Clean face defaults: SOLVED + linear_ok +
                 // blame_ok + !trunc.
@@ -7687,6 +7693,19 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("commit-readiness-wired", 1);
                 insert_kv("schema-2553", 2553);
                 insert_kv("issue-2553", 2553);
+                // Issue #2911: unified refined-consistency hard gate.
+                insert_kv("refined-consistency-wired",
+                          static_cast<std::int64_t>(refined_consistency_wired_v_read()));
+                insert_kv("refined-consistency-observe-total",
+                          static_cast<std::int64_t>(refined_consistency_observe_total_v_read()));
+                insert_kv("refined-consistency-reject-total",
+                          static_cast<std::int64_t>(refined_consistency_reject_total_v_read()));
+                insert_kv("refined-consistency-recover-total",
+                          static_cast<std::int64_t>(refined_consistency_recover_total_v_read()));
+                insert_kv("refined-consistency-face", refined_consistency_drift_face_hit() ? 1 : 0);
+                insert_kv("commit-readiness-force-reason-refined-drift", 15);
+                insert_kv("schema-2911", kRefinedConsistencyGateIssue);
+                insert_kv("issue-2911", kRefinedConsistencyGateIssue);
             }
             // Issue #2220: long-lived TypeChecker on Evaluator
             // mutate path.
@@ -10070,8 +10089,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
             const auto scored = compute_type_linear_commit_health(snap);
 
-            // #2648 adds evidence-loss keys — 64 slots keep load factor healthy.
-            auto* ht = FlatHashTable::create(64);
+            // #2648/#2911 add evidence-loss + refined-consistency keys — 128 slots.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -10144,7 +10163,9 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("force-reason-coercion-slo", 7);
             insert_kv("force-reason-occurrence-stale", 8);
             insert_kv("force-reason-coercion-evidence-loss", 9);
+            insert_kv("force-reason-refined-drift", 15); // #2911
             insert_kv("type-linear-commit-health-wired", 1);
+            insert_kv("commit-readiness-wired", 1); // #2553 lineage face
             insert_kv("schema-2613", kTypeLinearCommitHealthIssue);
             insert_kv("issue-2613", kTypeLinearCommitHealthIssue);
             // Lineage schemas (detailed queries remain authoritative)
@@ -10155,6 +10176,26 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2359", 2359);
             insert_kv("schema-2648", 2648);
             insert_kv("issue-2648", 2648);
+            // Issue #2911: unified refined-consistency hard gate face.
+            {
+                using aura::compiler::typed_audit::kRefinedConsistencyGateIssue;
+                using aura::compiler::typed_audit::refined_consistency_drift_face_hit;
+                using aura::compiler::typed_audit::refined_consistency_observe_total_v_read;
+                using aura::compiler::typed_audit::refined_consistency_recover_total_v_read;
+                using aura::compiler::typed_audit::refined_consistency_reject_total_v_read;
+                using aura::compiler::typed_audit::refined_consistency_wired_v_read;
+                insert_kv("refined-consistency-wired",
+                          static_cast<std::int64_t>(refined_consistency_wired_v_read()));
+                insert_kv("refined-consistency-observe-total",
+                          static_cast<std::int64_t>(refined_consistency_observe_total_v_read()));
+                insert_kv("refined-consistency-reject-total",
+                          static_cast<std::int64_t>(refined_consistency_reject_total_v_read()));
+                insert_kv("refined-consistency-recover-total",
+                          static_cast<std::int64_t>(refined_consistency_recover_total_v_read()));
+                insert_kv("refined-consistency-face", refined_consistency_drift_face_hit() ? 1 : 0);
+                insert_kv("schema-2911", kRefinedConsistencyGateIssue);
+                insert_kv("issue-2911", kRefinedConsistencyGateIssue);
+            }
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

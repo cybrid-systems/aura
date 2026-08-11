@@ -990,6 +990,11 @@ struct CommitReadinessInput {
     // Issue #2847: region type/occurrence cross-talk face (active under
     // prod/Full when face latch set by note_region_type_cross_talk).
     bool region_type_cross_talk_face = false;
+    // Issue #2911: unified refined-consistency hard gate. production/Full
+    // + refined drift (explicit latch or multi-face refined signals) →
+    // hard reject / recover. Soft: observe only via counters.
+    bool refined_consistency_hard = false;
+    bool refined_consistency_drift = false;
 };
 
 struct CommitReadiness {
@@ -1486,6 +1491,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
         return 13; // #2847
     if (r == "required_type")
         return 14; // #2898
+    if (r == "refined_drift")
+        return 15; // #2911
     return 0;      // ok
 }
 
@@ -1501,6 +1508,17 @@ inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_attempt_total{0}
 inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_total{0};
 inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_reject_total{0};
 inline std::atomic<std::uint32_t> g_cone_truncate_force_closure_wired{1};
+// Issue #2911: unified refined-consistency face (must be before commit_readiness).
+// Soft vs production decision table (#2911 AC6 — code comments only):
+//   Soft + drift        → observe counter; allow
+//   production/Full + drift → hard reject or full-solve recover
+//   no refined activity → zero cost (face clear; no extra loads beyond faces)
+inline constexpr int kRefinedConsistencyGateIssue = 2911;
+inline std::atomic<std::uint8_t> g_refined_consistency_drift_face{0};
+inline std::atomic<std::uint64_t> g_refined_consistency_observe_total{0};
+inline std::atomic<std::uint64_t> g_refined_consistency_reject_total{0};
+inline std::atomic<std::uint64_t> g_refined_consistency_recover_total{0};
+inline std::atomic<std::uint32_t> g_refined_consistency_wired{1};
 // Optional full-solve recover hook (wired by TypeChecker / Evaluator).
 // Returns true when SOLVED + occurrence roots restored. nullptr = no recover.
 using OccurrenceFullSolveRecoverFn = bool (*)(void* ctx) noexcept;
@@ -1643,6 +1661,30 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         return (set("region_type_cross_talk", false, 900), r);
     }
 
+    // 6c) Issue #2911: unified refined-consistency hard gate.
+    // Production/Full + refined drift (explicit latch or multi-face
+    // refined signals) → one full-solve recover (#2750 hook) or hard
+    // reject with force_reason refined_drift (code 15). Soft: observe
+    // only (would_allow_commit stays true when refined_consistency_hard
+    // is false). Quiet: face clear → zero cost (no recover attempt).
+    if (in.refined_consistency_hard && in.refined_consistency_drift) {
+        if (g_occurrence_full_solve_recover_fn != nullptr &&
+            g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx)) {
+            g_refined_consistency_recover_total.fetch_add(1, std::memory_order_relaxed);
+            g_occurrence_hard_face_recover_success_total.fetch_add(1, std::memory_order_relaxed);
+            g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);
+            // Fall through to ok (recovered refined scheme).
+        } else {
+            g_refined_consistency_reject_total.fetch_add(1, std::memory_order_relaxed);
+            g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+            return (set("refined_drift", false, 750), r);
+        }
+    } else if (!in.refined_consistency_hard && in.refined_consistency_drift) {
+        // Soft observe path (hermetic tests may set drift without hard).
+        g_refined_consistency_observe_total.fetch_add(1, std::memory_order_relaxed);
+        // Allow commit under Soft.
+    }
+
     // 7) ok — clean SOLVED + linear + blame + !truncated + no face hit.
     return (set("ok", true, 10000), r);
 }
@@ -1676,11 +1718,27 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     // prod/Full.
     const bool face_hard = prod || full;
     in.occurrence_face_hard = face_hard;
+    // Issue #2911: refined-consistency hard under same production/Full face.
+    in.refined_consistency_hard = face_hard;
     if (face_hard) {
         in.cone_outside_goal_drop_face = (cone_outside_goal_drop_total_v_read() > 0);
         in.occurrence_empty_after_fence_face = (occurrence_empty_after_fence_total_v_read() > 0);
         // Issue #2847: region type cross-talk face latch.
         in.region_type_cross_talk_face = region_type_cross_talk_face_hit();
+        // Issue #2911: unified refined drift — explicit latch OR multi-face
+        // refined signals (e.g. occurrence empty after fence + outside drop).
+        // Quiet: all clear → refined_consistency_drift stays false (zero cost
+        // beyond the face loads already paid above).
+        int refined_hits = 0;
+        if (g_refined_consistency_drift_face.load(std::memory_order_relaxed) != 0)
+            refined_hits = 2; // explicit latch always enough
+        else {
+            if (in.cone_outside_goal_drop_face)
+                ++refined_hits;
+            if (in.occurrence_empty_after_fence_face)
+                ++refined_hits;
+        }
+        in.refined_consistency_drift = refined_hits >= 2;
         // Issue #2716: face-hit observe counter (not true recover).
         // #2750 moves true recover success to recover_success_total.
         if (in.cone_outside_goal_drop_face || in.occurrence_empty_after_fence_face) {
@@ -2631,6 +2689,38 @@ inline void publish_cone_outside_goal_drop(std::uint64_t n = 1) noexcept {
         g_cone_outside_goal_drop_total.fetch_add(n, std::memory_order_relaxed);
     else
         g_cone_outside_goal_drop_soft_total.fetch_add(n, std::memory_order_relaxed);
+}
+
+// Issue #2911: publish unified refined-consistency drift face.
+// Soft → observe only; production/Full → face latch for commit_readiness.
+// Counters declared earlier (before commit_readiness); accessors here.
+inline void note_refined_consistency_drift(bool production_hard) noexcept {
+    if (production_hard) {
+        g_refined_consistency_drift_face.store(1, std::memory_order_relaxed);
+    } else {
+        g_refined_consistency_observe_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+[[nodiscard]] inline bool refined_consistency_drift_face_hit() noexcept {
+    return g_refined_consistency_drift_face.load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline std::uint64_t refined_consistency_observe_total_v_read() noexcept {
+    return g_refined_consistency_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t refined_consistency_reject_total_v_read() noexcept {
+    return g_refined_consistency_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t refined_consistency_recover_total_v_read() noexcept {
+    return g_refined_consistency_recover_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t refined_consistency_wired_v_read() noexcept {
+    return g_refined_consistency_wired.load(std::memory_order_relaxed);
+}
+inline void clear_refined_consistency_drift_for_test() noexcept {
+    g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);
+    g_refined_consistency_observe_total.store(0, std::memory_order_relaxed);
+    g_refined_consistency_reject_total.store(0, std::memory_order_relaxed);
+    g_refined_consistency_recover_total.store(0, std::memory_order_relaxed);
 }
 
 // Test / recover reset.

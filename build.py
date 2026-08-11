@@ -8575,6 +8575,33 @@ def cmd_occurrence_persist_production_2910_coverage():
     return 0
 
 
+def cmd_refined_consistency_commit_gate_2911_coverage():
+    """Issue #2911: refined-consistency hard gate on commit_readiness (static)."""
+    print(f"{B}=== refined-consistency commit gate coverage (#2911) ==={N}")
+    script = COVERAGE_CHECKS / "check_refined_consistency_commit_gate_2911.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("refined-consistency commit gate (#2911) coverage contract rows failed")
+        return 1
+    ok("refined-consistency commit gate (#2911) coverage clean")
+    return 0
+
+
+def cmd_refined_consistency_commit_gate_2911():
+    """Issue #2911: refined consistency drift hard-gates production commit_readiness.
+
+    Soft observe-only; quiet zero cost. production/Full + refined drift
+    (explicit latch or multi-face refined signals) → full-solve recover or
+    hard reject force_reason refined_drift (code 15). Extends type-linear
+    suite (#81967).
+    """
+    print(f"{B}=== refined-consistency commit gate (#2911) ==={N}")
+    return cmd_refined_consistency_commit_gate_2911_coverage()
+
+
 def cmd_occurrence_persist_production_2910():
     """Issue #2910: default production persist + rehydrate before green stamps.
 
@@ -11261,6 +11288,7 @@ def cmd_gate():
         or cmd_occurrence_goal_persist_rehydrate_coverage()
         or cmd_occurrence_persist_production_default_2896_coverage()
         or cmd_occurrence_persist_production_2910_coverage()
+        or cmd_refined_consistency_commit_gate_2911_coverage()
         or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
         or cmd_coercion_evidence_loss_slo_coverage()
         or cmd_fiber_eval_depth_isolation_coverage()
@@ -12220,6 +12248,8 @@ def main():
         "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,
         "occurrence-persist-production-2910": cmd_occurrence_persist_production_2910,
         "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,
+        "refined-consistency-commit-gate-2911": cmd_refined_consistency_commit_gate_2911,
+        "refined-consistency-commit-gate-2911-coverage": cmd_refined_consistency_commit_gate_2911_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,
