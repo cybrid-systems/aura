@@ -3554,38 +3554,35 @@ static std::mutex g_fiber_ex_stacks_mtx_;
 // the right per-fiber ExStack). When no hook is installed,
 // defaults to fiber id 0 (single-threaded / single-fiber
 // behavior).
-typedef std::uint64_t (*aura_fiber_id_fn_t)();
-static aura_fiber_id_fn_t g_current_fiber_id_fn = nullptr;
-
-extern "C" void aura_set_current_fiber_id_fn(aura_fiber_id_fn_t fn) {
-    g_current_fiber_id_fn = fn;
-}
-extern "C" aura_fiber_id_fn_t aura_get_current_fiber_id_fn() {
-    return g_current_fiber_id_fn;
+// SSOT definition + setter/getter live in runtime_ssot.cpp
+// (libaura_tl_arena.so) so libaura_test_objects.so resolves
+// aura_set_current_fiber_id_fn at load time without the JIT SOs.
+static aura_fiber_id_fn_t current_fiber_id_hook() noexcept {
+    return aura_get_current_fiber_id_fn();
 }
 
 // Helper: get the current fiber's ExStack, creating an empty
 // one if it doesn't exist yet. Holds the mutex briefly.
 static std::vector<ExFrame>& get_current_ex_stack() {
-    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     return g_fiber_ex_stacks[fid];
 }
 
 extern "C" void aura_exception_push(std::uint64_t handler_block, std::uint64_t payload_slot) {
-    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     g_fiber_ex_stacks[fid].push_back({handler_block, payload_slot});
 }
 extern "C" void aura_exception_pop() {
-    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto& s = g_fiber_ex_stacks[fid];
     if (!s.empty())
         s.pop_back();
 }
 extern "C" std::uint64_t aura_exception_top_handler() {
-    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
     if (it == g_fiber_ex_stacks.end() || it->second.empty())
@@ -3593,7 +3590,7 @@ extern "C" std::uint64_t aura_exception_top_handler() {
     return it->second.back().handler_block;
 }
 extern "C" std::uint64_t aura_exception_top_payload() {
-    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
     if (it == g_fiber_ex_stacks.end() || it->second.empty())
@@ -3601,7 +3598,7 @@ extern "C" std::uint64_t aura_exception_top_payload() {
     return it->second.back().payload_slot;
 }
 extern "C" std::uint64_t aura_exception_depth() {
-    std::uint64_t fid = g_current_fiber_id_fn ? g_current_fiber_id_fn() : 0;
+    std::uint64_t fid = current_fiber_id_hook() ? current_fiber_id_hook()() : 0;
     std::lock_guard<std::mutex> lock(g_fiber_ex_stacks_mtx_);
     auto it = g_fiber_ex_stacks.find(fid);
     if (it == g_fiber_ex_stacks.end())

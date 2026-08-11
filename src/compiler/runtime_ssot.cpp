@@ -30,6 +30,26 @@ bool g_use_arena = true;
 // Flat hash table index space (Phase 4c).
 std::vector<FlatHashTable*> g_hash_tables;
 
+// ── Current-fiber-id hook (Issue #195) ──
+// SSOT lives here (libaura_tl_arena.so) so libaura_test_objects.so
+// (which NEEDED-links libaura_tl_arena.so) resolves
+// aura_set_current_fiber_id_fn at load time without depending on the
+// JIT SOs. Same class of bug as g_pair_slots: when the definition
+// lives only in aura_jit_runtime.cpp (JIT SOs), aura_test_objects has
+// an undefined symbol that x86_64 glibc refuses to resolve from a
+// later-loaded DSO at load time:
+//   symbol lookup error: libaura_test_objects.so: undefined symbol: aura_set_current_fiber_id_fn
+// (mold --as-needed strips the JIT lib from test_issue_* binaries
+// that don't directly reference it).
+static aura_fiber_id_fn_t g_current_fiber_id_fn = nullptr;
+
+extern "C" void aura_set_current_fiber_id_fn(aura_fiber_id_fn_t fn) {
+    g_current_fiber_id_fn = fn;
+}
+extern "C" aura_fiber_id_fn_t aura_get_current_fiber_id_fn() {
+    return g_current_fiber_id_fn;
+}
+
 // Issue #1998 / B-024: C accessor so tests need not name std::vector.
 extern "C" size_t aura_g_owned_pair_slots_size() {
     return g_owned_pair_slots_.size();
