@@ -25,6 +25,7 @@ module;
 #include "compiler/mutation_hold_budget.h" // Issue #2720/#2726: holder degrade counters + reject_enabled
 #include "compiler/typed_mutation_audit.h" // Issue #2710: production_defaults_active on steal Ok clear
 #include "core/layout_stamp.hh"            // Issue #2519: full 8-field LayoutStamp equality
+#include "core/lifetime_consistency_proof.hh" // Issue #2888: unified proof header
 #include "core/security_event_wal.hh" // Issue #2839: IsolationDeny SE on fiber principal mismatch
 #include "core/workspace_epoch.hh"    // Issue #2839: Mutation epoch mid for SE
 #include <algorithm>                  // Issue #2189: remove_if for pin table invalidate
@@ -36,6 +37,7 @@ module;
 module aura.compiler.evaluator;
 
 import std;
+import aura.core.lifetime_pin; // Issue #2888: unified proof pin axis
 
 extern "C" {
 bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64_t bridge_epoch);
@@ -2208,6 +2210,32 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
                 sm->type_linear_proof_stamped_after_rebind_total.fetch_add(
                     1, std::memory_order_relaxed);
         }
+    }
+
+    // Issue #2888: stamp unified LifetimeConsistencyProof on steal-complete
+    // (mirrors the densify Phase-5 stamp). Composes envframe (#2711) +
+    // type-linear (#2854) + pin (#2265) + layout (#2170) + residual (#2846)
+    // into one Agent-visible proof; publishes the compact process-wide
+    // last-proof atomic set for high-frequency Agent poll. Read-only
+    // aggregation (make_lifetime_consistency_proof never bumps counters).
+    {
+        using aura::core::envframe_lifetime::snapshot_envframe_lifetime_proof;
+        using aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof;
+        using aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof;
+        const auto efl = snapshot_envframe_lifetime_proof();
+        const auto layout = current_layout_stamp();
+        const auto proof = make_lifetime_consistency_proof(
+            efl.hold_gen, efl.compact_gen, efl.scans_run, efl.densify_scan_total,
+            efl.densify_scan_fail, efl.hold_gen_mismatch_total,
+            typed_audit::last_type_linear_proof_outcome_v_read(),
+            typed_audit::last_proof_linear_root_count_v_read(),
+            typed_audit::type_linear_proof_stamped_after_rebind_total_v_read(),
+            typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read(),
+            aura::core::lifetime::lifetime_pin_contract_fail_total(),
+            aura::core::lifetime::lifetime_pin_remap_miss_total(), layout.arena_gen,
+            layout.flat_gen, layout.env_gen, aura::gc_hooks::residual_defer_after_exit_total(),
+            efl.mutation_epoch);
+        stamp_lifetime_consistency_proof(proof);
     }
 
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {

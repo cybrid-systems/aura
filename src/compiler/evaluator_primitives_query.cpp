@@ -10,8 +10,9 @@ module;
 #include "compiler/shape.h"
 #include "compiler/shape_profiler.h"
 #include "compiler/value_tags.h"
-#include "core/gc_hooks.h"      // #1593 safepoint wait linkage
-#include "core/layout_stamp.hh" // Issue #2432: kLayoutStampSchema
+#include "core/gc_hooks.h"                    // #1593 safepoint wait linkage
+#include "core/layout_stamp.hh"               // Issue #2432: kLayoutStampSchema
+#include "core/lifetime_consistency_proof.hh" // Issue #2888: unified proof
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "serve/multi_fiber_mailbox.h"             // #1597 orch readiness
@@ -8635,6 +8636,130 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema",
                       1617); // keep 1617 for existing ACs;
                              // #2030 via schema-2030
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
+    // Issue #2888: query:lifetime-consistency-proof — unified Agent-visible
+    // snapshot for "is my live state consistent after the last
+    // densify/steal/mutate?" without torn views. Aggregates EnvFrame (#2711)
+    // + TypeLinear (#2854) + pin (#2265) + LayoutStamp (#2170) + residual
+    // (#2846) into one read-only proof with a single would_allow_commit /
+    // force_reason_code. Also surfaces the process-wide last-proof atomic set
+    // (stamped on outermost densify success + steal-complete) for
+    // high-frequency Agent poll. Additive only — #2711 / #2697 / #2854 / pin
+    // stats surfaces preserved (AC4). Pure reads — no counter bumps, no
+    // mutate side effects (AC3 quiet path: no extra atomics).
+    ObservabilityPrims::register_stats_impl(
+        "query:lifetime-consistency-proof",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            // Capacity 96: 16 component keys + 5 axis flags + unified + poll + sentinels.
+            auto* ht = FlatHashTable::create(96);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            using aura::core::envframe_lifetime::snapshot_envframe_lifetime_proof;
+            using aura::core::lifetime_consistency_proof::last_lifetime_consistency_proof;
+            using aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof;
+            const auto efl = snapshot_envframe_lifetime_proof();
+            aura::core::LayoutStamp layout{};
+            if (ev)
+                layout = ev->current_layout_stamp();
+            const auto proof = make_lifetime_consistency_proof(
+                efl.hold_gen, efl.compact_gen, efl.scans_run, efl.densify_scan_total,
+                efl.densify_scan_fail, efl.hold_gen_mismatch_total,
+                typed_audit::last_type_linear_proof_outcome_v_read(),
+                typed_audit::last_proof_linear_root_count_v_read(),
+                typed_audit::type_linear_proof_stamped_after_rebind_total_v_read(),
+                typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read(),
+                aura::core::lifetime::lifetime_pin_contract_fail_total(),
+                aura::core::lifetime::lifetime_pin_remap_miss_total(), layout.arena_gen,
+                layout.flat_gen, layout.env_gen, aura::gc_hooks::residual_defer_after_exit_total(),
+                efl.mutation_epoch);
+            // EnvFrame axis (#2711)
+            insert_kv("lifetime-consistency-proof-envframe-hold-gen",
+                      static_cast<std::int64_t>(proof.envframe_hold_gen));
+            insert_kv("lifetime-consistency-proof-envframe-compact-gen",
+                      static_cast<std::int64_t>(proof.envframe_compact_gen));
+            insert_kv("lifetime-consistency-proof-envframe-scans-run",
+                      static_cast<std::int64_t>(proof.envframe_scans_run));
+            insert_kv("lifetime-consistency-proof-envframe-densify-scan-total",
+                      static_cast<std::int64_t>(proof.envframe_densify_scan_total));
+            insert_kv("lifetime-consistency-proof-envframe-densify-scan-fail",
+                      static_cast<std::int64_t>(proof.envframe_densify_scan_fail));
+            insert_kv("lifetime-consistency-proof-envframe-hold-gen-mismatch-total",
+                      static_cast<std::int64_t>(proof.envframe_hold_gen_mismatch_total));
+            // TypeLinear axis (#2854)
+            insert_kv("lifetime-consistency-proof-type-linear-outcome",
+                      static_cast<std::int64_t>(proof.type_linear_outcome));
+            insert_kv("lifetime-consistency-proof-linear-root-count",
+                      static_cast<std::int64_t>(proof.type_linear_linear_root_count));
+            insert_kv("lifetime-consistency-proof-type-linear-stamped-after-rebind-total",
+                      static_cast<std::int64_t>(proof.type_linear_stamped_after_rebind_total));
+            insert_kv("lifetime-consistency-proof-type-linear-reject-after-rebind-fail-total",
+                      static_cast<std::int64_t>(proof.type_linear_reject_after_rebind_fail_total));
+            // Pin axis (#2265 / #2266)
+            insert_kv("lifetime-consistency-proof-pin-contract-fail-total",
+                      static_cast<std::int64_t>(proof.pin_contract_fail_total));
+            insert_kv("lifetime-consistency-proof-pin-remap-miss-total",
+                      static_cast<std::int64_t>(proof.pin_remap_miss_total));
+            // LayoutStamp axis (#2170)
+            insert_kv("lifetime-consistency-proof-layout-arena-gen",
+                      static_cast<std::int64_t>(proof.layout_arena_gen));
+            insert_kv("lifetime-consistency-proof-layout-flat-gen",
+                      static_cast<std::int64_t>(proof.layout_flat_gen));
+            insert_kv("lifetime-consistency-proof-layout-env-gen",
+                      static_cast<std::int64_t>(proof.layout_env_gen));
+            // Residual axis (#2846)
+            insert_kv("lifetime-consistency-proof-residual-defer-after-exit-total",
+                      static_cast<std::int64_t>(proof.residual_defer_after_exit_total));
+            // Unified
+            insert_kv("lifetime-consistency-proof-mutation-epoch",
+                      static_cast<std::int64_t>(proof.mutation_epoch));
+            insert_kv("lifetime-consistency-proof-would-allow-commit",
+                      proof.would_allow_commit ? 1 : 0);
+            insert_kv("lifetime-consistency-proof-force-reason-code",
+                      static_cast<std::int64_t>(proof.force_reason_code));
+            // Process-wide last-proof atomic poll (stamp sites publish).
+            const auto poll = last_lifetime_consistency_proof();
+            insert_kv("lifetime-consistency-proof-last-would-allow-commit",
+                      poll.would_allow_commit ? 1 : 0);
+            insert_kv("lifetime-consistency-proof-last-force-reason-code",
+                      static_cast<std::int64_t>(poll.force_reason_code));
+            insert_kv("lifetime-consistency-proof-last-mutation-epoch",
+                      static_cast<std::int64_t>(poll.mutation_epoch));
+            insert_kv("lifetime-consistency-proof-stamped-total",
+                      static_cast<std::int64_t>(poll.stamped_total));
+            insert_kv("lifetime-consistency-proof-wired", 1);
+            insert_kv("schema-2888", 2888);
+            insert_kv("issue-2888",
+                      aura::core::lifetime_consistency_proof::kLifetimeConsistencyProofIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

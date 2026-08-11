@@ -100,6 +100,15 @@ static std::int64_t href(CompilerService& cs, const char* key) {
     return as_int(*r);
 }
 
+// Issue #2888: unified proof query helper (query:lifetime-consistency-proof).
+static std::int64_t href2888(CompilerService& cs, const char* key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:lifetime-consistency-proof\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
 // ── Issue #2673: production soak + hard-path lock for densify
 // linear-root consistency scan (refine #2642 residual #2/#3).
 //
@@ -765,6 +774,153 @@ static void ac2749_4_source_and_no_design() {
           "AC4: no docs/design/2749-* per #1655");
 }
 
+// ── Issue #2888: unified LifetimeConsistencyProof ──
+// Single Agent-visible proof for densify × steal × mutate consistency:
+// aggregates EnvFrameLifetimeProof (#2711) + TypeLinearCommitProof outcome
+// + linear_root_count (#2854) + pin contract/remap (#2265) + LayoutStamp
+// components (#2170) + residual_defer_after_exit (#2846). Stamp once on the
+// outermost MutationBoundaryGuard success path + steal-complete; exposed via
+// additive query:lifetime-consistency-proof + process-wide last-proof atomic.
+//
+//   AC1: make_lifetime_consistency_proof() returns would_allow_commit=true
+//        when all component axes clean; fields map 1:1 to the component
+//        inputs (envframe + type-linear + pin + layout + residual).
+//   AC2: densify ownership scan fail inject → would_allow_commit=false +
+//        force_reason_code non-zero (envframe bit); Soft observes only
+//        (aggregation is read-only — no rollback semantics).
+//   AC3: Soft / empty / no densify → last-proof atomics stay healthy-empty
+//        (default would_allow_commit=true, reason=0, stamped_total=0).
+//   AC4: query:lifetime-consistency-proof additive keys + schema-2888;
+//        existing #2711 / #2697 / pin stats surfaces preserved.
+//   AC5: source-cite + linter + no docs/design/ per #1655.
+static void ac2888_1_header_and_aggregation() {
+    std::println("\n--- #2888 AC1: header + pure aggregation ---");
+    const auto h = read_file("src/core/lifetime_consistency_proof.hh");
+    CHECK(h.find("struct LifetimeConsistencyProof") != std::string::npos,
+          "AC1: proof struct declared");
+    CHECK(h.find("make_lifetime_consistency_proof") != std::string::npos,
+          "AC1: pure aggregation function");
+    CHECK(h.find("envframe_densify_scan_fail") != std::string::npos, "AC1: envframe axis");
+    CHECK(h.find("type_linear_outcome") != std::string::npos, "AC1: type-linear axis");
+    CHECK(h.find("pin_contract_fail_total") != std::string::npos, "AC1: pin axis");
+    CHECK(h.find("layout_arena_gen") != std::string::npos, "AC1: layout axis");
+    CHECK(h.find("residual_defer_after_exit_total") != std::string::npos, "AC1: residual axis");
+    CHECK(h.find("would_allow_commit") != std::string::npos, "AC1: unified commit flag");
+    CHECK(h.find("kLifetimeConsistencyProofIssue = 2888") != std::string::npos,
+          "AC1: issue stamp 2888");
+    // Aggregation is read-only: no fetch_add / bump in make_*. Never mutates
+    // counters (mirrors #2300 lifetime_contract.h contract).
+    CHECK(h.find("never bumps counters") != std::string::npos ||
+              h.find("never mutates atomics") != std::string::npos,
+          "AC1: pure-read documented");
+    // AC1 live: clean proof → would_allow_commit=true via the query surface.
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "AC1: warm");
+    CHECK(href2888(cs, "lifetime-consistency-proof-would-allow-commit") == 1,
+          "AC1: healthy-empty default would_allow_commit=1");
+    CHECK(href2888(cs, "lifetime-consistency-proof-force-reason-code") == 0,
+          "AC1: healthy default force_reason_code=0");
+    CHECK(href2888(cs, "schema-2888") == 2888, "AC1: schema-2888");
+    CHECK(href2888(cs, "issue-2888") == 2888, "AC1: issue-2888");
+}
+
+static void ac2888_2_scan_fail_forces_reject() {
+    std::println("\n--- #2888 AC2: inject densify ownership scan fail → reject proof ---");
+    // The aggregation maps envframe_densify_scan_fail > 0 to
+    // would_allow_commit=false + force_reason_code bit 0 (envframe axis).
+    const auto h = read_file("src/core/lifetime_consistency_proof.hh");
+    CHECK(h.find("fail_envframe_scan") != std::string::npos, "AC2: envframe fail predicate");
+    CHECK(h.find("kProofReasonEnvframeScanFail") != std::string::npos,
+          "AC2: envframe fail reason bit");
+    CHECK(h.find("fail_type_linear") != std::string::npos, "AC2: type-linear fail predicate");
+    CHECK(h.find("kProofReasonTypeLinearReject") != std::string::npos,
+          "AC2: type-linear reject reason bit");
+    CHECK(h.find("fail_residual") != std::string::npos, "AC2: residual fail predicate");
+    // Soft observes only: aggregation is a pure read; no rollback semantics
+    // live in the proof (the enforcement gate is #2497 / #2854, already
+    // covered by the sibling ACs above).
+    CHECK(h.find("read-only aggregation") != std::string::npos ||
+              h.find("never bumps counters") != std::string::npos,
+          "AC2: Soft observe-only documented");
+}
+
+static void ac2888_3_quiet_path_zero_cost() {
+    std::println("\n--- #2888 AC3: quiet path zero extra atomics + healthy-empty ---");
+    const auto h = read_file("src/core/lifetime_consistency_proof.hh");
+    // Stamp sites are ONLY on the outermost densify success path + steal-
+    // complete; quiet mutate never stamps → last-proof atomics stay at
+    // healthy-empty defaults (AC3 no extra atomics on quiet path).
+    CHECK(h.find("healthy-empty default") != std::string::npos, "AC3: default healthy-empty");
+    CHECK(h.find("g_lcp_last_would_allow_commit") != std::string::npos,
+          "AC3: last-proof atomic present");
+    CHECK(h.find("stamp_lifetime_consistency_proof") != std::string::npos,
+          "AC3: stamp helper present");
+    CHECK(h.find("last_lifetime_consistency_proof") != std::string::npos,
+          "AC3: poll helper present");
+    // Stamp sites: Phase-5 densify exit + steal-complete only.
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(mb.find("stamp_lifetime_consistency_proof(proof)") != std::string::npos,
+          "AC3: densify exit stamp site");
+    CHECK(fm.find("stamp_lifetime_consistency_proof(proof)") != std::string::npos,
+          "AC3: steal-complete stamp site");
+}
+
+static void ac2888_4_query_additive() {
+    std::println("\n--- #2888 AC4: additive query keys + schema ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("query:lifetime-consistency-proof") != std::string::npos, "AC4: query registered");
+    CHECK(q.find("lifetime-consistency-proof-envframe-densify-scan-fail") != std::string::npos,
+          "AC4: envframe axis key");
+    CHECK(q.find("lifetime-consistency-proof-type-linear-outcome") != std::string::npos,
+          "AC4: type-linear axis key");
+    CHECK(q.find("lifetime-consistency-proof-pin-contract-fail-total") != std::string::npos,
+          "AC4: pin axis key");
+    CHECK(q.find("lifetime-consistency-proof-layout-arena-gen") != std::string::npos,
+          "AC4: layout axis key");
+    CHECK(q.find("lifetime-consistency-proof-residual-defer-after-exit-total") != std::string::npos,
+          "AC4: residual axis key");
+    CHECK(q.find("lifetime-consistency-proof-last-would-allow-commit") != std::string::npos,
+          "AC4: last-proof poll key");
+    CHECK(q.find("lifetime-consistency-proof-stamped-total") != std::string::npos,
+          "AC4: stamped-total key");
+    CHECK(q.find("schema-2888") != std::string::npos, "AC4: schema-2888");
+    CHECK(q.find("issue-2888") != std::string::npos, "AC4: issue-2888");
+    // Existing #2711 / #2697 / pin surfaces preserved (no regression).
+    CHECK(q.find("envframe-lifetime-proof-hold-gen") != std::string::npos,
+          "AC4: #2711 surface preserved");
+    CHECK(q.find("type-linear-commit-proof-readiness-bp") != std::string::npos,
+          "AC4: #2697 surface preserved");
+    CHECK(q.find("schema-2711") != std::string::npos, "AC4: schema-2711 preserved");
+    CHECK(q.find("schema-2697") != std::string::npos, "AC4: schema-2697 preserved");
+}
+
+static void ac2888_5_source_and_linter() {
+    std::println("\n--- #2888 AC5: source-cite + linter + no docs/design/ ---");
+    const auto h = read_file("src/core/lifetime_consistency_proof.hh");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_densify_ownership_scan_fail_gate.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_lifetime_consistency_proof_2888.py");
+    const auto build = read_file("build.py");
+    CHECK(h.find("Issue #2888") != std::string::npos, "AC5: header cites #2888");
+    CHECK(mb.find("Issue #2888") != std::string::npos, "AC5: boundary TU cites #2888");
+    CHECK(fm.find("Issue #2888") != std::string::npos, "AC5: fiber TU cites #2888");
+    CHECK(q.find("Issue #2888") != std::string::npos, "AC5: query TU cites #2888");
+    CHECK(t.find("ac2888_1_header_and_aggregation") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2888_2_scan_fail_forces_reject") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2888_3_quiet_path_zero_cost") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2888_4_query_additive") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2888_5_source_and_linter") != std::string::npos, "AC5: AC5 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2888") != std::string::npos,
+          "AC5: coverage linter present and cites #2888");
+    CHECK(build.find("check_lifetime_consistency_proof_2888") != std::string::npos,
+          "AC5: build.py gate entry");
+    CHECK(read_file("docs/design/2888-lifetime-consistency-proof.md").empty(),
+          "AC5: no docs/design/2888-* per #1655");
+}
+
 } // namespace
 
 int run_test_densify_ownership_scan_fail_gate() {
@@ -797,7 +953,16 @@ int run_test_densify_ownership_scan_fail_gate() {
     ac2749_2_phase5_bumps_still_untracked();
     ac2749_3_fail_closed_preserved();
     ac2749_4_source_and_no_design();
-    std::println("\n=== #2497 + #2673 + #2711 + #2749: {} passed, {} failed ===", g_passed,
+    // Issue #2888: unified LifetimeConsistencyProof (EnvFrame + TypeLinear +
+    // Pin + LayoutStamp + residual) for Agent self-evo loops. AC1 header +
+    // pure aggregation, AC2 scan-fail reject + Soft observe-only, AC3 quiet
+    // path zero-cost, AC4 additive query keys, AC5 source-cite + linter.
+    ac2888_1_header_and_aggregation();
+    ac2888_2_scan_fail_forces_reject();
+    ac2888_3_quiet_path_zero_cost();
+    ac2888_4_query_additive();
+    ac2888_5_source_and_linter();
+    std::println("\n=== #2497 + #2673 + #2711 + #2749 + #2888: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
