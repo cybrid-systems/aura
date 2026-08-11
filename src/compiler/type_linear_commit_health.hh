@@ -173,6 +173,73 @@ compute_type_linear_commit_health(const TypeLinearCommitHealthSnapshot& s) noexc
     return s;
 }
 
+// ── Issue #2897: query:type-linear-evolution-snapshot ──
+// Single atomic-only (or last-proof gauge) poll for type×linear×occurrence
+// self-evo loops — Agent join reduction analogous to #2860 evolution-epoch
+// snapshot (hygiene/defuse/boundary axis). Orthogonal to #2888 Lifetime
+// ConsistencyProof (EnvFrame/pin axis). Pure SSOT fold: no new process
+// state, no CS walk on default path (uses last-proof gauges published
+// at stamp). Soft quiet → zeros, cheap.
+inline constexpr int kTypeLinearEvolutionSnapshotIssue = 2897;
+
+struct TypeLinearEvolutionSnapshot {
+    std::int64_t readiness_bp = 10000;
+    std::int64_t force_reason_code = 0;
+    std::int64_t would_allow_commit = 1;
+    // #2854 last proof outcome: 0=Quiet 1=Stamped 2=Reject
+    std::int64_t last_proof_outcome = 0;
+    std::int64_t live_goal_count = 0;
+    std::int64_t goal_fingerprint = 0;
+    std::int64_t linear_root_count = 0;
+    std::int64_t partial_cone_truncated = 0; // 0/1 last stamp
+    std::int64_t occurrence_empty_after_fence_total = 0;
+    std::int64_t cone_outside_goal_drop_total = 0;
+    // Additive lineage gauges (still pure loads)
+    std::int64_t last_proof_stamp = 0;
+    std::int64_t proof_stamped_after_rebind_total = 0;
+    std::int64_t proof_reject_after_rebind_fail_total = 0;
+    std::int64_t occurrence_empty_after_fence_soft_total = 0;
+};
+
+// Purpose: one-shot Agent self-evo poll of type×linear×occurrence axis
+// Pre: none (process atomics / last-proof gauges always readable)
+// Post: pure loads of existing SSOT; no unbounded alloc; no CS walk
+// Safety Class: P2 (observability)
+// Issue: #2897
+// AI-Native Rationale: high-frequency poll without multi-query join races
+[[nodiscard]] inline TypeLinearEvolutionSnapshot capture_type_linear_evolution_snapshot() noexcept {
+    TypeLinearEvolutionSnapshot s;
+    // #2553 readiness (same live_policy as #2613 health — SSOT fold)
+    const auto in = typed_audit::commit_readiness_live_policy();
+    const auto cr = typed_audit::commit_readiness(in);
+    s.readiness_bp = static_cast<std::int64_t>(cr.readiness_bp);
+    s.force_reason_code = cr.force_reason_code;
+    s.would_allow_commit = cr.would_allow_commit ? 1 : 0;
+    // #2854 / #2697 / #2842 last-proof gauges (no CS walk)
+    s.last_proof_outcome =
+        static_cast<std::int64_t>(typed_audit::last_type_linear_proof_outcome_v_read());
+    s.live_goal_count = static_cast<std::int64_t>(typed_audit::last_proof_live_goal_count_v_read());
+    s.goal_fingerprint =
+        static_cast<std::int64_t>(typed_audit::last_proof_goal_fingerprint_v_read());
+    s.linear_root_count =
+        static_cast<std::int64_t>(typed_audit::last_proof_linear_root_count_v_read());
+    s.last_proof_stamp =
+        static_cast<std::int64_t>(typed_audit::last_type_linear_commit_proof_stamp_v_read());
+    s.proof_stamped_after_rebind_total = static_cast<std::int64_t>(
+        typed_audit::type_linear_proof_stamped_after_rebind_total_v_read());
+    s.proof_reject_after_rebind_fail_total = static_cast<std::int64_t>(
+        typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read());
+    // #2621 / #2703 / #2704 faces (totals; 0 quiet)
+    s.partial_cone_truncated = typed_audit::last_partial_cone_truncated() ? 1 : 0;
+    s.occurrence_empty_after_fence_total =
+        static_cast<std::int64_t>(typed_audit::occurrence_empty_after_fence_total_v_read());
+    s.occurrence_empty_after_fence_soft_total =
+        static_cast<std::int64_t>(typed_audit::occurrence_empty_after_fence_soft_total_v_read());
+    s.cone_outside_goal_drop_total =
+        static_cast<std::int64_t>(typed_audit::cone_outside_goal_drop_total_v_read());
+    return s;
+}
+
 } // namespace aura::compiler
 
 #endif // AURA_COMPILER_TYPE_LINEAR_COMMIT_HEALTH_HH

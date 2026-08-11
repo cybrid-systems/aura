@@ -10093,6 +10093,93 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             return make_hash(hidx);
         });
 
+    // Issue #2897: query:type-linear-evolution-snapshot — single atomic/
+    // last-proof gauge poll for type×linear×occurrence self-evo loops
+    // (Agent join reduction; #2860 pattern for hygiene/defuse/boundary).
+    // Orthogonal to #2888 LifetimeConsistencyProof (EnvFrame/pin axis).
+    // Pure SSOT fold of existing gauges — no CS walk, no new process state.
+    // Soft quiet → zeros, cheap. Additive; preserves #2613/#2697/#2842/#2854.
+    ObservabilityPrims::register_stats_impl(
+        "query:type-linear-evolution-snapshot",
+        [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            const auto snap = capture_type_linear_evolution_snapshot();
+            // ~24 keys + lineage schemas — 64 slots keep load factor healthy.
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", kTypeLinearEvolutionSnapshotIssue);
+            insert_kv("issue", kTypeLinearEvolutionSnapshotIssue);
+            insert_kv("schema-2897", kTypeLinearEvolutionSnapshotIssue);
+            insert_kv("issue-2897", kTypeLinearEvolutionSnapshotIssue);
+            // #2553 readiness face
+            insert_kv("readiness-bp", snap.readiness_bp);
+            insert_kv("force-reason-code", snap.force_reason_code);
+            insert_kv("would-allow-commit", snap.would_allow_commit);
+            // #2854 last-proof outcome (0 Quiet / 1 Stamped / 2 Reject)
+            insert_kv("last-proof-outcome", snap.last_proof_outcome);
+            insert_kv("last-proof-outcome-quiet", 0);
+            insert_kv("last-proof-outcome-stamped", 1);
+            insert_kv("last-proof-outcome-reject", 2);
+            // #2697 / #2758 / #2842 last-proof gauges
+            insert_kv("live-goal-count", snap.live_goal_count);
+            insert_kv("goal-fingerprint", snap.goal_fingerprint);
+            insert_kv("linear-root-count", snap.linear_root_count);
+            insert_kv("last-proof-stamp", snap.last_proof_stamp);
+            // #2854 same-tx order totals
+            insert_kv("proof-stamped-after-rebind-total", snap.proof_stamped_after_rebind_total);
+            insert_kv("proof-reject-after-rebind-fail-total",
+                      snap.proof_reject_after_rebind_fail_total);
+            // #2621 / #2703 / #2704 face bits + totals
+            insert_kv("partial-cone-truncated", snap.partial_cone_truncated);
+            insert_kv("occurrence-empty-after-fence", snap.occurrence_empty_after_fence_total);
+            insert_kv("occurrence-empty-after-fence-total",
+                      snap.occurrence_empty_after_fence_total);
+            insert_kv("occurrence-empty-after-fence-soft-total",
+                      snap.occurrence_empty_after_fence_soft_total);
+            insert_kv("cone-outside-goal-drop", snap.cone_outside_goal_drop_total);
+            insert_kv("cone-outside-goal-drop-total", snap.cone_outside_goal_drop_total);
+            insert_kv("type-linear-evolution-snapshot-wired", 1);
+            // Lineage preserved (detailed queries remain authoritative)
+            insert_kv("schema-2613", 2613);
+            insert_kv("schema-2697", 2697);
+            insert_kv("schema-2842", 2842);
+            insert_kv("schema-2854", 2854);
+            insert_kv("schema-2860", 2860); // hygiene/defuse/boundary axis sibling
+            insert_kv("schema-2553", 2553);
+            insert_kv("schema-2621", 2621);
+            insert_kv("schema-2704", 2704);
+            insert_kv("schema-2703", 2703);
+
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #2350: query:type-system-health — single Agent score (basis points)
     // aggregating provenance completeness, timeout reject rate, linear pin miss
     // rate, and layered DCE efficiency. Pure/read-only (AC3); does not rename

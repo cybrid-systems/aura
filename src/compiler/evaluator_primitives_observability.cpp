@@ -129,6 +129,9 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:type-system-health",
     // Issue #2613 — readiness × linear × coercion × occurrence single Agent face
     "query:type-linear-commit-health",
+    // Issue #2897 — type×linear×occurrence evolution snapshot (Agent join reduction;
+    // pure last-proof / readiness gauges; sibling of #2860 evolution-epoch-snapshot)
+    "query:type-linear-evolution-snapshot",
     // Issue #2379 — single Agent mutation-concurrency health score
     // (hold + steal + residual + mailbox + densify). Pure reads of existing
     // atomics; does not replace per-subsystem queries.

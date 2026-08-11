@@ -8510,6 +8510,25 @@ def cmd_type_linear_commit_health_coverage():
     return 0
 
 
+def cmd_type_linear_evolution_snapshot_2897_coverage():
+    """Issue #2897: query:type-linear-evolution-snapshot Agent join reduction.
+
+    Single atomic/last-proof poll for type×linear×occurrence self-evo;
+    pure SSOT fold; schema-2897; Soft quiet zeros.
+    """
+    print(f"{B}=== type-linear-evolution-snapshot coverage (#2897) ==={N}")
+    script = COVERAGE_CHECKS / "check_type_linear_evolution_snapshot_2897.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type-linear-evolution-snapshot (#2897) coverage contract rows failed")
+        return 1
+    ok("type-linear-evolution-snapshot (#2897) coverage clean")
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -10830,6 +10849,7 @@ def cmd_gate():
         or cmd_dce_elided_deopt_meta_coverage()
         or cmd_castop_typed_meta_coverage()
         or cmd_type_linear_commit_health_coverage()
+        or cmd_type_linear_evolution_snapshot_2897_coverage()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()
