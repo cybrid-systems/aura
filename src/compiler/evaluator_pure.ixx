@@ -660,12 +660,34 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
         }
         return 0;
     };
+    // Issue #2940: zero-check must NOT use int coercion. static_cast<int64_t>
+    // of floats with |x| < 1 truncates to 0, so (/ -0.001 0.0015) after
+    // intermediate vector arith falsely hit DivisionByZero → silent 0.
+    // Type-aware: float uses IEEE 0.0 (+0/-0); int uses == 0; else coerce.
+    auto is_zero = [&](const types::EvalValue& v) -> bool {
+        if (types::is_float(v)) {
+            const double d = types::as_float(v);
+            return d == 0.0; // +0.0 and -0.0
+        }
+        if (types::is_int(v))
+            return types::as_int(v) == 0;
+        auto r = coerce_to_int_pure(v, string_heap);
+        return r.has_value() && *r == 0;
+    };
     if (args.empty()) {
         return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError,
                                                       "division: at least one argument required"));
     }
-    // Issue #1151/#1156: single-arg reciprocal zero-check; multi-arg zero + INT64_MIN/-1.
+    // Issue #1151/#1156: single-arg reciprocal; Issue #2940: float reciprocal.
     if (args.size() == 1) {
+        if (types::is_float(args[0])) {
+            const double d = types::as_float(args[0]);
+            if (d == 0.0) {
+                return std::unexpected(aura::diag::Diagnostic(aura::diag::ErrorKind::DivisionByZero,
+                                                              "division by zero"));
+            }
+            return types::make_float(1.0 / d);
+        }
         const std::int64_t d = coerce_one(args[0]);
         if (d == 0) {
             return std::unexpected(
@@ -674,12 +696,12 @@ arithmetic_div_pure(std::span<const types::EvalValue> args,
         if (d == -1) {
             // 1 / -1 is fine; only multi-arg INT64_MIN/-1 is overflow.
         }
-        return types::make_int(1 / d); // legacy: 1/x
+        return types::make_int(1 / d); // legacy: 1/x for int
     }
 
-    // Multi-arg: a / b / c / ...
+    // Multi-arg: a / b / c / ... — type-aware zero check (#2940).
     for (std::size_t i = 1; i < args.size(); ++i) {
-        if (coerce_one(args[i]) == 0) {
+        if (is_zero(args[i])) {
             return std::unexpected(
                 aura::diag::Diagnostic(aura::diag::ErrorKind::DivisionByZero, "division by zero"));
         }

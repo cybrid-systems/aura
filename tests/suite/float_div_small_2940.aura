@@ -1,0 +1,64 @@
+; Issue #2940 — float `/` must not collapse |den|<1 after intermediate arith.
+; GE-style elimination on a small MNA stamp; (/ a21 a11) must be ≈ -2/3.
+
+(define n 3)
+(define A (make-vector 9 0.0))
+(define b (make-vector 3 0.0))
+; Voltage-divider MNA stamp (R1=1k, R2=2k, V=5)
+(vector-set! A 0 0.001) (vector-set! A 1 -0.001) (vector-set! A 2 1.0)
+(vector-set! A 3 -0.001) (vector-set! A 4 0.0015) (vector-set! A 5 0.0)
+(vector-set! A 6 1.0) (vector-set! A 7 0.0) (vector-set! A 8 0.0)
+(vector-set! b 2 5.0)
+
+(define (mref i j) (vector-ref A (+ (* i n) j)))
+(define (mset i j v) (vector-set! A (+ (* i n) j) v))
+
+(define (swap-rows r1 r2)
+  (if (= r1 r2) #t
+    (begin
+      (let ((j 0))
+        (while (lambda () (< j n))
+          (lambda ()
+            (let ((tmp (mref r1 j)))
+              (mset r1 j (mref r2 j))
+              (mset r2 j tmp))
+            (set! j (+ j 1)))))
+      (let ((tb (vector-ref b r1)))
+        (vector-set! b r1 (vector-ref b r2))
+        (vector-set! b r2 tb)))))
+
+(swap-rows 0 2)
+
+(let ((i 1))
+  (while (lambda () (< i n))
+    (lambda ()
+      (let ((diag (mref 0 0)))
+        (let ((ai (mref i 0)))
+          (let ((factor (/ ai diag)))
+            (mset i 0 0.0)
+            (let ((j 1))
+              (while (lambda () (< j n))
+                (lambda ()
+                  (mset i j (- (mref i j) (* factor (mref 0 j))))
+                  (set! j (+ j 1)))))
+            (vector-set! b i (- (vector-ref b i) (* factor (vector-ref b 0)))))))
+      (set! i (+ i 1)))))
+
+(define a21 (mref 2 1))
+(define a11 (mref 1 1))
+(define ratio (/ a21 a11))
+(define recip (/ 1.0 a11))
+(define den_lt1 (/ a21 0.625))
+
+; Pass: non-zero ratios near expected values
+(if (and (< (abs (+ ratio 0.666667)) 0.00001)
+         (< (abs (- recip 666.667)) 0.1)
+         (< (abs (+ den_lt1 0.0016)) 0.00001)
+         (= a21 -0.001)
+         (= a11 0.0015))
+    (begin (display "OK-2940 float-div-small") (newline))
+    (begin
+      (display "FAIL-2940 ratio=") (write ratio)
+      (display " recip=") (write recip)
+      (display " den_lt1=") (write den_lt1)
+      (newline)))
