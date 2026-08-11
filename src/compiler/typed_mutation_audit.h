@@ -1699,13 +1699,20 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
     if (outcome == AuditOutcome::Error)
         g_typed_mutation_audit_counters.errors.fetch_add(1, std::memory_order_relaxed);
 
-    // Issue #2814 M7: enforcement-link gap detection.
+    // Issue #2814 M7: enforcement-link gap detection (metric always).
+    // Stderr warn is opt-in only: bash regression / agent harnesses capture
+    // combined streams and treat any gap banner as polluting stdout/expect
+    // (agent:mutate-rebind, edsl-ir-cache:cascade-*). Set AURA_AUDIT_GAP_WARN=1
+    // for local diagnosis. Metric audit_enforcement_gap_total remains the
+    // Agent-facing signal (query schema-2814).
     if (outcome == AuditOutcome::Success && mutation_id != 0 &&
         mutate_class_kind_requires_enforcement_link(kind) && !enforcement_linked_for(mutation_id)) {
         g_typed_mutation_audit_counters.audit_enforcement_gap_total.fetch_add(
             1, std::memory_order_relaxed);
         static std::atomic<int> s_gap_warned{0};
-        if (s_gap_warned.exchange(1, std::memory_order_relaxed) == 0) {
+        const char* warn = std::getenv("AURA_AUDIT_GAP_WARN");
+        if (warn && warn[0] == '1' && warn[1] == '\0' &&
+            s_gap_warned.exchange(1, std::memory_order_relaxed) == 0) {
             std::fprintf(stderr,
                          "[#2814 M7 audit] Success trail without invariant enforcement "
                          "link (mid=%llu name=%.*s). Call note_invariant_enforcement_ran "

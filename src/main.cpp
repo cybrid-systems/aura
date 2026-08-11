@@ -2694,6 +2694,24 @@ int main(int argc, char* argv[]) {
                 source_from_argv = true;
                 continue;
             }
+            // Already consumed in the pre-parse loop (sets g_use_arena=false).
+            if (a == "--no-arena")
+                continue;
+            // Health / worker flags may appear before denseness source args.
+            if (a == "--worker-threads") {
+                if (i + 1 < argc)
+                    ++i; // skip value
+                continue;
+            }
+            if (a.starts_with("--worker-threads="))
+                continue;
+            if (a == "--health-port") {
+                if (i + 1 < argc)
+                    ++i;
+                continue;
+            }
+            if (a.starts_with("--health-port="))
+                continue;
             if (!a.empty() && a[0] == '-') {
                 std::println(std::cerr, "error: unknown option '{}'", a);
                 print_denseness_usage(argv[0]);

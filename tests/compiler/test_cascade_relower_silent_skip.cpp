@@ -71,7 +71,8 @@ int run_test_cascade_relower_silent_skip() {
 
         auto cascade = mut.find("push_post_mutate_incremental_cascade");
         CHECK(cascade != std::string::npos, "AC1: cascade present");
-        auto win = mut.substr(cascade, 5500);
+        // Window enlarged after soft-path dependent re-stamp block after re-lower.
+        auto win = mut.substr(cascade, 14000);
         CHECK(win.find("Issue #2813") != std::string::npos, "AC1: cascade cites #2813");
         CHECK(win.find("cascade_relower_skipped_total") != std::string::npos,
               "AC1: skipped metric bump");

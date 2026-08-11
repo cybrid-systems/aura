@@ -75,7 +75,8 @@ int run_test_cascade_bfs_invalidate_after_guard() {
         // Cascade still soft under Guard.
         auto cascade = mut.find("push_post_mutate_incremental_cascade");
         CHECK(cascade != std::string::npos, "AC1: cascade present");
-        auto cwin = mut.substr(cascade, 4500);
+        // Window enlarged after soft-path dependent re-stamp comments (#cascade).
+        auto cwin = mut.substr(cascade, 12000);
         CHECK(cwin.find("/*run_full=*/false") != std::string::npos ||
                   cwin.find("run_full=*/false") != std::string::npos,
               "AC1: soft finalize under Guard retained");

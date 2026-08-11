@@ -3119,10 +3119,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.workspace_flat_ ? static_cast<std::uint64_t>(
                                          ev.workspace_flat_->all_mutations().size() > 0 ? 1 : 0)
                                    : 0;
-            // Issue #2814 M7 audit: missing invariant enforcement link
-            // before trail write. Call note_invariant_enforcement_ran
-            // (or _skipped) before finish_mutate_hard_gate to close the gap.
-            aura::compiler::typed_audit::note_invariant_enforcement_ran(nchg);
+            // Issue #2814 M7: link TLS mid to the same total_mutations_ the
+            // Guard/finish_mutate_hard_gate trail uses — NOT nchg (0|1).
+            // Mismatched mid left a gap fprintf on stderr that polluted bash
+            // regression captures (agent:mutate-rebind / edsl-ir-cache).
+            const std::uint64_t audit_mid = ev.total_mutations();
+            aura::compiler::typed_audit::note_invariant_enforcement_ran(audit_mid);
             if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
                 ok = false;
                 return mev("invariant-denied",
@@ -5754,6 +5756,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         // Scan entire AST for nodes with this sym_id (defs + uses)
         int count = 0;
+        NodeId first_define = NULL_NODE;
         for (NodeId id = 0; id < flat.size(); ++id) {
             // Check if this id's sym_id matches (and is meaningful)
             if (flat.sym_id(id) == old_sym) {
@@ -5764,6 +5767,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     tag == NodeTag::Let || tag == NodeTag::LetRec || tag == NodeTag::Set ||
                     tag == NodeTag::MacroDef) {
                     flat.sym_id(id) = new_sym;
+                    // Direct sym_id_ write does not bump generation or dirty
+                    // bits — without this, eval-current incremental cache
+                    // (same gen + clean last_form) skips re-eval and the
+                    // new name never binds (suite/mutate-structured).
+                    flat.mark_dirty_upward(id);
+                    if (tag == NodeTag::Define && first_define == NULL_NODE)
+                        first_define = id;
                     count++;
                 }
             }
@@ -5774,7 +5784,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // sym_id_), so the sym_id loop above doesn't see them.
         for (NodeId id = 0; id < flat.size(); ++id) {
             if (flat.tag(id) == NodeTag::Lambda) {
-                count += flat.rename_param(id, old_sym, new_sym, nullptr);
+                const int n = flat.rename_param(id, old_sym, new_sym, nullptr);
+                if (n > 0) {
+                    flat.mark_dirty_upward(id);
+                    count += n;
+                }
             }
         }
 
@@ -5784,8 +5798,23 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 std::string("symbol \"") + old_name + "\" not found in AST");
         }
 
+        // Force epoch advance so eval-current cannot hit the gen-equal
+        // short-circuit with a stale last_eval_current_result_.
+        flat.bump_generation();
+        ev.last_eval_current_result_.reset();
+        // Soft IR cascade: stage both names so post-Guard cascade dirties
+        // the new define key (old cache entry key is orphaned).
+        ev.defuse_affected_syms_.insert(std::string(old_name));
+        ev.defuse_affected_syms_.insert(std::string(new_name));
+        if (ev.mark_define_dirty_fn_) {
+            ev.mark_define_dirty_fn_(std::string(old_name));
+            ev.mark_define_dirty_fn_(std::string(new_name));
+        }
+
         // Issue #1696: rename may touch many Variable sites — multi-node log.
-        flat.add_mutation(NULL_NODE, "rename-symbol", old_name, new_name, summary);
+        // Prefer a live Define target so push_post_mutate note_define sees it.
+        flat.add_mutation(first_define != NULL_NODE ? first_define : NULL_NODE, "rename-symbol",
+                          old_name, new_name, summary);
         return make_bool(true);
     });
 
@@ -8273,6 +8302,37 @@ void Evaluator::drain_cascade_bfs_invalidate() noexcept {
             ++drained;
         }
     }
+    // Soft-path observation contract (edsl-ir-cache:cascade-after-mutate):
+    // hard invalidate_function re-lowers root + dependents and clears
+    // entry.dirty. Soft rebind still needs dependents marked dirty so the
+    // next eval-current knows to re-lower callers of a mutated callee.
+    // Re-stamp callers only (not the drained roots) after the hard pass.
+    if (drained > 0 && mark_define_dirty_fn_ && get_dependents_fn_) {
+        std::unordered_set<std::string> restamped;
+        restamped.reserve(batch.size() * 2);
+        for (const auto& name : batch) {
+            if (name.empty())
+                continue;
+            for (const auto& dep : get_dependents_fn_(name)) {
+                if (dep.empty() || dep == name)
+                    continue;
+                // Skip if this dep was itself hard-invalidated as a root
+                // in the same batch (its IR is already fresh).
+                bool also_root = false;
+                for (const auto& r : batch) {
+                    if (r == dep) {
+                        also_root = true;
+                        break;
+                    }
+                }
+                if (also_root)
+                    continue;
+                if (!restamped.insert(dep).second)
+                    continue;
+                mark_define_dirty_fn_(dep);
+            }
+        }
+    }
     if (drained > 0) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->cascade_bfs_invalidate_total.fetch_add(drained, std::memory_order_relaxed);
@@ -8456,6 +8516,19 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     if (defines_n > 0) {
         if (relower_dirty_defines_fn_) {
             relower_dirty_defines_fn_();
+            // Soft-path contract (edsl-ir-cache:cascade-after-mutate / #2038):
+            // eager re-lower clears entry.dirty on cascade dependents whose
+            // own AST was unchanged. Re-run mark_define_dirty on each
+            // directly-mutated name so dep_graph BFS re-marks callers
+            // (mark_define_dirty does not re-lower). Note: post-Guard
+            // drain_cascade_bfs_invalidate may hard-invalidate and clear
+            // again — that path re-stamps dependents after drain.
+            if (mark_define_dirty_fn_) {
+                for (const auto& name : affected_names) {
+                    if (!name.empty())
+                        mark_define_dirty_fn_(name);
+                }
+            }
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->cascade_relower_ran_total.fetch_add(1, std::memory_order_relaxed);
         } else {

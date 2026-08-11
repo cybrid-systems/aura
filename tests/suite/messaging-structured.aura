@@ -23,6 +23,5 @@
   (let ((r (send "test-agent" 42)))
     (check (or (eq? r #f) (eq? r #t)))))
 
-(define result (run-tests))
-(display result)
+(display (run-tests))
 (newline)

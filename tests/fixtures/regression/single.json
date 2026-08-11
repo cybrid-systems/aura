@@ -49,9 +49,9 @@
   },
   {
     "name": "pid-measure",
-    "code": "(require \"std/adaptive\" all:)(measure-distance 0 \"30\" '(\"42\"))",
-    "expect_out": "",
-    "expect_err": "unbound variable: n"
+    "code": "(require \"std/adaptive\" all:)(display (measure-distance 0 \"30\" '(\"42\")))",
+    "expect_out": "(fine 0 no expected keywords found in output)",
+    "expect_err": ""
   },
   {
     "name": "tweak-lit-plus",

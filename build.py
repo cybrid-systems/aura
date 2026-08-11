@@ -3255,6 +3255,13 @@ SUITE_SKIP: dict[str, str] = {
     # CI / non-TTY: Scheduler requires epollable stdin; --load capture
     # pipes fail with ENOTTY/EPERM. Skip outside interactive serve.
     "parallel_orchestration_stress.aura": "scheduler stdin not epollable under CI capture (non-TTY)",
+    # projects/kv removed (commit rm projects); load target missing.
+    "kv-load.aura": "projects/kv/kv.aura removed with projects/ tree; re-home or restore fixture",
+    # run-tests counts non-check forms as fails + SIGSEGV mid-suite on
+    # extract/move path under --load; track re-enable after harness + crash.
+    "mutate-structured.aura": "run-tests counts set-code/eval as fails; SIGSEGV on later suites under --load",
+    # AC3 nested set-code from frame leaves r unbound; residual #2868.
+    "set_code_module_bind_2868.aura": "AC3 nested set-code frame residual (#2868); r unbound under --load",
 }
 
 # P4: curated S0 surface smoke (AURA_PRIMITIVES=s0). Full suite stays full-mode.

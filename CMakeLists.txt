@@ -460,6 +460,7 @@ target_sources(test_ir PRIVATE
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/tl_arena_tls.cpp
+    src/compiler/runtime_ssot.cpp # g_pair_slots / g_use_arena / g_hash_tables SSOT
     src/compiler/aura_jit_bridge.cpp
     src/compiler/hot_update_registry.cpp # Issue #1956
     # Issue #675 follow-up: http_health.cpp provides
@@ -503,6 +504,7 @@ target_sources(test_concurrent PRIVATE
     # "undefined reference to aura_set_current_fiber_id_fn".
     src/compiler/aura_jit_runtime.cpp
     src/compiler/tl_arena_tls.cpp
+    src/compiler/runtime_ssot.cpp # g_pair_slots / g_use_arena / g_hash_tables SSOT
     src/compiler/aura_jit_bridge.cpp
     src/compiler/hot_update_registry.cpp # Issue #1956
     # aura_jit.cpp defines emit_native_object (called from
@@ -602,9 +604,14 @@ add_test(NAME concurrent_basic COMMAND ./test_concurrent)
 # re-compile the full set of .ixx modules.
 set(AURA_MODULE_BMI_DIR ${CMAKE_BINARY_DIR}/module_cache)
 file(MAKE_DIRECTORY ${AURA_MODULE_BMI_DIR})
-# g_tl_arena TLS SSOT — tiny SO so aura_test_objects + light/full JIT
-# share one definition (x86_64 load-time TLS resolve; see tl_arena_tls.cpp).
-add_library(aura_tl_arena SHARED src/compiler/tl_arena_tls.cpp)
+# Runtime SSOT SO (kept name libaura_tl_arena.so for DT_NEEDED stability):
+# g_tl_arena TLS + g_pair_slots / g_owned_pair_slots_ / g_use_arena /
+# g_hash_tables. aura_test_objects + light/full JIT must share one definition
+# (x86_64 load-time data resolve; see tl_arena_tls.cpp / runtime_ssot.cpp).
+add_library(aura_tl_arena SHARED
+    src/compiler/tl_arena_tls.cpp
+    src/compiler/runtime_ssot.cpp
+)
 set_target_properties(aura_tl_arena PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -612,6 +619,8 @@ set_target_properties(aura_tl_arena PROPERTIES
 )
 target_include_directories(aura_tl_arena PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_tl_arena PUBLIC cxx_std_26)
+# runtime_ssot.cpp uses std::vector — need libstdc++.
+target_link_libraries(aura_tl_arena PUBLIC stdc++)
 
 # P2: SHARED — one libaura_test_objects.so (~tens of MB) instead of
 # embedding the 30MB archive into every issue-test binary. Tests
@@ -942,6 +951,7 @@ if(LLVM_FOUND)
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
         src/compiler/tl_arena_tls.cpp
+        src/compiler/runtime_ssot.cpp
         src/compiler/aura_jit_bridge.cpp
         src/compiler/hot_update_registry.cpp)
     # Issue #278 follow-up: aura_jit_prim_dispatch lives in
@@ -1100,7 +1110,8 @@ set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLA
 # (same pattern as test_gc_evaluator_integration / test_ir).
 if(LLVM_FOUND)
     target_sources(test_spec_jit PRIVATE src/compiler/aura_jit.cpp src/compiler/aura_jit_runtime.cpp
-                   src/compiler/aura_jit_bridge_stub.cpp src/compiler/tl_arena_tls.cpp)
+                   src/compiler/aura_jit_bridge_stub.cpp src/compiler/tl_arena_tls.cpp
+                   src/compiler/runtime_ssot.cpp)
     # Issue #278 follow-up: aura_jit.cpp references
     # aura_jit_prim_dispatch which lives in service.ixx. The
     # per-test binary can't import service.ixx cleanly (the
@@ -1125,7 +1136,8 @@ add_executable(test_jit_metrics tests/compiler/test_jit_metrics.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp
-    src/compiler/tl_arena_tls.cpp)
+    src/compiler/tl_arena_tls.cpp
+    src/compiler/runtime_ssot.cpp)
 target_include_directories(test_jit_metrics PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -1150,7 +1162,8 @@ add_executable(test_jit_concurrent_compile tests/compiler/test_jit_concurrent_co
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp
-    src/compiler/tl_arena_tls.cpp)
+    src/compiler/tl_arena_tls.cpp
+    src/compiler/runtime_ssot.cpp)
 target_include_directories(test_jit_concurrent_compile PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
@@ -1178,7 +1191,8 @@ add_executable(test_jit_consistency tests/compiler/test_jit_consistency.cpp
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp
-    src/compiler/tl_arena_tls.cpp)
+    src/compiler/tl_arena_tls.cpp
+    src/compiler/runtime_ssot.cpp)
 target_include_directories(test_jit_consistency PRIVATE src)
 set_source_files_properties(src/compiler/aura_jit.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
 set_source_files_properties(src/compiler/aura_jit_runtime.cpp PROPERTIES COMPILE_FLAGS "-fno-rtti")
