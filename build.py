@@ -8560,6 +8560,33 @@ def cmd_occurrence_goal_persist_rehydrate_coverage():
     return 0
 
 
+def cmd_occurrence_persist_production_2910_coverage():
+    """Issue #2910: production always-on persist + densify/steal stamp after rehydrate."""
+    print(f"{B}=== OccurrenceGoal production persist + stamp-after-rehydrate (#2910) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_persist_production_2910.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("OccurrenceGoal production persist #2910 coverage contract rows failed")
+        return 1
+    ok("OccurrenceGoal production persist #2910 coverage clean")
+    return 0
+
+
+def cmd_occurrence_persist_production_2910():
+    """Issue #2910: default production persist + rehydrate before green stamps.
+
+    Soft zero-cost; production/Full always persist on outermost success.
+    Densify Phase-5 fences (prune+rehydrate) before TypeLinearCommitProof
+    freeze; steal resume rehydrates empty CS under production. Extends
+    #2608/#2896 suite (#81967).
+    """
+    print(f"{B}=== OccurrenceGoal production persist (#2910) ==={N}")
+    return cmd_occurrence_persist_production_2910_coverage()
+
+
 def cmd_occurrence_persist_production_default_2896_coverage():
     """Issue #2896: production-default outermost success persist + fence face.
 
@@ -11233,6 +11260,7 @@ def cmd_gate():
         or cmd_instance_constraint_depth_cap_coverage()
         or cmd_occurrence_goal_persist_rehydrate_coverage()
         or cmd_occurrence_persist_production_default_2896_coverage()
+        or cmd_occurrence_persist_production_2910_coverage()
         or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
         or cmd_coercion_evidence_loss_slo_coverage()
         or cmd_fiber_eval_depth_isolation_coverage()
@@ -12190,6 +12218,8 @@ def main():
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
         "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,
+        "occurrence-persist-production-2910": cmd_occurrence_persist_production_2910,
+        "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
         "lock-order-production-soft": cmd_lock_order_production_soft_coverage,
         "coercion-prov-slo": cmd_coercion_prov_slo_coverage,

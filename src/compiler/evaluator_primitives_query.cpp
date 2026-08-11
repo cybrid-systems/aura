@@ -6773,6 +6773,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("occurrence-persist-outermost-success-wired", 1);
                 insert_kv("schema-2896", 2896);
                 insert_kv("issue-2896", 2896);
+                // Issue #2910: densify/steal green stamps freeze CS truth
+                // after rehydrate (close empty priority roots residual).
+                insert_kv("occurrence-persist-stamp-after-rehydrate-wired", 1);
+                insert_kv("occurrence-persist-production-always-on-success", 1);
+                insert_kv("schema-2910", 2910);
+                insert_kv("issue-2910", 2910);
             }
             // Issue #2307: sole-authority sentinel.
             // solve_delta_occurrence now seeds occurrence

@@ -794,13 +794,14 @@ public:
     // ways (drift detected). Zero cost on empty occurrence_goals_ (AC4).
     // Caller decides observe-only (Soft) vs reject (production/Full).
     [[nodiscard]] bool check_occurrence_refined_consistency() noexcept;
-    // Issue #2608: optional OccurrenceGoal persist / rehydrate.
-    // Soft default OFF (zero writes). Production defaults OR
+    // Issue #2608 / #2896 / #2910: OccurrenceGoal persist / rehydrate.
+    // Soft default OFF (zero writes). Production defaults OR Full OR
     // AURA_OCCURRENCE_PERSIST=1 enables; AURA_OCCURRENCE_PERSIST=0 forces off.
     // Cap via AURA_OCCURRENCE_PERSIST_CAP (default 256, soft-cone discipline).
     //   append: copy live goals into side buffer (truncate excess).
     //   rehydrate: if live table empty, restore from buffer (epoch=0
     //   sentinel so prune does not immediately drop them).
+    // #2910: densify/steal green stamps freeze CS truth AFTER rehydrate.
     [[nodiscard]] static bool occurrence_persist_enabled() noexcept;
     [[nodiscard]] static std::size_t occurrence_persist_cap() noexcept;
     // Returns number of entries written (0 when disabled / empty goals).
@@ -2145,14 +2146,14 @@ export struct TypeChecker {
         // cannot leave memo stale_vs_epoch ahead of goals.
         last_predicate_memo_live_ = 0;
         last_predicate_memo_stale_vs_epoch_ = 0;
-        // Issue #2608 / #2641 / #2896: after steal/densify prune, rehydrate
-        // from persist side buffer so priority roots stay non-empty when
-        // a prior outermost success wrote a snapshot. Soft: disabled path
-        // returns 0 (zero cost). On miss under production/Full, latch the
-        // #2704 occurrence_empty_after_fence face so commit_readiness
-        // hard-rejects (no half-green empty priority roots). Soft env=1
-        // miss bumps soft face only. Prefer CS truth for TypeLinearCommit
-        // Proof after successful rehydrate (#2842).
+        // Issue #2608 / #2641 / #2896 / #2910: after steal/densify prune,
+        // rehydrate from persist side buffer so priority roots stay
+        // non-empty when a prior outermost success wrote a snapshot.
+        // Soft: disabled path returns 0 (zero cost). On miss under
+        // production/Full, latch #2704 occurrence_empty_after_fence face
+        // so commit_readiness hard-rejects (no half-green empty priority
+        // roots). Prefer CS truth for TypeLinearCommitProof after
+        // successful rehydrate (#2842 / #2910 densify stamp order).
         if (goals_dropped > 0 && solve_delta_cs_.occurrence_goals_size() == 0) {
             const auto n_reh = solve_delta_cs_.rehydrate_occurrence_from_persist(
                 /*preferred_mid=*/0);

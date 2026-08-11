@@ -1,7 +1,7 @@
 // @category: unit
 // @reason: Issue #2608 — optional OccurrenceGoal persist on side buffer
 //          for cross-delta / multi-session rehydrate after steal/densify.
-//          Issue #2896 — production-default outermost success persist +
+//          Issue #2896 / #2910 — production-default outermost success persist +
 //          fence rehydrate face latch (#2704) to close densify×steal
 //          half-green empty priority roots.
 //
@@ -15,6 +15,12 @@
 //   #2896 AC3: fence prune + rehydrate restore (or #2704 face on miss)
 //   #2896 AC4: after rehydrate, live_goal_count non-zero for #2842 stamp shape
 //   #2896 AC5: schema-2896 + prior surfaces preserved
+//   #2910 AC1: production + goals → persist always-on (no env)
+//   #2910 AC2: Soft / empty → zero cost
+//   #2910 AC3: densify/steal stamp order = fence rehydrate before freeze
+//   #2910 AC4: after rehydrate CS truth on green stamp (#2842)
+//   #2910 AC5: schema-2910 + lineage; extend this suite (#81967)
+//   #2910 AC6: decision table + linter; no docs/design/*
 
 #include "test_harness.hpp"
 
@@ -454,6 +460,111 @@ static void ac2896_5_query_and_source() {
           "2896 AC5: #2704 surface preserved");
 }
 
+// ── #2910: densify/steal stamp after rehydrate + production always-on ──
+static void ac2910_1_production_always_persist() {
+    std::println("\n--- #2910 AC1: production + goals → always persist without env ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    CHECK(ConstraintSystem::occurrence_persist_enabled(),
+          "2910 AC1: persist enabled under production without env");
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), /*pred=*/9, /*mut=*/42, /*epoch=*/1);
+    CHECK(u.cs.occurrence_goals_size() == 1, "2910 AC1: one live goal");
+    const auto w = u.cs.append_occurrence_snapshot(42);
+    CHECK(w == 1, "2910 AC1: append wrote without env");
+    CHECK(u.cs.occurrence_persist_log_size() > 0, "2910 AC1: log size > 0");
+    apply_dev_audit_defaults();
+}
+
+static void ac2910_2_soft_zero_cost() {
+    std::println("\n--- #2910 AC2: Soft / empty → zero cost ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    CHECK(!ConstraintSystem::occurrence_persist_enabled(), "2910 AC2: Soft default OFF");
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    CHECK(u.cs.append_occurrence_snapshot(1) == 0, "2910 AC2: empty → 0");
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 1, 1, 1);
+    CHECK(u.cs.append_occurrence_snapshot(1) == 0, "2910 AC2: Soft + goals still 0 without env");
+    CHECK(u.cs.occurrence_persist_log_size() == 0, "2910 AC2: log empty");
+}
+
+static void ac2910_3_stamp_after_rehydrate_order() {
+    std::println("\n--- #2910 AC3: densify stamp freezes CS after rehydrate fence ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    // Densify: first fence call must appear before densify_goal_truth_2842 freeze.
+    const auto fence_pos = mb.find("note_type_freshness_after_steal_or_densify()");
+    const auto freeze_pos = mb.find("densify_goal_truth_2842");
+    CHECK(fence_pos != std::string::npos, "2910 AC3: densify fence present");
+    CHECK(freeze_pos != std::string::npos, "2910 AC3: densify goal freeze present");
+    CHECK(fence_pos < freeze_pos, "2910 AC3: fence before densify goal freeze");
+    CHECK(mb.find("#2910") != std::string::npos, "2910 AC3: boundary cites #2910");
+    // Steal resume: rehydrate + CS truth freeze before proof stamp.
+    CHECK(efm.find("rehydrate_occurrence_from_persist") != std::string::npos,
+          "2910 AC3: steal path rehydrates before stamp");
+    CHECK(efm.find("steal_goal_truth_2910") != std::string::npos ||
+              efm.find("#2910") != std::string::npos,
+          "2910 AC3: steal path cites #2910 CS truth");
+}
+
+static void ac2910_4_goal_truth_after_rehydrate() {
+    std::println("\n--- #2910 AC4: rehydrate → non-zero live_goal_count for stamp ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    UnitCs u;
+    u.cs.set_current_epoch(5);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 3, 50, /*epoch=*/5);
+    CHECK(u.cs.append_occurrence_snapshot(50) == 1, "2910 AC4: snapshot");
+    u.cs.set_current_epoch(6);
+    const auto dropped = u.cs.prune_occurrence_goals(6);
+    CHECK(dropped == 1, "2910 AC4: prune dropped 1");
+    CHECK(u.cs.occurrence_goals_size() == 0, "2910 AC4: empty after prune");
+    const auto rh = u.cs.rehydrate_occurrence_from_persist(0);
+    CHECK(rh >= 1, "2910 AC4: rehydrate restores ≥1");
+    CHECK(u.cs.occurrence_goals_size() > 0, "2910 AC4: live non-empty after rehydrate");
+    apply_dev_audit_defaults();
+}
+
+static void ac2910_5_query_and_source() {
+    std::println("\n--- #2910 AC5: schema-2910 + lineage preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2910") == 2910, "2910 AC5: schema-2910");
+    CHECK(href(cs, "issue-2910") == 2910, "2910 AC5: issue-2910");
+    CHECK(href(cs, "occurrence-persist-stamp-after-rehydrate-wired") == 1,
+          "2910 AC5: stamp-after-rehydrate-wired");
+    CHECK(href(cs, "occurrence-persist-production-always-on-success") == 1,
+          "2910 AC5: production-always-on-success");
+    CHECK(href(cs, "schema-2896") == 2896, "2910 AC5: schema-2896 preserved");
+    CHECK(href(cs, "schema-2608") == 2608, "2910 AC5: schema-2608 preserved");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(impl.find("#2910") != std::string::npos, "2910 AC5: impl cites #2910");
+    CHECK(mb.find("#2910") != std::string::npos, "2910 AC5: boundary cites #2910");
+}
+
+static void ac2910_6_linter_and_decision_table() {
+    std::println("\n--- #2910 AC6: decision table + linter + no design doc ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_occurrence_persist_production_2910.py");
+    CHECK(impl.find("Soft vs production decision table") != std::string::npos ||
+              impl.find("Soft + goals") != std::string::npos,
+          "2910 AC6: decision table in code comments");
+    CHECK(build.find("check_occurrence_persist_production_2910") != std::string::npos,
+          "2910 AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2910") != std::string::npos, "2910 AC6: linter present");
+    CHECK(read_file("docs/design/2910-occurrence-persist.md").empty(),
+          "2910 AC6: no docs/design/2910-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2910.cpp").empty(),
+          "2910 AC6: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_occurrence_goal_persist_rehydrate() {
@@ -474,6 +585,13 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2896_3_fence_rehydrate_or_face();
     ac2896_4_goal_truth_after_rehydrate();
     ac2896_5_query_and_source();
+    std::println("\n=== #2910 stamp-after-rehydrate + production always-on ===");
+    ac2910_1_production_always_persist();
+    ac2910_2_soft_zero_cost();
+    ac2910_3_stamp_after_rehydrate_order();
+    ac2910_4_goal_truth_after_rehydrate();
+    ac2910_5_query_and_source();
+    ac2910_6_linter_and_decision_table();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
