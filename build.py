@@ -8605,6 +8605,113 @@ def cmd_steal_residual_rearm_race_2901_coverage():
     return 0
 
 
+def cmd_chaos_release_blocker_2902_coverage():
+    """Issue #2902: static contract for chaos hard release blocker."""
+    print(f"{B}=== chaos hard release blocker coverage (#2902) ==={N}")
+    script = COVERAGE_CHECKS / "check_chaos_release_blocker_2902.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("chaos hard release blocker (#2902) coverage contract rows failed")
+        return 1
+    ok("chaos hard release blocker (#2902) coverage clean")
+    return 0
+
+
+def cmd_chaos_release_blocker_2902():
+    """Issue #2902: hard release blocker — multi-fiber chaos under production_defaults.
+
+    Elevates #2856/#2554/#2722/#2755 into a hard pre-push/CI release gate:
+      AURA_CHAOS_RELEASE_BLOCKER=1 AURA_CHAOS_RELEASE_BLOCKER_ONLY=1
+      workers=4 fibers=32 duration=8s seed=1 Soft steal off
+      production_defaults_active enforced in-process
+
+    Hard-fail set (any delta > 0 fails):
+      steal_snapshot_hard_fail, residual still-running,
+      residual hard-AND arms (#2721), force_deopt, resume_hard_fail,
+      residual_rearm_race (#2901), residual_defer_steal_hard_fail (#2546),
+      resume_fence hard/ticket surplus (layout_stamp_resume observe-only).
+
+    Bounded load signal (composition ceiling, not absolute zero under prod):
+      mailbox hold/defer starvation — production_defaults hard face (#2551)
+      ticks under intentional Guard×mailbox; default ceiling max(64, fibers*2)
+      unless AURA_CHAOS_MB_STARVE_MAX is set. Soft/PR still use max=0.
+
+    Sustained mode (optional AURA_CHAOS_SUSTAINED=1): fibers≥32, duration≥8s.
+    Soft / known-bad inject under production still fails (#2554 inject path).
+    FULL/SOAK nightly paths unchanged.
+
+    CI gate job without cmake: static coverage only (same pattern as #2554).
+    """
+    print(f"{B}=== chaos hard release blocker (#2902) ==={N}")
+    rc = cmd_chaos_release_blocker_2902_coverage()
+    if rc != 0:
+        return rc
+
+    bin_path = BUILD / "test_chaos_mutate_steal_gc_mailbox"
+    cmake_cache = BUILD / "CMakeCache.txt"
+    if not bin_path.exists():
+        if not cmake_cache.exists():
+            ok(
+                "chaos release blocker runtime skipped (no CMakeCache; static coverage only) "
+                "— run after ./build.py build or via build-test CI"
+            )
+            return 0
+        info("building test_chaos_mutate_steal_gc_mailbox…")
+        nproc = os.cpu_count() or 4
+        r = subprocess.run(
+            ["ninja", "-C", str(BUILD), "-j", str(max(1, nproc // 2)), "test_chaos_mutate_steal_gc_mailbox"],
+            cwd=ROOT,
+        )
+        if r.returncode != 0:
+            fail("build test_chaos_mutate_steal_gc_mailbox failed")
+            return r.returncode
+    if not bin_path.exists():
+        fail(f"missing {bin_path} — run ./build.py build first")
+        return 1
+
+    env = os.environ.copy()
+    env["AURA_CHAOS_RELEASE_BLOCKER"] = "1"
+    env["AURA_CHAOS_RELEASE_BLOCKER_ONLY"] = "1"
+    env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)
+    env.setdefault("AURA_CHAOS_SEED", "1")
+    env.setdefault("AURA_CHAOS_WORKERS", "4")
+    env.setdefault("AURA_CHAOS_FIBERS", "32")
+    env.setdefault("AURA_CHAOS_DURATION_S", "8")
+    # Leave AURA_CHAOS_MB_STARVE_MAX unset so composition ceiling applies
+    # under production_defaults (see run_chaos_pass #2902). Caller may set.
+
+    info(
+        "release blocker env: AURA_CHAOS_RELEASE_BLOCKER=1 ONLY "
+        f"workers={env['AURA_CHAOS_WORKERS']} fibers={env['AURA_CHAOS_FIBERS']} "
+        f"duration={env['AURA_CHAOS_DURATION_S']}s seed={env['AURA_CHAOS_SEED']}"
+    )
+    timeout_s = max(180, int(env["AURA_CHAOS_DURATION_S"]) + 120)
+    start = time.time()
+    try:
+        r = subprocess.run([str(bin_path)], cwd=ROOT, env=env, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        fail(f"chaos release blocker timed out after {timeout_s}s (hang?) — release blocked")
+        return 1
+    elapsed = time.time() - start
+    if r.returncode != 0:
+        fail(
+            f"chaos hard release blocker FAILED exit={r.returncode} in {elapsed:.1f}s — "
+            "any hard-fail counter (steal hard-fail / residual still-running / "
+            "residual hard-AND / rearm_race / defer_steal_hard / resume_fence) "
+            "must be 0 under production_defaults_active"
+        )
+        return r.returncode
+    ok(
+        f"chaos hard release blocker GREEN in {elapsed:.1f}s "
+        f"(workers={env['AURA_CHAOS_WORKERS']} fibers={env['AURA_CHAOS_FIBERS']} "
+        f"duration={env['AURA_CHAOS_DURATION_S']}s; expanded hard-fail set zero)"
+    )
+    return 0
+
+
 def cmd_mailbox_hold_starvation_hard_coverage():
     """Issue #2551: hold-exit residual under production → hard + Agent throttle.
 
@@ -10930,6 +11037,7 @@ def cmd_gate():
         or cmd_linear_ir_fastpath_2899_coverage()
         or cmd_solver_budget_2900_coverage()
         or cmd_steal_residual_rearm_race_2901_coverage()
+        or cmd_chaos_release_blocker_2902()
         or cmd_chaos_mutate_steal_gc_mailbox_coverage()
         or cmd_production_concurrency_coverage()
         or cmd_chaos_pr_hard_fail_gate()
@@ -11812,6 +11920,8 @@ def main():
         "production-concurrency-coverage": cmd_production_concurrency_coverage,
         "chaos-pr-hard-fail": cmd_chaos_pr_hard_fail_gate,
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
+        "chaos-release-blocker-2902": cmd_chaos_release_blocker_2902,
+        "chaos-release-blocker-2902-coverage": cmd_chaos_release_blocker_2902_coverage,
         "chaos-soak-hard-gate-2722": cmd_chaos_soak_hard_gate_2722,
         "chaos-soak-hard-gate-2722-coverage": cmd_chaos_soak_hard_gate_2722_coverage,
         "chaos-soak-residual-zero-2755-coverage": cmd_chaos_soak_residual_zero_2755_coverage,

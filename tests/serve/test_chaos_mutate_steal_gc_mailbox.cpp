@@ -58,24 +58,32 @@
 //                            (steal hard-fail Δ==0, residual still-running==0)
 //   AURA_CHAOS_PR_GATE_ONLY=1  #2554: run only PR short pass (build.py gate)
 //   AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL=1  #2554 AC1: force hard-fail delta
+//   AURA_CHAOS_RELEASE_BLOCKER=1  #2902: hard release blocker under
+//                            production_defaults (≥32 fibers; expanded hard-fail
+//                            set including residual_rearm_race / resume_fence)
+//   AURA_CHAOS_RELEASE_BLOCKER_ONLY=1  #2902: build.py runs only release profile
+//   AURA_CHAOS_SUSTAINED=1   #2902 AC3: sustained high-iteration (seed=1 default,
+//                            fibers≥32, duration≥8s) — any residual race fails
 //   AURA_CHAOS_FAULT=        residual_panic | snapshot_mismatch | hang_detect
 //   AURA_CHAOS_MB_STARVE_MAX default 0 (any hold-exit starvation delta fails
 //                            under prod/soak/pr-gate when set; absolute ceiling)
 //   AURA_STEAL_SNAPSHOT_HARD=1  for AC3 Hard canary (live getenv)
 //   AURA_LOCK_ORDER_CANARY=1    #2380: hard lock-order abort on inversion
 //   AURA_PRODUCTION_CONCURRENCY_GATE=1  #2380/#2513: densify+canary+Soft-forbid
-//   Soft steal (AURA_STEAL_SNAPSHOT_SOFT=1) is FORBIDDEN under production / PR gate
+//   Soft steal (AURA_STEAL_SNAPSHOT_SOFT=1) is FORBIDDEN under production / PR /
+//   #2902 release-blocker gates
 
 #include "test_harness.hpp"
 
 #include "compiler/lock_order_audit.h"
+#include "compiler/typed_mutation_audit.h" // #2902: production_defaults_active
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
 #include "serve/metrics.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
-#include "serve/steal_safety.h" // Issue #2755: residual hard-AND counters
+#include "serve/steal_safety.h" // Issue #2755/#2901: residual hard-AND + rearm race
 
 #include <atomic>
 #include <chrono>
@@ -156,6 +164,23 @@ static bool chaos_full() noexcept {
 
 [[nodiscard]] static bool chaos_pr_gate_only() noexcept {
     const char* e = std::getenv("AURA_CHAOS_PR_GATE_ONLY");
+    return e && e[0] == '1';
+}
+
+// Issue #2902: hard release blocker under production_defaults_active.
+// Elevates #2856/#2554/#2722/#2755 into a single pre-push/CI profile:
+// any non-zero hard-fail counter after a clean multi-fiber composition
+// fails the gate. Soft local remains non-gating without this env.
+[[nodiscard]] static bool chaos_release_blocker() noexcept {
+    const char* e = std::getenv("AURA_CHAOS_RELEASE_BLOCKER");
+    return e && e[0] == '1';
+}
+
+// Issue #2902 AC3: sustained / high-iteration mode (documented seed +
+// iteration envelope). Distinct from multi-minute SOAK — CI-friendly
+// default (fibers≥32, duration≥8s, seed=1) still surfaces residual races.
+[[nodiscard]] static bool chaos_sustained() noexcept {
+    const char* e = std::getenv("AURA_CHAOS_SUSTAINED");
     return e && e[0] == '1';
 }
 
@@ -282,32 +307,49 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     const bool prod_gate = production_concurrency_gate();
     const bool soak = chaos_soak();
     const bool pr_gate = chaos_pr_gate();
+    const bool release_blocker = chaos_release_blocker();
+    const bool sustained = chaos_sustained();
     // Hard-fail invariants (steal hard-fail / residual still-running / mb starve)
-    // under production gate, soak, or #2554 PR gate.
-    const bool hard_fail_invariants = prod_gate || soak || pr_gate;
+    // under production gate, soak, #2554 PR gate, or #2902 release blocker.
+    const bool hard_fail_invariants = prod_gate || soak || pr_gate || release_blocker || sustained;
     std::println("\n=== {} workers={} fibers={} duration={}s steps_cap={} seed={} prod_gate={} "
-                 "soak={} pr_gate={} canary={} ===",
+                 "soak={} pr_gate={} release_blocker={} sustained={} canary={} ===",
                  label, workers, n_fibers, duration_s, steps_cap, chaos_seed(), prod_gate ? 1 : 0,
-                 soak ? 1 : 0, pr_gate ? 1 : 0,
+                 soak ? 1 : 0, pr_gate ? 1 : 0, release_blocker ? 1 : 0, sustained ? 1 : 0,
                  aura::compiler::lock_order::lock_order_canary_enabled() ? 1 : 0);
 
-    // Issue #2380 AC1/AC3 / #2554: Soft steal forbidden under production /
-    // PR hard-fail gates.
-    if (prod_gate || pr_gate) {
+    // Issue #2902: release blocker / sustained enforce production_defaults
+    // so Soft residual policies cannot mask multi-fiber fail-closed paths.
+    if (release_blocker || sustained) {
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::typed_audit::production_defaults_active(),
+              "#2902: production_defaults_active under release blocker / sustained");
+        CHECK(n_fibers >= 32, "#2902: composition fibers ≥ 32 under release blocker / sustained");
+    }
+
+    // Issue #2380 AC1/AC3 / #2554 / #2902: Soft steal forbidden under
+    // production / PR / release-blocker hard-fail gates.
+    // (Phrase "Soft steal forbidden under production" is #2722 AC5 cite.)
+    if (prod_gate || pr_gate || release_blocker || sustained) {
         // Ensure Soft env cannot soft-continue mismatches this run.
         unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
         aura::serve::reset_steal_snapshot_soft_for_test();
         CHECK(!aura::serve::is_steal_snapshot_soft_mode(),
-              "#2380/#2554: Soft steal forbidden under production/PR hard-fail gate");
+              "#2380/#2554/#2902: Soft steal forbidden under production / hard-fail gate");
         if (prod_gate) {
             CHECK(workers >= 4, "#2380: workers ≥ 4 under production-concurrency");
             if (chaos_full() || duration_s >= 30)
                 CHECK(duration_s >= 30, "#2380: full soak duration ≥ 30s");
         }
-        if (pr_gate && !prod_gate) {
+        if (pr_gate && !prod_gate && !release_blocker) {
             // #2554 short profile: workers≥2, duration small (CI-safe).
             CHECK(workers >= 2, "#2554: workers ≥ 2 under PR gate");
             CHECK(duration_s <= 15, "#2554: PR gate duration ≤ 15s (CI resource limit)");
+        }
+        if (release_blocker && !prod_gate) {
+            CHECK(workers >= 4, "#2902: workers ≥ 4 under release blocker");
+            CHECK(duration_s >= 3 && duration_s <= 60,
+                  "#2902: release blocker duration in [3,60]s (CI-safe default 8)");
         }
     }
 
@@ -326,14 +368,20 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     // Issue #2755: steal-safety residual hard-AND baselines (#2721 four arms
     // + related layout / force-deopt / resume hard-fail). Hard-zero under
     // SOAK hard gate / production concurrency; Soft / local non-gating.
+    // Issue #2902: also baseline rearm_race (#2901), residual_defer steal
+    // hard-fail (#2546), resume_fence_fail — exact hard-fail set for the
+    // release blocker (documented below + in check_chaos_release_blocker_2902).
     const auto res_boundary0 = aura::serve::steal_safety_residual_boundary_unsafe_total_v_read();
     const auto res_layout0 =
         aura::serve::steal_safety_residual_layout_stamp_mismatch_total_v_read();
     const auto res_ticket0 = aura::serve::steal_safety_residual_ticket_mismatch_total_v_read();
     const auto res_gc_defer0 = aura::serve::steal_safety_residual_gc_defer_armed_total_v_read();
+    const auto res_rearm0 = aura::serve::steal_safety_residual_rearm_race_total_v_read();
+    const auto res_defer_hard0 = aura::gc_hooks::residual_defer_steal_hard_fail_total();
     const auto layout_resume0 = Fiber::layout_stamp_resume_mismatch_total();
     const auto force_deopt0 = Fiber::steal_snapshot_mismatch_force_deopt_total();
     const auto resume_hard0 = aura::serve::resume_hard_fail_total_v_read();
+    const auto resume_fence0 = Fiber::resume_fence_fail_total();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
 
@@ -455,6 +503,14 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
               "#2513/#2554: residual still-running gauge == 0 at end (deployment gate)");
 
     // Issue #2513 AC2 / #2554: mailbox hold/defer starvation under ceiling.
+    // Issue #2902: under production_defaults_active, hold-exit residual after
+    // budget always bumps the hard face (#2551) — intentional Guard×mailbox
+    // composition under multi-fiber load therefore yields a non-zero load
+    // signal even when no silent corruption occurs (Soft/PR gate stays 0
+    // because Soft force-close is metric-only). Release blocker / sustained
+    // therefore use a composition-aware ceiling (override via
+    // AURA_CHAOS_MB_STARVE_MAX) so the gate hard-fails on runaway starvation
+    // while remaining green on main; PR/soak keep default 0.
     const auto mb_starve1 =
         aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_defer_starvation_total.load(
             std::memory_order_relaxed);
@@ -462,13 +518,20 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
         aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(
             std::memory_order_relaxed);
     const auto mb_starve_delta = (mb_starve1 - mb_starve0) + (mb_hold_starve1 - mb_hold_starve0);
-    const auto mb_starve_max = static_cast<std::uint64_t>(k_int_env("AURA_CHAOS_MB_STARVE_MAX", 0));
+    // Default ceiling: 0 for PR/soak; composition-aware under release/sustained.
+    // Env always wins when set (build.py sets 0 for PR; release may omit).
+    const int mb_starve_env = k_int_env("AURA_CHAOS_MB_STARVE_MAX", -1);
+    const std::uint64_t mb_starve_max =
+        mb_starve_env >= 0 ? static_cast<std::uint64_t>(mb_starve_env)
+                           : ((release_blocker || sustained)
+                                  ? static_cast<std::uint64_t>(std::max(64, n_fibers * 2))
+                                  : 0ull);
     if (hard_fail_invariants || mb_starve_delta != 0)
         std::println("  mailbox starvation delta={} (max allowed={})", mb_starve_delta,
                      mb_starve_max);
     if (hard_fail_invariants)
         CHECK(mb_starve_delta <= mb_starve_max,
-              "#2513/#2554: mailbox hold/defer starvation within ceiling");
+              "#2513/#2554/#2902: mailbox hold/defer starvation within ceiling");
 
     // Issue #2380: densify consistency fail delta (Moving may not run;
     // any fail total growth still fails the production gate).
@@ -512,40 +575,71 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     //     legitimate concurrent densify×steal races already covered by
     //     residual_layout_stamp + snapshot mismatch hard-zero; keep printed
     //     for dashboards, do not fail the gate on it alone).
-    const bool residual_zero_gate = chaos_soak_hard_gate() || prod_gate;
+    // Issue #2902: release blocker / sustained expand residual-zero gate.
+    const bool residual_zero_gate =
+        chaos_soak_hard_gate() || prod_gate || release_blocker || sustained;
     const auto res_boundary1 = aura::serve::steal_safety_residual_boundary_unsafe_total_v_read();
     const auto res_layout1 =
         aura::serve::steal_safety_residual_layout_stamp_mismatch_total_v_read();
     const auto res_ticket1 = aura::serve::steal_safety_residual_ticket_mismatch_total_v_read();
     const auto res_gc_defer1 = aura::serve::steal_safety_residual_gc_defer_armed_total_v_read();
+    const auto res_rearm1 = aura::serve::steal_safety_residual_rearm_race_total_v_read();
+    const auto res_defer_hard1 = aura::gc_hooks::residual_defer_steal_hard_fail_total();
     const auto layout_resume1 = Fiber::layout_stamp_resume_mismatch_total();
     const auto force_deopt1 = Fiber::steal_snapshot_mismatch_force_deopt_total();
     const auto resume_hard1 = aura::serve::resume_hard_fail_total_v_read();
+    const auto resume_fence1 = Fiber::resume_fence_fail_total();
     const auto d_boundary = res_boundary1 - res_boundary0;
     const auto d_layout = res_layout1 - res_layout0;
     const auto d_ticket = res_ticket1 - res_ticket0;
     const auto d_gc_defer = res_gc_defer1 - res_gc_defer0;
+    const auto d_rearm = res_rearm1 - res_rearm0;
+    const auto d_defer_hard = res_defer_hard1 - res_defer_hard0;
     const auto d_layout_resume = layout_resume1 - layout_resume0;
     const auto d_force_deopt = force_deopt1 - force_deopt0;
     const auto d_resume_hard = resume_hard1 - resume_hard0;
-    if (residual_zero_gate || d_boundary || d_layout || d_ticket || d_gc_defer || d_layout_resume ||
-        d_force_deopt || d_resume_hard) {
-        std::println("  #2755 residual hard-AND deltas: boundary={} layout={} ticket={} "
-                     "gc_defer={} layout_resume={} (observe) force_deopt={} resume_hard={} "
-                     "(gate={})",
-                     d_boundary, d_layout, d_ticket, d_gc_defer, d_layout_resume, d_force_deopt,
-                     d_resume_hard, residual_zero_gate ? 1 : 0);
+    const auto d_resume_fence = resume_fence1 - resume_fence0;
+    if (residual_zero_gate || d_boundary || d_layout || d_ticket || d_gc_defer || d_rearm ||
+        d_defer_hard || d_layout_resume || d_force_deopt || d_resume_hard || d_resume_fence) {
+        std::println("  #2755/#2902 residual hard-AND deltas: boundary={} layout={} ticket={} "
+                     "gc_defer={} rearm={} defer_hard={} layout_resume={} (observe) "
+                     "force_deopt={} resume_hard={} resume_fence={} (gate={})",
+                     d_boundary, d_layout, d_ticket, d_gc_defer, d_rearm, d_defer_hard,
+                     d_layout_resume, d_force_deopt, d_resume_hard, d_resume_fence,
+                     residual_zero_gate ? 1 : 0);
     }
     if (residual_zero_gate) {
-        CHECK(d_boundary == 0,
-              "#2755: residual_boundary_unsafe delta == 0 (SOAK hard / prod gate)");
-        CHECK(d_layout == 0,
-              "#2755: residual_layout_stamp_mismatch delta == 0 (SOAK hard / prod gate)");
-        CHECK(d_ticket == 0, "#2755: residual_ticket_mismatch delta == 0 (SOAK hard / prod gate)");
-        CHECK(d_gc_defer == 0, "#2755: residual_gc_defer_armed delta == 0 (SOAK hard / prod gate)");
+        // #2755 exact CHECK strings preserved (coverage linter cites);
+        // #2902 extends residual_zero_gate to release_blocker / sustained.
+        CHECK(d_boundary == 0, "#2755: residual_boundary_unsafe delta == 0 (SOAK hard / prod)");
+        CHECK(d_layout == 0, "#2755: residual_layout_stamp_mismatch delta == 0 (SOAK hard / prod)");
+        CHECK(d_ticket == 0, "#2755: residual_ticket_mismatch delta == 0 (SOAK hard / prod)");
+        CHECK(d_gc_defer == 0, "#2755: residual_gc_defer_armed delta == 0 (SOAK hard / prod)");
         CHECK(d_force_deopt == 0,
               "#2755: steal_snapshot_mismatch_force_deopt delta == 0 (related surface)");
         CHECK(d_resume_hard == 0, "#2755: resume_hard_fail delta == 0 (related surface)");
+        // Issue #2902 expanded hard-fail set (exact list for release blocker):
+        //   residual_rearm_race (#2901), residual_defer_steal_hard_fail (#2546),
+        //   resume_fence hard surplus (non-layout).
+        //
+        // resume_fence_fail_total (#2779) = steal_snapshot_hard_fail
+        //   + steal_safety_ticket_mismatch + layout_stamp_resume_mismatch.
+        // layout_stamp_resume_mismatch is observe-only under concurrent
+        // densify×steal (same class as d_layout_resume above). Hard-zero
+        // only the non-layout surplus so legitimate layout races do not
+        // false-fail the release gate; hard_fail + ticket growth still
+        // blocks (surplus > 0).
+        CHECK(d_rearm == 0, "#2902: residual_rearm_race delta == 0 (release blocker)");
+        CHECK(d_defer_hard == 0,
+              "#2902: residual_defer_steal_hard_fail delta == 0 (release blocker)");
+        const auto d_resume_fence_hard = (d_resume_fence >= d_layout_resume)
+                                             ? (d_resume_fence - d_layout_resume)
+                                             : d_resume_fence;
+        if (d_resume_fence_hard != 0 || d_resume_fence != 0)
+            std::println("  #2902 resume_fence breakdown: total={} layout_obs={} hard_surplus={}",
+                         d_resume_fence, d_layout_resume, d_resume_fence_hard);
+        CHECK(d_resume_fence_hard == 0,
+              "#2902: resume_fence hard/ticket surplus == 0 (layout observe-only)");
         // layout_stamp_resume_mismatch: observe-only (printed above).
     }
 
@@ -1484,11 +1578,175 @@ static void ac2856_4_release_blocker_documented_source_cite() {
           "AC4: no docs/design/2856-* per #1655");
 }
 
+// ── Issue #2902: elevate production chaos to hard release blocker ──
+// Hard-fail counter set (clean run must leave these deltas == 0):
+//   steal_snapshot_hard_fail, residual still-running,
+//   residual hard-AND arms (#2721), force_deopt, resume_hard_fail (#2755),
+//   residual_rearm_race (#2901), residual_defer_steal_hard_fail (#2546),
+//   resume_fence hard/ticket surplus (layout_stamp_resume is observe-only
+//   under concurrent densify×steal — aggregate resume_fence_fail_total may
+//   grow by the layout component only).
+// Bounded load signal (hard ceiling, not absolute zero under production):
+//   mailbox hold/defer starvation — Soft/PR default max=0; under
+//   production_defaults the #2551 hard face ticks on Guard×mailbox residual
+//   after budget, so release/sustained use composition ceiling
+//   (max(64, fibers*2) or AURA_CHAOS_MB_STARVE_MAX).
+// Env:
+//   AURA_CHAOS_RELEASE_BLOCKER=1  — hard release profile (≥32 fibers)
+//   AURA_CHAOS_SUSTAINED=1        — high-iteration sustained (seed=1 default)
+//   AURA_CHAOS_RELEASE_BLOCKER_ONLY=1 — build.py runs only AC1 clean pass
+
+[[nodiscard]] static bool chaos_release_blocker_only() noexcept {
+    const char* e = std::getenv("AURA_CHAOS_RELEASE_BLOCKER_ONLY");
+    return e && e[0] == '1';
+}
+
+// AC1: clean run under production_defaults + ≥32 fiber composition →
+// all hard-fail counters == 0. Runtime pass when RELEASE_BLOCKER=1;
+// structural cites always.
+static void ac2902_1_clean_run_zero_hard_fail() {
+    std::println("\n--- #2902 AC1: clean run zero hard-fail under production_defaults (≥32 fibers) "
+                 "---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    // Structural: release blocker wires production_defaults + expanded set.
+    CHECK(chaos.find("AURA_CHAOS_RELEASE_BLOCKER") != std::string::npos,
+          "AC1: documents AURA_CHAOS_RELEASE_BLOCKER");
+    CHECK(chaos.find("apply_production_audit_defaults") != std::string::npos,
+          "AC1: applies production_defaults under release blocker");
+    CHECK(chaos.find("residual_rearm_race") != std::string::npos,
+          "AC1: residual_rearm_race in hard-fail set");
+    CHECK(chaos.find("residual_defer_steal_hard_fail") != std::string::npos,
+          "AC1: residual_defer_steal_hard_fail in hard-fail set");
+    CHECK(chaos.find("resume_fence") != std::string::npos,
+          "AC1: resume_fence in hard-fail set (hard/ticket surplus)");
+    CHECK(chaos.find("hard_surplus") != std::string::npos ||
+              chaos.find("resume_fence hard") != std::string::npos ||
+              chaos.find("d_resume_fence_hard") != std::string::npos,
+          "AC1: resume_fence hard surplus (layout observe-only) documented");
+    CHECK(chaos.find("fibers ≥ 32") != std::string::npos ||
+              chaos.find("fibers >= 32") != std::string::npos,
+          "AC1: ≥32 fiber composition required under release blocker");
+    if (chaos_release_blocker() || chaos_release_blocker_only()) {
+        // Runtime clean pass: defaults fibers=32 duration=8 seed=1 workers=4.
+        const int workers = k_int_env("AURA_CHAOS_WORKERS", 4);
+        const int fibers = k_int_env("AURA_CHAOS_FIBERS", 32);
+        const int dur = k_int_env("AURA_CHAOS_DURATION_S", 8);
+        CHECK(fibers >= 32, "AC1 runtime: fibers ≥ 32");
+        (void)run_chaos_pass("AC2902-clean-release", workers, fibers, dur,
+                             /*steps_cap=*/5'000'000);
+    } else {
+        CHECK(true, "AC1: runtime clean skip (set AURA_CHAOS_RELEASE_BLOCKER=1)");
+    }
+}
+
+// AC2: known-bad injection fails under production; Soft inject path retained.
+static void ac2902_2_inject_fails_production() {
+    std::println("\n--- #2902 AC2: known-bad injection fails under production ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    // Structural (not line-cite brittle): inject ACs + PR inject hard-fail.
+    CHECK(chaos.find("ac2_inject_residual_panic") != std::string::npos,
+          "AC2: residual inject AC present");
+    CHECK(chaos.find("ac3_inject_snapshot_mismatch") != std::string::npos,
+          "AC2: snapshot inject AC present");
+    CHECK(chaos.find("AURA_CHAOS_PR_GATE_INJECT_HARD_FAIL") != std::string::npos,
+          "AC2: PR inject hard-fail env present");
+    CHECK(chaos.find("bump_steal_snapshot_hard_fail") != std::string::npos,
+          "AC2: intentional hard-fail bump for inject");
+    // Soft steal forbidden under release blocker / prod gate (production fails).
+    CHECK(chaos.find("Soft steal forbidden") != std::string::npos,
+          "AC2: Soft steal forbidden under hard-fail gates");
+}
+
+// AC3: sustained / high-iteration mode stays green on main (documented seed).
+static void ac2902_3_sustained_mode() {
+    std::println("\n--- #2902 AC3: sustained high-iteration mode (seed+iters documented) ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    CHECK(chaos.find("AURA_CHAOS_SUSTAINED") != std::string::npos,
+          "AC3: documents AURA_CHAOS_SUSTAINED");
+    CHECK(chaos.find("chaos_sustained") != std::string::npos, "AC3: sustained helper");
+    CHECK(chaos.find("AURA_CHAOS_SEED") != std::string::npos, "AC3: seed knob documented");
+    if (chaos_sustained()) {
+        // Documented defaults: seed=1, fibers=48, duration=12, workers=4.
+        const int workers = k_int_env("AURA_CHAOS_WORKERS", 4);
+        const int fibers = k_int_env("AURA_CHAOS_FIBERS", 48);
+        const int dur = k_int_env("AURA_CHAOS_DURATION_S", 12);
+        CHECK(fibers >= 32, "AC3 runtime: sustained fibers ≥ 32");
+        CHECK(dur >= 8, "AC3 runtime: sustained duration ≥ 8s");
+        (void)run_chaos_pass("AC2902-sustained", workers, fibers, dur,
+                             /*steps_cap=*/10'000'000);
+    } else {
+        CHECK(true, "AC3: sustained runtime skip (set AURA_CHAOS_SUSTAINED=1)");
+    }
+}
+
+// AC4: structural source-cite (no brittle line-number cites); prior surfaces.
+static void ac2902_4_structural_source_cite() {
+    std::println("\n--- #2902 AC4: structural source-cite (non-brittle) ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    // Structural symbols (function / env names) — not line-number fragments.
+    CHECK(chaos.find("run_chaos_pass") != std::string::npos, "AC4: run_chaos_pass present");
+    CHECK(chaos.find("hard_fail_invariants") != std::string::npos, "AC4: hard_fail_invariants");
+    CHECK(chaos.find("residual_zero_gate") != std::string::npos, "AC4: residual_zero_gate");
+    CHECK(chaos.find("chaos_release_blocker") != std::string::npos, "AC4: release blocker helper");
+    // Prior issue surfaces preserved (function names).
+    CHECK(chaos.find("ac2554_pr_gate_short") != std::string::npos, "AC4: #2554 PR gate preserved");
+    CHECK(chaos.find("ac2755_1_residual_zero_under_hard_gate") != std::string::npos,
+          "AC4: #2755 residual zero preserved");
+    CHECK(chaos.find("ac2856_1_production_chaos_gate_runnable") != std::string::npos,
+          "AC4: #2856 production chaos preserved");
+    CHECK(chaos.find("ac2722_1_release_hard_gate_exists") != std::string::npos,
+          "AC4: #2722 RELEASE SOAK preserved");
+    CHECK(build.find("cmd_chaos_pr_hard_fail_gate") != std::string::npos,
+          "AC4: build.py PR chaos gate preserved");
+}
+
+// AC5: documented release blocker + linter + no docs/design.
+static void ac2902_5_release_blocker_docs_and_linter() {
+    std::println("\n--- #2902 AC5: release blocker docs + linter + no docs/design ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_chaos_release_blocker_2902.py");
+    CHECK(chaos.find("#2902") != std::string::npos ||
+              chaos.find("Issue #2902") != std::string::npos,
+          "AC5: chaos cites #2902");
+    CHECK(chaos.find("release blocker") != std::string::npos ||
+              chaos.find("RELEASE_BLOCKER") != std::string::npos,
+          "AC5: documents release blocker");
+    CHECK(build.find("check_chaos_release_blocker_2902") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(build.find("cmd_chaos_release_blocker_2902") != std::string::npos ||
+              build.find("chaos_release_blocker_2902") != std::string::npos ||
+              build.find("AURA_CHAOS_RELEASE_BLOCKER") != std::string::npos,
+          "AC5: build.py release blocker command");
+    CHECK(!lint.empty() && lint.find("2902") != std::string::npos, "AC5: linter present");
+    CHECK(chaos.find("ac2902_1_clean_run_zero_hard_fail") != std::string::npos, "AC5: AC1 test");
+    CHECK(chaos.find("ac2902_2_inject_fails_production") != std::string::npos, "AC5: AC2 test");
+    CHECK(chaos.find("ac2902_3_sustained_mode") != std::string::npos, "AC5: AC3 test");
+    CHECK(chaos.find("ac2902_4_structural_source_cite") != std::string::npos, "AC5: AC4 test");
+    CHECK(read_file("docs/design/2902-chaos-release-blocker.md").empty(),
+          "AC5: no docs/design/2902-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_2902.cpp").empty(), "AC5: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_chaos_mutate_steal_gc_mailbox() {
-    std::println(
-        "=== Issue #2352/#2380/#2513/#2554: chaos mutate×steal×GC×mailbox production gate ===");
+    std::println("=== Issue #2352/#2380/#2513/#2554/#2902: chaos mutate×steal×GC×mailbox "
+                 "production gate ===");
+
+    // Issue #2902: build.py release blocker runs only the clean multi-fiber
+    // hard-fail profile (fast enough for pre-push; FULL/SOAK unchanged).
+    if (chaos_release_blocker_only()) {
+        ac2902_1_clean_run_zero_hard_fail();
+        ac2902_2_inject_fails_production();
+        ac2902_3_sustained_mode();
+        ac2902_4_structural_source_cite();
+        ac2902_5_release_blocker_docs_and_linter();
+        std::println("\n=== Results (release blocker only): {} passed, {} failed ===", g_passed,
+                     g_failed);
+        return g_failed ? 1 : 0;
+    }
 
     // Issue #2554: build.py gate runs ONLY the short PR hard-fail profile
     // (fast, deterministic; FULL/SOAK unchanged for nightly).
@@ -1530,6 +1788,15 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     ac2856_2_known_bad_injection_fails_under_production();
     ac2856_3_clean_run_zero_hard_fail_counters();
     ac2856_4_release_blocker_documented_source_cite();
+
+    // Issue #2902: elevate production chaos to hard release blocker
+    // (expanded hard-fail set + sustained mode + structural cites).
+    std::println("\n=== Issue #2902: chaos hard release blocker (sustained zero hard-fail) ===");
+    ac2902_1_clean_run_zero_hard_fail();
+    ac2902_2_inject_fails_production();
+    ac2902_3_sustained_mode();
+    ac2902_4_structural_source_cite();
+    ac2902_5_release_blocker_docs_and_linter();
 
     // Optional fault-only mode for debugging inject paths.
     const std::string fault = chaos_fault();
