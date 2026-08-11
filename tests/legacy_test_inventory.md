@@ -1717,7 +1717,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_self_func_active_invariant.cpp` (—) [domain_suite, theme_compiler] — AC1: source helpers + static_assert + #2826 cites
 - `tests/core/test_set_workspace_flat.cpp` (—) [domain_suite, theme_core] — Issue #1729 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape.cpp` (—) [large, domain_suite, theme_compiler] — test_shape.cpp — Unit tests for shape infrastructure (Phase 1, #53)
-- `tests/compiler/test_shape_compact_storm_isolation.cpp` (—) [domain_suite, theme_compiler] — AC1: Gate/linter — on_arena_compact never calls update_deopt_storm_state_
+- `tests/compiler/test_shape_compact_storm_isolation.cpp` (—) [domain_suite, theme_compiler] — Issue #2908 — PerEval harden: compact must not bump process-global
 - `tests/compiler/test_shape_high_mutation_storm.cpp` (—) [domain_suite, theme_compiler] — AC1: production default applies kHighMutationPreset knobs (no env)
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #406/#407/#570/#605 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_shape_profiler_concurrency.cpp` (—) [domain_suite, theme_compiler] — AC1: docs model A (shared_mutex) in shape_profiler.h
