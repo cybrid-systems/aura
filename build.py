@@ -3257,7 +3257,11 @@ def test_issues():
     for local iteration when an issue is the only thing modified.
     """
     tier = issues_tier()
-    jobs = os.environ.get("AURA_ISSUES_JOBS") or str(min(8, os.cpu_count() or 4))
+    # Full tier defaults to 4 workers (not 8): high fan-out was the main
+    # source of SIGSEGV/timeout under load. Override with AURA_ISSUES_JOBS.
+    _cpu = os.cpu_count() or 4
+    _default = min(4, _cpu) if tier == "full" else min(8, _cpu)
+    jobs = os.environ.get("AURA_ISSUES_JOBS") or str(_default)
     extra_args: list[str] = []
     if "--changed" in sys.argv:
         extra_args.append("--changed")
@@ -3274,6 +3278,7 @@ def test_issues():
     run_path = ROOT / "tests" / "python" / "run.py"
     if not run_path.exists():
         run_path = ROOT / "tests" / "run.py"
+    # Full tier wall clock: serial recovery pass can double worst-case time.
     r = subprocess.run(
         [
             sys.executable,
@@ -3288,7 +3293,7 @@ def test_issues():
         ],
         capture_output=True,
         text=True,
-        timeout=900 if tier == "full" else 300,
+        timeout=1800 if tier == "full" else 300,
     )
     print(r.stdout)
     if r.stderr:
