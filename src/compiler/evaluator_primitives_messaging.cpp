@@ -473,6 +473,56 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-2680", 2680);
             insert_kv("schema-2849", 2849);
             insert_kv("issue-2849", 2849);
+            // Issue #2903: deferred-under-boundary wait histogram + p50/p99/max.
+            // Agents poll wait latency without stitching multiple queries.
+            // Soft / zero-defer path: counters stay 0 (no hist noise).
+            insert_kv("mailbox-under-boundary-wait-us-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_us_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-samples",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-us-max",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-us-p50",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p50.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-us-p99",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-drop-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_drop_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-hist-lt-100us",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[0].load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-hist-lt-1ms",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[1].load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-hist-lt-10ms",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[2].load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-hist-lt-100ms",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[3].load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-hist-ge-100ms",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[4].load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-under-boundary-wait-wired", 1);
+            insert_kv("schema-2903", 2903);
+            insert_kv("issue-2903", 2903);
             // Issue #2587: mutate admission gate counter (hard reject
             // vs metric-only soft path; AC1 / AC2). Zero cost when
             // agent-throttle flag == 0 — single relaxed load at every
