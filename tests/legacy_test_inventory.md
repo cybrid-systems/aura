@@ -1311,7 +1311,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_partial_cone_commit_gate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Soft + truncated → allow commit; last_partial_cone_truncated true
 - `tests/compiler/test_partial_cs_single_source.cpp` (—) [domain_suite, theme_compiler] — AC1: N consecutive infer_flat_partial → import_total += N; solve sees roots
 - `tests/compiler/test_partial_recompile_single_evict.cpp` (—) [domain_suite, theme_compiler] — AC1: partial_recompile does not call invalidate(name)
-- `tests/core/test_pcv_exclusive_with_set.cpp` (—) [domain_suite, theme_core] — AC1: with_set exclusive → no alloc (same storage, with_set_exclusive metric)
+- `tests/core/test_pcv_exclusive_with_set.cpp` (—) [domain_suite, theme_core] — Issue #2906 — FlatAST locked mutate forces exclusive via move-out.
 - `tests/compiler/test_per_symbol_dirty_cycle_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1786 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_per_symbol_dirty_pool_lock.cpp` (—) [domain_suite, theme_core] — Issue #1785 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_persistent_typechecker.cpp` (—) [domain_suite, theme_compiler] — AC1: N post-mutate typechecks reuse one TypeChecker (pointer stable)
