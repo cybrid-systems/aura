@@ -42,8 +42,9 @@ module;
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
-#include "security_capabilities.h"          // aura_fiber_current_id
-#include "aura_jit_bridge.h"                // aura_invoke_long_mutation_scheduler_hook
+#include "../core/lifetime_consistency_proof.hh" // Issue #2888: unified proof
+#include "security_capabilities.h"               // aura_fiber_current_id
+#include "aura_jit_bridge.h"                     // aura_invoke_long_mutation_scheduler_hook
 #include "ownership_escape_lowering_gate.h" // Issue #2309: aura_escape_move_gate_clear + rollback counter
 #include "compiler/ownership_rebind.h" // Issue #2695: unified OwnershipEnv rebind API post-densify/steal/Agent
                                        // + aura_aot_func_table_epoch +
@@ -3202,6 +3203,33 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     m->type_linear_proof_stamped_after_rebind_total.fetch_add(
                         1, std::memory_order_relaxed);
                 }
+            }
+            // Issue #2888: stamp unified LifetimeConsistencyProof once on
+            // the outermost densify success path. Composes envframe (#2711)
+            // + type-linear (#2854) + pin (#2265) + layout (#2170) +
+            // residual (#2846) into one Agent-visible proof; publishes the
+            // compact process-wide last-proof atomic set for high-frequency
+            // Agent poll. Quiet path (no densify) never reaches here → AC3
+            // zero extra atomics on the quiet path. Read-only aggregation
+            // (make_lifetime_consistency_proof never bumps counters).
+            {
+                using aura::core::envframe_lifetime::snapshot_envframe_lifetime_proof;
+                using aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof;
+                using aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof;
+                const auto efl = snapshot_envframe_lifetime_proof();
+                const auto layout = ev_->current_layout_stamp();
+                const auto proof = make_lifetime_consistency_proof(
+                    efl.hold_gen, efl.compact_gen, efl.scans_run, efl.densify_scan_total,
+                    efl.densify_scan_fail, efl.hold_gen_mismatch_total,
+                    typed_audit::last_type_linear_proof_outcome_v_read(),
+                    typed_audit::last_proof_linear_root_count_v_read(),
+                    typed_audit::type_linear_proof_stamped_after_rebind_total_v_read(),
+                    typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read(),
+                    aura::core::lifetime::lifetime_pin_contract_fail_total(),
+                    aura::core::lifetime::lifetime_pin_remap_miss_total(), layout.arena_gen,
+                    layout.flat_gen, layout.env_gen,
+                    aura::gc_hooks::residual_defer_after_exit_total(), efl.mutation_epoch);
+                stamp_lifetime_consistency_proof(proof);
             }
             // Issue #2507: Moving densify success → invalidate escape /
             // MoveOp elision gate for this eval. Remap may invalidate

@@ -1883,6 +1883,23 @@ def cmd_lint():
             "Issue #2887 agent BP degrade linter failed — run python3 scripts/coverage/checks/check_agent_bp_degrade_2887.py"
         )
         return r
+    # Issue #2888: unified LifetimeConsistencyProof (EnvFrame + TypeLinear +
+    # Pin + LayoutStamp + residual) for Agent self-evo loops. Stamp once on
+    # outermost densify success + steal-complete; additive
+    # query:lifetime-consistency-proof + last-proof atomic. Extends the
+    # existing src/-aligned densify/ownership/EnvFrame suite
+    # (test_densify_ownership_scan_fail_gate.cpp, #81967); no docs/design/
+    # (#1655).
+    lcp_script = COVERAGE_CHECKS / "check_lifetime_consistency_proof_2888.py"
+    if not lcp_script.exists():
+        fail(f"missing {lcp_script}")
+        return 1
+    r = run([sys.executable, str(lcp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2888 lifetime-consistency-proof linter failed — run python3 scripts/coverage/checks/check_lifetime_consistency_proof_2888.py"
+        )
+        return r
     # Issue #2840: GeneralObjectPin required densify fail-closed residual
     # (#2597/#2665: pref locked but callers void-cast wire + densify
     # unguarded). Sticky breach + Moving gate + required-fail callers.
