@@ -69,11 +69,24 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     reemit_pipeline_calls_.fetch_add(1, std::memory_order_relaxed);
     reemit_candidates_.fetch_add(candidates, std::memory_order_relaxed);
     reemit_success_.fetch_add(successes, std::memory_order_relaxed);
-    // Issue #2502: feed clean reemit successes into the re-promote window
-    // (zero-cost when force_jit_regions_mask_ is already 0).
-    if (successes > 0)
+    // Issue #2502 / #2895: feed clean reemit successes into the re-promote
+    // window (zero-cost when force_jit_regions_mask_ is already 0). Stamp
+    // last success coverage before the window check so partial re-promote
+    // sees the bits this clean success covered.
+    if (successes > 0) {
+        const auto demoted = force_jit_regions_mask_.load(std::memory_order_relaxed);
+        if (demoted != 0) {
+            // Issue #2895: sticky Agent override takes precedence; else
+            // stamp the demoted force-JIT reason bits as covered. Override
+            // stays until cleared on repromote / reload_success / reset
+            // so a multi-success window keeps a consistent coverage view.
+            auto covered = reemit_success_coverage_override_.load(std::memory_order_relaxed);
+            if (covered == 0)
+                covered = demoted;
+            last_reemit_success_region_mask_.store(covered, std::memory_order_relaxed);
+        }
         maybe_force_jit_repromote_on_clean_success();
-    else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
+    } else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
         force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     // Issue #2855: amortized force-drain check. Invoked from
     // on_reemit_pipeline_call (NOT steal-complete path — #2715 regression
@@ -200,6 +213,8 @@ void HotUpdateRegistry::on_reload_success() noexcept {
     // Issue #2502: wholesale clear ends the re-promote streak (mask
     // already idle; streak is only meaningful while demoted).
     force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+    // Issue #2895: clear sticky coverage override on full recovery.
+    reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
     // Issue #2601: clear retry state (reload succeeded — no more
     // bounded retries needed; the next exhaust will re-seed).
     exhausted_min_dirty_retry_attempts_left_.store(0, std::memory_order_relaxed);
@@ -255,12 +270,44 @@ void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
     const auto streak = force_jit_stable_successes_.fetch_add(1, std::memory_order_relaxed) + 1;
     if (streak < window)
         return;
-    // Window met: clear demoted mask bits (process-wide stability → all
-    // reasons eligible). Stamp last repromoted reason from the demotion
-    // that put us here for agent correlation.
+    // Window met: clear demoted mask bits. Stamp last repromoted reason
+    // from the demotion that put us here for agent correlation.
+    // Issue #2895: optional partial clear — only force_mask ∩ last_success
+    // when repromote_only_covered_bits is set (default off → wholesale
+    // clear preserves #2502). Soft residual stays force-JIT.
     const auto reason = last_force_jit_reason_.load(std::memory_order_relaxed);
+    const auto last_cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
+    const bool partial =
+        force_jit_repromote_only_covered_bits_.load(std::memory_order_relaxed) != 0;
+    if (partial && last_cov != 0) {
+        const auto clear_bits = mask & last_cov;
+        if (clear_bits == 0) {
+            // No overlap — leave mask; window already consumed so reset
+            // streak (Agent must re-cover). Keep sticky override.
+            force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+            return;
+        }
+        const auto residual = mask & ~clear_bits;
+        force_jit_regions_mask_.store(residual, std::memory_order_relaxed);
+        force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+        if (residual != 0) {
+            force_jit_repromote_partial_total_.fetch_add(1, std::memory_order_relaxed);
+            // Residual still demoted — keep override so next window can
+            // continue covering the same recovered bits if still sticky.
+        } else {
+            force_jit_repromote_total_.fetch_add(1, std::memory_order_relaxed);
+            reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
+        }
+        last_force_jit_repromote_reason_.store(reason, std::memory_order_release);
+        last_force_jit_repromote_at_epoch_notify_.store(
+            epoch_notify_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        return;
+    }
+    // Default (#2502): wholesale clear — process-wide stability → all
+    // demoted reasons eligible.
     force_jit_regions_mask_.store(0, std::memory_order_relaxed);
     force_jit_stable_successes_.store(0, std::memory_order_relaxed);
+    reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
     force_jit_repromote_total_.fetch_add(1, std::memory_order_relaxed);
     last_force_jit_repromote_reason_.store(reason, std::memory_order_release);
     last_force_jit_repromote_at_epoch_notify_.store(epoch_notify_.load(std::memory_order_relaxed),
@@ -306,6 +353,37 @@ void HotUpdateRegistry::reset_force_jit_repromote_for_test() noexcept {
     force_jit_repromote_total_.store(0, std::memory_order_relaxed);
     last_force_jit_repromote_reason_.store(0, std::memory_order_relaxed);
     last_force_jit_repromote_at_epoch_notify_.store(0, std::memory_order_relaxed);
+    // Issue #2895: coverage + partial knobs / counters.
+    last_reemit_success_region_mask_.store(0, std::memory_order_relaxed);
+    force_jit_repromote_only_covered_bits_.store(0, std::memory_order_relaxed);
+    force_jit_repromote_partial_total_.store(0, std::memory_order_relaxed);
+    reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2895: last clean-reemit coverage (force-JIT reason bits).
+std::uint64_t HotUpdateRegistry::last_reemit_success_region_mask() const noexcept {
+    return last_reemit_success_region_mask_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::note_reemit_success_coverage(
+    std::uint64_t covered_force_jit_bits) noexcept {
+    // Sticky override applied on subsequent successes > 0 reemit calls
+    // until wholesale clear / reset. Also stamp immediately so Agents
+    // can read last-success mask before the next pipeline call.
+    reemit_success_coverage_override_.store(covered_force_jit_bits, std::memory_order_relaxed);
+    last_reemit_success_region_mask_.store(covered_force_jit_bits, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::set_force_jit_repromote_only_covered_bits(bool only_covered) noexcept {
+    force_jit_repromote_only_covered_bits_.store(only_covered ? 1 : 0, std::memory_order_relaxed);
+}
+
+bool HotUpdateRegistry::force_jit_repromote_only_covered_bits() const noexcept {
+    return force_jit_repromote_only_covered_bits_.load(std::memory_order_relaxed) != 0;
+}
+
+std::uint64_t HotUpdateRegistry::force_jit_repromote_partial_total() const noexcept {
+    return force_jit_repromote_partial_total_.load(std::memory_order_relaxed);
 }
 
 // ── Issue #2601: exhausted min-dirty retry closed loop ──
@@ -900,6 +978,15 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
     out->force_jit_repromote_require_pending_idle =
         reg.force_jit_repromote_require_pending_idle() ? 1 : 0;
     out->schema_2502 = 2502;
+    // Issue #2895: last success coverage + partial re-promote (additive).
+    out->last_reemit_success_region_mask =
+        static_cast<std::int64_t>(reg.last_reemit_success_region_mask());
+    out->force_jit_repromote_only_covered_bits =
+        reg.force_jit_repromote_only_covered_bits() ? 1 : 0;
+    out->force_jit_repromote_partial_total =
+        static_cast<std::int64_t>(reg.force_jit_repromote_partial_total());
+    out->schema_2895 = 2895;
+    out->issue_2895 = 2895;
     // Issue #2601: exhausted min-dirty retry closed loop.
     out->aot_exhausted_min_dirty_retry_total =
         static_cast<std::int64_t>(reg.aot_exhausted_min_dirty_retry_total());
