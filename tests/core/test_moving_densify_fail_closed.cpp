@@ -263,7 +263,7 @@ static void ac11_production_default_hard() {
           "AC11: apply_production_security_defaults parses AURA_MOVING_UNTRACKED");
     CHECK(hh.find("Issue #2596") != std::string::npos,
           "AC11: apply_production_security_defaults cites #2596");
-    CHECK(hh.find("production_default: lock to hard when unset") != std::string::npos,
+    CHECK(hh.find("Production default: lock to hard when unset") != std::string::npos,
           "AC11: production-default lock to hard when env unset");
     CHECK(hh.find("g_moving_untracked_hard_abort_pref.store(1") != std::string::npos,
           "AC11: locks pref to 1 (hard) under production");
@@ -305,16 +305,16 @@ static void ac14_soft_unset_keeps_observe() {
 static void ac15_query_keys_source_cite() {
     std::println("\n--- #2596 AC15: additive query keys source-cite ---");
     const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
-    CHECK(obs.find("moving-untracked-production-hard") != std::string::npos ||
-              obs.find("moving_untracked_production_hard") != std::string::npos,
+    CHECK(obs.find("production-hard-active") != std::string::npos,
           "AC15: lifetime-contract-snapshot exposes production-hard flag");
-    CHECK(obs.find("moving-untracked-external-roots-total") != std::string::npos ||
-              obs.find("moving_untracked_external_roots_total") != std::string::npos,
+    CHECK(obs.find("untracked-external-roots-total") != std::string::npos ||
+              obs.find("untracked_external_roots_total") != std::string::npos,
           "AC15: lifetime-contract-snapshot exposes untracked counter");
+    const auto ah = read_file("src/core/arena_auto_policy_stats.h");
+    CHECK(ah.find("g_moving_untracked_hard_abort_pref{-1}") != std::string::npos,
+          "AC15: arena_auto_policy_stats.h declares pref with default -1 (unset)");
     const auto arena = read_file("src/core/arena.ixx");
-    CHECK(arena.find("g_moving_untracked_hard_abort_pref{-1}") != std::string::npos,
-          "AC15: arena.ixx declares pref with default -1 (unset)");
-    CHECK(arena.find("Issue #2596") != std::string::npos,
+    CHECK(arena.find("Issue #2495/#2596") != std::string::npos,
           "AC15: arena.ixx cites #2596 (production-default alignment)");
 }
 
