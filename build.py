@@ -1936,6 +1936,20 @@ def cmd_lint():
             "Issue #2889 known-roots auto-register linter failed — run python3 scripts/coverage/checks/check_moving_known_roots_auto_register_2889.py"
         )
         return r
+    # Issue #2935: exhaustive known-root inventory + sticky densify-off Agent
+    # recovery (re-register + clear sticky + optional one-shot Moving densify).
+    # Extends #2889/#2905 suite (test_moving_densify_fail_closed.cpp, #81967);
+    # no docs/design/ (#1655).
+    mksr_script = COVERAGE_CHECKS / "check_moving_known_roots_sticky_recovery_2935.py"
+    if not mksr_script.exists():
+        fail(f"missing {mksr_script}")
+        return 1
+    r = run([sys.executable, str(mksr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2935 known-roots sticky recovery linter failed — run python3 scripts/coverage/checks/check_moving_known_roots_sticky_recovery_2935.py"
+        )
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
@@ -6463,6 +6477,34 @@ def cmd_moving_sticky_densify_off_2905():
     """
     print(f"{B}=== moving sticky densify-off (#2905) ==={N}")
     return cmd_moving_sticky_densify_off_2905_coverage()
+
+
+def cmd_moving_known_roots_sticky_recovery_2935_coverage():
+    """Issue #2935: known-root inventory + sticky densify-off Agent recovery (static)."""
+    print(f"{B}=== moving known-roots sticky recovery coverage (#2935) ==={N}")
+    script = COVERAGE_CHECKS / "check_moving_known_roots_sticky_recovery_2935.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving known-roots sticky recovery (#2935) coverage contract rows failed")
+        return 1
+    ok("moving known-roots sticky recovery (#2935) coverage clean")
+    return 0
+
+
+def cmd_moving_known_roots_sticky_recovery_2935():
+    """Issue #2935: exhaustive known-root auto-register + sticky densify-off recovery.
+
+    Extends #2889 inventory (WorkspaceTree layer slots) via shared
+    register_known_moving_densify_root_slots; Agent recovery path
+    (arena:recover-moving-sticky-densify) re-registers + clears sticky +
+    optional one-shot Moving densify. Soft never arms sticky; hard path
+    still arms. Additive schema-2935 on densify-health.
+    """
+    print(f"{B}=== moving known-roots sticky recovery (#2935) ==={N}")
+    return cmd_moving_known_roots_sticky_recovery_2935_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -12715,6 +12757,8 @@ def main():
         "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
         "moving-sticky-densify-off-2905": cmd_moving_sticky_densify_off_2905,
         "moving-sticky-densify-off-2905-coverage": cmd_moving_sticky_densify_off_2905_coverage,
+        "moving-known-roots-sticky-recovery-2935": cmd_moving_known_roots_sticky_recovery_2935,
+        "moving-known-roots-sticky-recovery-2935-coverage": cmd_moving_known_roots_sticky_recovery_2935_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,

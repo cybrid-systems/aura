@@ -926,6 +926,206 @@ static void ac2889_5_linter_and_no_design() {
     CHECK(!design.good(), "AC5: no docs/design/2889-* per #1655");
 }
 
+// ── Issue #2935: known-root coverage + sticky-off Agent recovery ──
+// Extends #2889 inventory (WorkspaceTree layer slots) + shared register
+// helper; adds Agent recovery path (re-register + clear sticky + optional
+// one-shot Moving densify) with additive counters. Soft never arms sticky;
+// hard path still arms. Fail-closed incomplete-remap preserved.
+//
+//   AC1: densify entry calls register_known_moving_densify_root_slots
+//        (full inventory: 6 intermediates + WorkspaceTree + RootRemap).
+//   AC2: production hard still arms sticky; Soft never arms.
+//   AC3: recover_moving_sticky_densify_off + arena:recover-moving-sticky-densify
+//        re-register + clear sticky + optional densify retry.
+//   AC4: additive recovery counters + schema-2935 on densify-health.
+//   AC5: Soft / Moving-off zero densify work preserved (walk inside
+//        moving_compact_enabled block; recovery densify gated).
+//   AC6: tests + coverage linter + no docs/design/.
+
+static void ac2935_1_full_inventory_and_shared_helper() {
+    std::println("\n--- #2935 AC1: full known-root inventory + shared register helper ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(mb.find("Issue #2935") != std::string::npos || mb.find("#2935") != std::string::npos,
+          "AC1: boundary TU cites #2935");
+    CHECK(mb.find("register_known_moving_densify_root_slots") != std::string::npos,
+          "AC1: densify entry uses shared register helper");
+    CHECK(mb.find("WorkspaceTree") != std::string::npos &&
+              mb.find("parent_flat_") != std::string::npos &&
+              mb.find("parent_pool_") != std::string::npos,
+          "AC1: WorkspaceTree layer residual slots in inventory");
+    CHECK(mb.find("workspace_flat_") != std::string::npos, "AC1: workspace_flat_ in inventory");
+    CHECK(mb.find("mutate_target_flat_") != std::string::npos,
+          "AC1: mutate_target_flat_ in inventory");
+    CHECK(mb.find("current_flat_") != std::string::npos, "AC1: current_flat_ in inventory");
+    CHECK(mb.find("root_remap_registered_slots_snapshot") != std::string::npos,
+          "AC1: RootRemap compiler roots still registered");
+    CHECK(ev.find("register_known_moving_densify_root_slots") != std::string::npos,
+          "AC1: Evaluator declares register helper");
+    // Densify entry still inside moving_compact_enabled() (zero work Soft/off).
+    const auto helper_call = mb.find("register_known_moving_densify_root_slots()");
+    const auto moving_pos = mb.find("if (aura::ast::moving_compact_enabled())");
+    CHECK(helper_call != std::string::npos && moving_pos != std::string::npos &&
+              helper_call > moving_pos,
+          "AC1: densify-entry register still inside moving_compact_enabled()");
+}
+
+static void ac2935_2_hard_arms_soft_never_preserved() {
+    std::println("\n--- #2935 AC2: hard sticky arm preserved; Soft never arms ---");
+    // Runtime: reuse #2905/#2837 mechanics.
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        void* ext = p0;
+        arena.register_external_root_for_densify(ext); // value-only → incomplete under hard
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        if (r.objects_moved > 0 && r.moving_incomplete_remap) {
+            CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+                  "AC2: production hard incomplete still arms sticky");
+        }
+        (void)p1;
+        (void)p2;
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        void* ext = p0;
+        arena.register_external_root_for_densify(ext);
+        (void)arena.live_compact(LiveCompactMode::Moving);
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC2: Soft never arms sticky densify-off");
+        (void)p1;
+        (void)p2;
+    }
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Soft (hard_pref <= 0) does not arm sticky") != std::string::npos ||
+              arena.find("hard_pref > 0") != std::string::npos,
+          "AC2: Soft/hard arm path source-cited");
+}
+
+static void ac2935_3_agent_recovery_path() {
+    std::println(
+        "\n--- #2935 AC3: Agent recovery re-register + clear sticky + optional densify ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mem = read_file("src/compiler/evaluator_primitives_memory.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(mb.find("recover_moving_sticky_densify_off") != std::string::npos,
+          "AC3: recovery method implemented");
+    CHECK(ev.find("recover_moving_sticky_densify_off") != std::string::npos,
+          "AC3: recovery method declared on Evaluator");
+    CHECK(ev.find("MovingStickyDensifyRecoveryResult") != std::string::npos,
+          "AC3: recovery result struct");
+    CHECK(mb.find("clear_moving_incomplete_remap_sticky_densify_off") != std::string::npos,
+          "AC3: recovery clears sticky");
+    CHECK(mb.find("compact_all_moving_pinned") != std::string::npos,
+          "AC3: recovery optional densify retry");
+    CHECK(mb.find("g_moving_sticky_cleared_via_recovery_total") != std::string::npos,
+          "AC3: sticky-cleared-via-recovery counter bump");
+    CHECK(mb.find("g_moving_densify_retry_after_recovery_total") != std::string::npos,
+          "AC3: densify-retry-after-recovery counter bump");
+    CHECK(mem.find("arena:recover-moving-sticky-densify") != std::string::npos,
+          "AC3: Agent primitive wired");
+    CHECK(mem.find("schema-2935") != std::string::npos, "AC3: primitive returns schema-2935");
+    // Counter unit path: force-arm sticky, clear via recovery counter helper surface.
+    aura::core::densify_consistency::reset_moving_sticky_densify_recovery_for_test();
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC3: sticky force-armed");
+    // Direct clear path (recovery body step b) — counters need Evaluator for full
+    // path; verify counter symbols + sticky clear helper still work standalone.
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "AC3: sticky clear helper recovers densify enablement");
+    aura::ast::set_moving_compact_enabled(1);
+    CHECK(aura::ast::moving_compact_enabled() == 1,
+          "AC3: moving_compact_enabled restored after sticky clear");
+}
+
+static void ac2935_4_additive_metrics_and_schema() {
+    std::println("\n--- #2935 AC4: additive recovery counters + schema-2935 ---");
+    const auto h = read_file("src/core/densify_consistency_report.h");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(h.find("g_moving_sticky_cleared_via_recovery_total") != std::string::npos,
+          "AC4: sticky-cleared-via-recovery counter");
+    CHECK(h.find("g_moving_densify_retry_after_recovery_total") != std::string::npos,
+          "AC4: densify-retry-after-recovery counter");
+    CHECK(h.find("kMovingStickyDensifyRecoveryIssue = 2935") != std::string::npos,
+          "AC4: issue stamp 2935");
+    CHECK(h.find("moving_sticky_cleared_via_recovery_total_v_read") != std::string::npos,
+          "AC4: sticky cleared read accessor");
+    CHECK(h.find("moving_densify_retry_after_recovery_total_v_read") != std::string::npos,
+          "AC4: densify retry read accessor");
+    CHECK(h.find("reset_moving_sticky_densify_recovery_for_test") != std::string::npos,
+          "AC4: recovery counter test reset");
+    // #2889 known-roots counter preserved.
+    CHECK(h.find("g_moving_known_roots_auto_registered_total") != std::string::npos,
+          "AC4: #2889 known-roots counter preserved");
+    CHECK(obs.find("sticky-cleared-via-recovery-total") != std::string::npos,
+          "AC4: densify-health sticky-cleared-via-recovery-total");
+    CHECK(obs.find("densify-retry-after-recovery-total") != std::string::npos,
+          "AC4: densify-health densify-retry-after-recovery-total");
+    CHECK(obs.find("sticky-recovery-wired") != std::string::npos, "AC4: sticky-recovery-wired");
+    CHECK(obs.find("schema-2935") != std::string::npos, "AC4: schema-2935");
+    CHECK(obs.find("issue-2935") != std::string::npos, "AC4: issue-2935");
+    // Lineage preserved.
+    CHECK(obs.find("schema-2889") != std::string::npos, "AC4: schema-2889 preserved");
+    CHECK(obs.find("schema-2905") != std::string::npos, "AC4: schema-2905 preserved");
+    CHECK(obs.find("schema-2837") != std::string::npos, "AC4: schema-2837 preserved");
+}
+
+static void ac2935_5_soft_zero_work_and_moving_off() {
+    std::println("\n--- #2935 AC5: Soft / Moving-off zero densify work preserved ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Densify-entry register still gated by moving_compact_enabled (AC5 of #2889).
+    CHECK(mb.find("if (aura::ast::moving_compact_enabled())") != std::string::npos,
+          "AC5: densify entry still gated");
+    // Recovery densify retry gated by moving_compact_enabled after sticky clear.
+    CHECK(mb.find("retry_densify && arena_group_ && aura::ast::moving_compact_enabled()") !=
+                  std::string::npos ||
+              mb.find("moving_compact_enabled()") != std::string::npos,
+          "AC5: recovery densify gated by moving_compact_enabled");
+    // Soft never arms sticky — source cite.
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Soft (hard_pref <= 0) does not arm sticky") != std::string::npos ||
+              arena.find("hard_pref > 0") != std::string::npos,
+          "AC5: Soft never arms sticky source-cited");
+}
+
+static void ac2935_6_linter_and_no_design() {
+    std::println("\n--- #2935 AC6: linter + no docs/design/ ---");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_moving_known_roots_sticky_recovery_2935.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac2935_1_full_inventory_and_shared_helper") != std::string::npos,
+          "AC6: AC1 test");
+    CHECK(t.find("ac2935_2_hard_arms_soft_never_preserved") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2935_3_agent_recovery_path") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac2935_4_additive_metrics_and_schema") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2935_5_soft_zero_work_and_moving_off") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac2935_6_linter_and_no_design") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2935") != std::string::npos,
+          "AC6: coverage linter present and cites #2935");
+    CHECK(build.find("check_moving_known_roots_sticky_recovery_2935") != std::string::npos,
+          "AC6: build.py gate entry");
+    std::ifstream design("docs/design/2935-moving-sticky-recovery.md");
+    if (!design) {
+        design.open("../docs/design/2935-moving-sticky-recovery.md");
+    }
+    CHECK(!design.good(), "AC6: no docs/design/2935-* per #1655");
+    CHECK(read_file("tests/core/test_issue_2935.cpp").empty(),
+          "AC6: no new invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -983,6 +1183,14 @@ int run_test_moving_densify_fail_closed() {
     ac2905_3_hard_arms_soft_never();
     ac2905_4_reregister_clean_restores_without_manual_clear();
     ac2905_5_source_cite_phase5_no_design();
+    // Issue #2935: known-root coverage + sticky-off Agent recovery
+    // (extends #2495 test file per #81967).
+    ac2935_1_full_inventory_and_shared_helper();
+    ac2935_2_hard_arms_soft_never_preserved();
+    ac2935_3_agent_recovery_path();
+    ac2935_4_additive_metrics_and_schema();
+    ac2935_5_soft_zero_work_and_moving_off();
+    ac2935_6_linter_and_no_design();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 

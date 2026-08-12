@@ -2807,45 +2807,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 aura::ast::g_moving_untracked_external_roots_total.load(std::memory_order_relaxed);
             panic_depth_baseline =
                 aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_relaxed);
-            // Issue #2889: auto-register known intermediate buffers + compiler
-            // external roots into the Moving densify window BEFORE compact runs.
-            // Previously these slots were never registered (#2837 API was
-            // test-only), so known intermediates (workspace / mutate-target /
-            // current flat+pool, RootRemap stable + closure capture slots) were
-            // counted as untracked → false sticky densify-off / incomplete_remap
-            // under production. Truly foreign pointers stay unregistered → hard
-            // fail-closed preserved (AC2). Soft / no Moving never reaches here
-            // → zero extra work (AC3). Additive counters only (AC4).
-            {
-                using aura::compiler::root_remap_registered_slots_snapshot;
-                std::vector<void**> known_slots;
-                known_slots.reserve(8);
-                if (ev_->workspace_flat_)
-                    known_slots.push_back(reinterpret_cast<void**>(&ev_->workspace_flat_));
-                if (ev_->workspace_pool_)
-                    known_slots.push_back(reinterpret_cast<void**>(&ev_->workspace_pool_));
-                if (ev_->mutate_target_flat_)
-                    known_slots.push_back(reinterpret_cast<void**>(&ev_->mutate_target_flat_));
-                if (ev_->mutate_target_pool_)
-                    known_slots.push_back(reinterpret_cast<void**>(&ev_->mutate_target_pool_));
-                if (ev_->current_flat_)
-                    known_slots.push_back(reinterpret_cast<void**>(&ev_->current_flat_));
-                if (ev_->current_pool_)
-                    known_slots.push_back(reinterpret_cast<void**>(&ev_->current_pool_));
-                // Compiler roots: RootRemap host-registered stable refs +
-                // closure captures are known compiler external roots.
-                for (void** slot : root_remap_registered_slots_snapshot()) {
-                    if (slot != nullptr && *slot != nullptr)
-                        known_slots.push_back(slot);
-                }
-                if (!known_slots.empty() && ev_->arena_group_) {
-                    for (void** slot : known_slots)
-                        ev_->arena_group_->register_external_root_slot_for_densify_all(slot);
-                    aura::core::densify_consistency::g_moving_known_roots_auto_registered_total
-                        .fetch_add(static_cast<std::uint64_t>(known_slots.size()),
-                                   std::memory_order_relaxed);
-                }
-            }
+            // Issue #2889 / #2935: auto-register known intermediate buffers +
+            // compiler external roots into the Moving densify window BEFORE
+            // compact runs. Shared helper
+            // Evaluator::register_known_moving_densify_root_slots() walks the
+            // full inventory (workspace / mutate-target / current flat+pool,
+            // WorkspaceTree layer slots, RootRemap stable + closure capture).
+            // Soft / no Moving never reaches here → zero extra work (AC5).
+            // Truly foreign pointers stay unregistered → hard fail-closed
+            // preserved (AC2). Additive counters only (AC4).
+            (void)ev_->register_known_moving_densify_root_slots();
             const auto compact_r = ev_->arena_group_
                                        ? ev_->arena_group_->compact_all_moving_pinned()
                                        : aura::ast::AdaptiveCompactResult{};
@@ -4231,6 +4202,104 @@ Evaluator::transaction_guard_host_for_region(Evaluator& ev, std::uint64_t region
         /*clear=*/nullptr,
         /*host_owns_panic_checkpoint=*/true,
     };
+}
+
+// Issue #2935 / #2889: exhaustive known intermediate + compiler root inventory
+// for Moving densify. Shared by densify-entry walk and Agent sticky recovery.
+std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
+    if (!arena_group_)
+        return 0;
+    using aura::compiler::root_remap_registered_slots_snapshot;
+    std::vector<void**> known_slots;
+    known_slots.reserve(16);
+    // Production intermediate buffers (#2889 inventory).
+    if (workspace_flat_)
+        known_slots.push_back(reinterpret_cast<void**>(&workspace_flat_));
+    if (workspace_pool_)
+        known_slots.push_back(reinterpret_cast<void**>(&workspace_pool_));
+    if (mutate_target_flat_)
+        known_slots.push_back(reinterpret_cast<void**>(&mutate_target_flat_));
+    if (mutate_target_pool_)
+        known_slots.push_back(reinterpret_cast<void**>(&mutate_target_pool_));
+    if (current_flat_)
+        known_slots.push_back(reinterpret_cast<void**>(&current_flat_));
+    if (current_pool_)
+        known_slots.push_back(reinterpret_cast<void**>(&current_pool_));
+    // Issue #2935 residual: WorkspaceTree layer slots may hold the same
+    // arena-allocated FlatAST/StringPool (or parent pointers) as the
+    // Evaluator members — densify must rewrite every external void** that
+    // aliases a moved object. COW heap clones are safe no-ops (not in
+    // last_object_remap_). Tombstoned layers keep null slots skipped.
+    if (workspace_tree_) {
+        auto* wt = static_cast<WorkspaceTree*>(workspace_tree_);
+        for (auto& node : wt->nodes_) {
+            if (node.flat)
+                known_slots.push_back(reinterpret_cast<void**>(&node.flat));
+            if (node.pool)
+                known_slots.push_back(reinterpret_cast<void**>(&node.pool));
+            if (node.parent_flat_)
+                known_slots.push_back(reinterpret_cast<void**>(&node.parent_flat_));
+            if (node.parent_pool_)
+                known_slots.push_back(reinterpret_cast<void**>(&node.parent_pool_));
+        }
+    }
+    // Compiler roots: RootRemap host-registered stable refs + closure captures.
+    for (void** slot : root_remap_registered_slots_snapshot()) {
+        if (slot != nullptr && *slot != nullptr)
+            known_slots.push_back(slot);
+    }
+    if (known_slots.empty())
+        return 0;
+    for (void** slot : known_slots)
+        arena_group_->register_external_root_slot_for_densify_all(slot);
+    aura::core::densify_consistency::g_moving_known_roots_auto_registered_total.fetch_add(
+        static_cast<std::uint64_t>(known_slots.size()), std::memory_order_relaxed);
+    return known_slots.size();
+}
+
+// Issue #2935: Agent recovery after sticky densify-off.
+// (a) re-register known roots (b) clear sticky when armed
+// (c) optional one-shot Moving densify via compact_all_moving_pinned.
+Evaluator::MovingStickyDensifyRecoveryResult
+Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
+    MovingStickyDensifyRecoveryResult out{};
+    out.sticky_was_on = aura::ast::moving_incomplete_remap_sticky_densify_off();
+    // (a) always re-register known roots so a subsequent densify (here or at
+    // the next outermost boundary) has the full inventory in-window.
+    out.roots_registered = register_known_moving_densify_root_slots();
+    // (b) clear sticky densify-off when armed — Agent-visible recovery path
+    // (distinct from #2905 auto-clear on unified green densify).
+    if (out.sticky_was_on) {
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        out.sticky_cleared = !aura::ast::moving_incomplete_remap_sticky_densify_off();
+        if (out.sticky_cleared) {
+            aura::core::densify_consistency::g_moving_sticky_cleared_via_recovery_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    // (c) optional one-shot Moving densify under the same Moving-enabled rules
+    // as densify entry. Skip when Moving still disabled (pref/env off) or no
+    // arena_group — Soft / AURA_ARENA_MOVING_COMPACT=0 stay zero densify work.
+    if (retry_densify && arena_group_ && aura::ast::moving_compact_enabled()) {
+        const auto compact_r = arena_group_->compact_all_moving_pinned();
+        out.densify_retried = true;
+        out.pin_contract_held = compact_r.pin_contract_held;
+        out.incomplete_remap = compact_r.moving_incomplete_remap_any;
+        aura::core::densify_consistency::g_moving_densify_retry_after_recovery_total.fetch_add(
+            1, std::memory_order_relaxed);
+        // Clean recovery densify also auto-clears sticky via live_compact /
+        // Phase-5 path; keep sticky_cleared accurate if densify re-armed it.
+        if (aura::ast::moving_incomplete_remap_sticky_densify_off()) {
+            out.sticky_cleared = false;
+        }
+    }
+    // Success: sticky trap lifted (or never armed) AND when densify retried,
+    // pin_contract_held + no incomplete remap (AC3).
+    const bool sticky_ok = !out.sticky_was_on || out.sticky_cleared;
+    const bool densify_ok =
+        !out.densify_retried || (out.pin_contract_held && !out.incomplete_remap);
+    out.success = sticky_ok && densify_ok;
+    return out;
 }
 
 } // namespace aura::compiler

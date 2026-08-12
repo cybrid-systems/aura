@@ -161,6 +161,24 @@ inline constexpr int kMovingKnownRootsAutoRegisterIssue = 2889;
 inline void reset_moving_known_roots_auto_registered_for_test() noexcept {
     g_moving_known_roots_auto_registered_total.store(0, std::memory_order_relaxed);
 }
+// Issue #2935: Agent recovery after sticky densify-off (re-register known
+// roots + clear sticky + optional one-shot Moving densify retry). Additive
+// only — does not gate fail-closed incomplete-remap / production hard arm.
+// Soft never arms sticky (#2905 AC3), so Soft recovery leaves these at 0
+// unless an Agent force-arms sticky under test.
+inline std::atomic<std::uint64_t> g_moving_sticky_cleared_via_recovery_total{0};
+inline std::atomic<std::uint64_t> g_moving_densify_retry_after_recovery_total{0};
+inline constexpr int kMovingStickyDensifyRecoveryIssue = 2935;
+[[nodiscard]] inline std::uint64_t moving_sticky_cleared_via_recovery_total_v_read() noexcept {
+    return g_moving_sticky_cleared_via_recovery_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t moving_densify_retry_after_recovery_total_v_read() noexcept {
+    return g_moving_densify_retry_after_recovery_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_sticky_densify_recovery_for_test() noexcept {
+    g_moving_sticky_cleared_via_recovery_total.store(0, std::memory_order_relaxed);
+    g_moving_densify_retry_after_recovery_total.store(0, std::memory_order_relaxed);
+}
 inline std::atomic<std::uint8_t> g_last_densify_envframe_fail_code{0};
 inline std::atomic<std::uint8_t> g_last_densify_closure_fail_code{0};
 
