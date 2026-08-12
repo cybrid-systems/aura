@@ -1137,6 +1137,19 @@ def cmd_lint():
             "Issue #2774 multi-via-single ban linter failed — run python3 scripts/coverage/checks/check_batch_dirty_multi_via_single_ban_2774.py"
         )
         return r
+    # Issue #2936: production multi-block IR dirty = batch API only smoke
+    # (hard-expect residual multi-via-single == 0; optional AURA_IR_DIRTY_BATCH_ONLY
+    # assert). Extends test_batch_dirty_discipline (#81967); no docs/design/.
+    mpo_script = COVERAGE_CHECKS / "check_batch_dirty_production_multi_only_2936.py"
+    if not mpo_script.exists():
+        fail(f"missing {mpo_script}")
+        return 1
+    r = run([sys.executable, str(mpo_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2936 production multi-only dirty linter failed — run python3 scripts/coverage/checks/check_batch_dirty_production_multi_only_2936.py"
+        )
+        return r
     # Issue #2776: AotReloadConsistencyProof concurrent stamp — fetch_add
     # stamp_epoch (no lost-update RMW) + seqlock multi-field snapshot
     # (#2753 residual). ac2776_* in test_reload_recovery_query per #81967.
@@ -6429,6 +6442,32 @@ def cmd_batch_dirty_discipline_coverage():
         return 1
     ok("batch dirty cascade discipline (#2615) coverage clean")
     return 0
+
+
+def cmd_batch_dirty_production_multi_only_2936_coverage():
+    """Issue #2936: production multi-block IR dirty must use batch API only (static)."""
+    print(f"{B}=== batch dirty production multi-only coverage (#2936) ==={N}")
+    script = COVERAGE_CHECKS / "check_batch_dirty_production_multi_only_2936.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("batch dirty production multi-only (#2936) coverage contract rows failed")
+        return 1
+    ok("batch dirty production multi-only (#2936) coverage clean")
+    return 0
+
+
+def cmd_batch_dirty_production_multi_only_2936():
+    """Issue #2936: production multi-block dirty = batch APIs only.
+
+    Residual multi-via-single (#2774 Soft metric) hard-expects 0 under production
+    smoke. Optional AURA_IR_DIRTY_BATCH_ONLY=1 aborts on residual; Soft/unit
+    intentional residual remains when env unset. schema-2936 + smoke-wired.
+    """
+    print(f"{B}=== batch dirty production multi-only (#2936) ==={N}")
+    return cmd_batch_dirty_production_multi_only_2936_coverage()
 
 
 def cmd_moving_unified_success_2682_coverage():
@@ -12754,6 +12793,8 @@ def main():
         "type-linear-commit-health": cmd_type_linear_commit_health_coverage,
         "hot-children-columnar": cmd_hot_children_columnar_coverage,
         "batch-dirty-discipline": cmd_batch_dirty_discipline_coverage,
+        "batch-dirty-production-multi-only-2936": cmd_batch_dirty_production_multi_only_2936,
+        "batch-dirty-production-multi-only-2936-coverage": cmd_batch_dirty_production_multi_only_2936_coverage,
         "moving-unified-success-2682": cmd_moving_unified_success_2682_coverage,
         "moving-sticky-densify-off-2905": cmd_moving_sticky_densify_off_2905,
         "moving-sticky-densify-off-2905-coverage": cmd_moving_sticky_densify_off_2905_coverage,

@@ -185,13 +185,35 @@ export inline std::atomic<std::uint64_t> g_ir_soa_batch_dirty_blocks_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_single_dirty_marks_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_batch_bit_only_cascades_total{0};
 
-// Issue #2774: residual multi-block cascade via N× mark_block_dirty on the
-// same function without an intervening batch API. Soft production metric —
-// Agents / CI smoke fail when residual > 0 under production defaults.
-// True single-block mark_block_dirty remains AC2 (streak stays 1).
+// Issue #2774 / #2936: residual multi-block cascade via N× mark_block_dirty
+// on the same function without an intervening batch API. Soft production
+// metric — Agents / CI smoke fail when residual > 0 under production
+// defaults (#2936 hard-expects residual==0, mirrors #2618 residual AoS
+// smoke). True single-block mark_block_dirty remains AC2 (streak stays 1).
+// Production multi-block entry is mark_blocks_dirty / mark_blocks_dirty_bits_only
+// / mark_all_blocks_dirty only (batch clears streak). Optional hard assert
+// when AURA_IR_DIRTY_BATCH_ONLY=1 (debug / production pack discipline).
 export inline constexpr int kIrSoaMultiViaSingleBanIssue = 2774;
+export inline constexpr int kSchemaResidualMultiViaSingleProductionSmoke = 2936;
 export inline std::atomic<std::uint64_t> g_ir_soa_residual_multi_via_single_cascades_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_residual_multi_via_single_marks_total{0};
+// Issue #2936: production-smoke-wired sentinel (additive observability).
+export inline std::atomic<std::uint64_t>&
+g_ir_dirty_batch_only_production_smoke_wired_atomic() noexcept {
+    static std::atomic<std::uint64_t> v{1};
+    return v;
+}
+export [[nodiscard]] inline std::uint64_t ir_dirty_batch_only_production_smoke_wired() noexcept {
+    return g_ir_dirty_batch_only_production_smoke_wired_atomic().load(std::memory_order_acquire);
+}
+// Issue #2936: true when AURA_IR_DIRTY_BATCH_ONLY=1 — residual multi-via-single
+// hard-aborts (debug/production pack). Unit tests that intentionally trip
+// residual leave this unset (AC5 Soft/test residual still works).
+export [[nodiscard]] inline bool ir_dirty_batch_only_hard() noexcept {
+    if (const char* e = std::getenv("AURA_IR_DIRTY_BATCH_ONLY"))
+        return e[0] == '1';
+    return false;
+}
 
 // ── Issue #2773: logical invalidation epoch (process-wide) ──────────
 // One tick per *logical* cascade so Agents can answer "how many fence
@@ -618,9 +640,20 @@ namespace detail {
         if (last == self) {
             ++streak;
             // First time we observe ≥2 singles on same fn without batch → cascade residual.
-            if (streak == 2)
+            if (streak == 2) {
                 g_ir_soa_residual_multi_via_single_cascades_total.fetch_add(
                     1, std::memory_order_relaxed);
+                // Issue #2936: optional hard discipline (AURA_IR_DIRTY_BATCH_ONLY=1).
+                // Soft / unit residual exercise leaves env unset → metric only (AC5).
+                // Production packs / debug can set env=1 to fail-closed on residual.
+                if (ir_dirty_batch_only_hard()) {
+                    std::fprintf(
+                        stderr, "[#2936] FATAL: residual multi-via-single mark_block_dirty cascade "
+                                "(use mark_blocks_dirty / mark_blocks_dirty_bits_only / "
+                                "mark_all_blocks_dirty; AURA_IR_DIRTY_BATCH_ONLY=1)\n");
+                    std::abort();
+                }
+            }
             // Every single mark from the 2nd onward is a residual mark.
             if (streak >= 2)
                 g_ir_soa_residual_multi_via_single_marks_total.fetch_add(1,
