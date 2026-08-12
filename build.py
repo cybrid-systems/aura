@@ -9252,6 +9252,24 @@ def cmd_producer_bp_budget_2925_coverage():
     return 0
 
 
+def cmd_scope_resolve_2926_coverage():
+    """Issue #2926: session-local scope-resolve by name.
+
+    AgentScope::find + orch:scope-resolve; no global AgentRegistry.
+    """
+    print(f"{B}=== scope-resolve coverage (#2926) ==={N}")
+    script = COVERAGE_CHECKS / "check_scope_resolve_2926.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("scope-resolve (#2926) coverage contract rows failed")
+        return 1
+    ok("scope-resolve (#2926) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -12385,6 +12403,7 @@ def main():
         "isolation-decide-2923": cmd_isolation_decide_2923_coverage,
         "wait-reclaimed-2924": cmd_wait_reclaimed_2924_coverage,
         "producer-bp-budget-2925": cmd_producer_bp_budget_2925_coverage,
+        "scope-resolve-2926": cmd_scope_resolve_2926_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

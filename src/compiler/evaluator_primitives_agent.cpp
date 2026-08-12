@@ -3847,6 +3847,86 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return build_orch_hash(kv);
     });
 
+    // Issue #2926: orch:scope-resolve name [:include-descendants bool]
+    // Session-local live find on the per-Evaluator AgentScope (no global
+    // AgentRegistry). Best-effort against handles_ (+ optional children).
+    // Missing name → ok=#f status=not-found (never hang). After join_all,
+    // fiber may be done — ok=#t with status=done (handle still in scope).
+    // After scope slot dropped (empty session) → not-found.
+    add("orch:scope-resolve",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0])) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:scope-resolve: usage (orch:scope-resolve name "
+                                            "[:include-descendants bool])",
+                                            ev.primitive_error_counter_ptr());
+            }
+            const auto name = heap_str_from(ev.string_heap_, a[0]);
+            bool include_descendants = true;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if ((k == "include-descendants" || k == "include_descendants") &&
+                    types::is_bool(val)) {
+                    include_descendants = types::as_bool(val);
+                }
+            }
+            aura::orch::g_orch_module_stats.scope_resolve_total.fetch_add(
+                1, std::memory_order_relaxed);
+            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            aura::orch::AgentHandle* hp = scope ? scope->find(name, include_descendants) : nullptr;
+            if (!hp) {
+                aura::orch::g_orch_module_stats.scope_resolve_miss_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                const auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("not-found");
+                const auto nidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(std::string(name));
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"name", make_string(nidx)},
+                    {"status", make_string(sidx)},
+                    {"schema", make_int(2926)},
+                    {"schema-2926", make_int(2926)},
+                    {"schema-2751", make_int(aura::orch::kAgentDirectoryIssue)},
+                    {"schema-2588", make_int(2588)},
+                    {"issue-2926", make_int(2926)},
+                    {"scope-resolve-wired", make_int(1)},
+                };
+                return build_orch_hash(kv);
+            }
+            // Live status (same labels as directory_snapshot #2751).
+            const char* st = "unknown";
+            if (!hp->ok) {
+                st = "spawn-failed";
+            } else if (!hp->fiber) {
+                st = "unknown";
+            } else if (hp->fiber->is_done()) {
+                st = "done";
+            } else if (hp->fiber->is_cancel_requested()) {
+                st = "cancelled";
+            } else {
+                st = "alive";
+            }
+            const auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(st);
+            const auto nidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(hp->name.empty() ? std::string(name) : hp->name);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(hp->ok)},
+                {"id", make_int(static_cast<std::int64_t>(hp->id))},
+                {"name", make_string(nidx)},
+                {"status", make_string(sidx)},
+                {"schema", make_int(2926)},
+                {"schema-2926", make_int(2926)},
+                {"schema-2751", make_int(aura::orch::kAgentDirectoryIssue)},
+                {"schema-2588", make_int(2588)},
+                {"issue-2926", make_int(2926)},
+                {"scope-resolve-wired", make_int(1)},
+            };
+            return build_orch_hash(kv);
+        });
+
     // Issue #2751: orch:agent-directory — session-level Agent directory
     // surface (per-Evaluator AgentScope snapshot; NOT a process-global
     // registry). Optional filters:
@@ -5030,6 +5110,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("agent-directory-wired", 1);
             insert_kv("schema-2751", aura::orch::kAgentDirectoryIssue);
             insert_kv("issue-2751", aura::orch::kAgentDirectoryIssue);
+            // Issue #2926: session-local scope-resolve metrics.
+            insert_kv("scope-resolve-total", static_cast<std::int64_t>(os.scope_resolve_total.load(
+                                                 std::memory_order_relaxed)));
+            insert_kv("scope-resolve-miss-total",
+                      static_cast<std::int64_t>(
+                          os.scope_resolve_miss_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2926", 2926);
+            insert_kv("issue-2926", 2926);
+            insert_kv("scope-resolve-wired", 1);
             // Issue #2153: secondary drain residual / wait after non-Ok cancel.
             insert_kv("join-drain-residual-total",
                       static_cast<std::int64_t>(

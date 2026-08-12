@@ -589,6 +589,24 @@ public:
         return snap;
     }
 
+    // Issue #2926: session-local live resolve by name (no process-global
+    // AgentRegistry). Best-effort against current handles_ (+ optional
+    // descendant scopes under #2537). Concurrent spawn may race (same
+    // serial-owner model as directory_snapshot). Returns nullptr on miss.
+    // After join_all, handles may remain with fiber done — find still
+    // returns them (caller reads status via fiber/is_done); after the
+    // per-Evaluator scope slot is dropped, Aura resolve returns not-found.
+    [[nodiscard]] AgentHandle* find(std::string_view name,
+                                    bool include_descendants = true) noexcept {
+        ScopeEnterGuard g(this, "find");
+        return find_unlocked_(name, include_descendants);
+    }
+    [[nodiscard]] const AgentHandle* find(std::string_view name,
+                                          bool include_descendants = true) const noexcept {
+        ScopeEnterGuard g(this, "find");
+        return find_unlocked_(name, include_descendants);
+    }
+
     // Supervision root: cancel + best-effort drain + release before
     // destruction. join_agents handles cancel+drain on non-Ok internally
     // (#2082), and per-handle release_agent_memory_reservation is
@@ -747,6 +765,43 @@ private:
         if (d == 1) {
             owner_tid_.store(std::thread::id{}, std::memory_order_release);
         }
+    }
+
+    // Issue #2926: name walk without taking a second enter on *this*
+    // (caller already holds ScopeEnterGuard). Children take their own enter.
+    [[nodiscard]] AgentHandle* find_unlocked_(std::string_view name,
+                                              bool include_descendants) noexcept {
+        for (auto& h : handles_) {
+            if (h.name == name)
+                return &h;
+        }
+        if (!include_descendants)
+            return nullptr;
+        for (auto& c : children_) {
+            if (!c)
+                continue;
+            ScopeEnterGuard cg(c.get(), "find");
+            if (auto* p = c->find_unlocked_(name, /*include_descendants=*/true))
+                return p;
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const AgentHandle* find_unlocked_(std::string_view name,
+                                                    bool include_descendants) const noexcept {
+        for (const auto& h : handles_) {
+            if (h.name == name)
+                return &h;
+        }
+        if (!include_descendants)
+            return nullptr;
+        for (const auto& c : children_) {
+            if (!c)
+                continue;
+            ScopeEnterGuard cg(c.get(), "find");
+            if (const auto* p = c->find_unlocked_(name, /*include_descendants=*/true))
+                return p;
+        }
+        return nullptr;
     }
 
     // Issue #2751 / #2777: collect into snap. Caller must hold ScopeEnterGuard
