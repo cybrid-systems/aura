@@ -3077,6 +3077,11 @@ def test_mutation():
 def test_runtime_unit():
     """runtime.c 单元测试"""
     print(f"{B}═══ runtime.c Unit Tests ═══{N}")
+    import tempfile
+
+    # Unique output path so suite-level parallelism cannot clobber /tmp/runtime_test.
+    td = tempfile.mkdtemp(prefix="aura_runtime_c_")
+    out_bin = str(Path(td) / "runtime_test")
     r = subprocess.run(
         [
             "gcc",
@@ -3085,7 +3090,7 @@ def test_runtime_unit():
             str(ROOT / "tests" / "runtime_test_harness.c"),
             str(ROOT / "lib" / "runtime.c"),
             "-o",
-            "/tmp/runtime_test",
+            out_bin,
             "-lm",
         ],
         capture_output=True,
@@ -3096,7 +3101,7 @@ def test_runtime_unit():
         print(r.stderr[:500])
         fail("runtime.c test compilation failed")
         return 1
-    r = subprocess.run(["/tmp/runtime_test"], capture_output=True, text=True, timeout=30)
+    r = subprocess.run([out_bin], capture_output=True, text=True, timeout=30)
     print(r.stdout)
     if r.returncode != 0:
         fail("runtime.c unit tests failed")
@@ -3457,53 +3462,112 @@ SUITE_S0_FILES = frozenset(
 )
 
 
+def _suite_jobs() -> int:
+    """Parallel workers for tests/suite/*.aura (AURA_SUITE_JOBS).
+
+    Default: when AURA_TEST_JOBS>1 (CI), use min(8, nproc, AURA_TEST_JOBS);
+    otherwise 1 (local serial for simpler logs).
+    """
+    raw = os.environ.get("AURA_SUITE_JOBS", "").strip()
+    if raw.isdigit():
+        return max(1, int(raw))
+    tj = _test_jobs()
+    if tj <= 1:
+        return 1
+    nproc = os.cpu_count() or 4
+    return max(1, min(8, nproc, tj))
+
+
 def test_suite_runner(*, s0: bool = False):
     """Run all tests/suite/*.aura files.
 
     s0=True sets AURA_PRIMITIVES=s0 and only runs SUITE_S0_FILES (surface smoke).
+    Parallelism via AURA_SUITE_JOBS (see _suite_jobs). Each case is a separate
+    aura process; the binary is read-only so cases are independent.
     """
     label = "Suite tests (s0)" if s0 else "Suite tests"
     print(f"{B}═══ {label} ═══{N}")
+    if not AURA.exists():
+        fail(f"{AURA} not found — run 'build' first")
+        return 1
     root = ROOT / "tests" / "suite"
-    passed = 0
-    failed = 0
-    skipped = 0
     env = _aura_test_env()
     if s0:
         env["AURA_PRIMITIVES"] = "s0"
+
+    # Collect work items first (skip bookkeeping is sequential and cheap).
+    work: list[Path] = []
+    skipped = 0
     for f in sorted(root.glob("*.aura")):
         if f.name == "run-tests.aura":
             continue
-        name = f.stem
         if f.name in SUITE_SKIP:
-            print(f"  {Y}↷{N}  suite/{name}.aura: SKIPPED — {SUITE_SKIP[f.name]}")
+            print(f"  {Y}↷{N}  suite/{f.stem}.aura: SKIPPED — {SUITE_SKIP[f.name]}")
             skipped += 1
             continue
         if s0 and f.name not in SUITE_S0_FILES:
-            continue  # not part of s0 smoke set (silent skip; not counted)
-        code = f.read_text()
-        if not code:
-            warn(f"  suite/{name}.aura: empty")
-            failed += 1
             continue
-        r = subprocess.run(
-            [str(AURA), "--load", str(f)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=env,
-        )
+        work.append(f)
+
+    def _run_one(f: Path) -> tuple[str, bool, str]:
+        name = f.stem
+        try:
+            code = f.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return name, False, str(e)[:80]
+        if not code:
+            return name, False, "empty"
+        try:
+            r = subprocess.run(
+                [str(AURA), "--load", str(f)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            return name, False, "timeout 120s"
         if r.returncode == 0:
-            ok(f"  suite/{name}.aura")
-            passed += 1
-        else:
-            errstr = r.stderr[:80] if r.stderr else r.stdout[:80]
-            warn(f"  suite/{name}.aura: {errstr}")
-            failed += 1
+            return name, True, ""
+        errstr = (r.stderr or r.stdout or "")[:80]
+        return name, False, errstr
+
+    jobs = _suite_jobs()
+    passed = 0
+    failed = 0
+    if jobs <= 1 or len(work) <= 1:
+        for f in work:
+            name, ok_case, err = _run_one(f)
+            if ok_case:
+                ok(f"  suite/{name}.aura")
+                passed += 1
+            else:
+                warn(f"  suite/{name}.aura: {err}")
+                failed += 1
+    else:
+        print(f"  suite parallel jobs={jobs} cases={len(work)}")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            futs = {pool.submit(_run_one, f): f for f in work}
+            # Preserve deterministic print order by stem.
+            results: dict[str, tuple[bool, str]] = {}
+            for fut in as_completed(futs):
+                name, ok_case, err = fut.result()
+                results[name] = (ok_case, err)
+            for name in sorted(results):
+                ok_case, err = results[name]
+                if ok_case:
+                    ok(f"  suite/{name}.aura")
+                    passed += 1
+                else:
+                    warn(f"  suite/{name}.aura: {err}")
+                    failed += 1
+
     total = passed + failed + skipped
     summary = f"  Suite: {passed}/{total} passed"
     if skipped:
         summary += f" ({skipped} skipped)"
+    if jobs > 1:
+        summary += f" [jobs={jobs}]"
     if s0:
         summary += " [AURA_PRIMITIVES=s0]"
     print(summary)
@@ -3545,7 +3609,11 @@ CI_SAFETY = ["gradual", "regression", "p0"]
 # AURA_ISSUES_TIER=full on main (all ~90+ binaries).
 CI_ISSUES = ["issues"]
 CI_ISSUES_FAST = ["issues-fast"]
-# Suites safe to run in parallel (separate binaries / no shared /tmp paths).
+# Suites safe to run in parallel (each spawns its own process / binary).
+# Aura is read-only under Soft sandbox defaults (_aura_test_env).
+# Kept serial:
+#   - p0: tests/python/test_regression.py uses fixed /tmp/aura-* paths
+#   - bench: heavy, optional, wall-clock SLO
 CI_PARALLEL_SAFE = frozenset(
     {
         "unit",
@@ -3555,6 +3623,12 @@ CI_PARALLEL_SAFE = frozenset(
         "repl",
         "gradual",
         "runtime-c",
+        "integ",
+        "typecheck",
+        "smoke",
+        "bash",
+        "suite",
+        "regression",
     }
 )
 
@@ -3672,7 +3746,7 @@ def cmd_test(suite_names: list[str]):
 
     if parallel:
         workers = min(jobs, len(parallel))
-        print(f"{B}Running {len(parallel)} parallel-safe suites (jobs={workers}); {len(serial)} aura suites serial{N}")
+        print(f"{B}Running {len(parallel)} parallel-safe suites (jobs={workers}); {len(serial)} suite(s) serial{N}")
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(_run_suite, label, fn): label for label, fn in parallel}
             for fut in as_completed(futures):
