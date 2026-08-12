@@ -81,8 +81,13 @@ def _scan_file(path: Path) -> list[tuple[int, str, str]]:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
+    # Cheap prefilter: no sandbox_mode → no possible direct write hit.
+    if "sandbox_mode" not in text:
+        return []
     hits: list[tuple[int, str, str]] = []
     for i, raw in enumerate(text.splitlines(), start=1):
+        if "sandbox_mode" not in raw:
+            continue
         stripped = _strip_comments(raw)
         if not stripped.strip():
             continue
@@ -97,6 +102,10 @@ def _is_authority_path(rel: Path) -> bool:
     return rel.as_posix() in AUTHORITY_FILES
 
 
+# Production + tests only (authority rule is about process code, not docs/scripts).
+_SCAN_ROOTS = ("src", "tests")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--strict", action="store_true", help="exit 1 on any direct write outside the authority")
@@ -104,13 +113,21 @@ def main() -> int:
     args = ap.parse_args()
 
     findings: list[dict] = []
-    for path in sorted(ROOT.rglob("*")):
-        if not path.is_file():
+    # Avoid ROOT.rglob("*") over the whole checkout (build/, scripts/, …).
+    paths: list[Path] = []
+    for root_name in _SCAN_ROOTS:
+        root = ROOT / root_name
+        if not root.is_dir():
             continue
-        if path.suffix not in SCAN_EXTENSIONS:
-            continue
-        if any(seg in path.parts for seg in ("build", ".git", "node_modules")):
-            continue
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix not in SCAN_EXTENSIONS:
+                continue
+            if any(seg in path.parts for seg in ("build", ".git", "node_modules")):
+                continue
+            paths.append(path)
+    for path in sorted(paths):
         rel = path.relative_to(ROOT)
         hits = _scan_file(path)
         if not hits:

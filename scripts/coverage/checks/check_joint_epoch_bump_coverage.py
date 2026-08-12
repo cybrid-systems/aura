@@ -35,7 +35,6 @@ Exit 0 = all rows satisfied.
 from __future__ import annotations
 
 import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -95,23 +94,34 @@ def check_split_bumps(rel: str, haystack: str) -> list[str]:
     parts = rel_norm.split("/")
     if any(p in {"tests", "benchmarks", "scripts"} for p in parts):
         return fails
+    # Cheap prefilter before regex finditer + line counting.
+    if "g_current_bridge_epoch" not in haystack and "g_aot_table_epoch" not in haystack:
+        return fails
+    # Line map once if we may have hits.
     for pat, label in FORBIDDEN_PATTERNS:
         for m in pat.finditer(haystack):
-            line_no = haystack[: m.start()].count("\n") + 1
+            line_no = haystack.count("\n", 0, m.start()) + 1
             fails.append(f"{rel}:{line_no}: forbidden split-domain bump pattern {label!r}")
     return fails
 
 
 def scan_src_tree() -> list[str]:
-    """Scan src/**/*.cpp + src/**/*.ixx for forbidden patterns."""
+    """Scan src/**/*.{cpp,ixx,h,hh} for forbidden patterns."""
     fails: list[str] = []
     src = ROOT / "src"
     if not src.is_dir():
         return fails
     for ext in ("*.cpp", "*.ixx", "*.h", "*.hh"):
-        for p in sorted(src.rglob(ext)):
-            rel = str(p.relative_to(ROOT))
-            text = p.read_text(encoding="utf-8", errors="replace")
+        for p in src.rglob(ext):
+            rel = str(p.relative_to(ROOT)).replace("\\", "/")
+            if rel in ALLOW_LIST:
+                continue
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "g_current_bridge_epoch" not in text and "g_aot_table_epoch" not in text:
+                continue
             fails.extend(check_split_bumps(rel, text))
     return fails
 
@@ -149,15 +159,15 @@ void bump_it() {
     if svc_fails:
         fails.append(f"AC4: service.ixx allow-list (got {svc_fails})")
 
-    # Also exercise via a temp file to prove the scanner picks it up.
+    # Temp-file path is outside src/; scan_src_tree must not invent hits for it.
+    # (No full-tree rescan here — that doubled AC4 cost under gate.)
     with tempfile.TemporaryDirectory() as td:
         bad_path = Path(td) / "bad_test_patch.cpp"
-        bad_path.write_text(bad)
-        # Check the script as a whole can be invoked and finds at least
-        # one bad pattern in the temp tree (uses the scanner directly).
-        all_fails = scan_src_tree()  # full scan — must not include bad_test_patch.cpp
-        if any("bad_test_patch" in f for f in all_fails):
-            fails.append("AC4: temp patch leaked into scan_src_tree output")
+        bad_path.write_text(bad, encoding="utf-8")
+        # Direct check: path under tempfile is not under src/, so tree scan
+        # cannot see it; assert the relative name is not a src/ path.
+        if "src/" in str(bad_path):
+            fails.append("AC4: temp patch path unexpectedly under src/")
     return 1 if fails else 0
 
 
@@ -229,15 +239,9 @@ def main() -> int:
     must("g_2693_consecutive_dirty_total_stub", "AC3", brs)
     must("g_2693_soft_fuse_k_stub", "AC3", brs)
 
-    # AC4 — linter self-test
-    r = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), "--self-test"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    if r.returncode != 0:
-        fails.append(f"AC4 self-test:\n{r.stdout}\n{r.stderr}")
+    # AC4 — linter self-test (in-process; avoid subprocess + double tree scan).
+    if self_test() != 0:
+        fails.append("AC4 self-test failed (bad patch / allow-list checks)")
     # Also scan src/ for split-domain bumps.
     split_fails = scan_src_tree()
     if split_fails:
@@ -281,21 +285,8 @@ def main() -> int:
     # AC7 — build.py wires the linter
     must("check_joint_epoch_bump_coverage", "AC7", build)
     must("joint epoch bump coverage linter", "AC7", build)
-
-    # Cross-check: #2668 + #2640 + #2366 linters still green
-    for prev in (
-        "check_2668_coverage.py",
-        "check_epoch_invariant_periodic_coverage.py",
-        "check_epoch_invariant_walk_2366.py",
-    ):
-        r = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "coverage" / "checks" / prev)],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
-        if r.returncode != 0:
-            fails.append(f"{prev} regression:\n{r.stdout}\n{r.stderr}")
+    # Prior #2668/#2640/#2366 linters are run independently by the gate
+    # parallel runner (no nested cascade re-exec).
 
     if fails:
         for f in fails:

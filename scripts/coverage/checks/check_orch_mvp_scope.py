@@ -141,6 +141,13 @@ def strip_comments_and_strings(src: str) -> str:
     return "".join(out)
 
 
+def _needs_scan(raw: str) -> bool:
+    """Cheap prefilter: skip strip/regex when no banned identifier appears."""
+    if any(pname in raw for pname, _ in REMOVED_PATTERNS):
+        return True
+    return any(pname in raw for pname, _, _ in FEATURE_FLAG_PATTERNS)
+
+
 def scan_file(path: Path) -> list[tuple[int, str, str]]:
     rel = path.relative_to(REPO_ROOT).as_posix()
     if rel in ALLOWLIST:
@@ -148,6 +155,10 @@ def scan_file(path: Path) -> list[tuple[int, str, str]]:
     try:
         raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        return []
+    # Fast path: ~99% of TUs never mention removed multi-agent symbols.
+    # Avoid O(n) comment/string stripping on those files (was ~2.5s of gate).
+    if not _needs_scan(raw):
         return []
     # Issue #2083: collect feature-flag macros defined in this file; their
     # associated FEATURE_FLAG_PATTERNS are then allowed in the same TU.
@@ -159,10 +170,14 @@ def scan_file(path: Path) -> list[tuple[int, str, str]]:
             if flag:
                 defined_flags.add(flag)
     stripped = strip_comments_and_strings(raw)
-    raw_lines = raw.splitlines()
     stripped_lines = stripped.splitlines()
     violations: list[tuple[int, str, str]] = []
-    for lineno, (_raw_line, stripped_line) in enumerate(zip(raw_lines, stripped_lines, strict=False), start=1):
+    for lineno, stripped_line in enumerate(stripped_lines, start=1):
+        # Skip lines with no hit candidate after strip.
+        if not any(pname in stripped_line for pname, _ in REMOVED_PATTERNS) and not any(
+            pname in stripped_line for pname, _, _ in FEATURE_FLAG_PATTERNS
+        ):
+            continue
         for pname, pat in REMOVED_PATTERNS:
             for m in pat.finditer(stripped_line):
                 violations.append((lineno, pname, m.group(0)))
