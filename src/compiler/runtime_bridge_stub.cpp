@@ -34,6 +34,14 @@ aura_macro_provenance_repin_on_steal(void* /*ev_ptr*/, std::uint64_t /*cloned_ma
     return 0;
 }
 
+// Issue #1368: aura_set_aot_metrics — service.ixx / evaluator.ixx wire the
+// CompilerMetrics pointer at startup/teardown. Strong definition lives in
+// aura_jit_bridge.cpp (full JIT) / aura_jit_bridge_stub.cpp (light JIT);
+// weak stub here so libaura_test_objects.so resolves it at load time even
+// when mold --as-needed strips the JIT libs (same class as the other four
+// stubs above — e6f8e7dd missed this one).
+extern "C" __attribute__((weak)) void aura_set_aot_metrics(void* /*metrics*/) {}
+
 // Weak AuraJIT stub ctor (+ companion symbols) so service.ixx's jit_ value
 // member links when no JIT lib is present. Strong definitions in
 // aura_jit.cpp interpose when a JIT lib is linked.
