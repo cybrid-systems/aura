@@ -58,21 +58,19 @@ def main() -> int:
     # ── AC1: disjoint region_keys → region-concurrent eligibility ──
     must("Issue #2886", "AC1", agent_prim)
     must("region-concurrent-eligible", "AC1", agent_prim)
-    # The 3rd isolation-level value "region-concurrent" appears in the
-    # isolation_level ternary (serialized / best-effort-pure / region-concurrent).
-    if '"region-concurrent"' not in agent_prim:
+    poh = _read("src/serve/parallel_orch.h")
+    # 3rd isolation-level value "region-concurrent" — #2923 string table lives
+    # in parallel_orch::isolation_level_cstr; Aura wires via decide_isolation.
+    if '"region-concurrent"' not in agent_prim and "region-concurrent" not in poh and "RegionConcurrent" not in poh:
         fails.append(
-            "AC1: 3rd isolation-level value 'region-concurrent' not surfaced in Aura surface "
+            "AC1: 3rd isolation-level value 'region-concurrent' not surfaced "
             "(per #2886 — disjoint region_keys take region-concurrent over serialized)"
         )
-    # distinct_keys ≥ 2 check (the lambda that computes region-concurrent-eligible).
-    if "distinct_keys" not in agent_prim:
-        fails.append(
-            "AC1: 'distinct_keys' compute block missing in Aura surface "
-            "(#2886 needs to count distinct region_keys to drive the 3rd value)"
-        )
-    if "region_concurrent_eligible = (distinct_keys >= 2)" not in agent_prim:
-        fails.append("AC1: 'region_concurrent_eligible = (distinct_keys >= 2)' gate missing")
+    # #2923 SSOT: decide_isolation; legacy inline distinct_keys still accepted.
+    if "decide_isolation" not in agent_prim and "distinct_keys" not in agent_prim:
+        fails.append("AC1: neither decide_isolation (#2923) nor distinct_keys compute in Aura surface")
+    if "decide_isolation" not in agent_prim and "region_concurrent_eligible = (distinct_keys >= 2)" not in agent_prim:
+        fails.append("AC1: region_concurrent_eligible gate missing (expect decide_isolation or distinct_keys >= 2)")
     # Test exercises disjoint region_keys → region-concurrent.
     must(":region-keys (vector 1 2)", "AC1", test_pure)
     must("isolation-level", "AC1", test_pure)
@@ -96,7 +94,9 @@ def main() -> int:
     #   (region_concurrent_eligible ? "region-concurrent" : "serialized")
     # Default path: pure_mode=false + region_concurrent_eligible=false →
     # "serialized". Source-cite check.
-    if '"best-effort-pure"' not in agent_prim or '"serialized"' not in agent_prim:
+    if ('"best-effort-pure"' not in agent_prim and "best-effort-pure" not in poh) or (
+        '"serialized"' not in agent_prim and "serialized" not in poh
+    ):
         fails.append(
             "AC3: default 'serialized' / pure 'best-effort-pure' isolation-level values "
             "missing (#2400 / #2081 regression)"
@@ -107,11 +107,15 @@ def main() -> int:
     must("serialized", "AC3", test_pure)
 
     # ── AC4: zero / overlapping region_keys → falls back to serialized ──
-    # region-concurrent-eligible must return false when distinct_keys < 2.
-    # The lambda implements this via `return distinct >= 2;`.
-    if "return distinct >= 2;" not in agent_prim:
+    # region-concurrent-eligible false when distinct < 2 (#2923 decide_isolation
+    # or legacy lambda `return distinct >= 2;`).
+    if (
+        "decide_isolation" not in agent_prim
+        and "return distinct >= 2;" not in agent_prim
+        and "distinct_nonzero_region_keys >= 2" not in poh
+    ):
         fails.append(
-            "AC4: region-concurrent-eligible gate `return distinct >= 2;` missing "
+            "AC4: region-concurrent-eligible gate missing "
             "(zero / overlapping region_keys must fall back to serialized per AC4)"
         )
     # The Aura surface must also expose the serialized value when no
