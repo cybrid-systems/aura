@@ -1,0 +1,74 @@
+; Issue #2917 — closed-loop agent:recover-from-error
+; Unbound-class error → diagnose → fix under Guard → stats + no residual hold.
+
+(define ok #t)
+
+; Stats surface present (schema 2917)
+(define s0 (engine:metrics "query:agent-recovery-stats"))
+(if (hash? s0)
+    #t
+    (begin (display "FAIL-2917 stats-hash\n") (set! ok #f)))
+(if (= (hash-ref s0 'schema) 2917)
+    #t
+    (begin (display "FAIL-2917 schema\n") (set! ok #f)))
+
+; Closed loop: unbound map → add-require std/list
+(define code "(map (lambda (x) x) (list 1 2 3))")
+(define err "unbound variable: map")
+(define r (agent:recover-from-error err code))
+(if (pair? r)
+    #t
+    (begin (display "FAIL-2917 result-not-pair\n") (set! ok #f)))
+
+(define r-ok (car r))
+(define r-status (car (cdr r)))
+(define r-cause (car (cdr (cdr r))))
+(define r-fix (car (cdr (cdr (cdr r)))))
+(define r-fixed (car (cdr (cdr (cdr (cdr r))))))
+
+(if (and (boolean? r-ok) r-ok)
+    #t
+    (begin (display "FAIL-2917 ok-flag\n") (set! ok #f)))
+(if (= r-status 1)
+    #t
+    (begin (display "FAIL-2917 status-not-1\n") (set! ok #f)))
+(if (string? r-fixed)
+    #t
+    (begin (display "FAIL-2917 fixed-not-string\n") (set! ok #f)))
+
+; Fixed path should be add-require for unbound map
+(if (or (equal? r-fix "add-require")
+        (equal? r-cause "missing-require"))
+    #t
+    (begin (display "FAIL-2917 expected add-require\n") (set! ok #f)))
+
+; Success rate counters advanced
+(define s1 (engine:metrics "query:agent-recovery-stats"))
+(if (and (integer? (hash-ref s1 'attempts-total))
+         (>= (hash-ref s1 'attempts-total) 1)
+         (>= (hash-ref s1 'success-total) 1)
+         (= (hash-ref s1 'last-status) 1))
+    #t
+    (begin (display "FAIL-2917 counters\n") (set! ok #f)))
+
+; No residual strict hold after successful recovery
+(if (= (hash-ref s1 'strict-hold) 0)
+    #t
+    (begin (display "FAIL-2917 residual-strict-hold\n") (set! ok #f)))
+
+; Bad-args path is a clean structured failure (not crash)
+(define bad (agent:recover-from-error))
+(if (and (pair? bad) (not (car bad)) (= (car (cdr bad)) 5))
+    #t
+    (begin (display "FAIL-2917 bad-args status\n") (set! ok #f)))
+
+; Quota-class diagnosis still available (recover can raise soft limit)
+(define qcode "(list 1 2 3)")
+(define qr (agent:recover-from-error "prim-heap-quota: pairs soft limit exceeded" qcode))
+(if (and (pair? qr) (car qr))
+    #t
+    (begin (display "FAIL-2917 quota-recover\n") (set! ok #f)))
+
+(if ok
+    (begin (display "OK-2917 agent-recovery") (newline))
+    (begin (display "FAIL-2917") (newline) (unbound-2917-force-fail)))

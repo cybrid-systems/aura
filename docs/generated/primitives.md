@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**482** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**483** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 84 primitives (17%)
-- **core**: 357 primitives (74%)
+- **core**: 358 primitives (74%)
 - **internal-observable**: 40 primitives (8%)
 - **convenience**: 1 primitives (0%)
 
@@ -108,8 +108,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `fiber:spawn-backend` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
-## Agent: (2)
+## Agent: (3)
 
+- `agent:recover-from-error` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `agent:running?` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `agent:tick` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
@@ -714,13 +715,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (357)
+### Core builtins (must remain primitive) (358)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `_agent:spawn` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `abs` — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` — `src/compiler/evaluator_primitives_math.cpp`
+- `agent:recover-from-error` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `agent:running?` — `src/compiler/evaluator_primitives_agent.cpp`
 - `agent:tick` — `src/compiler/evaluator_primitives_agent.cpp`
 - `aot:reload` — `src/compiler/evaluator_primitives_obs_jit.cpp`

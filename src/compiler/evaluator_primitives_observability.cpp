@@ -649,6 +649,8 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     "query:primitives-hotpath-stats",
     // Issue #2916 — Soft pair/string/vector heap quotas under multi-fiber Agent loops
     "query:prim-heap-quota-stats",
+    // Issue #2917 — Closed-loop agent:recover-from-error status / success rate
+    "query:agent-recovery-stats",
     // Issue #585 — Unified primitive error handling + recovery observability
     "query:primitives-error-stats",
     // Issue #587 — AI-native primitives development support observability
