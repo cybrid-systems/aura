@@ -231,12 +231,19 @@ namespace {
 // Lookup is a single mutex critical section + unordered_map find
 // (O(1) amortized). Production gates the caller (mutation_hold_budget_
 // reject_enabled); Soft / sandbox=off → counter-only, no flag set.
+//
+// Issue #2932: pair request_hold_budget_cancel with request_force_safepoint
+// so a non-yielding holder still hits a cooperative edge
+// (check_gc_safepoint / yield) that can force outermost fail-closed and
+// release workspace_mtx_ / MutationHold without waiting for voluntary
+// Phase-5 exit alone.
 extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
     f->request_hold_budget_cancel();
+    f->request_force_safepoint(); // #2932: pair force-safepoint with cancel
     return 1;
 }
 
@@ -295,6 +302,9 @@ void (*g_fiber_yield_checkpoint_)(uint8_t) = nullptr;
 // held (in which case the request is deferred).
 extern "C" int aura_evaluator_request_gc_safepoint();
 extern "C" void aura_evaluator_wait_for_safepoint(std::uint64_t timeout_ms);
+// Issue #2932: hold-budget forced fail-closed at cooperative edges
+// (strong def in evaluator_fiber_mutation.cpp; weak no-op in fiber_bridge).
+extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept;
 void (*g_fiber_resume_validate_)() = nullptr;
 void (*g_fiber_yield_checkpoint_deleter_)(void*) = nullptr;
 
@@ -612,14 +622,30 @@ void Fiber::check_gc_safepoint() {
     // path and GC wait continue; reclaimed bodies are not re-dispatched
     // by the scheduler. Pure C++ tight loops without edges remain
     // quarantine-visible via join_drain_residual_still_running.
+    //
+    // Issue #2932: hold-budget overtime force-fail-closed. When the
+    // cross-fiber force-degrade path (#2726) set pending_hold_budget_
+    // cancel_ (+ force_safepoint), the next cooperative edge must drive
+    // the same outermost-failure marking used by Phase-5 so Guard dtor
+    // releases workspace_mtx_ + MutationHold + residual closed-loop
+    // (#2846) even if the body is a non-yielding tight loop that never
+    // reaches Phase-5 on its own. Soft / sandbox=off: metric-only
+    // (reject_enabled gate inside the C ABI). Nested guards never
+    // independently force-fail (outermost success flag only).
     if (auto* cur = g_current_fiber) {
+        if (cur->peek_hold_budget_cancel()) {
+            (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
+        }
         if (cur->is_force_safepoint_requested()) {
             cur->force_safepoint_requested_.store(false, std::memory_order_release);
             // Under MutationBoundary hold, residual body cannot yield yet —
-            // count budget exceeded (join still Reclaimed).
+            // count budget exceeded (join still Reclaimed). Also re-try
+            // hold-budget fail-closed after clearing force flag (covers
+            // race where cancel was set after the peek above).
             if (aura_evaluator_mutation_boundary_held() != 0 ||
                 aura_evaluator_mutation_boundary_depth() > 0) {
                 residual_cpu_budget_exceeded_total_.fetch_add(1, std::memory_order_relaxed);
+                (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
             }
         }
     }

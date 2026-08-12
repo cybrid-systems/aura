@@ -1216,6 +1216,52 @@ extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept {
         ev->mark_outermost_mutation_failed();
 }
 
+// Issue #2932: hold-budget overtime forced outermost fail-closed at a
+// cooperative safepoint edge (Fiber::check_gc_safepoint / yield).
+//
+// Under production / AURA_MUTATION_HOLD_BUDGET_HARD=1, when the holder
+// fiber has pending_hold_budget_cancel_ (set by #2726 force-degrade +
+// paired force-safepoint), consume the flag once and mark outermost
+// mutation failed so Guard dtor releases workspace_mtx_ + MutationHold
+// + residual closed-loop (#2846) — even if the body is a non-yielding
+// tight loop that never reaches Phase-5 on its own.
+//
+// Soft / sandbox=off: returns 0 without consume (metric-only unless hard
+// env). Nested guards never independently force-fail (outermost success
+// flag only; mark_outermost_mutation_failed is outermost-scoped).
+//
+// Returns 1 when fail-closed fired, 0 otherwise. Happy path (flag unset):
+// one peek load inside the caller + early out here after reject_enabled
+// and depth checks.
+extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept {
+    using namespace aura::compiler;
+    auto* cur = aura::serve::g_current_fiber;
+    if (!cur)
+        return 0;
+    // AC2: Soft / sandbox=off metric-only unless hard env.
+    if (!mutation_hold_budget_reject_enabled())
+        return 0;
+    // Only meaningful while a mutation boundary is live on this fiber.
+    if (aura_evaluator_mutation_boundary_depth() == 0 &&
+        aura_evaluator_mutation_boundary_held() == 0)
+        return 0;
+    // One-shot consume (same CAS as Phase-5). If Phase-5 already consumed,
+    // this is a no-op (return 0).
+    if (!cur->consume_hold_budget_cancel())
+        return 0;
+    // Outermost-only failure marking (AC3: nested never independently
+    // force-fail — mark_outermost targets the outermost success flag).
+    if (auto* ev = Evaluator::get_query_evaluator())
+        ev->mark_outermost_mutation_failed();
+    // Cooperative Phase-5 consume counter stays in sync for Agent health
+    // (fired vs consumed). Distinct forced-fail-closed total records that
+    // the fail closed at a safepoint edge rather than voluntary Phase-5.
+    g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total.fetch_add(
+        1, std::memory_order_relaxed);
+    g_mutation_hold_budget_forced_fail_closed_total.fetch_add(1, std::memory_order_relaxed);
+    return 1;
+}
+
 // Issue #2720: P0 holder-degrade path (#2701 residual). #2701 only rejected
 // new admits when live longest outermost hold exceeded budget — the holder
 // itself kept owning workspace_mtx_ exclusive + GcDeferReason::MutationHold,
@@ -1272,6 +1318,10 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
     // flag lost under crash (Agent health signal — see mutation_
     // hold_budget.h for the additive counters).
     g_mutation_hold_budget_holder_degrade_cross_fiber_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2932: aura_fiber_request_hold_budget_cancel pairs the
+    // pending-cancel flag with request_force_safepoint so the holder
+    // hits check_gc_safepoint / yield and force-fails closed even under
+    // a non-yielding body. Soft: reject_enabled gate → no flag, no force.
     if (mutation_hold_budget_reject_enabled() &&
         aura_fiber_request_hold_budget_cancel(fiber_id) != 0) {
         g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total.fetch_add(

@@ -1173,6 +1173,20 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                     mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total_v_read()));
                             insert_kv("schema-2726", 2726);
                             insert_kv("issue-2726", 2726);
+                            // Issue #2932: hold-budget overtime forced
+                            // outermost fail-closed (safepoint edge,
+                            // not cooperative Phase-5-only). Additive —
+                            // all #2701/#2720/#2726 surfaces preserved.
+                            insert_kv("mutation-hold-budget-forced-fail-"
+                                      "closed-total",
+                                      static_cast<std::int64_t>(
+                                          mutation_hold_budget_forced_fail_closed_total_v_read()));
+                            insert_kv("mutation-hold-budget-forced-fail-"
+                                      "closed-wired",
+                                      static_cast<std::int64_t>(
+                                          mutation_hold_budget_forced_fail_closed_wired_v_read()));
+                            insert_kv("schema-2932", 2932);
+                            insert_kv("issue-2932", 2932);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail

@@ -354,6 +354,35 @@ inline void clear_mutation_hold_budget_holder_degrade_cross_fiber_cancel_for_tes
         0, std::memory_order_relaxed);
 }
 
+// Issue #2932: hold-budget overtime → forced outermost fail-closed (not
+// cooperative Phase-5-only). When production / hard-env hold-budget cancel
+// is set, the holder is also force-safepointed (#2533 infrastructure) and
+// Fiber::check_gc_safepoint consumes the flag + mark_outermost_mutation_
+// failed so Guard dtor releases workspace_mtx_ + MutationHold + residual
+// closed-loop (#2846) even under a non-yielding body.
+//
+// g_mutation_hold_budget_forced_fail_closed_total: bumped when the
+// safepoint-edge path (aura_evaluator_try_hold_budget_fail_closed_at_
+// safepoint) actually consumes + marks failed. Distinct from Soft observe
+// (#2701 soft_observe) and from voluntary Phase-5 consume (#2726
+// cancel_consumed — still bumped for Agent health fired/consumed parity).
+// Soft / sandbox=off: never bumps (reject_enabled gate). Nested guards
+// never independently force-fail (outermost success flag only).
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_forced_fail_closed_total{0};
+inline std::atomic<std::uint32_t> g_mutation_hold_budget_forced_fail_closed_wired{1};
+inline constexpr int kMutationHoldBudgetForcedFailClosedIssue = 2932;
+
+[[nodiscard]] inline std::uint64_t mutation_hold_budget_forced_fail_closed_total_v_read() noexcept {
+    return g_mutation_hold_budget_forced_fail_closed_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_hold_budget_forced_fail_closed_wired_v_read() noexcept {
+    return g_mutation_hold_budget_forced_fail_closed_wired.load(std::memory_order_relaxed);
+}
+
+inline void clear_mutation_hold_budget_forced_fail_closed_for_test() noexcept {
+    g_mutation_hold_budget_forced_fail_closed_total.store(0, std::memory_order_relaxed);
+}
+
 // Issue #2724: region/subtree-scoped MutationBoundary concurrent admit.
 // Shared header so evaluator_mutation_boundary (writers) and
 // evaluator_primitives_query (query surface) share one definition.

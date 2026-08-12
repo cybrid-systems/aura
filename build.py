@@ -668,6 +668,22 @@ def cmd_lint():
             "Issue #2726 cross-fiber hold-budget cancel linter failed — run python3 scripts/coverage/checks/check_cross_fiber_hold_budget_cancel_2726.py"
         )
         return r
+    # Issue #2932: hold-budget overtime forced outermost fail-closed
+    # (force-safepoint + safepoint-edge consume, not Phase-5-only).
+    # Wires check_hold_budget_forced_fail_closed_2932.py so cancel pairs
+    # force-safepoint, check_gc_safepoint fail-closed ABI, additive
+    # forced-fail-closed metrics, Soft gate, nested outermost-only,
+    # residual #2846 failure path, and test extension stay enforced.
+    hbff_script = COVERAGE_CHECKS / "check_hold_budget_forced_fail_closed_2932.py"
+    if not hbff_script.exists():
+        fail(f"missing {hbff_script}")
+        return 1
+    r = run([sys.executable, str(hbff_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2932 hold-budget forced fail-closed linter failed — run python3 scripts/coverage/checks/check_hold_budget_forced_fail_closed_2932.py"
+        )
+        return r
     # Issue #2754: region concurrent cone / ImpactScope mask-AND
     # disjointness (#2724 residual). Equal keys + proven cone masks
     # (mask AND == 0) → concurrent admit; true overlap still rejects.
@@ -9387,6 +9403,25 @@ def cmd_chaos_steal_gc_nightly_2931_coverage():
     return 0
 
 
+def cmd_hold_budget_forced_fail_closed_2932_coverage():
+    """Issue #2932: hold-budget overtime forced outermost fail-closed.
+
+    force-safepoint paired with cancel; check_gc_safepoint consume path;
+    Soft metric-only; outermost-only; residual #2846 on failure exit.
+    """
+    print(f"{B}=== hold-budget forced fail-closed coverage (#2932) ==={N}")
+    script = COVERAGE_CHECKS / "check_hold_budget_forced_fail_closed_2932.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hold-budget forced fail-closed (#2932) coverage contract rows failed")
+        return 1
+    ok("hold-budget forced fail-closed (#2932) coverage clean")
+    return 0
+
+
 def cmd_chaos_steal_gc_nightly_2931():
     """Issue #2931: nightly hard gate — steal×mutate×GC×mailbox chaos soak.
 
@@ -12588,6 +12623,7 @@ def main():
         "bridge-epoch-zero-stale-2930": cmd_bridge_epoch_zero_stale_2930_coverage,
         "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,
         "chaos-steal-gc-nightly-2931-coverage": cmd_chaos_steal_gc_nightly_2931_coverage,
+        "hold-budget-forced-fail-closed-2932": cmd_hold_budget_forced_fail_closed_2932_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

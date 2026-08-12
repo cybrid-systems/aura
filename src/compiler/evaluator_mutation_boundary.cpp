@@ -1868,6 +1868,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // (the existing #1897/#1818 exception auto-flip above uses the same
     // shape).
     //
+    // Issue #2932: may already have been consumed at a safepoint edge
+    // (aura_evaluator_try_hold_budget_fail_closed_at_safepoint) which
+    // also mark_outermost_mutation_failed — Phase-5 still runs the
+    // forced-failure residual closed-loop (#2846) because success=false.
+    // If the body never hit a safepoint, this poll is the voluntary
+    // cooperative consume path (still fail-closed under production).
+    //
     // AC3 — only outermost Guards observe/clear the flag. Nested
     // guards fall through to the nested depth_slot-- branch below;
     // is_outermost_ is ctor-captured (#2120) so the guard is robust
