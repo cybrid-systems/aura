@@ -9234,6 +9234,24 @@ def cmd_wait_reclaimed_2924_coverage():
     return 0
 
 
+def cmd_producer_bp_budget_2925_coverage():
+    """Issue #2925: producer BP self-throttle budget for attached agents.
+
+    Consecutive Backpressure → throttle; default off; composes with #2887.
+    """
+    print(f"{B}=== producer BP budget coverage (#2925) ==={N}")
+    script = COVERAGE_CHECKS / "check_producer_bp_budget_2925.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("producer BP budget (#2925) coverage contract rows failed")
+        return 1
+    ok("producer BP budget (#2925) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -12366,6 +12384,7 @@ def main():
         "ast-unparse-2922": cmd_ast_unparse_2922_coverage,
         "isolation-decide-2923": cmd_isolation_decide_2923_coverage,
         "wait-reclaimed-2924": cmd_wait_reclaimed_2924_coverage,
+        "producer-bp-budget-2925": cmd_producer_bp_budget_2925_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

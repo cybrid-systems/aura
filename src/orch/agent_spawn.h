@@ -373,6 +373,10 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> wait_reclaimed_total{0};
     std::atomic<std::uint64_t> wait_reclaimed_timeout_total{0};
     std::atomic<std::uint64_t> wait_reclaimed_cleanup_total{0};
+    // Issue #2925: producer BP self-throttle (per-handle consecutive BP budget).
+    // enter = budget crossed; clear = Ok push or quiet window healed throttle.
+    std::atomic<std::uint64_t> agent_producer_throttle_enter_total{0};
+    std::atomic<std::uint64_t> agent_producer_throttle_clear_total{0};
     // Issue #2636: residual reclaim observability — body-age tracking
     // (steady_clock ns at mark_reclaimed → body exit / Fiber dtor).
     // gauge on max/sum (CAS on max under contention); counter on samples.
@@ -929,6 +933,13 @@ struct AgentHandle {
     // (deferred) path; cleared when Done-path cleanup runs (wait_reclaimed_body
     // or a later Ok join). Enables wait_reclaimed_body without re-joining.
     bool reclaimed_deferred_cleanup = false;
+    // Issue #2925: producer BP budget (0 = off, zero cost on send path).
+    // Copied from AgentSpec / env at spawn. Consecutive BP pushes on this
+    // handle enter throttle (helper_stop + short-circuit BP) without cancel.
+    std::uint32_t producer_bp_budget = 0;
+    std::uint32_t consecutive_bp_count = 0;
+    bool producer_throttled = false;
+    std::uint64_t last_producer_bp_us = 0; // orch_now_us at last BP (quiet clear)
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -953,7 +964,11 @@ struct AgentHandle {
         , keepalive_helper(o.keepalive_helper)
         , max_no_yield_ms(o.max_no_yield_ms)
         , coop(std::move(o.coop))
-        , reclaimed_deferred_cleanup(o.reclaimed_deferred_cleanup) {
+        , reclaimed_deferred_cleanup(o.reclaimed_deferred_cleanup)
+        , producer_bp_budget(o.producer_bp_budget)
+        , consecutive_bp_count(o.consecutive_bp_count)
+        , producer_throttled(o.producer_throttled)
+        , last_producer_bp_us(o.last_producer_bp_us) {
         o.id = 0;
         o.fiber = nullptr;
         o.ok = false;
@@ -968,6 +983,10 @@ struct AgentHandle {
         o.keepalive_helper = nullptr;
         o.max_no_yield_ms = 0;
         o.reclaimed_deferred_cleanup = false;
+        o.producer_bp_budget = 0;
+        o.consecutive_bp_count = 0;
+        o.producer_throttled = false;
+        o.last_producer_bp_us = 0;
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -995,6 +1014,10 @@ struct AgentHandle {
             max_no_yield_ms = o.max_no_yield_ms;
             coop = std::move(o.coop);
             reclaimed_deferred_cleanup = o.reclaimed_deferred_cleanup;
+            producer_bp_budget = o.producer_bp_budget;
+            consecutive_bp_count = o.consecutive_bp_count;
+            producer_throttled = o.producer_throttled;
+            last_producer_bp_us = o.last_producer_bp_us;
             o.id = 0;
             o.fiber = nullptr;
             o.ok = false;
@@ -1009,6 +1032,10 @@ struct AgentHandle {
             o.keepalive_helper = nullptr;
             o.max_no_yield_ms = 0;
             o.reclaimed_deferred_cleanup = false;
+            o.producer_bp_budget = 0;
+            o.consecutive_bp_count = 0;
+            o.producer_throttled = false;
+            o.last_producer_bp_us = 0;
         }
         return *this;
     }
@@ -1069,7 +1096,28 @@ struct AgentSpec {
     // no longer poisons unrelated scopes B/C. Wire surface: Aura kwarg
     // :bp-scope-id "tenant-a" on (orch:spawn-agent).
     std::string bp_scope_id{};
+    // Issue #2925: consecutive Backpressure budget before producer self-throttle.
+    // 0 = off (default, zero cost on agent_send). N > 0 → after N consecutive
+    // BP on the same handle enter throttle (helper_stop + short-circuit BP).
+    // Does not detach mailbox or cancel body (Throttle; Cancel is watch_all).
+    // Env opt-in when 0: AURA_ORCH_PRODUCER_BP_BUDGET=N (spawn-time only).
+    std::uint32_t producer_bp_budget = 0;
 };
+
+// Issue #2925: resolve effective producer BP budget (spec wins; env fallback).
+// Zero cost when both unset (returns 0). Spawn-time only — not per send.
+[[nodiscard]] inline std::uint32_t resolve_producer_bp_budget(std::uint32_t spec_budget) noexcept {
+    if (spec_budget > 0)
+        return spec_budget;
+    const char* env = std::getenv("AURA_ORCH_PRODUCER_BP_BUDGET");
+    if (!env || !*env)
+        return 0;
+    try {
+        return static_cast<std::uint32_t>(std::stoul(env));
+    } catch (...) {
+        return 0;
+    }
+}
 
 // Issue #2585: production default for AgentSpec.max_no_yield_ms.
 // Returns the effective coop window in milliseconds:
@@ -1546,6 +1594,11 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     h.liveness = live;
     h.max_no_yield_ms = effective_max_no_yield_ms;
     h.coop = std::move(coop);
+    // Issue #2925: producer BP budget (0 = off). Spec wins; env fallback.
+    h.producer_bp_budget = resolve_producer_bp_budget(spec.producer_bp_budget);
+    h.consecutive_bp_count = 0;
+    h.producer_throttled = false;
+    h.last_producer_bp_us = 0;
     g_orch_module_stats.agents_spawned.fetch_add(1, std::memory_order_relaxed);
     g_orch_module_stats.agents_active.fetch_add(1, std::memory_order_relaxed);
 
@@ -2154,26 +2207,81 @@ agent_send_safe(AgentHandle& h, serve::mf_mailbox::MailMessage msg,
 // Issue #2848 lineage: schema / query surface for auto handoff metrics.
 inline constexpr int kAgentSendAutoHandoffIssue = 2848;
 
+// Issue #2925: clear producer throttle after quiet window (#2398 BP window)
+// or when consecutive BP has been healed by Ok. budget==0 is a no-op.
+// Returns true if throttle was cleared this call.
+inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
+    if (h.producer_bp_budget == 0 || !h.producer_throttled)
+        return false;
+    const auto window_ms = resolve_mailbox_bp_window_ms();
+    if (window_ms == 0) {
+        // Window disabled: only Ok push clears (caller clears consecutive).
+        return false;
+    }
+    const auto now = orch_now_us();
+    if (h.last_producer_bp_us == 0 || now - h.last_producer_bp_us <= window_ms * 1000ULL)
+        return false;
+    h.producer_throttled = false;
+    h.consecutive_bp_count = 0;
+    g_orch_module_stats.agent_producer_throttle_clear_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
 // Send a message to an agent's mailbox (if any).
 // Issue #1881: bump all outcomes (ok / backpressure / closed) — no dead path.
 // Issue #2848: auto handoff_ref for StableNodeRef payloads lives on the
 // language path (orch:agent-send in evaluator_primitives_agent.cpp). This
 // C++ helper still pushes as-is so raw callers that set held_ref_token
 // without handoff_completed continue to hit the #2663 Closed gate.
+// Issue #2925: optional producer_bp_budget self-throttle after N consecutive
+// BP (default 0 = off / zero extra work). Does not cancel body or detach
+// mailbox (Throttle; Cancel remains watch_all / explicit).
 [[nodiscard]] inline serve::mf_mailbox::PushStatus agent_send(AgentHandle& h,
                                                               serve::mf_mailbox::MailMessage msg) {
     if (!h.ok || !h.mailbox) {
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
         return serve::mf_mailbox::PushStatus::Closed;
     }
+    // #2925: when throttled, short-circuit BP without growing the queue
+    // (unbounded producer spin stays BP without enqueue pressure).
+    if (h.producer_bp_budget > 0 && h.producer_throttled) {
+        (void)maybe_clear_producer_throttle(h);
+        if (h.producer_throttled) {
+            g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
+            // Do not re-bump process/recent gauge on every short-circuit —
+            // throttle already reacted to storm; avoid permanent admit poison.
+            return serve::mf_mailbox::PushStatus::Backpressure;
+        }
+    }
     msg.to_fiber = h.id;
     auto st = h.mailbox->push(std::move(msg));
-    if (st == serve::mf_mailbox::PushStatus::Ok)
+    if (st == serve::mf_mailbox::PushStatus::Ok) {
         g_orch_module_stats.agents_send.fetch_add(1, std::memory_order_relaxed);
-    else if (st == serve::mf_mailbox::PushStatus::Backpressure) {
+        if (h.producer_bp_budget > 0) {
+            h.consecutive_bp_count = 0;
+            if (h.producer_throttled) {
+                h.producer_throttled = false;
+                g_orch_module_stats.agent_producer_throttle_clear_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+    } else if (st == serve::mf_mailbox::PushStatus::Backpressure) {
         g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
         // Issue #2228 / #2398: recent gauge + last-event (see emit_keepalive).
         note_mailbox_bp_recent_event();
+        if (h.producer_bp_budget > 0) {
+            ++h.consecutive_bp_count;
+            h.last_producer_bp_us = orch_now_us();
+            if (!h.producer_throttled && h.consecutive_bp_count >= h.producer_bp_budget) {
+                h.producer_throttled = true;
+                // Throttle semantics (#2887 sibling): cooperative helper_stop
+                // only — no body cancel and no mailbox detach (AC4).
+                if (h.liveness)
+                    h.liveness->helper_stop.store(true, std::memory_order_release);
+                g_orch_module_stats.agent_producer_throttle_enter_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
     } else
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
     return st;

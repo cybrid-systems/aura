@@ -814,6 +814,182 @@ int run_test_mailbox_bp_admit() {
               "ac2780_source_and_query: skip-active path");
     }
 
+    // ── #2925: producer BP self-throttle budget ────────────────────
+    {
+        using aura::orch::agent_send;
+        using aura::orch::maybe_clear_producer_throttle;
+        using aura::orch::resolve_producer_bp_budget;
+
+        std::println("\n--- #2925 AC1: budget=0 zero cost ---");
+        {
+            auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/2);
+            AgentHandle h;
+            h.ok = true;
+            h.id = 1;
+            h.mailbox = mb;
+            h.producer_bp_budget = 0; // off
+            // Fill mailbox
+            for (int i = 0; i < 4; ++i) {
+                MailMessage m;
+                m.payload = "fill";
+                (void)mb->push(std::move(m));
+            }
+            const auto enter0 = g_orch_module_stats.agent_producer_throttle_enter_total.load(
+                std::memory_order_relaxed);
+            MailMessage m;
+            m.payload = "bp";
+            auto st = agent_send(h, std::move(m));
+            CHECK(st == PushStatus::Backpressure || st == PushStatus::Ok,
+                  "2925 AC1: send returns (BP or Ok)");
+            CHECK(!h.producer_throttled, "2925 AC1: budget=0 never throttles");
+            CHECK(h.consecutive_bp_count == 0, "2925 AC1: consecutive counter unused at 0");
+            CHECK(g_orch_module_stats.agent_producer_throttle_enter_total.load(
+                      std::memory_order_relaxed) == enter0,
+                  "2925 AC1: enter metric unchanged when budget=0");
+            CHECK(resolve_producer_bp_budget(5) == 5, "2925 AC1: resolve respects non-zero spec");
+        }
+
+        std::println("\n--- #2925 AC2: N consecutive BP → throttle enter ---");
+        {
+            auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/1);
+            // Fill to high-water so further pushes BP.
+            {
+                MailMessage m;
+                m.payload = "fill0";
+                (void)mb->push(std::move(m));
+            }
+            AgentHandle h;
+            h.ok = true;
+            h.id = 42;
+            h.mailbox = mb;
+            h.producer_bp_budget = 3;
+            h.liveness = std::make_shared<aura::orch::AgentLiveness>();
+            const auto enter0 = g_orch_module_stats.agent_producer_throttle_enter_total.load(
+                std::memory_order_relaxed);
+            int bp_n = 0;
+            for (int i = 0; i < 5; ++i) {
+                MailMessage m;
+                m.payload = "storm";
+                auto st = agent_send(h, std::move(m));
+                if (st == PushStatus::Backpressure)
+                    ++bp_n;
+            }
+            CHECK(bp_n >= 3, "2925 AC2: at least 3 BP outcomes");
+            CHECK(h.producer_throttled, "2925 AC2: producer_throttled after budget");
+            CHECK(h.consecutive_bp_count >= 3, "2925 AC2: consecutive_bp_count >= budget");
+            CHECK(g_orch_module_stats.agent_producer_throttle_enter_total.load(
+                      std::memory_order_relaxed) >= enter0 + 1,
+                  "2925 AC2: enter_total bumped");
+            CHECK(h.liveness->helper_stop.load(std::memory_order_relaxed),
+                  "2925 AC2: helper_stop set (Throttle, not Cancel)");
+            // Further sends stay BP without cancel.
+            CHECK(h.fiber == nullptr || !h.fiber->is_cancel_requested(),
+                  "2925 AC2/AC4: body not cancelled by default");
+            MailMessage m2;
+            m2.payload = "after";
+            auto st2 = agent_send(h, std::move(m2));
+            CHECK(st2 == PushStatus::Backpressure, "2925 AC2: further send stays BP");
+        }
+
+        std::println("\n--- #2925 AC3: Ok push clears consecutive + quiet clears throttle ---");
+        {
+            auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/8);
+            AgentHandle h;
+            h.ok = true;
+            h.id = 7;
+            h.mailbox = mb;
+            h.producer_bp_budget = 2;
+            // Ok path is reachable only when not short-circuit throttled.
+            h.producer_throttled = false;
+            h.consecutive_bp_count = 5;
+            MailMessage m;
+            m.payload = "ok-clear";
+            auto st = agent_send(h, std::move(m));
+            CHECK(st == PushStatus::Ok, "2925 AC3: Ok push succeeds");
+            CHECK(h.consecutive_bp_count == 0, "2925 AC3: consecutive cleared on Ok");
+            // Quiet-window path clears throttle when last BP aged out.
+            const auto clear0 = g_orch_module_stats.agent_producer_throttle_clear_total.load(
+                std::memory_order_relaxed);
+            h.producer_throttled = true;
+            h.last_producer_bp_us = 1; // ancient
+            setenv("AURA_ORCH_BP_WINDOW_MS", "1", 1);
+            CHECK(maybe_clear_producer_throttle(h), "2925 AC3: quiet window clears throttle");
+            CHECK(!h.producer_throttled, "2925 AC3: throttled false after quiet clear");
+            CHECK(g_orch_module_stats.agent_producer_throttle_clear_total.load(
+                      std::memory_order_relaxed) >= clear0 + 1,
+                  "2925 AC3: clear_total bumped on quiet clear");
+            setenv("AURA_ORCH_BP_WINDOW_MS", "", 1);
+        }
+
+        std::println("\n--- #2925 AC4: no detach / no cancel (source-cite) ---");
+        {
+            std::ifstream in("src/orch/agent_spawn.h");
+            if (!in)
+                in.open("../src/orch/agent_spawn.h");
+            std::string spawn((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+            auto pos = spawn.find("producer_bp_budget > 0");
+            CHECK(pos != std::string::npos, "2925 AC4: producer budget gate present");
+            // Enter-site near helper_stop (agent_send), not OrchModuleStats decl.
+            auto helper = spawn.find("producer_throttled = true");
+            CHECK(helper != std::string::npos, "2925 AC4: producer_throttled=true enter site");
+            auto win = spawn.substr(helper, 500);
+            CHECK(win.find("helper_stop") != std::string::npos, "2925 AC4: helper_stop on enter");
+            CHECK(win.find("request_cancel") == std::string::npos,
+                  "2925 AC4: no request_cancel on producer throttle enter");
+            CHECK(win.find("mailbox->detach") == std::string::npos,
+                  "2925 AC4: no mailbox detach on throttle enter");
+        }
+
+        std::println("\n--- #2925 AC5: metrics + query + Soft ---");
+        {
+            CHECK(href(cs, "schema-2925") == 2925, "2925 AC5: schema-2925");
+            CHECK(href(cs, "issue-2925") == 2925, "2925 AC5: issue-2925");
+            CHECK(href(cs, "producer-bp-budget-wired") == 1, "2925 AC5: wired sentinel");
+            CHECK(href(cs, "agent-producer-throttle-enter-total") >= 0,
+                  "2925 AC5: enter query key");
+            CHECK(href(cs, "agent-producer-throttle-clear-total") >= 0,
+                  "2925 AC5: clear query key");
+        }
+
+        std::println("\n--- #2925 AC6: source-cite + no invent + no docs/design/ ---");
+        {
+            std::ifstream in("src/orch/agent_spawn.h");
+            if (!in)
+                in.open("../src/orch/agent_spawn.h");
+            std::string spawn((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(spawn.find("Issue #2925") != std::string::npos, "2925 AC6: #2925 cite");
+            CHECK(spawn.find("producer_bp_budget") != std::string::npos,
+                  "2925 AC6: producer_bp_budget field");
+            CHECK(spawn.find("resolve_producer_bp_budget") != std::string::npos,
+                  "2925 AC6: resolve helper");
+            std::ifstream agent_in("src/compiler/evaluator_primitives_agent.cpp");
+            if (!agent_in)
+                agent_in.open("../src/compiler/evaluator_primitives_agent.cpp");
+            std::string agent((std::istreambuf_iterator<char>(agent_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(agent.find("producer-bp-budget") != std::string::npos,
+                  "2925 AC6: Aura :producer-bp-budget");
+            std::ifstream invent("tests/orch/test_issue_2925.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_2925.cpp");
+            CHECK(!invent.good(), "2925 AC6: no test_issue_2925.cpp per #81967");
+            std::ifstream design("docs/design/2925-producer-bp.md");
+            if (!design.good())
+                design.open("../docs/design/2925-producer-bp.md");
+            CHECK(!design.good(), "2925 AC6: no docs/design/2925-* per #1655");
+            std::ifstream build_in("build.py");
+            if (!build_in)
+                build_in.open("../build.py");
+            std::string build((std::istreambuf_iterator<char>(build_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(build.find("producer-bp-budget-2925") != std::string::npos ||
+                      build.find("producer_bp_budget_2925") != std::string::npos,
+                  "2925 AC6: build.py coverage cmd");
+        }
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

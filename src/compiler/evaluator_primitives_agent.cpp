@@ -3063,6 +3063,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // per-scope recent counter + admit (storm in A no longer
             // poisons B/C). Wired to AgentSpec::bp_scope_id at line 2883.
             std::string bp_scope_id{};
+            // Issue #2925: consecutive BP budget before producer self-throttle.
+            std::uint32_t producer_bp_budget = 0;
             for (; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -3099,6 +3101,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     const auto sid = types::as_string_idx(val);
                     if (sid < ev.string_heap_.size())
                         bp_scope_id = ev.string_heap_[sid];
+                } else if ((k == "producer-bp-budget" || k == "producer_bp_budget") &&
+                           types::is_int(val)) {
+                    // Issue #2925: consecutive BP self-throttle (0 = off).
+                    producer_bp_budget =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 }
             }
 
@@ -3141,6 +3148,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             spec.max_no_yield_ms = max_no_yield_ms;       // Issue #2540
             spec.bp_admit_threshold = bp_admit_threshold; // Issue #2591
             spec.bp_scope_id = std::move(bp_scope_id);    // Issue #2633
+            spec.producer_bp_budget = producer_bp_budget; // Issue #2925
             auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
             // Issue #2009: move-only handle; snapshot then put on success.
             const bool ok = handle.ok;
@@ -4936,6 +4944,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("agent-bp-throttle-total",
                       static_cast<std::int64_t>(
                           os.agent_bp_throttle_total.load(std::memory_order_relaxed)));
+            // Issue #2925: producer self-throttle (consecutive BP budget).
+            insert_kv("agent-producer-throttle-enter-total",
+                      static_cast<std::int64_t>(
+                          os.agent_producer_throttle_enter_total.load(std::memory_order_relaxed)));
+            insert_kv("agent-producer-throttle-clear-total",
+                      static_cast<std::int64_t>(
+                          os.agent_producer_throttle_clear_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2925", 2925);
+            insert_kv("issue-2925", 2925);
+            insert_kv("producer-bp-budget-wired", 1);
             // Issue #2756: workflow-level FailurePolicy composition
             // (batch + AgentScope + residual preference). Additive —
             // #2007/#2229/#2539 surfaces above preserved.
