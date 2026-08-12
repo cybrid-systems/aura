@@ -186,6 +186,18 @@ extern "C" void aura_pure_anon_note_walk_outcome(std::uint64_t ok, std::uint64_t
 extern "C" void aura_pure_anon_observe_deopt_window(std::uint64_t deopt_window_count) noexcept;
 extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_current() noexcept;
 extern "C" std::uint64_t aura_pure_anon_pressure_bp() noexcept;
+// Issue #2928: budgeted residual live-closure remount (round-robin cursor +
+// budget B, default 32 production / 0 Soft). Outside reemit-success paths
+// (#2602/#2691/#2850). budget_skip under hard storm / reemit throttle.
+// Soft / budget=0 / nslots==0 → zero walk beyond one budget load.
+extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
+extern "C" std::uint64_t aura_residual_remount_cursor() noexcept;
+extern "C" std::uint64_t aura_residual_remount_ok_total_v_read() noexcept;
+extern "C" std::uint64_t aura_residual_remount_budget_skip_total_v_read() noexcept;
+extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
+extern "C" void aura_test_set_residual_remount_budget(std::uint64_t budget) noexcept;
+extern "C" void aura_test_set_residual_remount_force_skip(int v) noexcept;
+extern "C" void aura_test_reset_residual_remount_state() noexcept;
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);

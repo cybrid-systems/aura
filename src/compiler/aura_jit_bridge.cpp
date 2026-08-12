@@ -258,6 +258,14 @@ extern "C" void aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64
     }
 }
 
+// Issue #2928: residual round-robin remount counters (outside reemit-success).
+extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_t budget_skip) {
+    if (auto* m = aot_metrics()) {
+        m->residual_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
+        m->residual_remount_budget_skip_total.fetch_add(budget_skip, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2638: residual sid=0 cap-hit counter bumper. Bumped when
 // the residual backfill branch in aura_remap_live_closures_after_reemit
 // sees cur_backfill >= cap (or 0 cap = unlimited → never). Distinct
