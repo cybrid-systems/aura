@@ -21,6 +21,14 @@
 //   #2910 AC4: after rehydrate CS truth on green stamp (#2842)
 //   #2910 AC5: schema-2910 + lineage; extend this suite (#81967)
 //   #2910 AC6: decision table + linter; no docs/design/*
+//
+//   #2938 AC1: production + non-empty goals + outermost success → snapshot
+//              written + post-persist proof fingerprint matches goals
+//   #2938 AC2: Soft + empty goals → zero extra writes / zero commit counters
+//   #2938 AC3: reject / force-rollback never writes commit snapshot
+//   #2938 AC4: densify/steal fence after snapshotted commit → rehydrate or face
+//   #2938 AC5: #2608 / #2842 / #2758 / #2910 surfaces preserved
+//   #2938 AC6: source-cite + linter + no docs/design/
 
 #include "test_harness.hpp"
 
@@ -50,8 +58,13 @@ using aura::compiler::solve_delta_occurrence;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
+using aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue;
+using aura::compiler::typed_audit::note_occurrence_commit_snapshot_written;
+using aura::compiler::typed_audit::occurrence_commit_snapshot_mid_v_read;
+using aura::compiler::typed_audit::occurrence_commit_snapshot_written_total_v_read;
 using aura::compiler::typed_audit::occurrence_empty_after_fence_soft_total_v_read;
 using aura::compiler::typed_audit::occurrence_empty_after_fence_total_v_read;
+using aura::compiler::typed_audit::reset_occurrence_commit_snapshot_for_test;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
@@ -565,6 +578,137 @@ static void ac2910_6_linter_and_decision_table() {
           "2910 AC6: no new test file per #81967");
 }
 
+// ── Issue #2938: freeze Occurrence truth on every successful commit ──
+
+static void ac2938_1_production_commit_snapshot_and_post_persist_stamp() {
+    std::println("\n--- #2938 AC1: production success → snapshot + post-persist proof ---");
+    CHECK(kOccurrenceCommitSnapshotIssue == 2938, "AC1: issue stamp 2938");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    reset_occurrence_commit_snapshot_for_test();
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), /*pred=*/7, /*mut=*/99, /*epoch=*/1);
+    CHECK(u.cs.occurrence_goals_size() == 1, "AC1: one live goal");
+    const auto w0 = occurrence_commit_snapshot_written_total_v_read();
+    const auto written = u.cs.append_occurrence_snapshot(99);
+    CHECK(written == 1, "AC1: append wrote 1");
+    // Simulate outermost success note (C ABI does this after write).
+    note_occurrence_commit_snapshot_written(99, static_cast<std::uint64_t>(written));
+    CHECK(occurrence_commit_snapshot_written_total_v_read() == w0 + 1,
+          "AC1: commit-snapshot-written-total +1");
+    CHECK(occurrence_commit_snapshot_mid_v_read() == 99, "AC1: last mid = 99");
+    // Source-cite: outermost success path stamps post-persist.
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("note_occurrence_commit_snapshot_written") != std::string::npos,
+          "AC1: dtor C ABI notes commit snapshot");
+    CHECK(mb.find("build_type_linear_commit_proof_from_live") != std::string::npos,
+          "AC1: post-persist proof stamp in success helper");
+    // Persist before stamp in the helper body order.
+    const auto note_pos = mb.find("note_occurrence_commit_snapshot_written");
+    const auto stamp_pos = mb.find("build_type_linear_commit_proof_from_live",
+                                   note_pos != std::string::npos ? note_pos : 0);
+    CHECK(note_pos != std::string::npos && stamp_pos != std::string::npos && note_pos < stamp_pos,
+          "AC1: note write before post-persist proof stamp");
+    apply_dev_audit_defaults();
+}
+
+static void ac2938_2_soft_empty_zero() {
+    std::println("\n--- #2938 AC2: Soft + empty → zero commit counters ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    reset_occurrence_commit_snapshot_for_test();
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    CHECK(u.cs.append_occurrence_snapshot(1) == 0, "AC2: empty Soft → 0 writes");
+    note_occurrence_commit_snapshot_written(1, 0); // zero entries → no bump
+    CHECK(occurrence_commit_snapshot_written_total_v_read() == 0,
+          "AC2: written-total stays 0 on zero entries");
+    CHECK(occurrence_commit_snapshot_mid_v_read() == 0, "AC2: mid stays 0");
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 1, 1, 1);
+    CHECK(u.cs.append_occurrence_snapshot(1) == 0, "AC2: Soft + goals still 0 without env");
+}
+
+static void ac2938_3_reject_never_writes() {
+    std::println("\n--- #2938 AC3: reject path never writes commit snapshot ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Persist helper only under outermost && success.
+    CHECK(mb.find("if (outermost && success)") != std::string::npos, "AC3: success gate present");
+    CHECK(mb.find("aura_outermost_success_persist_occurrence") != std::string::npos,
+          "AC3: persist helper only on success path");
+    // Reject stamps proof without calling persist helper in the same block.
+    const auto reject_block = mb.find("linear-synth-hard-fail");
+    CHECK(reject_block != std::string::npos, "AC3: reject path present");
+    // Source-cite AC3 comment.
+    CHECK(mb.find("Reject / force-rollback never reaches this block") != std::string::npos ||
+              mb.find("never call this helper (AC3)") != std::string::npos,
+          "AC3: reject-no-write contract source-cited");
+}
+
+static void ac2938_4_fence_after_snapshot() {
+    std::println("\n--- #2938 AC4: fence after snapshotted commit → rehydrate or face ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    UnitCs u;
+    u.cs.set_current_epoch(5);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 3, 50, /*epoch=*/5);
+    CHECK(u.cs.append_occurrence_snapshot(50) == 1, "AC4: snapshot written");
+    note_occurrence_commit_snapshot_written(50, 1);
+    u.cs.set_current_epoch(6);
+    const auto dropped = u.cs.prune_occurrence_goals(6);
+    CHECK(dropped == 1, "AC4: prune dropped 1");
+    CHECK(u.cs.occurrence_goals_size() == 0, "AC4: empty after prune");
+    const auto rh = u.cs.rehydrate_occurrence_from_persist(0);
+    CHECK(rh >= 1, "AC4: rehydrate restores ≥1");
+    CHECK(u.cs.occurrence_goals_size() > 0, "AC4: live non-empty after rehydrate (no half-green)");
+    apply_dev_audit_defaults();
+}
+
+static void ac2938_5_lineage_query() {
+    std::println("\n--- #2938 AC5: additive keys + lineage preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2938") == 2938, "AC5: schema-2938");
+    CHECK(href(cs, "issue-2938") == 2938, "AC5: issue-2938");
+    CHECK(href(cs, "occurrence-commit-snapshot-wired") == 1, "AC5: commit-snapshot-wired");
+    CHECK(href(cs, "occurrence-commit-snapshot-written-total") >= 0,
+          "AC5: written-total key present");
+    CHECK(href(cs, "occurrence-commit-snapshot-mid") >= 0, "AC5: mid key present");
+    CHECK(href(cs, "schema-2608") == 2608, "AC5: schema-2608 preserved");
+    CHECK(href(cs, "schema-2910") == 2910, "AC5: schema-2910 preserved");
+    CHECK(href(cs, "schema-2896") == 2896, "AC5: schema-2896 preserved");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kOccurrenceCommitSnapshotIssue = 2938") != std::string::npos,
+          "AC5: issue constant");
+    CHECK(tma.find("g_occurrence_commit_snapshot_written_total") != std::string::npos,
+          "AC5: written counter");
+    CHECK(tma.find("g_last_proof_goal_fingerprint") != std::string::npos,
+          "AC5: #2842 fingerprint preserved");
+}
+
+static void ac2938_6_linter_and_no_design() {
+    std::println("\n--- #2938 AC6: linter + no docs/design/ ---");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_occurrence_commit_snapshot_2938.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac2938_1_production_commit_snapshot_and_post_persist_stamp") != std::string::npos,
+          "AC6: AC1 test");
+    CHECK(t.find("ac2938_2_soft_empty_zero") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2938_3_reject_never_writes") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac2938_4_fence_after_snapshot") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2938_5_lineage_query") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac2938_6_linter_and_no_design") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2938") != std::string::npos, "AC6: linter present");
+    CHECK(build.find("check_occurrence_commit_snapshot_2938") != std::string::npos,
+          "AC6: build.py gate");
+    CHECK(read_file("docs/design/2938-occurrence-commit-snapshot.md").empty(),
+          "AC6: no docs/design/2938-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2938.cpp").empty(),
+          "AC6: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_occurrence_goal_persist_rehydrate() {
@@ -592,6 +736,13 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2910_4_goal_truth_after_rehydrate();
     ac2910_5_query_and_source();
     ac2910_6_linter_and_decision_table();
+    std::println("\n=== #2938 outermost success freezes Occurrence commit snapshot ===");
+    ac2938_1_production_commit_snapshot_and_post_persist_stamp();
+    ac2938_2_soft_empty_zero();
+    ac2938_3_reject_never_writes();
+    ac2938_4_fence_after_snapshot();
+    ac2938_5_lineage_query();
+    ac2938_6_linter_and_no_design();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

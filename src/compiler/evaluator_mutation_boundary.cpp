@@ -123,22 +123,11 @@ extern "C" std::uint64_t aura_jit_equivalence_ok_v_read(void) noexcept;
 extern "C" std::uint64_t aura_jit_equivalence_mismatch_v_read(void) noexcept;
 extern "C" std::uint64_t aura_jit_equivalence_deopt_force_v_read(void) noexcept;
 
-// Issue #2641: C ABI for outermost-success OccurrenceGoal persist (tests + dtor).
-// Soft / env=0 / no type-checker → zero cost inside maybe_persist_occurrence_snapshot.
-extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
-                                                          std::uint64_t mutation_id) noexcept {
-    if (!ev_ptr)
-        return;
-    auto* ev = static_cast<aura::compiler::Evaluator*>(ev_ptr);
-    if (auto* tc = static_cast<aura::compiler::TypeChecker*>(ev->commit_type_checker_handle())) {
-        (void)tc->maybe_persist_occurrence_snapshot(mutation_id);
-    }
-}
-
 // Issue #2842: freeze Occurrence truth (live_goal_count + bounded fingerprint)
 // from commit TypeChecker CS at stamp sites. Quiet path (no TC / empty goals):
 // both 0, zero extra cost. Fingerprint mixes up to kProofGoalFingerprintMaxGoals
 // live goals so Agents detect densify/steal content drift without N-key join.
+// Declared before outermost-success persist so #2938 can stamp post-persist.
 [[nodiscard]] static aura::compiler::typed_audit::ProofGoalTruth
 freeze_proof_goal_truth_from_type_checker(void* tc_handle) noexcept {
     using aura::compiler::typed_audit::kProofGoalFingerprintMaxGoals;
@@ -166,6 +155,39 @@ freeze_proof_goal_truth_from_type_checker(void* tc_handle) noexcept {
     // Non-empty goals always produce a non-zero fingerprint (Agent drift).
     t.goal_fingerprint = (h != 0) ? h : 1;
     return t;
+}
+
+// Issue #2641 / #2938: C ABI for outermost-success OccurrenceGoal persist
+// (tests + dtor). Soft / env=0 / no type-checker / empty goals → zero cost
+// inside maybe_persist_occurrence_snapshot. Issue #2938: successful commit
+// is sole authority that freezes Occurrence truth — on write, bump
+// occurrence-commit-snapshot counters and stamp TypeLinearCommitProof with
+// the **post-persist** fingerprint (not a pre-persist hint). Reject paths
+// never call this helper (AC3).
+extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
+                                                          std::uint64_t mutation_id) noexcept {
+    if (!ev_ptr)
+        return;
+    auto* ev = static_cast<aura::compiler::Evaluator*>(ev_ptr);
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(ev->commit_type_checker_handle());
+    if (!tc)
+        return;
+    // (1) Persist live goals into the long-lived side buffer when enabled.
+    const auto written = tc->maybe_persist_occurrence_snapshot(mutation_id);
+    // (2) Issue #2938: note commit-snapshot write (production/Full + non-empty).
+    if (written > 0) {
+        aura::compiler::typed_audit::note_occurrence_commit_snapshot_written(
+            mutation_id, static_cast<std::uint64_t>(written));
+    }
+    // (3) Stamp TypeLinearCommitProof from post-persist CS truth so Agents
+    // holding the proof across densify/steal match the durable snapshot.
+    // Soft + empty goals: freeze returns 0/0; stamp still records defuse
+    // epoch (additive, no new writes to persist buffer). Call site always
+    // passes defuse_version as mutation_id.
+    const auto truth = freeze_proof_goal_truth_from_type_checker(tc);
+    (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live(
+        mutation_id, truth.live_goal_count, truth.goal_fingerprint, truth.from_cs);
+    (void)ev; // reserved for future evaluator-scoped stamp faces
 }
 
 namespace aura::compiler {
@@ -3513,12 +3535,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_linear_revalidations.fetch_add(1, std::memory_order_relaxed);
         }
-        // Issue #2608 / #2641 / #2896 / #2910: OccurrenceGoal persist for
-        // cross-delta / multi-session replay after steal/densify prune.
+        // Issue #2608 / #2641 / #2896 / #2910 / #2938: OccurrenceGoal persist
+        // for cross-delta / multi-session replay after steal/densify prune.
         // Soft default OFF (zero cost); production/Full always write a
         // snapshot on outermost success (no env required) so densify×steal
-        // rehydrate restores priority roots before green TypeLinearCommit
-        // stamps (#2910). Via C ABI so tests exercise the same path.
+        // rehydrate restores priority roots. Issue #2938: successful commit
+        // is sole authority — post-persist TypeLinearCommitProof freeze is
+        // inside the C ABI (written-total + last mid + proof fingerprint).
+        // Reject / force-rollback never reaches this block (AC3).
         {
             const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
             aura_outermost_success_persist_occurrence(ev_, mid);

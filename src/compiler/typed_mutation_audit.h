@@ -1118,6 +1118,31 @@ inline std::atomic<std::uint64_t> g_type_linear_commit_proof_goal_truth_stamped_
 inline std::atomic<std::uint64_t> g_type_linear_commit_proof_goal_fingerprint_nonzero_total{0};
 // Issue #2842: production stamp fell back to gauge (CS pointer unavailable).
 inline std::atomic<std::uint64_t> g_type_linear_commit_proof_goal_truth_gauge_fallback_total{0};
+// Issue #2938: outermost success is sole authority that freezes Occurrence
+// truth into the long-lived persist side buffer. Counters bump only when
+// maybe_persist_occurrence_snapshot actually writes entries (production /
+// Full + non-empty goals). Soft / empty / reject → zero (AC2/AC3).
+inline constexpr int kOccurrenceCommitSnapshotIssue = 2938;
+inline std::atomic<std::uint64_t> g_occurrence_commit_snapshot_written_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_commit_snapshot_mid{0};
+[[nodiscard]] inline std::uint64_t occurrence_commit_snapshot_written_total_v_read() noexcept {
+    return g_occurrence_commit_snapshot_written_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_commit_snapshot_mid_v_read() noexcept {
+    return g_occurrence_commit_snapshot_mid.load(std::memory_order_relaxed);
+}
+inline void note_occurrence_commit_snapshot_written(std::uint64_t mid,
+                                                    std::uint64_t entries_written) noexcept {
+    if (entries_written == 0)
+        return;
+    g_occurrence_commit_snapshot_written_total.fetch_add(1, std::memory_order_relaxed);
+    if (mid != 0)
+        g_occurrence_commit_snapshot_mid.store(mid, std::memory_order_relaxed);
+}
+inline void reset_occurrence_commit_snapshot_for_test() noexcept {
+    g_occurrence_commit_snapshot_written_total.store(0, std::memory_order_relaxed);
+    g_occurrence_commit_snapshot_mid.store(0, std::memory_order_relaxed);
+}
 // Process gauge published by stamp sites / query when CS goals known.
 // Quiet default 0 (no CS / empty goals). Gauge is fallback-only under
 // production when CS is unavailable (#2842) — prefer CS size at stamp.

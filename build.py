@@ -8937,6 +8937,32 @@ def cmd_refined_consistency_commit_gate_2911():
     return cmd_refined_consistency_commit_gate_2911_coverage()
 
 
+def cmd_occurrence_commit_snapshot_2938_coverage():
+    """Issue #2938: outermost success freezes Occurrence commit snapshot (static)."""
+    print(f"{B}=== occurrence commit snapshot coverage (#2938) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_commit_snapshot_2938.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence commit snapshot (#2938) coverage contract rows failed")
+        return 1
+    ok("occurrence commit snapshot (#2938) coverage clean")
+    return 0
+
+
+def cmd_occurrence_commit_snapshot_2938():
+    """Issue #2938: freeze Occurrence truth on every successful outermost commit.
+
+    Successful commit is sole authority for the long-lived persist side buffer;
+    post-persist TypeLinearCommitProof fingerprint matches written goals.
+    Soft/empty/reject → zero commit-snapshot counters.
+    """
+    print(f"{B}=== occurrence commit snapshot (#2938) ==={N}")
+    return cmd_occurrence_commit_snapshot_2938_coverage()
+
+
 def cmd_occurrence_persist_production_2910():
     """Issue #2910: default production persist + rehydrate before green stamps.
 
@@ -12863,6 +12889,8 @@ def main():
         "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,
         "occurrence-persist-production-2910": cmd_occurrence_persist_production_2910,
         "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,
+        "occurrence-commit-snapshot-2938": cmd_occurrence_commit_snapshot_2938,
+        "occurrence-commit-snapshot-2938-coverage": cmd_occurrence_commit_snapshot_2938_coverage,
         "refined-consistency-commit-gate-2911": cmd_refined_consistency_commit_gate_2911,
         "refined-consistency-commit-gate-2911-coverage": cmd_refined_consistency_commit_gate_2911_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
