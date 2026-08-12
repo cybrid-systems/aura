@@ -465,7 +465,58 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return make_string(0);
 
         // Inline unparse for the chosen root (captures flat/pool by ref).
+        // Issue #2919: P0 tags TypeAnnotation/Coercion/DefineType/Linear family +
+        // lambda dotted rest + string escapes for agent set-code roundtrip.
         constexpr int kMaxUnparseDepth = 256;
+        auto escape_string_literal = [](std::string_view raw) -> std::string {
+            std::string esc = "\"";
+            for (unsigned char c : raw) {
+                switch (c) {
+                    case '\\':
+                        esc += "\\\\";
+                        break;
+                    case '"':
+                        esc += "\\\"";
+                        break;
+                    case '\n':
+                        esc += "\\n";
+                        break;
+                    case '\t':
+                        esc += "\\t";
+                        break;
+                    case '\r':
+                        esc += "\\r";
+                        break;
+                    default:
+                        if (c < 0x20) {
+                            // Other controls as \xNN so re-parse stays legal.
+                            esc += "\\x";
+                            static constexpr char hex[] = "0123456789abcdef";
+                            esc += hex[(c >> 4) & 0xF];
+                            esc += hex[c & 0xF];
+                        } else {
+                            esc += static_cast<char>(c);
+                        }
+                        break;
+                }
+            }
+            esc += '"';
+            return esc;
+        };
+        auto coercion_type_name = [](std::int64_t type_tag) -> std::string_view {
+            switch (type_tag) {
+                case 0:
+                    return "Int";
+                case 1:
+                    return "String";
+                case 2:
+                    return "Bool";
+                case 3:
+                    return "Any";
+                default:
+                    return "Any";
+            }
+        };
         auto unparse = [&](this const auto& self, aura::ast::NodeId id, int indent,
                            int depth = 0) -> std::string {
             if (depth > kMaxUnparseDepth)
@@ -473,6 +524,31 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             if (id == aura::ast::NULL_NODE || id >= flat->size())
                 return "()";
             auto v = flat->get(id);
+            // Proper list as (a b c) — used by define-type ctor bodies (pair chains).
+            auto unparse_proper_list = [&](aura::ast::NodeId list_id) -> std::string {
+                std::string s = "(";
+                bool first = true;
+                auto cur = list_id;
+                while (cur != aura::ast::NULL_NODE && cur < flat->size()) {
+                    auto lv = flat->get(cur);
+                    if (lv.tag == aura::ast::NodeTag::Pair && lv.children.size() >= 2) {
+                        if (!first)
+                            s += " ";
+                        first = false;
+                        s += self(lv.child(0), indent + 1, depth + 1);
+                        cur = lv.child(1);
+                    } else if (lv.tag == aura::ast::NodeTag::LiteralInt && lv.int_value == 0 &&
+                               flat->marker(cur) != aura::ast::SyntaxMarker::BoolLiteral) {
+                        break; // nil sentinel
+                    } else {
+                        if (!first)
+                            s += " ";
+                        s += ". " + self(cur, indent + 1, depth + 1);
+                        break;
+                    }
+                }
+                return s + ")";
+            };
             switch (v.tag) {
                 case aura::ast::NodeTag::LiteralInt: {
                     if (flat->marker(id) == aura::ast::SyntaxMarker::BoolLiteral)
@@ -486,15 +562,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     return s;
                 }
                 case aura::ast::NodeTag::LiteralString: {
-                    auto raw = pool->resolve(v.sym_id);
-                    std::string esc = "\"";
-                    for (auto c : std::string_view(raw)) {
-                        if (c == '\\' || c == '"')
-                            esc += '\\';
-                        esc += c;
-                    }
-                    esc += '"';
-                    return esc;
+                    return escape_string_literal(pool->resolve(v.sym_id));
                 }
                 case aura::ast::NodeTag::Variable:
                     return std::string(pool->resolve(v.sym_id));
@@ -508,11 +576,21 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     return s + ")";
                 }
                 case aura::ast::NodeTag::Lambda: {
+                    // Issue #2919: dotted rest — int_value != 0 (HasLambdaDotted).
+                    const bool dotted = v.int_value != 0;
                     std::string s = "(lambda (";
-                    for (std::size_t i = 0; i < v.params.size(); ++i) {
-                        if (i > 0)
-                            s += " ";
-                        s += std::string(pool->resolve(v.params[i]));
+                    const auto n = v.params.size();
+                    for (std::size_t i = 0; i < n; ++i) {
+                        if (dotted && n >= 1 && i == n - 1) {
+                            if (n > 1)
+                                s += " ";
+                            s += ". ";
+                            s += std::string(pool->resolve(v.params[i]));
+                        } else {
+                            if (i > 0)
+                                s += " ";
+                            s += std::string(pool->resolve(v.params[i]));
+                        }
                     }
                     s += ")";
                     if (!v.children.empty())
@@ -589,8 +667,86 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                         s += " " + self(v.child(0), indent + 1, depth + 1);
                     return s + ")";
                 }
+                // ── Issue #2919 P0: type / coercion / linear / define-type ──
+                case aura::ast::NodeTag::TypeAnnotation: {
+                    // Forms: (: name Type) | (: name Type val) | (check expr : Type)
+                    const auto type_name = std::string(pool->resolve(v.sym_id));
+                    const auto inner =
+                        v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1);
+                    if (v.int_value != 0) {
+                        // 3-arg bind form: int_value holds var SymId
+                        auto var_name =
+                            std::string(pool->resolve(static_cast<aura::ast::SymId>(v.int_value)));
+                        return "(: " + var_name + " " + type_name + " " + inner + ")";
+                    }
+                    if (!v.children.empty()) {
+                        auto iv = flat->get(v.child(0));
+                        if (iv.tag == aura::ast::NodeTag::Variable) {
+                            return "(: " + std::string(pool->resolve(iv.sym_id)) + " " + type_name +
+                                   ")";
+                        }
+                    }
+                    return "(check " + inner + " : " + type_name + ")";
+                }
+                case aura::ast::NodeTag::Coercion: {
+                    // (cast expr : TypeName) — int_value = type_tag (0 Int … 3 Any)
+                    const auto inner =
+                        v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1);
+                    return "(cast " + inner + " : " + std::string(coercion_type_name(v.int_value)) +
+                           ")";
+                }
+                case aura::ast::NodeTag::DefineType: {
+                    // (define-type Name (Ctor ft...) ...) or (define-type (Name p...) ...)
+                    std::string s = "(define-type ";
+                    if (v.params.empty()) {
+                        s += std::string(pool->resolve(v.sym_id));
+                    } else {
+                        s += "(" + std::string(pool->resolve(v.sym_id));
+                        for (auto pid : v.params)
+                            s += " " + std::string(pool->resolve(pid));
+                        s += ")";
+                    }
+                    for (auto cid : v.children) {
+                        if (cid == aura::ast::NULL_NODE || cid >= flat->size())
+                            continue;
+                        auto cv = flat->get(cid);
+                        // Parser stores ctors as (quote (CtorName ft...))
+                        if (cv.tag == aura::ast::NodeTag::Quote && !cv.children.empty()) {
+                            s += " " + unparse_proper_list(cv.child(0));
+                        } else {
+                            s += " " + self(cid, indent + 1, depth + 1);
+                        }
+                    }
+                    return s + ")";
+                }
+                case aura::ast::NodeTag::Linear: {
+                    const auto inner =
+                        v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1);
+                    return "(Linear " + inner + ")";
+                }
+                case aura::ast::NodeTag::Move: {
+                    const auto inner =
+                        v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1);
+                    return "(move " + inner + ")";
+                }
+                case aura::ast::NodeTag::Borrow: {
+                    const auto inner =
+                        v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1);
+                    return "(borrow " + inner + ")";
+                }
+                case aura::ast::NodeTag::MutBorrow: {
+                    const auto inner =
+                        v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1);
+                    return "(mut-borrow " + inner + ")";
+                }
+                case aura::ast::NodeTag::Drop: {
+                    const auto inner =
+                        v.children.empty() ? "()" : self(v.child(0), indent + 1, depth + 1);
+                    return "(drop " + inner + ")";
+                }
                 default: {
-                    // Fallback: generic node dump for unknown types
+                    // Fallback: generic node dump for unknown / SV tags (P1).
+                    // P0 production tags must not reach here (see #2919 AC).
                     return std::format("<{}>", static_cast<int>(v.tag));
                 }
             }
