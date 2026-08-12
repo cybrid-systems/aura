@@ -228,6 +228,47 @@ enum class AotReloadFail : std::uint8_t {
     Other,
 };
 
+// Issue #2927: stable AotReloadFail → force_jit_regions_mask bit groups.
+// Related recovery reasons share a bit so Agents can heal Env-only drift
+// without demoting Version-healthy regions. Stable mask ABI (not enum
+// ordinals — enum order remains #2093 snapshot ABI):
+//   bit 0: Version | Defuse
+//   bit 1: Env
+//   bit 2: Linear
+//   bit 3: Region | Staging
+//   bit 4: Dlopen | Other
+//   Ok / unknown → no bit (mask 0); bit index sentinel 0xFF
+// on_force_jit_for_reason fetch_ors only the mapped bit (never silent
+// full-mask). ConsistencyProof fail-after-force-jit must carry the same
+// post-OR mask as HotUpdateRegistry (#2845).
+inline constexpr std::uint8_t aot_reload_fail_to_force_jit_bit_index(AotReloadFail r) noexcept {
+    switch (r) {
+        case AotReloadFail::Version:
+        case AotReloadFail::Defuse:
+            return 0;
+        case AotReloadFail::Env:
+            return 1;
+        case AotReloadFail::Linear:
+            return 2;
+        case AotReloadFail::Region:
+        case AotReloadFail::Staging:
+            return 3;
+        case AotReloadFail::Dlopen:
+        case AotReloadFail::Other:
+            return 4;
+        case AotReloadFail::Ok:
+        default:
+            return 0xFF;
+    }
+}
+
+inline constexpr std::uint64_t aot_reload_fail_to_force_jit_mask(AotReloadFail r) noexcept {
+    const auto bit = aot_reload_fail_to_force_jit_bit_index(r);
+    if (bit == 0xFF)
+        return 0;
+    return static_cast<std::uint64_t>(1) << bit;
+}
+
 // Issue #2093: getter for the last reload failure reason (file-scope
 // atomic in aura_jit_bridge.cpp; thread-safe lock-free read).
 // Returns AotReloadFail as uint8_t for C ABI stability.

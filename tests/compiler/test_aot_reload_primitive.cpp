@@ -1467,8 +1467,8 @@ int main() {
         reg.on_force_jit_for_reason(AotReloadFail::Version);
         const auto s1 = reg.reload_recovery_state();
         CHECK(s1.attempts_left == 0, "2302.6: post-force_jit attempts_left == 0");
-        CHECK((s1.force_jit_regions_mask & (1u << static_cast<unsigned>(AotReloadFail::Version))) !=
-                  0,
+        CHECK((s1.force_jit_regions_mask &
+               aot_reload_fail_to_force_jit_mask(AotReloadFail::Version)) != 0,
               "2302.7: post-force_jit bit for Version set");
         CHECK(s1.last_reason == static_cast<std::uint8_t>(AotReloadFail::Version),
               "2302.8: post-force_jit last_reason == Version");
