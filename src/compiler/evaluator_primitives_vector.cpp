@@ -247,8 +247,50 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_bool(false);
         return make_bool(is_vector(a[0]));
     });
-    add("make-vector", [&vector_heap](std::span<const EvalValue> a) {
-        auto n = a.empty() ? 0 : static_cast<std::size_t>(as_int(a[0]));
+    // Issue #2965: accept exact integer-valued floats as length (floor/round
+    // results); never reinterpret float bits via as_int → max_size() noise.
+    add("make-vector", [&vector_heap, &string_heap, &error_values,
+                        primitive_error_counter](std::span<const EvalValue> a) {
+        std::size_t n = 0;
+        if (!a.empty()) {
+            std::int64_t len = 0;
+            if (is_int(a[0])) {
+                len = as_int(a[0]);
+            } else if (is_float(a[0])) {
+                const double d = as_float(a[0]);
+                constexpr double kMaxI64 =
+                    static_cast<double>(std::numeric_limits<std::int64_t>::max());
+                // Exact integer-valued, finite, non-negative, in int64 range.
+                if (!(d == d) || d < 0.0 || d >= kMaxI64 || d != std::trunc(d)) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string("make-vector: length must be a non-negative integer, got ") +
+                            std::to_string(d) + " (float)",
+                        primitive_error_counter);
+                }
+                len = static_cast<std::int64_t>(d);
+            } else {
+                return make_primitive_error(string_heap, error_values,
+                                            "make-vector: length must be a non-negative integer",
+                                            primitive_error_counter);
+            }
+            if (len < 0) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string("make-vector: length must be a non-negative integer, got ") +
+                        std::to_string(len),
+                    primitive_error_counter);
+            }
+            n = static_cast<std::size_t>(len);
+            // Pre-check max_size so callers never see the raw std::vector message.
+            if (n > std::vector<EvalValue>{}.max_size()) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string("make-vector: length exceeds maximum vector size, got ") +
+                        std::to_string(len),
+                    primitive_error_counter);
+            }
+        }
         EvalValue init = a.size() > 1 ? a[1] : make_void();
         std::vector<EvalValue> elems(n, init);
         auto idx = vector_heap.size();

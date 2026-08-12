@@ -1,0 +1,47 @@
+; Issue #2965 — make-vector accepts integer-valued float lengths
+; (incl. floor/round results) and rejects non-integers with a typed error
+; (never the misleading std::vector max_size() path).
+
+(define ok #t)
+
+(if (= (vector-length (make-vector 5 0.0)) 5)
+    #t
+    (begin (display "FAIL-2965 int-len\n") (set! ok #f)))
+
+(if (= (vector-length (make-vector 5.0 0.0)) 5)
+    #t
+    (begin (display "FAIL-2965 float-5.0\n") (set! ok #f)))
+
+(if (= (vector-length (make-vector (floor 10.0) 0.0)) 10)
+    #t
+    (begin (display "FAIL-2965 floor-10\n") (set! ok #f)))
+
+(if (= (vector-length (make-vector (/ 10.0 2.0) 0.0)) 5)
+    #t
+    (begin (display "FAIL-2965 div-exact\n") (set! ok #f)))
+
+(if (= (vector-length (make-vector (round 10.1) 0.0)) 10)
+    #t
+    (begin (display "FAIL-2965 round-10.1\n") (set! ok #f)))
+
+; denseness-style fixed-step nsteps = floor(tstop/dt)
+(define nsteps (floor (/ 0.005 1e-5)))
+(if (= (vector-length (make-vector (+ nsteps 1) 0.0)) 500)
+    #t
+    (begin (display "FAIL-2965 nsteps-tran len=")
+           (write (vector-length (make-vector (+ nsteps 1) 0.0)))
+           (newline)
+           (set! ok #f)))
+
+; non-integer float → error value (not max_size abort)
+(if (error? (make-vector 5.5 0.0))
+    #t
+    (begin (display "FAIL-2965 non-int-float should error\n") (set! ok #f)))
+
+(if (error? (make-vector -1 0.0))
+    #t
+    (begin (display "FAIL-2965 neg-len should error\n") (set! ok #f)))
+
+(if ok
+    (begin (display "OK-2965 make-vector-float-len") (newline))
+    (begin (display "FAIL-2965") (newline) (unbound-2965-force-fail)))
