@@ -2,6 +2,9 @@
 # Issue #1933: LLVM source-based coverage artifact job.
 # Issue #1935: unified fuzz orchestrator.
 # Issue #2380 / #2513: production-concurrency gate (lock-order canary + full chaos).
+# Issue #2931: steal×mutate×GC×mailbox chaos soak hard gate
+#   (AURA_CHAOS_STEAL_GC=1, duration≥600s, workers≥8; residual-after-exit +
+#   resume-fence fail-closed). EXCLUDE_FROM_ALL — not part of default PR test.
 # Deploy-class soak: AURA_CHAOS_SOAK=1 AURA_CHAOS_FIBERS=256..1000
 #   AURA_CHAOS_DURATION_S=300+ (local / long runners only).
 name: Nightly
@@ -17,6 +20,35 @@ env:
   CCACHE_DISABLE: 1
 
 jobs:
+  # Issue #2931: steal×mutate×GC×mailbox chaos soak as nightly hard gate.
+  # Fail-closed: residual_defer_after_exit without matching clears,
+  # resume_fence_fail / ticket-mismatch hard surplus, residual_defer_steal
+  # hard-fail, residual bits still armed. PR default remains
+  # EXCLUDE_FROM_ALL + AURA_CHAOS_STEAL_GC env gate.
+  chaos-steal-gc-nightly:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/dev:v1.0.5
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build
+      run: python3 build.py build
+
+    # Builds + runs test_chaos_steal_mutation_gc under the env matrix below
+    # (see build.py cmd_chaos_steal_gc_nightly_2931). Soft steal forbidden.
+    - name: chaos steal-gc nightly hard gate (#2931)
+      env:
+        AURA_CHAOS_STEAL_GC: "1"
+        AURA_CHAOS_DURATION_S: "600"
+        AURA_CHAOS_WORKERS: "8"
+      run: |
+        python3 build.py chaos-steal-gc-nightly-2931
+        echo "✓ chaos-steal-gc-nightly green (duration≥600 workers≥8 residual/resume fail-closed)"
+
   # Issue #2380 / #2513: nightly production-concurrency hard gate.
   # Hard-fail: hang / residual defer / snapshot mismatch / steal hard-fail /
   # residual still-running > 0 / densify fail / lock-order canary / Soft steal /
