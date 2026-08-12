@@ -1786,10 +1786,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     }
                 }
 
-                // Issue #2906: set_child → set_child_locked moves
-                // children_[parent] out, cow_set exclusive in-place when
-                // sole holder, then moves back (canonical PCV exclusive
-                // path). SafePCVSpan / snapshot holders force COW.
                 flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
                 // Issue #2037 + #2858: propagate MacroIntroduced marker
                 // on allowed mutates (root + descendant cascade +

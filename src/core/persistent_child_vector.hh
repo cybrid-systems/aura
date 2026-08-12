@@ -38,19 +38,14 @@
 //  Header-only, no std::pmr dependency. Uses std::shared_ptr
 //  (atomic refcount — safe to share across fibers / threads).
 //
-//  Issue #2058 / #2140 / #2906: unique-ownership hot path. When the PCV
-//  is the sole holder of storage (use_count()==1) — the common FlatAST
-//  pattern of "mutate then drop old view" after a move out of
-//  children_[id] — cow_* / with_set exclusive + ensure_unique + in-place
-//  writes avoid a new allocation and the second atomic refcount trip.
-//  Snapshot / SafePCVSpan holders keep use_count()>1 so with_* still
-//  allocate (COW correctness). Issue #2140 extends exclusive in-place
-//  to const with_set. Issue #2906: FlatAST locked mutate paths MUST use
-//  the canonical pattern (never mutate children_[id] in place while the
-//  slot still holds a shared view):
-//    auto kids = std::move(children_[id]);  // sole holder if no snap
-//    kids.cow_set(i, new_child);            // exclusive in-place
-//    children_[id] = std::move(kids);
+//  Issue #2058 / #2140: unique-ownership hot path. When the PCV is the
+//  sole holder of storage (use_count()==1) — the common FlatAST pattern
+//  of "mutate then drop old view" after a move out of children_[id] —
+//  cow_* / with_set exclusive + ensure_unique + in-place writes avoid a
+//  new allocation and the second atomic refcount trip. Snapshot /
+//  SafePCVSpan holders keep use_count()>1 so with_* still allocate
+//  (COW correctness). Issue #2140 extends exclusive in-place to const
+//  with_set (AI multi-round local replace-one-child).
 //
 // Test plan (test_issue_221.cpp):
 //   1. Basic: construct, size, operator[], iterators
@@ -103,11 +98,6 @@ struct PcvHotpathMetrics {
     // Issue #2140: with_set exclusive vs shared paths.
     std::atomic<std::uint64_t> with_set_exclusive_total{0};
     std::atomic<std::uint64_t> with_set_cow_total{0};
-    // Issue #2906: FlatAST locked path after move-out of children_[id].
-    // exclusive = cow_set/with_set hit unique in-place; cow = shared
-    // snapshot/SafePCVSpan forced allocate. Agents chart exclusive ratio.
-    std::atomic<std::uint64_t> flatast_locked_move_out_exclusive_total{0};
-    std::atomic<std::uint64_t> flatast_locked_move_out_cow_total{0};
     // Issue #2406 / #2521: TLS scratch freelist (production default ON;
     // AURA_PCV_TLS=0 forces off).
     std::atomic<std::uint64_t> tls_scratch_hit_total{0};
@@ -129,8 +119,6 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
     m.cow_push_total.store(0, std::memory_order_relaxed);
     m.with_set_exclusive_total.store(0, std::memory_order_relaxed);
     m.with_set_cow_total.store(0, std::memory_order_relaxed);
-    m.flatast_locked_move_out_exclusive_total.store(0, std::memory_order_relaxed);
-    m.flatast_locked_move_out_cow_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_hit_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_miss_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_recycle_total.store(0, std::memory_order_relaxed);
@@ -139,8 +127,6 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
 inline constexpr int kPcvHotpathIssue = 2058;
 // Issue #2140: exclusive with_set (refcount==1) in-place, no alloc.
 inline constexpr int kPcvExclusiveSetIssue = 2140;
-// Issue #2906: FlatAST locked mutate forces exclusive PCV via move-out.
-inline constexpr int kPcvFlatastLockedExclusiveIssue = 2906;
 // Issue #2406: TLS scratch freelist foundation for exclusive PCV allocs.
 // Issue #2521: production default ON (mirror Moving compact / HighMutation).
 inline constexpr int kPcvTlsScratchIssue = 2406;
@@ -450,14 +436,12 @@ public:
         return result;
     }
 
-    // ── Issue #2058 / #2906: unique-path / COW hybrid mutators ────────
+    // ── Issue #2058: unique-path / COW hybrid mutators ────────
     // Non-const: when this is the sole storage owner, write in place
     // (zero alloc, no extra atomic). When shared (snapshot / pin /
     // SafePCVSpan), allocate like with_* and replace self.
-    // Issue #2906 canonical FlatAST locked pattern (see set_child_locked):
-    //   auto kids = std::move(children_[id]);
-    //   kids.cow_set(i, new_child);
-    //   children_[id] = std::move(kids);
+    // FlatAST locked paths should move children_[id] out, call cow_*,
+    // then move back — so the common case is unique.
 
     void cow_set(size_type i, const T& v) {
         g_pcv_hotpath_metrics().cow_set_total.fetch_add(1, std::memory_order_relaxed);
