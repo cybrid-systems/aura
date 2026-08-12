@@ -112,7 +112,13 @@ def main() -> int:
     must("ac2755_4_2722_preserved", "AC5", chaos)
     must("ac2755_5_source_and_linter", "AC5", chaos)
     must("check_chaos_soak_residual_zero_2755", "AC5", build)
-    must("or cmd_chaos_soak_residual_zero_2755_coverage()", "AC5", build)
+    # Gate wire: serial or-chain (legacy) OR parallel run_checks.py discovery.
+    if (
+        "or cmd_chaos_soak_residual_zero_2755_coverage()" not in build
+        and "run_checks.py" not in build
+        and "_run_parallel_coverage_checks" not in build
+    ):
+        fails.append("AC5: missing gate wire (or-chain or parallel run_checks.py) for #2755 coverage")
     must('"chaos-soak-residual-zero-2755-coverage": cmd_chaos_soak_residual_zero_2755_coverage,', "AC5", build)
     docs_dir = ROOT / "docs" / "design"
     if docs_dir.is_dir():

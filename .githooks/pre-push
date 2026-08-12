@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 #
-# Aura pre-push hook — run the same static gate CI runs before push.
-# Catches clang-format / ruff / docs drift that slipped past commit
-# (--no-verify) or accumulated in unstaged files.
+# Aura pre-push hook — fast static gate before push.
+#
+# Default: ./build.py gate --changed
+#   - docs + ruff + clang-format (changed C++ only)
+#   - parallel coverage checks whose paths intersect the git diff
+#   - nested check_* cascades suppressed (gate already runs each once)
+#   - chaos runtime profiles skipped (static coverage still runs if selected)
+#
+# Full gate (CI parity, slower):
+#   AURA_GATE_FULL=1 git push
+#   # or: python3 build.py gate --full
 #
 # Exit codes:
 #   0 — gate clean
@@ -17,10 +25,19 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "pre-push: running ./build.py gate (docs + lint + format + fixtures)..."
-if ! python3 "$ROOT/build.py" gate; then
+GATE_ARGS=(gate --changed)
+if [[ "${AURA_GATE_FULL:-}" == "1" || "${AURA_GATE_FULL:-}" == "true" || "${AURA_GATE_FULL:-}" == "yes" ]]; then
+    GATE_ARGS=(gate --full)
+    echo "pre-push: running FULL ./build.py gate (AURA_GATE_FULL=1)..."
+else
+    echo "pre-push: running ./build.py gate --changed (fast path)..."
+    echo "          set AURA_GATE_FULL=1 for full gate (CI parity)"
+fi
+
+if ! python3 "$ROOT/build.py" "${GATE_ARGS[@]}"; then
     echo "❌ pre-push: gate failed — fix locally before pushing" >&2
     echo "   hints: ./build.py format --fix  |  ./build.py lint --fix  |  ./build.py docs" >&2
+    echo "   full:  ./build.py gate --full   |  AURA_GATE_FULL=1 git push" >&2
     exit 1
 fi
 
