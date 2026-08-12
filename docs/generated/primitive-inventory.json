@@ -9,7 +9,7 @@
     "workspace": 17
   },
   "count": 481,
-  "frozen_count": 443,
+  "frozen_count": 444,
   "frozen_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -291,6 +291,7 @@
     "query:per-fiber-mutation-stack-stats",
     "query:per-fiber-stack-pool-stats",
     "query:post-steal-closed-loop-stats",
+    "query:prim-heap-quota-stats",
     "query:primitive-error-stats",
     "query:primitive-error-unified-stats",
     "query:primitive-meta-stats",
@@ -941,7 +942,7 @@
   ],
   "public_stats_via_add": 0,
   "schema": 2,
-  "stats_count": 420,
+  "stats_count": 421,
   "stats_names": [
     "arena:adaptive-stats",
     "arena:defrag-stats",
@@ -1214,6 +1215,7 @@
     "query:per-fiber-mutation-stack-stats",
     "query:per-fiber-stack-pool-stats",
     "query:post-steal-closed-loop-stats",
+    "query:prim-heap-quota-stats",
     "query:primitive-error-stats",
     "query:primitive-error-unified-stats",
     "query:primitive-meta-stats",
