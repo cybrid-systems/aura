@@ -8,16 +8,18 @@
 #ifndef AURA_COMPILER_SHAPE_PROFILER_H
 #define AURA_COMPILER_SHAPE_PROFILER_H
 
+#include <array>
 #include <atomic>
 #include <cstdint>
-// Issue #337: std::flat_map (C++23) for the
-// profiles_ container. Better cache locality
-// than std::unordered_map for the small-to-medium
+// Issue #337: std::flat_map (C++23) for per-shard
+// profiles. Better cache locality than
+// std::unordered_map for the small-to-medium
 // profile sets typical in shape-stable code. The
 // flat_map keeps entries in sorted order (small
 // overhead vs hash) but avoids the per-lookup
 // cache miss pattern of unordered_map's
-// hash-bucket traversal.
+// hash-bucket traversal. Issue #2937: one map
+// per shard under its own shared_mutex.
 #include <flat_map>
 #include <functional>
 #include <mutex>
@@ -31,20 +33,28 @@ namespace aura::compiler::shape {
 // ── ShapeProfiler ─────────────────────────────────────────────
 // Records shape observations per function and determines shape stability.
 //
-// Issue #2141 — concurrency model A (reader/writer shared_mutex):
-//   - Shared lock: is_stable / dominant_shape / current_snapshot /
-//     metrics / tracked_fns / shape_stable_ratio / deopt_rate_per_fn /
-//     profile_count (read-only walks of profiles_).
-//   - Unique lock: record_shape / invalidate / invalidate_all /
-//     on_arena_compact / on_boundary_or_fiber_sync / reset /
-//     config setters that touch non-atomic state.
-//   - Deopt-storm ring updates run under unique lock only.
-//   - External deopt/dirty hooks fire *after* releasing the lock so
+// Issue #2141 — concurrency model A (reader/writer shared_mutex).
+// Issue #2937 — sharded by FnKey so disjoint functions do not serialize
+// on a single unique lock under multi-fiber AI mutate+eval:
+//   - Per-shard shared_mutex + flat_map (kShapeProfilerShardCount shards).
+//   - Shared lock on shard(fn): is_stable / dominant_shape / current_snapshot /
+//     metrics (read-only walk of that function's profile).
+//   - Unique lock on shard(fn): record_shape / invalidate for that FnKey.
+//   - Ordered multi-shard unique locks (0..N-1): invalidate_all /
+//     on_arena_compact / reset / tracked_fns / shape_stable_ratio /
+//     deopt_rate_per_fn / profile_count (cross-function walks).
+//   - Config knobs under config_mtx_ (rare writers; not on hot record path).
+//   - Deopt-storm ring under meta_mtx_ (mutation-only; never from compact).
+//   - External deopt/dirty hooks fire *after* releasing locks so
 //     callbacks may re-enter without deadlock.
-//   - Metrics atomics remain lock-free for publish; map integrity is
-//     guarded by mtx_. Contention counted in shape_profiler_lock_contended_total.
+//   - Metrics atomics remain lock-free for publish. Contention counted in
+//     shape_profiler_lock_contended_total (any shard / config try_lock miss).
 // Multi-fiber mutate + eval + compact is production-supported under this model.
+// Compact≠storm (#2617) and PerEval storm default (#2683) unchanged.
 inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
+inline constexpr int kShapeProfilerShardIssue = 2937;
+// Fixed shard count — power-of-two friendly; FnKey hash selects shard.
+inline constexpr std::size_t kShapeProfilerShardCount = 16;
 
 // Issue #2255: process-wide shape version accessor for
 // LayoutStamp.shape_version capture in
@@ -361,10 +371,10 @@ public:
     // Default = base threshold (so adaptive thr = 2× base). Env:
     // AURA_SHAPE_STORM_ADAPTIVE_BOOST=N (0 disables adaptive raise).
     void set_adaptive_threshold_boost(std::uint32_t boost) noexcept {
-        adaptive_threshold_boost_ = boost;
+        adaptive_threshold_boost_.store(boost, std::memory_order_release);
     }
     [[nodiscard]] std::uint32_t adaptive_threshold_boost() const noexcept {
-        return adaptive_threshold_boost_;
+        return adaptive_threshold_boost_.load(std::memory_order_acquire);
     }
 
     // Issue #1468: shape_stable_ratio = (# fns in profiles_ with
@@ -382,16 +392,35 @@ public:
     // Issue #686: optional dirty-scope callback (IRSoA / block_dirty_).
     void set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook);
 
-    // Issue #2141: how often exclusive/shared lock had to wait (try_lock miss).
+    // Issue #2141 / #2937: how often exclusive/shared lock had to wait
+    // (try_lock miss on any shard or config mutex).
     [[nodiscard]] std::uint64_t lock_contended_total() const noexcept {
         return lock_contended_total_.load(std::memory_order_relaxed);
     }
+    // Issue #2937: public shard count for tests / Agents.
+    [[nodiscard]] static constexpr std::size_t shard_count() noexcept {
+        return kShapeProfilerShardCount;
+    }
+    // Issue #2937: which shard owns `fn` (stable hash).
+    [[nodiscard]] static std::size_t shard_index(FnKey fn) noexcept;
 
 private:
-    // Issue #2141: lock helpers (try → contended++ → block).
-    [[nodiscard]] std::unique_lock<std::shared_mutex> unique_lock_() const;
-    [[nodiscard]] std::shared_lock<std::shared_mutex> shared_lock_() const;
-    // Invalidate body without taking mtx_ (caller holds unique lock).
+    // Issue #2141 / #2937: per-shard lock helpers (try → contended++ → block).
+    [[nodiscard]] std::unique_lock<std::shared_mutex> unique_lock_shard_(std::size_t i) const;
+    [[nodiscard]] std::shared_lock<std::shared_mutex> shared_lock_shard_(std::size_t i) const;
+    // Ordered multi-shard locks (indices 0..N-1) for cross-function walks.
+    // Always acquire in ascending index order to avoid deadlock.
+    using ShardUniqueLocks =
+        std::array<std::unique_lock<std::shared_mutex>, kShapeProfilerShardCount>;
+    using ShardSharedLocks =
+        std::array<std::shared_lock<std::shared_mutex>, kShapeProfilerShardCount>;
+    [[nodiscard]] ShardUniqueLocks unique_lock_all_shards_() const;
+    [[nodiscard]] ShardSharedLocks shared_lock_all_shards_() const;
+    // Config knobs (window / threshold / max_profiles) — rare writers.
+    [[nodiscard]] std::unique_lock<std::shared_mutex> unique_lock_config_() const;
+    [[nodiscard]] std::shared_lock<std::shared_mutex> shared_lock_config_() const;
+    // Invalidate body without taking locks (caller holds unique lock on
+    // the owning shard for `fn`).
     bool invalidate_unlocked_(FnKey fn);
     struct ShapeRecord {
         ShapeID shape_id;
@@ -448,31 +477,40 @@ private:
         ShapeID compute_dominant() const;
     };
 
-    void maybe_evict_profiles_();
+    // Evict within one shard (caller holds unique on that shard).
+    // Cap ≈ max_profiles_ / shard_count so total stays near max_profiles_.
+    void maybe_evict_profiles_(std::size_t shard_i);
     // Issue #1468 / #2617: update deopt-storm ring + active flag.
     // MUTATION-ONLY callers: invalidate_unlocked_ / record_shape stability-loss.
     // Forbidden from on_arena_compact (gate + runtime ring-count contract).
+    // Caller holds unique on the owning shard; this takes meta_mtx_ for the ring.
     void update_deopt_storm_state_(FnKey fn) noexcept;
 
-    // Issue #2141: guards profiles_ / history / deopt ring / config knobs.
-    mutable std::shared_mutex mtx_;
+    // Issue #2937: per-FnKey profile shard (map + mutex).
+    struct ProfileShard {
+        mutable std::shared_mutex mtx;
+        std::flat_map<FnKey, FnProfile> profiles;
+    };
+    std::array<ProfileShard, kShapeProfilerShardCount> shards_{};
+    // Issue #2141 / #2937: process-wide contention counter (any shard/config).
     mutable std::atomic<std::uint64_t> lock_contended_total_{0};
+    // Config knobs (not on hot record_shape path for distinct FnKeys).
+    mutable std::shared_mutex config_mtx_;
+    // Deopt-storm ring + dirty_hook (mutation-only meta; never compact).
+    mutable std::mutex meta_mtx_;
 
-    // Issue #337: std::flat_map (C++23) for the
-    // profiles_ container. The flat_map's sorted
-    // iteration matches the per-Fn history window
-    // access pattern (the profiling engine iterates
-    // profiles to detect stability across functions
-    // — sorted access is more cache-friendly than
-    // hash-bucket iteration). Guarded by mtx_.
-    std::flat_map<FnKey, FnProfile> profiles_;
     std::uint32_t window_size_ = kDefaultWindowSize;
     double stability_ratio_ = kDefaultStabilityRatio;
-    std::uint64_t global_time_ = 0;
-    std::size_t max_profiles_ = 4096; // Issue #992
-    std::uint64_t profile_evictions_ = 0;
+    // Issue #2937: global_time is atomic so concurrent shards can stamp
+    // history without a process-wide unique lock.
+    std::atomic<std::uint64_t> global_time_{0};
+    // Issue #992 / #2937: atomic so per-shard eviction can read without
+    // nesting config_mtx_ under a shard unique lock.
+    std::atomic<std::size_t> max_profiles_{4096};
+    std::atomic<std::uint64_t> profile_evictions_{0};
     // Issue #1468: per-instance deopt-event ring for storm detection.
     // Stores (timestamp, fn) for the last deopt_storm_window_ events.
+    // Guarded by meta_mtx_ (#2937).
     struct DeoptEvent {
         std::uint64_t time;
         FnKey fn;
@@ -495,11 +533,13 @@ private:
     // (should never happen — compact skips the ring; kept for API symmetry).
     std::atomic<bool> last_storm_from_compact_{false};
     // Issue #1468: configurable knobs (now driven by Preset).
+    // Issue #2937: storm knobs atomic so update_deopt_storm_state_ can
+    // read them under shard unique without nesting config_mtx_.
     std::uint32_t min_samples_for_stable_ = 100;
-    std::uint32_t deopt_storm_window_ = 256;
-    std::uint32_t deopt_storm_threshold_ = 4;
+    std::atomic<std::uint32_t> deopt_storm_window_{256};
+    std::atomic<std::uint32_t> deopt_storm_threshold_{4};
     // Issue #2526: adaptive boost (0 = disable adaptive raise).
-    std::uint32_t adaptive_threshold_boost_ = 0; // set in ctor to match base thr
+    std::atomic<std::uint32_t> adaptive_threshold_boost_{0}; // set in ctor to match base thr
     std::atomic<std::uint32_t> adaptive_threshold_live_{0};
     std::atomic<std::uint64_t> adaptive_suppress_total_{0};
     std::atomic<std::uint64_t> adaptive_enter_total_{0};

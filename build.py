@@ -7826,6 +7826,32 @@ def cmd_shape_compact_no_global_bump_2908():
     return cmd_shape_compact_no_global_bump_2908_coverage()
 
 
+def cmd_shape_profiler_shard_2937_coverage():
+    """Issue #2937: ShapeProfiler FnKey lock sharding (static)."""
+    print(f"{B}=== shape profiler shard coverage (#2937) ==={N}")
+    script = COVERAGE_CHECKS / "check_shape_profiler_shard_2937.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("shape profiler shard (#2937) coverage contract rows failed")
+        return 1
+    ok("shape profiler shard (#2937) coverage clean")
+    return 0
+
+
+def cmd_shape_profiler_shard_2937():
+    """Issue #2937: ShapeProfiler hot-path lock sharding for multi-fiber AI.
+
+    Per-FnKey shards (kShapeProfilerShardCount) so concurrent record_shape on
+    disjoint functions does not serialize on one unique lock. Preserves
+    #2617 compact≠storm and #2141 contention metrics.
+    """
+    print(f"{B}=== shape profiler shard (#2937) ==={N}")
+    return cmd_shape_profiler_shard_2937_coverage()
+
+
 def cmd_shape_compact_storm_isolation_coverage():
     """Issue #2617: compact path must never feed deopt-storm ring as mutation.
 
@@ -12815,6 +12841,8 @@ def main():
         "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
+        "shape-profiler-shard-2937": cmd_shape_profiler_shard_2937,
+        "shape-profiler-shard-2937-coverage": cmd_shape_profiler_shard_2937_coverage,
         "shape-compact-no-global-bump-2908": cmd_shape_compact_no_global_bump_2908,
         "shape-compact-no-global-bump-2908-coverage": cmd_shape_compact_no_global_bump_2908_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

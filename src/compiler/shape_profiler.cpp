@@ -324,52 +324,98 @@ ShapeProfiler::ShapeProfiler() {
         apply_preset(kHighMutationPreset);
 }
 
-// ── Issue #2141: lock helpers ─────────────────────────────────
-std::unique_lock<std::shared_mutex> ShapeProfiler::unique_lock_() const {
-    std::unique_lock<std::shared_mutex> lock(mtx_, std::try_to_lock);
+// ── Issue #2141 / #2937: lock helpers (per-shard + config) ───
+std::size_t ShapeProfiler::shard_index(FnKey fn) noexcept {
+    // SplitMix64-style mix so sequential FnKeys spread across shards.
+    std::uint64_t x = static_cast<std::uint64_t>(fn);
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return static_cast<std::size_t>(x % kShapeProfilerShardCount);
+}
+
+std::unique_lock<std::shared_mutex> ShapeProfiler::unique_lock_shard_(std::size_t i) const {
+    auto& mtx = shards_[i % kShapeProfilerShardCount].mtx;
+    std::unique_lock<std::shared_mutex> lock(mtx, std::try_to_lock);
     if (!lock.owns_lock()) {
         lock_contended_total_.fetch_add(1, std::memory_order_relaxed);
-        lock = std::unique_lock<std::shared_mutex>(mtx_);
+        lock = std::unique_lock<std::shared_mutex>(mtx);
     }
     return lock;
 }
 
-std::shared_lock<std::shared_mutex> ShapeProfiler::shared_lock_() const {
-    std::shared_lock<std::shared_mutex> lock(mtx_, std::try_to_lock);
+std::shared_lock<std::shared_mutex> ShapeProfiler::shared_lock_shard_(std::size_t i) const {
+    auto& mtx = shards_[i % kShapeProfilerShardCount].mtx;
+    std::shared_lock<std::shared_mutex> lock(mtx, std::try_to_lock);
     if (!lock.owns_lock()) {
         lock_contended_total_.fetch_add(1, std::memory_order_relaxed);
-        lock = std::shared_lock<std::shared_mutex>(mtx_);
+        lock = std::shared_lock<std::shared_mutex>(mtx);
+    }
+    return lock;
+}
+
+ShapeProfiler::ShardUniqueLocks ShapeProfiler::unique_lock_all_shards_() const {
+    ShardUniqueLocks locks;
+    // Ascending index order — sole multi-shard acquisition order (#2937).
+    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i)
+        locks[i] = unique_lock_shard_(i);
+    return locks;
+}
+
+ShapeProfiler::ShardSharedLocks ShapeProfiler::shared_lock_all_shards_() const {
+    ShardSharedLocks locks;
+    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i)
+        locks[i] = shared_lock_shard_(i);
+    return locks;
+}
+
+std::unique_lock<std::shared_mutex> ShapeProfiler::unique_lock_config_() const {
+    std::unique_lock<std::shared_mutex> lock(config_mtx_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        lock_contended_total_.fetch_add(1, std::memory_order_relaxed);
+        lock = std::unique_lock<std::shared_mutex>(config_mtx_);
+    }
+    return lock;
+}
+
+std::shared_lock<std::shared_mutex> ShapeProfiler::shared_lock_config_() const {
+    std::shared_lock<std::shared_mutex> lock(config_mtx_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        lock_contended_total_.fetch_add(1, std::memory_order_relaxed);
+        lock = std::shared_lock<std::shared_mutex>(config_mtx_);
     }
     return lock;
 }
 
 void ShapeProfiler::set_window_size(std::uint32_t n) {
-    auto lock = unique_lock_();
+    auto lock = unique_lock_config_();
     window_size_ = n;
 }
 
 void ShapeProfiler::set_stability_ratio(double r) {
-    auto lock = unique_lock_();
+    auto lock = unique_lock_config_();
     stability_ratio_ = r;
 }
 
 std::uint32_t ShapeProfiler::window_size() const noexcept {
-    auto lock = shared_lock_();
+    auto lock = shared_lock_config_();
     return window_size_;
 }
 
 double ShapeProfiler::stability_ratio() const noexcept {
-    auto lock = shared_lock_();
+    auto lock = shared_lock_config_();
     return stability_ratio_;
 }
 
 void ShapeProfiler::apply_preset(Preset p) {
-    auto lock = unique_lock_();
+    auto lock = unique_lock_config_();
     window_size_ = p.window_size;
     stability_ratio_ = p.stability_ratio;
     min_samples_for_stable_ = p.min_samples_for_stable;
-    deopt_storm_window_ = p.deopt_storm_window;
-    deopt_storm_threshold_ = p.deopt_storm_threshold;
+    deopt_storm_window_.store(p.deopt_storm_window, std::memory_order_release);
+    deopt_storm_threshold_.store(p.deopt_storm_threshold, std::memory_order_release);
     // Issue #2526: default adaptive boost = base threshold (2× under
     // compact-dominated + stable). AURA_SHAPE_STORM_ADAPTIVE_BOOST=0
     // disables raise; N sets explicit boost.
@@ -384,7 +430,7 @@ void ShapeProfiler::apply_preset(Preset p) {
                 boost = static_cast<std::uint32_t>(v);
         }
     }
-    adaptive_threshold_boost_ = boost;
+    adaptive_threshold_boost_.store(boost, std::memory_order_release);
     adaptive_threshold_live_.store(p.deopt_storm_threshold, std::memory_order_release);
     g_deopt_storm_adaptive_threshold_atomic().store(p.deopt_storm_threshold,
                                                     std::memory_order_release);
@@ -392,47 +438,45 @@ void ShapeProfiler::apply_preset(Preset p) {
 }
 
 ShapeProfiler::Preset ShapeProfiler::active_preset() const noexcept {
-    auto lock = shared_lock_();
+    auto lock = shared_lock_config_();
     return active_preset_;
 }
 
 std::uint32_t ShapeProfiler::min_samples_for_stable() const noexcept {
-    auto lock = shared_lock_();
+    auto lock = shared_lock_config_();
     return min_samples_for_stable_;
 }
 
 std::uint32_t ShapeProfiler::deopt_storm_window() const noexcept {
-    auto lock = shared_lock_();
-    return deopt_storm_window_;
+    return deopt_storm_window_.load(std::memory_order_acquire);
 }
 
 std::uint32_t ShapeProfiler::deopt_storm_threshold() const noexcept {
-    auto lock = shared_lock_();
-    return deopt_storm_threshold_;
+    return deopt_storm_threshold_.load(std::memory_order_acquire);
 }
 
 void ShapeProfiler::set_max_profiles(std::size_t n) {
-    auto lock = unique_lock_();
-    max_profiles_ = n ? n : 1;
+    max_profiles_.store(n ? n : 1, std::memory_order_release);
 }
 
 std::size_t ShapeProfiler::max_profiles() const noexcept {
-    auto lock = shared_lock_();
-    return max_profiles_;
+    return max_profiles_.load(std::memory_order_acquire);
 }
 
 std::size_t ShapeProfiler::profile_count() const noexcept {
-    auto lock = shared_lock_();
-    return profiles_.size();
+    auto locks = shared_lock_all_shards_();
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i)
+        n += shards_[i].profiles.size();
+    return n;
 }
 
 std::uint64_t ShapeProfiler::profile_evictions() const noexcept {
-    auto lock = shared_lock_();
-    return profile_evictions_;
+    return profile_evictions_.load(std::memory_order_relaxed);
 }
 
 void ShapeProfiler::set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook) {
-    auto lock = unique_lock_();
+    std::lock_guard<std::mutex> meta(meta_mtx_);
     dirty_hook_ = std::move(hook);
 }
 
@@ -474,23 +518,34 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     aura::core::cpp26::record_hotpath_invariant_hit();
     contract_assert(is_known_inline_shape_id(shape_id) || shape_id != SHAPE_UNKNOWN);
 
-    // Issue #2141: unique lock; fire external hooks after unlock.
+    // Issue #2141 / #2937: unique lock on owning shard only; fire hooks after unlock.
     bool fire_stability_loss = false;
     std::uint64_t fire_version = 0;
     std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
     bool result = false;
 
+    // Issue #2937 lock order: config (shared) before shard unique — never nest
+    // config under a held shard lock on the hot path.
+    std::uint32_t win = 0;
+    double stab = 0.0;
     {
-        auto lock = unique_lock_();
-        // Issue #992: cap profiles before insert.
-        if (profiles_.find(fn) == profiles_.end() && profiles_.size() >= max_profiles_)
-            maybe_evict_profiles_();
-        auto& profile = profiles_[fn];
+        auto cfg = shared_lock_config_();
+        win = window_size_;
+        stab = stability_ratio_;
+    }
+    const std::size_t si = shard_index(fn);
+    {
+        auto lock = unique_lock_shard_(si);
+        auto& profiles = shards_[si].profiles;
+        // Issue #992 / #2937: per-shard cap ≈ max_profiles_/N so total stays near max.
+        if (profiles.find(fn) == profiles.end())
+            maybe_evict_profiles_(si);
+        auto& profile = profiles[fn];
         auto& history = profile.history;
-        std::uint64_t now = ++global_time_;
+        const std::uint64_t now = global_time_.fetch_add(1, std::memory_order_relaxed) + 1;
         profile.last_used = now;
 
-        history.push({shape_id, now}, window_size_);
+        history.push({shape_id, now}, win);
 
         profile.total_calls++;
 
@@ -512,11 +567,11 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
         contract_assert(static_cast<std::uint32_t>(dominant_count) <= hist_size);
         double ratio = static_cast<double>(dominant_count) / static_cast<double>(hist_size);
         contract_assert(ratio >= 0.0 && ratio <= 1.0);
-        if (ratio >= stability_ratio_ && profile.is_stable && profile.stable_shape == dominant) {
+        if (ratio >= stab && profile.is_stable && profile.stable_shape == dominant) {
             return true;
         }
 
-        if (ratio >= stability_ratio_) {
+        if (ratio >= stab) {
             if (!profile.is_stable) {
                 shape_stability_hit_count.fetch_add(1, std::memory_order_relaxed);
             }
@@ -538,7 +593,10 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
             update_deopt_storm_state_(fn);
             fire_stability_loss = true;
             fire_version = profile.version;
-            dirty_hook_copy = dirty_hook_;
+            {
+                std::lock_guard<std::mutex> meta(meta_mtx_);
+                dirty_hook_copy = dirty_hook_;
+            }
         }
         profile.is_stable = false;
         profile.stable_shape = SHAPE_UNKNOWN;
@@ -556,24 +614,27 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
 }
 
 bool ShapeProfiler::is_stable(FnKey fn) const {
-    auto lock = shared_lock_();
-    auto it = profiles_.find(fn);
-    return it != profiles_.end() && it->second.is_stable;
+    const std::size_t si = shard_index(fn);
+    auto lock = shared_lock_shard_(si);
+    auto it = shards_[si].profiles.find(fn);
+    return it != shards_[si].profiles.end() && it->second.is_stable;
 }
 
 ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {
-    auto lock = shared_lock_();
-    auto it = profiles_.find(fn);
-    if (it == profiles_.end())
+    const std::size_t si = shard_index(fn);
+    auto lock = shared_lock_shard_(si);
+    auto it = shards_[si].profiles.find(fn);
+    if (it == shards_[si].profiles.end())
         return SHAPE_UNKNOWN;
     return it->second.stable_shape;
 }
 
 ShapeSnapshot ShapeProfiler::current_snapshot(FnKey fn) const {
-    auto lock = shared_lock_();
+    const std::size_t si = shard_index(fn);
+    auto lock = shared_lock_shard_(si);
     ShapeSnapshot snap;
-    auto it = profiles_.find(fn);
-    if (it != profiles_.end()) {
+    auto it = shards_[si].profiles.find(fn);
+    if (it != shards_[si].profiles.end()) {
         snap.id = it->second.stable_shape;
         snap.version = it->second.version;
     }
@@ -581,9 +642,11 @@ ShapeSnapshot ShapeProfiler::current_snapshot(FnKey fn) const {
 }
 
 bool ShapeProfiler::invalidate_unlocked_(FnKey fn) {
-    // Caller must hold unique lock on mtx_.
-    auto it = profiles_.find(fn);
-    if (it == profiles_.end())
+    // Caller must hold unique lock on the owning shard for `fn`.
+    const std::size_t si = shard_index(fn);
+    auto& profiles = shards_[si].profiles;
+    auto it = profiles.find(fn);
+    if (it == profiles.end())
         return false;
 
     const bool was_stable = it->second.is_stable;
@@ -615,17 +678,22 @@ bool ShapeProfiler::invalidate(FnKey fn) {
     std::uint64_t version = 0;
     bool found = false;
     std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
+    const std::size_t si = shard_index(fn);
     {
-        auto lock = unique_lock_();
-        auto it = profiles_.find(fn);
-        if (it == profiles_.end())
+        auto lock = unique_lock_shard_(si);
+        auto& profiles = shards_[si].profiles;
+        auto it = profiles.find(fn);
+        if (it == profiles.end())
             return false;
         found = true;
         was_stable = invalidate_unlocked_(fn);
-        it = profiles_.find(fn);
-        if (it != profiles_.end())
+        it = profiles.find(fn);
+        if (it != profiles.end())
             version = it->second.version;
-        dirty_hook_copy = dirty_hook_;
+        {
+            std::lock_guard<std::mutex> meta(meta_mtx_);
+            dirty_hook_copy = dirty_hook_;
+        }
     }
     if (found) {
         fire_shape_deopt_hook(fn, version, kShapeDirtyScopeInvalidate);
@@ -638,15 +706,17 @@ bool ShapeProfiler::invalidate(FnKey fn) {
 }
 
 void ShapeProfiler::invalidate_all() noexcept {
-    // Collect keys under unique lock, then invalidate each (hook-safe).
+    // Collect keys under shared multi-shard locks, then invalidate each (hook-safe).
     // Issue #2526: mutation pressure counted per-invalidate_unlocked_ (not here)
     // to avoid double-count with the single-fn path.
     std::vector<FnKey> keys;
     {
-        auto lock = unique_lock_();
-        keys.reserve(profiles_.size());
-        for (const auto& [k, _] : profiles_)
-            keys.push_back(k);
+        auto locks = shared_lock_all_shards_();
+        for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
+            keys.reserve(keys.size() + shards_[i].profiles.size());
+            for (const auto& [k, _] : shards_[i].profiles)
+                keys.push_back(k);
+        }
     }
     for (FnKey fn : keys)
         (void)invalidate(fn);
@@ -677,7 +747,8 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     // hard contract under Moving mode.
     const auto t0 = std::chrono::steady_clock::now();
 
-    // Issue #2141: mutate under unique lock; fire hooks after unlock.
+    // Issue #2141 / #2937: mutate under ordered multi-shard unique locks;
+    // fire hooks after unlock. Compact still never takes meta_mtx_ storm path.
     struct HookWork {
         FnKey fn;
         std::uint64_t version;
@@ -687,10 +758,15 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     std::uint32_t touched = 0;
 
     {
-        auto lock = unique_lock_();
+        auto locks = unique_lock_all_shards_();
         // #2617 runtime contract: compact must not grow storm ring or
         // mutation-induced invalidation counters.
-        const auto ring_before = deopt_ring_count_;
+        std::uint32_t ring_before = 0;
+        {
+            std::lock_guard<std::mutex> meta(meta_mtx_);
+            ring_before = deopt_ring_count_;
+            dirty_hook_copy = dirty_hook_;
+        }
         const auto mut_before = mutation_induced_invalidations_.load(std::memory_order_relaxed);
         // Issue #2908: capture process-global version for PerEval contract.
         const auto global_ver_before = shape_version_bump_count.load(std::memory_order_relaxed);
@@ -700,9 +776,15 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
         const int iso_mode = aura_get_storm_isolation_mode();
         const bool allow_global_version_bump = (iso_mode != 2);
 
-        if (profiles_.empty()) {
+        std::size_t total_profiles = 0;
+        for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i)
+            total_profiles += shards_[i].profiles.size();
+        if (total_profiles == 0) {
             deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
-            contract_assert(deopt_ring_count_ == ring_before);
+            {
+                std::lock_guard<std::mutex> meta(meta_mtx_);
+                contract_assert(deopt_ring_count_ == ring_before);
+            }
             contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) ==
                             mut_before);
             contract_assert(!last_storm_from_compact_.load(std::memory_order_relaxed));
@@ -710,42 +792,46 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
         }
 
         const std::uint64_t epoch = aura::core::current_mutation_epoch();
-        dirty_hook_copy = dirty_hook_;
-        hooks_to_fire.reserve(profiles_.size());
+        hooks_to_fire.reserve(total_profiles);
 
         // flat_map iterator yields pair-by-value proxy; use auto&&.
-        for (auto&& [fn, profile] : profiles_) {
-            const bool was_stable = profile.is_stable;
-            profile.version++;
-            if (epoch > profile.version)
-                profile.version = epoch;
-            // Issue #2908: per-profile version always advances (local dirty
-            // hooks / resume soft path). Process-global shape_version only
-            // under Global isolation (not production PerEval default).
-            if (allow_global_version_bump) {
-                shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
-                g_shape_compact_global_version_bump_total_atomic().fetch_add(
-                    1, std::memory_order_relaxed);
-            } else {
-                g_shape_compact_global_version_skipped_total_atomic().fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-            ++touched;
+        for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
+            for (auto&& [fn, profile] : shards_[i].profiles) {
+                const bool was_stable = profile.is_stable;
+                profile.version++;
+                if (epoch > profile.version)
+                    profile.version = epoch;
+                // Issue #2908: per-profile version always advances (local dirty
+                // hooks / resume soft path). Process-global shape_version only
+                // under Global isolation (not production PerEval default).
+                if (allow_global_version_bump) {
+                    shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+                    g_shape_compact_global_version_bump_total_atomic().fetch_add(
+                        1, std::memory_order_relaxed);
+                } else {
+                    g_shape_compact_global_version_skipped_total_atomic().fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                ++touched;
 
-            if (was_stable) {
-                shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
-                arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
-            }
+                if (was_stable) {
+                    shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
+                    arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
+                }
 
-            hooks_to_fire.push_back(HookWork{fn, profile.version});
-            deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
-            arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
-            // Explicitly do NOT call update_deopt_storm_state_(fn).  // #2617
-            deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+                hooks_to_fire.push_back(HookWork{fn, profile.version});
+                deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
+                arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
+                // Explicitly do NOT call update_deopt_storm_state_(fn).  // #2617
+                deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+            }
         }
 
         // #2617: fail-closed if a future edit feeds the storm ring from compact.
-        contract_assert(deopt_ring_count_ == ring_before);
+        {
+            std::lock_guard<std::mutex> meta(meta_mtx_);
+            contract_assert(deopt_ring_count_ == ring_before);
+        }
         contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) ==
                         mut_before);
         contract_assert(!last_storm_from_compact_.load(std::memory_order_relaxed));
@@ -788,9 +874,11 @@ double ShapeProfiler::on_boundary_or_fiber_sync(bool clear_compact_only_storm) n
     record_shape_fiber_refresh();
 
     {
-        auto lock = unique_lock_();
+        // Issue #2937: storm ring under meta_mtx_; threshold is atomic.
+        const std::uint32_t thr = deopt_storm_threshold_.load(std::memory_order_acquire);
+        std::lock_guard<std::mutex> meta(meta_mtx_);
         if (clear_compact_only_storm && deopt_storm_active_.load(std::memory_order_acquire)) {
-            if (deopt_ring_count_ < deopt_storm_threshold_) {
+            if (deopt_ring_count_ < thr) {
                 deopt_storm_active_.store(false, std::memory_order_release);
                 // Issue #2433: clear published StormLevel Shape bit + force-reason
                 // when storm soft-clears (boundary/fiber sync, compact-only).
@@ -824,38 +912,53 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
     // #2617: ring events are mutation-sourced only (call-site gate).
     // Adaptive suppress under compact-dominated pressure remains soft
     // (kShapeStormForceReasonAdaptiveSuppress) — never Threshold hard fence.
-    // Push the new event into the ring.
-    if (deopt_ring_.size() != deopt_storm_window_) {
-        deopt_ring_.assign(deopt_storm_window_ > 0 ? deopt_storm_window_ : 1, DeoptEvent{0, 0});
+    // Caller holds unique on owning shard; ring under meta_mtx_.
+    // Issue #2937: storm knobs are atomic (no config_mtx_ under shard unique).
+    const std::uint32_t win = deopt_storm_window_.load(std::memory_order_acquire);
+    const std::uint32_t thr_raw = deopt_storm_threshold_.load(std::memory_order_acquire);
+    const std::uint32_t base_thr = thr_raw > 0 ? thr_raw : 1;
+    const std::uint32_t boost = adaptive_threshold_boost_.load(std::memory_order_acquire);
+    // Do not take config_mtx_ under shard unique (#2937 lock order). Adaptive
+    // uses the production default stability bar as the slack baseline.
+    const double stab_cfg = kDefaultStabilityRatio;
+
+    // Stable-ratio peek under the already-held shard unique only (never take
+    // other shard locks here — deadlock with ordered multi-shard walks).
+    const std::size_t si = shard_index(fn);
+    std::uint32_t stable = 0;
+    std::uint32_t nprof = 0;
+    {
+        nprof = static_cast<std::uint32_t>(shards_[si].profiles.size());
+        for (const auto& [k, p] : shards_[si].profiles) {
+            (void)k;
+            if (p.is_stable)
+                ++stable;
+        }
     }
-    deopt_ring_[deopt_ring_head_] = DeoptEvent{global_time_, fn};
+    const double stable_ratio =
+        nprof > 0 ? static_cast<double>(stable) / static_cast<double>(nprof) : 0.0;
+
+    std::lock_guard<std::mutex> meta(meta_mtx_);
+    // Push the new event into the ring.
+    if (deopt_ring_.size() != win) {
+        deopt_ring_.assign(win > 0 ? win : 1, DeoptEvent{0, 0});
+    }
+    deopt_ring_[deopt_ring_head_] = DeoptEvent{global_time_.load(std::memory_order_relaxed), fn};
     deopt_ring_head_ = (deopt_ring_head_ + 1) % static_cast<std::uint32_t>(deopt_ring_.size());
     if (deopt_ring_count_ < deopt_ring_.size())
         ++deopt_ring_count_;
     // Count deopts in the most-recent `deopt_storm_window_` ring entries.
     const std::uint32_t recent = deopt_ring_count_; // ring sized to window
-    const std::uint32_t base_thr = deopt_storm_threshold_ > 0 ? deopt_storm_threshold_ : 1;
 
     // Issue #2526: compute adaptive threshold under compact-dominated
     // + stable profiles (avoid over-isolation after Moving compact).
     std::uint32_t adaptive_thr = base_thr;
     const auto compact = arena_compact_calls_.load(std::memory_order_relaxed);
     const auto mut_inv = mutation_induced_invalidations_.load(std::memory_order_relaxed);
-    // Stable-ratio peek without nested lock: use profiles under current unique lock.
-    std::uint32_t stable = 0;
-    const auto nprof = static_cast<std::uint32_t>(profiles_.size());
-    for (const auto& [k, p] : profiles_) {
-        (void)k;
-        if (p.is_stable)
-            ++stable;
-    }
-    const double stable_ratio =
-        nprof > 0 ? static_cast<double>(stable) / static_cast<double>(nprof) : 0.0;
     const bool compact_dominated = compact > 0 && compact >= mut_inv;
-    const bool profiles_stable =
-        nprof > 0 && stable_ratio >= (stability_ratio_ * 0.90); // slight slack
-    if (adaptive_threshold_boost_ > 0 && compact_dominated && profiles_stable)
-        adaptive_thr = base_thr + adaptive_threshold_boost_;
+    const bool profiles_stable = nprof > 0 && stable_ratio >= (stab_cfg * 0.90); // slight slack
+    if (boost > 0 && compact_dominated && profiles_stable)
+        adaptive_thr = base_thr + boost;
 
     adaptive_threshold_live_.store(adaptive_thr, std::memory_order_release);
     g_deopt_storm_adaptive_threshold_atomic().store(adaptive_thr, std::memory_order_release);
@@ -902,30 +1005,38 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
     }
 }
 
-// Issue #1468 / #2141: ratio accessors under shared lock (multi-fiber safe).
+// Issue #1468 / #2141 / #2937: ratio accessors under multi-shard shared locks.
 double ShapeProfiler::shape_stable_ratio() const noexcept {
-    auto lock = shared_lock_();
-    if (profiles_.empty())
-        return 0.0;
+    auto locks = shared_lock_all_shards_();
     std::uint32_t stable = 0;
-    for (const auto& [k, p] : profiles_) {
-        (void)k;
-        if (p.is_stable)
-            ++stable;
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
+        for (const auto& [k, p] : shards_[i].profiles) {
+            (void)k;
+            ++n;
+            if (p.is_stable)
+                ++stable;
+        }
     }
-    return static_cast<double>(stable) / static_cast<double>(profiles_.size());
+    if (n == 0)
+        return 0.0;
+    return static_cast<double>(stable) / static_cast<double>(n);
 }
 
 double ShapeProfiler::deopt_rate_per_fn() const noexcept {
-    auto lock = shared_lock_();
-    if (profiles_.empty())
-        return 0.0;
+    auto locks = shared_lock_all_shards_();
     std::uint64_t total_deopt = 0;
-    for (const auto& [k, p] : profiles_) {
-        (void)k;
-        total_deopt += p.deopt_count;
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
+        for (const auto& [k, p] : shards_[i].profiles) {
+            (void)k;
+            ++n;
+            total_deopt += p.deopt_count;
+        }
     }
-    return static_cast<double>(total_deopt) / static_cast<double>(profiles_.size());
+    if (n == 0)
+        return 0.0;
+    return static_cast<double>(total_deopt) / static_cast<double>(n);
 }
 
 double ShapeProfiler::history_hit_rate() const noexcept {
@@ -938,10 +1049,11 @@ double ShapeProfiler::history_hit_rate() const noexcept {
 }
 
 ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
-    auto lock = shared_lock_();
+    const std::size_t si = shard_index(fn);
+    auto lock = shared_lock_shard_(si);
     ShapeFnMetrics m;
-    auto it = profiles_.find(fn);
-    if (it == profiles_.end())
+    auto it = shards_[si].profiles.find(fn);
+    if (it == shards_[si].profiles.end())
         return m;
 
     auto& p = it->second;
@@ -971,38 +1083,52 @@ ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
 }
 
 void ShapeProfiler::reset() {
-    auto lock = unique_lock_();
-    profiles_.clear();
-    global_time_ = 0;
-    profile_evictions_ = 0;
-    deopt_ring_.clear();
-    deopt_ring_head_ = 0;
-    deopt_ring_count_ = 0;
+    auto locks = unique_lock_all_shards_();
+    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i)
+        shards_[i].profiles.clear();
+    global_time_.store(0, std::memory_order_relaxed);
+    profile_evictions_.store(0, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> meta(meta_mtx_);
+        deopt_ring_.clear();
+        deopt_ring_head_ = 0;
+        deopt_ring_count_ = 0;
+    }
     deopt_storm_active_.store(false, std::memory_order_release);
 }
 
-void ShapeProfiler::maybe_evict_profiles_() {
-    // Caller must hold unique lock. Issue #992: drop oldest last_used.
-    while (profiles_.size() >= max_profiles_ && !profiles_.empty()) {
-        auto victim = profiles_.begin();
+void ShapeProfiler::maybe_evict_profiles_(std::size_t shard_i) {
+    // Caller must hold unique lock on shard_i. Issue #992 / #2937:
+    // per-shard cap ≈ max_profiles_/N so total capacity ~ max_profiles_.
+    // max_profiles_ is only written under config unique; relaxed load is OK
+    // for eviction (slight overshoot is acceptable). Avoid config lock under
+    // shard unique (lock-order discipline).
+    const std::size_t max_p = max_profiles_.load(std::memory_order_acquire);
+    const std::size_t shard_cap =
+        std::max<std::size_t>(1, (max_p ? max_p : 1) / kShapeProfilerShardCount + 1);
+    auto& profiles = shards_[shard_i % kShapeProfilerShardCount].profiles;
+    while (profiles.size() >= shard_cap && !profiles.empty()) {
+        auto victim = profiles.begin();
         std::uint64_t oldest = victim->second.last_used;
-        for (auto it = profiles_.begin(); it != profiles_.end(); ++it) {
+        for (auto it = profiles.begin(); it != profiles.end(); ++it) {
             if (it->second.last_used < oldest) {
                 oldest = it->second.last_used;
                 victim = it;
             }
         }
-        profiles_.erase(victim);
-        ++profile_evictions_;
+        profiles.erase(victim);
+        profile_evictions_.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
 std::vector<FnKey> ShapeProfiler::tracked_fns() const {
-    auto lock = shared_lock_();
+    auto locks = shared_lock_all_shards_();
     std::vector<FnKey> keys;
-    keys.reserve(profiles_.size());
-    for (const auto& [k, _] : profiles_)
-        keys.push_back(k);
+    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
+        keys.reserve(keys.size() + shards_[i].profiles.size());
+        for (const auto& [k, _] : shards_[i].profiles)
+            keys.push_back(k);
+    }
     return keys;
 }
 
