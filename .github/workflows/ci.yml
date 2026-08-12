@@ -43,6 +43,8 @@ env:
   AURA_BUILD_TYPE: RelWithDebInfo
   AURA_BUILD_JOBS: "0"  # 0 → use all host CPUs in build.py
   AURA_TEST_JOBS: "4"
+  # Suite-internal case fan-out (keep modest — suites also run in parallel).
+  AURA_SUITE_JOBS: "2"
   AURA_ISSUES_JOBS: "4"
   # Cross-run ccache caused stale-object flakes; compile fresh every job.
   CCACHE_DISABLE: 1
