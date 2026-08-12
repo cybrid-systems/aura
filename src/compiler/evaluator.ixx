@@ -5403,6 +5403,13 @@ private:
     std::atomic<std::uint64_t> verify_tool_dirty_propagations_total_{0};
     std::atomic<std::uint64_t> verify_tool_stable_ref_hits_total_{0};
     std::atomic<std::uint64_t> verify_tool_feedback_mutate_success_total_{0};
+    // Issue #2917: closed-loop agent:recover-from-error counters.
+    std::atomic<std::uint64_t> agent_recovery_attempts_total_{0};
+    std::atomic<std::uint64_t> agent_recovery_success_total_{0};
+    std::atomic<std::uint64_t> agent_recovery_fail_total_{0};
+    std::atomic<std::uint64_t> agent_recovery_last_status_{0};
+    std::atomic<std::uint64_t> agent_recovery_hold_cleared_total_{0};
+    std::atomic<std::uint64_t> agent_recovery_checkpoint_total_{0};
     // Issue #443: result cache keyed by (cmd, gen).
     // Bounded LRU (P0: 64 entries, FIFO eviction; the
     // follow-up uses a proper LRU). Used by
@@ -7140,6 +7147,49 @@ public:
     }
     void bump_verify_tool_feedback_mutate_success() noexcept {
         verify_tool_feedback_mutate_success_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2917: Agent closed-loop recovery counters (also mirrored to CompilerMetrics).
+    void note_agent_recovery_attempt() noexcept {
+        agent_recovery_attempts_total_.fetch_add(1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->agent_recovery_attempts_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void note_agent_recovery_result(std::uint64_t status, bool success, bool hold_cleared,
+                                    bool checkpointed) noexcept {
+        agent_recovery_last_status_.store(status, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->agent_recovery_last_status.store(status, std::memory_order_relaxed);
+        if (success) {
+            agent_recovery_success_total_.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->agent_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            agent_recovery_fail_total_.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->agent_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (hold_cleared) {
+            agent_recovery_hold_cleared_total_.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->agent_recovery_hold_cleared_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (checkpointed) {
+            agent_recovery_checkpoint_total_.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->agent_recovery_checkpoint_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t agent_recovery_attempts() const noexcept {
+        return agent_recovery_attempts_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t agent_recovery_successes() const noexcept {
+        return agent_recovery_success_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t agent_recovery_fails() const noexcept {
+        return agent_recovery_fail_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t agent_recovery_last_status() const noexcept {
+        return agent_recovery_last_status_.load(std::memory_order_relaxed);
     }
     // Issue #443: public cache accessors (called from
     // verify_tool.cpp's lambdas, which don't get

@@ -7124,6 +7124,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> prim_heap_quota_strings_limit{0};
     std::atomic<std::uint64_t> prim_heap_quota_vectors_limit{0};
 
+    // Issue #2917: closed-loop Agent recovery (diagnose → apply-fix under Guard).
+    // Surfaced via (engine:metrics "query:agent-recovery-stats") schema-2917.
+    // last_status: 0 idle, 1 success, 2 fail, 3 no-diagnosis, 4 guard-fail, 5 bad-args.
+    std::atomic<std::uint64_t> agent_recovery_attempts_total{0};
+    std::atomic<std::uint64_t> agent_recovery_success_total{0};
+    std::atomic<std::uint64_t> agent_recovery_fail_total{0};
+    std::atomic<std::uint64_t> agent_recovery_last_status{0};
+    std::atomic<std::uint64_t> agent_recovery_hold_cleared_total{0};
+    std::atomic<std::uint64_t> agent_recovery_checkpoint_total{0};
+
     // Issue #452: AOT hot-update + region filtering
     // observability. Each counter is a per-bridge-event
     // monotonic total readable via (query:aot-stats).

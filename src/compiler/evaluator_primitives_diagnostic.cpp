@@ -1,9 +1,12 @@
 // evaluator_primitives_diagnostic.cpp — P0 step 23: diagnose / apply-fix / check-preconditions
+// Issue #2917: agent:recover-from-error closed-loop (diagnose → fix under Guard).
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
 
 #include "runtime_shared.h"
+#include "prim_heap_quota.hh"      // Issue #2917 recovery can raise soft quotas
+#include "security_side_effect.hh" // AURA_SIDE_EFFECT_PRIM / agent: → Mutate (#2057/#2152)
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
@@ -184,6 +187,31 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             msg.find("uncalled function") != std::string::npos) {
             return make_diag("closure-no-display", "", "add-display", "",
                              "Add (display (your-function args)) at the end of your code");
+        }
+
+        // Issue #2917 / #2916: soft heap / resource quota — raise limit or free pressure.
+        if (msg.find("prim-heap-quota:") != std::string::npos) {
+            std::string dim = "pairs";
+            if (msg.find("strings") != std::string::npos)
+                dim = "strings";
+            else if (msg.find("vectors") != std::string::npos)
+                dim = "vectors";
+            return make_diag("prim-heap-quota", dim, "raise-quota", dim,
+                             "Raise (resource:quota-set \"" + dim +
+                                 "\" N) or free heap pressure before retrying");
+        }
+        if (msg.find("quota exceeded") != std::string::npos ||
+            msg.find("resource quota") != std::string::npos) {
+            return make_diag("resource-quota", "", "raise-quota", "memory",
+                             "Raise resource:quota-set limit or reduce concurrent work");
+        }
+
+        // Type mismatch residual (mutate / typecheck last_mutate_error_)
+        if (msg.find("type") != std::string::npos &&
+            (msg.find("mismatch") != std::string::npos || msg.find("error") != std::string::npos ||
+             msg.find("deny") != std::string::npos)) {
+            return make_diag("type-mismatch", "", "clear-hold-or-rewrite", "",
+                             "Clear strict hold via recover or rewrite the offending mutate");
         }
 
         return make_bool(false);
@@ -376,6 +404,195 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         if (is_bool(result) && as_bool(result))
             ev.bump_verify_tool_dirty_propagation();
         return result;
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Issue #2917: (agent:recover-from-error …) — closed-loop recovery
+    //   error → diagnose → apply-fix under MutationBoundaryGuard → clear hold
+    // Agent-callable; required_effects auto-stamped Mutate via agent: prefix.
+    // AURA_SIDE_EFFECT_PRIM
+    //
+    // Forms:
+    //   (agent:recover-from-error code-string)
+    //       → use last_mutate_error_ as the error text
+    //   (agent:recover-from-error error-string code-string)
+    //   (agent:recover-from-error error-value code-string)
+    //
+    // Returns list: (ok status-code cause fix-type fixed-code-or-void)
+    //   status-code: 1 success, 2 fail, 3 no-diagnosis, 4 guard-fail, 5 bad-args
+    // Poll: (engine:metrics "query:agent-recovery-stats") schema-2917
+    // ═══════════════════════════════════════════════════════════════════════
+    add("agent:recover-from-error", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        ev.note_agent_recovery_attempt();
+
+        auto push_str = [&](const std::string& s) -> EvalValue {
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(s);
+            return make_string(sidx);
+        };
+        auto make_result = [&](bool ok, std::int64_t status, const std::string& cause,
+                               const std::string& fix_type, EvalValue fixed) -> EvalValue {
+            // (ok status cause fix-type fixed) proper list
+            auto nil = EvalValue(0);
+            auto e_pair = make_pair(ev.pairs_.size());
+            ev.pairs_.push_back({fixed, nil});
+            auto d_pair = make_pair(ev.pairs_.size());
+            ev.pairs_.push_back({push_str(fix_type), e_pair});
+            auto c_pair = make_pair(ev.pairs_.size());
+            ev.pairs_.push_back({push_str(cause), d_pair});
+            auto s_pair = make_pair(ev.pairs_.size());
+            ev.pairs_.push_back({make_int(status), c_pair});
+            auto o_pair = make_pair(ev.pairs_.size());
+            ev.pairs_.push_back({make_bool(ok), s_pair});
+            return o_pair;
+        };
+
+        // Resolve error message + optional code.
+        std::string err_msg;
+        std::string code;
+        if (a.empty()) {
+            ev.note_agent_recovery_result(/*status=*/5, /*success=*/false, /*hold=*/false,
+                                          /*ckpt=*/false);
+            return make_result(false, 5, "bad-args", "", make_void());
+        }
+
+        auto extract_err_string = [&](const EvalValue& v) -> std::string {
+            if (is_string(v)) {
+                auto si = as_string_idx(v);
+                if (si < ev.string_heap_.size())
+                    return ev.string_heap_[si];
+            } else if (is_error(v)) {
+                auto eidx = types::as_error_idx(v);
+                if (eidx < ev.error_values_.size()) {
+                    auto& cause = ev.error_values_[eidx];
+                    if (is_string(cause)) {
+                        auto si = as_string_idx(cause);
+                        if (si < ev.string_heap_.size())
+                            return ev.string_heap_[si];
+                    }
+                }
+            }
+            return {};
+        };
+
+        if (a.size() == 1) {
+            // Single arg: code-string, error from last_mutate_error_
+            if (!is_string(a[0])) {
+                ev.note_agent_recovery_result(5, false, false, false);
+                return make_result(false, 5, "bad-args", "", make_void());
+            }
+            auto ci = as_string_idx(a[0]);
+            if (ci >= ev.string_heap_.size()) {
+                ev.note_agent_recovery_result(5, false, false, false);
+                return make_result(false, 5, "bad-args", "", make_void());
+            }
+            code = ev.string_heap_[ci];
+            err_msg = ev.last_mutate_error();
+            if (err_msg.empty()) {
+                ev.note_agent_recovery_result(5, false, false, false);
+                return make_result(false, 5, "no-last-error", "", make_void());
+            }
+        } else {
+            err_msg = extract_err_string(a[0]);
+            if (err_msg.empty() || !is_string(a[1])) {
+                ev.note_agent_recovery_result(5, false, false, false);
+                return make_result(false, 5, "bad-args", "", make_void());
+            }
+            auto ci = as_string_idx(a[1]);
+            if (ci >= ev.string_heap_.size()) {
+                ev.note_agent_recovery_result(5, false, false, false);
+                return make_result(false, 5, "bad-args", "", make_void());
+            }
+            code = ev.string_heap_[ci];
+        }
+
+        // Guard + panic checkpoint (safe recovery window).
+        bool guard_ok = true;
+        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+            ev, /*pending=*/1, &guard_ok);
+        if (!guard_r) {
+            ev.note_agent_recovery_result(4, false, false, false);
+            return make_result(false, 4, "guard-fail", "", make_void());
+        }
+        auto guard = std::move(*guard_r);
+        ev.bump_verify_tool_guard_capture();
+        const bool ckpt = ev.save_panic_checkpoint();
+        if (ckpt)
+            (void)0; // counted below on result
+
+        // Diagnose (inline reuse of diagnose by constructing a string value).
+        auto err_sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(err_msg);
+        // Call diagnose logic via the primitive if present; else fail closed.
+        auto diag_slot = ev.primitives().slot_for_name("diagnose");
+        EvalValue diagnosis = make_bool(false);
+        if (auto fn = ev.primitives().slot_lookup_fast(diag_slot)) {
+            diagnosis = (*fn)({make_string(err_sidx)});
+        }
+        if (!is_pair(diagnosis)) {
+            ev.note_agent_recovery_result(3, false, false, ckpt);
+            return make_result(false, 3, "no-diagnosis", "", make_void());
+        }
+
+        // Apply fix under the same Guard (apply-fix also takes Guard — nested OK).
+        auto fix_slot = ev.primitives().slot_for_name("apply-fix");
+        EvalValue fixed = make_bool(false);
+        if (auto fn = ev.primitives().slot_lookup_fast(fix_slot)) {
+            auto code_sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(code);
+            fixed = (*fn)({make_string(code_sidx), diagnosis});
+        }
+        if (!is_string(fixed)) {
+            ev.note_agent_recovery_result(2, false, false, ckpt);
+            return make_result(false, 2, "apply-fix-failed", "", make_void());
+        }
+
+        // Extract cause / fix-type from diagnosis list for metrics + return.
+        auto get_elem = [&](EvalValue p, int n) -> std::string {
+            for (int i = 0; i < n && is_pair(p); ++i) {
+                if (i == n - 1) {
+                    if (is_string(ev.pairs_[as_pair_idx(p)].car)) {
+                        auto si = as_string_idx(ev.pairs_[as_pair_idx(p)].car);
+                        if (si < ev.string_heap_.size())
+                            return ev.string_heap_[si];
+                    }
+                    return "";
+                }
+                p = ev.pairs_[as_pair_idx(p)].cdr;
+            }
+            return "";
+        };
+        const auto cause = get_elem(diagnosis, 1);
+        const auto fix_type = get_elem(diagnosis, 3);
+
+        // Clear strict hold / last mutate error so Agents see green readiness.
+        const bool had_hold = ev.strict_mutate_hold() || !ev.last_mutate_error().empty();
+        if (had_hold)
+            ev.clear_last_mutate_error(); // also clears strict_mutate_hold_
+
+        // Quota-class: auto-raise soft limit a notch when fix-type is raise-quota.
+        if (fix_type == "raise-quota") {
+            const auto dim = get_elem(diagnosis, 2); // target dim for prim-heap
+            if (dim == "pairs") {
+                auto cur = ev.prim_heap_quota(PrimHeapDim::Pairs);
+                if (cur > 0)
+                    ev.set_prim_heap_quota(PrimHeapDim::Pairs, cur + 64);
+            } else if (dim == "strings") {
+                auto cur = ev.prim_heap_quota(PrimHeapDim::Strings);
+                if (cur > 0)
+                    ev.set_prim_heap_quota(PrimHeapDim::Strings, cur + 64);
+            } else if (dim == "vectors") {
+                auto cur = ev.prim_heap_quota(PrimHeapDim::Vectors);
+                if (cur > 0)
+                    ev.set_prim_heap_quota(PrimHeapDim::Vectors, cur + 16);
+            }
+        }
+
+        ev.bump_verify_tool_feedback_mutate_success();
+        ev.bump_verify_tool_stable_ref_hit();
+        ev.bump_verify_tool_dirty_propagation();
+        ev.note_agent_recovery_result(1, true, had_hold, ckpt);
+        return make_result(true, 1, cause, fix_type, fixed);
     });
 }
 

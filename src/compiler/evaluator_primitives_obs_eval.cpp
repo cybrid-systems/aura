@@ -16383,6 +16383,86 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+    // Issue #2917: closed-loop Agent recovery polling surface.
+    ObservabilityPrims::register_stats_impl(
+        "query:agent-recovery-stats", [&ev](const auto&) -> EvalValue {
+            std::uint64_t attempts = ev.agent_recovery_attempts();
+            std::uint64_t success = ev.agent_recovery_successes();
+            std::uint64_t fail = ev.agent_recovery_fails();
+            std::uint64_t last = ev.agent_recovery_last_status();
+            std::uint64_t hold_cleared = 0;
+            std::uint64_t ckpt = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                hold_cleared = m->agent_recovery_hold_cleared_total.load(std::memory_order_relaxed);
+                ckpt = m->agent_recovery_checkpoint_total.load(std::memory_order_relaxed);
+                // Prefer metrics mirror when present (same process).
+                attempts = std::max(
+                    attempts, m->agent_recovery_attempts_total.load(std::memory_order_relaxed));
+                success = std::max(success,
+                                   m->agent_recovery_success_total.load(std::memory_order_relaxed));
+                fail = std::max(fail, m->agent_recovery_fail_total.load(std::memory_order_relaxed));
+                last =
+                    std::max(last, m->agent_recovery_last_status.load(std::memory_order_relaxed));
+            }
+            const std::int64_t rate_bp =
+                attempts == 0
+                    ? 0
+                    : static_cast<std::int64_t>((success * 10000) / attempts); // basis points
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"attempts-total", make_int(static_cast<std::int64_t>(attempts))},
+                {"success-total", make_int(static_cast<std::int64_t>(success))},
+                {"fail-total", make_int(static_cast<std::int64_t>(fail))},
+                {"last-status", make_int(static_cast<std::int64_t>(last))},
+                {"success-rate-bp", make_int(rate_bp)},
+                {"hold-cleared-total", make_int(static_cast<std::int64_t>(hold_cleared))},
+                {"checkpoint-total", make_int(static_cast<std::int64_t>(ckpt))},
+                {"strict-hold", make_int(ev.strict_mutate_hold() ? 1 : 0)},
+                {"schema", make_int(2917)},
+            };
+            return build_hash(kv);
+        });
+
     ObservabilityPrims::register_stats_impl(
         "query:primitives-hotpath-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t call_total = 0;

@@ -26,6 +26,13 @@ Soft limits on `pairs` / `strings` / `vectors` growth for concurrent Agent loops
 - Contract: [stdlib/prim-heap-quota.md](stdlib/prim-heap-quota.md) (Issue #2916)
 - `(resource:quota-set "pairs"|"strings"|"vectors" N)` + `(engine:metrics "query:prim-heap-quota-stats")`
 
+## Agent recovery closed loop
+
+Error → diagnose → safe fix under Guard → clear hold → poll stats:
+
+- Contract: [stdlib/agent-recovery.md](stdlib/agent-recovery.md) (Issue #2917)
+- `(agent:recover-from-error err code)` + `(engine:metrics "query:agent-recovery-stats")`
+
 ## Docs regeneration
 
 ```bash
