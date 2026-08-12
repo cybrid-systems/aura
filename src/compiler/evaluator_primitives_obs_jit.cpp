@@ -968,6 +968,19 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                      aura::compiler::g_ir_soa_residual_multi_via_single_marks_total.load(
                          std::memory_order_relaxed)))},
                 {"soa-residual-multi-via-single-ban-wired", make_int(1)},
+                // Issue #2936: production multi-block dirty = batch-only smoke
+                // (hard-expect residual multi-via-single == 0 under production
+                // packs; mirrors #2618 residual AoS smoke). Additive only.
+                {"schema-2936",
+                 make_int(aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke)},
+                {"issue-2936",
+                 make_int(aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke)},
+                {"soa-residual-multi-via-single-production-smoke-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::ir_dirty_batch_only_production_smoke_wired()))},
+                {"ir-dirty-batch-only-production-smoke-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::ir_dirty_batch_only_production_smoke_wired()))},
                 // Issue #2682: Moving densify unified success gate.
                 // Single predicate (pin_contract ∧ root_remap ∧ untracked==0)
                 // used by Phase-5 outermost exit, AdaptiveCompactResult

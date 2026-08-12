@@ -20,10 +20,19 @@
 //   #2774 AC3: empty span quiet (no residual bump)
 //   #2774 AC4: residual multi-via-single counters + schema-2774
 //   #2774 AC5: N× mark_block_dirty trips residual; batch clears streak
+//
+//   #2936 AC1: production multi-block cascade sites use batch APIs; residual
+//              multi-via-single == 0 under production smoke workload
+//   #2936 AC2: single mark_block_dirty remains valid (streak 1)
+//   #2936 AC3: empty span batch quiet (no fence)
+//   #2936 AC4: schema-2936 + production-smoke-wired; #2615/#2773/#2774 preserved
+//   #2936 AC5: intentional residual still works when AURA_IR_DIRTY_BATCH_ONLY unset
+//   #2936 AC6: coverage linter + no docs/design/
 
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <span>
@@ -50,12 +59,15 @@ using aura::compiler::g_unified_dirty_fence_advance_total;
 using aura::compiler::g_unified_dirty_ir_batch_total;
 using aura::compiler::g_unified_dirty_ir_single_total;
 using aura::compiler::g_unified_dirty_last_sources;
+using aura::compiler::ir_dirty_batch_only_hard;
+using aura::compiler::ir_dirty_batch_only_production_smoke_wired;
 using aura::compiler::IRFunctionSoA;
 using aura::compiler::IRModuleV2;
 using aura::compiler::kInvSrcIrSoaBatch;
 using aura::compiler::kInvSrcIrSoaSingle;
 using aura::compiler::kIrSoaBatchDirtyDisciplineIssue;
 using aura::compiler::kIrSoaMultiViaSingleBanIssue;
+using aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke;
 using aura::compiler::kUnifiedDirtyFenceIssue;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -544,6 +556,165 @@ static void ac2774_5_source_cite() {
           "AC5: no docs/design/2774-* per #1655");
 }
 
+// ── Issue #2936: production multi-block IR dirty = batch API only ──
+
+static void ac2936_1_production_smoke_residual_zero() {
+    std::println("\n--- #2936 AC1: production multi-block batch-only; residual==0 smoke ---");
+    CHECK(kSchemaResidualMultiViaSingleProductionSmoke == 2936, "AC1: schema stamp 2936");
+    CHECK(ir_dirty_batch_only_production_smoke_wired() == 1, "AC1: production smoke wired");
+    // Production cascade sites use batch APIs (source-cite audit).
+    const auto dce = read_file("src/compiler/pass_impls.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(dce.find("mark_blocks_dirty(changed_blocks)") != std::string::npos ||
+              dce.find("mark_blocks_dirty") != std::string::npos,
+          "AC1: DCE production path uses mark_blocks_dirty");
+    CHECK(svc.find("mark_blocks_dirty") != std::string::npos, "AC1: service batch API present");
+    CHECK(svc.find("mark_blocks_dirty_bit_only") != std::string::npos ||
+              svc.find("mark_blocks_dirty_bits_only") != std::string::npos,
+          "AC1: service bit-only batch present");
+    // Representative multi-block cascade workload: only batch APIs → residual flat.
+    ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    CHECK(!ir_dirty_batch_only_hard(), "AC1: hard assert off for smoke (metric-only)");
+    auto fn = make_n_block_fn(8);
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    const auto m0 = g_ir_soa_residual_multi_via_single_marks_total.load(std::memory_order_relaxed);
+    // Several multi-block batches (ImpactScope-shaped).
+    for (int round = 0; round < 4; ++round) {
+        const std::uint32_t ids[] = {0, 1, 2, 3, 4, 5};
+        fn.mark_blocks_dirty(ids);
+        const std::uint32_t bits[] = {1, 3, 5, 7};
+        fn.mark_blocks_dirty_bits_only(bits);
+    }
+    fn.mark_all_blocks_dirty();
+    // True single marks interspersed (AC2 path) — streak must not residual.
+    fn.mark_block_dirty(0);
+    const auto r1 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    const auto m1 = g_ir_soa_residual_multi_via_single_marks_total.load(std::memory_order_relaxed);
+    if (r1 != r0 || m1 != m0) {
+        std::println(stderr,
+                     "FATAL: residual multi-via-single cascades={} marks={} after production "
+                     "batch smoke (baseline cascades={} marks={}); schema-2936/#2774 — "
+                     "use mark_blocks_dirty for multi-block cascades",
+                     r1, m1, r0, m0);
+    }
+    CHECK(r1 == r0, std::format("AC1 FATAL: residual multi-via-single cascades==0 growth "
+                                "(got delta {}; schema-2936/#2774)",
+                                r1 - r0));
+    CHECK(m1 == m0, std::format("AC1 FATAL: residual multi-via-single marks==0 growth "
+                                "(got delta {}; schema-2936/#2774)",
+                                m1 - m0));
+    // CompilerService mutate → invalidate path under SoA-only (smoke).
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (if (> x 0) (+ x 1) (- x 1)))\")").has_value(),
+          "AC1: set-code multi-block-ish define");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC1: eval-current");
+    CHECK(cs.eval("(set-code \"(define (f x) (if (> x 0) (+ x 2) (- x 2)))\")").has_value(),
+          "AC1: re-set-code invalidate");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC1: re-eval");
+    const auto r2 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    if (r2 != r0) {
+        std::println(stderr,
+                     "FATAL: residual multi-via-single cascades={} after CompilerService "
+                     "mutate→invalidate smoke (baseline {}); schema-2936",
+                     r2, r0);
+    }
+    CHECK(r2 == r0,
+          std::format("AC1 FATAL: residual multi-via-single cascades flat after service smoke "
+                      "(got {}; baseline {}; schema-2936)",
+                      r2, r0));
+}
+
+static void ac2936_2_single_allowed() {
+    std::println("\n--- #2936 AC2: single mark_block_dirty remains valid ---");
+    auto fn = make_n_block_fn(3);
+    // Batch first so streak is clear relative to this fn.
+    const std::uint32_t one[] = {0};
+    fn.mark_blocks_dirty(one);
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    const auto s0 = g_ir_soa_single_dirty_marks_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(1);
+    CHECK(g_ir_soa_single_dirty_marks_total.load(std::memory_order_relaxed) == s0 + 1,
+          "AC2: single marks +1");
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) == r0,
+          "AC2: streak==1 never bumps residual cascade");
+}
+
+static void ac2936_3_empty_span_quiet() {
+    std::println("\n--- #2936 AC3: empty span batch quiet ---");
+    auto fn = make_n_block_fn(2);
+    const auto fence0 = current_ir_soa_generation_fence();
+    fn.mark_blocks_dirty(std::span<const std::uint32_t>{});
+    fn.mark_blocks_dirty_bits_only(std::span<const std::uint32_t>{});
+    CHECK(current_ir_soa_generation_fence() == fence0, "AC3: empty span no fence (#2522 AC3)");
+}
+
+static void ac2936_4_obs_schema() {
+    std::println("\n--- #2936 AC4: additive observability + lineage ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    CHECK(q.find("schema-2936") != std::string::npos, "AC4: schema-2936");
+    CHECK(q.find("issue-2936") != std::string::npos, "AC4: issue-2936");
+    CHECK(q.find("soa-residual-multi-via-single-production-smoke-wired") != std::string::npos,
+          "AC4: production-smoke-wired sentinel");
+    CHECK(soa.find("kSchemaResidualMultiViaSingleProductionSmoke") != std::string::npos,
+          "AC4: schema constant");
+    CHECK(soa.find("ir_dirty_batch_only_production_smoke_wired") != std::string::npos,
+          "AC4: smoke wired accessor");
+    // Existing counters preserved.
+    CHECK(q.find("schema-2774") != std::string::npos, "AC4: schema-2774 preserved");
+    CHECK(q.find("schema-2615") != std::string::npos, "AC4: schema-2615 preserved");
+    CHECK(q.find("schema-2773") != std::string::npos, "AC4: schema-2773 preserved");
+    CHECK(q.find("soa-residual-multi-via-single-cascades-total") != std::string::npos,
+          "AC4: residual cascades key preserved");
+}
+
+static void ac2936_5_soft_residual_still_works() {
+    std::println("\n--- #2936 AC5: intentional residual under test (batch-only hard off) ---");
+    ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    CHECK(!ir_dirty_batch_only_hard(), "AC5: hard assert unset");
+    auto fn = make_n_block_fn(4);
+    const std::uint32_t one[] = {0};
+    fn.mark_blocks_dirty(one); // clear streak
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(1);
+    fn.mark_block_dirty(2); // trips residual (metric only — no abort)
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) ==
+              r0 + 1,
+          "AC5: intentional N× single still trips residual metric");
+    // Optional hard path is source-cited (env gate).
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    CHECK(soa.find("AURA_IR_DIRTY_BATCH_ONLY") != std::string::npos,
+          "AC5: optional hard assert env cited");
+    CHECK(soa.find("ir_dirty_batch_only_hard") != std::string::npos, "AC5: hard probe helper");
+}
+
+static void ac2936_6_linter_and_no_design() {
+    std::println("\n--- #2936 AC6: linter + no docs/design/ ---");
+    const auto t = read_file("tests/compiler/test_batch_dirty_discipline.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_batch_dirty_production_multi_only_2936.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac2936_1_production_smoke_residual_zero") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac2936_2_single_allowed") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2936_3_empty_span_quiet") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac2936_4_obs_schema") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2936_5_soft_residual_still_works") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac2936_6_linter_and_no_design") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2936") != std::string::npos,
+          "AC6: coverage linter present");
+    CHECK(build.find("check_batch_dirty_production_multi_only_2936") != std::string::npos,
+          "AC6: build.py gate");
+    CHECK(read_file("docs/design/2936-batch-dirty-production-multi-only.md").empty(),
+          "AC6: no docs/design/2936-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2936.cpp").empty(),
+          "AC6: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
@@ -567,7 +738,15 @@ int run_test_batch_dirty_discipline() {
     ac2774_3_empty_quiet();
     ac2774_4_residual_trips_and_schema();
     ac2774_5_source_cite();
-    std::println("\n=== #2615/#2681/#2773/#2774: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2936: production multi-block dirty batch-only smoke ===");
+    ac2936_1_production_smoke_residual_zero();
+    ac2936_2_single_allowed();
+    ac2936_3_empty_span_quiet();
+    ac2936_4_obs_schema();
+    ac2936_5_soft_residual_still_works();
+    ac2936_6_linter_and_no_design();
+    std::println("\n=== #2615/#2681/#2773/#2774/#2936: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
