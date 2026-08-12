@@ -254,6 +254,12 @@ inline MultiFiberMailboxStats g_mf_mailbox_stats{};
 // last_outermost_exit_ns: set on Guard outermost exit (drain opportunity).
 inline std::atomic<std::uint64_t> g_mailbox_first_open_defer_ns{0};
 inline std::atomic<std::uint64_t> g_mailbox_last_outermost_exit_ns{0};
+// Issue #2554 flaky: dedupe starvation canary — bump mailbox_defer_starvation
+// once per open-defer window (not once per drain). Cleared when the window
+// closes (depth returns to 0, first_open_defer_ns exchanged to 0). Without
+// this, a mailbox that stays deferred >100ms bumps on every outermost exit
+// drain → 100000-level counter storm → chaos PR gate (ceiling 0) flakes.
+inline std::atomic<bool> g_mailbox_defer_starve_reported{false};
 
 // Default starvation: deferred_depth > 0 for ≥100ms after first open defer
 // and at least one outermost exit was observed. Override ms via
@@ -404,6 +410,9 @@ inline void note_mailbox_push_ok_drain_progress() noexcept {
         return; // raced to zero
     // Flush latency sample when window closes (depth was 1 → 0).
     if (cur == 1) {
+        // Issue #2554: window closed — clear starvation canary so the next
+        // open-defer window can report once again.
+        g_mailbox_defer_starve_reported.store(false, std::memory_order_relaxed);
         const auto now = mailbox_steady_ns();
         const auto first = g_mailbox_first_open_defer_ns.exchange(0, std::memory_order_relaxed);
         const auto exit_ns = g_mailbox_last_outermost_exit_ns.load(std::memory_order_relaxed);
@@ -458,7 +467,9 @@ inline void note_mailbox_outermost_exit_drain() noexcept {
     if (first == 0)
         return;
     const auto age_ms = (now > first) ? (now - first) / 1'000'000ull : 0;
-    if (age_ms >= thr_ms) {
+    if (age_ms >= thr_ms &&
+        !g_mailbox_defer_starve_reported.exchange(true, std::memory_order_relaxed)) {
+        // Issue #2554: dedupe — bump once per open-defer window (not per drain).
         g_mf_mailbox_stats.mailbox_defer_starvation_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
@@ -573,6 +584,9 @@ drain_deferred_under_budget(std::uint64_t budget_us = 0) noexcept {
                         break;
                     if (cur == 1) {
                         (void)g_mailbox_first_open_defer_ns.exchange(0, std::memory_order_relaxed);
+                        // Issue #2554: window closed via force-resolve — clear
+                        // canary so the next open-defer window reports once.
+                        g_mailbox_defer_starve_reported.store(false, std::memory_order_relaxed);
                     }
                     ++resolved;
                 }
