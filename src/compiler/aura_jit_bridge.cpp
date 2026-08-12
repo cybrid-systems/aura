@@ -3151,6 +3151,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             }
             // Deferred boundary: leave pending; agents drain under Guard.
             // Not counted as fail (recovery is in-flight, not abandoned).
+            // The boundary exit path calls aura_hot_update_drain_pending_recovery
+            // per #2604 (outermost MutationBoundary success exit drains).
         }
     }
     // Issue #2249: Region/Staging exhausted counter (AC4).

@@ -74,9 +74,27 @@ static std::uint64_t stamp_for_remount(std::int64_t cid) {
     return defuse;
 }
 
+// Light-link detection (#2687 AC5 pattern): under light link the
+// stable-func-id map is a weak stub returning 0 (aura_jit_bridge_stub.cpp),
+// so remount/remap behavioral assertions cannot hold. Probe with a
+// throwaway name, then clear the map so the probe never leaks into
+// full-JIT runs. Behavioral ACs become best-effort under light;
+// source-cite checks always run.
+static bool light_stable_map_stub() {
+    int preserved = -1;
+    const auto sid = aura_get_or_preserve_stable_func_id("__light_probe_2503__", &preserved);
+    aura_clear_stable_func_id_map();
+    return sid == 0 && preserved == 0;
+}
+
 // ── AC1: densify candidate fail → MustDeopt + cell_remap_fail + batch_deopt ──
 static void ac1_cell_remap_force_deopt() {
     std::println("\n--- #2503 AC1: unmapped densify candidate → MustDeopt + batch_deopt ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerService cs;
     auto& ev = cs.evaluator();
     auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -132,6 +150,11 @@ static void ac1_cell_remap_force_deopt() {
 // ── AC2: env_gen fail still MustDeopt (no cell walk) ──
 static void ac2_env_gen_force_deopt() {
     std::println("\n--- #2503 AC2: env_gen fail → MustDeopt + mismatch counter ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerService cs;
     auto& ev = cs.evaluator();
     auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -183,6 +206,11 @@ static void ac2_env_gen_force_deopt() {
 // ── AC3: empty densify → zero cell cost ──
 static void ac3_empty_densify_zero_cost() {
     std::println("\n--- #2503 AC3: empty densify context → no extra cell walk cost ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerService cs;
     auto& ev = cs.evaluator();
     auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());

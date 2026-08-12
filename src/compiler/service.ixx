@@ -1224,7 +1224,7 @@ public:
         // (TLS storm eval context + eval_owner match).
         // Issue #2370: bind SpecJIT to this CompilerService as owner.
         spec_jit_.set_eval_owner(static_cast<void*>(this));
-        hot_update_registry().register_storm_listener(
+        storm_listener_id_ = hot_update_registry().register_storm_listener(
             [this](std::uint64_t /*deopts_in_window*/, std::uint64_t /*window_ms*/) noexcept {
                 // Publish TLS eval context for PerEval storm isolation (#2370).
                 aura_set_storm_eval_context(static_cast<void*>(this));
@@ -10948,6 +10948,13 @@ public:
     // mutation checkpoints before arena teardown so PCV
     // children_snapshot copies do not race ~workspace_flat_.
     ~CompilerService() {
+        // Issue #2576-lifecycle: unregister the storm listener before the
+        // SpecJITController (member spec_jit_) is destroyed. The listener
+        // captures `this`; without removal a later deopt storm (any test /
+        // agent triggering deopts after this service goes out of scope)
+        // would call on_deopt_storm on the freed controller (UAF).
+        if (storm_listener_id_ != 0)
+            hot_update_registry().unregister_storm_listener(storm_listener_id_);
         // Issue #984: clear thread_local lowering hooks on teardown.
         clear_lowering_compiler_core_hooks();
         Evaluator::clear_main_thread_mutation_stack();
@@ -13152,6 +13159,10 @@ public:
     std::optional<LowerSoAEmitSnapshot> pending_soa_snapshot_;
     // ── Speculative JIT controller (Phase 2, #53) ──────────────
     shape::SpecJITController spec_jit_{jit_};
+    // Issue #2576-lifecycle: storm listener registration id so ~CompilerService
+    // can unregister (the listener captures `this`; leaving it registered after
+    // teardown makes any later deopt storm UAF into the freed controller).
+    std::uint64_t storm_listener_id_{0};
 
     // ── Static registry ──────────────────────────────────────
     // Using Scott Meyer's singletons to avoid ODR issues with module static members

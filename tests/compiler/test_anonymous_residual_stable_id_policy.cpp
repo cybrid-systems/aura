@@ -57,9 +57,28 @@ static std::int64_t href(CompilerService& cs, const char* key) {
     return as_int(*r);
 }
 
+// Light-link detection (#2687 AC5 pattern): under light link the
+// stable-func-id map is a weak stub returning 0 (aura_jit_bridge_stub.cpp),
+// so named closures get sid==0 and map-dependent behavioral assertions
+// cannot hold. Probe with a throwaway name, then clear the map so the
+// probe never leaks into full-JIT runs (each AC clears the map at start
+// anyway). Behavioral ACs become best-effort under light; source-cite
+// checks always run.
+static bool light_stable_map_stub() {
+    int preserved = -1;
+    const auto sid = aura_get_or_preserve_stable_func_id("__light_probe_2605__", &preserved);
+    aura_clear_stable_func_id_map();
+    return sid == 0 && preserved == 0;
+}
+
 // ── AC1: named soak → residual_backfill stable ──
 static void ac1_named_soak_no_residual_growth() {
     std::println("\n--- #2605 AC1: named create → sid≠0; residual_backfill stable ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -136,6 +155,11 @@ static void ac2_anonymous_must_deopt_no_invent() {
 // ── AC3: residual inject → one backfill; next reemit no growth ──
 static void ac3_residual_one_shot_backfill() {
     std::println("\n--- #2605 AC3: residual inject → one backfill; steady no growth ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -347,6 +371,11 @@ static void ac2637_schema_and_source_cite() {
 
 static void ac2638_cap_below_threshold_backfill_works() {
     std::println("\n--- #2638 AC2: below cap → existing backfill still works ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -378,6 +407,11 @@ static void ac2638_cap_below_threshold_backfill_works() {
 
 static void ac2638_cap_above_threshold_force_must_deopt() {
     std::println("\n--- #2638 AC1: above cap → MustDeopt + cap-hit counter ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -428,6 +462,11 @@ static void ac2638_cap_above_threshold_force_must_deopt() {
 
 static void ac2638_named_sid_nonzero_skips_cap() {
     std::println("\n--- #2638 AC4: named path with sid≠0 never hits residual cap ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();

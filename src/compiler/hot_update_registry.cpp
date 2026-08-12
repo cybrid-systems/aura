@@ -1407,9 +1407,15 @@ std::uint64_t HotUpdateRegistry::register_dirty_listener(DirtyListener fn) {
 
 std::uint64_t HotUpdateRegistry::register_storm_listener(StormListener fn) {
     std::lock_guard<std::mutex> lock(listeners_mtx_);
-    storm_listeners_.push_back(std::move(fn));
+    const auto id = next_listener_id_++;
+    storm_listeners_.emplace_back(id, std::move(fn));
     register_calls_.fetch_add(1, std::memory_order_relaxed);
-    return next_listener_id_++;
+    return id;
+}
+
+void HotUpdateRegistry::unregister_storm_listener(std::uint64_t id) noexcept {
+    std::lock_guard<std::mutex> lock(listeners_mtx_);
+    std::erase_if(storm_listeners_, [id](const auto& e) { return e.first == id; });
 }
 
 void HotUpdateRegistry::clear_listeners() noexcept {
@@ -1457,14 +1463,15 @@ void HotUpdateRegistry::notify_dirty_define(const char* name) noexcept {
 
 void HotUpdateRegistry::notify_deopt_storm_locked(std::uint64_t deopts_in_window,
                                                   std::uint64_t window_ms) noexcept {
-    std::vector<StormListener> storm_copy;
+    std::vector<std::pair<std::uint64_t, StormListener>> storm_copy;
     std::vector<EpochListener> epoch_copy;
     {
         std::lock_guard<std::mutex> lock(listeners_mtx_);
         storm_copy = storm_listeners_;
         epoch_copy = epoch_listeners_;
     }
-    for (auto& fn : storm_copy) {
+    for (auto& [id, fn] : storm_copy) {
+        (void)id;
         if (fn) {
             try {
                 fn(deopts_in_window, window_ms);

@@ -15,6 +15,10 @@
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 
+// Stable-func-id probe for light-link detection (#2687 AC5 pattern).
+extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved);
+extern "C" void aura_clear_stable_func_id_map(void);
+
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -140,6 +144,20 @@ void ac2_query_schema() {
     CHECK(qinc.find("source-to-ir-desync-recovered-total") != std::string::npos,
           "inc recovered dash key");
 
+    // Light-link detection (#2687 AC5 pattern): under light link the
+    // stable-func-id map is a weak stub returning 0 and CompilerService
+    // engine:metrics eval queries are not wired (primitives register only
+    // in libaura_test_objects), so the eval half of this AC cannot hold.
+    // Source-cite checks above always run.
+    int preserved = -1;
+    const auto probe = aura_get_or_preserve_stable_func_id("__light_probe_2206__", &preserved);
+    aura_clear_stable_func_id_map();
+    if (probe == 0 && preserved == 0) {
+        std::println("  (light link: engine:metrics eval not wired → eval asserts "
+                     "best-effort, source-cite kept)");
+        return;
+    }
+
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
@@ -194,6 +212,16 @@ void ac3_wireup_soundness() {
 // AC4: service inject desync → recover → metrics + partial retention
 void ac4_service_inject_recover() {
     std::println("\n--- AC4: service inject map desync + recover ---");
+    // Light-link detection (#2687 AC5 pattern): engine:metrics eval queries
+    // are not wired under light link → query-mirror asserts best-effort.
+    int preserved = -1;
+    const auto probe = aura_get_or_preserve_stable_func_id("__light_probe_2206_ac4__", &preserved);
+    aura_clear_stable_func_id_map();
+    if (probe == 0 && preserved == 0) {
+        std::println("  (light link: engine:metrics eval not wired → query-mirror asserts "
+                     "best-effort, source-cite kept)");
+        return;
+    }
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define g (lambda (x) (+ x 2))) (g 1)\")").has_value(),
           "set-code g");

@@ -20,6 +20,10 @@
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 
+// Stable-func-id probe for light-link detection (#2687 AC5 pattern).
+extern "C" std::uint32_t aura_get_or_preserve_stable_func_id(const char* name, int* out_preserved);
+extern "C" void aura_clear_stable_func_id_map(void);
+
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -173,6 +177,16 @@ void ac3_pure_patch() {
 
 void ac4_query_schema() {
     std::println("\n--- AC4: query schema-2045 ---");
+    // Light-link detection (#2687 AC5 pattern): engine:metrics eval queries
+    // are not wired under light link → eval asserts best-effort.
+    int preserved = -1;
+    const auto probe = aura_get_or_preserve_stable_func_id("__light_probe_2045_ac4__", &preserved);
+    aura_clear_stable_func_id_map();
+    if (probe == 0 && preserved == 0) {
+        std::println("  (light link: engine:metrics eval not wired → eval asserts "
+                     "best-effort, source-cite kept)");
+        return;
+    }
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
@@ -190,6 +204,16 @@ void ac4_query_schema() {
 
 void ac5_service_cascade_rebuild() {
     std::println("\n--- AC5: service invalidate cascade rebuilds map ---");
+    // Light-link detection (#2687 AC5 pattern): engine:metrics eval queries
+    // are not wired under light link → query-mirror asserts best-effort.
+    int preserved = -1;
+    const auto probe = aura_get_or_preserve_stable_func_id("__light_probe_2045_ac5__", &preserved);
+    aura_clear_stable_func_id_map();
+    if (probe == 0 && preserved == 0) {
+        std::println("  (light link: engine:metrics eval not wired → query-mirror asserts "
+                     "best-effort, source-cite kept)");
+        return;
+    }
     CompilerService cs;
     CHECK(cs.eval("(set-code \""
                   "(define a (lambda () 1))"
