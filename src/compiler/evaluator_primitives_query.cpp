@@ -9696,14 +9696,14 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               ::aura::compiler::g_layered_evidence_diverge_total.load(
                                   std::memory_order_relaxed)));
                 insert_kv("layered-evidence-coherence-wired", 1);
-                // Issue #2719: Full/production optional hard gate on
+                // Issue #2719 / #2912: Full/production hard gate on
                 // layered evidence diverge (#2674 residual). Default
                 // production arm: force-Full on next boundary (fidelity-
                 // health note, not a hard-reject of current commit).
-                // Opt-in arm: env AURA_LAYERED_COERCION_DIVERGE_HARD=1
-                // → hard reject path. Soft/Sampled: observe-only
-                // (#2674 behavior preserved — no force-armed bump, no
-                // flag set). Additive — all #2674 keys above preserved.
+                // #2912: boundary *consumes* force-full-pending → Full
+                // audit (dual-complete + provenance recover). Opt-in
+                // HARD env → hard-reject consume with force_reason.
+                // Soft/Sampled: observe-only (#2674). Additive keys.
                 insert_kv("layered-evidence-diverge-force-armed-total",
                           static_cast<std::int64_t>(
                               ::aura::compiler::g_layered_evidence_diverge_force_armed_total.load(
@@ -9726,6 +9726,20 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           ::aura::compiler::layered_diverge_hard_enabled() ? 1 : 0);
                 insert_kv("schema-2719", 2719);
                 insert_kv("issue-2719", 2719);
+                // Issue #2912: consume totals + force_reason sentinel.
+                insert_kv(
+                    "layered-evidence-diverge-force-consumed-total",
+                    static_cast<std::int64_t>(
+                        ::aura::compiler::g_layered_evidence_diverge_force_consumed_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "layered-evidence-diverge-hard-reject-consumed-total",
+                    static_cast<std::int64_t>(
+                        ::aura::compiler::g_layered_evidence_diverge_hard_reject_consumed_total
+                            .load(std::memory_order_relaxed)));
+                insert_kv("layered-evidence-diverge-force-full-consume-wired", 1);
+                insert_kv("schema-2912", 2912);
+                insert_kv("issue-2912", 2912);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

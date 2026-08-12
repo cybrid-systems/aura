@@ -183,22 +183,32 @@ export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_with_evidenc
 // Full/Production: optional escalate via fidelity-health note. No abort path.
 export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_total{0};
 
-// Issue #2719: Full/production optional hard gate on layered evidence
-// diverge (#2674 residual). When diverge is observed under
-// production_defaults_active() || get_strategy() == Full:
-//   - (default arm) bump force-armed counter + set force-full-pending
-//     flag so the next MutationBoundary runs a Full invariant sample
-//     (a fidelity-health note, not a hard-reject of the current commit).
-//   - (opt-in env arm AURA_LAYERED_COERCION_DIVERGE_HARD=1) bump
-//     hard-reject counter + set hard-reject-pending flag so the next
-//     commit can be rejected (Agents decide downstream policy). Default
-//     production: force-Full arm only (no silent reject unless env).
-// Soft/Sampled: observe-only (#2674 behavior preserved — no force-armed
-// bump, no flag set).
+// Issue #2719 / #2912: Full/production hard gate on layered evidence
+// diverge (#2674 residual). Soft vs production table (#2912 AC6):
+//
+//   Path                          | Behavior
+//   ------------------------------|------------------------------------------
+//   Soft + diverge                | observe g_layered_evidence_diverge_total only
+//   production / Full + diverge   | arm force-Full pending (#2719) + on next
+//                                 | boundary *consume* → force Full audit
+//                                 | (#2912 residual: arm alone was not enough)
+//   production + HARD env + diverge | also arm hard-reject-pending (Agents /
+//                                 | boundary may reject with force_reason)
+//   no coercion / no diverge      | zero cost (pure loads; consume no-ops)
+//
+// When diverge is observed under production_defaults_active() || Full:
+//   - (default arm) bump force-armed + set force-full-pending so the *next*
+//     MutationBoundary consumes it and forces a Full invariant sample
+//     (not a hard-reject of the current commit by default).
+//   - (opt-in env AURA_LAYERED_COERCION_DIVERGE_HARD=1) also arm hard-reject.
+// Soft/Sampled: observe-only (#2674 — no force-armed bump, no flag set).
 export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_force_armed_total{0};
 export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_hard_reject_total{0};
 export inline std::atomic<std::uint32_t> g_layered_evidence_diverge_force_full_pending{0};
 export inline std::atomic<std::uint32_t> g_layered_evidence_diverge_hard_reject_pending{0};
+// Issue #2912: one-shot consume totals (mirrors coercion_prov_slo_force_consumed).
+export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_force_consumed_total{0};
+export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_hard_reject_consumed_total{0};
 
 // Env var helper for #2719 hard-reject arm. Reads
 // AURA_LAYERED_COERCION_DIVERGE_HARD (any non-zero value enables).
@@ -218,7 +228,7 @@ export [[nodiscard]] inline bool layered_diverge_hard_enabled() noexcept {
     return enabled;
 }
 
-// Accessors + test resets for #2719 surface.
+// Accessors + test resets for #2719 / #2912 surface.
 export [[nodiscard]] inline std::uint64_t
 layered_evidence_diverge_force_armed_total_v_read() noexcept {
     return g_layered_evidence_diverge_force_armed_total.load(std::memory_order_relaxed);
@@ -244,6 +254,48 @@ export [[nodiscard]] inline bool layered_evidence_diverge_hard_reject_pending() 
 }
 export inline void clear_layered_evidence_diverge_hard_reject_pending_for_test() noexcept {
     g_layered_evidence_diverge_hard_reject_pending.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2912: one-shot consume of force-Full pending (next outermost
+// boundary exit). Returns true if pending was set; clears flag and bumps
+// force_consumed. Quiet path: exchange 0→0, no counter mutation.
+export [[nodiscard]] inline bool consume_layered_evidence_diverge_force_full() noexcept {
+    const auto prev =
+        g_layered_evidence_diverge_force_full_pending.exchange(0, std::memory_order_acq_rel);
+    if (prev != 0) {
+        g_layered_evidence_diverge_force_consumed_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
+// Issue #2912: one-shot consume of hard-reject pending (opt-in HARD env).
+// Agents / boundary use this to reject with force_reason
+// "layered-evidence-diverge". Quiet path: zero cost.
+export [[nodiscard]] inline bool consume_layered_evidence_diverge_hard_reject() noexcept {
+    const auto prev =
+        g_layered_evidence_diverge_hard_reject_pending.exchange(0, std::memory_order_acq_rel);
+    if (prev != 0) {
+        g_layered_evidence_diverge_hard_reject_consumed_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        return true;
+    }
+    return false;
+}
+
+export [[nodiscard]] inline std::uint64_t
+layered_evidence_diverge_force_consumed_total_v_read() noexcept {
+    return g_layered_evidence_diverge_force_consumed_total.load(std::memory_order_relaxed);
+}
+export inline void reset_layered_evidence_diverge_force_consumed_total_for_test() noexcept {
+    g_layered_evidence_diverge_force_consumed_total.store(0, std::memory_order_relaxed);
+}
+export [[nodiscard]] inline std::uint64_t
+layered_evidence_diverge_hard_reject_consumed_total_v_read() noexcept {
+    return g_layered_evidence_diverge_hard_reject_consumed_total.load(std::memory_order_relaxed);
+}
+export inline void reset_layered_evidence_diverge_hard_reject_consumed_total_for_test() noexcept {
+    g_layered_evidence_diverge_hard_reject_consumed_total.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2102 / #2185: provenance-miss policy atomics + helpers live in

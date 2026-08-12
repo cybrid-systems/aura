@@ -2204,6 +2204,18 @@ def cmd_lint():
             "layered evidence coherence (#2674) coverage linter failed — run python3 scripts/coverage/checks/check_layered_evidence_coherence_2674.py"
         )
         return r
+    # Issue #2912: layered evidence diverge must force-Full under production
+    # (closes #2719 residual — arm alone left pending unconsumed; Soft observe).
+    leff_script = COVERAGE_CHECKS / "check_layered_evidence_force_full_2912.py"
+    if not leff_script.exists():
+        fail(f"missing {leff_script}")
+        return 1
+    r = run([sys.executable, str(leff_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "layered evidence force-Full consume (#2912) coverage linter failed — run python3 scripts/coverage/checks/check_layered_evidence_force_full_2912.py"
+        )
+        return r
     # Issue #2675: linear-enforce-effective single pure API (replaces #2222
     # split logic). Single source of truth shared by AST audit, IR executor,
     # MutationBoundary force classification. Soft Warning synth never maps to

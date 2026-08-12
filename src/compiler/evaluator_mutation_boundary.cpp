@@ -537,10 +537,34 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool evidence_loss_pressure =
         aura::compiler::coercion_evidence_loss_pressure(evidence_loss_bp);
     const bool slo_force = aura::compiler::consume_coercion_prov_slo_force_full();
-    bool provenance_miss = aura::compiler::consume_provenance_miss_for_boundary() || slo_force;
+    // Issue #2912: consume layered-evidence-diverge force-Full pending armed
+    // under production/Full at prior outermost exit (#2719 arm). One-shot:
+    // OR into provenance_miss so do_audit forces Full-path recovery (dual-
+    // complete + provenance chain fill). Soft never arms pending → consume
+    // no-ops (quiet). Hard-reject pending (opt-in HARD env) is consumed
+    // below for force_reason stamping / Agent-visible reject path.
+    const bool layered_diverge_force =
+        aura::compiler::consume_layered_evidence_diverge_force_full();
+    const bool layered_diverge_hard =
+        aura::compiler::consume_layered_evidence_diverge_hard_reject();
+    bool provenance_miss = aura::compiler::consume_provenance_miss_for_boundary() || slo_force ||
+                           layered_diverge_force;
     // Capture whether this exit Full-samples under #2648 evidence-loss pressure
     // (before Soft recover may clear). One-shot: pending consumed above.
     const bool evidence_loss_force_candidate = slo_force && evidence_loss_pressure;
+    // Issue #2912 AC1: hard-reject pending under production → force_reason
+    // "layered-evidence-diverge" for Agents / densify-style health. Default
+    // production stays force-Full only (hard path is env opt-in). Soft never
+    // sets hard-reject-pending so this is vacuous under Soft.
+    if (layered_diverge_hard && (typed_audit::production_defaults_active() ||
+                                 typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        // force_reason surface: last_mutate_error_ so Agents can correlate.
+        // Do not hard-abort the process — structural reject is downstream
+        // policy (mirrors #2719 "Agents decide"). Provenance_miss already
+        // true when force_full was also armed; hard path still force-audits.
+        last_mutate_error_ = "layered-evidence-diverge";
+        provenance_miss = true;
+    }
     // Issue #2561: Soft/Sampled cheap blame recovery before force-audit.
     // When miss signal present under Sampled: re-walk fill for mid's dirty
     // cone; on success clear force; on fail arm one-shot Full sample only if
@@ -3417,15 +3441,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             std::memory_order_relaxed);
     const auto layered_diverge_delta =
         aura::compiler::check_layered_evidence_coherence(ir_narrow_evidence_hits_snapshot);
-    // Issue #2719: Full/production optional hard gate on layered evidence
-    // diverge (#2674 residual). Default production arm: force-Full on next
-    // boundary (fidelity-health note, not a hard-reject of the current
-    // commit). Opt-in arm: env AURA_LAYERED_COERCION_DIVERGE_HARD=1 →
-    // hard reject path (Agents decide downstream policy). Soft/Sampled:
-    // observe-only — #2674 behavior preserved (no force-armed bump, no
-    // flag set). Zero cost when no diverge (diverge_delta == 0). Bumping
-    // counters + setting flags from a destructor is safe (no throw past
-    // remaining dtor work per #1766 — atomic ops only).
+    // Issue #2719 / #2912: Full/production hard gate on layered evidence
+    // diverge (#2674 residual). Default production arm: set force-full-
+    // pending so the *next* outermost boundary *consumes* it via
+    // consume_layered_evidence_diverge_force_full() (#2912) and forces a
+    // Full invariant sample (dual-complete + provenance recover). Opt-in
+    // HARD env: also arm hard-reject-pending (consume stamps force_reason
+    // "layered-evidence-diverge"). Soft/Sampled: observe-only — #2674
+    // (no force-armed bump, no flag). Zero cost when diverge_delta == 0.
+    // Destructor-safe: atomics only (#1766).
     if (layered_diverge_delta > 0 &&
         (typed_audit::production_defaults_active() ||
          typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
