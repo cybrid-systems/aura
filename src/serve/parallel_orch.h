@@ -91,6 +91,88 @@ struct TaskSpec {
     std::uint64_t cone_mask = 0;
 };
 
+// ── Isolation level (Issue #2923 / #2400 / #2886) ───────────────
+// Authoritative pure decision for multi-agent batch admit. Shared by C++
+// hosts and Aura (orch:parallel-intend). Do not re-derive the ternary in
+// the Aura surface — call decide_isolation only.
+//
+//   Serialized        — default :pure #f, zero/overlap/single region keys
+//   BestEffortPure    — pure_mode=true (never transactional isolation)
+//   RegionConcurrent  — pure_mode=false + ≥2 distinct non-zero region_keys
+//   None              — C++ TaskSpec-only path that never touches Evaluator
+//                       (not emitted by the Aura primitive)
+enum class IsolationLevel : std::uint8_t {
+    Serialized = 0,
+    BestEffortPure = 1,
+    RegionConcurrent = 2,
+    None = 3,
+};
+
+struct IsolationDecision {
+    IsolationLevel level = IsolationLevel::Serialized;
+    bool region_concurrent_eligible = false;
+    std::uint32_t distinct_nonzero_region_keys = 0;
+};
+
+// Accurate distinct non-zero region_key count (O(n²), no allocation).
+// Zero keys and empty spans → 0. Overlapping keys count once.
+[[nodiscard]] inline std::uint32_t
+count_distinct_nonzero_region_keys(std::span<const TaskSpec> tasks) noexcept {
+    std::uint32_t distinct = 0;
+    for (std::size_t i = 0; i < tasks.size(); ++i) {
+        const auto k = tasks[i].region_key;
+        if (k == 0)
+            continue;
+        bool first = true;
+        for (std::size_t j = 0; j < i; ++j) {
+            if (tasks[j].region_key == k) {
+                first = false;
+                break;
+            }
+        }
+        if (first)
+            ++distinct;
+    }
+    return distinct;
+}
+
+// Pure SSOT: isolation level for a batch before admit.
+// `policy` reserved for future host knobs; decision today is pure_mode +
+// region-key distinctness only (matches historical Aura ternary).
+[[nodiscard]] inline IsolationDecision decide_isolation(const ParallelPolicy& /*policy*/,
+                                                        std::span<const TaskSpec> tasks,
+                                                        bool pure_mode) noexcept {
+    IsolationDecision d;
+    d.distinct_nonzero_region_keys = count_distinct_nonzero_region_keys(tasks);
+    d.region_concurrent_eligible = d.distinct_nonzero_region_keys >= 2;
+    if (pure_mode) {
+        // AC2: pure never claims transactional / region isolation.
+        d.level = IsolationLevel::BestEffortPure;
+    } else if (d.region_concurrent_eligible) {
+        // AC1: two+ disjoint non-zero keys → region-concurrent.
+        d.level = IsolationLevel::RegionConcurrent;
+    } else {
+        // AC3: zero / overlap / single key → serialized (no false concurrent).
+        d.level = IsolationLevel::Serialized;
+    }
+    return d;
+}
+
+// Aura hash / query string for IsolationLevel (stable schema-2400 / #2886 names).
+[[nodiscard]] inline const char* isolation_level_cstr(IsolationLevel level) noexcept {
+    switch (level) {
+        case IsolationLevel::Serialized:
+            return "serialized";
+        case IsolationLevel::BestEffortPure:
+            return "best-effort-pure";
+        case IsolationLevel::RegionConcurrent:
+            return "region-concurrent";
+        case IsolationLevel::None:
+            return "none";
+    }
+    return "serialized";
+}
+
 enum class BatchStatus : std::uint8_t {
     Ok = 0,            // all tasks succeeded
     Partial = 1,       // some errors, completed without fail-fast abort

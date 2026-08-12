@@ -9198,6 +9198,24 @@ def cmd_ast_unparse_2922_coverage():
     return 0
 
 
+def cmd_isolation_decide_2923_coverage():
+    """Issue #2923: authoritative IsolationLevel decide_isolation API.
+
+    C++ + Aura share one pure decision; no second ternary in agent.
+    """
+    print(f"{B}=== isolation decide coverage (#2923) ==={N}")
+    script = COVERAGE_CHECKS / "check_isolation_decide_2923.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("isolation decide (#2923) coverage contract rows failed")
+        return 1
+    ok("isolation decide (#2923) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -12328,6 +12346,7 @@ def main():
         "workspace-source-ssot-2920": cmd_workspace_source_ssot_2920_coverage,
         "current-source-roundtrip-2921": cmd_current_source_roundtrip_2921_coverage,
         "ast-unparse-2922": cmd_ast_unparse_2922_coverage,
+        "isolation-decide-2923": cmd_isolation_decide_2923_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

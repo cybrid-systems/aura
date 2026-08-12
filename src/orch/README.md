@@ -50,8 +50,9 @@ AST/mutate safety is preserved across fibers. The batch hash carries `eval-seria
 | **isolation-level** (Issue #2400) | `serialized` | `best-effort-pure` (never transactional; even if all tasks fallback-locked) |
 | Forced lock | n/a | if mutation boundary already held → lock + `pure_fallback_locked_total` |
 
-**isolation-level enum** (`isolation-level` on every batch hash, schema-2400):
-`serialized` | `best-effort-pure` | `none` (C++ TaskSpec-only path that never touches Evaluator).
+**isolation-level enum** (`isolation-level` on every batch hash, schema-2400 / #2886 / #2923):
+`serialized` | `best-effort-pure` | `region-concurrent` | `none` (C++ TaskSpec-only path that never touches Evaluator).
+SSOT: `aura::serve::parallel_orch::decide_isolation` (header-only); Aura `(parallel-intend)` does not re-derive the ternary.
 
 **Pure contract (caller guarantees + best-effort probe):**
 

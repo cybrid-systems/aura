@@ -40,6 +40,7 @@
 #include "test_harness.hpp"
 
 #include "orch/agent_spawn.h"
+#include "serve/parallel_orch.h" // Issue #2923: decide_isolation SSOT
 
 #include <atomic>
 #include <cstdint>
@@ -1005,7 +1006,7 @@ int run_test_parallel_intend_pure_contract() {
                                     :max-concurrency 2
                                     :collect-errors #t
                                     :timeout-ms 2000)))
-              (if (eq? (hash-ref h "isolation-level") "serialized") 1 0))
+              (if (string=? (hash-ref h "isolation-level") "serialized") 1 0))
         )");
             CHECK(iso.has_value() && as_int(*iso) == 1,
                   "2886 AC4: isolation-level=serialized with zero region_keys (no false claim)");
@@ -1111,6 +1112,151 @@ int run_test_parallel_intend_pure_contract() {
                               " (forbidden per #1655)");
                 }
             }
+        }
+    }
+
+    // ── #2923: authoritative IsolationLevel decide_isolation SSOT ──
+    {
+        using aura::serve::parallel_orch::decide_isolation;
+        using aura::serve::parallel_orch::isolation_level_cstr;
+        using aura::serve::parallel_orch::IsolationLevel;
+        using aura::serve::parallel_orch::ParallelPolicy;
+        using aura::serve::parallel_orch::TaskSpec;
+
+        std::println("\n--- #2923 AC1: two disjoint keys → RegionConcurrent ---");
+        {
+            ParallelPolicy pol;
+            std::vector<TaskSpec> ts(2);
+            ts[0].region_key = 1;
+            ts[1].region_key = 2;
+            auto d = decide_isolation(pol, ts, /*pure_mode=*/false);
+            CHECK(d.level == IsolationLevel::RegionConcurrent, "2923 AC1: level=RegionConcurrent");
+            CHECK(d.region_concurrent_eligible, "2923 AC1: region_concurrent_eligible=true");
+            CHECK(d.distinct_nonzero_region_keys == 2, "2923 AC1: distinct keys == 2");
+            CHECK(std::string_view(isolation_level_cstr(d.level)) == "region-concurrent",
+                  "2923 AC1: cstr=region-concurrent");
+        }
+
+        std::println("\n--- #2923 AC2: pure_mode=true → BestEffortPure (even with keys) ---");
+        {
+            ParallelPolicy pol;
+            std::vector<TaskSpec> ts(2);
+            ts[0].region_key = 10;
+            ts[1].region_key = 20;
+            auto d = decide_isolation(pol, ts, /*pure_mode=*/true);
+            CHECK(d.level == IsolationLevel::BestEffortPure, "2923 AC2: level=BestEffortPure");
+            CHECK(d.region_concurrent_eligible, "2923 AC2: eligible flag still true for keys");
+            CHECK(std::string_view(isolation_level_cstr(d.level)) == "best-effort-pure",
+                  "2923 AC2: cstr=best-effort-pure (never transactional)");
+            CHECK(std::string_view(isolation_level_cstr(d.level)) != "transactional",
+                  "2923 AC2: pure never transactional");
+        }
+
+        std::println("\n--- #2923 AC3: zero / overlap / single key → Serialized ---");
+        {
+            ParallelPolicy pol;
+            // Empty
+            {
+                auto d = decide_isolation(pol, {}, false);
+                CHECK(d.level == IsolationLevel::Serialized, "2923 AC3: empty → Serialized");
+                CHECK(!d.region_concurrent_eligible, "2923 AC3: empty not eligible");
+            }
+            // Zero keys
+            {
+                std::vector<TaskSpec> ts(2);
+                auto d = decide_isolation(pol, ts, false);
+                CHECK(d.level == IsolationLevel::Serialized, "2923 AC3: zero keys → Serialized");
+                CHECK(!d.region_concurrent_eligible, "2923 AC3: zero keys not eligible");
+            }
+            // Single non-zero
+            {
+                std::vector<TaskSpec> ts(2);
+                ts[0].region_key = 7;
+                ts[1].region_key = 0;
+                auto d = decide_isolation(pol, ts, false);
+                CHECK(d.level == IsolationLevel::Serialized, "2923 AC3: single key → Serialized");
+                CHECK(d.distinct_nonzero_region_keys == 1, "2923 AC3: distinct == 1");
+                CHECK(!d.region_concurrent_eligible, "2923 AC3: single not eligible");
+            }
+            // Overlapping keys (same non-zero twice)
+            {
+                std::vector<TaskSpec> ts(2);
+                ts[0].region_key = 5;
+                ts[1].region_key = 5;
+                auto d = decide_isolation(pol, ts, false);
+                CHECK(d.level == IsolationLevel::Serialized, "2923 AC3: overlap → Serialized");
+                CHECK(d.distinct_nonzero_region_keys == 1, "2923 AC3: overlap distinct == 1");
+                CHECK(!d.region_concurrent_eligible, "2923 AC3: overlap not eligible");
+            }
+        }
+
+        std::println(
+            "\n--- #2923 AC4: Aura isolation-level derived from decide_isolation only ---");
+        {
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto poh = read_file("src/serve/parallel_orch.h");
+            CHECK(poh.find("decide_isolation") != std::string::npos,
+                  "2923 AC4: decide_isolation in parallel_orch.h");
+            CHECK(poh.find("enum class IsolationLevel") != std::string::npos,
+                  "2923 AC4: IsolationLevel enum");
+            CHECK(agent.find("decide_isolation") != std::string::npos,
+                  "2923 AC4: Aura parallel-intend calls decide_isolation");
+            CHECK(agent.find("isolation_level_cstr") != std::string::npos,
+                  "2923 AC4: Aura uses isolation_level_cstr for hash string");
+            // No second independent ternary in agent (legacy pure_mode ? ... gone).
+            CHECK(agent.find("pure_mode ? \"best-effort-pure\"") == std::string::npos,
+                  "2923 AC4: no second ternary pure_mode ? best-effort-pure");
+            CHECK(agent.find("region_concurrent_eligible ? \"region-concurrent\"") ==
+                      std::string::npos,
+                  "2923 AC4: no second ternary region_concurrent_eligible ? region-concurrent");
+        }
+
+        std::println("\n--- #2923 AC5: Soft regression — Aura still emits isolation-level ---");
+        {
+            CompilerService cs;
+            cs.evaluator().set_effect_sandbox_mode(0); // Soft
+            auto iso = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (string=? (hash-ref h "isolation-level") "region-concurrent") 1 0))
+        )");
+            CHECK(iso.has_value() && as_int(*iso) == 1,
+                  "2923 AC5 Soft: region-concurrent via decide_isolation");
+            auto pure_iso = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :pure #t
+                                    :max-concurrency 2
+                                    :region-keys (vector 1 2)
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (string=? (hash-ref h "isolation-level") "best-effort-pure") 1 0))
+        )");
+            CHECK(pure_iso.has_value() && as_int(*pure_iso) == 1,
+                  "2923 AC5 Soft: pure still best-effort-pure with region keys");
+            auto ser = cs.eval(R"(
+            (let ((h (parallel-intend (vector (lambda () 1) (lambda () 2))
+                                    :max-concurrency 2
+                                    :collect-errors #t
+                                    :timeout-ms 2000)))
+              (if (string=? (hash-ref h "isolation-level") "serialized") 1 0))
+        )");
+            CHECK(ser.has_value() && as_int(*ser) == 1,
+                  "2923 AC5 Soft: default serialized preserved");
+        }
+
+        std::println("\n--- #2923 AC6: source-cite + no invent + no docs/design/ ---");
+        {
+            const auto t = read_file("tests/orch/test_parallel_intend_pure_contract.cpp");
+            CHECK(t.find("#2923 AC1") != std::string::npos, "2923 AC6: this suite cites #2923");
+            CHECK(read_file("docs/design/2923-isolation-decide.md").empty(),
+                  "2923 AC6: no docs/design/2923-* per #1655");
+            std::ifstream invent("tests/orch/test_issue_2923.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_2923.cpp");
+            CHECK(!invent.good(), "2923 AC6: no test_issue_2923.cpp per #81967");
         }
     }
 

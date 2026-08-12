@@ -2821,43 +2821,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 1, std::memory_order_relaxed);
         }
 
-        // Issue #2400: isolation-level for Agent control planes.
-        //   pure_mode=false → "serialized"   (default :pure #f / eval_mu)
-        //   pure_mode=true  → "best-effort-pure"  (never "transactional";
-        //                     even if all tasks fallback-locked)
-        // C++ TaskSpec-only path (never touches Evaluator) may use "none"
-        // outside this Aura primitive — not advertised here.
-        // Do NOT advertise pure as transactional isolation (AC4 #2400 / #2230).
-        // Issue #2886: when ≥2 distinct non-zero region_keys are supplied AND
-        // the batch was admitted under #2724 try_acquire_for_region, the
-        // region-concurrent surface is the recommended multi-agent mutate
-        // path. Surface "region-concurrent" as a 3rd isolation-level value
-        // (preferred over "best-effort-pure" for disjoint-key mutate batches
-        // per #2724/#2746). Compute the same distinct-key signal used by
-        // `region-concurrent-eligible` below so the two values are coherent.
-        std::uint64_t distinct_keys = 0;
-        std::uint64_t seen_keys[8] = {};
-        std::size_t n_seen_keys = 0;
-        for (const auto& t : tasks) {
-            if (t.region_key == 0)
-                continue;
-            bool already = false;
-            for (std::size_t j = 0; j < n_seen_keys; ++j) {
-                if (seen_keys[j] == t.region_key) {
-                    already = true;
-                    break;
-                }
-            }
-            if (!already) {
-                if (n_seen_keys < 8)
-                    seen_keys[n_seen_keys++] = t.region_key;
-                ++distinct_keys;
-            }
-        }
-        const bool region_concurrent_eligible = (distinct_keys >= 2);
+        // Issue #2400 / #2886 / #2923: isolation-level for Agent control planes.
+        // Sole authority: aura::serve::parallel_orch::decide_isolation (pure).
+        // Do NOT re-derive the pure_mode / region-key ternary here.
+        //   Serialized       — default :pure #f, zero/overlap/single keys
+        //   BestEffortPure   — pure_mode (never "transactional"; #2230)
+        //   RegionConcurrent — ≥2 distinct non-zero region_keys, !pure
+        // C++ TaskSpec-only IsolationLevel::None is not advertised here.
+        const auto iso_decision =
+            aura::serve::parallel_orch::decide_isolation(policy, tasks, pure_mode);
+        const bool region_concurrent_eligible = iso_decision.region_concurrent_eligible;
         const char* isolation_level =
-            pure_mode ? "best-effort-pure"
-                      : (region_concurrent_eligible ? "region-concurrent" : "serialized");
+            aura::serve::parallel_orch::isolation_level_cstr(iso_decision.level);
         const auto iso_sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(isolation_level);
 
@@ -2925,28 +2900,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(
                  aura::serve::parallel_orch::g_parallel_orch_stats.region_concurrent_batches_total
                      .load(std::memory_order_relaxed)))},
-            {"region-concurrent-eligible", make_bool([&] {
-                 std::uint64_t distinct = 0;
-                 std::uint64_t seen[8] = {};
-                 std::size_t n_seen = 0;
-                 for (const auto& t : tasks) {
-                     if (t.region_key == 0)
-                         continue;
-                     bool already = false;
-                     for (std::size_t j = 0; j < n_seen; ++j) {
-                         if (seen[j] == t.region_key) {
-                             already = true;
-                             break;
-                         }
-                     }
-                     if (!already) {
-                         if (n_seen < 8)
-                             seen[n_seen++] = t.region_key;
-                         ++distinct;
-                     }
-                 }
-                 return distinct >= 2;
-             }())},
+            // Issue #2923: same IsolationDecision as isolation-level (no 2nd count).
+            {"region-concurrent-eligible", make_bool(region_concurrent_eligible)},
             {"schema", make_int(1587)},
             {"schema-2007", make_int(2007)},
             {"schema-2081", make_int(2081)},
