@@ -6627,6 +6627,27 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 insert_kv("schema-2900", 2900);
                 insert_kv("issue-2900", 2900);
             }
+            // Issue #2913: solve_delta locality SLO (anti silent under-constrain).
+            // Soft residual → observe; production/Full residual → escalate/reject.
+            // Existing #1871 locality-hits/misses preserved above.
+            {
+                using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+                const std::int64_t loc_obs = static_cast<std::int64_t>(
+                    g_typed_mutation_audit_counters.solve_delta_locality_slo_observe_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t loc_esc = static_cast<std::int64_t>(
+                    g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+                        std::memory_order_relaxed));
+                const std::int64_t loc_rej = static_cast<std::int64_t>(
+                    g_typed_mutation_audit_counters.solve_delta_locality_reject_total.load(
+                        std::memory_order_relaxed));
+                insert_kv("solve-delta-locality-slo-observe-total", loc_obs);
+                insert_kv("solve-delta-locality-escalate-total", loc_esc);
+                insert_kv("solve-delta-locality-reject-total", loc_rej);
+                insert_kv("solve-delta-locality-slo-wired", 1);
+                insert_kv("schema-2913", 2913);
+                insert_kv("issue-2913", 2913);
+            }
             // Issue #2278: epoch-scoped OccurrenceGoal table
             // metrics.
             //   - occurrence-goal-replay-total: live goals

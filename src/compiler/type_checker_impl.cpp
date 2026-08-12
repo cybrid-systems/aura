@@ -1915,6 +1915,8 @@ SolveResult ConstraintSystem::check_truncate_anti_starve(std::vector<Constraint>
 SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_out) {
     // Issue #258: time the delta solve into CompilerMetrics::delta_solve_time_us.
     // Issue #2318 / #2508: anti-starve streak + goal-priority reverify gate.
+    // Issue #2913: locality SLO after local SOLVED residual (Soft observe /
+    // production escalate). TIMEOUT already escalates via #2277 inside impl.
     if (metrics_) {
         auto* m = static_cast<CompilerMetrics*>(metrics_);
         auto start = std::chrono::steady_clock::now();
@@ -1924,14 +1926,14 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
         m->delta_solve_time_us.fetch_add(static_cast<std::uint64_t>(us), std::memory_order_relaxed);
         SolveResult replaced = result;
         if (check_truncate_anti_starve_impl(unresolved_out, result, replaced))
-            return replaced;
-        return result;
+            result = replaced;
+        return escalate_locality_slo_if_production(result, unresolved_out);
     }
     auto result = solve_delta_impl(unresolved_out);
     SolveResult replaced = result;
     if (check_truncate_anti_starve_impl(unresolved_out, result, replaced))
-        return replaced;
-    return result;
+        result = replaced;
+    return escalate_locality_slo_if_production(result, unresolved_out);
 }
 
 // Issue #258: solve_delta() body split out so the timer wrapper
@@ -1939,6 +1941,8 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
 // from Issue #148 Phase 2 — only the structure is different
 // (moved into a private impl method).
 SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolved_out) {
+    // Issue #2913: reset locality residual snapshot for this delta.
+    last_locality_pruned_ = 0;
     // Issue #2647: empty dirty worklist is NOT proof of SOLVED when live
     // OccurrenceGoals (or residual priority roots) still need revalidation
     // against Union-Find. Vacuous green after clear_blame_context left goals
@@ -2172,6 +2176,8 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     // by the caller (CompilerService). Pre-#409 the
     // counter didn't exist; the worklist size was the
     // signal but not surfaced.
+    // Issue #2913: snapshot pruned residual for locality SLO (post-delta).
+    last_locality_pruned_ = pruned;
     if (metrics_) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->delta_constraints_processed_total.fetch_add(worklist.size(), std::memory_order_relaxed);
@@ -2463,6 +2469,60 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
             static_cast<struct CompilerMetrics*>(metrics_)->delta_timeout_reject_total.fetch_add(
                 1, std::memory_order_relaxed);
         }
+    }
+    return full;
+}
+
+// Issue #2913: solve_delta locality SLO (anti silent under-constrain).
+// Soft vs production table:
+//   Soft + residual          → observe + allow (return prior SOLVED)
+//   production / Full + residual → escalate full solve; reject if unsolved
+//   clean local (no residual) → zero cost pass-through
+// TIMEOUT residual is already escalated by escalate_if_production (#2277);
+// this gate only fires on SOLVED with deferred dirty (locality prune miss).
+SolveResult
+ConstraintSystem::escalate_locality_slo_if_production(SolveResult prior,
+                                                      std::vector<Constraint>* unresolved_out) {
+    // Quiet path: fully local SOLVED with no deferred dirty.
+    if (prior != SolveResult::SOLVED)
+        return prior;
+    if (last_locality_pruned_ == 0 && dirty_count_ == 0)
+        return prior;
+
+    auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                      aura::compiler::typed_audit::get_strategy() ==
+                          aura::compiler::typed_audit::AuditStrategy::Full;
+
+    if (!hard) {
+        // Soft: observe residual under-constrain, allow SOLVED (Agents may
+        // drain pending_full_solve_roots_ on a later delta — #1871).
+        c.solve_delta_locality_slo_observe_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->solve_delta_locality_slo_observe_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return prior;
+    }
+
+    // production / Full: escalate to full solve — never silent-green residual.
+    production_escalated_ = true;
+    c.solve_delta_locality_escalate_total.fetch_add(1, std::memory_order_relaxed);
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->solve_delta_locality_escalate_total.fetch_add(1, std::memory_order_relaxed);
+        m->solve_delta_locality_slo_wired.store(1, std::memory_order_relaxed);
+    }
+    SolveResult full = solve(unresolved_out);
+    if (full != SolveResult::SOLVED) {
+        c.solve_delta_locality_reject_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->solve_delta_locality_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else {
+        // Full SOLVED clears residual locality snapshot for commit_readiness.
+        last_locality_pruned_ = 0;
     }
     return full;
 }

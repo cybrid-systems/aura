@@ -9016,6 +9016,25 @@ def cmd_solver_budget_2900_coverage():
     return 0
 
 
+def cmd_solve_delta_locality_slo_2913_coverage():
+    """Issue #2913: solve_delta locality SLO (anti silent under-constrain).
+
+    Soft residual observe; production/Full escalate full; quiet zero cost;
+    schema-2913.
+    """
+    print(f"{B}=== solve_delta locality SLO coverage (#2913) ==={N}")
+    script = COVERAGE_CHECKS / "check_solve_delta_locality_slo_2913.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("solve_delta locality SLO (#2913) coverage contract rows failed")
+        return 1
+    ok("solve_delta locality SLO (#2913) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 

@@ -200,6 +200,14 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> delta_timeout_full_solve_total{0};
     std::atomic<std::uint64_t> delta_timeout_reject_total{0};
     std::atomic<std::uint32_t> delta_timeout_hard_gate_wired{1};
+    // Issue #2913: solve_delta locality SLO (anti silent under-constrain).
+    // Soft + residual: observe_total only (allow SOLVED).
+    // production / Full + residual: escalate full solve; reject if unsolved.
+    // Quiet local SOLVED: zero cost (no counter bump).
+    std::atomic<std::uint64_t> solve_delta_locality_slo_observe_total{0};
+    std::atomic<std::uint64_t> solve_delta_locality_escalate_total{0};
+    std::atomic<std::uint64_t> solve_delta_locality_reject_total{0};
+    std::atomic<std::uint32_t> solve_delta_locality_slo_wired{1};
     // Issue #2900: SolverBudget surface (Agent-controlled delta TIMEOUT policy).
     // timeout_export: Soft + allow_timeout_commit kept TIMEOUT (never SOLVED).
     // full_escalate: production still escalated under non-default budget.

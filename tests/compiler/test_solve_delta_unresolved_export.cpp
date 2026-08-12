@@ -789,6 +789,185 @@ static void ac2900_5_source_cite() {
           "2900 AC5: no new test file per #81967");
 }
 
+// ── Issue #2913: solve_delta locality SLO + escalate_if_production residual ──
+// Soft + residual → observe + allow. production / Full + residual → escalate
+// full (or reject). Quiet local SOLVED → zero cost. Additive schema-2913.
+//
+// Soft vs production (#2913 AC6):
+//   Soft + residual              → observe + allow
+//   production / Full + residual → escalate or reject
+//   clean local                  → zero cost
+
+static void ac2913_1_production_escalate() {
+    std::println("\n--- #2913 AC1: production + residual → escalate ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    cs.force_locality_pruned_for_test(3); // inject residual under-constrain
+    CHECK(cs.last_locality_pruned() == 3, "2913 AC1: inject residual");
+
+    const auto esc0 = g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+        std::memory_order_relaxed);
+    const auto obs0 = g_typed_mutation_audit_counters.solve_delta_locality_slo_observe_total.load(
+        std::memory_order_relaxed);
+
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "2913 AC1: production escalate reaches SOLVED on empty CS");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+              std::memory_order_relaxed) > esc0,
+          "2913 AC1: locality_escalate_total bumps");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_slo_observe_total.load(
+              std::memory_order_relaxed) == obs0,
+          "2913 AC1: Soft observe NOT bumped under production");
+    CHECK(cs.production_escalated(), "2913 AC1: production_escalated_ set");
+    CHECK(metrics.solve_delta_locality_escalate_total.load() >= 1,
+          "2913 AC1: metrics mirror escalate");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2913_2_soft_observe_and_quiet() {
+    std::println("\n--- #2913 AC2: Soft residual observe; quiet zero cost ---");
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::set_strategy;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    auto save_strat = get_strategy();
+    // Soft Sampled (not Full): residual is observe-only. Cold-start default
+    // strategy is Full — must demote so Soft path is exercised.
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+
+    // Quiet: no residual → pass-through, no counters.
+    const auto esc0 = g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+        std::memory_order_relaxed);
+    const auto obs0 = g_typed_mutation_audit_counters.solve_delta_locality_slo_observe_total.load(
+        std::memory_order_relaxed);
+    auto quiet = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(quiet == SolveResult::SOLVED, "2913 AC2: quiet SOLVED");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+              std::memory_order_relaxed) == esc0,
+          "2913 AC2: quiet no escalate");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_slo_observe_total.load(
+              std::memory_order_relaxed) == obs0,
+          "2913 AC2: quiet no observe");
+
+    // Soft + residual → observe + allow.
+    cs.force_locality_pruned_for_test(2);
+    auto soft = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(soft == SolveResult::SOLVED, "2913 AC2: Soft allows residual SOLVED");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_slo_observe_total.load(
+              std::memory_order_relaxed) > obs0,
+          "2913 AC2: Soft observe bumps");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+              std::memory_order_relaxed) == esc0,
+          "2913 AC2: Soft no escalate");
+    CHECK(metrics.solve_delta_locality_slo_observe_total.load() >= 1,
+          "2913 AC2: metrics mirror observe");
+
+    // Non-SOLVED prior is pass-through (TIMEOUT handled by #2277).
+    auto to = cs.escalate_locality_slo_if_production(SolveResult::TIMEOUT);
+    CHECK(to == SolveResult::TIMEOUT, "2913 AC2: TIMEOUT prior unchanged");
+
+    set_strategy(save_strat);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2913_3_commit_readiness_after_escalate() {
+    std::println("\n--- #2913 AC3: after escalate → production_escalated + SOLVED ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    cs.force_locality_pruned_for_test(1);
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "2913 AC3: escalate returns SOLVED");
+    CHECK(cs.production_escalated(), "2913 AC3: production_escalated for commit_readiness");
+    CHECK(cs.last_locality_pruned() == 0, "2913 AC3: residual cleared after SOLVED escalate");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2913_4_additive_schema() {
+    std::println("\n--- #2913 AC4: additive schema + preserve prior keys ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "2913 AC4: warm");
+    CHECK(href(svc, "schema-2913") == 2913, "2913 AC4: schema-2913");
+    CHECK(href(svc, "issue-2913") == 2913, "2913 AC4: issue-2913");
+    CHECK(href(svc, "solve-delta-locality-slo-wired") == 1, "2913 AC4: wired");
+    CHECK(href(svc, "solve-delta-locality-escalate-total") >= 0, "2913 AC4: escalate key");
+    CHECK(href(svc, "solve-delta-locality-slo-observe-total") >= 0, "2913 AC4: observe key");
+    CHECK(href(svc, "solve-delta-locality-reject-total") >= 0, "2913 AC4: reject key");
+    // Preserve #1871 / #2277 / #2900.
+    CHECK(href(svc, "solve-delta-locality-hits") >= 0, "2913 AC4: locality-hits preserved");
+    CHECK(href(svc, "solve-delta-locality-misses") >= 0, "2913 AC4: locality-misses preserved");
+    CHECK(href(svc, "schema-2277") == 2277, "2913 AC4: schema-2277 preserved");
+    CHECK(href(svc, "schema-2900") == 2900, "2913 AC4: schema-2900 preserved");
+}
+
+static void ac2913_5_source_cite() {
+    std::println("\n--- #2913 AC5: source-cite + suite extend ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_solve_delta_locality_slo_2913.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("escalate_locality_slo_if_production") != std::string::npos,
+          "2913 AC5: ixx API");
+    CHECK(ixx.find("2913") != std::string::npos, "2913 AC5: ixx cites #2913");
+    CHECK(impl.find("escalate_locality_slo_if_production") != std::string::npos,
+          "2913 AC5: impl body");
+    CHECK(impl.find("last_locality_pruned_") != std::string::npos, "2913 AC5: residual snapshot");
+    CHECK(impl.find("Soft + residual") != std::string::npos ||
+              impl.find("Soft vs production") != std::string::npos,
+          "2913 AC5: Soft vs production table in comments");
+    CHECK(aud.find("solve_delta_locality_escalate_total") != std::string::npos,
+          "2913 AC5: audit counters");
+    CHECK(q.find("schema-2913") != std::string::npos, "2913 AC5: query schema");
+    CHECK(q.find("solve-delta-locality-escalate-total") != std::string::npos,
+          "2913 AC5: escalate query key");
+    CHECK(t.find("ac2913_1_production_escalate") != std::string::npos, "2913 AC5: AC1 test");
+    CHECK(t.find("ac2913_2_soft_observe_and_quiet") != std::string::npos, "2913 AC5: AC2 test");
+    CHECK(!lint.empty() && lint.find("2913") != std::string::npos, "2913 AC5: linter");
+    CHECK(build.find("check_solve_delta_locality_slo_2913") != std::string::npos,
+          "2913 AC5: build.py");
+    CHECK(read_file("docs/design/2913-solve-delta-locality-slo.md").empty(),
+          "2913 AC5: no docs/design/2913-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2913.cpp").empty(),
+          "2913 AC5: no new test file per #81967");
+}
+
+static void ac2913_6_wired_in_solve_delta() {
+    std::println("\n--- #2913 AC6: solve_delta wrapper calls locality SLO ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("escalate_locality_slo_if_production(result") != std::string::npos ||
+              impl.find("escalate_locality_slo_if_production(result,") != std::string::npos,
+          "2913 AC6: solve_delta wrapper calls escalate_locality_slo");
+    CHECK(impl.find("last_locality_pruned_ = pruned") != std::string::npos,
+          "2913 AC6: impl snapshots pruned residual");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -816,6 +995,13 @@ int run_test_solve_delta_unresolved_export() {
     ac2900_3_default_budget_unchanged();
     ac2900_4_additive_query();
     ac2900_5_source_cite();
+    std::println("\n=== Issue #2913: solve_delta locality SLO ===");
+    ac2913_1_production_escalate();
+    ac2913_2_soft_observe_and_quiet();
+    ac2913_3_commit_readiness_after_escalate();
+    ac2913_4_additive_schema();
+    ac2913_5_source_cite();
+    ac2913_6_wired_in_solve_delta();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

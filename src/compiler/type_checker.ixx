@@ -441,7 +441,12 @@ private:
     // escalate_if_production took the #2277 full-solve path.
     // SolverSnapshot reads this to expose production_escalated
     // without re-running escalate_if_production (which mutates state).
+    // Issue #2913: also flipped when locality-SLO escalate runs full solve.
     bool production_escalated_ = false;
+    // Issue #2913: last solve_delta locality residual (dirty constraints
+    // deferred outside the local root worklist). Soft observes; production
+    // / Full escalate to full solve (or reject if still unsolved).
+    std::size_t last_locality_pruned_ = 0;
     // Issue #2146: last effective_reverify_limit() observed by reverify.
     std::size_t last_reverify_limit_used_ = kReverifyCleanScanLimit;
     // Issue #2107: one-shot test hook (see force_next_delta_timeout_for_test).
@@ -533,6 +538,22 @@ public:
     //   - Soft + default: pass-through (unchanged)
     SolveResult escalate_if_production(SolveResult prior,
                                        std::vector<Constraint>* unresolved_out = nullptr);
+    // Issue #2913: solve_delta locality SLO. When the prior delta returned
+    // SOLVED but locality deferred residual dirty (last_locality_pruned_ > 0
+    // or dirty_count_ residual), Soft observes + allows; production / Full
+    // escalate to one full solve() (reject if still unsolved). Quiet local
+    // SOLVED (no residual) → zero cost pass-through. TIMEOUT already handled
+    // by escalate_if_production (#2277) — this gate is the residual anti
+    // silent under-constrain path.
+    SolveResult
+    escalate_locality_slo_if_production(SolveResult prior,
+                                        std::vector<Constraint>* unresolved_out = nullptr);
+    [[nodiscard]] std::size_t last_locality_pruned() const noexcept {
+        return last_locality_pruned_;
+    }
+    // Issue #2913: test inject residual for Soft/prod matrix (production code
+    // leaves this at 0; solve_delta_impl overwrites from real prune count).
+    void force_locality_pruned_for_test(std::size_t n) noexcept { last_locality_pruned_ = n; }
     // Issue #2900: Agent SolverBudget surface (null/default = current behavior).
     void set_solver_budget(SolverBudget b) noexcept { solver_budget_ = b; }
     void clear_solver_budget() noexcept { solver_budget_ = kSolverBudgetDefault; }
