@@ -16,6 +16,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -34,7 +37,7 @@ def main() -> int:
     mb = _read("src/serve/multi_fiber_mailbox.h")
     msg = _read("src/compiler/evaluator_primitives_messaging.cpp")
     health = _read("src/compiler/mutation_concurrency_health.hh")
-    query = _read("src/compiler/evaluator_primitives_query.cpp")
+    query = read_query_prims()
     test = _read("tests/serve/test_mailbox_recv_mutation_boundary.cpp")
     build = _read("build.py")
 

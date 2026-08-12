@@ -16,6 +16,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -37,7 +40,7 @@ def main() -> int:
     bh = _read("src/compiler/aura_jit_bridge.h")
     stub = _read("src/compiler/aura_jit_bridge_stub.cpp")
     met = _read("src/compiler/observability_metrics.h")
-    qq = _read("src/compiler/evaluator_primitives_query.cpp")
+    qq = read_query_prims()
     qe = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     dirty = _read("src/compiler/service_dirty.cpp")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")

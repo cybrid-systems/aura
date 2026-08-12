@@ -47,15 +47,37 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+def _expand_query_peels(rel: str) -> list[str]:
+    """Issue #2914: query registrations were peeled across evaluator_primitives_query*.cpp.
+
+    Manifests/linters that still cite the historical single path must search
+    all peels so schema/keys remain discoverable after the split.
+    """
+    if rel in (
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_query*.cpp",
+    ):
+        base = ROOT / "src" / "compiler"
+        return sorted(str(p.relative_to(ROOT)) for p in base.glob("evaluator_primitives_query*.cpp"))
+    return [rel]
+
+
+def _read_expanded(rel: str) -> str:
+    parts = [_read(p) for p in _expand_query_peels(rel)]
+    return "\n".join(parts)
+
+
 def _haystack(check: dict) -> tuple[str, str]:
     """Return (label, text) for a check row."""
     if "path" in check:
         rel = check["path"]
-        return rel, _read(rel)
+        expanded = _expand_query_peels(rel)
+        label = rel if len(expanded) == 1 else f"{rel}(+{len(expanded) - 1} peels)"
+        return label, _read_expanded(rel)
     if "paths" in check:
         paths = check["paths"]
         label = "+".join(paths)
-        return label, "".join(_read(p) for p in paths)
+        return label, "".join(_read_expanded(p) for p in paths)
     return "", ""
 
 

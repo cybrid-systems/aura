@@ -16,6 +16,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -41,7 +44,7 @@ def main() -> int:
     pass_impls = _read("src/compiler/pass_impls.ixx")
     opt = _read("src/compiler/optimization_passes.ixx")
     coercion = _read("src/compiler/coercion_map.ixx")
-    query = _read("src/compiler/evaluator_primitives_query.cpp")
+    query = read_query_prims()
     test = _read("tests/compiler/test_dce_elided_deopt_meta.cpp")
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")

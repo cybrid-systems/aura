@@ -18,6 +18,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -36,7 +39,7 @@ def main() -> int:
     ast_h = _read("src/core/ast.ixx")
     impl = _read("src/core/ast_impl.cpp")
     evalf = _read("src/compiler/evaluator_eval_flat.cpp")
-    query = _read("src/compiler/evaluator_primitives_query.cpp")
+    query = read_query_prims()
     obs = _read("src/compiler/evaluator_primitives_observability.cpp")
     test = _read("tests/core/test_dirty_column_lock.cpp")
     build = _read("build.py")

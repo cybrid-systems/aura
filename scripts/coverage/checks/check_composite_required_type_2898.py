@@ -14,6 +14,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -31,7 +34,7 @@ def main() -> int:
 
     aud = _read("src/compiler/typed_mutation_audit.h")
     tc = _read("src/compiler/evaluator_typecheck.cpp")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     om = _read("src/compiler/observability_metrics.h")
     t = _read("tests/compiler/test_composite_txn_commit.cpp")
     build = _read("build.py")

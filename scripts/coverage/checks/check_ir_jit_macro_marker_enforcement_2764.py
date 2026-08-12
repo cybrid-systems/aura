@@ -21,6 +21,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -47,7 +50,7 @@ def main() -> int:
     pass_impl = _read("src/compiler/pass_impls.ixx")
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     svc = _read("src/compiler/service.ixx")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     met = _read("src/compiler/observability_metrics.h")
     t = _read("tests/compiler/test_jit_macro_deopt_hygiene.cpp")
     build = _read("build.py")

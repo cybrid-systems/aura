@@ -24,6 +24,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -49,7 +52,7 @@ def main() -> int:
     idx = _read("src/compiler/evaluator_query_index.cpp")
     eix = _read("src/compiler/evaluator.ixx")
     met = _read("src/compiler/observability_metrics.h")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     matcher = _read("src/compiler/query_matcher.ixx")
     mcpp = _read("src/compiler/query_matcher.cpp")
