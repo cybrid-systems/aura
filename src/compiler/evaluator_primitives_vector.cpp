@@ -4,7 +4,8 @@
 module;
 
 #include "runtime_shared.h"
-#include "hash_meta.h" // FNV constants (#901)
+#include "prim_heap_quota.hh" // Issue #2916
+#include "hash_meta.h"        // FNV constants (#901)
 
 module aura.compiler.evaluator;
 
@@ -198,7 +199,15 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                          std::vector<std::vector<EvalValue>>& vector_heap,
                                          std::atomic<std::uint64_t>* primitive_error_counter,
                                          Evaluator& ev) {
-    add("vector", [&vector_heap](std::span<const EvalValue> a) {
+    add("vector", [&vector_heap, &string_heap, &error_values, primitive_error_counter,
+                   &ev](std::span<const EvalValue> a) {
+        // Issue #2916: soft vectors quota under multi-fiber construction.
+        if (!ev.prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap.size() + 1)) {
+            return make_primitive_error(
+                string_heap, error_values,
+                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
+                primitive_error_counter);
+        }
         std::vector<EvalValue> elems(a.begin(), a.end());
         auto idx = vector_heap.size();
         vector_heap.push_back(std::move(elems));
@@ -249,8 +258,8 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
     });
     // Issue #2965: accept exact integer-valued floats as length (floor/round
     // results); never reinterpret float bits via as_int → max_size() noise.
-    add("make-vector", [&vector_heap, &string_heap, &error_values,
-                        primitive_error_counter](std::span<const EvalValue> a) {
+    add("make-vector", [&vector_heap, &string_heap, &error_values, primitive_error_counter,
+                        &ev](std::span<const EvalValue> a) {
         std::size_t n = 0;
         if (!a.empty()) {
             std::int64_t len = 0;
@@ -290,6 +299,13 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                         std::to_string(len),
                     primitive_error_counter);
             }
+        }
+        // Issue #2916: soft vectors quota before materializing the buffer.
+        if (!ev.prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap.size() + 1)) {
+            return make_primitive_error(
+                string_heap, error_values,
+                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
+                primitive_error_counter);
         }
         EvalValue init = a.size() > 1 ? a[1] : make_void();
         std::vector<EvalValue> elems(n, init);

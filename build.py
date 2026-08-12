@@ -9071,6 +9071,25 @@ def cmd_prim_registrar_scaffold_2915_coverage():
     return 0
 
 
+def cmd_prim_heap_quota_2916_coverage():
+    """Issue #2916: multi-fiber prim heap soft quotas + Agent stats.
+
+    Shared pairs/strings/vectors soft limits; constructors return errors;
+    query:prim-heap-quota-stats schema-2916.
+    """
+    print(f"{B}=== prim heap quota coverage (#2916) ==={N}")
+    script = COVERAGE_CHECKS / "check_prim_heap_quota_2916.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("prim heap quota (#2916) coverage contract rows failed")
+        return 1
+    ok("prim heap quota (#2916) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -12194,6 +12213,7 @@ def main():
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "register-render-hot-prim": cmd_register_render_hot_prim_coverage,
         "prim-registrar-scaffold-2915": cmd_prim_registrar_scaffold_2915_coverage,
+        "prim-heap-quota-2916": cmd_prim_heap_quota_2916_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

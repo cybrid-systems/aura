@@ -8,6 +8,7 @@ module;
 
 
 #include "runtime_shared.h"
+#include "prim_heap_quota.hh" // Issue #2916
 
 module aura.compiler.evaluator;
 
@@ -79,7 +80,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         std::fill(string_heap[idx].begin(), string_heap[idx].end(), fill_char);
         return make_void();
     });
-    add("string->list", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("string->list", [&ev, &pairs, &string_heap, &error_values,
+                         primitive_error_counter](std::span<const EvalValue> a) {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         // Issue #2651: pairs_ + string_heap_ under alloc_storage_lock_.
@@ -88,6 +90,13 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         if (idx >= string_heap.size())
             return make_bool(false);
         auto& s = string_heap[idx];
+        // Issue #2916: soft pairs quota for char list materialization.
+        if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + s.size())) {
+            return make_primitive_error(
+                string_heap, error_values,
+                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                primitive_error_counter);
+        }
         EvalValue result = make_void();
         for (auto it = s.rbegin(); it != s.rend(); ++it) {
             auto pid = pairs.size();
@@ -97,7 +106,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return result;
     });
-    add("list->string", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("list->string", [&ev, &pairs, &string_heap, &error_values,
+                         primitive_error_counter](std::span<const EvalValue> a) {
         if (a.empty())
             return make_bool(false);
         // Issue #2651: snapshot under lock then intern.
@@ -119,12 +129,19 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 }
                 v = pairs[p].cdr;
             }
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                    primitive_error_counter);
+            }
             auto sidx = string_heap.size();
             string_heap.push_back(std::move(result));
             return make_string(sidx);
         }
     });
-    add("string-join", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("string-join", [&ev, &pairs, &string_heap, &error_values,
+                        primitive_error_counter](std::span<const EvalValue> a) {
         if (a.size() < 2 || !is_string(a[1]))
             return make_bool(false);
         // Issue #2651: multi-fiber long joins (overnight pads) must lock.
@@ -152,15 +169,29 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             }
             v = pairs[p].cdr;
         }
+        if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+            return make_primitive_error(
+                string_heap, error_values,
+                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                primitive_error_counter);
+        }
         auto sidx = string_heap.size();
         string_heap.push_back(std::move(result));
         return make_string(sidx);
     });
 
     // ── Pair / List / String primitives ─────────────────────────
-    add("cons", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("cons", [&ev, &pairs, &string_heap, &error_values,
+                 primitive_error_counter](std::span<const EvalValue> a) {
         // Issue #2651 / #1397: concurrent fiber cons must not race pairs_.
+        // Issue #2916: soft pairs quota under multi-fiber Agent loops.
         std::lock_guard lock(ev.alloc_storage_lock_);
+        if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
+            return make_primitive_error(
+                string_heap, error_values,
+                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                primitive_error_counter);
+        }
         auto id = pairs.size();
         pairs.push_back({a[0], a[1]});
         return make_pair(id);
@@ -412,7 +443,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             return make_bool(false);
         return make_bool(is_string(a[0]));
     });
-    add("string-append", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+    add("string-append", [&ev, &pairs, &string_heap, &error_values,
+                          primitive_error_counter](std::span<const EvalValue> a) {
         // Issue #2651: overnight multi-agent long-context pads call
         // string-append heavily under fiber fanout. Unlocked push_back
         // races pmr::vector / monotonic_buffer_resource → SIGSEGV in
@@ -434,6 +466,13 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
         for (std::size_t i = 0; i < string_heap.size(); ++i) {
             if (string_heap[i] == result)
                 return make_string(i);
+        }
+        // Issue #2916: soft strings quota only when a new slot is required.
+        if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+            return make_primitive_error(
+                string_heap, error_values,
+                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                primitive_error_counter);
         }
         auto id = string_heap.size();
         string_heap.push_back(std::move(result));

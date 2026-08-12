@@ -23,6 +23,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/densify_consistency_report.h" // Issue #2368: DensifyRemapPairingResult
 #include "core/resource_quota.hh"            // Issue #1579
+#include "prim_heap_quota.hh"                // Issue #2916: pair/string/vector soft quotas
 // Issue #1416: capability names for invoke_prim_with_telemetry gate
 #include "security_capabilities.h"
 // Issue #2057 / #2152: side-effect name inference + dispatch required_effects
@@ -1170,7 +1171,8 @@ namespace primitives_detail {
                                   std::pmr::vector<Pair>& pairs,
                                   std::pmr::vector<std::string>& string_heap,
                                   std::vector<EvalValue>& error_values,
-                                  std::atomic<std::uint64_t>* primitive_error_counter);
+                                  std::atomic<std::uint64_t>* primitive_error_counter,
+                                  Evaluator& ev);
     void register_list_primitives(std::function<void(std::string, PrimFn)> add,
                                   std::pmr::vector<Pair>& pairs,
                                   std::pmr::vector<std::string>& string_heap,
@@ -4994,6 +4996,16 @@ private:
     std::uint64_t resource_quota_mutations_ = 0;
     std::atomic<std::uint64_t> mutation_quota_used_{0};
 
+    // Issue #2916: soft absolute-size limits for hot-path heaps (0 = unlimited).
+    // Enforced only on growth constructors (list/append/map/json/string/vector);
+    // list-ref / member / math never consult these (no single-fiber latency hit).
+    std::atomic<std::uint64_t> prim_heap_quota_pairs_{0};
+    std::atomic<std::uint64_t> prim_heap_quota_strings_{0};
+    std::atomic<std::uint64_t> prim_heap_quota_vectors_{0};
+    std::atomic<std::uint64_t> prim_heap_hw_pairs_{0};
+    std::atomic<std::uint64_t> prim_heap_hw_strings_{0};
+    std::atomic<std::uint64_t> prim_heap_hw_vectors_{0};
+
     // Issue #242 / #1360: panic checkpoint for append-only arenas.
     // save_panic_checkpoint() snapshots each size; on restore we
     // truncate cells_/pairs_/string_heap_/env_frames_ back.
@@ -6696,6 +6708,90 @@ public:
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
             m->pair_alloc_total.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+
+    // Issue #2916: soft heap quota for pairs_ / string_heap_ / vector_heap_.
+    // after_size = heap size *after* the planned growth. limit 0 = unlimited.
+    // Always updates high-water; checks/rejects only when a limit is set.
+    [[nodiscard]] bool prim_heap_quota_allow(PrimHeapDim dim, std::size_t after_size) noexcept {
+        auto& hw = (dim == PrimHeapDim::Pairs)     ? prim_heap_hw_pairs_
+                   : (dim == PrimHeapDim::Strings) ? prim_heap_hw_strings_
+                                                   : prim_heap_hw_vectors_;
+        auto prev = hw.load(std::memory_order_relaxed);
+        const auto after = static_cast<std::uint64_t>(after_size);
+        while (after > prev && !hw.compare_exchange_weak(prev, after, std::memory_order_relaxed)) {
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            auto& mhw = (dim == PrimHeapDim::Pairs)     ? m->prim_heap_pairs_high_water
+                        : (dim == PrimHeapDim::Strings) ? m->prim_heap_strings_high_water
+                                                        : m->prim_heap_vectors_high_water;
+            auto mp = mhw.load(std::memory_order_relaxed);
+            while (after > mp && !mhw.compare_exchange_weak(mp, after, std::memory_order_relaxed)) {
+            }
+        }
+        const auto lim = (dim == PrimHeapDim::Pairs)
+                             ? prim_heap_quota_pairs_.load(std::memory_order_relaxed)
+                         : (dim == PrimHeapDim::Strings)
+                             ? prim_heap_quota_strings_.load(std::memory_order_relaxed)
+                             : prim_heap_quota_vectors_.load(std::memory_order_relaxed);
+        if (lim == 0)
+            return true;
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->prim_heap_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
+        if (after > lim) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->prim_heap_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        return true;
+    }
+    void set_prim_heap_quota(PrimHeapDim dim, std::uint64_t limit) noexcept {
+        switch (dim) {
+            case PrimHeapDim::Pairs:
+                prim_heap_quota_pairs_.store(limit, std::memory_order_relaxed);
+                break;
+            case PrimHeapDim::Strings:
+                prim_heap_quota_strings_.store(limit, std::memory_order_relaxed);
+                break;
+            case PrimHeapDim::Vectors:
+                prim_heap_quota_vectors_.store(limit, std::memory_order_relaxed);
+                break;
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            switch (dim) {
+                case PrimHeapDim::Pairs:
+                    m->prim_heap_quota_pairs_limit.store(limit, std::memory_order_relaxed);
+                    break;
+                case PrimHeapDim::Strings:
+                    m->prim_heap_quota_strings_limit.store(limit, std::memory_order_relaxed);
+                    break;
+                case PrimHeapDim::Vectors:
+                    m->prim_heap_quota_vectors_limit.store(limit, std::memory_order_relaxed);
+                    break;
+            }
+        }
+    }
+    [[nodiscard]] std::uint64_t prim_heap_quota(PrimHeapDim dim) const noexcept {
+        switch (dim) {
+            case PrimHeapDim::Pairs:
+                return prim_heap_quota_pairs_.load(std::memory_order_relaxed);
+            case PrimHeapDim::Strings:
+                return prim_heap_quota_strings_.load(std::memory_order_relaxed);
+            case PrimHeapDim::Vectors:
+                return prim_heap_quota_vectors_.load(std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    [[nodiscard]] std::uint64_t prim_heap_high_water(PrimHeapDim dim) const noexcept {
+        switch (dim) {
+            case PrimHeapDim::Pairs:
+                return prim_heap_hw_pairs_.load(std::memory_order_relaxed);
+            case PrimHeapDim::Strings:
+                return prim_heap_hw_strings_.load(std::memory_order_relaxed);
+            case PrimHeapDim::Vectors:
+                return prim_heap_hw_vectors_.load(std::memory_order_relaxed);
+        }
+        return 0;
     }
     inline void bump_linear_traverse_count(std::uint64_t steps,
                                            std::uint64_t max_depth_observed) noexcept {

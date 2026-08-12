@@ -4,7 +4,8 @@
 module;
 
 #include "runtime_shared.h"
-#include "hash_meta.h" // FNV constants (#901)
+#include "prim_heap_quota.hh" // Issue #2916
+#include "hash_meta.h"        // FNV constants (#901)
 
 #include <stdexcept> // Issue #2480: out_of_range / invalid_argument from stod/stoll
 
@@ -58,118 +59,133 @@ using types::make_void;
 void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::pmr::vector<std::string>& string_heap,
                               std::vector<EvalValue>& error_values,
-                              std::atomic<std::uint64_t>* primitive_error_counter) {
+                              std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
     // Supports: Int, Float, String, Bool, Void→null, Pair→array, Hash→obj
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
-    add("json-encode", [&pairs, &string_heap](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty()) {
-            auto sid = string_heap.size();
-            string_heap.push_back("null");
-            return types::make_string(sid);
-        }
-
-        // Use explicit std::function for recursion
-        std::function<std::string(const types::EvalValue&)> to_json;
-        to_json = [&](const types::EvalValue& v) -> std::string {
-            if (types::is_int(v))
-                return std::to_string(types::as_int(v));
-            if (types::is_float(v)) {
-                auto s = std::to_string(types::as_float(v));
-                if (s.find('.') != std::string::npos) {
-                    s.erase(s.find_last_not_of('0') + 1, std::string::npos);
-                    if (s.back() == '.')
-                        s.pop_back();
+    // Issue #2916: soft string quota on result interning under multi-fiber loops.
+    add("json-encode",
+        [&pairs, &string_heap, &error_values, primitive_error_counter,
+         &ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty()) {
+                if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                        primitive_error_counter);
                 }
-                return s;
+                auto sid = string_heap.size();
+                string_heap.push_back("null");
+                return types::make_string(sid);
             }
-            if (types::is_string(v)) {
-                auto idx = types::as_string_idx(v);
-                std::string str = (idx < string_heap.size()) ? string_heap[idx] : "";
-                std::string r = "\"";
-                for (auto c : str) {
-                    switch (c) {
-                        case '"':
-                            r += "\\\"";
-                            break;
-                        case '\\':
-                            r += "\\\\";
-                            break;
-                        case '\n':
-                            r += "\\n";
-                            break;
-                        case '\r':
-                            r += "\\r";
-                            break;
-                        case '\t':
-                            r += "\\t";
-                            break;
-                        default:
-                            r += c;
+
+            // Use explicit std::function for recursion
+            std::function<std::string(const types::EvalValue&)> to_json;
+            to_json = [&](const types::EvalValue& v) -> std::string {
+                if (types::is_int(v))
+                    return std::to_string(types::as_int(v));
+                if (types::is_float(v)) {
+                    auto s = std::to_string(types::as_float(v));
+                    if (s.find('.') != std::string::npos) {
+                        s.erase(s.find_last_not_of('0') + 1, std::string::npos);
+                        if (s.back() == '.')
+                            s.pop_back();
                     }
+                    return s;
                 }
-                r += '\"';
-                return r;
-            }
-            if (types::is_bool(v))
-                return types::as_bool(v) ? "true" : "false";
-            if (types::is_void(v))
-                return "null";
-            if (types::is_pair(v)) {
-                std::string r = "[";
-                bool first = true;
-                auto cur = v;
-                while (types::is_pair(cur)) {
-                    auto pidx = types::as_pair_idx(cur);
-                    if (pidx >= pairs.size())
-                        break;
-                    if (!first)
-                        r += ",";
-                    first = false;
-                    r += to_json(pairs[pidx].car);
-                    cur = pairs[pidx].cdr;
+                if (types::is_string(v)) {
+                    auto idx = types::as_string_idx(v);
+                    std::string str = (idx < string_heap.size()) ? string_heap[idx] : "";
+                    std::string r = "\"";
+                    for (auto c : str) {
+                        switch (c) {
+                            case '"':
+                                r += "\\\"";
+                                break;
+                            case '\\':
+                                r += "\\\\";
+                                break;
+                            case '\n':
+                                r += "\\n";
+                                break;
+                            case '\r':
+                                r += "\\r";
+                                break;
+                            case '\t':
+                                r += "\\t";
+                                break;
+                            default:
+                                r += c;
+                        }
+                    }
+                    r += '\"';
+                    return r;
                 }
-                if (!types::is_void(cur)) {
-                    r += ",";
-                    r += to_json(cur);
-                }
-                r += "]";
-                return r;
-            }
-
-            if (types::is_hash(v)) {
-                auto hidx = types::as_hash_idx(v);
-                if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                if (types::is_bool(v))
+                    return types::as_bool(v) ? "true" : "false";
+                if (types::is_void(v))
                     return "null";
-                auto* ht = g_hash_tables[hidx];
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                std::string r = "{";
-                bool first = true;
-                for (std::size_t i = ht->capacity; i > 0; --i) {
-                    if (meta[i - 1] != 0xFF) {
+                if (types::is_pair(v)) {
+                    std::string r = "[";
+                    bool first = true;
+                    auto cur = v;
+                    while (types::is_pair(cur)) {
+                        auto pidx = types::as_pair_idx(cur);
+                        if (pidx >= pairs.size())
+                            break;
                         if (!first)
                             r += ",";
                         first = false;
-                        r += to_json(EvalValue{keys[i - 1]});
-                        r += ":";
-                        r += to_json(EvalValue{vals[i - 1]});
+                        r += to_json(pairs[pidx].car);
+                        cur = pairs[pidx].cdr;
                     }
+                    if (!types::is_void(cur)) {
+                        r += ",";
+                        r += to_json(cur);
+                    }
+                    r += "]";
+                    return r;
                 }
-                r += "}";
-                return r;
-            }
-            return "null";
-        };
 
-        auto result = to_json(a[0]);
-        auto sid = string_heap.size();
-        string_heap.push_back(result);
-        return types::make_string(sid);
-    });
+                if (types::is_hash(v)) {
+                    auto hidx = types::as_hash_idx(v);
+                    if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                        return "null";
+                    auto* ht = g_hash_tables[hidx];
+                    auto meta = ht->metadata();
+                    auto keys = ht->keys();
+                    auto vals = ht->values();
+                    std::string r = "{";
+                    bool first = true;
+                    for (std::size_t i = ht->capacity; i > 0; --i) {
+                        if (meta[i - 1] != 0xFF) {
+                            if (!first)
+                                r += ",";
+                            first = false;
+                            r += to_json(EvalValue{keys[i - 1]});
+                            r += ":";
+                            r += to_json(EvalValue{vals[i - 1]});
+                        }
+                    }
+                    r += "}";
+                    return r;
+                }
+                return "null";
+            };
+
+            auto result = to_json(a[0]);
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                    primitive_error_counter);
+            }
+            auto sid = string_heap.size();
+            string_heap.push_back(result);
+            return types::make_string(sid);
+        });
     // json-get-string: extract string value of a JSON field
     // (json-get-string json-str field-name) → string
     add("json-get-string", [&pairs, &string_heap](std::span<const EvalValue> a) -> EvalValue {
@@ -216,8 +232,8 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // json-parse: parse JSON string into Aura value
     // (json-parse json-str) → value (Int/Float/String/Bool/Void/List/Hash)
     add("json-parse",
-        [&pairs, &string_heap, &error_values,
-         primitive_error_counter](std::span<const EvalValue> a) -> EvalValue {
+        [&pairs, &string_heap, &error_values, primitive_error_counter,
+         &ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0]))
                 return make_void();
             auto json_str = string_heap[types::as_string_idx(a[0])];
@@ -317,6 +333,12 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     }
                     pos++;
                 }
+                if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                        primitive_error_counter);
+                }
                 auto sid = string_heap.size();
                 string_heap.push_back(result);
                 return types::make_string(sid);
@@ -394,6 +416,13 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 if (pos < json_str.size() && json_str[pos] == ']')
                     pos++;
                 // Build list in correct order
+                // Issue #2916: soft pairs quota for JSON array materialization.
+                if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + elems.size())) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        primitive_error_counter);
+                }
                 EvalValue result = make_void();
                 for (std::size_t i = elems.size(); i > 0; --i) {
                     auto pid = pairs.size();
