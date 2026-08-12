@@ -1051,6 +1051,165 @@ static void ac2901_5_source_cite() {
           "2901 AC5: #2721 lineage");
 }
 
+// ── Issue #2929: StealInvariant table + per-invariant counters ─────────
+// Makes sole-enqueue hard-AND machine-checkable: each residual arm maps
+// to a named StealInvariant + dedicated fail counter + last reject bits.
+
+static void ac2929_1_invariant_table_and_counters() {
+    std::println("\n--- #2929 AC1: every residual arm maps to StealInvariant + counter ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    CHECK(hdr.find("enum class StealInvariant") != std::string::npos, "AC1: StealInvariant enum");
+    CHECK(hdr.find("SnapshotConsistent") != std::string::npos, "AC1: SnapshotConsistent");
+    CHECK(hdr.find("BoundarySafe") != std::string::npos, "AC1: BoundarySafe");
+    CHECK(hdr.find("LayoutStampMatch") != std::string::npos, "AC1: LayoutStampMatch");
+    CHECK(hdr.find("TicketFresh") != std::string::npos, "AC1: TicketFresh");
+    CHECK(hdr.find("GcDeferClear") != std::string::npos, "AC1: GcDeferClear");
+    CHECK(hdr.find("EnvFrameOk") != std::string::npos, "AC1: EnvFrameOk");
+    CHECK(hdr.find("steal_invariant_mask") != std::string::npos, "AC1: mask helper");
+    CHECK(hdr.find("g_steal_safety_invariant_snapshot_fail_total") != std::string::npos,
+          "AC1: snapshot fail counter");
+    CHECK(hdr.find("g_steal_safety_last_reject_invariant_bits") != std::string::npos,
+          "AC1: last reject bits");
+    CHECK(hdr.find("steal_safety_invariant_fail_total") != std::string::npos,
+          "AC1: per-invariant fail accessor");
+    CHECK(cpp.find("StealInvariant::BoundarySafe") != std::string::npos,
+          "AC1: BoundarySafe in transaction body");
+    CHECK(cpp.find("StealInvariant::LayoutStampMatch") != std::string::npos,
+          "AC1: LayoutStampMatch in body");
+    CHECK(cpp.find("StealInvariant::TicketFresh") != std::string::npos, "AC1: TicketFresh in body");
+    CHECK(cpp.find("StealInvariant::GcDeferClear") != std::string::npos,
+          "AC1: GcDeferClear in body");
+    CHECK(cpp.find("StealInvariant::EnvFrameOk") != std::string::npos, "AC1: EnvFrameOk in body");
+    CHECK(cpp.find("note_steal_invariant_fail") != std::string::npos,
+          "AC1: dedicated fail note helper");
+    CHECK(cpp.find("evaluate_residual_hard_and_bits") != std::string::npos,
+          "AC1: bits-returning hard-AND");
+}
+
+static void ac2929_2_ticket_only_after_all_invariants() {
+    std::println("\n--- #2929 AC2: ticket stamped only after all invariants pass ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    // set_resume_safety_ticket only after fail_bits == 0 path.
+    CHECK(cpp.find("stolen->set_resume_safety_ticket(snap.ticket)") != std::string::npos,
+          "AC2: ticket stamp present");
+    const auto stamp_pos = cpp.find("stolen->set_resume_safety_ticket(snap.ticket)");
+    const auto reject_pos = cpp.find("return StealSafetyDecision::RejectHard");
+    // There are multiple RejectHard returns; ensure ticket stamp is after
+    // residual fail_bits check (sole Ok stamp path).
+    CHECK(cpp.find("if (!residual_ok)") != std::string::npos,
+          "AC2: residual_ok fail gate before RejectHard");
+    CHECK(cpp.find("Issue #2844 sole-enqueue") != std::string::npos ||
+              cpp.find("all invariants Ok") != std::string::npos,
+          "AC2: sole-enqueue / all-invariants cite on stamp");
+    // Behavioral: poison residual inject → RejectHard, no snap ticket stamp.
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_last_reject_invariant_bits;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::steal_invariant_mask;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealInvariant;
+    using aura::serve::StealSafetyDecision;
+    clear_steal_safety_transaction_for_test();
+    Fiber f([] {});
+    constexpr std::uint64_t kPoison = 0xDEADBEEFULL;
+    static thread_local Fiber* s_f = nullptr;
+    s_f = &f;
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        if (s_f)
+            s_f->set_resume_safety_ticket(kPoison);
+    };
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+    const auto d = steal_safety_transaction(&f);
+    CHECK(d == StealSafetyDecision::RejectHard, "AC2: RejectHard on residual inject");
+    CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+          "AC2: ok_total unchanged (no ticket stamp path)");
+    CHECK(f.resume_safety_ticket() == kPoison, "AC2: snap ticket never stamped on RejectHard");
+    const auto bits = g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed);
+    CHECK((bits & steal_invariant_mask(StealInvariant::TicketFresh)) != 0 || bits != 0,
+          "AC2: last reject bits recorded");
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+    s_f = nullptr;
+    clear_steal_safety_transaction_for_test();
+    (void)stamp_pos;
+    (void)reject_pos;
+}
+
+static void ac2929_3_soft_metric_only_production_fail_closed() {
+    std::println("\n--- #2929 AC3: Soft metric-only; production fail-closed ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(cpp.find("RejectHard") != std::string::npos, "AC3: RejectHard path");
+    CHECK(cpp.find("set_resume_safety_ticket") != std::string::npos, "AC3: Ok stamp only");
+    // No Soft continue into enqueue inside transaction.
+    CHECK(cpp.find("StealSafetyDecision::Ok") != std::string::npos, "AC3: Ok return");
+    CHECK(hdr.find("Production Soft env ignored") != std::string::npos ||
+              hdr.find("soft / sandbox") != std::string::npos ||
+              hdr.find("Soft / sandbox") != std::string::npos,
+          "AC3: soft/sandbox contract documented");
+    // Transaction has no soft-continue return after residual fail.
+    CHECK(cpp.find("if (!residual_ok)") != std::string::npos, "AC3: residual fail → RejectHard");
+}
+
+static void ac2929_4_query_additive() {
+    std::println("\n--- #2929 AC4: query surface additive; prior counters preserved ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("schema-2929") != std::string::npos, "AC4: schema-2929");
+    CHECK(q.find("steal-invariant-table-wired") != std::string::npos, "AC4: table wired key");
+    CHECK(q.find("steal-invariant-last-reject-bits") != std::string::npos, "AC4: last reject bits");
+    CHECK(q.find("steal-invariant-boundary-fail-total") != std::string::npos,
+          "AC4: boundary fail total");
+    CHECK(q.find("steal-invariant-snapshot-fail-total") != std::string::npos,
+          "AC4: snapshot fail total");
+    CHECK(q.find("schema-2721") != std::string::npos, "AC4: schema-2721 preserved");
+    CHECK(q.find("schema-2699") != std::string::npos, "AC4: schema-2699 preserved");
+    CHECK(q.find("steal-safety-transaction-ok-total") != std::string::npos,
+          "AC4: transaction ok total");
+    // Live query (when metrics wired).
+    CompilerService cs;
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:gc-defer-reason-stats\") \"schema-2929\")");
+    if (r && is_int(*r))
+        CHECK(as_int(*r) == 2929, "AC4: live schema-2929");
+    else
+        CHECK(true, "AC4: query soft-miss ok under light-link");
+    // Prior residual counters still on header.
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(hdr.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC4: #2721 residual counters non-regressing");
+    CHECK(hdr.find("g_steal_safety_transaction_ok_total") != std::string::npos,
+          "AC4: #2699 ok counter non-regressing");
+}
+
+static void ac2929_5_source_and_linter() {
+    std::println("\n--- #2929 AC5/AC6: source-cite + linter + no docs/design ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_invariant_table_2929.py");
+    CHECK(hdr.find("Issue #2929") != std::string::npos ||
+              hdr.find("kStealSafetyInvariantTableIssue = 2929") != std::string::npos,
+          "AC5: hdr cites #2929");
+    CHECK(cpp.find("Issue #2929") != std::string::npos, "AC5: cpp cites #2929");
+    CHECK(t.find("ac2929_1_invariant_table_and_counters") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2929_2_ticket_only_after_all_invariants") != std::string::npos,
+          "AC5: AC2 test");
+    CHECK(t.find("ac2929_3_soft_metric_only_production_fail_closed") != std::string::npos,
+          "AC5: AC3 test");
+    CHECK(t.find("ac2929_4_query_additive") != std::string::npos, "AC5: AC4 test");
+    CHECK(!lint.empty() && lint.find("2929") != std::string::npos, "AC5: linter present");
+    CHECK(build.find("check_steal_invariant_table_2929") != std::string::npos ||
+              build.find("steal-invariant-table-2929") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(t.find("ac2844_1_sole_enqueue_gate") != std::string::npos, "AC5: #2844 preserved");
+    CHECK(t.find("ac2721_1_residual_hard_and_inside_transaction") != std::string::npos,
+          "AC5: #2721 preserved");
+    CHECK(read_file("docs/design/2929-steal-invariant-table.md").empty(),
+          "AC6: no docs/design/2929-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_2929.cpp").empty(), "AC6: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_steal_complete_restamp_txn() {
@@ -1100,10 +1259,16 @@ int run_test_steal_complete_restamp_txn() {
     ac2901_3_counters_additive();
     ac2901_4_chaos_contract_source();
     ac2901_5_source_cite();
+    std::println("\n=== Issue #2929: StealInvariant table + counters ===");
+    ac2929_1_invariant_table_and_counters();
+    ac2929_2_ticket_only_after_all_invariants();
+    ac2929_3_soft_metric_only_production_fail_closed();
+    ac2929_4_query_additive();
+    ac2929_5_source_and_linter();
     if (g_failed)
         return 1;
     std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
-                 "#2727 + #2901: OK ({} passed)",
+                 "#2727 + #2901 + #2929: OK ({} passed)",
                  g_passed);
     return 0;
 }

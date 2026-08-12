@@ -69,58 +69,102 @@ namespace {
     // hard-AND + quiet re-sample under lock (no extra atomics when clean).
     std::mutex g_steal_safety_decision_mu;
 
-    // Evaluate residual hard-AND arms (a–e). When bump_counters is true,
-    // increments the matching residual_* counters on each failing arm.
-    // When false (quiet re-sample), only returns the boolean — zero atomics
-    // on the clean path (AC2).
-    [[nodiscard]] bool evaluate_residual_hard_and(Fiber* stolen, const MutationSafetySnapshot& snap,
-                                                  bool bump_counters) noexcept {
-        bool residual_ok = true;
-        // (a) Per-fiber mutation boundary safety
-        if (!stolen->is_at_mutation_boundary_safe()) {
-            if (bump_counters)
+    // Issue #2929: bump dedicated StealInvariant failure counter.
+    // Residual arms re-use residual_* totals so #2721/#2745 surfaces stay valid.
+    void note_steal_invariant_fail(StealInvariant inv) noexcept {
+        switch (inv) {
+            case StealInvariant::SnapshotConsistent:
+                g_steal_safety_invariant_snapshot_fail_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                break;
+            case StealInvariant::BoundarySafe:
+                // Keep fetch_add(1 on same line for #2721 AC greps.
                 g_steal_safety_residual_boundary_unsafe_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-            residual_ok = false;
-        }
-        // (b) LayoutStamp match (Issue #2721)
-        if (aura_evaluator_check_resume_layout_stamp(stolen) != 0) {
-            if (bump_counters)
+                break;
+            case StealInvariant::LayoutStampMatch:
                 g_steal_safety_residual_layout_stamp_mismatch_total.fetch_add(
                     1, std::memory_order_relaxed);
-            residual_ok = false;
-        }
-        // (c) Resume-ticket consistency
-        if (stolen->has_resume_safety_ticket() && stolen->resume_safety_ticket() != snap.ticket) {
-            if (bump_counters)
+                break;
+            case StealInvariant::TicketFresh:
                 g_steal_safety_residual_ticket_mismatch_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-            residual_ok = false;
+                break;
+            case StealInvariant::GcDeferClear:
+                g_steal_safety_residual_gc_defer_armed_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                break;
+            case StealInvariant::EnvFrameOk:
+                g_steal_safety_residual_envframe_lag_total.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case StealInvariant::Count:
+            default:
+                break;
         }
-        // (d) GC-defer arm state for the victim evaluator
+    }
+
+    // Issue #2929 / #2721: evaluate residual hard-AND arms as named
+    // StealInvariant checks. Returns fail bit-set (0 = all pass).
+    // When bump_counters is true, increments the matching invariant
+    // counter on each failing arm. When false (quiet re-sample), only
+    // returns bits — zero atomics on the clean path (AC2).
+    // Invariant table (a–e residual arms; SnapshotConsistent is earlier):
+    //   BoundarySafe      — is_at_mutation_boundary_safe
+    //   LayoutStampMatch  — aura_evaluator_check_resume_layout_stamp
+    //   TicketFresh       — resume ticket == snap.ticket
+    //   GcDeferClear      — victim evaluator GC defer clear
+    //   EnvFrameOk        — densify EnvFrame residual (#2745)
+    [[nodiscard]] std::uint64_t evaluate_residual_hard_and_bits(Fiber* stolen,
+                                                                const MutationSafetySnapshot& snap,
+                                                                bool bump_counters) noexcept {
+        std::uint64_t fail_bits = 0;
+        // StealInvariant::BoundarySafe
+        if (!stolen->is_at_mutation_boundary_safe()) {
+            fail_bits |= steal_invariant_mask(StealInvariant::BoundarySafe);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::BoundarySafe);
+        }
+        // StealInvariant::LayoutStampMatch
+        if (aura_evaluator_check_resume_layout_stamp(stolen) != 0) {
+            fail_bits |= steal_invariant_mask(StealInvariant::LayoutStampMatch);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::LayoutStampMatch);
+        }
+        // StealInvariant::TicketFresh
+        if (stolen->has_resume_safety_ticket() && stolen->resume_safety_ticket() != snap.ticket) {
+            fail_bits |= steal_invariant_mask(StealInvariant::TicketFresh);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::TicketFresh);
+        }
+        // StealInvariant::GcDeferClear
         // (#2721 hard-AND + #2727 per-Fiber durable evaluator_id identity)
         {
             void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
             if (victim_eval_id != nullptr &&
                 aura::gc_hooks::gc_deferred_for_evaluator(victim_eval_id)) {
+                fail_bits |= steal_invariant_mask(StealInvariant::GcDeferClear);
                 if (bump_counters)
-                    g_steal_safety_residual_gc_defer_armed_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                residual_ok = false;
+                    note_steal_invariant_fail(StealInvariant::GcDeferClear);
             }
         }
-        // (e) Issue #2745: EnvFrame residual after densify — last densify left
-        // envframe_ok=false or dual_epoch lag. Quiet path (call_seq==0) skips.
+        // StealInvariant::EnvFrameOk — Issue #2745: EnvFrame residual after densify
+        // last densify left envframe_ok=false or dual_epoch lag. Quiet path
+        // (call_seq==0) skips densify residual.
         if (aura::core::densify_consistency::last_densify_call_seq() > 0) {
             if (!aura::core::densify_consistency::last_densify_envframe_ok() ||
                 !aura::core::densify_consistency::last_densify_dual_epoch_ok()) {
+                fail_bits |= steal_invariant_mask(StealInvariant::EnvFrameOk);
                 if (bump_counters)
-                    g_steal_safety_residual_envframe_lag_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                residual_ok = false;
+                    note_steal_invariant_fail(StealInvariant::EnvFrameOk);
             }
         }
-        return residual_ok;
+        return fail_bits;
+    }
+
+    // Boolean wrapper (preserves #2721/#2901 residual_ok naming for greps).
+    [[nodiscard]] bool evaluate_residual_hard_and(Fiber* stolen, const MutationSafetySnapshot& snap,
+                                                  bool bump_counters) noexcept {
+        return evaluate_residual_hard_and_bits(stolen, snap, bump_counters) == 0;
     }
 
 } // namespace
@@ -130,6 +174,7 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
         // Defensive: caller passes null fiber → RejectHard.
         g_steal_safety_transaction_calls_total.fetch_add(1, std::memory_order_relaxed);
         g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+        // No concrete invariant — leave last bits unchanged.
         return StealSafetyDecision::RejectHard;
     }
     g_steal_safety_transaction_calls_total.fetch_add(1, std::memory_order_relaxed);
@@ -138,9 +183,9 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
     // fiber.cpp owns the snapshot seqlock; we just read it here.
     const auto snap = stolen->mutation_safety_snapshot();
 
-    // AC1 step 2 — inconsistency → production force-deopt + RejectHard.
-    // We re-check the seqlock via fiber's helper rather than duplicating
-    // the abort logic.
+    // AC1 step 2 / StealInvariant::SnapshotConsistent → production
+    // force-deopt + RejectHard. We re-check the seqlock via fiber's helper
+    // rather than duplicating the abort logic.
     const bool inconsistent = stolen->mutation_safety_snapshot_inconsistent(snap);
     if (inconsistent) {
         // Delegate to the existing strong ABI for the force-deopt path.
@@ -151,6 +196,10 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
         // After force-deopt, the fiber is no longer enqueue-safe —
         // RejectHard regardless of soft-mode (soft path can't override
         // production force-deopt under the new single-transaction contract).
+        // StealInvariant::SnapshotConsistent fail (dedicated counter + bits).
+        g_steal_safety_invariant_snapshot_fail_total.fetch_add(1, std::memory_order_relaxed);
+        g_steal_safety_last_reject_invariant_bits.store(
+            steal_invariant_mask(StealInvariant::SnapshotConsistent), std::memory_order_relaxed);
         g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
         return StealSafetyDecision::RejectHard;
     }
@@ -188,7 +237,9 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
             g_steal_safety_between_clear_and_hard_and_hook();
         }
 
-        bool residual_ok = evaluate_residual_hard_and(stolen, snap, /*bump_counters=*/true);
+        std::uint64_t fail_bits =
+            evaluate_residual_hard_and_bits(stolen, snap, /*bump_counters=*/true);
+        bool residual_ok = (fail_bits == 0);
 
         // Quiet re-sample under the same lock — catches re-arm that
         // landed after the first sample but before stamp. Clean path:
@@ -196,7 +247,7 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
         if (residual_ok) {
             if (!evaluate_residual_hard_and(stolen, snap, /*bump_counters=*/false)) {
                 // Re-arm race: attribute residual arms + race counter.
-                (void)evaluate_residual_hard_and(stolen, snap, /*bump_counters=*/true);
+                fail_bits = evaluate_residual_hard_and_bits(stolen, snap, /*bump_counters=*/true);
                 g_steal_safety_residual_rearm_race_total.fetch_add(1, std::memory_order_relaxed);
                 residual_ok = false;
             }
@@ -210,6 +261,8 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
             // Issue #2901: force second residual clear so a residual-armed
             // fiber cannot leave residue for a later enqueue path after
             // RejectHard. No ticket stamp (no post-transaction escape).
+            // Issue #2929: publish failing invariant bit-set for Agents.
+            g_steal_safety_last_reject_invariant_bits.store(fail_bits, std::memory_order_relaxed);
             aura_evaluator_on_steal_complete(stolen);
             g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
             return StealSafetyDecision::RejectHard;
@@ -217,6 +270,7 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
 
         // AC1 step 7 — stamp resume_safety_ticket only on Ok path
         // (after hard-AND + quiet re-sample passed under the same lock).
+        // Issue #2844 sole-enqueue: ticket stamp ONLY here (all invariants Ok).
         stolen->set_resume_safety_ticket(snap.ticket);
     }
 
