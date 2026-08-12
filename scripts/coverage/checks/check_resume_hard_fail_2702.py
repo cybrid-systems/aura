@@ -29,6 +29,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -50,7 +53,7 @@ def main() -> int:
     fc = _read("src/serve/fiber.cpp")
     sh = _read("src/serve/steal_safety.h")
     sc = _read("src/serve/steal_safety.cpp")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     t = _read("tests/serve/test_steal_safety_ticket.cpp")
     build = _read("build.py")
 

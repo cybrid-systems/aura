@@ -16,6 +16,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -38,7 +41,7 @@ def main() -> int:
     met = _read("src/compiler/observability_metrics.h")
     eixx = _read("src/compiler/evaluator.ixx")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     jit = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/serve/test_steal_complete_restamp_txn.cpp")
     cmake = _read("CMakeLists.txt")

@@ -23,6 +23,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 REPO = Path(__file__).resolve().parents[3]
 
 CONTRACT_ROWS = [
@@ -107,11 +110,19 @@ def check() -> int:
     failed = 0
     for row in CONTRACT_ROWS:
         path = REPO / row["path"]
-        if not path.exists():
-            print(f"FAIL: {row['name']}: missing file {row['path']}")
-            failed += 1
-            continue
-        text = path.read_text()
+        # Issue #2914: query registrations peeled across evaluator_primitives_query*.cpp
+        if "evaluator_primitives_query.cpp" in row["path"]:
+            text = read_query_prims()
+            if not text:
+                print(f"FAIL: {row['name']}: missing query peels")
+                failed += 1
+                continue
+        else:
+            if not path.exists():
+                print(f"FAIL: {row['name']}: missing file {row['path']}")
+                failed += 1
+                continue
+            text = path.read_text()
         for pat in row["patterns"]:
             if not re.search(pat, text):
                 print(f"FAIL: {row['name']}: missing /{pat}/ in {row['path']}")

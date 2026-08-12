@@ -23,6 +23,9 @@ import argparse
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 REPO = Path(__file__).resolve().parents[3]
 
 
@@ -46,7 +49,7 @@ def check() -> list:
     fiber_mut = _read("src/compiler/evaluator_fiber_mutation.cpp")
     met = _read("src/compiler/observability_metrics.h")
     eval_ixx = _read("src/compiler/evaluator.ixx")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     test = _read("tests/compiler/test_layout_stamp.cpp")
 
     # AC1 — Fiber POD has 6 stamp fields + has_resume_layout_stamp set flag

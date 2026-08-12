@@ -36,6 +36,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -103,7 +106,7 @@ def main() -> int:
     # inline definitions and atomic counters are unchanged. Verify
     # the existing query keys for #2697 / #2717 / #2719 are still
     # present in evaluator_primitives_query.cpp (no regression).
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     must("schema-2697", "AC3", q)
     must("schema-2717", "AC3", q)
     must("schema-2719", "AC3", q)

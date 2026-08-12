@@ -17,6 +17,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -58,7 +61,7 @@ def main() -> int:
 
     hh = _read("src/compiler/shape_profiler.h")
     cpp = _read("src/compiler/shape_profiler.cpp")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     obs = _read("src/compiler/evaluator_primitives_obs_jit.cpp")
     test = _read("tests/compiler/test_shape_compact_storm_isolation.cpp")
     build = _read("build.py")

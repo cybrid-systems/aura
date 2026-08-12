@@ -15,6 +15,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 RT = ROOT / "src" / "compiler" / "aura_jit_runtime.cpp"
 BH = ROOT / "src" / "compiler" / "aura_jit_bridge.h"
@@ -36,7 +39,7 @@ def main() -> int:
     bh = BH.read_text(encoding="utf-8", errors="replace")
     bc = BC.read_text(encoding="utf-8", errors="replace")
     met = MET.read_text(encoding="utf-8", errors="replace")
-    q = Q.read_text(encoding="utf-8", errors="replace")
+    q = read_query_prims()  # Issue #2914: peels
     rp = RP.read_text(encoding="utf-8", errors="replace")
     test = TEST.read_text(encoding="utf-8", errors="replace")
 

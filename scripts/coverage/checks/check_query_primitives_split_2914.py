@@ -19,7 +19,7 @@ SOFT_CAP = 4500  # soft; peels may sit slightly over 3k for natural cuts
 
 
 def main() -> int:
-    fails = []
+    fails: list[str] = []
     main_q = ROOT / "src/compiler/evaluator_primitives_query.cpp"
     peels = [
         "evaluator_primitives_query_obs_mid.cpp",
@@ -31,7 +31,7 @@ def main() -> int:
     if not main_q.is_file():
         fails.append("main query.cpp missing")
     else:
-        n = sum(1 for _ in main_q.open())
+        n = sum(1 for _ in main_q.open(encoding="utf-8", errors="replace"))
         if n > SOFT_CAP:
             fails.append(f"main query.cpp still {n} LOC (cap {SOFT_CAP})")
         t = main_q.read_text(encoding="utf-8", errors="replace")
@@ -48,7 +48,7 @@ def main() -> int:
         if not path.is_file():
             fails.append(f"missing peel {p}")
             continue
-        n = sum(1 for _ in path.open())
+        n = sum(1 for _ in path.open(encoding="utf-8", errors="replace"))
         if n > 5500:
             fails.append(f"{p} is {n} LOC (hard cap 5500)")
         if f"src/compiler/{p}" not in cmake:
@@ -69,7 +69,6 @@ def main() -> int:
     if not shared.is_file():
         fails.append("missing evaluator_primitives_query_shared.hh")
 
-    # Spot-check: list-ref still uses make_primitive_error for true errors
     lst = (ROOT / "src/compiler/evaluator_primitives_list.cpp").read_text(encoding="utf-8", errors="replace")
     if "list-ref" in lst and "make_primitive_error" not in lst:
         fails.append("list-ref lost make_primitive_error")

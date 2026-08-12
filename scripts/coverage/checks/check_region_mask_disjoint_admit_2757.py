@@ -24,6 +24,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -48,7 +51,7 @@ def main() -> int:
 
     mhb = _read("src/compiler/mutation_hold_budget.h")
     emb = _read("src/compiler/evaluator_mutation_boundary.cpp")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     t = _read("tests/serve/test_mailbox_hold_starvation_hard.cpp")
     build = _read("build.py")
 

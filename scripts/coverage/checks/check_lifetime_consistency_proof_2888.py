@@ -26,6 +26,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 FILES = [
@@ -55,7 +58,7 @@ def main() -> int:
     header = _read("src/core/lifetime_consistency_proof.hh")
     boundary = _read("src/compiler/evaluator_mutation_boundary.cpp")
     fiber = _read("src/compiler/evaluator_fiber_mutation.cpp")
-    query = _read("src/compiler/evaluator_primitives_query.cpp")
+    query = read_query_prims()
     test = _read("tests/compiler/test_densify_ownership_scan_fail_gate.cpp")
     build = _read("build.py")
 
@@ -106,12 +109,14 @@ def main() -> int:
 
     # ── AC5: source-cite + tests in src/-aligned suite + build.py gate ──
     for rel in FILES:
-        content = _read(rel)
+        content = read_query_prims() if "evaluator_primitives_query" in rel else _read(rel)
         if not content:
             fails.append(f"AC5: missing file {rel}")
             continue
-        if "Issue #2888" not in content:
+        if "Issue #2888" not in content and "evaluator_primitives_query" not in rel:
             fails.append(f"AC5: {rel} does not cite Issue #2888")
+        if "evaluator_primitives_query" in rel and "Issue #2888" not in content:
+            fails.append("AC5: query peels do not cite Issue #2888")
     must("ac2888_1_header_and_aggregation", "AC5", test)
     must("ac2888_2_scan_fail_forces_reject", "AC5", test)
     must("ac2888_3_quiet_path_zero_cost", "AC5", test)

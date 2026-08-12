@@ -15,6 +15,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from query_prims_sources import read_query_prims  # Issue #2914
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -34,7 +37,7 @@ def main() -> int:
 
     rt = _read("src/compiler/aura_jit_runtime.cpp")
     sec = _read("src/compiler/security_defaults.hh")
-    q = _read("src/compiler/evaluator_primitives_query.cpp")
+    q = read_query_prims()
     # Production surface wins via later register_stats_impl in obs_eval.
     q_prod = _read("src/compiler/evaluator_primitives_obs_eval.cpp")
     test = _read("tests/compiler/test_live_closure_stable_id_only.cpp")
