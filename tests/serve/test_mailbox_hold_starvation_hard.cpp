@@ -11,9 +11,13 @@
 #include "test_harness.hpp"
 
 #include "compiler/mutation_hold_budget.h" // #2761 live regions_disjoint unit checks
-#include "compiler/typed_mutation_audit.h" // #2847 region_type_commit_ok
+#include "compiler/typed_mutation_audit.h" // #2847 region_type_commit_ok; #2932 production defaults
+#include "core/gc_hooks.h"                 // #2932 residual closed-loop check
+#include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
+#include "serve/scheduler.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -24,6 +28,7 @@
 #include <vector>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -818,6 +823,219 @@ static void ac2726_6_no_docs_design() {
           "AC6: no docs/design/2726-* per #1655 (design rationale in close comment)");
 }
 
+// ── Issue #2932 AC1: under production defaults, hold-budget cancel +
+// force-safepoint at cooperative edge force outermost fail-closed and
+// release the exclusive hold (even for a non-yielding body that only
+// hits check_gc_safepoint via an explicit edge / yield).
+static void ac2932_1_force_safepoint_fail_closed() {
+    std::println("\n--- #2932 AC1: force-safepoint fail-closed under production ---");
+    // Source-cite first (always available).
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(fc.find("Issue #2932") != std::string::npos, "AC1: fiber.cpp cites #2932");
+    CHECK(fc.find("request_force_safepoint") != std::string::npos,
+          "AC1: cancel pairs request_force_safepoint");
+    CHECK(fc.find("aura_evaluator_try_hold_budget_fail_closed_at_safepoint") != std::string::npos,
+          "AC1: check_gc_safepoint calls fail-closed ABI");
+    CHECK(efm.find("aura_evaluator_try_hold_budget_fail_closed_at_safepoint") != std::string::npos,
+          "AC1: efm defines fail-closed ABI");
+    CHECK(efm.find("mark_outermost_mutation_failed") != std::string::npos,
+          "AC1: fail-closed marks outermost failed");
+    CHECK(mhb.find("g_mutation_hold_budget_forced_fail_closed_total") != std::string::npos,
+          "AC1: forced-fail-closed counter present");
+    CHECK(mhb.find("kMutationHoldBudgetForcedFailClosedIssue = 2932") != std::string::npos,
+          "AC1: issue stamp 2932");
+
+    // Runtime: production defaults + Guard + cancel + check_gc_safepoint
+    // → success=false + forced_fail_closed advanced + residual drained.
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "AC1: production_defaults_active for hard gate");
+    aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+    aura::compiler::clear_mutation_hold_budget_holder_degrade_cross_fiber_cancel_for_test();
+
+    const auto forced0 = aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{1};
+    std::atomic<int> ran{0};
+    std::atomic<int> peeked{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "AC1: outermost Guard");
+            // Inject residual hold so #2846 residual-after-exit is exercised
+            // on the failure path (production force-clear).
+            aura::gc_hooks::arm_mutation_hold_defer();
+            // Simulate #2726 force-degrade: set cancel + force-safepoint.
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "AC1: fiber current");
+            f->request_hold_budget_cancel();
+            f->request_force_safepoint();
+            peeked.store(f->peek_hold_budget_cancel() ? 1 : 0, std::memory_order_relaxed);
+            // Cooperative edge (non-yielding body would hit this via
+            // force-safepoint nudge + yield / check_gc_safepoint).
+            Fiber::check_gc_safepoint();
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC1: fiber body ran");
+    CHECK(peeked.load() == 1, "AC1: cancel was pending before safepoint");
+    CHECK(ok_flag.load() == 0, "AC1: outermost success forced false");
+    CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() > forced0,
+          "AC1: forced_fail_closed_total advanced");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0,
+          "AC1: residual defer drained after forced failure");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #2932 AC2: Soft / sandbox=off → metric-only; no forced fail.
+static void ac2932_2_soft_metric_only() {
+    std::println("\n--- #2932 AC2: Soft path metric-only ---");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+          "AC2: fail-closed ABI gates on reject_enabled");
+    CHECK(efm.find("Soft / sandbox=off") != std::string::npos, "AC2: Soft path documented");
+
+    // Runtime Soft: clear production defaults (reject_enabled is
+    // hard_env || production_defaults_active — sandbox=off alone does
+    // not clear production_defaults). Soft → no force-fail.
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+          "AC2: production defaults cleared for Soft");
+    CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+          "AC2: reject_enabled false under Soft");
+    aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+    const auto forced0 = aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{0};
+    std::atomic<int> still_pending{0};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            auto* f = aura::serve::g_current_fiber;
+            if (f) {
+                f->request_hold_budget_cancel();
+                f->request_force_safepoint();
+                Fiber::check_gc_safepoint();
+                still_pending.store(f->peek_hold_budget_cancel() ? 1 : 0,
+                                    std::memory_order_relaxed);
+            }
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC2: Soft fiber ran");
+    // Soft: reject_enabled false → no force-fail; success stays true.
+    // Flag may remain pending (not consumed under Soft).
+    CHECK(ok_flag.load() == 1, "AC2: Soft does not force-fail outermost");
+    CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() == forced0,
+          "AC2: forced_fail_closed not advanced under Soft");
+    ::unsetenv("AURA_SANDBOX");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #2932 AC3: nested guards never independently force-fail.
+static void ac2932_3_nested_outermost_only() {
+    std::println("\n--- #2932 AC3: nested outermost-only ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(emb.find("is_outermost_") != std::string::npos, "AC3: Phase-5 poll is outermost-only");
+    CHECK(efm.find("outermost") != std::string::npos ||
+              efm.find("mark_outermost_mutation_failed") != std::string::npos,
+          "AC3: fail-closed targets outermost success flag only");
+    CHECK(mhb.find("Nested") != std::string::npos,
+          "AC3: mhb documents nested never independently force-fail");
+}
+
+// ── Issue #2932 AC4: residual closed-loop (#2846) on forced-failure exit.
+static void ac2932_4_residual_closed_loop() {
+    std::println("\n--- #2932 AC4: residual #2846 on forced-failure exit ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("Issue #2846") != std::string::npos, "AC4: emb cites #2846");
+    CHECK(emb.find("close_residual_defer_after_exit") != std::string::npos,
+          "AC4: failure path uses closed-loop residual helper");
+    CHECK(emb.find("Issue #2932") != std::string::npos,
+          "AC4: Phase-5 documents #2932 forced-failure residual path");
+    CHECK(emb.find("forced-failure residual") != std::string::npos,
+          "AC4: Phase-5 cites forced-failure residual");
+    // Runtime residual drain is covered under AC1 (defer_reasons_snapshot==0).
+}
+
+// ── Issue #2932 AC5: source-cite + linter + query keys.
+static void ac2932_5_source_and_linter() {
+    std::println("\n--- #2932 AC5: source-cite + linter + query ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_hold_budget_forced_fail_closed_2932.py");
+    CHECK(mhb.find("Issue #2932") != std::string::npos, "AC5: mhb cites #2932");
+    CHECK(emb.find("Issue #2932") != std::string::npos, "AC5: emb cites #2932");
+    CHECK(efm.find("Issue #2932") != std::string::npos, "AC5: efm cites #2932");
+    CHECK(fc.find("Issue #2932") != std::string::npos, "AC5: fiber.cpp cites #2932");
+    CHECK(fh.find("Issue #2932") != std::string::npos, "AC5: fiber.h cites #2932");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-fail-closed-total"),
+          "AC5: forced-fail-closed-total query key");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-fail-closed-wired"),
+          "AC5: forced-fail-closed-wired query key");
+    CHECK(source_has_key(q, "schema-2932"), "AC5: schema-2932");
+    CHECK(source_has_key(q, "issue-2932"), "AC5: issue-2932");
+    CHECK(source_has_key(q, "schema-2726"), "AC5: #2726 preserved");
+    CHECK(t.find("ac2932_1_force_safepoint_fail_closed") != std::string::npos,
+          "AC5: AC1 test present");
+    CHECK(t.find("ac2932_2_soft_metric_only") != std::string::npos, "AC5: AC2 test present");
+    CHECK(t.find("ac2932_3_nested_outermost_only") != std::string::npos, "AC5: AC3 test present");
+    CHECK(t.find("ac2932_4_residual_closed_loop") != std::string::npos, "AC5: AC4 test present");
+    CHECK(t.find("ac2932_5_source_and_linter") != std::string::npos, "AC5: self-test");
+    CHECK(build.find("check_hold_budget_forced_fail_closed_2932") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2932") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("tests/serve/test_issue_2932.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
+// ── Issue #2932 AC6: no docs/design/2932-*.
+static void ac2932_6_no_docs_design() {
+    std::println("\n--- #2932 AC6: no docs/design/2932-* per #1655 ---");
+    CHECK(read_file("docs/design/2932-hold-budget-forced-fail-closed.md").empty(),
+          "AC6: no docs/design/2932-* per #1655");
+}
+
 // ── Issue #2754 AC1: equal keys + cone-/mask-disjoint ImpactScope →
 // concurrent admit (bump cone-admit counter). Key-disjoint fast path
 // preserved (#2724). regions_disjoint 4-arg + regions_cone_disjoint
@@ -1531,6 +1749,14 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2726_4_query_keys();
     ac2726_5_source_and_linter();
     ac2726_6_no_docs_design();
+    std::println("\n=== Issue #2932: hold-budget overtime forced outermost fail-closed (#2726 "
+                 "residual) ===");
+    ac2932_1_force_safepoint_fail_closed();
+    ac2932_2_soft_metric_only();
+    ac2932_3_nested_outermost_only();
+    ac2932_4_residual_closed_loop();
+    ac2932_5_source_and_linter();
+    ac2932_6_no_docs_design();
     std::println(
         "\n=== Issue #2754: region concurrent cone/ImpactScope mask-AND (#2724 residual) ===");
     ac2754_1_cone_disjoint_concurrent_admit();

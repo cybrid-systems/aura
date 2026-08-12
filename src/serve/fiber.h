@@ -728,13 +728,20 @@ public:
     // the flag unless AURA_MUTATION_HOLD_BUDGET_HARD=1 — same gating as
     // #2701/#2720 (zero cost on happy path).
     //
+    // Issue #2932: aura_fiber_request_hold_budget_cancel also pairs
+    // request_force_safepoint so a non-yielding holder still hits
+    // check_gc_safepoint, which calls
+    // aura_evaluator_try_hold_budget_fail_closed_at_safepoint to consume
+    // the flag + mark_outermost_mutation_failed under production.
+    //
     // request_hold_budget_cancel: cross-fiber setter (called from the
     // force-degrade ABI; atomic store under release).
     //
     // consume_hold_budget_cancel: one-shot CAS true→false; returns true iff
     // the flag was set, so the caller can fire mark_outermost_mutation_failed
     // exactly once per request. AC3 — only the outermost Guard poll path
-    // calls this (nested guards ignore the flag).
+    // and the #2932 safepoint fail-closed path call this (nested guards
+    // ignore the flag).
     //
     // peek_hold_budget_cancel: read-only diagnostic accessor (relaxed load).
     void request_hold_budget_cancel() noexcept {
