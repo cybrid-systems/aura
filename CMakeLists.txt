@@ -3991,6 +3991,11 @@ aura_add_issue_test(test_current_source_roundtrip)
 aura_issue_test_link_light(test_current_source_roundtrip)
 add_dependencies(all_test_issue_targets test_current_source_roundtrip)
 
+# Issue #2922: extract ast_unparse library + pretty options (no Evaluator)
+aura_add_issue_test(test_ast_unparse)
+aura_issue_test_link_light(test_ast_unparse)
+add_dependencies(all_test_issue_targets test_ast_unparse)
+
 # Issue #2656: CLI denseness fiber:spawn positive ids (not -1).
 aura_add_issue_test(test_fiber_spawn_cli)
 aura_issue_test_link_light(test_fiber_spawn_cli)

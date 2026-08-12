@@ -31,7 +31,8 @@ Requirements for each row:
 3. Second `set-code` of the unparsed text yields the **same** unparse (stable)  
 4. Prefer **reparse success + semantic equivalence** over byte-identical pretty-print  
 
-When a new production `NodeTag` lands, add an unparse arm (#2919-style) **and** a table row here.
+When a new production `NodeTag` lands, add an unparse arm in
+`src/core/ast_unparse.ixx` (#2922) **and** a table row here.
 
 ## Case map
 

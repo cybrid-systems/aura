@@ -1,6 +1,8 @@
 export module aura.core;
 export import aura.core.arena;
 export import aura.core.ast;
+// Issue #2922: unparse library (imports ast; no Evaluator). Agent + tests.
+export import aura.core.ast_unparse;
 // FlatAST decomp step 2: mutation fold pipeline (not re-exported from ast —
 // would cycle). Pull via umbrella for service/type_checker convenience.
 export import aura.core.ast_mutation_pipeline;
