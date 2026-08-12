@@ -648,6 +648,26 @@ Hash result (AC3):
 - each `agents[i]` → `{name, id, status, scope-path, ok, schema=2751}`
   (`status` ∈ `alive` | `done` | `cancelled` | `spawn-failed` | `unknown`)
 
+### `orch:scope-resolve` live name lookup (Issue #2926)
+
+**Live** session-local resolve (not a directory snapshot). Returns a structured
+hash for one name on the calling Evaluator's `AgentScope` tree.
+
+```aura
+(orch:scope-resolve "worker-1")
+(orch:scope-resolve "child-agent" :include-descendants #t)  ; default #t
+(orch:scope-resolve "missing")  ; → ok=#f, status="not-found"
+```
+
+Semantics:
+1. **C++** — `AgentScope::find(name, include_descendants)` → `AgentHandle*` (or null).
+2. **Best-effort** against current `handles_` (same serial-owner model as directory).
+3. After `scope-join-all`, handle may remain with `status=done|cancelled`; after the
+   per-Evaluator scope slot is dropped, resolve returns `not-found`.
+4. **No global registry** — storage stays the existing per-Evaluator scope slot.
+
+Metrics: `scope-resolve-total`, `scope-resolve-miss-total`, `schema-2926`.
+
 Metrics (`query:orch-module-stats`):
 - `agent-directory-total` — prim invocations.
 - `agent-directory-entries-total` — sum of entry counts returned.
