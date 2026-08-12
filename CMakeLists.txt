@@ -3986,6 +3986,11 @@ aura_add_issue_test(test_subsecond_clock)
 aura_issue_test_link_light(test_subsecond_clock)
 add_dependencies(all_test_issue_targets test_subsecond_clock)
 
+# Issue #2921: current-source / snapshot roundtrip matrix (#2918–#2920 lock)
+aura_add_issue_test(test_current_source_roundtrip)
+aura_issue_test_link_light(test_current_source_roundtrip)
+add_dependencies(all_test_issue_targets test_current_source_roundtrip)
+
 # Issue #2656: CLI denseness fiber:spawn positive ids (not -1).
 aura_add_issue_test(test_fiber_spawn_cli)
 aura_issue_test_link_light(test_fiber_spawn_cli)

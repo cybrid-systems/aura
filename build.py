@@ -9162,6 +9162,24 @@ def cmd_workspace_source_ssot_2920_coverage():
     return 0
 
 
+def cmd_current_source_roundtrip_2921_coverage():
+    """Issue #2921: current-source / snapshot roundtrip regression matrix.
+
+    Table-driven unit test + suite locking #2918–#2920.
+    """
+    print(f"{B}=== current-source roundtrip coverage (#2921) ==={N}")
+    script = COVERAGE_CHECKS / "check_current_source_roundtrip_2921.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("current-source roundtrip (#2921) coverage contract rows failed")
+        return 1
+    ok("current-source roundtrip (#2921) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -12290,6 +12308,7 @@ def main():
         "ast-snapshot-workspace-2918": cmd_ast_snapshot_workspace_2918_coverage,
         "current-source-unparse-2919": cmd_current_source_unparse_2919_coverage,
         "workspace-source-ssot-2920": cmd_workspace_source_ssot_2920_coverage,
+        "current-source-roundtrip-2921": cmd_current_source_roundtrip_2921_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

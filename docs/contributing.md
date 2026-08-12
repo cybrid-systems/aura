@@ -40,6 +40,13 @@ FlatAST is authoritative after mutate; do not trust cached set-code text:
 - Contract: [stdlib/workspace-source-ssot.md](stdlib/workspace-source-ssot.md) (Issue #2920)
 - Prefer `(current-source :workspace)` / live unparse for JIT & serialize
 
+## current-source roundtrip tests
+
+Parse → unparse → re-parse matrix for agent source loops:
+
+- [stdlib/current-source-roundtrip.md](stdlib/current-source-roundtrip.md) (Issue #2921)
+- Extend `kRoundtripNoMutate[]` in `tests/compiler/test_current_source_roundtrip.cpp`
+
 ## Docs regeneration
 
 ```bash
