@@ -1,0 +1,51 @@
+; Issue #2921 — suite smoke for current-source / snapshot roundtrip matrix
+; Full table lives in tests/compiler/test_current_source_roundtrip.cpp.
+; This suite locks dual-workspace + one mutate-class path under --load.
+
+(define ok #t)
+
+; Dual-workspace: after set-code, :workspace is the user script
+(set-code "(define suite-ws-2921 7)")
+(define ws (current-source :workspace))
+(define cur (current-source))
+(if (string? ws)
+    #t
+    (begin (display "FAIL-2921 workspace source\n") (set! ok #f)))
+
+; Roundtrip a P0 typed form
+(set-code "(: x Int 5)")
+(define u1 (current-source :workspace))
+(set-code u1)
+(define u2 (current-source :workspace))
+(if (equal? u1 u2)
+    #t
+    (begin (display "FAIL-2921 type-annot roundtrip\n") (set! ok #f)))
+
+; Snapshot / restore
+(set-code "(define snap-2921 1)")
+(define sid (ast:snapshot "s2921"))
+(set-code "(define snap-2921 2)")
+(if (ast:restore sid)
+    #t
+    (begin (display "FAIL-2921 restore\n") (set! ok #f)))
+
+; Mutate rebind when available
+(set-code "(define (g x) x)")
+(if (procedure? mutate:rebind)
+    (begin
+      (mutate:rebind "g" "(lambda (x) (+ x 1))" "2921")
+      (define mid (current-source :workspace))
+      (set-code mid)
+      (if (string? (current-source :workspace))
+          #t
+          (begin (display "FAIL-2921 mutate roundtrip\n") (set! ok #f))))
+    #t)
+
+; Null-ish: already had workspace; just ensure snapshot id was valid
+(if (and (integer? sid) (>= sid 0))
+    #t
+    (begin (display "FAIL-2921 snapshot id\n") (set! ok #f)))
+
+(if ok
+    (begin (display "OK-2921 current-source-roundtrip") (newline))
+    (begin (display "FAIL-2921") (newline) (unbound-2921-force-fail)))
