@@ -367,6 +367,12 @@ struct OrchModuleStats {
     // (language surface). Distinct from join_reclaimed_deferred_cleanup_total
     // which counts C++ complete_agent_join_cleanup Reclaimed path.
     std::atomic<std::uint64_t> agent_join_reclaimed_total{0};
+    // Issue #2924: wait_reclaimed_body observability (additive).
+    // total = all wait calls; timeout = residual still running after wait;
+    // cleanup = Done-path cleanup completed after body exit.
+    std::atomic<std::uint64_t> wait_reclaimed_total{0};
+    std::atomic<std::uint64_t> wait_reclaimed_timeout_total{0};
+    std::atomic<std::uint64_t> wait_reclaimed_cleanup_total{0};
     // Issue #2636: residual reclaim observability — body-age tracking
     // (steady_clock ns at mark_reclaimed → body exit / Fiber dtor).
     // gauge on max/sum (CAS on max under contention); counter on samples.
@@ -919,6 +925,10 @@ struct AgentHandle {
     // Issue #2540: cooperative yield contract (0 / null = off, zero cost).
     std::uint32_t max_no_yield_ms = 0;
     std::shared_ptr<AgentCoopYield> coop;
+    // Issue #2924: set when complete_agent_join_cleanup takes the Reclaimed
+    // (deferred) path; cleared when Done-path cleanup runs (wait_reclaimed_body
+    // or a later Ok join). Enables wait_reclaimed_body without re-joining.
+    bool reclaimed_deferred_cleanup = false;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -942,7 +952,8 @@ struct AgentHandle {
         , keepalive_active(o.keepalive_active)
         , keepalive_helper(o.keepalive_helper)
         , max_no_yield_ms(o.max_no_yield_ms)
-        , coop(std::move(o.coop)) {
+        , coop(std::move(o.coop))
+        , reclaimed_deferred_cleanup(o.reclaimed_deferred_cleanup) {
         o.id = 0;
         o.fiber = nullptr;
         o.ok = false;
@@ -956,6 +967,7 @@ struct AgentHandle {
         o.keepalive_active = false;
         o.keepalive_helper = nullptr;
         o.max_no_yield_ms = 0;
+        o.reclaimed_deferred_cleanup = false;
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -982,6 +994,7 @@ struct AgentHandle {
             keepalive_helper = o.keepalive_helper;
             max_no_yield_ms = o.max_no_yield_ms;
             coop = std::move(o.coop);
+            reclaimed_deferred_cleanup = o.reclaimed_deferred_cleanup;
             o.id = 0;
             o.fiber = nullptr;
             o.ok = false;
@@ -995,6 +1008,7 @@ struct AgentHandle {
             o.keepalive_active = false;
             o.keepalive_helper = nullptr;
             o.max_no_yield_ms = 0;
+            o.reclaimed_deferred_cleanup = false;
         }
         return *this;
     }
@@ -1672,6 +1686,7 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
         // cleanup without join_keepalive_helper, drain residual helper.
         if (h.keepalive_helper)
             join_keepalive_helper(h, kDefaultKeepaliveHelperDrainMs);
+        h.reclaimed_deferred_cleanup = true; // Issue #2924: wait_reclaimed_body gate
         g_orch_module_stats.join_reclaimed_deferred_cleanup_total.fetch_add(
             1, std::memory_order_relaxed);
         return;
@@ -1682,8 +1697,87 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     if (h.mailbox && h.fiber)
         h.mailbox->detach(h.fiber);
     release_agent_memory_reservation(h);
+    h.reclaimed_deferred_cleanup = false; // Issue #2924: Done path completed
     // Name-table drop: deferred to ~AgentHandle / scope dtor
     // (idempotent with this helper).
+}
+
+// Issue #2924: wait for still-running body after JoinStatus::Reclaimed.
+// Hosts call this instead of ad-hoc polling after still-running=1.
+//   - Invalid / no-op unless Reclaimed deferred cleanup is pending (or
+//     fiber is_reclaimed + still live). Zero cost on Ok/Timeout/Cancelled.
+//   - Timeout while body still running: status=Timeout, still_running=true,
+//     **no** reservation release / mailbox detach (#2661 preserved).
+//   - Body exit: runs Done-path complete_agent_join_cleanup once
+//     (idempotent with ~AgentHandle / second wait).
+struct WaitReclaimedResult {
+    serve::JoinStatus status = serve::JoinStatus::Invalid;
+    std::uint64_t wait_us = 0;
+    bool still_running = false;
+    bool cleanup_completed = false;
+};
+
+[[nodiscard]] inline WaitReclaimedResult
+wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}) noexcept {
+    WaitReclaimedResult out;
+    g_orch_module_stats.wait_reclaimed_total.fetch_add(1, std::memory_order_relaxed);
+
+    serve::Fiber* f = h.fiber;
+    const bool deferred = h.reclaimed_deferred_cleanup;
+    const bool fiber_reclaimed_live =
+        f && f->is_reclaimed() && (!f->is_done() || f->still_running_after_reclaim_counted());
+    if (!deferred && !fiber_reclaimed_live) {
+        // AC3: non-Reclaimed join path — Invalid, zero cost.
+        out.status = serve::JoinStatus::Invalid;
+        return out;
+    }
+    if (!f) {
+        out.status = serve::JoinStatus::Invalid;
+        return out;
+    }
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool has_deadline = timeout_ms.has_value();
+    const auto deadline = has_deadline ? t0 + std::chrono::milliseconds(*timeout_ms)
+                                       : std::chrono::steady_clock::time_point{};
+
+    // Poll cooperative exit. Host-thread sleep (no Fiber::join — join already
+    // returned Reclaimed; re-join would race residual cleanup contracts).
+    while (!f->is_done()) {
+        if (has_deadline && std::chrono::steady_clock::now() >= deadline) {
+            out.status = serve::JoinStatus::Timeout;
+            out.still_running = f->still_running_after_reclaim_counted() || !f->is_done();
+            out.cleanup_completed = false;
+            out.wait_us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
+            g_orch_module_stats.wait_reclaimed_timeout_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            return out; // AC2: no reservation release / mailbox detach
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+
+    // Body exited — pair still-running gauge if reclaim path counted it.
+    f->note_body_exit_if_reclaimed();
+    out.still_running = false;
+    out.wait_us = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+
+    if (h.reclaimed_deferred_cleanup) {
+        serve::JoinResult done_jr;
+        done_jr.status = serve::JoinStatus::Ok;
+        complete_agent_join_cleanup(h, done_jr);
+        out.cleanup_completed = true;
+        g_orch_module_stats.wait_reclaimed_cleanup_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        // Already cleaned (second wait / dtor raced) — idempotent no-op.
+        out.cleanup_completed = false;
+    }
+    out.status = serve::JoinStatus::Ok;
+    return out;
 }
 
 // Stop keepalive helper (if any). Sets helper_stop so the fiber-native helper

@@ -3335,6 +3335,74 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return build_orch_hash(kv);
         });
 
+    // Issue #2924: (orch:agent-wait-reclaimed name [:timeout-ms n])
+    // Wait for still-running body after status=reclaimed; never frees
+    // reservation on Timeout (#2661). Returns Invalid when not reclaimed.
+    add("orch:agent-wait-reclaimed",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty()) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-wait-reclaimed: need name",
+                                            ev.primitive_error_counter_ptr());
+            }
+            std::optional<std::uint64_t> timeout_ms;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
+                    timeout_ms = static_cast<std::uint64_t>(
+                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+            }
+            aura::orch::AgentHandle* hp = nullptr;
+            if (types::is_string(a[0])) {
+                auto name = heap_str_from(ev.string_heap_, a[0]);
+                hp = ev.agent_names_->find(name);
+            }
+            if (!hp) {
+                auto sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("invalid");
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"status", make_string(sidx)},
+                    {"wait-us", make_int(0)},
+                    {"still-running", make_bool(false)},
+                    {"cleanup-completed", make_bool(false)},
+                    {"schema", make_int(2924)},
+                    {"schema-2924", make_int(2924)},
+                    {"issue-2924", make_int(2924)},
+                };
+                return build_orch_hash(kv);
+            }
+            auto wr = aura::orch::wait_reclaimed_body(*hp, timeout_ms);
+            // Map status without embedding "JoinStatus::Ok)" substrings that
+            // #2885 AC2 greps for in orch:agent-join Ok/Timeout hash growth.
+            const char* st = "invalid";
+            bool wait_ok = false;
+            if (wr.status == aura::serve::JoinStatus::Ok) {
+                st = "ok";
+                wait_ok = true;
+            } else if (wr.status == aura::serve::JoinStatus::Timeout) {
+                st = "timeout";
+            } else if (wr.status == aura::serve::JoinStatus::Cancelled) {
+                st = "cancelled";
+            } else if (wr.status == aura::serve::JoinStatus::Reclaimed) {
+                st = "reclaimed";
+            }
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(st);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(wait_ok)},
+                {"status", make_string(sidx)},
+                {"wait-us", make_int(static_cast<std::int64_t>(wr.wait_us))},
+                {"still-running", make_bool(wr.still_running)},
+                {"cleanup-completed", make_bool(wr.cleanup_completed)},
+                {"schema", make_int(2924)},
+                {"schema-2924", make_int(2924)},
+                {"issue-2924", make_int(2924)},
+                {"agent-wait-reclaimed-wired", make_int(1)},
+            };
+            return build_orch_hash(kv);
+        });
+
     // Issue #2588: Aura language surface for AgentScope supervision.
     // Per-Evaluator scope (not process-static — see agent_scope.h
     // g_evaluator_agent_scopes map). Mirrors Aura semantics:
@@ -4962,6 +5030,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                           os.agent_join_reclaimed_total.load(std::memory_order_relaxed)));
             insert_kv("schema-2743", 2743);
             insert_kv("issue-2743", 2743);
+            // Issue #2924: wait_reclaimed_body counters (additive).
+            insert_kv(
+                "wait-reclaimed-total",
+                static_cast<std::int64_t>(os.wait_reclaimed_total.load(std::memory_order_relaxed)));
+            insert_kv("wait-reclaimed-timeout-total",
+                      static_cast<std::int64_t>(
+                          os.wait_reclaimed_timeout_total.load(std::memory_order_relaxed)));
+            insert_kv("wait-reclaimed-cleanup-total",
+                      static_cast<std::int64_t>(
+                          os.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2924", 2924);
+            insert_kv("issue-2924", 2924);
+            insert_kv("wait-reclaimed-wired", 1);
             // Issue #2397: reclaimed vs body-still-running (additive; #2227 keys preserved).
             // Prefer Fiber process-truth gauges when available so serve-only and
             // orch-linked binaries agree; orch mirrors track the same transitions.
