@@ -538,8 +538,14 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                 }
             }
         }
-        if (did_direct)
+        if (did_direct) {
+            // Issue #2920: restamp text cache *after* Guard exit (exit may
+            // invalidate on log growth). Snapshot source is workspace unparse
+            // at snapshot time (#2918).
+            if (id < ev.snapshot_sources_.size())
+                ev.note_workspace_source_text(ev.snapshot_sources_[id]);
             return make_bool(true);
+        }
 
         // Source-based fallback (existing behavior). Holds its own
         // unique_lock inside set-code; we must not be holding ours
