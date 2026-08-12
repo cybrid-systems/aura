@@ -83,6 +83,58 @@ inline constexpr int kRestampIncrementalDefaultIssue = 2402;
     }
 }
 
+// Issue #2934: restamp budget (max nodes eager-restamped per
+// restamp_all_node_generations call). 0 = unlimited (default Soft /
+// regression-green current behavior). When planned restamp count
+// exceeds budget, soft-degrade to incremental (if dirty cone fits)
+// or lazy-align only (skip O(N) full walk); never silent torn gen
+// (lazy-align keeps is_valid/make_ref consistent). Env:
+// AURA_RESTAMP_BUDGET_NODES (process-wide, cached).
+inline constexpr int kRestampBudgetIssue = 2934;
+
+[[nodiscard]] inline std::atomic<std::uint32_t>& g_restamp_budget_nodes_override() noexcept {
+    static std::atomic<std::uint32_t> v{0};
+    return v;
+}
+[[nodiscard]] inline std::atomic<bool>& g_restamp_budget_nodes_override_set() noexcept {
+    static std::atomic<bool> v{false};
+    return v;
+}
+
+[[nodiscard]] inline std::uint32_t resolve_restamp_budget_nodes() noexcept {
+    static std::atomic<std::uint32_t> cached{0};
+    static std::atomic<bool> initialized{false};
+    if (!initialized.load(std::memory_order_acquire)) {
+        const char* e = std::getenv("AURA_RESTAMP_BUDGET_NODES");
+        if (e && *e) {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(e, &end, 10);
+            // 0 = unlimited; cap at 100M to avoid accidental overflow.
+            if (end != e && v <= 100000000ul)
+                cached.store(static_cast<std::uint32_t>(v), std::memory_order_release);
+        }
+        initialized.store(true, std::memory_order_release);
+    }
+    return cached.load(std::memory_order_acquire);
+}
+
+// Test / production-defaults override of the process cache.
+inline void set_restamp_budget_nodes_for_process(std::uint32_t n) noexcept {
+    g_restamp_budget_nodes_override().store(n, std::memory_order_release);
+    g_restamp_budget_nodes_override_set().store(true, std::memory_order_release);
+}
+
+[[nodiscard]] inline std::uint32_t restamp_budget_nodes_effective() noexcept {
+    if (g_restamp_budget_nodes_override_set().load(std::memory_order_acquire))
+        return g_restamp_budget_nodes_override().load(std::memory_order_acquire);
+    return resolve_restamp_budget_nodes();
+}
+
+inline void clear_restamp_budget_nodes_override_for_test() noexcept {
+    g_restamp_budget_nodes_override_set().store(false, std::memory_order_release);
+    g_restamp_budget_nodes_override().store(0, std::memory_order_release);
+}
+
 } // namespace aura::ast
 
 #endif // AURA_CORE_FLATAST_RESTAMP_HH

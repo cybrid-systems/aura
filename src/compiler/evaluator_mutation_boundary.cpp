@@ -441,6 +441,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // valid NodeIds (including unrelated workspace defines).
     // Issue #1282: restamp also consumes auto_restamp_pending_
     // after a generation wrap so live node_gen_ recovers.
+    // Issue #2934: restamp_all_node_generations honors restamp budget
+    // (AURA_RESTAMP_BUDGET_NODES / process override). Over budget →
+    // soft-degrade to incremental or lazy-align only; Agents read
+    // restamp-budget-exceeded-total / restamp-last-budget-exceeded.
+    // Hard fail-closed only on genuine invariant violations (never
+    // silent torn generation — lazy-align keeps is_valid consistent).
     if (workspace_flat_) {
         const bool wrap_pending = workspace_flat_->auto_restamp_pending();
         workspace_flat_->restamp_all_node_generations();

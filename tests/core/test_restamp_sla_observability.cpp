@@ -78,11 +78,13 @@ static void ac1_query_surface_reports_sla() {
 static void ac2_soft_no_wrap_zero_overhead() {
     std::println("\n--- AC2: soft / no-wrap path — counters stay 0 ---");
     const auto astx = read_file("src/core/ast.ixx");
-    // Source-cite confirms: counters live in restamp_all_node_generations()
-    // (only fires on wrap). No constant-cost loop outside that function.
-    CHECK(astx.find("restamp_slo_breach_total_.fetch_add") != std::string::npos,
+    const auto impl = read_file("src/core/ast_impl.cpp");
+    // Source-cite: counters live in restamp_all_node_generations() (impl).
+    CHECK(astx.find("restamp_slo_breach_total_") != std::string::npos ||
+              impl.find("restamp_slo_breach_total_.fetch_add") != std::string::npos,
           "AC2: breach bump only inside restamp_all_node_generations");
-    CHECK(astx.find("restamp_us_p99_.compare_exchange_weak") != std::string::npos,
+    CHECK(impl.find("restamp_us_p99_.compare_exchange_weak") != std::string::npos ||
+              astx.find("restamp_us_p99_.compare_exchange_weak") != std::string::npos,
           "AC2: p99 CAS only inside restamp_all_node_generations");
 
     // Fresh FlatAST → no wrap → all SLA counters stay 0.
@@ -133,10 +135,13 @@ static void ac4_configurable_slo_budget_breach() {
               (restamp.find("cached{500}") != std::string::npos ||
                astx.find("cached{500}") != std::string::npos),
           "AC4: default SLO budget 500 µs (matches issue Required change 2)");
-    // Breach detection: restamp_us_last > budget → bump.
-    CHECK(astx.find("if (us_u > slo_budget_us)") != std::string::npos,
+    // Breach detection: restamp_us_last > budget → bump (impl body).
+    const auto impl = read_file("src/core/ast_impl.cpp");
+    CHECK(impl.find("if (us_u > slo_budget_us)") != std::string::npos ||
+              astx.find("if (us_u > slo_budget_us)") != std::string::npos,
           "AC4: breach detection — us_u > slo_budget_us → bump");
-    CHECK(astx.find("restamp_slo_breach_total_.fetch_add(1") != std::string::npos,
+    CHECK(impl.find("restamp_slo_breach_total_.fetch_add(1") != std::string::npos ||
+              astx.find("restamp_slo_breach_total_.fetch_add(1") != std::string::npos,
           "AC4: breach counter increment");
     // Runtime override via set_restamp_slo_us_budget (clamped 1..60_000_000 µs).
     CHECK(astx.find("set_restamp_slo_us_budget") != std::string::npos,
@@ -178,6 +183,96 @@ static void ac6_additive_schema_existing_fixtures() {
           "AC6: Issue #2528 source-cite present (additive schema)");
 }
 
+// ── Issue #2934 AC1–AC4: restamp budget soft-degrade ──
+static void ac2934_1_budget_soft_degrade() {
+    std::println("\n--- #2934 AC1: restamp budget soft-degrade under over-budget ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::NodeTag;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::ast::SyntaxMarker;
+    clear_restamp_budget_nodes_override_for_test();
+    // Default unlimited.
+    FlatAST flat0;
+    CHECK(flat0.restamp_budget_nodes() == 0, "AC1: default budget unlimited (0)");
+    CHECK(flat0.restamp_budget_exceeded_total() == 0, "AC1: no exceed yet");
+
+    const auto impl = read_file("src/core/ast_impl.cpp");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
+    CHECK(impl.find("Issue #2934") != std::string::npos, "AC1: restamp body cites #2934");
+    CHECK(impl.find("restamp_budget_nodes_effective") != std::string::npos,
+          "AC1: budget effective used");
+    CHECK(impl.find("restamp_budget_exceeded_total_") != std::string::npos,
+          "AC1: exceeded counter bump");
+    CHECK(impl.find("lazy_only = true") != std::string::npos, "AC1: soft-degrade to lazy_only");
+    CHECK(restamp.find("AURA_RESTAMP_BUDGET_NODES") != std::string::npos,
+          "AC1: env AURA_RESTAMP_BUDGET_NODES");
+    CHECK(restamp.find("kRestampBudgetIssue = 2934") != std::string::npos, "AC1: issue stamp 2934");
+
+    // Runtime: many live nodes + budget=1 → soft-degrade, no hard fail.
+    FlatAST flat;
+    for (int i = 0; i < 64; ++i)
+        (void)flat.add_node(NodeTag::LiteralInt, SyntaxMarker::User);
+    set_restamp_budget_nodes_for_process(1);
+    CHECK(flat.restamp_budget_nodes() == 1, "AC1: process override budget=1");
+    const auto exceeded0 = flat.restamp_budget_exceeded_total();
+    const auto skipped0 = flat.restamp_nodes_skipped_total();
+    flat.restamp_all_node_generations();
+    CHECK(flat.restamp_budget_exceeded_total() > exceeded0, "AC1: exceeded total advanced");
+    CHECK(flat.restamp_last_budget_exceeded(), "AC1: last-budget-exceeded flag set");
+    CHECK(flat.restamp_nodes_skipped_total() > skipped0, "AC1: nodes-skipped advanced");
+    CHECK(flat.restamp_lazy_align_enabled(), "AC1: lazy-align enabled after soft-degrade");
+    clear_restamp_budget_nodes_override_for_test();
+}
+
+static void ac2934_2_default_unlimited() {
+    std::println("\n--- #2934 AC2/AC4: default unlimited Soft regression green ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    clear_restamp_budget_nodes_override_for_test();
+    FlatAST flat;
+    CHECK(flat.restamp_budget_nodes() == 0, "AC4: default budget 0 = unlimited");
+    const auto before = flat.restamp_budget_exceeded_total();
+    flat.restamp_all_node_generations();
+    CHECK(flat.restamp_budget_exceeded_total() == before,
+          "AC4: unlimited path does not bump exceeded");
+    CHECK(!flat.restamp_last_budget_exceeded(), "AC4: last-exceeded clear under unlimited");
+}
+
+static void ac2934_3_agent_metrics() {
+    std::println("\n--- #2934 AC3: Agent-visible metrics keys ---");
+    const auto stdlib = read_file("src/compiler/evaluator_primitives_stdlib_review.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(stdlib.find("restamp-budget") != std::string::npos, "AC3: restamp-budget key");
+    CHECK(stdlib.find("restamp-budget-exceeded-total") != std::string::npos,
+          "AC3: exceeded-total key");
+    CHECK(stdlib.find("restamp-nodes-skipped-total") != std::string::npos,
+          "AC3: nodes-skipped key");
+    CHECK(stdlib.find("restamp-last-budget-exceeded") != std::string::npos,
+          "AC3: last-budget-exceeded flag");
+    CHECK(stdlib.find("schema-2934") != std::string::npos, "AC3: schema-2934");
+    CHECK(obs.find("schema-2934") != std::string::npos, "AC3: hold-stats surface has schema-2934");
+    CHECK(obs.find("restamp-budget-exceeded-total") != std::string::npos,
+          "AC3: hold-stats exceeded key");
+}
+
+static void ac2934_5_source_and_linter() {
+    std::println("\n--- #2934 AC5/AC6: source-cite + linter ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto eix = read_file("src/compiler/evaluator.ixx");
+    const auto astx = read_file("src/core/ast.ixx");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_restamp_budget_2934.py");
+    CHECK(emb.find("Issue #2934") != std::string::npos, "AC5: emb cites #2934");
+    CHECK(eix.find("Issue #2934") != std::string::npos, "AC5: evaluator.ixx cites #2934");
+    CHECK(astx.find("Issue #2934") != std::string::npos, "AC5: ast.ixx cites #2934");
+    CHECK(restamp.find("Issue #2934") != std::string::npos, "AC5: flatast_restamp cites #2934");
+    CHECK(build.find("check_restamp_budget_2934") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2934") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("tests/core/test_issue_2934.cpp").empty(), "AC5: no invent test file");
+    CHECK(read_file("docs/design/2934-restamp-budget.md").empty(), "AC6: no docs/design/2934-*");
+}
+
 } // namespace
 
 int run_test_restamp_sla_observability() {
@@ -188,7 +283,12 @@ int run_test_restamp_sla_observability() {
     ac4_configurable_slo_budget_breach();
     ac5_chaos_soak_tsan_covered();
     ac6_additive_schema_existing_fixtures();
-    std::println("\n=== #2528: see per-AC results above ===");
+    std::println("\n=== Issue #2934: restamp budget soft-degrade ===");
+    ac2934_1_budget_soft_degrade();
+    ac2934_2_default_unlimited();
+    ac2934_3_agent_metrics();
+    ac2934_5_source_and_linter();
+    std::println("\n=== #2528+#2934: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 

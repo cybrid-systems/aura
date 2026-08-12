@@ -53,9 +53,14 @@ export constexpr SymId INVALID_SYM = ~0u;
 // Re-exported so `import aura.core.ast` keeps prior public surface.
 export using ::aura::ast::RestampPolicy;
 export using ::aura::ast::kRestampIncrementalDefaultIssue;
+export using ::aura::ast::kRestampBudgetIssue;
 export using ::aura::ast::resolve_restamp_policy;
 export using ::aura::ast::resolve_restamp_slo_us;
 export using ::aura::ast::restamp_policy_name;
+export using ::aura::ast::resolve_restamp_budget_nodes;
+export using ::aura::ast::restamp_budget_nodes_effective;
+export using ::aura::ast::set_restamp_budget_nodes_for_process;
+export using ::aura::ast::clear_restamp_budget_nodes_override_for_test;
 
 // ── Wave B3: small public AST PODs on auto_serialize ─────────
 //
@@ -2098,6 +2103,14 @@ public:
     // Issue #2402: last restamp_all_node_generations call cost (Agent SLO).
     mutable std::atomic<std::uint64_t> restamp_nodes_last_{0};
     mutable std::atomic<std::uint64_t> restamp_us_last_{0};
+    // Issue #2934: restamp budget soft-degrade (Guard exit latency control).
+    // exceeded: planned eager restamp nodes > budget → soft degrade.
+    // nodes_skipped: nodes not eager-restamped under budget degrade.
+    // last_budget_exceeded: Agent-visible flag for the most recent call
+    // (1 if that restamp hit the budget gate).
+    mutable std::atomic<std::uint64_t> restamp_budget_exceeded_total_{0};
+    mutable std::atomic<std::uint64_t> restamp_nodes_skipped_total_{0};
+    mutable std::atomic<std::uint32_t> restamp_last_budget_exceeded_{0};
     // Issue #2528: long-session SLA surface — restamp_slo_breach_total_
     // bumps when restamp_us_last_ exceeds the configured AURA_RESTAMP_SLO_US
     // budget (default 500 µs). Agents / orch poll this counter via the
@@ -7694,6 +7707,22 @@ public:
     }
     [[nodiscard]] std::uint64_t restamp_us_last() const noexcept {
         return restamp_us_last_.load(std::memory_order_relaxed);
+    }
+    // Issue #2934: restamp budget (max eager nodes per restamp call).
+    // 0 = unlimited (default Soft / regression-green). Overridable via
+    // AURA_RESTAMP_BUDGET_NODES or set_restamp_budget_nodes_for_process.
+    [[nodiscard]] std::uint32_t restamp_budget_nodes() const noexcept {
+        return restamp_budget_nodes_effective();
+    }
+    [[nodiscard]] std::uint64_t restamp_budget_exceeded_total() const noexcept {
+        return restamp_budget_exceeded_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t restamp_nodes_skipped_total() const noexcept {
+        return restamp_nodes_skipped_total_.load(std::memory_order_relaxed);
+    }
+    // Agent soft-reject flag: last restamp_all_node_generations hit budget.
+    [[nodiscard]] bool restamp_last_budget_exceeded() const noexcept {
+        return restamp_last_budget_exceeded_.load(std::memory_order_relaxed) != 0;
     }
     // Issue #2528: long-session SLA surface. Each restamp_all_node_generations
     // call that exceeds restamp_slo_us_budget() bumps the breach counter.

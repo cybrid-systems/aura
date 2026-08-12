@@ -835,6 +835,36 @@ void FlatAST::restamp_all_node_generations() {
             }
         }
     }
+    // Issue #2934: restamp budget / density control on Guard exit.
+    // Budget = max nodes that may be eager-restamped this call (0 =
+    // unlimited, Soft default). Over budget → soft-degrade:
+    //   - dirty cone fits budget → incremental (lazy-align for rest)
+    //   - else → lazy-align only (skip O(N) full walk)
+    // Never silent torn generation: lazy-align keeps is_valid/make_ref
+    // consistent; wrap_pending is still cleared below. Hard fail-closed
+    // only for genuine invariant violations elsewhere.
+    restamp_last_budget_exceeded_.store(0, std::memory_order_relaxed);
+    const auto budget = restamp_budget_nodes_effective();
+    if (budget > 0 && !lazy_only && live > 0) {
+        const std::uint64_t planned =
+            use_incremental ? touched_live : live; // full path when !use_incremental
+        if (planned > static_cast<std::uint64_t>(budget)) {
+            restamp_budget_exceeded_total_.fetch_add(1, std::memory_order_relaxed);
+            restamp_last_budget_exceeded_.store(1, std::memory_order_relaxed);
+            if (touched_live > 0 && touched_live <= static_cast<std::uint64_t>(budget)) {
+                // Soft: cone fits — incremental + lazy for untouched.
+                use_incremental = true;
+                lazy_only = false;
+                restamp_nodes_skipped_total_.fetch_add(planned - touched_live,
+                                                       std::memory_order_relaxed);
+            } else {
+                // Soft: skip eager restamp entirely; lazy-align only.
+                lazy_only = true;
+                use_incremental = false;
+                restamp_nodes_skipped_total_.fetch_add(planned, std::memory_order_relaxed);
+            }
+        }
+    }
     if (lazy_only) {
         // Issue #2402: wrap with no dirty under Incremental policy —
         // enable lazy gen-align only (zero eager restamp). wrap_epoch
