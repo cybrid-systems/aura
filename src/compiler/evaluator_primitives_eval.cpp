@@ -173,8 +173,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // Issue #2220: set-code replaces workspace — drop long-lived
             // TypeChecker so the next typecheck rebuilds against new AST.
             ev.invalidate_persistent_typechecker();
-            // Issue #1381: retain source for serialize-workspace.
-            ev.workspace_source_text_ = ev.string_heap_[idx];
+            // Issue #1381 / #2920: stamp source cache (valid until next mutate).
+            ev.note_workspace_source_text(ev.string_heap_[idx]);
             // Issue #211: invalidate the (tag, arity) index
             // when the workspace changes. (The set_workspace_flat
             // hook would do this, but set-code assigns directly
@@ -378,6 +378,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         ev.workspace_pool_ = pool_ptr;
         // Issue #2220: load-file replaces workspace — drop persistent TypeChecker.
         ev.invalidate_persistent_typechecker();
+        // Issue #2920: stamp source cache from file contents (same as set-code).
+        ev.note_workspace_source_text(content);
         ev.update_shared_tree_root();
         // (ASAN fix #107 leak) delete the old index; see sibling site above.
         destroy_defuse_index();
@@ -798,13 +800,15 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // note_eval_current_shared_* / Guard ctor). Prefer outer Guard when
     // evaluating code that itself mutates.
     add(aura::compiler::prim::kEvalCurrent, [&ev, mev](const auto& a) -> EvalValue {
-        // Phase 4: (eval-current :jit) — no workspace lock needed for the
-        // service JIT path (it re-parses source via get_workspace_source_fn_).
+        // Phase 4: (eval-current :jit) — re-parse **authoritative** workspace
+        // source (Issue #2920 SSOT). Prefer live unparse (get_workspace_source_fn_
+        // / CompilerService); never JIT from pre-mutate workspace_source_text_
+        // after Guard exit. Empty → fall through to tree-walker on FlatAST.
         if (a.size() == 1 && types::is_keyword(a[0])) {
             auto kidx = types::as_keyword_idx(a[0]);
             if (kidx < ev.keyword_table_.size() && ev.keyword_table_[kidx] == ":jit") {
-                if (ev.try_jit_fn_ && ev.get_workspace_source_fn_) {
-                    std::string src = ev.get_workspace_source_fn_();
+                if (ev.try_jit_fn_) {
+                    std::string src = ev.authoritative_workspace_source();
                     if (!src.empty()) {
                         auto jit_result = ev.try_jit_fn_(src);
                         if (jit_result)

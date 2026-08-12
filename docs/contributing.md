@@ -33,6 +33,13 @@ Error → diagnose → safe fix under Guard → clear hold → poll stats:
 - Contract: [stdlib/agent-recovery.md](stdlib/agent-recovery.md) (Issue #2917)
 - `(agent:recover-from-error err code)` + `(engine:metrics "query:agent-recovery-stats")`
 
+## Workspace source SSOT
+
+FlatAST is authoritative after mutate; do not trust cached set-code text:
+
+- Contract: [stdlib/workspace-source-ssot.md](stdlib/workspace-source-ssot.md) (Issue #2920)
+- Prefer `(current-source :workspace)` / live unparse for JIT & serialize
+
 ## Docs regeneration
 
 ```bash

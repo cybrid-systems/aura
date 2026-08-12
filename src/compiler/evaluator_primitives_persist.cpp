@@ -203,13 +203,10 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         const std::string path = ev.string_heap_[pidx];
 
         // Shared lock: pure read of workspace + mutation log (#1376 pattern).
+        // Issue #2920 SSOT: authoritative source (live unparse preferred;
+        // never stale pre-mutate workspace_source_text_ after Guard exit).
         ev.lock_workspace_shared();
-        std::string source;
-        if (ev.get_workspace_source_fn_) {
-            source = ev.get_workspace_source_fn_();
-        }
-        if (source.empty())
-            source = ev.workspace_source_text_;
+        std::string source = ev.authoritative_workspace_source();
         std::uint64_t mut_count = 0;
         std::vector<char> mut_blob;
         if (ev.workspace_flat_) {

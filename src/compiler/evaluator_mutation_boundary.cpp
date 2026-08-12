@@ -344,6 +344,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool nested_boundary = stack.size() > 1;
     auto cp = stack.back();
     stack.pop_back();
+    // Issue #2920 SSOT: FlatAST is authoritative after structural mutate.
+    // Invalidate set-code text cache when this flat actually mutated so
+    // JIT/serialize cannot re-parse pre-mutate source. set-code swaps in a
+    // fresh flat (mutation_log empty, size not > entry) and keeps its stamp.
+    // Live unparse (get_workspace_source_fn_ / current-source :workspace) is
+    // the post-mutate reader. Cross-link #2918 snapshot path.
+    if (success && workspace_flat_) {
+        if (cp.lightweight || workspace_flat_->mutation_log_size() > cp.mutation_log_size) {
+            invalidate_workspace_source_text();
+        }
+    }
     if (cp.lightweight && workspace_flat_) {
         // Issue #1355: lightweight path — commit or rollback side log.
         if (success) {

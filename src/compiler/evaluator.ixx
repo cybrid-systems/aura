@@ -2637,10 +2637,40 @@ public:
     // Phase 4: get the workspace source by unparsing workspace_flat_.
     // Used by (eval-current :jit) to pass a proper source string to
     // the JIT pipeline. Returns empty if no workspace is set.
+    // Issue #2920 SSOT: this hook (CompilerService → unparse_node) is the
+    // preferred live reader after any mutate; workspace_source_text_ is
+    // only a set-code/load/restore stamp, invalidated on Guard exit.
     using GetWorkspaceSourceFn = std::string();
     std::function<GetWorkspaceSourceFn> get_workspace_source_fn_ = nullptr;
     void set_get_workspace_source_fn(std::function<GetWorkspaceSourceFn> fn) {
         get_workspace_source_fn_ = std::move(fn);
+    }
+    // Issue #2920: authoritative workspace text for JIT / serialize.
+    // FlatAST is SSOT after mutate; text cache is advisory only.
+    [[nodiscard]] std::string authoritative_workspace_source() const {
+        if (get_workspace_source_fn_) {
+            auto s = get_workspace_source_fn_();
+            if (!s.empty())
+                return s;
+        }
+        // Cache valid only when generation still matches the stamping site
+        // (set-code / load / restore) — never after mutate without refresh.
+        if (workspace_source_text_valid_ && !workspace_source_text_.empty() && workspace_flat_ &&
+            workspace_source_text_generation_ == workspace_flat_->generation()) {
+            return workspace_source_text_;
+        }
+        return {};
+    }
+    void note_workspace_source_text(std::string text) {
+        workspace_source_text_ = std::move(text);
+        workspace_source_text_valid_ = true;
+        workspace_source_text_generation_ =
+            workspace_flat_ ? workspace_flat_->generation() : std::uint16_t{0};
+    }
+    void invalidate_workspace_source_text() noexcept {
+        workspace_source_text_.clear();
+        workspace_source_text_valid_ = false;
+        workspace_source_text_generation_ = 0;
     }
     // Phase 4: JIT-execute an Aura source string and return the result.
     // Used by (eval-current :jit) to compile-and-run the workspace.
@@ -5027,10 +5057,14 @@ private:
     // Stores (kind, message) for structured diagnostic return
     std::string last_set_code_error_kind_;
     std::string last_set_code_error_msg_;
-    // Issue #1381: last successful set-code source (for serialize-workspace).
-    // Prefer get_workspace_source_fn_ when CompilerService is wired; this
-    // fallback keeps bare Evaluator persistable.
+    // Issue #1381 / #2920: last set-code/load/restore source stamp.
+    // SSOT after mutate is FlatAST (unparse via get_workspace_source_fn_ /
+    // current-source :workspace). This cache is invalidated on every
+    // MutationBoundaryGuard exit so JIT/serialize never re-parse pre-mutate
+    // text. Cross-link #2918: snapshot stores its own workspace unparse.
     std::string workspace_source_text_;
+    bool workspace_source_text_valid_ = false;
+    std::uint16_t workspace_source_text_generation_ = 0;
 
     // Last mutate typecheck error (empty = no error). Set by auto-typecheck
     // after mutate:rebind etc. Cleared on next successful mutate.
