@@ -19,6 +19,13 @@ Adding or changing built-in primitives follows the **primitive authoring contrac
 
 **Do not invent new registration styles.** Prefer `register_prim` for general prims and `register_render_hot_prim` only for render-critical hot paths.
 
+## Multi-fiber heap quotas (Agent self-evo)
+
+Soft limits on `pairs` / `strings` / `vectors` growth for concurrent Agent loops:
+
+- Contract: [stdlib/prim-heap-quota.md](stdlib/prim-heap-quota.md) (Issue #2916)
+- `(resource:quota-set "pairs"|"strings"|"vectors" N)` + `(engine:metrics "query:prim-heap-quota-stats")`
+
 ## Docs regeneration
 
 ```bash

@@ -1,0 +1,66 @@
+; Issue #2916 — Agent loop under prim-heap soft quota
+; Pairs soft limit returns a clean error; stats surface stays live;
+; unlimited restore keeps constructors working.
+; Note: do not (define x (error-producing-call)) — error values abort
+; define RHS; use (error? (…)) inline like other suite ACs.
+
+(define ok #t)
+
+; Baseline: list works unlimited
+(if (= (length (list 1 2 3)) 3)
+    #t
+    (begin (display "FAIL-2916 baseline-list\n") (set! ok #f)))
+
+; list-ref path (must not be gated by quota)
+(if (= (list-ref (list 10 20 30) 1) 20)
+    #t
+    (begin (display "FAIL-2916 list-ref\n") (set! ok #f)))
+
+; Stats surface + schema
+(define s0 (engine:metrics "query:prim-heap-quota-stats"))
+(if (hash? s0)
+    #t
+    (begin (display "FAIL-2916 stats-hash\n") (set! ok #f)))
+
+(if (= (hash-ref s0 'schema) 2916)
+    #t
+    (begin (display "FAIL-2916 schema\n") (set! ok #f)))
+
+; Grow a few pairs so high-water is non-zero
+(define seed (list 1 2 3))
+(define s1 (engine:metrics "query:prim-heap-quota-stats"))
+(define psz (hash-ref s1 'pairs-size))
+; Soft limit just above current size — bulk list of 8 pairs must reject
+(if (= (resource:quota-set "pairs" (+ psz 1)) 1)
+    #t
+    (begin (display "FAIL-2916 quota-set\n") (set! ok #f)))
+
+(if (error? (list 1 2 3 4 5 6 7 8))
+    #t
+    (begin (display "FAIL-2916 expect-error under quota\n") (set! ok #f)))
+
+; Rejects counter should be visible
+(define s2 (engine:metrics "query:prim-heap-quota-stats"))
+(define rej (hash-ref s2 'rejects-total))
+(if (and (integer? rej) (>= rej 1))
+    #t
+    (begin (display "FAIL-2916 rejects-total\n") (set! ok #f)))
+
+; Restore unlimited and construct again
+(resource:quota-set "pairs" 0)
+(if (= (length (list 1 2 3 4 5)) 5)
+    #t
+    (begin (display "FAIL-2916 restore-unlimited\n") (set! ok #f)))
+
+; string soft quota: freeze at current size so any new intern errors
+(define ss (engine:metrics "query:prim-heap-quota-stats"))
+(define sl (hash-ref ss 'strings-size))
+(resource:quota-set "strings" sl)
+(if (error? (string-append "2916-unique-prefix-" "xyz-quota-miss"))
+    #t
+    (begin (display "FAIL-2916 string-quota-error\n") (set! ok #f)))
+(resource:quota-set "strings" 0)
+
+(if ok
+    (begin (display "OK-2916 prim-heap-quota") (newline))
+    (begin (display "FAIL-2916") (newline) (unbound-2916-force-fail)))

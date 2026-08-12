@@ -12,6 +12,7 @@
 module;
 
 #include "runtime_shared.h"
+#include "prim_heap_quota.hh" // Issue #2916
 #include "compiler/aura_jit_bridge.h"
 #include "observability_metrics.h"
 #include "compiler/shape.h"
@@ -226,7 +227,8 @@ void ObservabilityPrims::register_eval_p0(PrimRegistrar add, Evaluator& ev) {
         [&ev](const auto&) -> EvalValue { return make_bool(ev.panic_auto_rollback_); });
 
     // Issue #753: (resource:quota-set kind limit) — configure quota
-    // axis ("memory" | "fibers" | "time"). 0 = unlimited.
+    // axis ("memory" | "fibers" | "time" | "pairs" | "strings" | "vectors").
+    // 0 = unlimited. Issue #2916 adds pairs/strings/vectors soft heap limits.
     add("resource:quota-set", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_int(0);
@@ -241,6 +243,12 @@ void ObservabilityPrims::register_eval_p0(PrimRegistrar add, Evaluator& ev) {
             ev.set_resource_quota_fibers(limit);
         else if (kind == "time")
             ev.set_resource_quota_time_us(limit);
+        else if (kind == "pairs")
+            ev.set_prim_heap_quota(PrimHeapDim::Pairs, limit);
+        else if (kind == "strings")
+            ev.set_prim_heap_quota(PrimHeapDim::Strings, limit);
+        else if (kind == "vectors")
+            ev.set_prim_heap_quota(PrimHeapDim::Vectors, limit);
         else
             return make_int(0);
         return make_int(1);
@@ -250,6 +258,7 @@ void ObservabilityPrims::register_eval_p0(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 1 (orig lines 1236-1289)
 void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
     // Issue #753: (resource:quota-get kind) — read configured limit.
+    // Issue #2916: pairs/strings/vectors soft heap limits.
     ObservabilityPrims::register_stats_impl(
         "resource:quota-get", [&ev](const auto& a) -> EvalValue {
             if (a.empty() || !is_string(a[0]))
@@ -264,6 +273,14 @@ void ObservabilityPrims::register_eval_p1(PrimRegistrar add, Evaluator& ev) {
                 return make_int(static_cast<std::int64_t>(ev.resource_quota_fibers()));
             if (kind == "time")
                 return make_int(static_cast<std::int64_t>(ev.resource_quota_time_us()));
+            if (kind == "pairs")
+                return make_int(static_cast<std::int64_t>(ev.prim_heap_quota(PrimHeapDim::Pairs)));
+            if (kind == "strings")
+                return make_int(
+                    static_cast<std::int64_t>(ev.prim_heap_quota(PrimHeapDim::Strings)));
+            if (kind == "vectors")
+                return make_int(
+                    static_cast<std::int64_t>(ev.prim_heap_quota(PrimHeapDim::Vectors)));
             return make_int(0);
         });
     // Issue #753 / #1013: (resource:quota-check kind current) — enforce quota;
@@ -16284,6 +16301,88 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
     // stdlib usages paying pair-allocation cost that I should
     // consolidate to Arena-backed storage?" + "is cdr-walk
     // getting pathological under mutation?".
+    // Issue #2916: soft heap quota pressure for multi-fiber Agent self-evo.
+    // Prefer (engine:metrics "query:prim-heap-quota-stats"); high-water always
+    // tracks constructor growth; checks/rejects only when limits are set.
+    ObservabilityPrims::register_stats_impl(
+        "query:prim-heap-quota-stats", [&ev](const auto&) -> EvalValue {
+            std::uint64_t checks = 0, rejects = 0;
+            std::uint64_t hw_p = 0, hw_s = 0, hw_v = 0;
+            std::uint64_t lim_p = 0, lim_s = 0, lim_v = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                checks = m->prim_heap_quota_checks_total.load(std::memory_order_relaxed);
+                rejects = m->prim_heap_quota_rejects_total.load(std::memory_order_relaxed);
+                hw_p = m->prim_heap_pairs_high_water.load(std::memory_order_relaxed);
+                hw_s = m->prim_heap_strings_high_water.load(std::memory_order_relaxed);
+                hw_v = m->prim_heap_vectors_high_water.load(std::memory_order_relaxed);
+                lim_p = m->prim_heap_quota_pairs_limit.load(std::memory_order_relaxed);
+                lim_s = m->prim_heap_quota_strings_limit.load(std::memory_order_relaxed);
+                lim_v = m->prim_heap_quota_vectors_limit.load(std::memory_order_relaxed);
+            }
+            // Prefer live Evaluator high-water when metrics lag (same process).
+            hw_p = std::max(hw_p, ev.prim_heap_high_water(PrimHeapDim::Pairs));
+            hw_s = std::max(hw_s, ev.prim_heap_high_water(PrimHeapDim::Strings));
+            hw_v = std::max(hw_v, ev.prim_heap_high_water(PrimHeapDim::Vectors));
+            lim_p = std::max(lim_p, ev.prim_heap_quota(PrimHeapDim::Pairs));
+            lim_s = std::max(lim_s, ev.prim_heap_quota(PrimHeapDim::Strings));
+            lim_v = std::max(lim_v, ev.prim_heap_quota(PrimHeapDim::Vectors));
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(16);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        FlatHashTable::destroy(ht);
+                        return make_void();
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"checks-total", make_int(static_cast<std::int64_t>(checks))},
+                {"rejects-total", make_int(static_cast<std::int64_t>(rejects))},
+                {"pairs-high-water", make_int(static_cast<std::int64_t>(hw_p))},
+                {"strings-high-water", make_int(static_cast<std::int64_t>(hw_s))},
+                {"vectors-high-water", make_int(static_cast<std::int64_t>(hw_v))},
+                {"pairs-limit", make_int(static_cast<std::int64_t>(lim_p))},
+                {"strings-limit", make_int(static_cast<std::int64_t>(lim_s))},
+                {"vectors-limit", make_int(static_cast<std::int64_t>(lim_v))},
+                {"pairs-size", make_int(static_cast<std::int64_t>(ev.pairs().size()))},
+                {"strings-size", make_int(static_cast<std::int64_t>(ev.string_heap().size()))},
+                {"schema", make_int(kPrimHeapQuotaSchema)},
+            };
+            return build_hash(kv);
+        });
+
     ObservabilityPrims::register_stats_impl(
         "query:primitives-hotpath-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t call_total = 0;

@@ -5,6 +5,7 @@ module;
 
 #include "primitives_detail.h"
 #include "observability_metrics.h"
+#include "prim_heap_quota.hh" // Issue #2916
 
 module aura.compiler.evaluator;
 
@@ -147,10 +148,17 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return make_void();
     };
-    add("list", [&pairs, &ev](std::span<const EvalValue> a) {
+    add("list", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
         // Build proper list (pair chain ending with void)
         // Issue #2651: lock pairs_ growth under multi-fiber fanout.
+        // Issue #2916: soft pairs quota before bulk grow (Agent-visible error).
         std::lock_guard lock(ev.alloc_storage_lock_);
+        if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + a.size())) {
+            return make_primitive_error(
+                string_heap, error_values,
+                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                ev.primitive_error_counter_ptr());
+        }
         EvalValue result = make_void();
         for (auto it = a.rbegin(); it != a.rend(); ++it) {
             auto id = pairs.size();
@@ -267,7 +275,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         return make_int(0);
     });
     // (append list ...) — Variadic: concatenate all provided lists
-    add("append", [&pairs, &ev](std::span<const EvalValue> a) {
+    add("append", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
         if (a.size() < 2)
@@ -293,6 +301,13 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     result = a[0];
                     break;
                 }
+                // Issue #2916: soft pairs quota on each grow step.
+                if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                        ev.primitive_error_counter_ptr());
+                }
                 auto new_id = pairs.size();
                 pairs.push_back({pairs[idx].car, make_void()});
                 ev.bump_pair_alloc_count(); // Issue #614
@@ -315,7 +330,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return result;
     });
-    add("reverse", [&pairs, &ev](std::span<const EvalValue> a) {
+    add("reverse", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_int(0);
         // Issue #2651: pairs_ push under alloc_storage_lock_.
@@ -328,6 +343,12 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto idx = as_pair_idx(v);
             if (idx >= pairs.size())
                 return a[0];
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
+            }
             auto new_id = pairs.size();
             pairs.push_back({pairs[idx].car, result});
             ev.bump_pair_alloc_count(); // Issue #614
@@ -336,59 +357,67 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return result;
     });
-    add("map", [&pairs, apply_unary, &ev](std::span<const EvalValue> a) {
-        // (map func list) — apply func to each element, collect results
-        if (a.size() < 2 || is_void(a[1]))
-            return make_void();
+    add("map",
+        [&pairs, &string_heap, &error_values, apply_unary, &ev](std::span<const EvalValue> a) {
+            // (map func list) — apply func to each element, collect results
+            if (a.size() < 2 || is_void(a[1]))
+                return make_void();
 
-        EvalValue result = make_void();
-        EvalValue tail = make_void();
-        bool first = true;
-        EvalValue current = a[1];
+            EvalValue result = make_void();
+            EvalValue tail = make_void();
+            bool first = true;
+            EvalValue current = a[1];
 
-        while (is_pair(current)) {
-            EvalValue car;
-            EvalValue next;
-            {
-                // Issue #2651: snapshot car/next under lock (pairs_ may reallocate).
-                std::lock_guard lock(ev.alloc_storage_lock_);
-                auto idx = as_pair_idx(current);
-                if (idx >= pairs.size())
-                    break;
-                car = pairs[idx].car;
-                next = pairs[idx].cdr;
-            }
-
-            ev.bump_list_chain_traversals();
-            ev.bump_list_estimated_cache_misses();
-            // apply_unary outside lock (may re-enter primitives; recursive_mutex OK
-            // if it also takes alloc_storage_lock_).
-            auto mapped = apply_unary(a[0], car, true);
-
-            {
-                std::lock_guard lock(ev.alloc_storage_lock_);
-                auto new_id = pairs.size();
-                pairs.push_back({mapped, make_void()});
-                ev.bump_pair_alloc_count(); // Issue #614
-                auto new_pair = make_pair(new_id);
-
-                if (first) {
-                    result = new_pair;
-                    tail = new_pair;
-                    first = false;
-                } else {
-                    auto tail_idx = as_pair_idx(tail);
-                    if (tail_idx < pairs.size())
-                        pairs[tail_idx].cdr = new_pair;
-                    tail = new_pair;
+            while (is_pair(current)) {
+                EvalValue car;
+                EvalValue next;
+                {
+                    // Issue #2651: snapshot car/next under lock (pairs_ may reallocate).
+                    std::lock_guard lock(ev.alloc_storage_lock_);
+                    auto idx = as_pair_idx(current);
+                    if (idx >= pairs.size())
+                        break;
+                    car = pairs[idx].car;
+                    next = pairs[idx].cdr;
                 }
+
+                ev.bump_list_chain_traversals();
+                ev.bump_list_estimated_cache_misses();
+                // apply_unary outside lock (may re-enter primitives; recursive_mutex OK
+                // if it also takes alloc_storage_lock_).
+                auto mapped = apply_unary(a[0], car, true);
+
+                {
+                    std::lock_guard lock(ev.alloc_storage_lock_);
+                    // Issue #2916: soft pairs quota before result cons cell.
+                    if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                            ev.primitive_error_counter_ptr());
+                    }
+                    auto new_id = pairs.size();
+                    pairs.push_back({mapped, make_void()});
+                    ev.bump_pair_alloc_count(); // Issue #614
+                    auto new_pair = make_pair(new_id);
+
+                    if (first) {
+                        result = new_pair;
+                        tail = new_pair;
+                        first = false;
+                    } else {
+                        auto tail_idx = as_pair_idx(tail);
+                        if (tail_idx < pairs.size())
+                            pairs[tail_idx].cdr = new_pair;
+                        tail = new_pair;
+                    }
+                }
+
+                current = next;
             }
 
-            current = next;
-        }
-
-        return result;
-    });
+            return result;
+        });
     add("filter", [&pairs, apply_pred, &ev](std::span<const EvalValue> a) {
         // (filter pred list) — keep elements where pred returns truthy
         if (a.size() < 2 || is_void(a[1]))

@@ -7111,6 +7111,19 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> linear_traverse_total{0};
     std::atomic<std::uint64_t> cdr_depth_max{0};
 
+    // Issue #2916: soft heap quotas for multi-fiber Agent self-evo loops.
+    // High-water of pairs_/string_heap_/vector_heap_ sizes; checks/rejects
+    // only when a soft limit is configured (resource:quota-set pairs|…).
+    // Surfaced via (engine:metrics "query:prim-heap-quota-stats") schema-2916.
+    std::atomic<std::uint64_t> prim_heap_quota_checks_total{0};
+    std::atomic<std::uint64_t> prim_heap_quota_rejects_total{0};
+    std::atomic<std::uint64_t> prim_heap_pairs_high_water{0};
+    std::atomic<std::uint64_t> prim_heap_strings_high_water{0};
+    std::atomic<std::uint64_t> prim_heap_vectors_high_water{0};
+    std::atomic<std::uint64_t> prim_heap_quota_pairs_limit{0};
+    std::atomic<std::uint64_t> prim_heap_quota_strings_limit{0};
+    std::atomic<std::uint64_t> prim_heap_quota_vectors_limit{0};
+
     // Issue #452: AOT hot-update + region filtering
     // observability. Each counter is a per-bridge-event
     // monotonic total readable via (query:aot-stats).
