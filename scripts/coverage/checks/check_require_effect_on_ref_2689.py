@@ -35,6 +35,7 @@ Exit 0 = OK, 1 = violation found.
 
 from __future__ import annotations
 
+import bisect
 import re
 import sys
 from pathlib import Path
@@ -50,6 +51,11 @@ SCOPE_FILES = [
     "src/compiler/evaluator_primitives_messaging.cpp",
 ]
 
+# Control-flow openers that share `... ( ... ) {` shape with functions.
+_CTRL_OPEN = re.compile(r"^\s*(?:if|else\s+if|else|for|while|switch|catch|try|do)\b")
+# require_effect( but not require_effect_on_ref(
+_REQUIRE_EFFECT_CALL = re.compile(r"\brequire_effect(?!_on_ref)\s*\(")
+
 
 def _read(rel: str) -> str:
     p = ROOT / rel
@@ -59,42 +65,50 @@ def _read(rel: str) -> str:
 
 
 def _find_function_bodies(text: str) -> list[tuple[int, str]]:
-    """Return (start_line, body) for each function/lambda body found.
+    """Return (start_line, body) for function/lambda-like `{...}` regions.
 
-    Naive regex matches `name(...) {` or `[](...) {` / `auto name(...) {`.
-    Uses brace-depth walker to capture the full body (handles nested
-    braces, lambdas inside functions, etc.).
+    Single linear scan (O(n)) with a brace stack. Previous implementation
+    treated each line's brace offset as a file index and re-walked the whole
+    file per candidate line — ~O(lines × bytes) and the main gate bottleneck.
+
+    Semantics preserved for AC5: a body is checked if it names StableNodeRef
+    and calls require_effect(; nested lambdas are covered because their text
+    sits inside the enclosing function body.
     """
+    if not text or "StableNodeRef" not in text or "require_effect" not in text:
+        return []
+
+    line_starts = [0]
+    for i, ch in enumerate(text):
+        if ch == "\n":
+            line_starts.append(i + 1)
+
+    def line_no(pos: int) -> int:
+        return bisect.bisect_right(line_starts, pos)
+
     bodies: list[tuple[int, str]] = []
-    # Match function header at the start of a line. C++ allows
-    # complex return types / qualifiers / attributes, so we use a
-    # permissive pattern: anything ending with `(...) {`.
-    # Restrict to lines that look like function definitions (have a `(`).
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        # Cheap pre-filter: must contain a `(` before a `{` on the same line
-        # (function signature) AND `{` to start the body.
-        if "{" not in line or "(" not in line:
-            continue
-        # Find the opening `{` on this line.
-        brace_pos = line.find("{")
-        if brace_pos == -1:
-            continue
-        # Walk forward from brace_pos+1 to capture the body until matching `}`.
-        depth = 1
-        i = brace_pos + 1
-        body_start = i
-        while i < len(text) and depth > 0:
-            c = text[i]
-            if c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-            i += 1
-        if depth == 0:
-            body = text[body_start : i - 1]
-            # Only include bodies that are non-trivial (>= 20 chars).
-            if len(body) >= 20:
-                bodies.append((lineno, body))
+    stack: list[tuple[int, int, bool]] = []  # (open_pos, line, is_fn_like)
+    n = len(text)
+    i = 0
+    while i < n:
+        c = text[i]
+        if c == "{":
+            ln = line_no(i)
+            ls = line_starts[ln - 1]
+            le = text.find("\n", ls)
+            line = text[ls : le if le >= 0 else n]
+            local = i - ls
+            # Function / lambda opener: `(` before `{` on this line, not if/for/...
+            is_fn = "(" in line[:local] and not _CTRL_OPEN.match(line)
+            stack.append((i, ln, is_fn))
+        elif c == "}" and stack:
+            open_pos, ln, is_fn = stack.pop()
+            if is_fn:
+                body = text[open_pos + 1 : i]
+                # Cheap prefilter: only keep bodies that can violate AC5.
+                if len(body) >= 20 and "StableNodeRef" in body and "require_effect" in body:
+                    bodies.append((ln, body))
+        i += 1
     return bodies
 
 
@@ -107,13 +121,11 @@ def _check_body(body: str) -> tuple[bool, str]:
       - AND no `ref_tenant` in scope
       - AND no `require_effect_on_ref(` call
     """
-    has_stable_node_ref = "StableNodeRef" in body
-    has_require_effect = bool(re.search(r"\brequire_effect\s*\(", body))
-    if not (has_stable_node_ref and has_require_effect):
+    if "StableNodeRef" not in body:
         return False, ""
-    has_ref_tenant = "ref_tenant" in body
-    has_require_effect_on_ref = bool(re.search(r"\brequire_effect_on_ref\s*\(", body))
-    if has_ref_tenant or has_require_effect_on_ref:
+    if not _REQUIRE_EFFECT_CALL.search(body):
+        return False, ""
+    if "ref_tenant" in body or "require_effect_on_ref" in body:
         return False, ""
     return True, (
         "function/lambda has StableNodeRef in scope and calls "
