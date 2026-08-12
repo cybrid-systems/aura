@@ -1,4 +1,6 @@
 // evaluator_primitives_ast.cpp — P0 step 13: ast:* primitives
+// Issue #2918: ast:snapshot / ast:diff use workspace source (:workspace), not
+// bare current-source (dual-workspace Phase 1 default = current_flat_).
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
@@ -62,6 +64,32 @@ using types::make_void;
 void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                              std::function<void()> destroy_defuse_index,
                              std::function<DefUseSummaryStats()> defuse_summary_stats) {
+
+    // Issue #2918: intern :workspace once and call current-source with it.
+    // Dual-workspace: bare (current-source) reads current_flat_ (eval frame);
+    // checkpoints/diff must unparse workspace_flat_ (set-code / mutate target).
+    auto workspace_keyword = [&ev]() -> EvalValue {
+        for (std::size_t i = 0; i < ev.keyword_table_.size(); ++i) {
+            if (ev.keyword_table_[i] == ":workspace")
+                return make_keyword(static_cast<std::uint64_t>(i));
+        }
+        auto idx = ev.keyword_table_.size();
+        ev.keyword_table_.push_back(":workspace");
+        return make_keyword(static_cast<std::uint64_t>(idx));
+    };
+    auto workspace_source_string = [&ev, workspace_keyword]() -> std::optional<std::string> {
+        // Callers must ensure workspace_flat_ / workspace_pool_ are non-null.
+        auto src_fn = ev.primitives_.lookup("current-source");
+        if (!src_fn)
+            return std::nullopt;
+        auto src = (*src_fn)({workspace_keyword()});
+        if (!is_string(src))
+            return std::nullopt;
+        auto src_idx = as_string_idx(src);
+        if (src_idx >= ev.string_heap_.size())
+            return std::nullopt;
+        return ev.string_heap_[src_idx];
+    };
 
     // Helper: line-based LCS diff (Myers-like, simplified)
     // Returns list of (tag . line) entries
@@ -168,15 +196,18 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
 
     // (ast:snapshot ["name"])
     //   → integer snapshot ID (or -1 on failure)
-    //   Stores current workspace source code as a named checkpoint.
+    //   Stores the persistent EDSL **workspace** source (set-code / mutate
+    //   target) as a named checkpoint — dual-workspace Phase 1 (#2918).
+    //   Does **not** use bare (current-source) (that is current_flat_).
     //   Names are optional; unnamed snapshots get auto-generated names.
+    //   When workspace_flat_ is null → -1 (no silent empty default path).
     //
     // (#107 part 6) Also stores a direct deep-copy of the workspace's
     // FlatAST and StringPool. ast:restore prefers the direct copy
     // (lossless, no reparse) and falls back to the source string
     // only when the direct copy is missing (e.g. for snapshots
     // taken before this feature shipped).
-    add("ast:snapshot", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("ast:snapshot", [&ev, workspace_source_string](std::span<const EvalValue> a) -> EvalValue {
         // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
         // defuse_version_ + rollback. ok = false on every error path so
         // the Guard's dtor triggers rollback consistently.
@@ -188,28 +219,19 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             return make_int(-1);
         }
         auto guard = std::move(*guard_r);
+        // Issue #2918: no workspace → hard fail (not empty string from Default path).
         if (!ev.workspace_flat_ || !ev.workspace_pool_) {
             ok = false;
             return make_int(-1);
         }
 
-        // Get current source
-        auto src_fn = ev.primitives_.lookup("current-source");
-        if (!src_fn) {
+        // Issue #2918: workspace unparse only (current-source :workspace).
+        auto source_opt = workspace_source_string();
+        if (!source_opt) {
             ok = false;
             return make_int(-1);
         }
-        auto src = (*src_fn)({});
-        if (!is_string(src)) {
-            ok = false;
-            return make_int(-1);
-        }
-        auto src_idx = as_string_idx(src);
-        if (src_idx >= ev.string_heap_.size()) {
-            ok = false;
-            return make_int(-1);
-        }
-        auto source = ev.string_heap_[src_idx];
+        auto source = std::move(*source_opt);
 
         // Optional name
         std::string name;
@@ -535,9 +557,10 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
 
     // (ast:diff [id])
     //   → ((tag . line) ...)
-    //   Compares current source vs a snapshot. If no id given, compares
-    //   versus the most recent snapshot. Tags: :same / :removed / :added
-    add("ast:diff", [&ev, line_diff](const auto& a) -> EvalValue {
+    //   Compares **workspace** source vs a snapshot (#2918 dual-workspace).
+    //   If no id given, compares versus the most recent snapshot.
+    //   Tags: :same / :removed / :added
+    add("ast:diff", [&ev, line_diff, workspace_source_string](const auto& a) -> EvalValue {
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
 
@@ -555,19 +578,12 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
 
         auto& old_source = ev.snapshot_sources_[id];
 
-        // Get current source
-        auto src_fn = ev.primitives_.lookup("current-source");
-        if (!src_fn)
+        // Issue #2918: workspace unparse only (not current_flat_ / bare current-source).
+        auto new_opt = workspace_source_string();
+        if (!new_opt)
             return make_void();
-        auto src = (*src_fn)({});
-        if (!is_string(src))
-            return make_void();
-        auto src_idx = as_string_idx(src);
-        if (src_idx >= ev.string_heap_.size())
-            return make_void();
-        auto& new_source = ev.string_heap_[src_idx];
 
-        return line_diff(old_source, new_source);
+        return line_diff(old_source, *new_opt);
     });
     auto str_list_to_pairs = [&ev](std::span<const std::string> items) -> EvalValue {
         EvalValue list = make_void();
@@ -592,7 +608,9 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     //     :uses           — total tracked variable uses
     //     :source-length  — source code character count
     ObservabilityPrims::register_stats_impl(
-        "ast:summary", [&ev, str_list_to_pairs, defuse_summary_stats](const auto&) -> EvalValue {
+        "ast:summary",
+        [&ev, str_list_to_pairs, defuse_summary_stats,
+         workspace_source_string](const auto&) -> EvalValue {
             if (!ev.workspace_flat_ || !ev.workspace_pool_)
                 return make_void();
 
@@ -705,17 +723,10 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
             // Get mutation count
             auto n_mutations = flat.mutation_count();
 
-            // Get source length (via current-source)
+            // Issue #2918: source length of workspace unparse (not current_flat_).
             std::uint64_t source_len = 0;
-            auto src_fn = ev.primitives_.lookup("current-source");
-            if (src_fn) {
-                auto src = (*src_fn)({});
-                if (is_string(src)) {
-                    auto sidx = as_string_idx(src);
-                    if (sidx < ev.string_heap_.size())
-                        source_len = ev.string_heap_[sidx].size();
-                }
-            }
+            if (auto ws = workspace_source_string())
+                source_len = ws->size();
 
             // Build by-tag list: ((tag-name . count) ...)
             EvalValue by_tag_list = make_void();

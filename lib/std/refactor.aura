@@ -70,7 +70,8 @@
 (define (refactor:extract-function node-ids fn-name)
   ; 当前仅支持源码级提取（AST 级改树结构过于复杂）
   ; 获取当前源码
-  (define source (try (current-source) (catch #f)))
+  ; Issue #2918: refactor user script in workspace, not current eval frame.
+  (define source (try (current-source :workspace) (catch #f)))
   (if (not source) #f
     (begin
       ; 用源码行号近似提取（后续用 AST 节点 ID 精确化）

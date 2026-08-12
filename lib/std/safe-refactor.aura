@@ -87,7 +87,8 @@
 ;   (list 'rejected "reason")      — empty source/body or typecheck failed
 ;   (list 'error "reason")         — exception during set-code/typecheck
 (define (safe-refactor:replace-fn fn-name new-body)
-  (let* ((current (try (current-source) (catch (e) "")))
+  ; Issue #2918: user-script intent → :workspace (not current eval frame).
+  (let* ((current (try (current-source :workspace) (catch (e) "")))
          (snap-id (ast:snapshot (string-append "replace-" fn-name))))
     (cond
       ((or (= (string-length current) 0) (= (string-length new-body) 0))

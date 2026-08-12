@@ -433,7 +433,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         // (the AST being evaluated right now), set by CompilerService::eval /
         // eval_ir / exec_jit. Optional :workspace keyword reads the persistent
         // EDSL workspace (set via (set-code ...)).
-        // See dual-workspace design (archived: docs-archive-pre-2026-06)
+        // Issue #2918: agent checkpoints (ast:snapshot / ast:diff) and stdlib
+        // refactor helpers MUST pass :workspace for user-script intent.
+        // Bare (current-source) is wrong for mutate → snapshot → restore loops.
         //
         // Use an enum to distinguish "user asked for :workspace" (even if
         // ev.workspace_flat_ is null) from "no preference" (use ev.current_flat_).
