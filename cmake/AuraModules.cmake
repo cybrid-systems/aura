@@ -14,6 +14,8 @@ set(AURA_CXX_MODULE_CORE
     src/core/mutation.ixx
     src/core/mutators.ixx
     src/core/ast.ixx
+    # Issue #2922: FlatAST → source unparse (after ast.ixx; no Evaluator dep).
+    src/core/ast_unparse.ixx
     # FlatAST decomp step 2: MutationVisitor pipeline (imports ast; after ast.ixx).
     src/core/ast_mutation_pipeline.ixx
     # Issue #2000 Phase 2: real LifetimePin RAII pinning + generation stamp

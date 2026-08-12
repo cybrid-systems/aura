@@ -889,14 +889,14 @@ public:
                     return std::nullopt;
                 return *result;
             });
-        // Phase 4: get workspace source via unparse_node (the proper
-        // way to serialize a workspace FlatAST back to a string).
+        // Phase 4 / Issue #2922: workspace source via unparse_to_string
+        // (SSOT with (current-source :workspace); no Evaluator re-entry).
         evaluator_.set_get_workspace_source_fn([this]() -> std::string {
             auto* ws_flat = evaluator_.workspace_flat();
             auto* ws_pool = evaluator_.workspace_pool();
             if (!ws_flat || !ws_pool)
                 return "";
-            return unparse_node(*ws_flat, *ws_pool, ws_flat->root, 0);
+            return aura::ast::unparse_to_string(*ws_flat, *ws_pool, ws_flat->root, {});
         });
         // Issue #194: hook to query the runtime→intrinsic migration
         // counter from the AuraJIT. Used by the (jit:intrinsic-count)

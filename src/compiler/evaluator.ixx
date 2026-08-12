@@ -2637,8 +2637,8 @@ public:
     // Phase 4: get the workspace source by unparsing workspace_flat_.
     // Used by (eval-current :jit) to pass a proper source string to
     // the JIT pipeline. Returns empty if no workspace is set.
-    // Issue #2920 SSOT: this hook (CompilerService → unparse_node) is the
-    // preferred live reader after any mutate; workspace_source_text_ is
+    // Issue #2920 / #2922 SSOT: this hook (CompilerService → unparse_to_string)
+    // is the preferred live reader after any mutate; workspace_source_text_ is
     // only a set-code/load/restore stamp, invalidated on Guard exit.
     using GetWorkspaceSourceFn = std::string();
     std::function<GetWorkspaceSourceFn> get_workspace_source_fn_ = nullptr;

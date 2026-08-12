@@ -12,6 +12,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
+import aura.core.ast_unparse; // Issue #2922: snapshot unparse without current-source re-entry
 import aura.compiler.value;
 import aura.compiler.type_checker;
 import aura.parser.parser;
@@ -65,30 +66,15 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
                              std::function<void()> destroy_defuse_index,
                              std::function<DefUseSummaryStats()> defuse_summary_stats) {
 
-    // Issue #2918: intern :workspace once and call current-source with it.
-    // Dual-workspace: bare (current-source) reads current_flat_ (eval frame);
+    // Issue #2918 / #2922: unparse workspace_flat_ via library (no primitive
+    // re-entry). Dual-workspace: bare (current-source) is current_flat_;
     // checkpoints/diff must unparse workspace_flat_ (set-code / mutate target).
-    auto workspace_keyword = [&ev]() -> EvalValue {
-        for (std::size_t i = 0; i < ev.keyword_table_.size(); ++i) {
-            if (ev.keyword_table_[i] == ":workspace")
-                return make_keyword(static_cast<std::uint64_t>(i));
-        }
-        auto idx = ev.keyword_table_.size();
-        ev.keyword_table_.push_back(":workspace");
-        return make_keyword(static_cast<std::uint64_t>(idx));
-    };
-    auto workspace_source_string = [&ev, workspace_keyword]() -> std::optional<std::string> {
-        // Callers must ensure workspace_flat_ / workspace_pool_ are non-null.
-        auto src_fn = ev.primitives_.lookup("current-source");
-        if (!src_fn)
+    // Call under MutationBoundaryGuard is safe — unparse_to_string is pure.
+    auto workspace_source_string = [&ev]() -> std::optional<std::string> {
+        if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return std::nullopt;
-        auto src = (*src_fn)({workspace_keyword()});
-        if (!is_string(src))
-            return std::nullopt;
-        auto src_idx = as_string_idx(src);
-        if (src_idx >= ev.string_heap_.size())
-            return std::nullopt;
-        return ev.string_heap_[src_idx];
+        return aura::ast::unparse_to_string(*ev.workspace_flat_, *ev.workspace_pool_,
+                                            ev.workspace_flat_->root, {});
     };
 
     // Helper: line-based LCS diff (Myers-like, simplified)

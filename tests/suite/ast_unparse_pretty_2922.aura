@@ -1,0 +1,33 @@
+; Issue #2922 — suite smoke for unparse pretty mode + default compact.
+; Library extraction verified in tests/compiler/test_ast_unparse.cpp.
+
+(define ok #t)
+
+(set-code "(begin (define f (lambda (x) (let ((y 1)) (+ x y)))) (f 2))")
+
+(define compact (current-source :workspace))
+(define pretty (current-source :workspace :pretty))
+
+; Default compact: single-line (no newline) for this small tree
+(if (and (string? compact)
+         (>= (string-length compact) 1)
+         (< (string-index compact "\n") 0))
+    #t
+    (begin (display "FAIL-2922 compact should be single-line\n") (set! ok #f)))
+
+; Pretty: multi-line for begin / define / lambda / let
+(if (and (string? pretty)
+         (>= (string-index pretty "\n") 0)
+         (not (equal? compact pretty)))
+    #t
+    (begin (display "FAIL-2922 pretty should be multi-line and differ\n") (set! ok #f)))
+
+; Workspace still readable after pretty (no mutation)
+(define again (current-source :workspace))
+(if (equal? again compact)
+    #t
+    (begin (display "FAIL-2922 default path changed after :pretty\n") (set! ok #f)))
+
+(if ok
+    (begin (display "OK-2922 ast-unparse-pretty") (newline))
+    (begin (display "FAIL-2922") (newline) (unbound-2922-force-fail)))
