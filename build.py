@@ -9035,6 +9035,24 @@ def cmd_solve_delta_locality_slo_2913_coverage():
     return 0
 
 
+def cmd_query_primitives_split_2914_coverage():
+    """Issue #2914: split evaluator_primitives_query.cpp + error convention.
+
+    Peels under LOC budget; register_query_primitives orchestrates; docs.
+    """
+    print(f"{B}=== query primitives split coverage (#2914) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_primitives_split_2914.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query primitives split (#2914) coverage contract rows failed")
+        return 1
+    ok("query primitives split (#2914) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 

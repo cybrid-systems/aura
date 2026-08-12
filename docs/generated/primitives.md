@@ -24,7 +24,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:calls-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query_obs_mid.cpp`
 - `query:dirty-nodes` *[internal-observable]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:dirty-subtree` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:effects` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -32,18 +32,18 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:ffi-pin-count` *[internal-observable]* — `src/compiler/ffi_primitives_impl.cpp`
 - `query:filter` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:generate-primitive-skeleton` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `query:hygiene-diagnostic` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:hygiene-diagnostic` *[internal-observable]* — `src/compiler/evaluator_primitives_query_reflect.cpp`
 - `query:last-mutation-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:macro-introduced` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:macro-provenance-chain` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mark-occurrence-stale` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-provenance-chain` *[internal-observable]* — `src/compiler/evaluator_primitives_query_lifecycle.cpp`
+- `query:mark-occurrence-stale` *[internal-observable]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:module-exports` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-impact` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutations-since` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutations-since` *[internal-observable]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:node-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:occurrence-stale?` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-stale?` *[internal-observable]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:pattern` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:primitives-meta` *[internal-observable]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:provenance-of` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -51,7 +51,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:reaches` *[internal-observable]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ref-valid?` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:root` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:schema` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
+- `query:schema` *[internal-observable]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:schema-of-marker` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref` *[internal-observable]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref-provenance` *[internal-observable]* — `src/compiler/evaluator_primitives_query.cpp`
@@ -62,7 +62,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 - `mutate:from-verification-feedback` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-reflected` *[mutation-safety]* — `src/compiler/evaluator_primitives_query.cpp`
+- `mutate:validate-reflected` *[mutation-safety]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 
 ## Ast: (15)
 
@@ -551,9 +551,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## Reflect: (3)
 
-- `reflect:provenance-blame` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
-- `reflect:validate-edsl` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
-- `reflect:validate-macro-body` *[core]* — `src/compiler/evaluator_primitives_query.cpp`
+- `reflect:provenance-blame` *[core]* — `src/compiler/evaluator_primitives_query_reflect.cpp`
+- `reflect:validate-edsl` *[core]* — `src/compiler/evaluator_primitives_query_reflect.cpp`
+- `reflect:validate-macro-body` *[core]* — `src/compiler/evaluator_primitives_query_reflect.cpp`
 
 ## Resource: (2)
 
@@ -689,7 +689,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `git-status` — `src/compiler/evaluator_primitives_io.cpp`
 - `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:set-agent-fingerprint` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-reflected` — `src/compiler/evaluator_primitives_query.cpp`
+- `mutate:validate-reflected` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `panic-auto-rollback?` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-checkpoint` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-restore` — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -948,9 +948,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `reflect-members` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-module-exports` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `reflect-type` — `src/compiler/evaluator_primitives_reflect.cpp`
-- `reflect:provenance-blame` — `src/compiler/evaluator_primitives_query.cpp`
-- `reflect:validate-edsl` — `src/compiler/evaluator_primitives_query.cpp`
-- `reflect:validate-macro-body` — `src/compiler/evaluator_primitives_query.cpp`
+- `reflect:provenance-blame` — `src/compiler/evaluator_primitives_query_reflect.cpp`
+- `reflect:validate-edsl` — `src/compiler/evaluator_primitives_query_reflect.cpp`
+- `reflect:validate-macro-body` — `src/compiler/evaluator_primitives_query_reflect.cpp`
 - `regex-find` — `src/compiler/evaluator_primitives_math.cpp`
 - `regex-match?` — `src/compiler/evaluator_primitives_math.cpp`
 - `regex-replace` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1081,7 +1081,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:calls-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:defines-by-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:dirty-impact` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:dirty-impact` — `src/compiler/evaluator_primitives_query_obs_mid.cpp`
 - `query:dirty-nodes` — `src/compiler/evaluator_primitives_compile.cpp`
 - `query:dirty-subtree` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:effects` — `src/compiler/evaluator_primitives_query_defuse.cpp`
@@ -1089,18 +1089,18 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:ffi-pin-count` — `src/compiler/ffi_primitives_impl.cpp`
 - `query:filter` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:generate-primitive-skeleton` — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `query:hygiene-diagnostic` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:hygiene-diagnostic` — `src/compiler/evaluator_primitives_query_reflect.cpp`
 - `query:last-mutation-provenance` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:macro-introduced` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:macro-provenance-chain` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mark-occurrence-stale` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:macro-provenance-chain` — `src/compiler/evaluator_primitives_query_lifecycle.cpp`
+- `query:mark-occurrence-stale` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:module-exports` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:mutation-impact` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutations-since` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:mutations-since` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:node-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-provenance` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:node-type` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:occurrence-stale?` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:occurrence-stale?` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:pattern` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:primitives-meta` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `query:provenance-of` — `src/compiler/evaluator_primitives_query_workspace.cpp`
@@ -1108,7 +1108,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:reaches` — `src/compiler/evaluator_primitives_query_defuse.cpp`
 - `query:ref-valid?` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:root` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:schema` — `src/compiler/evaluator_primitives_query.cpp`
+- `query:schema` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:schema-of-marker` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query:stable-ref-provenance` — `src/compiler/evaluator_primitives_query.cpp`
