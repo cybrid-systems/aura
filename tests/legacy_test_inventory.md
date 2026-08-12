@@ -1725,7 +1725,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_shape_compact_storm_isolation.cpp` (—) [domain_suite, theme_compiler] — Issue #2908 — PerEval harden: compact must not bump process-global
 - `tests/compiler/test_shape_high_mutation_storm.cpp` (—) [domain_suite, theme_compiler] — AC1: production default applies kHighMutationPreset knobs (no env)
 - `tests/compiler/test_shape_profiler_burst_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #406/#407/#570/#605 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_shape_profiler_concurrency.cpp` (—) [domain_suite, theme_compiler] — AC1: docs model A (shared_mutex) in shape_profiler.h
+- `tests/compiler/test_shape_profiler_concurrency.cpp` (—) [domain_suite, theme_compiler] — Issue #2937 — FnKey-sharded locks (extend per #81967).
 - `tests/compiler/test_shape_profiler_stability_deopt_fiber_task4.cpp` (—) [domain_suite, theme_compiler] — test_shape_profiler_stability_deopt_fiber_task4.cpp — Issue #570:
 - `tests/compiler/test_shape_soa_storm_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_shape_soa_storm_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_shape_soa_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_shape_soa_unit_batch.cpp — Wave 36+ (#1957) shape_soa theme
