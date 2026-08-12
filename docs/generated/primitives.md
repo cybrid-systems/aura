@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**487** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**488** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 84 primitives (17%)
-- **core**: 360 primitives (74%)
+- **core**: 361 primitives (74%)
 - **internal-observable**: 42 primitives (9%)
 - **convenience**: 1 primitives (0%)
 
@@ -444,7 +444,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `aot:set-module-version` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `aot:set-region-mask` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
-## Arena: (13)
+## Arena: (14)
 
 - `arena:adaptive-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -454,6 +454,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `arena:defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-now` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:live-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:recover-moving-sticky-densify` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-auto-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-compact-threshold` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -719,7 +720,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (360)
+### Core builtins (must remain primitive) (361)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -745,6 +746,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `arena:defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:defrag-now` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:live-compact` — `src/compiler/evaluator_primitives_memory.cpp`
+- `arena:recover-moving-sticky-densify` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-auto-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`

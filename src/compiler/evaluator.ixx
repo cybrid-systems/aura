@@ -3992,6 +3992,37 @@ public:
     // Precondition: pin_contract_held && had_moving_densify.
     [[nodiscard]] aura::core::densify_consistency::DensifyRemapPairingResult
     force_densify_remap_pairing() noexcept;
+
+    // Issue #2935: auto-register known intermediate + compiler external root
+    // slots into the Moving densify window (extends #2889 inventory). Walks
+    // workspace / mutate-target / current flat+pool, WorkspaceTree layer
+    // flat/pool/parent slots, and RootRemap stable + closure capture slots.
+    // Returns the number of non-null slots registered via
+    // ArenaGroup::register_external_root_slot_for_densify_all. Soft / no
+    // arena_group → 0 (zero extra work when densify entry never reaches
+    // this under !moving_compact_enabled()). Bumps
+    // g_moving_known_roots_auto_registered_total.
+    [[nodiscard]] std::size_t register_known_moving_densify_root_slots() noexcept;
+
+    // Issue #2935: Agent recovery after sticky densify-off.
+    // (a) re-register known roots (b) clear sticky densify-off when armed
+    // (c) optionally attempt one Moving densify (compact_all_moving_pinned).
+    // Success requires sticky cleared (or was off) and, when densify
+    // retried, pin_contract_held + no incomplete remap. Soft never arms
+    // sticky — recovery is observe-only then (counters stay 0 unless
+    // sticky was force-armed under test).
+    struct MovingStickyDensifyRecoveryResult {
+        bool sticky_was_on = false;
+        bool sticky_cleared = false;
+        std::size_t roots_registered = 0;
+        bool densify_retried = false;
+        bool pin_contract_held = true;
+        bool incomplete_remap = false;
+        bool success = false;
+    };
+    [[nodiscard]] MovingStickyDensifyRecoveryResult
+    recover_moving_sticky_densify_off(bool retry_densify = true) noexcept;
+
     // Issue #242: detect a stale EnvFrame (one whose `version_`
     // snapshot is older than the current `defuse_version_`). A
     // closure captured against env_frames_[id] whose frame.version_

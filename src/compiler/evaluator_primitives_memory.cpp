@@ -9,6 +9,7 @@ module;
 #include "observability_metrics.h"
 #include "render_telemetry.hh"
 #include "core/arena_auto_policy_stats.h"
+#include "core/densify_consistency_report.h" // Issue #2935 recovery counters
 #include <limits>
 
 module aura.compiler.evaluator;
@@ -567,6 +568,66 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 std::memory_order_relaxed);
         }
         return make_int(marked);
+    });
+    // Issue #2935: (arena:recover-moving-sticky-densify [retry?])
+    // Agent recovery after sticky densify-off: re-register known roots,
+    // clear sticky, optionally one-shot Moving densify. Optional bool arg
+    // defaults to #t (retry densify). Soft never arms sticky → observe-only
+    // when sticky is 0. Returns hash with recovery outcome + schema-2935.
+    // Named arena:* (not mutate:*) — densify control, no AST write; avoids
+    // side-effect-security mutate: surface (#2057) and SlimSurface mutate count.
+    add("arena:recover-moving-sticky-densify", [&ev](const auto& a) -> EvalValue {
+        bool retry = true;
+        if (!a.empty() && is_bool(a[0]))
+            retry = as_bool(a[0]);
+        const auto r = ev.recover_moving_sticky_densify_off(retry);
+        auto* ht = FlatHashTable::create(16);
+        if (!ht)
+            return make_void();
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, std::int64_t v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto idx = ((h >> 1) + at) & (hcap - 1);
+                if (meta[idx] == 0xFF) {
+                    meta[idx] = fp;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k_str);
+                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[idx] = make_int(v).val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("sticky-was-on", r.sticky_was_on ? 1 : 0);
+        insert_kv("sticky-cleared", r.sticky_cleared ? 1 : 0);
+        insert_kv("roots-registered", static_cast<std::int64_t>(r.roots_registered));
+        insert_kv("densify-retried", r.densify_retried ? 1 : 0);
+        insert_kv("pin-contract-held", r.pin_contract_held ? 1 : 0);
+        insert_kv("incomplete-remap", r.incomplete_remap ? 1 : 0);
+        insert_kv("success", r.success ? 1 : 0);
+        insert_kv("sticky-cleared-via-recovery-total",
+                  static_cast<std::int64_t>(aura::core::densify_consistency::
+                                                moving_sticky_cleared_via_recovery_total_v_read()));
+        insert_kv(
+            "densify-retry-after-recovery-total",
+            static_cast<std::int64_t>(aura::core::densify_consistency::
+                                          moving_densify_retry_after_recovery_total_v_read()));
+        insert_kv("sticky-recovery-wired", 1);
+        insert_kv("schema-2935", 2935);
+        insert_kv("issue-2935", aura::core::densify_consistency::kMovingStickyDensifyRecoveryIssue);
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
     });
 
     // Issue #1518: (query:arena-live-compact-stats) — production surface.

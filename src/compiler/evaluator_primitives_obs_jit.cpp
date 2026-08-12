@@ -11963,6 +11963,22 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2889", 2889);
             insert_kv("issue-2889",
                       aura::core::densify_consistency::kMovingKnownRootsAutoRegisterIssue);
+            // Issue #2935: sticky densify-off Agent recovery metrics.
+            // sticky-cleared-via-recovery-total / densify-retry-after-recovery-total
+            // pair with sticky-densify-off so Agents can verify recovery ran
+            // after a production hard incomplete-remap trap. Additive only.
+            insert_kv(
+                "sticky-cleared-via-recovery-total",
+                static_cast<std::int64_t>(aura::core::densify_consistency::
+                                              moving_sticky_cleared_via_recovery_total_v_read()));
+            insert_kv(
+                "densify-retry-after-recovery-total",
+                static_cast<std::int64_t>(aura::core::densify_consistency::
+                                              moving_densify_retry_after_recovery_total_v_read()));
+            insert_kv("sticky-recovery-wired", 1);
+            insert_kv("schema-2935", 2935);
+            insert_kv("issue-2935",
+                      aura::core::densify_consistency::kMovingStickyDensifyRecoveryIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
