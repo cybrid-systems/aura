@@ -3342,7 +3342,14 @@ def test_issues():
     git-diff-touched issue tests (no bundle subset). Useful for
     PR simulation when the bundle subset is too aggressive, and
     for local iteration when an issue is the only thing modified.
+
+    When AURA_ISSUE_BUILD=none/skip/off (CI path filter: no issue_matrix
+    paths touched), skip cleanly — binaries were not linked.
     """
+    issue_mode = os.environ.get("AURA_ISSUE_BUILD", "all").strip().lower()
+    if issue_mode in ("none", "skip", "off", "0"):
+        info("issue tests: skipped (AURA_ISSUE_BUILD=none — no issue matrix build)")
+        return 0
     tier = issues_tier()
     # Full tier defaults to 4 workers (not 8): high fan-out was the main
     # source of SIGSEGV/timeout under load. Override with AURA_ISSUES_JOBS.
@@ -11177,7 +11184,11 @@ def cmd_gate():
 
 
 def cmd_ci():
-    """CI build + test (parallel suites when AURA_TEST_JOBS>1)."""
+    """CI build + test (parallel suites when AURA_TEST_JOBS>1).
+
+    Honors AURA_ISSUE_BUILD=none (skip issue binary matrix + issues suite)
+    for PR path-filter when only scripts/lib tooling changed.
+    """
     suites = CI_CORE + CI_SAFETY + CI_ISSUES
     return cmd_build() or cmd_test(suites)
 

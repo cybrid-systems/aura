@@ -5,19 +5,23 @@
 #
 # Wall-time layout (target):
 #   PR:
-#     gate (~1–2m) ──► build-test (~12–18m: build + core/safety/issues-fast + s0 + bench)
-#     security-scan ── parallel from t=0 (no gate wait)
+#     gate (~1m) ── parallel ──► build-test (~10–15m: build + core/safety + issues?)
+#     security-scan ────────────► (no gate wait)
 #   main (push):
-#     same as PR, plus ubsan-smoke / asan / repro / deploy-health in parallel
+#     same as PR, plus ubsan-smoke / asan / repro / deploy-health / bench
 #
-# PR optimisations (2026-07):
+# PR optimisations:
 #   - concurrency cancel-in-progress (superseded PR pushes)
-#   - drop PR-side full rebuild jobs (s0-smoke + ubsan-smoke) — they duplicated
-#     build-test wall time; s0 folded into build-test; ubsan is main-only
+#   - drop PR-side full rebuild jobs (s0-smoke + ubsan-smoke)
 #   - security-scan no longer needs: [gate]
-#   - gate: remove non-blocking clang-tidy (wasted wall + no signal)
+#   - gate: remove non-blocking clang-tidy
 #   - skip apt when mold/lld already on the image
 #   - paths-filter: docs-only PRs run gate only (no full C++ build)
+#   - (2026-08) gate ‖ build-test (build-test no longer waits on gate)
+#   - (2026-08) PR bench --strict → main-only
+#   - (2026-08) PR AURA_ISSUE_BUILD=none when issue_matrix paths untouched
+#
+# Branch protection: require both `gate` and `build-test` (not only one).
 #
 # Developer map: docs/test_harness_pattern.md
 # Platforms: docs/ci-platforms.md (#1573)
@@ -49,15 +53,20 @@ env:
   AURA_USE_MOLD: "1"
   AURA_LINK_JOBS: "2"
   NINJA_STATUS: "[%f/%t %es] "
-  # Issue #1569: hard benchmark SLO gate (regression → job fail)
-  AURA_CI_STRICT_BENCH: "1"
+  # Issue #1569: hard benchmark SLO — enforced on main build-test only
+  # (see bench step `if:`). Keep env default off so accidental local/PR
+  # invocations of build.py bench without --strict stay soft.
+  AURA_CI_STRICT_BENCH: "0"
 
 jobs:
   # Cheap filter: docs/chore-only PRs skip the full C++ matrix.
+  # issue_matrix: whether to link/run the test_issue_* / domain-batch matrix
+  # (skip when only scripts/lib/docs tooling changed — still builds aura).
   changes:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.filter.outputs.code }}
+      issue_matrix: ${{ steps.filter.outputs.issue_matrix }}
     steps:
     - uses: actions/checkout@v7
     - uses: dorny/paths-filter@v4
@@ -77,6 +86,13 @@ jobs:
             - 'contracts'
             - '.clang-format'
             - '.clang-tidy'
+          issue_matrix:
+            - 'src/**'
+            - 'cmake/**'
+            - 'CMakeLists.txt'
+            - 'tests/**'
+            - 'build.py'
+            - 'contracts'
 
   gate:
     runs-on: ubuntu-latest
@@ -109,7 +125,8 @@ jobs:
         echo "aura philosophy guard clean (no docs/design/ files)"
 
   build-test:
-    needs: [gate, changes]
+    # Parallel with gate (needs: changes only). Require both jobs in branch protection.
+    needs: [changes]
     # Full matrix only when C++/tests/build surface changed (or on main push).
     if: >-
       github.event_name == 'push' ||
@@ -145,17 +162,32 @@ jobs:
         command -v mold >/dev/null 2>&1 && mold --version || true
         command -v ld.lld >/dev/null 2>&1 && ld.lld --version | head -1 || true
 
+    # Summarize path-filter → issue matrix (for logs).
+    - name: Issue matrix policy
+      run: |
+        echo "event=${{ github.event_name }}"
+        echo "code=${{ needs.changes.outputs.code }}"
+        echo "issue_matrix=${{ needs.changes.outputs.issue_matrix }}"
+        echo "AURA_ISSUES_TIER=${{ github.event_name == 'pull_request' && 'fast' || 'full' }}"
+
     - name: Build & Test
       env:
         AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
         AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         AURA_RUNTIME_DIR: ${{ github.workspace }}
+        # main push: always full issue link matrix.
+        # PR: link issue/domain-batch binaries only when src/tests/cmake/… changed;
+        # pure scripts/lib/docs tooling PRs still build aura + core suites.
+        AURA_ISSUE_BUILD: ${{ github.event_name == 'push' && 'all' || (needs.changes.outputs.issue_matrix == 'true' && 'all' || 'none') }}
       run: python3 build.py ci
 
     # Issue #2554: PR chaos hard-fail runtime (steal Δ==0, residual==0).
-    # Static coverage runs in the gate job; binary requires cmake tree so
-    # the short profile runs here after ./build.py ci (not in static gate).
+    # Binary requires cmake tree so the short profile runs after ./build.py ci.
+    # Skip when issue matrix is off on PR (no chaos target in default build).
     - name: Chaos PR hard-fail gate (#2554)
+      if: >-
+        github.event_name == 'push' ||
+        needs.changes.outputs.issue_matrix == 'true'
       env:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py chaos-pr-hard-fail
@@ -181,11 +213,38 @@ jobs:
           | ./build/aura
 
     # Issue #1569: hard SLO gate for compiler pipeline benchmarks.
+    # Main only — PR wall time; regressions still caught on merge-to-main.
     - name: Benchmark SLO gate (#1569)
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       env:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
         AURA_CI_STRICT_BENCH: "1"
       run: python3 build.py bench --strict
+
+  # Single green check for branch protection when gate ‖ build-test.
+  # Succeeds only if gate is green and build-test is green or skipped
+  # (docs-only PR: build-test skipped, gate still required).
+  ci-ok:
+    name: ci-ok
+    runs-on: ubuntu-latest
+    needs: [gate, build-test]
+    if: always()
+    steps:
+    - name: Aggregate gate + build-test
+      run: |
+        set -e
+        gate="${{ needs.gate.result }}"
+        bt="${{ needs.build-test.result }}"
+        echo "gate=$gate build-test=$bt"
+        if [ "$gate" != "success" ]; then
+          echo "❌ gate did not succeed ($gate)"
+          exit 1
+        fi
+        if [ "$bt" != "success" ] && [ "$bt" != "skipped" ]; then
+          echo "❌ build-test did not succeed ($bt)"
+          exit 1
+        fi
+        echo "✓ ci-ok (gate=$gate, build-test=$bt)"
 
   # ASAN track — main only (saves ~8–10m on PRs; PR gate is build-test).
   asan-build:
