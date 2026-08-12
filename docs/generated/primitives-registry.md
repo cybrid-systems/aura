@@ -54,4 +54,5 @@ These are the `primitives_detail::register_*_primitives` calls in the central re
 
 - **mutation** / **mutate** / **workspace-query** / **control** — self-modifying FlatAST + fiber-sensitive entry points
 - Prefer Guard / safe-yield boundaries when calling from multi-agent loops (see `#1504`, `#1547`)
-- Adding a primitive: register in the matching `evaluator_primitives_*.cpp`, ensure the register_* is invoked from the central registry, attach `PrimMeta`, add a suite/regression test, run `./build.py docs`
+- Adding a primitive: prefer `register_prim` + `PrimSpec` (`src/compiler/prim_registrar_scaffold.hh`, Issue #2915) in the matching `evaluator_primitives_*.cpp`, ensure the register_* is invoked from the central registry, attach `PrimMeta` (auto `required_effects` via #2152), add a suite/regression test, run `./build.py docs`
+- Contract: [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) — **do not invent new registration styles**

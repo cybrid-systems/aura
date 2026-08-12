@@ -1,0 +1,36 @@
+; Issue #2915 — PrimRegistrar scaffold proof (misc migrated to register_prim)
+; Misc clocks remain live; discovery surfaces still resolve with meta.
+
+(define ok #t)
+
+; Proof-migrated misc prims still evaluate
+(if (integer? (current-time))
+    #t
+    (begin (display "FAIL-2915 current-time\n") (set! ok #f)))
+
+(if (integer? (current-time-ms))
+    #t
+    (begin (display "FAIL-2915 current-time-ms\n") (set! ok #f)))
+
+(if (integer? (monotonic-ms))
+    #t
+    (begin (display "FAIL-2915 monotonic-ms\n") (set! ok #f)))
+
+(if (integer? (arena-offset))
+    #t
+    (begin (display "FAIL-2915 arena-offset\n") (set! ok #f)))
+
+; Discovery: describe returns a pair (meta present for scaffold-stamped docs)
+(define d (primitive:describe "current-time-ms"))
+(if (pair? d)
+    #t
+    (begin (display "FAIL-2915 primitive:describe current-time-ms\n") (set! ok #f)))
+
+; Catalog / meta list still resolvable (must not break #1552 surfaces)
+(if (procedure? query:primitives-meta)
+    #t
+    (begin (display "FAIL-2915 query:primitives-meta missing\n") (set! ok #f)))
+
+(if ok
+    (begin (display "OK-2915 prim-registrar-scaffold") (newline))
+    (begin (display "FAIL-2915") (newline) (unbound-2915-force-fail)))

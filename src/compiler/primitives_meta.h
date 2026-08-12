@@ -38,7 +38,8 @@ inline constexpr std::string_view kPrimCategoryRendering = "rendering";
 // Issue #697 extension kit version (bumped when schema/contracts change).
 // #709: capture contract + fast slot dispatch + registry stats.
 // #498: constraint skeleton template + query:primitive-metadata.
-inline constexpr int kPrimitivesExtensionKitVersion = 3;
+// #2915: register_prim / PrimSpec authoring scaffold + agent contract.
+inline constexpr int kPrimitivesExtensionKitVersion = 4;
 
 // Agent-facing skeleton bundle returned by primitive:generate-skeleton.
 struct PrimitiveSkeleton {

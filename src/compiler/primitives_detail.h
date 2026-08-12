@@ -5,8 +5,10 @@
 //   - Error paths: pass primitive_error_counter to make_primitive_error.
 //   - Read-only hot paths: capture [&ev] or explicit heap refs; no silent catch.
 //
-// Agents extending stdlib should use DEFINE_PRIMITIVE_META for registration meta
-// and slot_lookup_fast (via prim_record_fastpath_hit) in list/map/filter loops.
+// Agents extending stdlib should prefer register_prim + PrimSpec
+// (prim_registrar_scaffold.hh, Issue #2915) or DEFINE_PRIMITIVE_META for
+// registration meta, and slot_lookup_fast (via prim_record_fastpath_hit)
+// in list/map/filter loops.
 //
 // Issue #671: STATIC_CAPTURE_CHECK helpers (compile-time enforcement).
 // Use PRIM_CAPTURE_HAS_ERROR_COUNTER / PRIM_CAPTURE_USES_GUARD at the
