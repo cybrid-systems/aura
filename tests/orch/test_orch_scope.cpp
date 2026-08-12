@@ -38,6 +38,7 @@
 
 #include "orch/agent_spawn.h"
 #include "orch/agent_scope.h"
+#include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 
 #include <atomic>
@@ -393,6 +394,188 @@ int run_test_orch_scope() {
         // Cleanup.
         cs.eval(R"((orch:scope-cancel-all))");
         cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
+    }
+
+    // ── #2926: session-local scope-resolve by name ─────────────────
+    {
+        std::println("\n=== Issue #2926: orch:scope-resolve (session-local find) ===");
+        CHECK(true, "issue stamp #2926");
+        CompilerService cs;
+        reset_all();
+
+        // Fresh session.
+        cs.eval(R"((orch:scope-cancel-all))");
+        cs.eval(R"((orch:scope-join-all :timeout-ms 500 :drain-ms 500))");
+
+        std::println("\n--- #2926 AC1: spawn then resolve same name ---");
+        {
+            auto spawn = cs.eval(R"((orch:scope-spawn "resolve-agent-a"))");
+            CHECK(spawn.has_value(), "2926 AC1: spawn resolve-agent-a");
+            auto ok_b = cs.eval(
+                R"((let ((r (orch:scope-resolve "resolve-agent-a"))) (if (hash-ref r "ok") 1 0)))");
+            CHECK(ok_b && is_int(*ok_b) && as_int(*ok_b) == 1, "2926 AC1: resolve ok=#t");
+            auto name_ok = cs.eval(
+                R"((let ((r (orch:scope-resolve "resolve-agent-a")))
+                     (if (string=? (hash-ref r "name") "resolve-agent-a") 1 0)))");
+            CHECK(name_ok && is_int(*name_ok) && as_int(*name_ok) == 1,
+                  "2926 AC1: resolve name matches");
+            auto schema = cs.eval(
+                R"((let ((r (orch:scope-resolve "resolve-agent-a"))) (hash-ref r "schema")))");
+            CHECK(schema && is_int(*schema) && as_int(*schema) == 2926, "2926 AC1: schema=2926");
+            // C++ find + send via resolved handle
+            {
+                aura::serve::Scheduler sched(2);
+                aura::orch::AgentScope root(sched);
+                aura::orch::AgentSpec sa;
+                sa.name = "cpp-find-a";
+                sa.body = [] {};
+                sa.attach_mailbox = true;
+                sa.mailbox_high_water = 16;
+                auto& ha = root.spawn(std::move(sa));
+                CHECK(ha.ok, "2926 AC1: C++ spawn ok");
+                auto* found = root.find("cpp-find-a");
+                CHECK(found != nullptr && found->id == ha.id, "2926 AC1: C++ find matching id");
+                aura::serve::mf_mailbox::MailMessage m;
+                m.payload = "hi";
+                auto st = aura::orch::agent_send(*found, std::move(m));
+                CHECK(st == aura::serve::mf_mailbox::PushStatus::Ok ||
+                          st == aura::serve::mf_mailbox::PushStatus::Backpressure,
+                      "2926 AC1: send via resolved handle works");
+                root.cancel_all();
+                (void)root.join_all(aura::orch::JoinPolicy{.primary_ms = 2000, .drain_ms = 2000});
+            }
+        }
+
+        std::println("\n--- #2926 AC2: unknown name → not-found ---");
+        {
+            auto miss = cs.eval(
+                R"((let ((r (orch:scope-resolve "no-such-agent-xyz")))
+                     (list (if (hash-ref r "ok") 1 0)
+                           (if (string=? (hash-ref r "status") "not-found") 1 0))))");
+            CHECK(miss.has_value(), "2926 AC2: resolve missing returns");
+            auto ok0 = cs.eval(
+                R"((let ((r (orch:scope-resolve "no-such-agent-xyz"))) (if (hash-ref r "ok") 1 0)))");
+            CHECK(ok0 && is_int(*ok0) && as_int(*ok0) == 0, "2926 AC2: ok=#f");
+            auto st = cs.eval(
+                R"((let ((r (orch:scope-resolve "no-such-agent-xyz")))
+                     (if (string=? (hash-ref r "status") "not-found") 1 0)))");
+            CHECK(st && is_int(*st) && as_int(*st) == 1, "2926 AC2: status=not-found");
+            // No cross-Evaluator lookup: second CompilerService has empty scope.
+            CompilerService cs2;
+            auto other = cs2.eval(
+                R"((let ((r (orch:scope-resolve "resolve-agent-a"))) (if (hash-ref r "ok") 1 0)))");
+            CHECK(other && is_int(*other) && as_int(*other) == 0,
+                  "2926 AC2: other Evaluator does not see first session agents");
+        }
+
+        std::println("\n--- #2926 AC3: include-descendants hierarchy ---");
+        {
+            aura::serve::Scheduler sched(2);
+            aura::orch::AgentScope root(sched);
+            aura::orch::AgentSpec sa;
+            sa.name = "root-resolve";
+            sa.body = [] {};
+            sa.attach_mailbox = false;
+            (void)root.spawn(std::move(sa));
+            auto& child = root.spawn_child();
+            aura::orch::AgentSpec sb;
+            sb.name = "child-resolve";
+            sb.body = [] {};
+            sb.attach_mailbox = false;
+            (void)child.spawn(std::move(sb));
+            CHECK(root.find("root-resolve", false) != nullptr, "2926 AC3: root finds self");
+            CHECK(root.find("child-resolve", false) == nullptr,
+                  "2926 AC3: include_descendants=#f misses child");
+            CHECK(root.find("child-resolve", true) != nullptr,
+                  "2926 AC3: include_descendants=#t finds child");
+            CHECK(child.find("root-resolve", true) == nullptr,
+                  "2926 AC3: child does not see parent");
+            root.cancel_all();
+            (void)root.join_all(aura::orch::JoinPolicy{.primary_ms = 2000, .drain_ms = 2000});
+        }
+
+        std::println("\n--- #2926 AC4: after join_all → status done or not-found ---");
+        {
+            cs.eval(R"((orch:scope-cancel-all))");
+            cs.eval(R"((orch:scope-join-all :timeout-ms 500 :drain-ms 500))");
+            cs.eval(R"((orch:scope-spawn "join-then-resolve"))");
+            cs.eval(R"((orch:scope-cancel-all))");
+            cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
+            // After join: either scope dropped → not-found, or handle remains with done.
+            auto after = cs.eval(R"((let ((r (orch:scope-resolve "join-then-resolve")))
+                 (list (if (hash-ref r "ok") 1 0)
+                       (hash-ref r "status"))))");
+            CHECK(after.has_value(), "2926 AC4: resolve after join returns");
+            auto ok_or_miss = cs.eval(R"(
+              (let ((r (orch:scope-resolve "join-then-resolve")))
+                (if (hash-ref r "ok")
+                    (if (or (string=? (hash-ref r "status") "done")
+                            (string=? (hash-ref r "status") "cancelled")
+                            (string=? (hash-ref r "status") "alive"))
+                        1 0)
+                    (if (string=? (hash-ref r "status") "not-found") 1 0)))
+            )");
+            CHECK(ok_or_miss && is_int(*ok_or_miss) && as_int(*ok_or_miss) == 1,
+                  "2926 AC4: after join → done/cancelled/alive or not-found (documented)");
+        }
+
+        std::println("\n--- #2926 AC5: MVP linter + metrics ---");
+        {
+            CHECK(g_orch_module_stats.scope_resolve_total.load(std::memory_order_relaxed) >= 1,
+                  "2926 AC5: scope_resolve_total bumps");
+            CHECK(g_orch_module_stats.scope_resolve_miss_total.load(std::memory_order_relaxed) >= 1,
+                  "2926 AC5: scope_resolve_miss_total bumps");
+            std::ifstream in("src/orch/agent_scope.h");
+            if (!in)
+                in.open("../src/orch/agent_scope.h");
+            std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            CHECK(src.find("class AgentRegistry") == std::string::npos,
+                  "2926 AC5: no AgentRegistry type");
+            CHECK(src.find("find(std::string_view") != std::string::npos,
+                  "2926 AC5: find API present");
+            std::ifstream agent_in("src/compiler/evaluator_primitives_agent.cpp");
+            if (!agent_in)
+                agent_in.open("../src/compiler/evaluator_primitives_agent.cpp");
+            std::string agent((std::istreambuf_iterator<char>(agent_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(agent.find("scope-resolve-wired") != std::string::npos,
+                  "2926 AC5: query wires scope-resolve-wired");
+            CHECK(agent.find("scope-resolve-total") != std::string::npos,
+                  "2926 AC5: query wires scope-resolve-total");
+            CHECK(agent.find("schema-2926") != std::string::npos, "2926 AC5: schema-2926 in query");
+        }
+
+        std::println("\n--- #2926 AC6: source-cite + no invent + no docs/design/ ---");
+        {
+            std::ifstream t_in("tests/orch/test_orch_scope.cpp");
+            if (!t_in)
+                t_in.open("../tests/orch/test_orch_scope.cpp");
+            std::string t((std::istreambuf_iterator<char>(t_in)), std::istreambuf_iterator<char>());
+            CHECK(t.find("#2926 AC1") != std::string::npos, "2926 AC6: this suite cites #2926");
+            std::ifstream invent("tests/orch/test_issue_2926.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_2926.cpp");
+            CHECK(!invent.good(), "2926 AC6: no test_issue_2926.cpp");
+            std::ifstream design("docs/design/2926-scope-resolve.md");
+            if (!design.good())
+                design.open("../docs/design/2926-scope-resolve.md");
+            CHECK(!design.good(), "2926 AC6: no docs/design/2926-*");
+            std::ifstream build_in("build.py");
+            if (!build_in)
+                build_in.open("../build.py");
+            std::string build((std::istreambuf_iterator<char>(build_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(build.find("scope-resolve-2926") != std::string::npos ||
+                      build.find("scope_resolve_2926") != std::string::npos,
+                  "2926 AC6: build.py coverage");
+            std::ifstream agent_in("src/compiler/evaluator_primitives_agent.cpp");
+            if (!agent_in)
+                agent_in.open("../src/compiler/evaluator_primitives_agent.cpp");
+            std::string agent((std::istreambuf_iterator<char>(agent_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(agent.find("orch:scope-resolve") != std::string::npos,
+                  "2926 AC6: Aura prim present");
+        }
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
