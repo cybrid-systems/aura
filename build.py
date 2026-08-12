@@ -9216,6 +9216,24 @@ def cmd_isolation_decide_2923_coverage():
     return 0
 
 
+def cmd_wait_reclaimed_2924_coverage():
+    """Issue #2924: wait_reclaimed_body after JoinStatus::Reclaimed.
+
+    Explicit wait for still-running body; #2661 preserved on timeout.
+    """
+    print(f"{B}=== wait_reclaimed_body coverage (#2924) ==={N}")
+    script = COVERAGE_CHECKS / "check_wait_reclaimed_2924.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("wait_reclaimed (#2924) coverage contract rows failed")
+        return 1
+    ok("wait_reclaimed (#2924) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -12347,6 +12365,7 @@ def main():
         "current-source-roundtrip-2921": cmd_current_source_roundtrip_2921_coverage,
         "ast-unparse-2922": cmd_ast_unparse_2922_coverage,
         "isolation-decide-2923": cmd_isolation_decide_2923_coverage,
+        "wait-reclaimed-2924": cmd_wait_reclaimed_2924_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

@@ -733,11 +733,17 @@ int run_test_join_drain_reclaim() {
         CHECK(in_reclaimed_branch,
               "2885 AC2: still-running / reclaim-age-ms / deferred-cleanup keys guarded by "
               "Reclaimed status check (zero-cost on Ok / Timeout / Cancelled)");
-        // Ok / Timeout / Cancelled branches must NOT have the new keys.
-        // The Reclaimed branch is the ONLY path that bumps the new keys.
-        CHECK(posture_prim_src.find("JoinStatus::Ok)") == std::string::npos &&
-                  posture_prim_src.find("JoinStatus::Timeout)") == std::string::npos,
-              "2885 AC2: Ok / Timeout paths don't grow the hash (no new keys)");
+        // Ok / Timeout / Cancelled paths of orch:agent-join must not
+        // unconditionally emplace still-running keys. Keys live only under
+        // the Reclaimed if-block (substring order: Reclaimed guard before
+        // first still-running emplace).
+        const auto reclaimed_if =
+            posture_prim_src.find("if (jr.status == aura::serve::JoinStatus::Reclaimed)");
+        const auto still_key = posture_prim_src.find("still-running");
+        CHECK(reclaimed_if != std::string::npos && still_key != std::string::npos &&
+                  reclaimed_if < still_key,
+              "2885 AC2: still-running key appears only after Reclaimed guard "
+              "(Ok / Timeout paths don't grow the join hash)");
     }
 
     // ── #2885 AC3: #2661 contract preserved — no body-stack free on Reclaimed ──
@@ -804,6 +810,168 @@ int run_test_join_drain_reclaim() {
                 CHECK(name.find("2885-") == std::string::npos,
                       std::string("2885 AC6: no docs/design/") + name + " (forbidden per #1655)");
             }
+        }
+    }
+
+    // ── #2924: wait_reclaimed_body explicit wait after Reclaimed ──
+    {
+        using aura::orch::AgentHandle;
+        using aura::orch::complete_agent_join_cleanup;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::wait_reclaimed_body;
+        using aura::orch::WaitReclaimedResult;
+        using aura::serve::Fiber;
+        using aura::serve::FiberState;
+        using aura::serve::JoinResult;
+        using aura::serve::JoinStatus;
+
+        std::println("\n--- #2924 AC1: body exit → Ok + cleanup_completed ---");
+        {
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            CHECK(fiber_owned->still_running_after_reclaim_counted(),
+                  "2924 AC1 setup: still-running after mark_reclaimed");
+
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 4096; // synthetic reservation for release check
+
+            JoinResult jr;
+            jr.status = JoinStatus::Reclaimed;
+            complete_agent_join_cleanup(h, jr);
+            CHECK(h.reclaimed_deferred_cleanup, "2924 AC1: deferred flag set");
+            CHECK(h.reserved_memory_bytes == 4096, "2924 AC1: reservation held after Reclaimed");
+
+            // Body exits cooperatively.
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+
+            const auto wait_before =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            const auto clean_before =
+                g_orch_module_stats.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed);
+            auto wr = wait_reclaimed_body(h, std::optional<std::uint64_t>{1000});
+            CHECK(wr.status == JoinStatus::Ok, "2924 AC1: wait status=Ok");
+            CHECK(!wr.still_running, "2924 AC1: still_running=false");
+            CHECK(wr.cleanup_completed, "2924 AC1: cleanup_completed=true");
+            CHECK(h.reserved_memory_bytes == 0, "2924 AC1: reservation released once");
+            CHECK(!h.reclaimed_deferred_cleanup, "2924 AC1: deferred flag cleared");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) >=
+                      wait_before + 1,
+                  "2924 AC1: wait_reclaimed_total bumps");
+            CHECK(g_orch_module_stats.wait_reclaimed_cleanup_total.load(
+                      std::memory_order_relaxed) >= clean_before + 1,
+                  "2924 AC1: wait_reclaimed_cleanup_total bumps");
+        }
+
+        std::println("\n--- #2924 AC2: timeout while body still running → no release ---");
+        {
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinResult jr;
+            jr.status = JoinStatus::Reclaimed;
+            complete_agent_join_cleanup(h, jr);
+            CHECK(h.reserved_memory_bytes == 2048, "2924 AC2 setup: reservation held");
+
+            const auto to_before =
+                g_orch_module_stats.wait_reclaimed_timeout_total.load(std::memory_order_relaxed);
+            auto wr = wait_reclaimed_body(h, std::optional<std::uint64_t>{1}); // 1ms
+            CHECK(wr.status == JoinStatus::Timeout, "2924 AC2: status=Timeout");
+            CHECK(wr.still_running, "2924 AC2: still_running=true");
+            CHECK(!wr.cleanup_completed, "2924 AC2: cleanup_completed=false");
+            CHECK(h.reserved_memory_bytes == 2048, "2924 AC2: reservation NOT released (#2661)");
+            CHECK(h.reclaimed_deferred_cleanup, "2924 AC2: deferred flag still set");
+            CHECK(g_orch_module_stats.wait_reclaimed_timeout_total.load(
+                      std::memory_order_relaxed) >= to_before + 1,
+                  "2924 AC2: wait_reclaimed_timeout_total bumps");
+            // Cleanup so dtor does not leak reservation accounting.
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            (void)wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+        }
+
+        std::println("\n--- #2924 AC3: non-Reclaimed path → Invalid ---");
+        {
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->set_state(FiberState::Done);
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 100;
+            JoinResult jr;
+            jr.status = JoinStatus::Ok;
+            complete_agent_join_cleanup(h, jr);
+            CHECK(!h.reclaimed_deferred_cleanup, "2924 AC3: no deferred after Ok cleanup");
+            auto wr = wait_reclaimed_body(h, std::optional<std::uint64_t>{10});
+            CHECK(wr.status == JoinStatus::Invalid, "2924 AC3: Invalid on non-Reclaimed");
+            CHECK(!wr.cleanup_completed, "2924 AC3: no cleanup on Invalid");
+        }
+
+        std::println("\n--- #2924 AC4: second wait idempotent ---");
+        {
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 512;
+            JoinResult jr;
+            jr.status = JoinStatus::Reclaimed;
+            complete_agent_join_cleanup(h, jr);
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            auto wr1 = wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+            CHECK(wr1.status == JoinStatus::Ok && wr1.cleanup_completed, "2924 AC4: first wait Ok");
+            auto wr2 = wait_reclaimed_body(h, std::optional<std::uint64_t>{10});
+            CHECK(wr2.status == JoinStatus::Invalid, "2924 AC4: second wait Invalid (idempotent)");
+            CHECK(h.reserved_memory_bytes == 0, "2924 AC4: no double-free (reserved stays 0)");
+        }
+
+        std::println("\n--- #2924 AC5: metrics + query keys + Soft source-cite ---");
+        {
+            const auto spawn_src = read_file("src/orch/agent_spawn.h");
+            const auto agent_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto fiber_src = read_file("src/serve/fiber.h");
+            CHECK(spawn_src.find("wait_reclaimed_body") != std::string::npos,
+                  "2924 AC5: wait_reclaimed_body in agent_spawn.h");
+            CHECK(spawn_src.find("WaitReclaimedResult") != std::string::npos,
+                  "2924 AC5: WaitReclaimedResult");
+            CHECK(spawn_src.find("wait_reclaimed_total") != std::string::npos,
+                  "2924 AC5: wait_reclaimed_total metric");
+            CHECK(spawn_src.find("wait_reclaimed_timeout_total") != std::string::npos,
+                  "2924 AC5: wait_reclaimed_timeout_total");
+            CHECK(spawn_src.find("wait_reclaimed_cleanup_total") != std::string::npos,
+                  "2924 AC5: wait_reclaimed_cleanup_total");
+            CHECK(spawn_src.find("Issue #2924") != std::string::npos,
+                  "2924 AC5: source-cite #2924");
+            CHECK(fiber_src.find("still_running_after_reclaim_counted") != std::string::npos,
+                  "2924 AC5: fiber still_running accessor");
+            CHECK(agent_src.find("orch:agent-wait-reclaimed") != std::string::npos,
+                  "2924 AC5: Aura orch:agent-wait-reclaimed");
+            CHECK(agent_src.find("wait-reclaimed-total") != std::string::npos,
+                  "2924 AC5: query key wait-reclaimed-total");
+            CHECK(agent_src.find("schema-2924") != std::string::npos, "2924 AC5: schema-2924");
+        }
+
+        std::println("\n--- #2924 AC6: extend this suite + no invent + no docs/design/ ---");
+        {
+            const auto t = read_file("tests/orch/test_join_drain_reclaim.cpp");
+            CHECK(t.find("#2924 AC1") != std::string::npos, "2924 AC6: this suite cites #2924");
+            CHECK(read_file("docs/design/2924-wait-reclaimed.md").empty(),
+                  "2924 AC6: no docs/design/2924-* per #1655");
+            std::ifstream invent("tests/orch/test_issue_2924.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_2924.cpp");
+            CHECK(!invent.good(), "2924 AC6: no test_issue_2924.cpp per #81967");
+            const auto build = read_file("build.py");
+            CHECK(build.find("wait-reclaimed-2924") != std::string::npos ||
+                      build.find("wait_reclaimed_2924") != std::string::npos,
+                  "2924 AC6: build.py coverage cmd");
         }
     }
 
