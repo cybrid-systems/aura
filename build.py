@@ -9327,6 +9327,25 @@ def cmd_steal_residual_rearm_race_2901_coverage():
     return 0
 
 
+def cmd_steal_invariant_table_2929_coverage():
+    """Issue #2929: StealInvariant table for steal_safety_transaction hard-AND.
+
+    Named invariants + per-arm fail counters + last RejectHard bit-set;
+    ticket only after all pass; query schema-2929.
+    """
+    print(f"{B}=== steal invariant table coverage (#2929) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_invariant_table_2929.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal invariant table (#2929) coverage contract rows failed")
+        return 1
+    ok("steal invariant table (#2929) coverage clean")
+    return 0
+
+
 def cmd_chaos_release_blocker_2902_coverage():
     """Issue #2902: static contract for chaos hard release blocker."""
     print(f"{B}=== chaos hard release blocker coverage (#2902) ==={N}")
@@ -12444,6 +12463,7 @@ def main():
         "scope-resolve-2926": cmd_scope_resolve_2926_coverage,
         "force-jit-reason-bit-map-2927": cmd_force_jit_reason_bit_map_2927_coverage,
         "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,
+        "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

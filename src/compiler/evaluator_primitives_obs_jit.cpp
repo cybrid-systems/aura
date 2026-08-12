@@ -36,6 +36,7 @@ module;
 #include "hash_meta.h"
 #include "basis_points.h"
 #include "serve/fiber.h"
+#include "serve/steal_safety.h" // Issue #2929: StealInvariant counters / last reject bits
 #include "core/gc_hooks.h"
 #include "core/lifetime_contract.h"          // Issue #2300
 #include "core/densify_consistency_report.h" // Issue #2341
@@ -11184,8 +11185,9 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t arm_rejected_overflow_total =
                 aura::gc_hooks::g_gc_defer_arm_rejected_overflow_total.load(
                     std::memory_order_relaxed);
-            // Capacity 128: #2088 + #2160 + #2173 + #2203 + #2204 MutationHold.
-            auto* ht = FlatHashTable::create(128);
+            // Capacity 256: #2088 + #2160 + #2173 + #2203 + #2204 MutationHold
+            // + #2929 StealInvariant table keys (additive).
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -11383,6 +11385,71 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("residual-defer-steal-hard-and-wired", 1);
             insert_kv("schema-2546", 2546);
             insert_kv("issue-2546", 2546);
+            // Issue #2929: StealInvariant table + per-invariant fail totals
+            // (sole-enqueue gate hard-AND is machine-checkable). Additive;
+            // #2699/#2721/#2844 counters preserved.
+            {
+                using aura::serve::steal_invariant_mask;
+                using aura::serve::StealInvariant;
+                insert_kv("steal-safety-transaction-calls-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_transaction_calls_v_read()));
+                insert_kv(
+                    "steal-safety-transaction-ok-total",
+                    static_cast<std::int64_t>(aura::serve::steal_safety_transaction_ok_v_read()));
+                insert_kv("steal-safety-transaction-reject-hard-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_transaction_reject_hard_v_read()));
+                insert_kv("steal-invariant-snapshot-fail-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_invariant_snapshot_fail_total_v_read()));
+                insert_kv("steal-invariant-boundary-fail-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_residual_boundary_unsafe_total_v_read()));
+                insert_kv(
+                    "steal-invariant-layout-stamp-fail-total",
+                    static_cast<std::int64_t>(
+                        aura::serve::steal_safety_residual_layout_stamp_mismatch_total_v_read()));
+                insert_kv("steal-invariant-ticket-fail-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_residual_ticket_mismatch_total_v_read()));
+                insert_kv("steal-invariant-gc-defer-fail-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_residual_gc_defer_armed_total_v_read()));
+                insert_kv("steal-invariant-envframe-fail-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_residual_envframe_lag_total_v_read()));
+                insert_kv("steal-invariant-last-reject-bits",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_last_reject_invariant_bits_v_read()));
+                insert_kv("steal-invariant-bit-snapshot",
+                          static_cast<std::int64_t>(
+                              steal_invariant_mask(StealInvariant::SnapshotConsistent)));
+                insert_kv(
+                    "steal-invariant-bit-boundary",
+                    static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::BoundarySafe)));
+                insert_kv("steal-invariant-bit-layout",
+                          static_cast<std::int64_t>(
+                              steal_invariant_mask(StealInvariant::LayoutStampMatch)));
+                insert_kv(
+                    "steal-invariant-bit-ticket",
+                    static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::TicketFresh)));
+                insert_kv(
+                    "steal-invariant-bit-gc-defer",
+                    static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::GcDeferClear)));
+                insert_kv(
+                    "steal-invariant-bit-envframe",
+                    static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::EnvFrameOk)));
+                insert_kv("steal-invariant-table-wired",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_invariant_table_wired_v_read()));
+                insert_kv("schema-2929", 2929);
+                insert_kv("issue-2929", 2929);
+                insert_kv("schema-2721", 2721);
+                insert_kv("issue-2721", 2721);
+                insert_kv("schema-2699", 2699);
+                insert_kv("issue-2699", 2699);
+            }
             // Issue #2667: production-only hard residual GcDefer on
             // steal-complete + PanicCheckpoint rebind. Bumped when
             // aura_evaluator_on_steal_complete clears a live

@@ -47,10 +47,30 @@ enum class StealSafetyDecision : std::uint8_t {
     RejectHard = 1,
 };
 
+// Issue #2929: named invariants for the sole-enqueue gate hard-AND.
+// Every residual arm in steal_safety_transaction maps to one value;
+// RejectHard records the failing bit-set (bit N = StealInvariant N).
+// Stable ABI for Agents / dashboards / linters — do not reorder.
+enum class StealInvariant : std::uint8_t {
+    SnapshotConsistent = 0, // MutationSafetySnapshot seqlock consistent
+    BoundarySafe = 1,       // is_at_mutation_boundary_safe
+    LayoutStampMatch = 2,   // aura_evaluator_check_resume_layout_stamp
+    TicketFresh = 3,        // resume ticket matches snap.ticket
+    GcDeferClear = 4,       // victim evaluator GC defer clear
+    EnvFrameOk = 5,         // densify EnvFrame residual (#2745)
+    Count = 6,
+};
+
+[[nodiscard]] inline constexpr std::uint64_t steal_invariant_mask(StealInvariant inv) noexcept {
+    return static_cast<std::uint64_t>(1) << static_cast<unsigned>(inv);
+}
+
 inline constexpr int kStealSafetyTransactionIssue = 2699;
 inline constexpr int kStealSafetyTransactionHardAndIssue = 2721;
 // Issue #2745: EnvFrame hold_gen / dual-epoch residual hard-AND arm.
 inline constexpr int kStealSafetyEnvFrameResidualIssue = 2745;
+// Issue #2929: explicit StealInvariant table + last RejectHard bits.
+inline constexpr int kStealSafetyInvariantTableIssue = 2929;
 
 // File-scope atomics (mirror #2693/#2694/#2695/#2696/#2697/#2698 pattern).
 // The transaction itself is the caller; these counters surface the
@@ -83,6 +103,16 @@ inline std::atomic<std::uint32_t> g_steal_safety_residual_hard_and_wired{1};
 inline std::atomic<std::uint64_t> g_steal_safety_residual_rearm_race_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_residual_rearm_race_wired{1};
 inline constexpr int kStealSafetyResidualRearmRaceIssue = 2901;
+
+// Issue #2929: SnapshotConsistent fail counter (inconsistency path before
+// residual hard-AND). Residual arms re-use residual_* counters above as
+// the dedicated per-StealInvariant failure totals (BoundarySafe →
+// residual_boundary_unsafe, … EnvFrameOk → residual_envframe_lag).
+inline std::atomic<std::uint64_t> g_steal_safety_invariant_snapshot_fail_total{0};
+// Bit-set of last RejectHard failing invariants (bit N = StealInvariant N).
+// Soft/quiet Ok path does not write (Agents read last RejectHard only).
+inline std::atomic<std::uint64_t> g_steal_safety_last_reject_invariant_bits{0};
+inline std::atomic<std::uint32_t> g_steal_safety_invariant_table_wired{1};
 
 [[nodiscard]] inline std::uint64_t steal_safety_transaction_calls_v_read() noexcept {
     return g_steal_safety_transaction_calls_total.load(std::memory_order_relaxed);
@@ -121,6 +151,37 @@ steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
 [[nodiscard]] inline std::uint32_t steal_safety_residual_rearm_race_wired_v_read() noexcept {
     return g_steal_safety_residual_rearm_race_wired.load(std::memory_order_relaxed);
 }
+// Issue #2929: StealInvariant table accessors.
+[[nodiscard]] inline std::uint64_t steal_safety_invariant_snapshot_fail_total_v_read() noexcept {
+    return g_steal_safety_invariant_snapshot_fail_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t steal_safety_last_reject_invariant_bits_v_read() noexcept {
+    return g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t steal_safety_invariant_table_wired_v_read() noexcept {
+    return g_steal_safety_invariant_table_wired.load(std::memory_order_relaxed);
+}
+// Per-invariant fail total (SSOT for Agents). Residual counters alias
+// the existing residual_* totals so #2721/#2745 dashboards stay valid.
+[[nodiscard]] inline std::uint64_t steal_safety_invariant_fail_total(StealInvariant inv) noexcept {
+    switch (inv) {
+        case StealInvariant::SnapshotConsistent:
+            return steal_safety_invariant_snapshot_fail_total_v_read();
+        case StealInvariant::BoundarySafe:
+            return steal_safety_residual_boundary_unsafe_total_v_read();
+        case StealInvariant::LayoutStampMatch:
+            return steal_safety_residual_layout_stamp_mismatch_total_v_read();
+        case StealInvariant::TicketFresh:
+            return steal_safety_residual_ticket_mismatch_total_v_read();
+        case StealInvariant::GcDeferClear:
+            return steal_safety_residual_gc_defer_armed_total_v_read();
+        case StealInvariant::EnvFrameOk:
+            return steal_safety_residual_envframe_lag_total_v_read();
+        case StealInvariant::Count:
+        default:
+            return 0;
+    }
+}
 
 // The single authoritative transaction. Returns Ok (fiber ready to
 // enqueue) or RejectHard (Cancel+Done — never local_queue_.push). On
@@ -149,6 +210,8 @@ inline void clear_steal_safety_transaction_for_test() noexcept {
     g_steal_safety_residual_gc_defer_armed_total.store(0, std::memory_order_relaxed);
     g_steal_safety_residual_envframe_lag_total.store(0, std::memory_order_relaxed);
     g_steal_safety_residual_rearm_race_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_invariant_snapshot_fail_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_last_reject_invariant_bits.store(0, std::memory_order_relaxed);
     g_steal_safety_between_clear_and_hard_and_hook = nullptr;
 }
 
