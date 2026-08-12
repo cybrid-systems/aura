@@ -1,0 +1,30 @@
+; Issue #2914 — query primitives modularization smoke
+; Peels still register through register_query_primitives; discovery +
+; stats facades remain live. Error convention: true errors stay error values.
+
+(define ok #t)
+
+; Core vector/query path still works (workspace-independent)
+(if (= (vector-length (make-vector 4 0)) 4)
+    #t
+    (begin (display "FAIL-2914 make-vector\n") (set! ok #f)))
+
+; Stats facade (register_stats_impl path across peels) remains resolvable
+(define s (engine:metrics "query:module-export-cache-stats"))
+(if (hash? s)
+    #t
+    (begin (display "FAIL-2914 module-export-cache-stats\n") (set! ok #f)))
+
+; Schema discovery still present (query:schema primitive)
+(if (procedure? query:schema)
+    #t
+    (begin (display "FAIL-2914 query:schema missing\n") (set! ok #f)))
+
+; list-ref true error remains an error value (not silent void)
+(if (error? (list-ref (list 1 2) 99))
+    #t
+    (begin (display "FAIL-2914 list-ref should error\n") (set! ok #f)))
+
+(if ok
+    (begin (display "OK-2914 query-primitives-split") (newline))
+    (begin (display "FAIL-2914") (newline) (unbound-2914-force-fail)))
