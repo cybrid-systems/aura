@@ -1335,6 +1335,20 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                     kv.emplace_back("issue-2402",
                                     make_int(aura::ast::kRestampIncrementalDefaultIssue));
                     kv.emplace_back("restamp-incremental-wired", make_int(1));
+                    // Issue #2934: restamp budget (Guard exit latency control).
+                    kv.emplace_back("restamp-budget", make_int(static_cast<std::int64_t>(
+                                                          ws->restamp_budget_nodes())));
+                    kv.emplace_back(
+                        "restamp-budget-exceeded-total",
+                        make_int(static_cast<std::int64_t>(ws->restamp_budget_exceeded_total())));
+                    kv.emplace_back(
+                        "restamp-nodes-skipped-total",
+                        make_int(static_cast<std::int64_t>(ws->restamp_nodes_skipped_total())));
+                    kv.emplace_back("restamp-last-budget-exceeded",
+                                    make_int(ws->restamp_last_budget_exceeded() ? 1 : 0));
+                    kv.emplace_back("schema-2934", make_int(aura::ast::kRestampBudgetIssue));
+                    kv.emplace_back("issue-2934", make_int(aura::ast::kRestampBudgetIssue));
+                    kv.emplace_back("restamp-budget-wired", make_int(1));
                 }
             }
             return build_kv_hash(ev, kv);

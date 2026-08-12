@@ -13974,6 +13974,9 @@ public:
     // Evaluator access). Heavy try_acquire / AcquireTag ctor / dtor /
     // move / enable_fine_rollback live in evaluator_mutation_boundary.cpp
     // (same module partition pattern as evaluator_fiber_mutation.cpp).
+    // Issue #2934: successful exit drives restamp_all_node_generations
+    // under AURA_RESTAMP_BUDGET_NODES (soft-degrade over budget; see
+    // flatast_restamp.hh + evaluator_mutation_boundary.cpp exit path).
     class MutationBoundaryGuard {
         // Issue #241: did we capture a panic checkpoint at ctor?
         // (save_panic_checkpoint returns false if no source is loaded

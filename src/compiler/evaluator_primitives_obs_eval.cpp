@@ -6179,6 +6179,29 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"close-residual-defer-after-exit-wired", make_int(1)},
                 {"schema-2846", make_int(2846)},
                 {"issue-2846", make_int(2846)},
+                // Issue #2934: restamp budget on Guard exit (Agent latency
+                // control). Live FlatAST counters when workspace loaded.
+                {"restamp-budget",
+                 make_int(ev.workspace_flat() ? static_cast<std::int64_t>(
+                                                    ev.workspace_flat()->restamp_budget_nodes())
+                                              : 0)},
+                {"restamp-budget-exceeded-total",
+                 make_int(ev.workspace_flat()
+                              ? static_cast<std::int64_t>(
+                                    ev.workspace_flat()->restamp_budget_exceeded_total())
+                              : 0)},
+                {"restamp-nodes-skipped-total",
+                 make_int(ev.workspace_flat()
+                              ? static_cast<std::int64_t>(
+                                    ev.workspace_flat()->restamp_nodes_skipped_total())
+                              : 0)},
+                {"restamp-last-budget-exceeded",
+                 make_int(ev.workspace_flat() && ev.workspace_flat()->restamp_last_budget_exceeded()
+                              ? 1
+                              : 0)},
+                {"restamp-budget-wired", make_int(1)},
+                {"schema-2934", make_int(2934)},
+                {"issue-2934", make_int(2934)},
                 // Issue #2364: PanicCheckpoint residual × densify closed loop.
                 {"panic-defer-after-densify-total",
                  make_int(m ? load(m->panic_defer_after_densify_total)

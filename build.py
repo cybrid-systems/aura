@@ -696,6 +696,17 @@ def cmd_lint():
             "Issue #2933 QueryResult binding linter failed — run python3 scripts/coverage/checks/check_query_result_binding_2933.py"
         )
         return r
+    # Issue #2934: Guard exit restamp budget soft-degrade + Agent metrics.
+    rsb_script = COVERAGE_CHECKS / "check_restamp_budget_2934.py"
+    if not rsb_script.exists():
+        fail(f"missing {rsb_script}")
+        return 1
+    r = run([sys.executable, str(rsb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2934 restamp budget linter failed — run python3 scripts/coverage/checks/check_restamp_budget_2934.py"
+        )
+        return r
     # Issue #2754: region concurrent cone / ImpactScope mask-AND
     # disjointness (#2724 residual). Equal keys + proven cone masks
     # (mask AND == 0) → concurrent admit; true overlap still rejects.
@@ -9453,6 +9464,25 @@ def cmd_query_result_binding_2933_coverage():
     return 0
 
 
+def cmd_restamp_budget_2934_coverage():
+    """Issue #2934: Guard exit restamp budget + Agent-visible metrics.
+
+    Soft-degrade over budget (incremental/lazy); default unlimited Soft;
+    schema-2934 keys on restamp / mutation-boundary surfaces.
+    """
+    print(f"{B}=== restamp budget coverage (#2934) ==={N}")
+    script = COVERAGE_CHECKS / "check_restamp_budget_2934.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("restamp budget (#2934) coverage contract rows failed")
+        return 1
+    ok("restamp budget (#2934) coverage clean")
+    return 0
+
+
 def cmd_chaos_steal_gc_nightly_2931():
     """Issue #2931: nightly hard gate — steal×mutate×GC×mailbox chaos soak.
 
@@ -12656,6 +12686,7 @@ def main():
         "chaos-steal-gc-nightly-2931-coverage": cmd_chaos_steal_gc_nightly_2931_coverage,
         "hold-budget-forced-fail-closed-2932": cmd_hold_budget_forced_fail_closed_2932_coverage,
         "query-result-binding-2933": cmd_query_result_binding_2933_coverage,
+        "restamp-budget-2934": cmd_restamp_budget_2934_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,
