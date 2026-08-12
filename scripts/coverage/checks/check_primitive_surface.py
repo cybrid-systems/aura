@@ -47,6 +47,8 @@ INVENTORY_PATH = ROOT / "docs" / "generated" / "primitive-inventory.json"
 BASELINE_PATH = ROOT / "docs" / "generated" / "stats-primitives-baseline.json"
 
 ADD_RE = re.compile(r'add\(\s*"([^"]+)"')
+# Issue #2915: register_prim(add, ev, "name", ...) scaffold registrations.
+REGISTER_PRIM_RE = re.compile(r'register_prim\s*\(\s*add\s*,\s*\w+\s*,\s*"([^"]+)"')
 STATS_LIST_RE = re.compile(
     r"kObservabilityStatsPrimitives\s*=\s*\{(.*?)\n\};",
     re.DOTALL,
@@ -194,6 +196,8 @@ def scan_registered_names() -> list[str]:
     for path in sorted((ROOT / "src" / "compiler").glob("evaluator_primitives*.cpp")):
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in ADD_RE.finditer(text):
+            names.add(m.group(1))
+        for m in REGISTER_PRIM_RE.finditer(text):
             names.add(m.group(1))
     return sorted(names)
 
