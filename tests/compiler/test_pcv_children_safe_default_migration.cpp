@@ -245,7 +245,8 @@ static void ac2862_2_source_primitive() {
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
     CHECK(q.find("query:children-stable-stats") != std::string::npos,
           "#2862 AC2: query:children-stable-stats primitive registered");
-    CHECK(q.find("schema") != std::string::npos && q.find("make_int(2862)") != std::string::npos,
+    CHECK(q.find("schema") != std::string::npos &&
+              q.find("insert_kv(\"schema\", 2862)") != std::string::npos,
           "#2862 AC2: schema=2862 in hash builder");
     CHECK(q.find("children-stable-span-calls-total") != std::string::npos &&
               q.find("children-stable-pin-hits-total") != std::string::npos &&
@@ -253,7 +254,9 @@ static void ac2862_2_source_primitive() {
               q.find("children-stable-epoch-mismatch-total") != std::string::npos,
           "#2862 AC2: 4 contract counter keys in hash");
     // Additive on existing #2036 + #2861 pattern safety stats.
-    CHECK(q.find("query:children-stable-safe-default-total") != std::string::npos,
+    // The #2036 counter is exposed as children-stable-safe-default-total
+    // inside the query:children-stable-stats hash (insert_kv key).
+    CHECK(q.find("children-stable-safe-default-total") != std::string::npos,
           "#2862 AC2: #2036 children-stable-safe-default-total preserved");
     CHECK(q.find("query:pattern-safety-stats") != std::string::npos,
           "#2862 AC2: #2861 pattern-safety-stats preserved");
