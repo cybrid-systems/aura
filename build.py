@@ -2819,6 +2819,54 @@ def test_unit():
 # (loaded via tests/python/integ_cases.py — #1932 layout).
 
 
+def _case_jobs() -> int:
+    """Fan-out for multi-case suites (integ / typecheck / smoke).
+
+    AURA_CASE_JOBS overrides; else when AURA_TEST_JOBS>1 use min(4, jobs).
+    """
+    raw = os.environ.get("AURA_CASE_JOBS", "").strip()
+    if raw.isdigit():
+        return max(1, int(raw))
+    raw_t = os.environ.get("AURA_TEST_JOBS", "1").strip()
+    try:
+        tj = max(1, int(raw_t))
+    except ValueError:
+        tj = 1
+    if tj <= 1:
+        return 1
+    return max(1, min(4, tj))
+
+
+def _run_cases_parallel(label: str, cases: list, run_one, *, sort_key=None) -> int:
+    """Run independent cases with optional ThreadPoolExecutor; print ordered."""
+    jobs = _case_jobs()
+    results: list[tuple[object, bool, str]] = []
+    if jobs <= 1 or len(cases) <= 1:
+        for tc in cases:
+            results.append(run_one(tc))
+    else:
+        print(f"  {label} parallel cases jobs={jobs} n={len(cases)}")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            futs = [pool.submit(run_one, tc) for tc in cases]
+            for fut in as_completed(futs):
+                results.append(fut.result())
+        if sort_key is not None:
+            results.sort(key=lambda row: sort_key(row[0]))
+        else:
+            results.sort(key=lambda row: str(row[0]))
+
+    passed = failed = 0
+    for _key, ok_case, msg in results:
+        if ok_case:
+            ok(msg)
+            passed += 1
+        else:
+            fail(msg)
+            failed += 1
+    print(f"  {label}: {passed}/{passed + failed} passed")
+    return 1 if failed > 0 else 0
+
+
 def test_integ():
     """端到端管线测试 — eval / ir / typecheck / serve"""
     print(f"{B}═══ Integration tests ═══{N}")
@@ -2832,30 +2880,27 @@ def test_integ():
         "typecheck": ["--typecheck"],
         "serve": ["--serve"],
     }
-    passed = failed = 0
+    env = _aura_test_env()
+    cases = list(load_integ_cases())
 
-    for tc in load_integ_cases():
+    def run_one(tc):
         args = [str(AURA)] + flags.get(tc.pipeline, [])
         pipe_input = tc.code if tc.pipeline == "serve" else tc.code + "\n"
-
         r = subprocess.run(
             args,
             input=pipe_input,
             capture_output=True,
             text=True,
             timeout=30,
-            env=_aura_test_env(),
+            env=env,
         )
-
         ok_case = True
         issues = []
-
         # err_div_zero accepts multiple exit codes:
         #   0  = clean evaluation (test author's intent)
         #   -8 = legacy SIGFPE crash (pre-IR-executor behavior)
         #   1  = clean error report (IR executor DivisionByZero,
         #         post-#212 pure arithmetic_div_pure path)
-        # All three satisfy the test's intent: no UB, no crash.
         if r.returncode != tc.expected_status and not (tc.name == "err_div_zero" and r.returncode in (0, -8, 1)):
             ok_case = False
             issues.append(f"exit_code={r.returncode} (expected {tc.expected_status})")
@@ -2892,14 +2937,10 @@ def test_integ():
                 issues.append(f"expected error '{tc.expected_err}' not found")
 
         if ok_case:
-            ok(f"[{tc.pipeline:10s}] {tc.name}")
-            passed += 1
-        else:
-            fail(f"[{tc.pipeline:10s}] {tc.name} — {'; '.join(issues)}")
-            failed += 1
+            return (tc.name, True, f"[{tc.pipeline:10s}] {tc.name}")
+        return (tc.name, False, f"[{tc.pipeline:10s}] {tc.name} — {'; '.join(issues)}")
 
-    print(f"  Integration: {passed}/{passed + failed} passed")
-    return 1 if failed > 0 else 0
+    return _run_cases_parallel("Integration", cases, run_one, sort_key=lambda n: n)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2914,8 +2955,10 @@ def test_typecheck():
         fail(f"{AURA} not found")
         return 1
 
-    passed = failed = 0
-    for tc in load_typecheck_cases():
+    env = _aura_test_env()
+    cases = list(load_typecheck_cases())
+
+    def run_one(tc):
         name, code, exp_type = tc.name, tc.code, tc.expected_type
         r = subprocess.run(
             [str(AURA), "--typecheck"],
@@ -2923,7 +2966,7 @@ def test_typecheck():
             capture_output=True,
             text=True,
             timeout=10,
-            env=_aura_test_env(),
+            env=env,
         )
         stdout = r.stdout.strip()
         type_ok = False
@@ -2931,16 +2974,11 @@ def test_typecheck():
             if line.startswith("type:") and exp_type in line:
                 type_ok = True
                 break
-
         if type_ok:
-            ok(f"{name:25s} → {exp_type}")
-            passed += 1
-        else:
-            fail(f"{name:25s} expected '{exp_type}', got: {stdout[:80]}")
-            failed += 1
+            return (name, True, f"{name:25s} → {exp_type}")
+        return (name, False, f"{name:25s} expected '{exp_type}', got: {stdout[:80]}")
 
-    print(f"  Typecheck: {passed}/{passed + failed} passed")
-    return 1 if failed > 0 else 0
+    return _run_cases_parallel("Typecheck", cases, run_one, sort_key=lambda n: n)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3008,26 +3046,24 @@ def test_smoke():
         fail(f"{AURA} not found")
         return 1
 
-    passed = failed = 0
-    for sc in load_smoke_cases():
+    env = _aura_test_env()
+    cases = list(load_smoke_cases())
+
+    def run_one(sc):
         name, cmd, expected = sc.name, sc.command, sc.expected
         r = subprocess.run(
             ["bash", "-c", f"cd {ROOT} && {cmd}"],
             capture_output=True,
             text=True,
             timeout=30,
-            env=_aura_test_env(),
+            env=env,
         )
         combined = r.stdout + r.stderr
         if expected in combined:
-            ok(f"{name:20s} → {expected}")
-            passed += 1
-        else:
-            fail(f"{name:20s} expected '{expected}', got '{combined[:60]}'")
-            failed += 1
+            return (name, True, f"{name:20s} → {expected}")
+        return (name, False, f"{name:20s} expected '{expected}', got '{combined[:60]}'")
 
-    print(f"  Smoke: {passed}/{passed + failed} passed")
-    return 1 if failed > 0 else 0
+    return _run_cases_parallel("Smoke", cases, run_one, sort_key=lambda n: n)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3611,9 +3647,9 @@ CI_ISSUES = ["issues"]
 CI_ISSUES_FAST = ["issues-fast"]
 # Suites safe to run in parallel (each spawns its own process / binary).
 # Aura is read-only under Soft sandbox defaults (_aura_test_env).
-# Kept serial:
-#   - p0: tests/python/test_regression.py uses fixed /tmp/aura-* paths
-#   - bench: heavy, optional, wall-clock SLO
+# p0 uses fixed /tmp/aura-* *within* its own process only — a single p0
+# instance is fine alongside other suites (they do not share those paths).
+# Kept serial: bench (heavy SLO).
 CI_PARALLEL_SAFE = frozenset(
     {
         "unit",
@@ -3629,6 +3665,7 @@ CI_PARALLEL_SAFE = frozenset(
         "bash",
         "suite",
         "regression",
+        "p0",
     }
 )
 

@@ -43,8 +43,9 @@ env:
   AURA_BUILD_TYPE: RelWithDebInfo
   AURA_BUILD_JOBS: "0"  # 0 → use all host CPUs in build.py
   AURA_TEST_JOBS: "4"
-  # Suite-internal case fan-out (keep modest — suites also run in parallel).
-  AURA_SUITE_JOBS: "2"
+  # Suite-internal + multi-case fan-out (suites also run in parallel).
+  AURA_SUITE_JOBS: "3"
+  AURA_CASE_JOBS: "2"
   AURA_ISSUES_JOBS: "4"
   # Cross-run ccache caused stale-object flakes; compile fresh every job.
   CCACHE_DISABLE: 1
@@ -194,13 +195,8 @@ jobs:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
       run: python3 build.py chaos-pr-hard-fail
 
-    # Was a separate s0-smoke job that rebuilt the entire tree (~10–15m).
-    # Folded here: reuse the same build/ (seconds, not a second full link).
-    - name: Suite s0 surface smoke
-      env:
-        AURA_RUNTIME_DIR: ${{ github.workspace }}
-      run: python3 build.py test suite-s0
-
+    # suite-s0 dropped: ./build.py ci already runs full tests/suite/*.aura
+    # (which is a superset of SUITE_S0_FILES). Keep a cheap s0 metrics probe.
     - name: "engine:metrics under s0"
       env:
         AURA_PRIMITIVES: s0
