@@ -611,6 +611,22 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("occurrence-persist-production-always-on-success", 1);
                 insert_kv("schema-2910", 2910);
                 insert_kv("issue-2910", 2910);
+                // Issue #2938: outermost success freezes Occurrence into
+                // immutable commit snapshot + post-persist proof stamp.
+                // Additive; Soft/empty leave counters at 0.
+                insert_kv("occurrence-commit-snapshot-written-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::
+                                  occurrence_commit_snapshot_written_total_v_read()));
+                insert_kv(
+                    "occurrence-commit-snapshot-mid",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::occurrence_commit_snapshot_mid_v_read()));
+                insert_kv("occurrence-commit-snapshot-wired", 1);
+                insert_kv("schema-2938",
+                          aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue);
+                insert_kv("issue-2938",
+                          aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue);
             }
             // Issue #2307: sole-authority sentinel.
             // solve_delta_occurrence now seeds occurrence
