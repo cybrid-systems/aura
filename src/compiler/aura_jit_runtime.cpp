@@ -2069,6 +2069,9 @@ extern "C" void aura_sync_remount_anon_live_closures(std::uint64_t* ok_count,
 // this) OR no live captured anon closures (nslots==0 short-circuit
 // same as anon path). Preserves #2602 named path + #2637/#2666 full
 // anon walk.
+// Issue #2714: production-default captured-only anon sync remount
+// (AC1 prod-default enabled / AC2 pure-anon skip / AC3 named unchanged /
+// AC4 soft zero-cost / AC5 additive no-regression).
 extern "C" void aura_sync_remount_anon_captured_live_closures(std::uint64_t* ok_count,
                                                               std::uint64_t* fail_count) {
     std::uint64_t ok = 0;
@@ -4059,6 +4062,16 @@ void aura_reset_runtime() {
     g_closure_names.clear();
     g_closure_freed.clear();     // Issue #1361
     g_closure_free_list.clear(); // Issue #1361
+    // Parallel columns added after #1361 must be cleared too or the
+    // next alloc's assert_closure_vectors_consistent sees a desync
+    // (func_ids empty while these still hold stale rows).
+    g_closure_bridge_epochs.clear();   // Issue #1508
+    g_closure_defuse_versions.clear(); // Issue #1508
+    g_closure_stable_func_ids.clear(); // Issue #2092
+    g_closure_must_deopt.clear();      // Issue #2128
+    g_closure_linear_state.clear();    // Issue #2129
+    g_closure_cow_gens.clear();        // Issue #2547
+    g_closure_env_gen.clear();         // Issue #2272
     for (int i = 0; i < CLOSURE_CACHE_SIZE; ++i)
         clear_closure_cache_entry(g_closure_cache[i]);
     g_jit_fns_overflow.clear(); // Issue #1304

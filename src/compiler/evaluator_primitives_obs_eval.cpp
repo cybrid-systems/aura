@@ -1680,6 +1680,9 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2256", 2256);
             insert_kv("issue-2256", 2256);
             insert_kv("issue-2166", static_cast<std::int64_t>(aura::ast::kMovingCompactIssue));
+            // Issue #2856: moving-unified hard-fail counters (moving_unified_fail)
+            // are exposed via the obs_jit engine:metrics surface — see
+            // evaluator_primitives_obs_jit.cpp g_moving_unified_fail_total.
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

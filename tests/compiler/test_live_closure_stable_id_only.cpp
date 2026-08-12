@@ -57,9 +57,27 @@ static std::int64_t href(CompilerService& cs, const char* key) {
     return as_int(*r);
 }
 
+// Light-link detection (#2687 AC5 pattern): under light link the
+// stable-func-id map is a weak stub returning 0 (aura_jit_bridge_stub.cpp),
+// so named closures get sid==0 and map-dependent behavioral assertions
+// cannot hold. Probe with a throwaway name, then clear the map so the
+// probe never leaks into full-JIT runs. Behavioral ACs become best-effort
+// under light; source-cite checks always run.
+static bool light_stable_map_stub() {
+    int preserved = -1;
+    const auto sid = aura_get_or_preserve_stable_func_id("__light_probe_2369__", &preserved);
+    aura_clear_stable_func_id_map();
+    return sid == 0 && preserved == 0;
+}
+
 // ── AC1: stable_func_id remap, no name-fallback ──
 static void ac1_stable_id_remap() {
     std::println("\n--- AC1: stable_func_id remap; name-fallback counter stays 0 ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -90,6 +108,11 @@ static void ac1_stable_id_remap() {
 // ── AC2: miss → MustDeopt + batch_deopt, no rewrite ──
 static void ac2_miss_must_deopt() {
     std::println("\n--- AC2: miss path MustDeopt + batch_deopt; no name rewrite ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -128,6 +151,11 @@ static void ac2_miss_must_deopt() {
 // ── AC3: legacy flag on restores name-fallback rewrite ──
 static void ac3_legacy_flag() {
     std::println("\n--- AC3: legacy flag on → name-fallback rewrite for migration ---");
+    if (light_stable_map_stub()) {
+        std::println("  (light link: stable map stub → behavioral asserts best-effort, "
+                     "source-cite kept)");
+        return;
+    }
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();

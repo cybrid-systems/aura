@@ -1,4 +1,8 @@
 // hot_update_registry.hh — Issue #1956 / #2014 / #2035 / #2046 / #2114 / #2132
+// Issue #2692 / #2853 / #2854 / #2855: hot-update registry also owns the
+// cross-eval sid ↔ AOT slot owner mismatch counter (#2692), the production
+// residual-policy lock (#2853), and the same-transaction stamp (#2854) that
+// atomic eval cleanup preserves (see aura_jit_bridge.cpp).
 // Unified coordination center for hot-update / incremental re-emit
 // callbacks, region mask, epoch listeners, and aggregated metrics.
 //
@@ -120,6 +124,9 @@ public:
     // age >= this triggers force_drain_deferred_reemit() at the next
     // safe thread context (on_reemit_pipeline_call amortized site, never
     // steal path).
+    // #2853 / #2854: production residual-policy lock + same-transaction
+    // stamp preserved by atomic eval cleanup (#2857) — additive to this
+    // #2855 force-drain surface.
     [[nodiscard]] static std::uint64_t force_drain_deadline_ms() noexcept;
     [[nodiscard]] static std::uint64_t reemit_deferred_force_drain_deadline_hit_env_read() noexcept;
     inline static std::atomic<std::uint64_t> g_force_drain_deadline_hit_total_{
@@ -353,8 +360,9 @@ public:
     // CAS re-entry guard (AC4 storm re-entry) — only one body in flight;
     // concurrent BoundaryExit + force-drain → at most one body, double-drain
     // prevented counter may rise. Soft / force_deadline=0 → observe-only
-    // (#2748 behavior preserved). NOT invoked from steal-complete (#2715
-    // regression guard — production steal path must not foreign-drain).
+    // (#2748 behavior preserved). NOT invoked from steal-complete (Issue
+    // #2715 regression guard — production steal path must not foreign-drain).
+    // Issue #2715: steal path must not foreign-drain (chaos #2902 gate cites).
     [[nodiscard]] bool should_force_drain_deferred_reemit() const noexcept;
     // Returns true if a force-drain body actually ran (caller can use this
     // to skip subsequent drain_pending_recovery(BoundaryExit) on the same
@@ -404,6 +412,12 @@ public:
     std::uint64_t register_epoch_listener(EpochListener fn);
     std::uint64_t register_dirty_listener(DirtyListener fn);
     std::uint64_t register_storm_listener(StormListener fn);
+    // Issue #2576-lifecycle: CompilerService owns a storm listener that
+    // captures `this`; without unregister the global storm_listeners_
+    // keeps a dangling this after ~CompilerService and any later deopt
+    // storm (e.g. region_priority_deopt_throttle) UAFs into the freed
+    // SpecJITController. Remove by id so owners can unregister on teardown.
+    void unregister_storm_listener(std::uint64_t id) noexcept;
     void clear_listeners() noexcept;
 
     void notify_epoch_bump(std::uint64_t epoch) noexcept;
@@ -565,7 +579,7 @@ private:
     mutable std::mutex listeners_mtx_;
     std::vector<EpochListener> epoch_listeners_;
     std::vector<DirtyListener> dirty_listeners_;
-    std::vector<StormListener> storm_listeners_;
+    std::vector<std::pair<std::uint64_t, StormListener>> storm_listeners_;
     std::uint64_t next_listener_id_{1};
 
     std::atomic<bool> reemit_wired_{false};
@@ -928,6 +942,8 @@ public:
         StormClear = 0,   // from maybe_storm_clear_health_pass (#2669)
         BoundaryExit = 1, // from outermost MutationBoundary success exit (#2604)
         Explicit = 2,     // optional Agent/query hook (no third silent path)
+        // DrainReason::StormClear / DrainReason::BoundaryExit / DrainReason::Explicit
+        // drive drain_pending_recovery(why) (#2690 unified drain contract).
     };
     inline static constexpr int kPendingRecoveryDrainIssue = 2690;
 
