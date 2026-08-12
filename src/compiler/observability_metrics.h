@@ -8942,6 +8942,11 @@ struct CompilerMetrics {
     std::atomic<std::uint32_t> partial_cone_cap_wired{1};                     // #2560
     std::atomic<std::uint64_t> solve_delta_locality_hits_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_misses_total{0};
+    // Issue #2913: locality SLO escalate (mirror of typed_audit counters).
+    std::atomic<std::uint64_t> solve_delta_locality_slo_observe_total{0};
+    std::atomic<std::uint64_t> solve_delta_locality_escalate_total{0};
+    std::atomic<std::uint64_t> solve_delta_locality_reject_total{0};
+    std::atomic<std::uint32_t> solve_delta_locality_slo_wired{1};
     // Issue #2065: solve_delta_epoch_skip_total — count of touched /
     // occurrence / let-poly roots skipped during solve_delta worklist
     // seeding because last_seen_epoch already matches the current
