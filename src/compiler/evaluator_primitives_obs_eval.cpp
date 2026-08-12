@@ -15080,6 +15080,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             // Issue #2850: pure-anon bounded sync remount.
             std::uint64_t sync_remount_pure_ok = 0;
             std::uint64_t sync_remount_pure_skip = 0;
+            // Issue #2928: residual round-robin remount (outside reemit-success).
+            std::uint64_t residual_remount_ok = 0;
+            std::uint64_t residual_remount_budget_skip = 0;
             // Issue #2605: residual / assign / preserve / named-invent axes.
             std::uint64_t residual_backfill = 0;
             std::uint64_t sid_assign = 0;
@@ -15112,6 +15115,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 sync_remount_pure_skip =
                     m->live_closure_sync_remount_pure_anon_skip_budget_total.load(
                         std::memory_order_relaxed);
+                residual_remount_ok = m->residual_remount_ok_total.load(std::memory_order_relaxed);
+                residual_remount_budget_skip =
+                    m->residual_remount_budget_skip_total.load(std::memory_order_relaxed);
                 residual_backfill =
                     m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
                 sid_assign = m->stable_func_id_assigned_total.load(std::memory_order_relaxed);
@@ -15282,6 +15288,18 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-sync-remount-pure-anon-wired", make_int(1)},
                 {"schema-2850", make_int(2850)},
                 {"issue-2850", make_int(2850)},
+                // Issue #2928: residual round-robin remount outside reemit-success.
+                {"residual-remount-ok-total",
+                 make_int(static_cast<std::int64_t>(residual_remount_ok))},
+                {"residual-remount-budget-skip-total",
+                 make_int(static_cast<std::int64_t>(residual_remount_budget_skip))},
+                {"residual-remount-cursor",
+                 make_int(static_cast<std::int64_t>(aura_residual_remount_cursor()))},
+                {"residual-remount-budget",
+                 make_int(static_cast<std::int64_t>(aura_residual_remount_budget_default()))},
+                {"residual-remount-wired", make_int(1)},
+                {"schema-2928", make_int(2928)},
+                {"issue-2928", make_int(2928)},
                 // Issue #2638: residual sid=0 growth hard cap + fail-closed
                 // drop/MustDeopt under sustained reemit. env
                 // AURA_RESIDUAL_SID0_CAP (default 256 under production;

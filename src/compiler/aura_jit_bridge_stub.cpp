@@ -460,6 +460,27 @@ extern "C" __attribute__((weak)) std::uint64_t aura_sync_remount_pure_anon_budge
 extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_pressure_bp() {
     return 0;
 }
+// Issue #2928: residual round-robin remount weak stubs (light-link).
+extern "C" __attribute__((weak)) void
+aura_bump_residual_remount_totals(std::uint64_t /*ok*/, std::uint64_t /*budget_skip*/) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_residual_remount_budget_default() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_residual_remount_cursor() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_residual_remount_ok_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_residual_remount_budget_skip_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_residual_live_closure_remount_tick(std::uint64_t /*budget*/) {}
+extern "C" __attribute__((weak)) void
+aura_test_set_residual_remount_budget(std::uint64_t /*budget*/) {}
+extern "C" __attribute__((weak)) void aura_test_set_residual_remount_force_skip(int /*v*/) {}
+extern "C" __attribute__((weak)) void aura_test_reset_residual_remount_state() {}
 extern "C" __attribute__((weak)) void
 aura_sync_remount_pure_anon_live_closures(std::uint64_t /*budget*/, std::uint64_t* ok_count,
                                           std::uint64_t* skip_budget_count) {

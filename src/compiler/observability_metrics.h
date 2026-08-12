@@ -9222,6 +9222,12 @@ struct CompilerMetrics {
     // Soft / budget=0 → counters stay 0 (zero extra work).
     std::atomic<std::uint64_t> live_closure_sync_remount_pure_anon_ok_total{0};          // #2850
     std::atomic<std::uint64_t> live_closure_sync_remount_pure_anon_skip_budget_total{0}; // #2850
+    // Issue #2928: residual round-robin remount outside reemit-success.
+    // residual_remount_ok: remount+heal success per tick; budget_skip:
+    // tick skipped under hard storm / reemit throttle (no remount storm).
+    // Soft / budget=0 → counters stay 0 (zero extra work).
+    std::atomic<std::uint64_t> residual_remount_ok_total{0};          // #2928
+    std::atomic<std::uint64_t> residual_remount_budget_skip_total{0}; // #2928
     // Issue #2092: live closures retargeted via the (off-by-default)
     // name fallback path because their stable_func_id stamp was 0
     // (legacy closure / define processed after set_name). Non-zero

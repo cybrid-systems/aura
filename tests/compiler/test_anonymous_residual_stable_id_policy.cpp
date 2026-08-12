@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
 
@@ -738,6 +739,140 @@ static void ac2893_5_source_and_linter() {
           "2893 AC5: no docs/design/2893-* per #1655");
 }
 
+// ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
+// Outside reemit-success; clears residual MustDeopt under bounded budget.
+
+extern "C" std::int64_t aura_alloc_closure(std::int64_t func_id);
+extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
+extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
+
+static void ac2928_1_residual_tick_clears_must_deopt() {
+    std::println("\n--- #2928 AC1: residual tick clears MustDeopt within budget ---");
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "AC1: alloc");
+    aura_closure_set_must_deopt(cid, 1);
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "AC1: MustDeopt set");
+    // Quiet pipeline ticks (candidates==0) + direct tick cover AC1 without reemit.
+    for (int i = 0; i < 8; ++i)
+        aura::compiler::hot_update_registry().on_reemit_pipeline_call(/*candidates=*/0,
+                                                                      /*successes=*/0);
+    aura_residual_live_closure_remount_tick(32);
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "AC1: MustDeopt cleared by residual tick");
+    const auto ok1 = aura_residual_remount_ok_total_v_read();
+    CHECK(ok1 > ok0, "AC1: residual_remount_ok_total advanced");
+    CHECK(aura_residual_remount_cursor() >= 0, "AC1: cursor readable");
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac2928_2_storm_skip() {
+    std::println("\n--- #2928 AC2: hard storm / throttle → residual walk skips ---");
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    const auto skip0 = aura_residual_remount_budget_skip_total_v_read();
+    // Force skip path (same branch as storm>=2 / should_throttle).
+    aura_test_set_residual_remount_force_skip(1);
+    aura_residual_live_closure_remount_tick(32);
+    const auto skip1 = aura_residual_remount_budget_skip_total_v_read();
+    CHECK(skip1 > skip0, "AC2: budget_skip advanced under force-skip gate");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("aura_hot_update_current_storm_level") != std::string::npos,
+          "AC2: storm_level gate present");
+    CHECK(rt.find("aura_hot_update_should_throttle_reemit") != std::string::npos,
+          "AC2: throttle gate present");
+    aura_test_set_residual_remount_force_skip(0);
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac2928_3_reemit_success_unchanged() {
+    std::println("\n--- #2928 AC3: reemit-success remount paths preserved ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "AC3: named remount preserved");
+    CHECK(rt.find("aura_sync_remount_anon_captured_live_closures") != std::string::npos,
+          "AC3: captured remount preserved");
+    CHECK(rt.find("aura_sync_remount_pure_anon_live_closures") != std::string::npos,
+          "AC3: pure-anon remount preserved");
+    CHECK(br.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "AC3: bridge wires named");
+    // Residual tick not on reemit-success path (candidates>0 gate).
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(reg.find("candidates == 0") != std::string::npos,
+          "AC3: residual only on quiet candidates==0");
+    CHECK(reg.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC3: residual wired from pipeline quiet");
+}
+
+static void ac2928_4_soft_budget_zero() {
+    std::println("\n--- #2928 AC4: Soft / budget=0 → zero walk ---");
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(0);
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    const auto sk0 = aura_residual_remount_budget_skip_total_v_read();
+    aura_residual_live_closure_remount_tick(0);
+    aura::compiler::hot_update_registry().on_reemit_pipeline_call(0, 0);
+    CHECK(aura_residual_remount_ok_total_v_read() == ok0, "AC4: budget=0 no ok advance");
+    CHECK(aura_residual_remount_budget_skip_total_v_read() == sk0, "AC4: budget=0 no skip advance");
+    CHECK(aura_residual_remount_budget_default() == 0, "AC4: test override budget 0");
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac2928_5_query_keys() {
+    std::println("\n--- #2928 AC5: query residual-remount keys additive ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2928") == 2928, "AC5: schema-2928");
+    CHECK(href(cs, "issue-2928") == 2928, "AC5: issue-2928");
+    CHECK(href(cs, "residual-remount-wired") == 1, "AC5: residual-remount-wired");
+    CHECK(href(cs, "residual-remount-ok-total") >= 0, "AC5: residual-remount-ok-total");
+    CHECK(href(cs, "residual-remount-budget-skip-total") >= 0,
+          "AC5: residual-remount-budget-skip-total");
+    CHECK(href(cs, "residual-remount-cursor") >= 0, "AC5: residual-remount-cursor");
+    CHECK(href(cs, "residual-remount-budget") >= 0, "AC5: residual-remount-budget");
+    // Preserve pure-anon surface.
+    CHECK(href(cs, "schema-2850") == 2850, "AC5: schema-2850 preserved");
+    CHECK(href(cs, "live-closure-sync-remount-pure-anon-wired") == 1,
+          "AC5: pure-anon wired preserved");
+}
+
+static void ac2928_6_source_and_linter() {
+    std::println("\n--- #2928 AC6: source-cite + linter + no docs/design ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto sh = read_file("src/compiler/runtime_shared.h");
+    const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_residual_remount_round_robin_2928.py");
+    CHECK(rt.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC6: residual tick in runtime");
+    CHECK(rt.find("g_residual_remount_cursor") != std::string::npos, "AC6: cursor atomic");
+    CHECK(rt.find("Issue #2928") != std::string::npos, "AC6: runtime cites #2928");
+    CHECK(br.find("aura_bump_residual_remount_totals") != std::string::npos, "AC6: bridge bump");
+    CHECK(reg.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC6: pipeline quiet wire");
+    CHECK(dtor.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC6: BoundaryExit wire");
+    CHECK(obs.find("residual_remount_ok_total") != std::string::npos, "AC6: metrics ok");
+    CHECK(obs.find("residual_remount_budget_skip_total") != std::string::npos, "AC6: metrics skip");
+    CHECK(sh.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC6: runtime_shared C ABI");
+    CHECK(t.find("ac2928_1_residual_tick_clears_must_deopt") != std::string::npos, "AC6: AC1 test");
+    CHECK(!lint.empty() && lint.find("2928") != std::string::npos, "AC6: linter present");
+    CHECK(build.find("check_residual_remount_round_robin_2928") != std::string::npos ||
+              build.find("residual-remount-2928") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2928-residual-remount.md").empty(),
+          "AC6: no docs/design/2928-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2928.cpp").empty(),
+          "AC6: no invent test per #81967");
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
@@ -1079,9 +1214,17 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2893_3_named_captured_unchanged();
     ac2893_4_query_additive();
     ac2893_5_source_and_linter();
+    std::println("\n=== Issue #2928: residual remount round-robin ===");
+    ac2928_1_residual_tick_clears_must_deopt();
+    ac2928_2_storm_skip();
+    ac2928_3_reemit_success_unchanged();
+    ac2928_4_soft_budget_zero();
+    ac2928_5_query_keys();
+    ac2928_6_source_and_linter();
 
-    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

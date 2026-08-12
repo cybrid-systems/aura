@@ -101,6 +101,9 @@ import aura.compiler.optimization_passes; // Issue #2674: layered evidence-coher
 // in mutation_hold_budget.h (shared with query:mutation-boundary-hold-stats).
 
 extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
+// Issue #2928: residual remount tick (aura_jit_runtime.cpp; weak stub light-link).
+extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
+extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 
 // Issue #2640: production Restricted default periodic epoch-invariant soft walk
 // (gated by mode=Soft + production_defaults_active + steady_ms rate limit;
@@ -3564,6 +3567,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // (mode != Soft / sandbox=off / disabled take a fast no-op skip path).
     if (outermost && success)
         aura_periodic_epoch_invariant_walk_if_due();
+    // Issue #2928: outermost success BoundaryExit residual remount tick
+    // (after deferred drain above). Amortizes residual MustDeopt when
+    // reemit-success sync walk was missed. Soft / budget=0 → zero walk.
+    if (outermost && success) {
+        const auto b = aura_residual_remount_budget_default();
+        if (b > 0)
+            aura_residual_live_closure_remount_tick(b);
+    }
     // Issue #2727: clear the durable per-Fiber evaluator_id so stale
     // steals cannot observe a previous evaluator. Only outermost
     // guards own the id (nested guards inherit it); clear happens at

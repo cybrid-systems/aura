@@ -19,8 +19,13 @@ extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(std::ui
 // Issue #2850: bounded pure-anon sync remount counters (sid==0 && !captures).
 extern "C" void aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64_t ok,
                                                                      std::uint64_t skip_budget);
+// Issue #2928: residual round-robin remount counters (outside reemit-success).
+extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_t budget_skip);
 // Issue #2638 residual sid=0 cap-hit counter.
 extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
+// Issue #2928: storm / throttle gates (production in hot_update_registry.cpp).
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+extern "C" int aura_hot_update_should_throttle_reemit(void);
 // Process-global aot_metrics getter (defined in aura_jit_bridge.cpp; the
 // file-static aot_metrics() accessor there is not externally visible).
 extern "C" void* aura_get_aot_metrics(void);
@@ -2330,6 +2335,146 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
         *ok_count = ok;
     if (skip_budget_count)
         *skip_budget_count = skip;
+}
+
+// ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
+// Outside reemit-success (#2602/#2691/#2850). Amortizes residual MustDeopt
+// / generation-behind when deferred reemit, Soft fuse lag, or steal
+// interleaving miss the success-path sync walk.
+//   - cursor + budget B (default 32 production; 0 Soft / env=0)
+//   - per tick: remount_or_force_deopt up to B live slots from cursor
+//   - on remount ok: clear MustDeopt + restamp bridge/defuse/env
+//   - hard storm / reemit throttle → skip walk (budget_skip +1)
+//   - Soft / budget=0 / nslots==0 → zero extra work beyond budget load
+// Call sites: on_reemit_pipeline_call quiet path; MutationBoundary
+// outermost success exit (after deferred drain). Never on reemit-success
+// remount path (AC3 no double-remount same tick).
+
+static std::atomic<std::uint64_t> g_residual_remount_cursor{0};
+// Process-local totals (light-link-safe; metrics bump may be weak stub).
+static std::atomic<std::uint64_t> g_residual_remount_ok_total{0};
+static std::atomic<std::uint64_t> g_residual_remount_budget_skip_total{0};
+// Test override: when set (non-UINT64_MAX), budget_default returns it.
+static std::atomic<std::uint64_t> g_residual_remount_budget_override{UINT64_MAX};
+// Test: force storm/throttle skip path without spinning deopt storm.
+static std::atomic<std::uint8_t> g_residual_force_skip{0};
+
+extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept {
+    const auto ov = g_residual_remount_budget_override.load(std::memory_order_relaxed);
+    if (ov != UINT64_MAX)
+        return ov;
+    const char* e = std::getenv("AURA_RESIDUAL_REMOUNT_BUDGET");
+    if (e && *e) {
+        std::uint64_t v = 0;
+        for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
+            v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+        return v; // explicit 0 = off
+    }
+    // Soft / sandbox / tests → 0 (zero walk); production Restricted → 32.
+    return aura::compiler::typed_audit::production_defaults_active() ? 32ull : 0ull;
+}
+
+extern "C" std::uint64_t aura_residual_remount_cursor() noexcept {
+    return g_residual_remount_cursor.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_residual_remount_ok_total_v_read() noexcept {
+    return g_residual_remount_ok_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_residual_remount_budget_skip_total_v_read() noexcept {
+    return g_residual_remount_budget_skip_total.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_test_set_residual_remount_budget(std::uint64_t budget) noexcept {
+    g_residual_remount_budget_override.store(budget, std::memory_order_relaxed);
+}
+
+extern "C" void aura_test_set_residual_remount_force_skip(int v) noexcept {
+    g_residual_force_skip.store(v != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+extern "C" void aura_test_reset_residual_remount_state() noexcept {
+    g_residual_remount_cursor.store(0, std::memory_order_relaxed);
+    g_residual_remount_budget_override.store(UINT64_MAX, std::memory_order_relaxed);
+    g_residual_force_skip.store(0, std::memory_order_relaxed);
+    // Do not zero ok/skip totals — monotonic for Agents; tests delta against snapshot.
+}
+
+extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
+    // AC4: budget=0 → zero walk (caller may still have done one relaxed load).
+    if (budget == 0)
+        return;
+
+    // AC2: hard storm / health throttle → skip remount storm.
+    // storm_level >= 2 = Global or Both; should_throttle covers deopt hard window.
+    // Test force-skip injects the same branch without spinning deopt storm.
+    const auto storm = static_cast<std::uint64_t>(aura_hot_update_current_storm_level());
+    if (g_residual_force_skip.load(std::memory_order_relaxed) != 0 || storm >= 2 ||
+        aura_hot_update_should_throttle_reemit() != 0) {
+        g_residual_remount_budget_skip_total.fetch_add(1, std::memory_order_relaxed);
+        aura_bump_residual_remount_totals(/*ok=*/0, /*budget_skip=*/1);
+        return;
+    }
+
+    std::uint64_t ok = 0;
+    {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        aura_lock_workspace_write();
+
+        const std::size_t nslots = g_closure_func_ids.size();
+        if (nslots == 0) {
+            aura_unlock_workspace_write();
+            return; // AC4: no live closures — zero walk body
+        }
+
+        if (g_closure_must_deopt.size() < nslots)
+            g_closure_must_deopt.resize(nslots, 0);
+        if (g_closure_bridge_epochs.size() < nslots)
+            g_closure_bridge_epochs.resize(nslots, 0);
+        if (g_closure_defuse_versions.size() < nslots)
+            g_closure_defuse_versions.resize(nslots, 0);
+        if (g_closure_env_gen.size() < nslots)
+            g_closure_env_gen.resize(nslots, 0);
+
+        const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        const std::uint64_t host_defuse = aura_get_aot_defuse_version();
+        const std::uint64_t start =
+            g_residual_remount_cursor.load(std::memory_order_relaxed) % nslots;
+
+        std::uint64_t used = 0;
+        std::size_t steps = 0;
+        std::size_t idx = static_cast<std::size_t>(start);
+        while (used < budget && steps < nslots) {
+            const std::size_t cid = idx;
+            idx = (idx + 1) % nslots;
+            ++steps;
+            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                continue;
+            // Budget unit: remount attempt on a live slot.
+            if (remount_or_force_deopt_unlocked_no_call_time_counter(
+                    static_cast<std::int64_t>(cid), live_env,
+                    /*linear_fp=*/0, table_epoch) != 0) {
+                // Residual heal: remount ok → clear MustDeopt + restamp
+                // dual-epoch so first call does not force-deopt.
+                g_closure_must_deopt[cid] = 0;
+                g_closure_bridge_epochs[cid] = table_epoch;
+                g_closure_defuse_versions[cid] = host_defuse;
+                g_closure_env_gen[cid] = live_env;
+                invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
+                ++ok;
+            }
+            ++used;
+        }
+        g_residual_remount_cursor.store(static_cast<std::uint64_t>(idx), std::memory_order_relaxed);
+        aura_unlock_workspace_write();
+    }
+
+    if (ok > 0) {
+        g_residual_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
+        aura_bump_residual_remount_totals(ok, /*budget_skip=*/0);
+    }
 }
 
 // Issue #660 / #2092 / #2550: set the closure's name after allocation.

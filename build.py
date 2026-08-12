@@ -6612,6 +6612,25 @@ def cmd_pure_anon_adaptive_budget_2893_coverage():
     return 0
 
 
+def cmd_residual_remount_round_robin_2928_coverage():
+    """Issue #2928: budgeted residual live-closure remount (round-robin).
+
+    Outside reemit-success; cursor + budget B (default 32); quiet pipeline
+    + BoundaryExit; storm/throttle skip; Soft/budget=0 zero cost.
+    """
+    print(f"{B}=== residual remount round-robin coverage (#2928) ==={N}")
+    script = COVERAGE_CHECKS / "check_residual_remount_round_robin_2928.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual remount round-robin (#2928) coverage contract rows failed")
+        return 1
+    ok("residual remount round-robin (#2928) coverage clean")
+    return 0
+
+
 def cmd_aot_slot_owner_consistency_2692_coverage():
     """Issue #2692: cross-eval sid ↔ AOT slot owner consistency assert.
 
@@ -12424,6 +12443,7 @@ def main():
         "producer-bp-budget-2925": cmd_producer_bp_budget_2925_coverage,
         "scope-resolve-2926": cmd_scope_resolve_2926_coverage,
         "force-jit-reason-bit-map-2927": cmd_force_jit_reason_bit_map_2927_coverage,
+        "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

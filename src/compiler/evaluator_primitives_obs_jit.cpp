@@ -1147,6 +1147,18 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-sync-remount-pure-anon-adaptive-wired", make_int(1)},
                 {"schema-2893", make_int(2893)},
                 {"issue-2893", make_int(2893)},
+                // Issue #2928: residual round-robin remount (outside reemit-success).
+                {"residual-remount-ok-total",
+                 make_int(L(&CompilerMetrics::residual_remount_ok_total))},
+                {"residual-remount-budget-skip-total",
+                 make_int(L(&CompilerMetrics::residual_remount_budget_skip_total))},
+                {"residual-remount-cursor",
+                 make_int(static_cast<std::int64_t>(aura_residual_remount_cursor()))},
+                {"residual-remount-budget",
+                 make_int(static_cast<std::int64_t>(aura_residual_remount_budget_default()))},
+                {"residual-remount-wired", make_int(1)},
+                {"schema-2928", make_int(2928)},
+                {"issue-2928", make_int(2928)},
                 // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
                 // assert. Soft single-eval / process-default (filter
                 // eval = nullptr) keeps this at 0. Production hard

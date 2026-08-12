@@ -16,6 +16,9 @@
 // C-linkage boundary probes (strong in evaluator_fiber_mutation; weak stubs).
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" int aura_evaluator_mutation_boundary_held();
+// Issue #2928: residual remount tick (production in aura_jit_runtime.cpp).
+extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
+extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 
 namespace aura::compiler {
 
@@ -107,6 +110,17 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
     // region mask) and fires a health pass. Amortized — only does
     // work on the transition edge. Soft zero-cost on quiet path.
     maybe_storm_clear_health_pass();
+    // Issue #2928: residual live-closure remount on quiet pipeline
+    // (no reemit candidates). Closes residual MustDeopt without waiting
+    // for the next reemit-success walk (#2602/#2691/#2850). Soft /
+    // budget=0 → one relaxed load then return. Hard storm / throttle
+    // skip inside the tick (budget_skip). Never on candidates>0 success
+    // path — avoids double-remount with the reemit-success sync walk.
+    if (candidates == 0) {
+        const auto b = aura_residual_remount_budget_default();
+        if (b > 0)
+            aura_residual_live_closure_remount_tick(b);
+    }
 }
 
 // Issue #2639: storm-clear edge detection (lazy hook). On the
