@@ -2413,15 +2413,21 @@ public:
     void install_compiler_gc_roots_fn(CompilerGcRootsFlushFn fn) noexcept {
         compiler_gc_roots_fn_ = fn;
     }
-    // Issue #223 / #296 / #1365: returns true if a closure's captured
+    // Issue #2930: zero-epoch counters live in bridge_epoch_zero_stats.h
+    // (shared with JIT dual-freshness). Accessors for Agents / tests.
+    [[nodiscard]] static std::uint64_t bridge_epoch_zero_observed_total_v_read() noexcept;
+    [[nodiscard]] static std::uint64_t bridge_epoch_zero_treated_stale_total_v_read() noexcept;
+
+    // Issue #223 / #296 / #1365 / #2930: returns true if a closure's captured
     // bridge_epoch is stale relative to the current epoch.
     //
-    // INVARIANT (Bridge Lifetime Contract, strict as of #1365):
+    // INVARIANT (Bridge Lifetime Contract, strict as of #1365 / #2930):
     //   1. current_epoch == 0 → bridge tracking inactive (pre-service
     //      or never bumped): never treat as stale.
     //   2. bridge_epoch == 0 with current_epoch != 0 → unstamped
-    //      while tracking is active → STALE (was legacy trust;
-    //      AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 restores trust).
+    //      while tracking is active → STALE under production defaults
+    //      (#2930 residual harden after #1365 construction stamp).
+    //      AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 restores trust (Soft fixtures).
     //   3. Non-zero mismatch → stale (safe-fallback / re-parse).
     //   4. Construction sites must call stamp_closure_bridge_epoch.
     //
@@ -2430,20 +2436,7 @@ public:
     //   bump_bridge_epoch() ─bumps─> current
     //   is_bridge_stale(captured, current) ─checks─> bool
     //   stale closure ─falls back─> body_source re-parse
-    static bool is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) noexcept {
-        if (current_epoch == 0)
-            return false; // tracking inactive
-        if (bridge_epoch == 0) {
-            // Issue #1365: strict by default; legacy opt-in for fixtures
-            static const bool legacy_trust = []() noexcept {
-                if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
-                    return e[0] != '0' && e[0] != '\0';
-                return false;
-            }();
-            return !legacy_trust;
-        }
-        return bridge_epoch != current_epoch;
-    }
+    static bool is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) noexcept;
 
     // Issue #1475: dual-check complement to is_bridge_stale. Even
     // when bridge_epoch matches, an EnvFrame captured pre-mutation

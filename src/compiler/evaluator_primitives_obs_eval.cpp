@@ -11278,6 +11278,18 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("jit-epoch-mandate-active", 1);
             insert_kv("defuse-version-check-wired", 1);
             insert_kv("bridge-epoch-check-wired", 1);
+            // Issue #2930: residual unstamped bridge_epoch==0 counters
+            // (production fail-closed after #1365 construction stamp).
+            insert_kv("closure-bridge-epoch-zero-observed-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::Evaluator::bridge_epoch_zero_observed_total_v_read()));
+            insert_kv(
+                "closure-bridge-epoch-zero-treated-stale-total",
+                static_cast<std::int64_t>(
+                    aura::compiler::Evaluator::bridge_epoch_zero_treated_stale_total_v_read()));
+            insert_kv("closure-bridge-epoch-zero-wired", 1);
+            insert_kv("schema-2930", 2930);
+            insert_kv("issue-2930", 2930);
             insert_kv("ir-apply-dual-check-wired", 1);
             // #1660 AC: unified helper + EnvFrame SoA + distinct stale metrics
             // epoch-stale ≈ bridge mismatch hits; env-stale ≈ envframe_stale;

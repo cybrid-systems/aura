@@ -9,13 +9,14 @@
 
 #include "aura_jit.h"
 #include "aura_jit_bridge.h"
-#include "aot_mangle.h"                   // mangle_aot_name (Issue #136)
-#include "aot_reload_consistency_proof.h" // Issue #2753: AotReloadConsistencyProof
-#include "hot_update_registry.hh"         // Issue #1956: unified hot-update coordination
-#include "observability_metrics.h"        // Issue #452: CompilerMetrics for AOT counter hooks
-#include "runtime_shared.h"               // Issue #2013: aura_remap_live_closures_after_reemit
-#include "typed_mutation_audit.h"         // Issue #1882: TypedMutationAudit on hot-update
-#include "core/workspace_epoch.hh"        // Issue #2039: dual-write WorkspaceEpoch::Bridge
+#include "aot_mangle.h"                       // mangle_aot_name (Issue #136)
+#include "aot_reload_consistency_proof.h"     // Issue #2753: AotReloadConsistencyProof
+#include "hot_update_registry.hh"             // Issue #1956: unified hot-update coordination
+#include "observability_metrics.h"            // Issue #452: CompilerMetrics for AOT counter hooks
+#include "runtime_shared.h"                   // Issue #2013: aura_remap_live_closures_after_reemit
+#include "typed_mutation_audit.h"             // Issue #1882: TypedMutationAudit on hot-update
+#include "core/workspace_epoch.hh"            // Issue #2039: dual-write WorkspaceEpoch::Bridge
+#include "compiler/bridge_epoch_zero_stats.h" // Issue #2930: zero-epoch counters
 
 #include <atomic>
 #include <cstdarg>
@@ -1657,9 +1658,11 @@ extern "C" std::uint64_t aura_aot_bridge_epoch_mismatches(void) {
 // defuse/env_version ↔ g_aot_defuse_version (mutate / EnvFrame domain)
 //
 // Strictness matches Evaluator::is_bridge_stale / is_env_frame_stale (#1365 /
-// #1475 / #1491 AC): when tracking is active (current != 0), an unstamped
-// capture (0) is STALE unless AURA_BRIDGE_EPOCH_LEGACY_TRUST=1. Non-zero
-// mismatch is always stale. current==0 → domain inactive → not stale.
+// #1475 / #1491 / #2930 AC): when tracking is active (current != 0), an
+// unstamped capture (0) is STALE unless AURA_BRIDGE_EPOCH_LEGACY_TRUST=1.
+// Non-zero mismatch is always stale. current==0 → domain inactive → not stale.
+// Issue #2930: zero-epoch observations on the bridge domain bump the same
+// process-wide counters as Evaluator::is_bridge_stale.
 extern "C" bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
                                           std::uint64_t captured_defuse_or_env_version) {
     if (aot_metrics())
@@ -1673,16 +1676,27 @@ extern "C" bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
         return false;
     }();
 
-    auto domain_ok = [](std::uint64_t captured, std::uint64_t current, bool trust) noexcept {
+    auto domain_ok = [](std::uint64_t captured, std::uint64_t current, bool trust,
+                        bool count_zero) noexcept {
         if (current == 0)
             return true; // tracking inactive for this domain
-        if (captured == 0)
-            return trust; // unstamped while tracking active
+        if (captured == 0) {
+            // Issue #2930: observe unstamped while tracking active (bridge domain).
+            if (count_zero)
+                aura::compiler::bridge_epoch_zero::note_observed();
+            if (trust)
+                return true;
+            if (count_zero)
+                aura::compiler::bridge_epoch_zero::note_treated_stale();
+            return false;
+        }
         return captured == current;
     };
 
-    return domain_ok(captured_bridge_epoch, cur_bridge, legacy_trust) &&
-           domain_ok(captured_defuse_or_env_version, cur_defuse, legacy_trust);
+    // Only count zero on the bridge_epoch domain (not defuse/env domain).
+    return domain_ok(captured_bridge_epoch, cur_bridge, legacy_trust, /*count_zero=*/true) &&
+           domain_ok(captured_defuse_or_env_version, cur_defuse, legacy_trust,
+                     /*count_zero=*/false);
 }
 
 extern "C" void aura_jit_closure_record_dual_check(void) {
