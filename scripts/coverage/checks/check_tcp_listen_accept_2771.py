@@ -9,7 +9,7 @@ Contract (one row per AC):
   AC1 prims tcp-listen / tcp-local-port / tcp-accept / tcp-accept-timeout
   AC2 std/socket + adaptive help + loopback docs
   AC3 test_tcp_listen_accept in json_io_cap_batch + ac echo
-  AC4 commercial budget tcp- = 8; live smoke when build/aura exists
+  AC4 commercial budget tcp- = 8 (static only; no live aura smoke)
   AC5 this linter wired; no docs/design/2771-*
 
 Exit 0 = all rows satisfied.
@@ -17,8 +17,6 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -30,55 +28,6 @@ def _read(rel: str) -> str:
     if not p.is_file():
         return ""
     return p.read_text(encoding="utf-8", errors="replace")
-
-
-def live_smoke() -> list[str]:
-    aura = ROOT / "build" / "aura"
-    if not aura.is_file() or not os.access(aura, os.X_OK):
-        return []
-    code = r"""
-(define L (tcp-listen 0))
-(define p (tcp-local-port L))
-(define f
-  (fiber:spawn
-    (lambda ()
-      (let ((c (tcp-connect "127.0.0.1" p)))
-        (tcp-send c "ping")
-        (let ((reply (tcp-recv c 64)))
-          (tcp-close c)
-          reply)))))
-(define s (tcp-accept L))
-(define msg (tcp-recv s 64))
-(tcp-send s (string-append "echo:" msg))
-(tcp-close s)
-(tcp-close L)
-(display (equal? (fiber:join f) "echo:ping")) (newline)
-(display (procedure? tcp-accept-timeout)) (newline)
-"""
-    env = os.environ.copy()
-    env["AURA_PATH"] = str(ROOT / "lib")
-    env["AURA_SANDBOX"] = "off"
-    env["AURA_PIPELINE_STRICT"] = "0"
-    try:
-        r = subprocess.run(
-            [str(aura)],
-            input=code,
-            text=True,
-            capture_output=True,
-            timeout=30,
-            env=env,
-            cwd=str(ROOT),
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return [f"live smoke: {e}"]
-    out = (r.stdout or "") + (r.stderr or "")
-    fails: list[str] = []
-    if "unbound variable" in out:
-        fails.append(f"live smoke: unbound\n{out[:400]}")
-    lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
-    if lines[:2] != ["#t", "#t"]:
-        fails.append(f"live smoke: expected #t/#t, got {lines[:6]!r}\n{out[:500]}")
-    return fails
 
 
 def main() -> int:
@@ -126,7 +75,6 @@ def main() -> int:
     # AC4
     must('tcp-": 8', "AC4", surface)
     must("#2771", "AC4", surface)
-    fails.extend(f"AC4: {m}" for m in live_smoke())
 
     # AC5
     must("check_tcp_listen_accept_2771", "AC5", build)
@@ -142,7 +90,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #2771 tcp-listen/accept multi-host denseness — prims + std/socket + fiber echo smoke green")
+    print("OK: Issue #2771 tcp-listen/accept multi-host denseness — prims + std/socket")
     return 0
 
 

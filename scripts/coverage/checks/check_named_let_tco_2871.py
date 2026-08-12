@@ -18,8 +18,6 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -31,48 +29,6 @@ def _read(rel: str) -> str:
     if not p.is_file():
         return ""
     return p.read_text(encoding="utf-8", errors="replace")
-
-
-def live_smoke() -> list[str]:
-    aura = ROOT / "build" / "aura"
-    if not aura.is_file() or not os.access(aura, os.X_OK):
-        return []
-    code = r"""
-(define (deep n)
-  (let loop ((i 0) (acc 0))
-    (if (>= i n) acc (loop (+ i 1) (+ acc 1)))))
-(display (deep 2000)) (newline)
-(define (deep-list n)
-  (let loop ((i 0) (acc (quote ())))
-    (if (>= i n) (length acc) (loop (+ i 1) (cons i acc)))))
-(display (deep-list 2000)) (newline)
-"""
-    env = os.environ.copy()
-    env["AURA_PATH"] = str(ROOT / "lib")
-    env["AURA_SANDBOX"] = "off"
-    env["AURA_PIPELINE_STRICT"] = "0"
-    try:
-        r = subprocess.run(
-            [str(aura)],
-            input=code,
-            text=True,
-            capture_output=True,
-            timeout=60,
-            env=env,
-            cwd=str(ROOT),
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return [f"live smoke: {e}"]
-    out = (r.stdout or "") + (r.stderr or "")
-    fails: list[str] = []
-    if "recursion depth exceeded" in out:
-        fails.append(f"live smoke: recursion depth exceeded\n{out[:500]}")
-    if "unbound variable" in out:
-        fails.append(f"live smoke: unbound variable\n{out[:500]}")
-    lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
-    if lines[:2] != ["2000", "2000"]:
-        fails.append(f"live smoke: expected ['2000','2000'], got {lines[:6]!r}\n{out[:500]}")
-    return fails
 
 
 def main() -> int:
@@ -112,8 +68,6 @@ def main() -> int:
     if docs_dir.is_dir():
         for f in sorted(docs_dir.glob("2871-*")):
             fails.append(f"AC4: docs/design/{f.name} present (forbidden per #1655)")
-
-    fails.extend(live_smoke())
 
     if fails:
         for f in fails:

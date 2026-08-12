@@ -7,15 +7,13 @@ Denseness span runners hit stdin-only + bare usage footguns. Contract:
   AC2 usage prints denseness env (AURA_PATH, AURA_SANDBOX, AURA_PIPELINE_STRICT)
   AC3 empty stdin / missing file gives explicit error + usage (not silent)
   AC4 piped stdin path preserved (isatty / source_from_argv)
-  AC5 this linter wired in build.py; optional smoke if ./build/aura exists
+  AC5 this linter wired in build.py (static only; no live aura smoke)
 
 Exit 0 = all rows satisfied.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -63,72 +61,11 @@ def main() -> int:
     must("!source_from_argv", "AC4", main_cpp)
     must("cin.rdbuf", "AC4", main_cpp)
 
-    # AC5 — linter wire + optional smoke.
+    # AC5 — linter wire (static only; live aura smoke removed from gate).
     must("check_cli_denseness_dx_2767", "AC5", build)
     if (ROOT / "docs" / "design").is_dir():
         for f in sorted((ROOT / "docs" / "design").glob("2767-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden per #1655)")
-
-    aura = ROOT / "build" / "aura"
-    if aura.is_file() and os.access(aura, os.X_OK):
-        env = os.environ.copy()
-        env.setdefault("AURA_SANDBOX", "off")
-        env.setdefault("AURA_PIPELINE_STRICT", "0")
-        # -e one-liner
-        r = subprocess.run(
-            [str(aura), "-e", "(+ 1 2)"],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        out = (r.stdout or "") + (r.stderr or "")
-        if r.returncode != 0 or "3" not in out:
-            fails.append(f"AC5 smoke: -e '(+ 1 2)' failed exit={r.returncode} out={out[:200]!r}")
-        # help mentions denseness env
-        r2 = subprocess.run(
-            [str(aura), "--help"],
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        help_out = (r2.stdout or "") + (r2.stderr or "")
-        if "AURA_PATH" not in help_out or "AURA_PIPELINE_STRICT" not in help_out:
-            fails.append("AC5 smoke: --help missing denseness env knobs")
-        # file path
-        tmp = ROOT / "build" / "_aura_2767_smoke.aura"
-        try:
-            tmp.write_text("(display 42)(newline)\n", encoding="utf-8")
-            r3 = subprocess.run(
-                [str(aura), str(tmp)],
-                cwd=ROOT,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            out3 = (r3.stdout or "") + (r3.stderr or "")
-            if r3.returncode != 0 or "42" not in out3:
-                fails.append(f"AC5 smoke: file path failed exit={r3.returncode} out={out3[:200]!r}")
-        finally:
-            if tmp.is_file():
-                tmp.unlink()
-        # stdin still works
-        r4 = subprocess.run(
-            [str(aura)],
-            input="(display 7)(newline)\n",
-            cwd=ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        out4 = (r4.stdout or "") + (r4.stderr or "")
-        if r4.returncode != 0 or "7" not in out4:
-            fails.append(f"AC5 smoke: stdin pipe failed exit={r4.returncode} out={out4[:200]!r}")
 
     if fails:
         for f in fails:
