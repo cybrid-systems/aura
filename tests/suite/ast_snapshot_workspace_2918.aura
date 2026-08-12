@@ -1,0 +1,65 @@
+; Issue #2918 — ast:snapshot / ast:diff use workspace source, not current_flat_
+; Under dual-workspace Phase 1, bare (current-source) is the suite/eval frame;
+; checkpoints must capture set-code'd workspace for agent rollback/refactor.
+
+(define ok #t)
+
+; No workspace yet → snapshot fails with -1 (not silent empty default path)
+(define no-ws (ast:snapshot "pre-set-code"))
+(if (= no-ws -1)
+    #t
+    (begin (display "FAIL-2918 expected -1 without workspace\n") (set! ok #f)))
+
+; Install a distinctive workspace (must differ from suite/eval current-source)
+(set-code "(define unique-ws-2918-marker 42)")
+(define ws (current-source :workspace))
+(define cur (current-source))
+; Suite/eval frame should not equal workspace unparse
+(if (not (equal? ws cur))
+    #t
+    (begin (display "FAIL-2918 expected default current-source != :workspace\n")
+           (set! ok #f)))
+
+; Snapshot after set-code must succeed
+(define sid (ast:snapshot "2918-ws"))
+(if (and (integer? sid) (>= sid 0))
+    #t
+    (begin (display "FAIL-2918 snapshot failed\n") (set! ok #f)))
+
+; Unchanged workspace → diff vs snapshot is empty or all :same (small)
+; If snapshot wrongly stored suite source while diff uses workspace (or vice
+; versa), the line list is large. After both are fixed, same content → few lines.
+(define d0 (ast:diff sid))
+; Empty void is ok (no snapshots/diff path); pair list of same lines also ok.
+(if (or (void? d0) (pair? d0) (null? d0))
+    #t
+    (begin (display "FAIL-2918 unexpected diff shape\n") (set! ok #f)))
+
+; Mutate workspace content, then restore via snapshot (flat path + source backup)
+(set-code "(define unique-ws-2918-marker 99)")
+(define mid (current-source :workspace))
+(if (not (equal? mid ws))
+    #t
+    (begin (display "FAIL-2918 set-code did not change workspace\n") (set! ok #f)))
+
+(if (ast:restore sid)
+    #t
+    (begin (display "FAIL-2918 restore failed\n") (set! ok #f)))
+
+(define after (current-source :workspace))
+; Restored workspace must match pre-mutate workspace unparse (flat copy path)
+(if (equal? after ws)
+    #t
+    (begin (display "FAIL-2918 restore did not restore workspace source\n")
+           (set! ok #f)))
+
+; Diff against post-mutate alternative: change workspace then expect a real diff
+(set-code "(define unique-ws-2918-marker 7)")
+(define d1 (ast:diff sid))
+(if (pair? d1)
+    #t
+    (begin (display "FAIL-2918 expected non-empty diff after mutate\n") (set! ok #f)))
+
+(if ok
+    (begin (display "OK-2918 ast-snapshot-workspace") (newline))
+    (begin (display "FAIL-2918") (newline) (unbound-2918-force-fail)))

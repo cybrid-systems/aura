@@ -22,10 +22,11 @@
 ; Returns association list: ((name . "updated") (name . "added") ...)
 ;
 (define (ws:merge-symbols child-id)
-  (let ((parent-src (current-source)))
+  ; Issue #2918: workspace trees, not the suite/eval current-source default.
+  (let ((parent-src (current-source :workspace)))
     ; Switch to child, get its source
     (workspace :switch child-id)
-    (define child-src (current-source))
+    (define child-src (current-source :workspace))
     
     ; Parse child source to extract define names
     (set-code child-src)
