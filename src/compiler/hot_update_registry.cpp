@@ -555,14 +555,19 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     // can correlate force-JIT reason with the last recovery epoch.
     last_force_jit_at_epoch_notify_.store(epoch_notify_.load(std::memory_order_relaxed),
                                           std::memory_order_relaxed);
-    // Issue #2302: set the force_jit_regions_mask bit for this reason
-    // (bit N = reason N in the AotReloadFail enum). Agents query the
-    // mask via query:reload-recovery-state to know which regions
-    // are currently in force-JIT mode without OR'ing per-reason counters.
-    const auto new_mask = force_jit_regions_mask_.fetch_or(static_cast<std::uint64_t>(1)
-                                                               << static_cast<std::uint8_t>(reason),
-                                                           std::memory_order_relaxed) |
-                          (static_cast<std::uint64_t>(1) << static_cast<std::uint8_t>(reason));
+    // Issue #2927: set only the mapped group bit (Version|Defuse→0,
+    // Env→1, Linear→2, Region|Staging→3, Dlopen|Other→4). Never silent
+    // full-mask; Ok maps to zero bits (no fetch_or). Agents query
+    // force_jit_regions_mask via query:reload-recovery-state.
+    const auto bit_index = aot_reload_fail_to_force_jit_bit_index(reason);
+    last_force_jit_mapped_bit_.store(bit_index, std::memory_order_relaxed);
+    const auto bit_mask = aot_reload_fail_to_force_jit_mask(reason);
+    std::uint64_t new_mask;
+    if (bit_mask != 0) {
+        new_mask = force_jit_regions_mask_.fetch_or(bit_mask, std::memory_order_relaxed) | bit_mask;
+    } else {
+        new_mask = force_jit_regions_mask_.load(std::memory_order_relaxed);
+    }
     // attempts_left exhausted on fall-back (matches the policy_for()
     // loop terminal condition in aura_jit_bridge.cpp).
     attempts_left_.store(0, std::memory_order_relaxed);
@@ -574,17 +579,18 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     // Issue #2845: re-stamp AotReloadConsistencyProof so Agents never
     // observe would_allow_native=true (or a stale pre-demotion force
     // mask) after Env/Linear/Version exhaust → force-JIT. Uses the sole
-    // fail-path helper (would_allow_native=false + matching mask).
+    // fail-path helper (would_allow_native=false + matching registry mask).
     stamp_aot_reload_consistency_proof_fail_after_force_jit(static_cast<std::uint8_t>(reason),
                                                             new_mask);
 }
 
 void HotUpdateRegistry::on_exhausted_min_dirty_queue(AotReloadFail reason) noexcept {
-    // Issue #2544: minimal dirty set from last fail reason — same bit
-    // encoding as force_jit_regions_mask_ (bit N = AotReloadFail N).
-    // Cascade trigger marks "reemit wanted" for agents + cascade path
-    // without a full-module dirty fan-out.
-    const auto mask = static_cast<std::uint64_t>(1) << static_cast<std::uint8_t>(reason);
+    // Issue #2544 / #2927: minimal dirty set from last fail reason —
+    // same stable group-bit encoding as force_jit_regions_mask_
+    // (aot_reload_fail_to_force_jit_mask). Cascade trigger marks
+    // "reemit wanted" for agents + cascade path without a full-module
+    // dirty fan-out.
+    const auto mask = aot_reload_fail_to_force_jit_mask(reason);
     on_region_mask_from_dirty(mask);
     on_cascade_reemit_trigger(/*candidates_hint=*/1);
     // Issue #2601: seed retry closed loop. attempts_left = cap (default 3),
@@ -1021,6 +1027,15 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
     out->schema_2639 = 2639;
     out->issue_2639 = 2639;
     out->schema_2601 = 2601;
+    // Issue #2927: reason→bit map keys (additive; preserve schema-2367).
+    {
+        const auto mapped = reg.last_force_jit_mapped_bit();
+        out->last_force_jit_mapped_bit =
+            mapped == 0xFF ? static_cast<std::int64_t>(-1) : static_cast<std::int64_t>(mapped);
+        out->force_jit_reason_bit_map_wired = 1;
+        out->schema_2927 = 2927;
+        out->issue_2927 = 2927;
+    }
     const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
                         rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
                         snap.storm_level != 0 || snap.reemit_deferred_pending != 0 ||

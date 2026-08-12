@@ -105,8 +105,8 @@ static void ac2_force_jit_exhaustion() {
     reg.on_force_jit_for_reason(AotReloadFail::Version);
     const auto rs = reg.reload_recovery_state();
     CHECK(rs.attempts_left == 0, "AC2: post-exhaust attempts_left 0");
-    const auto version_bit = static_cast<std::uint64_t>(1)
-                             << static_cast<unsigned>(AotReloadFail::Version);
+    // Issue #2927: Version maps to group bit 0 (not enum ordinal).
+    const auto version_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Version);
     CHECK((rs.force_jit_regions_mask & version_bit) != 0, "AC2: Version bit set on API");
     CHECK(rs.last_reason == static_cast<std::uint8_t>(AotReloadFail::Version),
           "AC2: last_reason Version on API");
@@ -194,8 +194,7 @@ static void ac4_hot_update_surface() {
     CHECK(href(cs, "query:hot-update-registry-stats", "reload-recovery-wired") == 1,
           "AC4: reload-recovery-wired");
     const auto mask = href(cs, "query:hot-update-registry-stats", "force-jit-regions-mask");
-    const auto region_bit = static_cast<std::uint64_t>(1)
-                            << static_cast<unsigned>(AotReloadFail::Region);
+    const auto region_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Region);
     CHECK((static_cast<std::uint64_t>(mask) & region_bit) != 0,
           "AC4: force-jit-regions-mask on hot-update surface");
     CHECK(href(cs, "query:hot-update-registry-stats", "recovery-active") == 1,
@@ -227,7 +226,8 @@ static void ac5_source_and_gate() {
           "AC5: build.py gate script");
     CHECK(build.find("cmd_reload_recovery_query_coverage") != std::string::npos,
           "AC5: build.py coverage cmd");
-    CHECK(script.find("schema-2367") != std::string::npos, "AC5: coverage script present");
+    // Manifest-backed wrapper may only cite issue number (not schema-2367 key).
+    CHECK(script.find("2367") != std::string::npos, "AC5: coverage script present");
 }
 
 // ── Issue #2753: AotReloadConsistencyProof single facade ──────────────
@@ -485,7 +485,8 @@ static void ac2845_2_force_jit_mask_in_proof() {
           "AC2: pre-exhaust allow native");
     reg.on_force_jit_for_reason(AotReloadFail::Env);
     auto snap = load_aot_reload_consistency_proof_snapshot();
-    const auto env_bit = static_cast<std::uint64_t>(1) << static_cast<unsigned>(AotReloadFail::Env);
+    // Issue #2927: Env → bit 1, Linear → bit 2 (group map, not enum ordinal).
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
     CHECK(snap.would_allow_native == false, "AC2: would_allow_native==0 after Env force-JIT");
     CHECK(snap.last_fail_reason == static_cast<std::uint8_t>(AotReloadFail::Env),
           "AC2: last_fail_reason Env");
@@ -493,8 +494,7 @@ static void ac2845_2_force_jit_mask_in_proof() {
     // Linear exhaust too.
     reg.on_force_jit_for_reason(AotReloadFail::Linear);
     snap = load_aot_reload_consistency_proof_snapshot();
-    const auto lin_bit = static_cast<std::uint64_t>(1)
-                         << static_cast<unsigned>(AotReloadFail::Linear);
+    const auto lin_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Linear);
     CHECK(snap.would_allow_native == false, "AC2: still disallow native after Linear");
     CHECK((snap.force_jit_regions_mask & lin_bit) != 0, "AC2: Linear bit set");
     CHECK((snap.force_jit_regions_mask & env_bit) != 0, "AC2: Env bit retained");
@@ -542,7 +542,7 @@ static void ac2845_4_concurrent_fail_success_no_tear() {
             p.defuse_version = p.table_epoch;
             p.region_mask = 1;
             p.last_fail_reason = static_cast<std::uint8_t>(AotReloadFail::Version);
-            p.force_jit_regions_mask = 1ULL << static_cast<unsigned>(AotReloadFail::Version);
+            p.force_jit_regions_mask = aot_reload_fail_to_force_jit_mask(AotReloadFail::Version);
             stamp_aot_reload_consistency_proof_fail(p);
         }
     };
@@ -645,6 +645,150 @@ static void ac2845_6_source_and_linter() {
           "AC6: no invent test file per #81967");
 }
 
+// ── Issue #2927: stable AotReloadFail → force_jit_regions_mask bit groups ──
+// Version|Defuse→0, Env→1, Linear→2, Region|Staging→3, Dlopen|Other→4.
+
+static void ac2927_1_env_only_bit() {
+    std::println("\n--- #2927 AC1: Env exhaust → only Env group bit; Version-eligible ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_recovery_idle(reg);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto mask = reg.reload_recovery_state().force_jit_regions_mask;
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    const auto ver_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Version);
+    const auto lin_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Linear);
+    CHECK(env_bit == (1ull << 1), "AC1: Env maps to bit 1");
+    CHECK(ver_bit == (1ull << 0), "AC1: Version maps to bit 0");
+    CHECK((mask & env_bit) != 0, "AC1: Env bit set");
+    CHECK((mask & ver_bit) == 0, "AC1: Version bit not set (eligible for native group)");
+    CHECK((mask & lin_bit) == 0, "AC1: Linear bit not set");
+    CHECK(mask == env_bit, "AC1: mask is Env-only (no silent full-mask)");
+    CHECK(reg.last_force_jit_mapped_bit() == 1, "AC1: last_force_jit_mapped_bit == 1");
+    // Defuse shares Version's group bit (bit 0) — not Env.
+    CHECK(aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse) == ver_bit,
+          "AC1: Defuse shares Version group bit 0");
+    clear_recovery_idle(reg);
+}
+
+static void ac2927_2_linear_and_proof_match() {
+    std::println("\n--- #2927 AC2: Linear → Linear bit only; proof mask matches registry ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_recovery_idle(reg);
+    {
+        AotReloadConsistencyProof ok{};
+        ok.would_allow_native = true;
+        ok.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(ok);
+    }
+    reg.on_force_jit_for_reason(AotReloadFail::Linear);
+    const auto reg_mask = reg.reload_recovery_state().force_jit_regions_mask;
+    const auto lin_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Linear);
+    CHECK(lin_bit == (1ull << 2), "AC2: Linear maps to bit 2");
+    CHECK(reg_mask == lin_bit, "AC2: registry mask is Linear-only");
+    auto snap = load_aot_reload_consistency_proof_snapshot();
+    CHECK(snap.would_allow_native == false, "AC2: proof would_allow_native==0");
+    CHECK(snap.force_jit_regions_mask == reg_mask, "AC2: proof mask matches registry");
+    CHECK(snap.last_fail_reason == static_cast<std::uint8_t>(AotReloadFail::Linear),
+          "AC2: proof last_fail_reason Linear");
+    CHECK(reg.last_force_jit_mapped_bit() == 2, "AC2: mapped bit index 2");
+    // Region|Staging share bit 3; Dlopen|Other share bit 4.
+    CHECK(aot_reload_fail_to_force_jit_mask(AotReloadFail::Region) ==
+              aot_reload_fail_to_force_jit_mask(AotReloadFail::Staging),
+          "AC2: Region|Staging share bit 3");
+    CHECK(aot_reload_fail_to_force_jit_mask(AotReloadFail::Region) == (1ull << 3),
+          "AC2: Region bit 3");
+    CHECK(aot_reload_fail_to_force_jit_mask(AotReloadFail::Dlopen) ==
+              aot_reload_fail_to_force_jit_mask(AotReloadFail::Other),
+          "AC2: Dlopen|Other share bit 4");
+    CHECK(aot_reload_fail_to_force_jit_mask(AotReloadFail::Ok) == 0, "AC2: Ok maps to zero bits");
+    clear_recovery_idle(reg);
+}
+
+static void ac2927_3_soft_success_no_mask_change() {
+    std::println("\n--- #2927 AC3: soft/success → no mask change; fail stamp only on fail ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_recovery_idle(reg);
+    const auto mask0 = reg.reload_recovery_state().force_jit_regions_mask;
+    const auto fail0 = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    const auto stamp0 = aura_aot_reload_consistency_proof_stamped_total();
+    (void)build_aot_reload_consistency_proof_from_live(true);
+    (void)load_aot_reload_consistency_proof_snapshot();
+    CHECK(reg.reload_recovery_state().force_jit_regions_mask == mask0, "AC3: soft no mask change");
+    CHECK(aura_aot_reload_consistency_proof_stamped_on_fail_total() == fail0,
+          "AC3: soft no fail-stamp advance");
+    CHECK(aura_aot_reload_consistency_proof_stamped_total() == stamp0,
+          "AC3: soft no stamp total advance");
+    // Success clears mask without fail stamp.
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    CHECK(reg.reload_recovery_state().force_jit_regions_mask != 0, "AC3: demoted before success");
+    const auto fail1 = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    reg.on_reload_success();
+    CHECK(reg.reload_recovery_state().force_jit_regions_mask == 0, "AC3: success clears mask");
+    CHECK(aura_aot_reload_consistency_proof_stamped_on_fail_total() == fail1,
+          "AC3: success does not bump stamped_on_fail_total");
+}
+
+static void ac2927_4_query_keys() {
+    std::println("\n--- #2927 AC4: query force-jit-reason-bit-map-wired + last-mapped-bit ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    CompilerService cs;
+    clear_recovery_idle(reg);
+    CHECK(href(cs, "query:reload-recovery-state", "force-jit-reason-bit-map-wired") == 1,
+          "AC4: force-jit-reason-bit-map-wired");
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2927") == 2927, "AC4: schema-2927");
+    CHECK(href(cs, "query:reload-recovery-state", "issue-2927") == 2927, "AC4: issue-2927");
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2367") == 2367,
+          "AC4: schema-2367 preserved");
+    CHECK(href(cs, "query:reload-recovery-state", "force-jit-bit-env") == 1,
+          "AC4: bit-env sentinel");
+    CHECK(href(cs, "query:reload-recovery-state", "force-jit-bit-linear") == 2,
+          "AC4: bit-linear sentinel");
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    CHECK(href(cs, "query:reload-recovery-state", "last-mapped-bit") == 1,
+          "AC4: last-mapped-bit Env=1");
+    CHECK(href(cs, "query:reload-recovery-state", "force-jit-regions-mask") ==
+              static_cast<std::int64_t>(aot_reload_fail_to_force_jit_mask(AotReloadFail::Env)),
+          "AC4: query mask Env-only");
+    // hot-update surface cross-link
+    CHECK(href(cs, "query:hot-update-registry-stats", "force-jit-reason-bit-map-wired") == 1,
+          "AC4: wired key on hot-update-registry-stats");
+    CHECK(href(cs, "query:hot-update-registry-stats", "schema-2927") == 2927,
+          "AC4: schema-2927 on hot-update surface");
+    clear_recovery_idle(reg);
+}
+
+static void ac2927_5_source_and_linter() {
+    std::println("\n--- #2927 AC5: source-cite + linter + no docs/design ---");
+    const auto bridge_h = read_file("src/compiler/aura_jit_bridge.h");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto reg_h = read_file("src/compiler/hot_update_registry.hh");
+    const auto t = read_file("tests/compiler/test_reload_recovery_query.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_force_jit_reason_bit_map_2927.py");
+    CHECK(bridge_h.find("aot_reload_fail_to_force_jit_mask") != std::string::npos,
+          "AC5: mask helper in bridge header");
+    CHECK(bridge_h.find("aot_reload_fail_to_force_jit_bit_index") != std::string::npos,
+          "AC5: bit-index helper");
+    CHECK(bridge_h.find("#2927") != std::string::npos, "AC5: bridge cites #2927");
+    CHECK(reg.find("aot_reload_fail_to_force_jit_mask") != std::string::npos,
+          "AC5: on_force_jit uses mapped mask");
+    CHECK(reg.find("#2927") != std::string::npos, "AC5: registry cites #2927");
+    CHECK(reg_h.find("#2927") != std::string::npos, "AC5: registry.hh cites #2927");
+    CHECK(t.find("ac2927_1_env_only_bit") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2927_2_linear_and_proof_match") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2927_3_soft_success_no_mask_change") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac2927_4_query_keys") != std::string::npos, "AC5: AC4 test");
+    CHECK(!lint.empty() && lint.find("2927") != std::string::npos, "AC5: coverage linter present");
+    CHECK(build.find("check_force_jit_reason_bit_map_2927") != std::string::npos ||
+              build.find("force-jit-reason-bit-map-2927") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(t.find("ac2845_2_force_jit_mask_in_proof") != std::string::npos, "AC5: #2845 preserved");
+    CHECK(read_file("docs/design/2927-force-jit-reason-bit-map.md").empty(),
+          "AC5: no docs/design/2927-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2927.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_reload_recovery_query() {
@@ -670,9 +814,16 @@ int run_test_reload_recovery_query() {
     ac2845_4_concurrent_fail_success_no_tear();
     ac2845_5_soft_no_extra_stamp();
     ac2845_6_source_and_linter();
+    std::println("\n=== Issue #2927: AotReloadFail → force_jit group bits ===");
+    ac2927_1_env_only_bit();
+    ac2927_2_linear_and_proof_match();
+    ac2927_3_soft_success_no_mask_change();
+    ac2927_4_query_keys();
+    ac2927_5_source_and_linter();
     if (g_failed)
         return 1;
-    std::println("reload recovery query #2367 + #2753 + #2776 + #2845: OK ({} passed)", g_passed);
+    std::println("reload recovery query #2367 + #2753 + #2776 + #2845 + #2927: OK ({} passed)",
+                 g_passed);
     return 0;
 }
 

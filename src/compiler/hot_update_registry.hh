@@ -618,6 +618,9 @@ private:
     //   the registry only sees post-clear state (cleaner Agent diffs).
     std::atomic<std::uint64_t> force_jit_for_reason_total_{0};
     std::atomic<std::uint8_t> last_force_jit_reason_{0};
+    // Issue #2927: last mapped force_jit_regions_mask bit index from
+    // aot_reload_fail_to_force_jit_bit_index (0xFF = none / Ok).
+    std::atomic<std::uint8_t> last_force_jit_mapped_bit_{0xFF};
     // Issue #2367: epoch_notify_ counter snapshot at last force-JIT
     // (agents correlate recovery reason with epoch fan-out progress).
     std::atomic<std::uint64_t> last_force_jit_at_epoch_notify_{0};
@@ -629,10 +632,13 @@ private:
     //     on_recovery_set_attempts_left() — set to
     //     policy.max_reemit at start of aura_reload_aot_module_for_eval,
     //     cleared to 0 on success or exhausted.
-    //   force_jit_regions_mask_: bitmask of regions currently
-    //     in force-JIT mode (bit N = reason N in the AotReloadFail
-    //     enum). Set via fetch_or in on_force_jit_for_reason,
-    //     cleared wholesale (store 0) in on_reload_success.
+    //   force_jit_regions_mask_: bitmask of demotion groups currently
+    //     in force-JIT mode. Issue #2927 maps AotReloadFail → stable
+    //     group bits via aot_reload_fail_to_force_jit_mask (Version|
+    //     Defuse→0, Env→1, Linear→2, Region|Staging→3, Dlopen|Other→4).
+    //     Set via fetch_or of only the mapped bit in
+    //     on_force_jit_for_reason; cleared wholesale (store 0) in
+    //     on_reload_success.
     //   pending_dirty_count_: count of pending dirty defines in
     //     HotUpdateRegistry that haven't been applied yet.
     //     Externally managed via on_recovery_pending_dirty_inc/dec()
@@ -899,6 +905,10 @@ public:
     [[nodiscard]] std::uint8_t last_force_jit_reason() const noexcept {
         return last_force_jit_reason_.load(std::memory_order_relaxed);
     }
+    // Issue #2927: last reason→bit index (0xFF when none / Ok).
+    [[nodiscard]] std::uint8_t last_force_jit_mapped_bit() const noexcept {
+        return last_force_jit_mapped_bit_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t last_force_jit_at_epoch_notify() const noexcept {
         return last_force_jit_at_epoch_notify_.load(std::memory_order_relaxed);
     }
@@ -1158,6 +1168,14 @@ struct aura_reload_recovery_snapshot {
     std::int64_t reemit_storm_clear_health_pass_reemit_driven_total;
     std::int64_t schema_2669; // 2669 when wired
     std::int64_t issue_2669;  // 2669
+    // Issue #2927: reason→bit map SSOT (additive query keys).
+    // last_force_jit_mapped_bit: bit index from
+    // aot_reload_fail_to_force_jit_bit_index; -1 when none/Ok (0xFF).
+    // force_jit_reason_bit_map_wired: always 1 when #2927 linked.
+    std::int64_t last_force_jit_mapped_bit;
+    std::int64_t force_jit_reason_bit_map_wired;
+    std::int64_t schema_2927; // 2927 when wired
+    std::int64_t issue_2927;  // 2927
     // recovery-active: 1 when any non-idle recovery signal is set
     // (force-jit mask, attempts_left, pending dirty, deferred reemit,
     // storm_level != None). Soft empty path → 0.

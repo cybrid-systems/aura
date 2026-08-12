@@ -90,8 +90,7 @@ static void ac1_repromote_after_window() {
     reg.set_force_jit_repromote_window(3);
 
     reg.on_force_jit_for_reason(AotReloadFail::Defuse);
-    const auto defuse_bit = static_cast<std::uint64_t>(1)
-                            << static_cast<unsigned>(AotReloadFail::Defuse);
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
     CHECK((reg.reload_recovery_state().force_jit_regions_mask & defuse_bit) != 0,
           "AC1: Defuse bit set");
     CHECK(reg.force_jit_stable_successes() == 0, "AC1: streak 0 after demotion");
@@ -129,8 +128,7 @@ static void ac2_storm_or_fail_blocks() {
 
     // Storm active resets streak and never clears mask.
     reg.on_force_jit_for_reason(AotReloadFail::Version);
-    const auto version_bit = static_cast<std::uint64_t>(1)
-                             << static_cast<unsigned>(AotReloadFail::Version);
+    const auto version_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Version);
     reg.on_reemit_pipeline_call(1, 1);
     reg.on_reemit_pipeline_call(1, 1);
     CHECK(reg.force_jit_stable_successes() == 2, "AC2: pre-storm streak 2");
@@ -270,9 +268,8 @@ static void ac2895_partial_clear_covered_only() {
 
     reg.on_force_jit_for_reason(AotReloadFail::Defuse);
     reg.on_force_jit_for_reason(AotReloadFail::Env);
-    const auto defuse_bit = static_cast<std::uint64_t>(1)
-                            << static_cast<unsigned>(AotReloadFail::Defuse);
-    const auto env_bit = static_cast<std::uint64_t>(1) << static_cast<unsigned>(AotReloadFail::Env);
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
     const auto both = defuse_bit | env_bit;
     CHECK((reg.reload_recovery_state().force_jit_regions_mask & both) == both,
           "2895 AC1: Defuse+Env demoted");
@@ -311,8 +308,7 @@ static void ac2895_default_preserves_2502() {
     reg.on_force_jit_for_reason(AotReloadFail::Defuse);
     reg.on_force_jit_for_reason(AotReloadFail::Env);
     // Even with narrower coverage note, default wholesale still clears all.
-    const auto defuse_bit = static_cast<std::uint64_t>(1)
-                            << static_cast<unsigned>(AotReloadFail::Defuse);
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
     reg.note_reemit_success_coverage(defuse_bit);
     reg.on_reemit_pipeline_call(1, 1);
     reg.on_reemit_pipeline_call(1, 1);
@@ -343,8 +339,7 @@ static void ac2895_query_surface() {
     reg.set_force_jit_repromote_only_covered_bits(true);
     reg.on_force_jit_for_reason(AotReloadFail::Defuse);
     reg.on_force_jit_for_reason(AotReloadFail::Linear);
-    const auto defuse_bit = static_cast<std::uint64_t>(1)
-                            << static_cast<unsigned>(AotReloadFail::Defuse);
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
     reg.note_reemit_success_coverage(defuse_bit);
     reg.on_reemit_pipeline_call(1, 1);
     reg.on_reemit_pipeline_call(1, 1);
@@ -382,8 +377,7 @@ static void ac2895_storm_blocks() {
     reg.set_force_jit_repromote_window(2);
     reg.set_force_jit_repromote_only_covered_bits(true);
     reg.on_force_jit_for_reason(AotReloadFail::Defuse);
-    const auto defuse_bit = static_cast<std::uint64_t>(1)
-                            << static_cast<unsigned>(AotReloadFail::Defuse);
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
     reg.note_reemit_success_coverage(defuse_bit);
     reg.on_reemit_pipeline_call(1, 1);
     CHECK(reg.force_jit_stable_successes() == 1, "2895 AC4: streak 1 pre-storm");
