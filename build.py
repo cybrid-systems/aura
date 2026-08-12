@@ -48,6 +48,8 @@ Usage:
   #   Soak knobs: AURA_CHAOS_SOAK=1 AURA_CHAOS_FIBERS=256..1000 AURA_CHAOS_DURATION_S=300+
   #   #2554: ./build.py gate runs short PR chaos hard-fail (steal hard-fail Δ==0,
   #          residual still-running==0) via AURA_CHAOS_PR_GATE=1 (not FULL/SOAK)
+  #   #2931: ./build.py chaos-steal-gc-nightly-2931 — steal×mutate×GC×mailbox
+  #          soak hard gate (AURA_CHAOS_STEAL_GC=1 duration≥600 workers≥8)
 
 Test suites:
   unit        C++ 单元测试 (61 cases)
@@ -9365,6 +9367,106 @@ def cmd_bridge_epoch_zero_stale_2930_coverage():
     return 0
 
 
+def cmd_chaos_steal_gc_nightly_2931_coverage():
+    """Issue #2931: static contract for chaos steal-gc nightly hard gate.
+
+    Nightly profile: AURA_CHAOS_STEAL_GC=1 AURA_CHAOS_DURATION_S≥600
+    AURA_CHAOS_WORKERS≥8; residual-after-exit + resume-fence fail-closed;
+    EXCLUDE_FROM_ALL + env gate preserved for PR default.
+    """
+    print(f"{B}=== chaos steal-gc nightly hard gate coverage (#2931) ==={N}")
+    script = COVERAGE_CHECKS / "check_chaos_steal_gc_nightly_2931.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("chaos steal-gc nightly (#2931) coverage contract rows failed")
+        return 1
+    ok("chaos steal-gc nightly (#2931) coverage clean")
+    return 0
+
+
+def cmd_chaos_steal_gc_nightly_2931():
+    """Issue #2931: nightly hard gate — steal×mutate×GC×mailbox chaos soak.
+
+    Env matrix (hard-fail if residual/resume-fence unbounded):
+      AURA_CHAOS_STEAL_GC=1
+      AURA_CHAOS_DURATION_S≥600  AURA_CHAOS_WORKERS≥8
+    Soft steal (AURA_STEAL_SNAPSHOT_SOFT) forbidden under the gate.
+    Builds test_chaos_steal_mutation_gc if needed (EXCLUDE_FROM_ALL target).
+    PR default remains opt-in via env + EXCLUDE_FROM_ALL.
+    CI gate job without cmake: static coverage only.
+    """
+    print(f"{B}=== chaos steal-gc nightly hard gate (#2931) ==={N}")
+    rc = cmd_chaos_steal_gc_nightly_2931_coverage()
+    if rc != 0:
+        return rc
+
+    bin_path = BUILD / "test_chaos_steal_mutation_gc"
+    cmake_cache = BUILD / "CMakeCache.txt"
+    if not bin_path.exists():
+        if not cmake_cache.exists():
+            ok(
+                "chaos steal-gc nightly runtime skipped (no CMakeCache; static coverage only) "
+                "— run after ./build.py build or via nightly CI"
+            )
+            return 0
+        info("building test_chaos_steal_mutation_gc…")
+        nproc = os.cpu_count() or 4
+        r = subprocess.run(
+            [
+                "ninja",
+                "-C",
+                str(BUILD),
+                "-j",
+                str(max(1, nproc // 2)),
+                "test_chaos_steal_mutation_gc",
+            ],
+            cwd=ROOT,
+        )
+        if r.returncode != 0:
+            fail("build test_chaos_steal_mutation_gc failed")
+            return r.returncode
+    if not bin_path.exists():
+        fail(f"missing {bin_path} — run ./build.py build first")
+        return 1
+
+    env = os.environ.copy()
+    env["AURA_CHAOS_STEAL_GC"] = "1"
+    env.setdefault("AURA_CHAOS_DURATION_S", "600")
+    env.setdefault("AURA_CHAOS_WORKERS", "8")
+    # Soft steal forbidden under nightly hard gate.
+    env.pop("AURA_STEAL_SNAPSHOT_SOFT", None)
+
+    info(
+        "env: AURA_CHAOS_STEAL_GC=1 "
+        f"workers={env['AURA_CHAOS_WORKERS']} duration={env['AURA_CHAOS_DURATION_S']}s "
+        "(residual-after-exit / resume-fence / ticket fail-closed)"
+    )
+    timeout_s = max(180, int(env["AURA_CHAOS_DURATION_S"]) + 180)
+    start = time.time()
+    try:
+        r = subprocess.run([str(bin_path)], cwd=ROOT, env=env, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        fail(f"chaos steal-gc nightly timed out after {timeout_s}s (hang?) — gate blocked")
+        return 1
+    elapsed = time.time() - start
+    if r.returncode != 0:
+        fail(
+            f"chaos steal-gc nightly FAILED exit={r.returncode} in {elapsed:.1f}s — "
+            "residual_defer_after_exit without matching clears / resume_fence hard "
+            "surplus / ticket mismatch / residual_defer_steal_hard_fail must be 0"
+        )
+        return r.returncode
+    ok(
+        f"chaos steal-gc nightly GREEN in {elapsed:.1f}s "
+        f"(workers={env['AURA_CHAOS_WORKERS']} duration={env['AURA_CHAOS_DURATION_S']}s; "
+        "residual/resume fail-closed)"
+    )
+    return 0
+
+
 def cmd_chaos_release_blocker_2902_coverage():
     """Issue #2902: static contract for chaos hard release blocker."""
     print(f"{B}=== chaos hard release blocker coverage (#2902) ==={N}")
@@ -12484,6 +12586,8 @@ def main():
         "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "bridge-epoch-zero-stale-2930": cmd_bridge_epoch_zero_stale_2930_coverage,
+        "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,
+        "chaos-steal-gc-nightly-2931-coverage": cmd_chaos_steal_gc_nightly_2931_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,
