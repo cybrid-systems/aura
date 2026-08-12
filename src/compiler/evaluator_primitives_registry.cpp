@@ -3,6 +3,7 @@
 //
 // ═══════════════════════════════════════════════════════════════════════
 // #1552 — Agent / developer discoverability (canonical registration map)
+// #2915 — PrimRegistrar + PrimMeta scaffolding (do not invent styles)
 // ═══════════════════════════════════════════════════════════════════════
 // This file is the CENTRAL entry for all PrimRegistrar callbacks.
 // Implementation bodies live in evaluator_primitives_*.cpp (+ verticals).
@@ -13,6 +14,14 @@
 //   - (primitive:describe name) / (query:primitive-list-with-meta)
 //   - (query:primitives-meta) / (query:primitives-meta-catalog)
 //   - docs/generated/primitives.md + docs/generated/primitives-registry.md
+//
+// Registration styles (do NOT invent new ones):
+//   - Preferred general: register_prim(add, ev, name, fn, PrimSpec)
+//     → src/compiler/prim_registrar_scaffold.hh (#2915)
+//   - Render hot only: register_render_hot_prim(...) (#2217)
+//   - Legacy add / prim_registrar_with_meta / DEFINE_PRIMITIVE_META still OK
+//     for existing TUs; new prims should use register_prim unless a specialized
+//     helper applies. Contract: docs/stdlib/primitive-authoring-contract.md
 //
 // Registration groups (order below = boot order):
 //   S0 core: type-char, pair-string, json, list, vector-hash, math,
