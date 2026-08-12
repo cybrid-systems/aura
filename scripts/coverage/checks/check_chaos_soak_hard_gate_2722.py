@@ -80,13 +80,15 @@ def main() -> int:
         "AC1",
         build,
     )
-    # Wired into main gate command chain (coverage-only for fast pre-push
-    # feedback; the full SOAK runs in release.yml per AC4).
-    must_match(
-        r"or\s+cmd_chaos_soak_hard_gate_2722_coverage\(\)",
-        "AC1",
-        build,
-    )
+    # Wired into gate: historical serial `or cmd_*_coverage()` chain, or the
+    # parallel scripts/coverage/run_checks.py path (check_*.py is discovered
+    # by glob; full SOAK still runs in release.yml per AC4).
+    if not (
+        re.search(r"or\s+cmd_chaos_soak_hard_gate_2722_coverage\(\)", build)
+        or "run_checks.py" in build
+        or "_run_parallel_coverage_checks" in build
+    ):
+        fails.append("AC1: gate must wire #2722 coverage via or-chain or parallel run_checks.py")
     # Full function registered in command table for release.yml invocation.
     must('"chaos-soak-hard-gate-2722": cmd_chaos_soak_hard_gate_2722,', "AC1", build)
 

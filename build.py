@@ -6,9 +6,12 @@ Usage:
   ./build.py [--sanitizer=asan|ubsan|tsan] build    # CMake 构建 (sanitizer-插桩)
   ./build.py [--sanitizer=asan|ubsan|tsan] test [suite]  # 运行测试
   ./build.py check            # gate + ci（与 CI 相同）
-  ./build.py gate             # docs + lint + format + fixtures + surface + binding + registry + dead-heap + aot-stamp + inventory
+  ./build.py gate             # docs + ruff + format + fixtures + parallel coverage checks
+  ./build.py gate --changed   # pre-push fast path: only checks touching git diff (+ cascade off)
   ./build.py gate --fix       # 同上，但 auto-regen docs/registry/inventory + lint/format --fix（#1572/#1957）
   ./build.py gate --scripts-only  # 跳过 clang-format（脚本-only,无 C++ 编译）
+  ./build.py gate --serial    # coverage checks one-at-a-time (debug; default is parallel)
+  ./build.py gate --jobs N    # coverage parallel workers (default min(16,nproc) / AURA_GATE_JOBS)
   ./build.py legacy-test-inventory  # #1957 inventory freshness (--fix to regen)
   ./build.py ci               # build + CI 测试矩阵
   ./build.py clean            # 清理构建产物
@@ -84,6 +87,7 @@ ROOT = Path(__file__).resolve().parent
 SCRIPTS = ROOT / "scripts"
 COVERAGE_CHECKS = SCRIPTS / "coverage" / "checks"
 COVERAGE_RUNNER = SCRIPTS / "coverage" / "runner.py"
+COVERAGE_RUN_CHECKS = SCRIPTS / "coverage" / "run_checks.py"
 TOOLS = SCRIPTS / "tools"
 AUDIT = SCRIPTS / "audit"
 BENCH = ROOT / "tests" / "benchmark.py"  # thin entry → tests/bench/benchmark.py
@@ -191,15 +195,64 @@ def _cpp_source_files():
     return files
 
 
+def _git_changed_files(base: str = "origin/main") -> list[str]:
+    """Changed paths vs base (merge-base...HEAD) + staged + unstaged + untracked."""
+    files: set[str] = set()
+    try:
+        mb = subprocess.run(
+            ["git", "merge-base", base, "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if mb.returncode == 0 and mb.stdout.strip():
+            r = subprocess.run(
+                ["git", "diff", "--name-only", f"{mb.stdout.strip()}...HEAD"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if r.returncode == 0:
+                files.update(ln.strip() for ln in r.stdout.splitlines() if ln.strip())
+        for args in (
+            ["git", "diff", "--name-only", "--cached"],
+            ["git", "diff", "--name-only"],
+            ["git", "ls-files", "--others", "--exclude-standard"],
+        ):
+            r = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, check=False)
+            if r.returncode == 0:
+                files.update(ln.strip() for ln in r.stdout.splitlines() if ln.strip())
+    except FileNotFoundError:
+        pass
+    return sorted(files)
+
+
 def cmd_format():
-    """clang-format check/fix for all C++ under src/ + tests/ (CI parity)."""
+    """clang-format check/fix for C++ under src/ + tests/ (CI parity).
+
+    Pass --changed (or AURA_FORMAT_CHANGED=1) to only touch files in the
+    git diff — used by pre-push fast gate.
+    """
     fix = "--fix" in sys.argv[2:]
-    print(f"{B}═══ Format {'(fix)' if fix else '(check)'} ═══{N}")
+    changed_only = "--changed" in sys.argv[2:] or os.environ.get("AURA_FORMAT_CHANGED", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    )
+    print(f"{B}═══ Format {'(fix)' if fix else '(check)'}{('+changed' if changed_only else '')} ═══{N}")
     clang_format = shutil.which("clang-format")
     if not clang_format:
         fail("clang-format not found — install clang-format (CI: llvm 22.x)")
         return 1
     files = _cpp_source_files()
+    if changed_only:
+        changed = set(_git_changed_files())
+        files = [f for f in files if str(f.relative_to(ROOT)).replace("\\", "/") in changed]
+        if not files:
+            ok("clang-format: no changed C++ files (skip)")
+            return 0
     if not files:
         fail("no C++ source files found under src/ or tests/")
         return 1
@@ -220,7 +273,14 @@ def cmd_format():
 
 
 def cmd_lint():
-    """Ruff lint + format check + Issue #1484 test-includes linter."""
+    """Ruff lint + format check + (optional) sequential coverage scripts.
+
+    Under ./build.py gate the sequential coverage chain is skipped
+    (AURA_LINT_SKIP_COVERAGE=1) and scripts/coverage/run_checks.py runs
+    the same check_*.py set in parallel with cascade suppression.
+    Standalone `./build.py lint` still runs the full sequential chain for
+    back-compat.
+    """
     fix = "--fix" in sys.argv[2:]
     print(f"{B}═══ Lint {'(fix)' if fix else '(check)'} ═══{N}")
     ruff = shutil.which("ruff")
@@ -246,6 +306,10 @@ def cmd_lint():
     if r != 0:
         fail("ruff format check failed — run ./build.py lint --fix")
         return r
+    # Gate path: coverage scripts run via parallel run_checks.py (cascade-free).
+    if os.environ.get("AURA_LINT_SKIP_COVERAGE", "").strip() in ("1", "true", "yes"):
+        ok("ruff OK (coverage checks deferred to parallel gate runner)")
+        return 0
     # Issue #1484: test-includes linter (matches .githooks/pre-commit
     # C2 wiring). Bare `#include "X.h"` patterns where the header
     # lives under src/compiler/ or src/core/ but the include
@@ -10960,23 +11024,75 @@ def cmd_source_to_ir_strict():
     return 0
 
 
+def _gate_parse_jobs() -> int:
+    """Parallel workers for coverage checks (0 → run_checks default)."""
+    if "--serial" in sys.argv[2:] or os.environ.get("AURA_GATE_SERIAL", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return 1
+    argv = sys.argv[2:]
+    for i, a in enumerate(argv):
+        if a == "--jobs" and i + 1 < len(argv) and argv[i + 1].isdigit():
+            return max(1, int(argv[i + 1]))
+        if a.startswith("--jobs=") and a.split("=", 1)[1].isdigit():
+            return max(1, int(a.split("=", 1)[1]))
+    env = os.environ.get("AURA_GATE_JOBS", "").strip()
+    if env.isdigit() and int(env) > 0:
+        return int(env)
+    return 0  # run_checks chooses min(16, nproc)
+
+
+def _run_parallel_coverage_checks(*, changed: bool) -> int:
+    """Drive scripts/coverage/run_checks.py (parallel + cascade-free)."""
+    if not COVERAGE_RUN_CHECKS.is_file():
+        fail(f"missing {COVERAGE_RUN_CHECKS}")
+        return 1
+    print(f"{B}═══ Coverage checks ({'changed' if changed else 'all'}, parallel) ═══{N}")
+    # Cascade suppression is the default for gate: every check runs once.
+    os.environ["AURA_COVERAGE_NO_CASCADE"] = "1"
+    os.environ["AURA_LINT_SKIP_COVERAGE"] = "1"
+    cmd = [sys.executable, str(COVERAGE_RUN_CHECKS)]
+    cmd.append("--changed" if changed else "--all")
+    jobs = _gate_parse_jobs()
+    if jobs > 0:
+        cmd.extend(["--jobs", str(jobs)])
+    # Forward --base if present.
+    argv = sys.argv[2:]
+    for i, a in enumerate(argv):
+        if a == "--base" and i + 1 < len(argv):
+            cmd.extend(["--base", argv[i + 1]])
+            break
+        if a.startswith("--base="):
+            cmd.append(a)
+            break
+    r = subprocess.run(cmd, cwd=ROOT)
+    if r.returncode != 0:
+        fail("coverage checks failed — see scripts/coverage/run_checks.py output above")
+        return r.returncode
+    ok("coverage checks clean")
+    return 0
+
+
 def cmd_gate():
-    """Fast static checks for CI (docs + lint + format + fixtures + surface + registry + binding).
+    """Fast static checks for CI / pre-push.
 
-    Issue #1572: pass --fix to auto-regen docs + test-registry and to run
-    lint/format in fix mode (those subcommands already read --fix from argv).
-    CI always runs without --fix (check-only).
+    Core: docs + ruff + clang-format + fixtures + surface audits.
+    Coverage: scripts/coverage/run_checks.py — parallel check_*.py with
+    nested cascade suppression (AURA_COVERAGE_NO_CASCADE=1).
 
-    Issue #1573: pass --scripts-only (or AURA_GATE_SCRIPTS_ONLY=1) to skip
-    clang-format (e.g. when C++ toolchain unavailable).
+    Flags:
+      --fix          auto-regen docs/registry/inventory; lint/format fix
+      --scripts-only  skip clang-format
+      --changed       only coverage/format for git-diff paths (pre-push)
+      --serial        coverage jobs=1
+      --jobs N        coverage parallel workers
+      --full          force full coverage + chaos runtime even with --changed
+                      (or AURA_GATE_FULL=1)
 
-    Issue #1668: also runs dead string_heap_ push audit (--strict).
-    Issue #1669: also runs catch(...) SILENCE-PRIM audit (--strict).
-    Issue #1931: also runs mutation Guard coverage linter (--strict).
-    Issue #1957: also runs legacy test inventory --check (regen with --fix).
-    Issue #1966: also runs orch MVP scope linter (--strict; removed multi-agent symbols).
-    Issue #2057: also runs side-effect security coverage (--strict).
-    Issue #2168: also runs AOT env/linear stamp coverage (forbid bare (0,0) mangle).
+    Issue #1572/#1573/#1668/#1669/#1931/#1957/#1966/#2057/#2168 lineage
+    preserved; execution is batched rather than a 300-deep `or` chain.
     """
     fix = "--fix" in sys.argv[2:]
     scripts_only = "--scripts-only" in sys.argv[2:] or os.environ.get("AURA_GATE_SCRIPTS_ONLY", "").strip() in (
@@ -10984,11 +11100,35 @@ def cmd_gate():
         "true",
         "yes",
     )
+    changed = "--changed" in sys.argv[2:] or os.environ.get("AURA_GATE_CHANGED", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    )
+    full = "--full" in sys.argv[2:] or os.environ.get("AURA_GATE_FULL", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if full:
+        changed = False
+
     mode = "fix" if fix else "check"
     if scripts_only:
         mode += "+scripts-only"
+    if changed:
+        mode += "+changed"
+    if full:
+        mode += "+full"
     print(f"{B}═══ Gate ({mode}) ═══{N}")
-    # Short-circuit with `or` (do not eagerly build a list of call results).
+
+    # Defer sequential coverage scripts inside cmd_lint to the parallel runner.
+    os.environ["AURA_LINT_SKIP_COVERAGE"] = "1"
+    os.environ["AURA_COVERAGE_NO_CASCADE"] = "1"
+    if changed:
+        os.environ["AURA_FORMAT_CHANGED"] = "1"
+
+    t_gate = time.time()
     rc = cmd_docs(check=not fix) or cmd_lint()
     if rc:
         return rc
@@ -10998,7 +11138,9 @@ def cmd_gate():
         rc = cmd_format()
         if rc:
             return rc
-    return (
+
+    # Small non-coverage audits (not part of check_*.py glob / have side policy).
+    rc = (
         cmd_fixtures()
         or cmd_primitive_surface()
         or cmd_test_registry()
@@ -11009,330 +11151,29 @@ def cmd_gate():
         or cmd_catch_silent_swallow()
         or cmd_mutation_guard_coverage()
         or cmd_orch_mvp_scope()
-        or cmd_workflow_failure_policy_2756_coverage()
-        or cmd_workflow_compose_aura_2843_coverage()
         or cmd_aot_env_linear_stamp()
         or cmd_legacy_test_inventory()
         or cmd_source_to_ir_strict()
-        or cmd_cross_function_impact_scope_coverage()
-        or cmd_dual_dep_graph_parity_coverage()
-        or cmd_adaptive_thr_coverage()
-        or cmd_aot_reload_policy_coverage()
-        or cmd_layout_stamp_fence_coverage()
-        or cmd_env_gen_fence_coverage()
-        or cmd_aot_stale_probe_hard_reject_coverage()
-        or cmd_hold_aware_steal_scoring_coverage()
-        or cmd_soa_single_source_of_truth_coverage()
-        or cmd_layout_stamp_shape_version_fence_coverage()
-        or cmd_arena_moving_compaction_coverage()
-        or cmd_arena_compact_hook_stats_coverage()
-        or cmd_arena_dtor_clears_hooks_coverage()
-        or cmd_has_on_compact_hook_lock_coverage()
-        or cmd_require_effect_live_mid_coverage()
-        or cmd_mid_join_fail_closed_2707_coverage()
-        or cmd_require_effect_auto_isolation_2490_coverage()
-        or cmd_tenant_scope_fiber_mandate_2491_coverage()
-        or cmd_security_audit_wal_force_restricted_2492_coverage()
-        or cmd_audit_mutation_id_unify_2493_coverage()
-        or cmd_side_effect_security_gate_hardfail_2494_coverage()
-        or cmd_moving_densify_fail_closed_2495_coverage()
-        or cmd_general_object_pin_coverage_gate_2496_coverage()
-        or cmd_restricted_unset_principal_coverage()
-        or cmd_grant_macro_self_evo_stamp_coverage()
-        or cmd_capability_string_matrix_unify_coverage()
-        or cmd_capability_high_risk_promote_2489_coverage()
-        or cmd_security_audit_fold_coverage()
-        or cmd_security_health_coverage()
-        or cmd_validate_node_no_abort_coverage()
-        or cmd_validate_post_restore_soa_coverage()
-        or cmd_fixup_deltas_coverage()
-        or cmd_last_validated_generation_atomic_coverage()
-        or cmd_stable_ref_wire_endian_coverage()
-        or cmd_orphan_reap_tick_coverage()
-        or cmd_join_drain_reclaim_still_running_coverage()
-        or cmd_residual_body_age_coverage()
-        or cmd_sync_remount_anon_coverage()
-        or cmd_residual_sid0_cap_coverage()
-        or cmd_storm_clear_health_pass_coverage()
-        or cmd_storm_clear_drive_body_coverage()
-        or cmd_mailbox_bp_recent_window_coverage()
-        or cmd_agent_scope_concurrent_coverage()
-        or cmd_parallel_isolation_level_coverage()
-        or cmd_pure_parallel_isolation_wording_coverage()
-        or cmd_audit_mid_fallback_slo_2594_coverage()
-        or cmd_densify_unified_gate_2595_coverage()
-        or cmd_moving_untracked_production_hard_2596_coverage()
-        or cmd_general_object_pin_auto_wire_2597_coverage()
-        or cmd_general_object_pin_auto_wire_2709_coverage()
-        or cmd_panic_checkpoint_steal_hard_2710_coverage()
-        or cmd_envframe_lifetime_proof_2711_coverage()
-        or cmd_epoch_invariant_soft_fuse_heal_2712_coverage()
-        or cmd_cross_eval_epoch_bump_2713_coverage()
-        or cmd_captured_anon_sync_remount_prod_default_2714_coverage()
-        or cmd_deferred_reemit_steal_sticky_2715_coverage()
-        or cmd_occurrence_hard_face_commit_2716_coverage()
-        or cmd_cone_truncate_force_closure_2909_coverage()
-        or cmd_type_linear_commit_proof_stamp_2717_coverage()
-        or cmd_type_linear_commit_proof_counts_2758_coverage()
-        or cmd_type_linear_commit_proof_goal_truth_2842_coverage()
-        or cmd_panic_residual_densify_hard_2598_coverage()
-        or cmd_envframe_densify_scan_commit_barrier_2599_coverage()
-        or cmd_mutation_boundary_shared_exit_2600_coverage()
-        or cmd_agent_reply_coverage()
-        or cmd_restamp_incremental_coverage()
-        or cmd_query_index_composite_coverage()
-        or cmd_stable_ref_export_coverage()
-        or cmd_moving_pin_contract_fail_closed_coverage()
-        or cmd_root_remap_pass_coverage()
-        or cmd_envframe_ownership_transfer_coverage()
-        or cmd_residual_gc_defer_multi_eval_coverage()
-        or cmd_residual_defer_after_exit_coverage()
-        or cmd_capture_cell_remap_coverage()
-        or cmd_general_object_pin_coverage()
-        or cmd_aot_per_eval_slot_invalidate_coverage()
-        or cmd_closure_sync_remount_2602_coverage()
-        or cmd_cross_cow_soft_migrate_obs_2603_coverage()
-        or cmd_reemit_auto_drain_boundary_2604_coverage()
-        or cmd_security_schedule_mutate_admit_2630_coverage()
-        or cmd_orch_scope_child_2631_coverage()
-        or cmd_aot_exhausted_min_dirty_retry_2601_coverage()
-        or cmd_lifetime_contract_snapshot_coverage()
-        or cmd_type_timeout_repair_graph_coverage()
-        or cmd_escape_gate_key_contract_coverage()
-        or cmd_composite_empty_cs_hard_coverage()
-        or cmd_composite_cs_signature_matrix_coverage()
-        or cmd_steal_snapshot_hard_invariant_coverage()
-        or cmd_steal_safety_ticket_coverage()
-        or cmd_steal_snapshot_soft_production_lock_coverage()
-        or cmd_render_deopt_throttle_race_coverage()
-        or cmd_legacy_pin_registry_cleanup_coverage()
-        or cmd_pin_bulk_all_shards_coverage()
-        or cmd_steal_complete_strong_entry_coverage()
-        or cmd_mutate_mailbox_strict_coverage()
-        or cmd_mailbox_defer_drain_sla_coverage()
-        or cmd_mailbox_hold_exit_drain_coverage()
-        or cmd_mailbox_under_boundary_wait_2903_coverage()
-        or cmd_mailbox_hold_starvation_hard_coverage()
-        or cmd_type_freshness_steal_densify_coverage()
-        or cmd_commit_readiness_score_coverage()
-        or cmd_transaction_guard_migration_coverage()
-        or cmd_dead_coercion_dirty_cone_coverage()
-        or cmd_lock_order_production_soft_coverage()
-        or cmd_coercion_prov_slo_coverage()
-        or cmd_blame_soft_recover_coverage()
-        or cmd_coercion_dual_require_coverage()
-        or cmd_linear_cross_closure_escape_coverage()
-        or cmd_linear_cross_closure_depth2_coverage()
-        or cmd_linear_cross_closure_depth_trunc_coverage()
-        or cmd_adt_match_goal_table_coverage()
-        or cmd_module_require_freevar_coverage()
-        or cmd_try_catch_bind_coverage()
-        or cmd_symbol_eq_coverage()
-        or cmd_setcode_rebind_coverage()
-        or cmd_aether_denseness_coverage()
-        or cmd_module_rebind_residual_coverage()
-        or cmd_hot_strategy_coverage()
-        or cmd_module_load_tail_coverage()
-        or cmd_while_define_oneshot_coverage()
-        or cmd_module_export_display_coverage()
-        or cmd_ir_const_string_intern_coverage()
-        or cmd_write_string_escape_coverage()
-        or cmd_jit_dual_string_heap_coverage()
-        or cmd_primcall_narg_coverage()
-        or cmd_primcall_str_intern_coverage()
-        or cmd_linear_three_layer_wire_coverage()
-        or cmd_partial_cone_cap_coverage()
-        or cmd_bidirectional_match_coverage()
-        or cmd_mutation_hold_slo_coverage()
-        or cmd_mutation_hold_estimate_coverage()
-        or cmd_mutation_hold_live_coverage()
-        or cmd_pcv_tls_scratch_coverage()
-        or cmd_pcv_tls_default_on_coverage()
-        or cmd_batch_dirty_cascade_coverage()
-        or cmd_batch_dirty_discipline_coverage()
-        or cmd_moving_unified_success_2682_coverage()
-        or cmd_moving_sticky_densify_off_2905_coverage()
-        or cmd_shape_storm_isolation_2683_coverage()
-        or cmd_evaluator_capture_tenant_2687_coverage()
-        or cmd_hard_capture_tenant_2705_coverage()
-        or cmd_evaluator_stamp_sole_authority_2759_coverage()
-        or cmd_capability_production_default_2688_coverage()
-        or cmd_closure_anon_captured_remount_2691_coverage()
-        or cmd_pure_anon_sync_remount_budget_2850_coverage()
-        or cmd_pure_anon_adaptive_budget_2893_coverage()
-        or cmd_aot_slot_owner_consistency_2692_coverage()
-        or cmd_require_effect_on_ref_2689_coverage()
-        or cmd_sole_require_effect_2706_coverage()
-        or cmd_pending_recovery_drain_2690_coverage()
-        or cmd_workspace_mtx_contention_coverage()
-        or cmd_module_partition_map_coverage()
-        or cmd_query_hygiene_default_coverage()
-        or cmd_shape_storm_adaptive_coverage()
-        or cmd_aot_linear_literal_noop_coverage()
-        or cmd_stringpool_bytes_total_lock_coverage()
-        or cmd_stringpool_buf_fragmentation_lock_coverage()
-        or cmd_node_meta_bounds_coverage()
-        or cmd_node_meta_gap_coverage()
-        or cmd_reset_slot_parent_edges_coverage()
-        or cmd_flatast_add_node_lock_coverage()
-        or cmd_summary_recompute_sym_coverage()
-        or cmd_summary_flags_guard_coverage()
-        or cmd_incoming_parent_dirty_atomic_coverage()
-        or cmd_binding_gens_atomic_coverage()
-        or cmd_structural_metadata_lock_order_coverage()
-        or cmd_tag_arity_index_lock_coverage()
-        or cmd_tag_arity_key_hash_coverage()
-        or cmd_restamp_lazy_align_atomic_coverage()
-        or cmd_subtree_gen_atomic_coverage()
-        or cmd_dirty_column_lock_coverage()
-        or cmd_dirty_columnar_2904_coverage()
-        or cmd_subtree_dirty_bounds_coverage()
-        or cmd_capability_audit_publish_coverage()
-        or cmd_capability_registry_snapshot_coverage()
-        or cmd_sandbox_mode_atomic_coverage()
-        or cmd_gc_defer_arm_fetch_or_coverage()
-        or cmd_gc_defer_overflow_policy_atomic_coverage()
-        or cmd_capability_effect_stats_snapshot_coverage()
-        or cmd_dead_coercion_columnar_coverage()
-        or cmd_ir_soa_layout_stamp_coverage()
-        or cmd_soa_ban_residual_aos_bridge_coverage()
-        or cmd_soa_sunset_bridge_2907_coverage()
-        or cmd_soa_residual_production_smoke_coverage()
-        or cmd_arena_moving_densify_health_coverage()
-        or cmd_coercion_unify_incomplete_skip_coverage()
-        or cmd_partial_cone_commit_gate_coverage()
-        or cmd_occurrence_dirty_key_authority_coverage()
-        or cmd_layout_stamp_equality_8field_coverage()
-        or cmd_shape_high_mutation_storm_coverage()
-        or cmd_hot_pass_hard_dod_coverage()
-        or cmd_hot_children_columnar_coverage()
-        or cmd_value_tag_hotpath_ban_coverage()
-        or cmd_shape_compact_storm_isolation_coverage()
-        or cmd_shape_compact_no_global_bump_2908_coverage()
-        or cmd_hot_contract_placement_coverage()
-        or cmd_post_compact_lifecycle_coverage()
-        or cmd_gc_defer_reconcile_cas_coverage()
-        or cmd_arena_compact_notify_lifecycle_coverage()
-        or cmd_verification_dirty_bits_lock_coverage()
-        or cmd_soa_column_atomic_coverage()
-        or cmd_macro_dirty_bits_lock_coverage()
-        or cmd_clear_macro_dirty_concurrent_coverage()
-        or cmd_region_dense_atomic_coverage()
-        or cmd_region_sym_dense_race_coverage()
-        or cmd_add_node_builder_contract_coverage()
-        or cmd_region_lambda_dense_race_coverage()
-        or cmd_region_sym_map_race_coverage()
-        or cmd_defines_referencing_sym_coverage()
-        or cmd_param_data_mutation_contract_coverage()
-        or cmd_param_annot_mutation_contract_coverage()
-        or cmd_param_begin_count_publish_coverage()
-        or cmd_incoming_parent_dirty_atomic_2452_coverage()
-        or cmd_get_nodeview_snapshot_coverage()
-        or cmd_raii_guard_flatast_lifetime_coverage()
-        or cmd_restore_children_structural_lock_coverage()
-        or cmd_subtree_uses_sym_template_bloat_coverage()
-        or cmd_mutation_log_cow_copy_coverage()
-        or cmd_truncate_commit_gate_coverage()
-        or cmd_type_system_health_coverage()
-        or cmd_type_system_health_next_action_coverage()
-        or cmd_ir_optimize_type_info_chain_coverage()
-        or cmd_closure_call_must_deopt_toctou_coverage()
-        or cmd_gc_closures_mtx_flush_sweep_coverage()
-        or cmd_ffi_hot_path_cache_toctou_coverage()
-        or cmd_aura_jit_unused_fn_lock_coverage()
-        or cmd_partial_recompile_single_evict_coverage()
-        or cmd_emit_object_deprecated_coverage()
-        or cmd_command_line_cap_io_read_coverage()
-        or cmd_regex_redos_timeout_coverage()
-        or cmd_json_parse_number_exception_coverage()
-        or cmd_json_parse_object_grow_coverage()
-        or cmd_list_end_of_list_void_coverage()
-        or cmd_channel_rendezvous_coverage()
-        or cmd_eval_current_no_auto_fix_coverage()
-        or cmd_load_cap_io_read_coverage()
-        or cmd_gc_heap_cells_clear_coverage()
-        or cmd_mutation_concurrency_health_coverage()
-        or cmd_steal_layout_stamp_coverage()
-        or cmd_steal_complete_restamp_txn_coverage()
-        or cmd_residual_defer_steal_hard_and_coverage()
-        or cmd_is_stealable_snapshot_gate_coverage()
-        or cmd_named_closure_stable_id_at_create_coverage()
-        or cmd_stable_func_id_eval_namespace_coverage()
-        or cmd_composite_drift_inject_2671_coverage()
-        or cmd_occurrence_cone_truncate_drift_2672_coverage()
-        or cmd_anonymous_residual_stable_id_policy_coverage()
-        or cmd_pereval_reemit_region_independence_coverage()
-        or cmd_instance_constraint_depth_cap_coverage()
-        or cmd_occurrence_goal_persist_rehydrate_coverage()
-        or cmd_occurrence_persist_production_default_2896_coverage()
-        or cmd_occurrence_persist_production_2910_coverage()
-        or cmd_refined_consistency_commit_gate_2911_coverage()
-        or cmd_occurrence_goal_vacuous_solve_prevent_coverage()
-        or cmd_coercion_evidence_loss_slo_coverage()
-        or cmd_fiber_eval_depth_isolation_coverage()
-        or cmd_module_path_refuse_coverage()
-        or cmd_pmr_alloc_fiber_safe_coverage()
-        or cmd_string_heap_corruption_guard_coverage()
-        or cmd_hash_table_grow_coverage()
-        or cmd_subsecond_clock_coverage()
-        or cmd_fiber_spawn_cli_coverage()
-        or cmd_steal_densify_linear_type_hard_and_coverage()
-        or cmd_composite_auto_partial_from_cone_coverage()
-        or cmd_dce_elided_deopt_meta_coverage()
-        or cmd_castop_typed_meta_coverage()
-        or cmd_type_linear_commit_health_coverage()
-        or cmd_type_linear_evolution_snapshot_2897_coverage()
-        or cmd_composite_required_type_2898_coverage()
-        or cmd_linear_ir_fastpath_2899_coverage()
-        or cmd_solver_budget_2900_coverage()
-        or cmd_steal_residual_rearm_race_2901_coverage()
-        or cmd_chaos_release_blocker_2902()
-        or cmd_chaos_mutate_steal_gc_mailbox_coverage()
-        or cmd_production_concurrency_coverage()
-        or cmd_chaos_pr_hard_fail_gate()
-        or cmd_chaos_soak_hard_gate_2722_coverage()
-        or cmd_chaos_soak_residual_zero_2755_coverage()
-        or cmd_post_densify_linear_type_revalidate_coverage()
-        or cmd_lock_order_audit_2354_coverage()
-        or cmd_type_dep_epoch_prune_coverage()
-        or cmd_reverify_expand_coverage()
-        or cmd_linear_synth_violation_coverage()
-        or cmd_linear_synth_boundary_authority_coverage()
-        or cmd_linear_force_unified_coverage()
-        or cmd_type_dirty_txn_order_coverage()
-        or cmd_linear_partial_revalidate_coverage()
-        or cmd_occurrence_cache_key_coverage()
-        or cmd_castop_density_hard_coverage()
-        or cmd_castop_density_closed_loop_coverage()
-        or cmd_memo_goal_epoch_health_coverage()
-        or cmd_densify_envframe_ok_coverage()
-        or cmd_densify_last_call_axes_coverage()
-        or cmd_envframe_ownership_steal_densify_coverage()
-        or cmd_general_object_pin_adopt_coverage()
-        or cmd_panic_defer_after_densify_coverage()
-        or cmd_densify_root_closure_closed_loop_coverage()
-        or cmd_epoch_invariant_walk_coverage()
-        or cmd_epoch_invariant_periodic_coverage()
-        or cmd_reload_recovery_query_coverage()
-        or cmd_densify_remap_pairing_coverage()
-        or cmd_live_closure_stable_id_only_coverage()
-        or cmd_specjit_per_eval_storm_isolation_coverage()
-        or cmd_specjit_pereval_storm_e2e_coverage()
-        or cmd_cross_cow_soft_migrate_coverage()
-        or cmd_cross_cow_drift_contract_coverage()
-        or cmd_lifetime_pin_remap_coverage()
-        or cmd_shape_storm_isolation_coverage()
-        or cmd_incremental_soundness_prod_coverage()
-        or cmd_register_render_hot_prim_coverage()
-        or cmd_check_2529_coverage()
-        or cmd_check_2530_coverage()
-        or cmd_check_2531_coverage()
-        or cmd_check_2532_coverage()
-        or cmd_check_2533_coverage()
-        or cmd_check_2534_coverage()
-        or cmd_check_2535_coverage()
-        or cmd_check_2536_coverage()
     )
+    if rc:
+        return rc
+
+    rc = _run_parallel_coverage_checks(changed=changed)
+    if rc:
+        return rc
+
+    # Chaos runtime profiles (need cmake tree / binary). Static coverage for
+    # these issues already ran via run_checks. On --changed pre-push, skip the
+    # multi-second runtime profiles unless --full.
+    if changed and not full:
+        info("changed mode: skipping chaos runtime profiles (static coverage already ran)")
+    else:
+        rc = cmd_chaos_release_blocker_2902() or cmd_chaos_pr_hard_fail_gate()
+        if rc:
+            return rc
+
+    ok(f"gate clean in {time.time() - t_gate:.1f}s ({mode})")
+    return 0
 
 
 def cmd_ci():
