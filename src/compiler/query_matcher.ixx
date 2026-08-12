@@ -45,6 +45,15 @@ namespace aura::compiler {
 // Issue #1695: values are StableNodeRef (not raw NodeId) so
 // mutate:replace-pattern / query:pattern share generation-tagged
 // provenance at capture time (Issue #818 pattern).
+//
+// Issue #2933: QueryMatchState remains the per-match capture buffer
+// for the matcher hot path. Durable multi-round Agent memory is
+// packaged by query:pattern / query:find / query:children-stable /
+// query:by-marker via :as-query-result into aura::core::QueryResult
+// (QueryEpoch + matches + optional SafePCVSpan pin flag) — see
+// src/core/workspace_epoch.hh and evaluator_primitives_query_workspace.cpp.
+// The matcher itself stays free of QueryResult so Soft default list
+// returns pay zero extra cost.
 export struct QueryMatchState {
     std::vector<std::pair<SymId, FlatAST::StableNodeRef>> captures;
     bool nested_arity = false; // true = Kleene (0..N), false = strict (exactly 1)

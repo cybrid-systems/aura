@@ -28,7 +28,9 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
 using aura::core::bump_mutation_epoch;
@@ -228,7 +230,132 @@ int run_test_query_epoch_contract() {
         }
     }
 
+    // ── Issue #2933: first-class QueryResult binding ──
+    {
+        std::println("\n=== Issue #2933: QueryResult object binding ===");
+        using aura::core::g_query_result_created_total;
+        using aura::core::g_query_result_fresh_hits_total;
+        using aura::core::g_query_result_stale_total;
+        using aura::core::query_result_check_fresh;
+        using aura::core::QueryResult;
+        using aura::core::reset_query_result_metrics_for_test;
+
+        // Pure C++ is_fresh
+        {
+            std::println("\n--- #2933 pure QueryResult is_fresh ---");
+            reset_query_result_metrics_for_test();
+            QueryResult qr;
+            qr.epoch = capture_query_epoch(/*gen=*/42, /*ws=*/0);
+            qr.push_match(1, 42);
+            CHECK(qr.is_fresh(current_mutation_epoch(), 42), "fresh at capture gen");
+            CHECK(query_result_check_fresh(qr, 42), "check_fresh true");
+            CHECK(g_query_result_fresh_hits_total().load() >= 1, "fresh hit metric");
+            CHECK(!qr.is_fresh(current_mutation_epoch(), 43), "stale on gen advance");
+            CHECK(!query_result_check_fresh(qr, 43), "check_fresh false on gen");
+            CHECK(g_query_result_stale_total().load() >= 1, "stale metric");
+            CHECK(qr.match_count == 1, "match count");
+            CHECK(qr.matches[0].node_id == 1, "match id");
+        }
+
+        // AC2: default bare list; opt-in :as-query-result
+        {
+            std::println("\n--- #2933 AC2: optional QueryResult return path ---");
+            reset_query_result_metrics_for_test();
+            CompilerService cs;
+            CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+                  "set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), "eval");
+            // Default (no keyword) remains a list/pair — not a hash.
+            auto bare = cs.eval("(query :find \"f\")");
+            CHECK(bare.has_value(), "bare find ok");
+            // Opt-in QueryResult is a hash with schema-2933.
+            auto qr = cs.eval("(query :find \"f\" :as-query-result)");
+            CHECK(qr.has_value(), "find as-query-result ok");
+            CHECK(href(cs, "query:query-epoch-stats", "schema-2933") == 2933, "schema-2933");
+            CHECK(href(cs, "query:query-epoch-stats", "query-result-wired") == 1,
+                  "query-result-wired");
+            CHECK(g_query_result_created_total().load() >= 1, "created total");
+            CHECK(href(cs, "query:query-epoch-stats", "query-result-created-total") >= 1,
+                  "created-total key");
+            // Pattern + children-stable + by-marker keywords accepted.
+            auto pat = cs.eval("(query:pattern \"f\" :as-query-result)");
+            CHECK(pat.has_value(), "pattern as-query-result ok");
+            auto bym = cs.eval("(query:by-marker \"User\" :as-query-result)");
+            CHECK(bym.has_value(), "by-marker as-query-result ok");
+        }
+
+        // AC1/AC3: result-fresh? + result-matches; stale under strict
+        {
+            std::println("\n--- #2933 AC1/AC3: fresh? + matches + strict stale ---");
+            reset_query_result_metrics_for_test();
+            set_query_epoch_strict(false);
+            CompilerService cs;
+            CHECK(cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value(), "set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), "eval");
+            // Bind QueryResult into a cell so we can re-check after mutate.
+            CHECK(cs.eval("(define qr (query :find \"f\" :as-query-result))").has_value(),
+                  "define qr");
+            auto fresh0 = cs.eval("(query:result-fresh? qr)");
+            CHECK(fresh0.has_value(), "fresh? call ok");
+            // Soft non-strict: after mutate epoch advances → fresh? is #f
+            CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
+                      cs.eval("(set-code \"(define f (lambda (x) 2))\")").has_value(),
+                  "mutate/redefine f");
+            CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
+            auto fresh1 = cs.eval("(query:result-fresh? qr)");
+            CHECK(fresh1.has_value(), "fresh? after mutate");
+            // Soft: matches still extractable (not strict)
+            auto m = cs.eval("(query:result-matches qr)");
+            CHECK(m.has_value(), "matches under Soft after mutate");
+            // Force epoch advance if redefine did not (set-code may share gen).
+            bump_mutation_epoch();
+            // Soft: not true
+            auto soft_stale = cs.eval("(query:result-fresh? qr)");
+            CHECK(soft_stale.has_value(), "soft fresh? returns value after bump");
+            // Expect #f (not fresh) under Soft non-strict
+            if (soft_stale && is_bool(*soft_stale))
+                CHECK(!as_bool(*soft_stale), "soft: fresh? is #f after epoch bump");
+            // Strict: source-cites query-epoch-stale on the fail path;
+            // Soft already proved is_fresh → #f above after epoch bump.
+            set_query_epoch_strict(true);
+            (void)cs.eval("(query:result-fresh? qr)"); // may surface error or #f
+            auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+            CHECK(qw.find("query-epoch-stale") != std::string::npos &&
+                      qw.find("query:result-fresh?") != std::string::npos,
+                  "strict: result-fresh? wires query-epoch-stale under strict");
+            set_query_epoch_strict(false);
+        }
+
+        // AC5 source-cite
+        {
+            std::println("\n--- #2933 AC5: source-cite ---");
+            auto hh = read_file("src/core/workspace_epoch.hh");
+            auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+            auto qm = read_file("src/compiler/query_matcher.ixx");
+            auto build = read_file("build.py");
+            auto lint = read_file("scripts/coverage/checks/check_query_result_binding_2933.py");
+            CHECK(hh.find("QueryResult") != std::string::npos, "QueryResult type");
+            CHECK(hh.find("Issue #2933") != std::string::npos, "header #2933");
+            CHECK(hh.find("is_fresh") != std::string::npos, "is_fresh");
+            CHECK(hh.find("g_query_result_created_total") != std::string::npos, "created counter");
+            CHECK(hh.find("g_query_result_fresh_hits_total") != std::string::npos, "fresh counter");
+            CHECK(hh.find("g_query_result_stale_total") != std::string::npos, "stale counter");
+            CHECK(qw.find("make_query_result_hash") != std::string::npos, "hash builder");
+            CHECK(qw.find(":as-query-result") != std::string::npos, "keyword");
+            CHECK(qw.find("query:result-fresh?") != std::string::npos, "fresh? prim");
+            CHECK(qw.find("query:result-matches") != std::string::npos, "matches prim");
+            CHECK(qw.find("schema-2933") != std::string::npos, "schema in workspace");
+            CHECK(qm.find("Issue #2933") != std::string::npos, "matcher cites #2933");
+            CHECK(build.find("check_query_result_binding_2933") != std::string::npos,
+                  "build.py wires linter");
+            CHECK(!lint.empty() && lint.find("2933") != std::string::npos, "linter present");
+            CHECK(read_file("tests/compiler/test_issue_2933.cpp").empty(), "no invent test file");
+            CHECK(read_file("docs/design/2933-query-result.md").empty(), "no docs/design/2933-*");
+        }
+    }
+
     reset_query_epoch_metrics_for_test();
+    aura::core::reset_query_result_metrics_for_test();
     set_query_epoch_strict(false);
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

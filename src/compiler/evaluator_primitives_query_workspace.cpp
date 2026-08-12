@@ -6,7 +6,7 @@ module;
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
-#include "core/workspace_epoch.hh" // Issue #2192: QueryEpoch contract
+#include "core/workspace_epoch.hh" // Issue #2192 QueryEpoch + #2933 QueryResult
 #include "serve/fiber.h"           // Issue #1630: aura_fiber_current_id for query:stable-ref
 #include "typed_mutation_audit.h"  // Issue #1892: hygiene skip audit trail
 
@@ -121,6 +121,70 @@ void register_workspace_query_primitives(
         return ok;
     };
 
+    // Issue #2933: wrap a bare match list into a first-class QueryResult
+    // hash (schema-2933). Opt-in via :as-query-result / :query-result #t.
+    // Default (no keyword) remains the bare list (AC2 Soft regression).
+    // Capture `ws` by value (struct-of-refs); do NOT capture &ws.
+    auto make_query_result_hash = [ws](const aura::core::QueryEpoch& epoch, EvalValue matches,
+                                       bool pinned) -> EvalValue {
+        auto* ht = FlatHashTable::create(32);
+        if (!ht)
+            return matches; // Soft: fall back to bare list if hash OOM
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        auto hcap = ht->capacity;
+        auto insert_kv = [&](const char* k_str, EvalValue v) {
+            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+            for (const char* p = k_str; *p; ++p)
+                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+            if (fp == 0xFF)
+                fp = 0xFE;
+            for (std::size_t at = 0; at < hcap; ++at) {
+                auto i = ((h >> 1) + at) & (hcap - 1);
+                if (meta[i] == 0xFF) {
+                    meta[i] = fp;
+                    auto kidx = ws.string_heap.size();
+                    ws.string_heap.push_back(k_str);
+                    keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                    vals[i] = v.val;
+                    ht->size++;
+                    return;
+                }
+            }
+        };
+        insert_kv("matches", matches);
+        insert_kv("mutation-epoch", make_int(static_cast<std::int64_t>(epoch.mutation_epoch)));
+        insert_kv("generation", make_int(static_cast<std::int64_t>(epoch.generation)));
+        insert_kv("bridge-epoch", make_int(static_cast<std::int64_t>(epoch.bridge_epoch)));
+        insert_kv("workspace-id", make_int(static_cast<std::int64_t>(epoch.workspace_id)));
+        insert_kv("pinned", make_int(pinned ? 1 : 0));
+        insert_kv("query-result-tag", make_int(1));
+        insert_kv("query-result-wired", make_int(1));
+        insert_kv("schema-2933", make_int(2933));
+        insert_kv("issue-2933", make_int(2933));
+        insert_kv("schema-2192", make_int(2192)); // lineage: QueryEpoch
+        aura::core::note_query_result_created();
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return make_hash(hidx);
+    };
+
+    // Issue #2933: finish epoch then optionally wrap as QueryResult.
+    auto end_query_epoch_maybe_result =
+        [&mev, end_query_epoch, make_query_result_hash](
+            const aura::core::QueryEpoch& start, aura::ast::FlatAST* flat, EvalValue ok,
+            bool as_query_result, bool pinned = false) -> EvalValue {
+        auto finished = end_query_epoch(start, flat, ok);
+        // Propagate query-epoch-stale errors unchanged.
+        if (is_error(finished))
+            return finished;
+        if (!as_query_result)
+            return finished;
+        return make_query_result_hash(start, finished, pinned);
+    };
+
     // Issue #2186: force every public EDSL query consumer of a node handle
     // through ensure_valid_or_refresh (silent-stale zero-tolerance). Accepts
     // bare NodeId or packed (id . gen) / (id . (gen . _)) stable-ref pairs
@@ -201,39 +265,60 @@ void register_workspace_query_primitives(
     };
 
     // (query :find name) — Find all node IDs with matching symbol name
-    (*q_impls)["query:find"] =
-        PrimFn{[ws, mev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty() || !is_string(a[0]))
-                return mev("bad-arg", "usage: (query :find name)");
-            auto idx = as_string_idx(a[0]);
-            if (idx >= ws.string_heap.size())
-                return mev("bad-arg", "name string index out of range");
-            if (!ws.workspace_flat || !ws.workspace_pool)
-                return mev("no-workspace", "no workspace AST loaded");
-            auto& flat = *ws.workspace_flat;
-            const auto qe = begin_query_epoch(&flat); // Issue #2192
-            auto name = ws.string_heap[idx];
-            // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
-            auto sym = ws.canonical_pool()->intern(name);
-            EvalValue result = make_void();
-            // Issue #2488: SoA shared lock for multi-column get() vs concurrent
-            // add_node (workspace_mtx shared alone does not cover flatast_mutex_
-            // size domain — structural_mtx_ is also independent).
-            auto soa = flat.try_acquire_soa_reader_lock();
-            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-                // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
-                if (flat.is_free_slot(id))
-                    continue;
-                auto v = flat.get(id);
-                if (v.sym_id == sym) {
-                    auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                    result = make_pair(pid);
+    (*q_impls)["query:find"] = PrimFn{[ws, mev, begin_query_epoch,
+                                       end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !is_string(a[0]))
+            return mev("bad-arg", "usage: (query :find name [:as-query-result|#:query-result #t])");
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ws.string_heap.size())
+            return mev("bad-arg", "name string index out of range");
+        if (!ws.workspace_flat || !ws.workspace_pool)
+            return mev("no-workspace", "no workspace AST loaded");
+        // Issue #2933: optional :as-query-result / :query-result (default off).
+        bool as_query_result = false;
+        for (std::size_t ai = 1; ai < a.size(); ++ai) {
+            if (!is_keyword(a[ai]))
+                continue;
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ws.keyword_table.size())
+                continue;
+            auto kw = ws.keyword_table[kidx];
+            if (kw == ":as-query-result" || kw == ":query-result") {
+                as_query_result = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        as_query_result = as_bool(a[ai + 1]);
+                    else
+                        as_query_result = (as_int(a[ai + 1]) != 0);
+                    ++ai;
                 }
             }
-            return end_query_epoch(qe, &flat, result);
-        }};
+        }
+        auto& flat = *ws.workspace_flat;
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
+        auto name = ws.string_heap[idx];
+        // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
+        auto sym = ws.canonical_pool()->intern(name);
+        EvalValue result = make_void();
+        // Issue #2488: SoA shared lock for multi-column get() vs concurrent
+        // add_node (workspace_mtx shared alone does not cover flatast_mutex_
+        // size domain — structural_mtx_ is also independent).
+        auto soa = flat.try_acquire_soa_reader_lock();
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            // Issue #1299/#1300: skip free/ghost orphan slots after rollback.
+            if (flat.is_free_slot(id))
+                continue;
+            auto v = flat.get(id);
+            if (v.sym_id == sym) {
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                result = make_pair(pid);
+            }
+        }
+        // Issue #2933: optional QueryResult binding (default bare list).
+        return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
+    }};
 
     // (query :children node-id|stable-ref) — Get children node IDs
     // Issue #2186: resolve via ensure_valid_or_refresh (no bare get).
@@ -272,16 +357,37 @@ void register_workspace_query_primitives(
     // Issue #2759: stamp each child via Evaluator (sole production authority)
     // before packing id.gen — process-global capture is Soft-only under hard-close.
     (*q_impls)["query:children-stable"] = PrimFn{[ws, mev, resolve_query_node_arg,
-                                                  begin_query_epoch, end_query_epoch,
+                                                  begin_query_epoch, end_query_epoch_maybe_result,
                                                   &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || !ws.workspace_flat)
-            return mev("bad-arg", "usage: (query :children-stable node-id|stable-ref)");
+            return mev("bad-arg",
+                       "usage: (query :children-stable node-id|stable-ref [:as-query-result])");
         bool ok = true;
         aura::ast::NodeId node = aura::ast::NULL_NODE;
         auto err = resolve_query_node_arg(a[0], "query:children-stable", &ok, node);
         if (!ok)
             return err;
+        // Issue #2933: optional QueryResult; pin=true (SafePCVSpan-stable path).
+        bool as_query_result = false;
+        for (std::size_t ai = 1; ai < a.size(); ++ai) {
+            if (!is_keyword(a[ai]))
+                continue;
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ws.keyword_table.size())
+                continue;
+            auto kw = ws.keyword_table[kidx];
+            if (kw == ":as-query-result" || kw == ":query-result") {
+                as_query_result = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        as_query_result = as_bool(a[ai + 1]);
+                    else
+                        as_query_result = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+            }
+        }
         auto& flat = *ws.workspace_flat;
         const auto qe = begin_query_epoch(&flat); // Issue #2192
         // Issue #398: truly zero-allocation path (no local
@@ -296,7 +402,8 @@ void register_workspace_query_primitives(
         auto gen = flat.generation();
         std::size_t n = flat.stable_child_count(node);
         if (n == 0)
-            return end_query_epoch(qe, &flat, make_void());
+            return end_query_epoch_maybe_result(qe, &flat, make_void(), as_query_result,
+                                                /*pinned=*/true);
         const auto base = ws.pairs.size();
         // Pre-allocate 3*N slots with placeholder pairs. The
         // exact car / cdr values are filled in below; the
@@ -328,7 +435,9 @@ void register_workspace_query_primitives(
             ws.pairs[list_idx].cdr = make_pair(next_idx);
         }
         // The final result is the first list-node.
-        return end_query_epoch(qe, &flat, make_pair(static_cast<int>(base + 2)));
+        // Issue #2933: children_stable is the SafePCVSpan pin path → pinned=1.
+        return end_query_epoch_maybe_result(qe, &flat, make_pair(static_cast<int>(base + 2)),
+                                            as_query_result, /*pinned=*/true);
     }};
 
     // Issue #249: (query :parent-stable node-id|stable-ref) — Get the
@@ -1383,170 +1492,189 @@ void register_workspace_query_primitives(
     //   :where / :tag "NodeTag" — Issue #1914: compose with tag filter
     //     e.g. (query:by-marker "User" :where "Define")
     //   :limit N — keyword form of limit
-    add("query:by-marker", [ws, mev, &ev](const auto& a) -> EvalValue {
-        // Issue #2403: time shared_lock hold; composite index when :where tag set.
-        const auto lock_t0 = std::chrono::steady_clock::now();
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        struct QuerySharedLockTimer {
-            Evaluator& ev;
-            std::chrono::steady_clock::time_point t0;
-            ~QuerySharedLockTimer() {
-                const auto us = static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::steady_clock::now() - t0)
-                        .count());
-                ev.note_query_shared_lock_us(us);
-            }
-        } lock_timer{ev, lock_t0};
-        if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query:by-marker marker-name [limit-int] "
-                                  "[:where|:tag tag-name] [:limit N])");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ws.string_heap.size())
-            return mev("bad-arg", "marker name string index out of range");
-        auto marker_name = ws.string_heap[idx];
-
-        // Map name → SyntaxMarker enum
-        aura::ast::SyntaxMarker target;
-        if (marker_name == "User") {
-            target = aura::ast::SyntaxMarker::User;
-        } else if (marker_name == "MacroIntroduced") {
-            target = aura::ast::SyntaxMarker::MacroIntroduced;
-        } else if (marker_name == "BoolLiteral") {
-            target = aura::ast::SyntaxMarker::BoolLiteral;
-        } else {
-            return mev("unknown-marker", std::string("unknown marker name: \"") + marker_name +
-                                             "\" (expected User / MacroIntroduced / BoolLiteral)");
-        }
-
-        std::int64_t limit = -1;
-        bool have_where_tag = false;
-        aura::ast::NodeTag where_tag = aura::ast::NodeTag::Begin;
-        auto parse_tag = [](std::string_view name) -> std::optional<aura::ast::NodeTag> {
-            if (name == "Define" || name == "define")
-                return aura::ast::NodeTag::Define;
-            if (name == "Call" || name == "call")
-                return aura::ast::NodeTag::Call;
-            if (name == "Lambda" || name == "lambda")
-                return aura::ast::NodeTag::Lambda;
-            if (name == "Variable" || name == "var")
-                return aura::ast::NodeTag::Variable;
-            if (name == "If" || name == "IfExpr" || name == "if")
-                return aura::ast::NodeTag::IfExpr;
-            if (name == "Let" || name == "let")
-                return aura::ast::NodeTag::Let;
-            if (name == "LetRec" || name == "letrec")
-                return aura::ast::NodeTag::LetRec;
-            if (name == "Begin" || name == "begin")
-                return aura::ast::NodeTag::Begin;
-            if (name == "Set" || name == "set!")
-                return aura::ast::NodeTag::Set;
-            if (name == "LiteralInt" || name == "int")
-                return aura::ast::NodeTag::LiteralInt;
-            if (name == "LiteralString" || name == "string")
-                return aura::ast::NodeTag::LiteralString;
-            return std::nullopt;
-        };
-        auto kw_name = [&](const EvalValue& v) -> std::string_view {
-            if (!is_keyword(v))
-                return {};
-            auto kidx = as_keyword_idx(v);
-            if (kidx >= ws.keyword_table.size())
-                return {};
-            return ws.keyword_table[kidx];
-        };
-        for (std::size_t ai = 1; ai < a.size(); ++ai) {
-            if (is_int(a[ai]) && limit < 0 && !is_keyword(a[ai])) {
-                limit = as_int(a[ai]);
-                if (limit < 0)
-                    return mev("bad-arg", "limit must be non-negative");
-                continue;
-            }
-            if (is_keyword(a[ai])) {
-                const auto kw = kw_name(a[ai]);
-                if (kw == ":where" || kw == ":tag") {
-                    if (ai + 1 >= a.size() || !is_string(a[ai + 1]))
-                        return mev("bad-arg", ":where/:tag requires a tag-name string");
-                    auto sidx = as_string_idx(a[ai + 1]);
-                    if (sidx >= ws.string_heap.size())
-                        return mev("bad-arg", "tag name string index out of range");
-                    auto parsed = parse_tag(ws.string_heap[sidx]);
-                    if (!parsed)
-                        return mev("unknown-tag", std::string("unknown NodeTag for :where: \"") +
-                                                      ws.string_heap[sidx] + "\"");
-                    where_tag = *parsed;
-                    have_where_tag = true;
-                    ++ai;
-                    continue;
+    //   :as-query-result / :query-result — Issue #2933 QueryResult binding
+    add("query:by-marker",
+        [ws, mev, &ev, begin_query_epoch,
+         end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+            // Issue #2403: time shared_lock hold; composite index when :where tag set.
+            const auto lock_t0 = std::chrono::steady_clock::now();
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            struct QuerySharedLockTimer {
+                Evaluator& ev;
+                std::chrono::steady_clock::time_point t0;
+                ~QuerySharedLockTimer() {
+                    const auto us = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::steady_clock::now() - t0)
+                            .count());
+                    ev.note_query_shared_lock_us(us);
                 }
-                if (kw == ":limit") {
-                    if (ai + 1 >= a.size() || !is_int(a[ai + 1]))
-                        return mev("bad-arg", ":limit requires a non-negative integer");
-                    limit = as_int(a[ai + 1]);
+            } lock_timer{ev, lock_t0};
+            if (a.empty() || !is_string(a[0]))
+                return mev("bad-arg", "usage: (query:by-marker marker-name [limit-int] "
+                                      "[:where|:tag tag-name] [:limit N] [:as-query-result])");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ws.string_heap.size())
+                return mev("bad-arg", "marker name string index out of range");
+            auto marker_name = ws.string_heap[idx];
+
+            // Map name → SyntaxMarker enum
+            aura::ast::SyntaxMarker target;
+            if (marker_name == "User") {
+                target = aura::ast::SyntaxMarker::User;
+            } else if (marker_name == "MacroIntroduced") {
+                target = aura::ast::SyntaxMarker::MacroIntroduced;
+            } else if (marker_name == "BoolLiteral") {
+                target = aura::ast::SyntaxMarker::BoolLiteral;
+            } else {
+                return mev("unknown-marker",
+                           std::string("unknown marker name: \"") + marker_name +
+                               "\" (expected User / MacroIntroduced / BoolLiteral)");
+            }
+
+            std::int64_t limit = -1;
+            bool as_query_result = false; // Issue #2933
+            bool have_where_tag = false;
+            aura::ast::NodeTag where_tag = aura::ast::NodeTag::Begin;
+            auto parse_tag = [](std::string_view name) -> std::optional<aura::ast::NodeTag> {
+                if (name == "Define" || name == "define")
+                    return aura::ast::NodeTag::Define;
+                if (name == "Call" || name == "call")
+                    return aura::ast::NodeTag::Call;
+                if (name == "Lambda" || name == "lambda")
+                    return aura::ast::NodeTag::Lambda;
+                if (name == "Variable" || name == "var")
+                    return aura::ast::NodeTag::Variable;
+                if (name == "If" || name == "IfExpr" || name == "if")
+                    return aura::ast::NodeTag::IfExpr;
+                if (name == "Let" || name == "let")
+                    return aura::ast::NodeTag::Let;
+                if (name == "LetRec" || name == "letrec")
+                    return aura::ast::NodeTag::LetRec;
+                if (name == "Begin" || name == "begin")
+                    return aura::ast::NodeTag::Begin;
+                if (name == "Set" || name == "set!")
+                    return aura::ast::NodeTag::Set;
+                if (name == "LiteralInt" || name == "int")
+                    return aura::ast::NodeTag::LiteralInt;
+                if (name == "LiteralString" || name == "string")
+                    return aura::ast::NodeTag::LiteralString;
+                return std::nullopt;
+            };
+            auto kw_name = [&](const EvalValue& v) -> std::string_view {
+                if (!is_keyword(v))
+                    return {};
+                auto kidx = as_keyword_idx(v);
+                if (kidx >= ws.keyword_table.size())
+                    return {};
+                return ws.keyword_table[kidx];
+            };
+            for (std::size_t ai = 1; ai < a.size(); ++ai) {
+                if (is_int(a[ai]) && limit < 0 && !is_keyword(a[ai])) {
+                    limit = as_int(a[ai]);
                     if (limit < 0)
                         return mev("bad-arg", "limit must be non-negative");
-                    ++ai;
                     continue;
                 }
-                return mev("bad-arg",
-                           std::string("unknown query:by-marker keyword: ") + std::string(kw));
+                if (is_keyword(a[ai])) {
+                    const auto kw = kw_name(a[ai]);
+                    if (kw == ":where" || kw == ":tag") {
+                        if (ai + 1 >= a.size() || !is_string(a[ai + 1]))
+                            return mev("bad-arg", ":where/:tag requires a tag-name string");
+                        auto sidx = as_string_idx(a[ai + 1]);
+                        if (sidx >= ws.string_heap.size())
+                            return mev("bad-arg", "tag name string index out of range");
+                        auto parsed = parse_tag(ws.string_heap[sidx]);
+                        if (!parsed)
+                            return mev("unknown-tag",
+                                       std::string("unknown NodeTag for :where: \"") +
+                                           ws.string_heap[sidx] + "\"");
+                        where_tag = *parsed;
+                        have_where_tag = true;
+                        ++ai;
+                        continue;
+                    }
+                    if (kw == ":limit") {
+                        if (ai + 1 >= a.size() || !is_int(a[ai + 1]))
+                            return mev("bad-arg", ":limit requires a non-negative integer");
+                        limit = as_int(a[ai + 1]);
+                        if (limit < 0)
+                            return mev("bad-arg", "limit must be non-negative");
+                        ++ai;
+                        continue;
+                    }
+                    if (kw == ":as-query-result" || kw == ":query-result") {
+                        // Issue #2933: optional QueryResult binding.
+                        as_query_result = true;
+                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                            if (is_bool(a[ai + 1]))
+                                as_query_result = as_bool(a[ai + 1]);
+                            else
+                                as_query_result = (as_int(a[ai + 1]) != 0);
+                            ++ai;
+                        }
+                        continue;
+                    }
+                    return mev("bad-arg",
+                               std::string("unknown query:by-marker keyword: ") + std::string(kw));
+                }
+                return mev("bad-arg", "unexpected argument after marker-name");
             }
-            return mev("bad-arg", "unexpected argument after marker-name");
-        }
 
-        auto& flat = *ws.workspace_flat;
-        EvalValue result = make_void();
-        std::int64_t emitted = 0;
-        std::int64_t where_hits = 0;
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192 / #2933
+            EvalValue result = make_void();
+            std::int64_t emitted = 0;
+            std::int64_t where_hits = 0;
 
-        // Issue #2403 AC1: constrained (marker + :where tag) hits composite
-        // index (tag across arities ± marker via user-only map when User).
-        // Unconstrained marker-only remains full walk → composite miss.
-        if (have_where_tag) {
-            const bool skip_macro = (target == aura::ast::SyntaxMarker::User);
-            const auto candidates = ev.snapshot_tag_all_arities(
-                static_cast<std::uint32_t>(where_tag), /*trigger=*/0, skip_macro);
-            ev.bump_query_index_composite_hit();
-            for (aura::ast::NodeId id : candidates) {
+            // Issue #2403 AC1: constrained (marker + :where tag) hits composite
+            // index (tag across arities ± marker via user-only map when User).
+            // Unconstrained marker-only remains full walk → composite miss.
+            if (have_where_tag) {
+                const bool skip_macro = (target == aura::ast::SyntaxMarker::User);
+                const auto candidates = ev.snapshot_tag_all_arities(
+                    static_cast<std::uint32_t>(where_tag), /*trigger=*/0, skip_macro);
+                ev.bump_query_index_composite_hit();
+                for (aura::ast::NodeId id : candidates) {
+                    if (limit >= 0 && emitted >= limit)
+                        break;
+                    if (id >= flat.size())
+                        continue;
+                    if (flat.marker(id) != target)
+                        continue;
+                    // Defense-in-depth: re-check tag (bucket is tag-keyed).
+                    if (flat.get(id).tag != where_tag)
+                        continue;
+                    ++where_hits;
+                    auto pid = ws.pairs.size();
+                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                    result = make_pair(pid);
+                    ++emitted;
+                }
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->by_marker_where_filter_hits.fetch_add(
+                        static_cast<std::uint64_t>(where_hits > 0 ? where_hits : 1),
+                        std::memory_order_relaxed);
+                return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
+            }
+
+            // Unconstrained marker-only: full walk (no tag arity key).
+            ev.bump_query_index_composite_miss();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
                 if (limit >= 0 && emitted >= limit)
                     break;
-                if (id >= flat.size())
-                    continue;
                 if (flat.marker(id) != target)
                     continue;
-                // Defense-in-depth: re-check tag (bucket is tag-keyed).
-                if (flat.get(id).tag != where_tag)
-                    continue;
-                ++where_hits;
                 auto pid = ws.pairs.size();
                 ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
                 result = make_pair(pid);
                 ++emitted;
             }
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->by_marker_where_filter_hits.fetch_add(
-                    static_cast<std::uint64_t>(where_hits > 0 ? where_hits : 1),
-                    std::memory_order_relaxed);
-            return result;
-        }
-
-        // Unconstrained marker-only: full walk (no tag arity key).
-        ev.bump_query_index_composite_miss();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (limit >= 0 && emitted >= limit)
-                break;
-            if (flat.marker(id) != target)
-                continue;
-            auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-            result = make_pair(pid);
-            ++emitted;
-        }
-        return result;
-    });
+            return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
+        });
 
     // Issue #1914: (query:node-provenance node-id|stable-ref) — full diagnostic hash
     // for AI root-cause of failed mutate / hygiene. Combines StableNodeRef
@@ -1988,7 +2116,8 @@ void register_workspace_query_primitives(
     //   query-pattern-delta-rebuild-total (query:pattern-hygiene-stats /
     //   query:pattern-index-rebuild-stats).
     add("query:pattern",
-        [ws, mev, &ev, begin_query_epoch, end_query_epoch](const auto& a) -> EvalValue {
+        [ws, mev, &ev, begin_query_epoch,
+         end_query_epoch_maybe_result](const auto& a) -> EvalValue {
             // Issue #2403: shared_lock spans QueryEpoch capture + match.
             // Topology is not COW-fenced for free concurrent match outside
             // the lock (mid-match node rewrites would be UB); index path
@@ -2012,7 +2141,8 @@ void register_workspace_query_primitives(
                            "usage: (query:pattern expr [:include-macro-introduced [#t]]"
                            " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
                            " [:respect-hygiene [#t|#f]]"
-                           " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
+                           " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
+                           " [:as-query-result|#:query-result #t])");
             if (!ws.workspace_flat || !ws.workspace_pool)
                 return mev("no-workspace", "no workspace AST loaded");
             const auto qe = begin_query_epoch(ws.workspace_flat); // Issue #2192
@@ -2020,6 +2150,8 @@ void register_workspace_query_primitives(
             bool have_pattern = false;
             std::size_t pattern_string_idx = 0;
             bool include_macro_introduced = false;
+            // Issue #2933: opt-in QueryResult binding (default bare list).
+            bool as_query_result = false;
             // Issue #289 / #481 / #1374: nested-arity / Kleene-star ellipsis.
             // Default (#t) is Kleene (`...` consumes 0..N consecutive
             // children). Set `:nested-arity #f` or `:strict-arity #t` to
@@ -2114,15 +2246,19 @@ void register_workspace_query_primitives(
                         nested_arity = !v;
                     } else if (kw == ":with-markers") {
                         consume_bool(with_markers);
+                    } else if (kw == ":as-query-result" || kw == ":query-result") {
+                        // Issue #2933: return QueryResult hash (matches +
+                        // QueryEpoch) instead of bare match list.
+                        consume_bool(as_query_result);
                     } else {
                         return mev("bad-arg", std::string("unknown query:pattern keyword: ") + kw);
                     }
                 } else {
-                    return mev(
-                        "bad-arg",
-                        "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                        " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
-                        " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]])");
+                    return mev("bad-arg",
+                               "usage: (query:pattern expr [:include-macro-introduced [#t]]"
+                               " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
+                               " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
+                               " [:as-query-result])");
                 }
             }
             if (!have_pattern)
@@ -2358,7 +2494,8 @@ void register_workspace_query_primitives(
                     // Skip the full walk. Structural miss kept for #423
                     // empty-bucket fast-exit telemetry.
                     ev.bump_pattern_structural_index_miss();
-                    return end_query_epoch(qe, ws.workspace_flat, make_void());
+                    return end_query_epoch_maybe_result(qe, ws.workspace_flat, make_void(),
+                                                        as_query_result);
                 }
                 ev.bump_pattern_structural_index_hit();
                 ev.bump_total_query_calls();
@@ -2534,7 +2671,8 @@ void register_workspace_query_primitives(
                         ev.capability_tenant_id());
                 }
             }
-            return end_query_epoch(qe, ws.workspace_flat, result); // Issue #2192
+            // Issue #2192 finish + optional #2933 QueryResult wrap.
+            return end_query_epoch_maybe_result(qe, ws.workspace_flat, result, as_query_result);
         });
 
     // Issue #282: (query:provenance-of var-name) — return the
@@ -2936,15 +3074,124 @@ void register_workspace_query_primitives(
             return make_bool(true);
         });
 
+    // Issue #2933: (query:result-fresh? qr) — re-check QueryResult epoch
+    // against live mutation_epoch + FlatAST generation. Bumps
+    // query_result_fresh_hits_total / query_result_stale_total.
+    // Soft: returns #f on stale. Strict QueryEpoch mode: returns
+    // structured query-epoch-stale error (AC3).
+    add("query:result-fresh?", [ws, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_hash(a[0]))
+            return mev("bad-arg", "usage: (query:result-fresh? query-result-hash)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return mev("bad-arg", "query:result-fresh?: invalid hash");
+        auto* ht = g_hash_tables[hidx];
+        // Lookup mutation-epoch + generation keys (linear scan of table).
+        std::int64_t mut = -1;
+        std::int64_t gen = -1;
+        std::int64_t tag = 0;
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            EvalValue k{keys[i]};
+            if (!is_string(k))
+                continue;
+            auto sidx = as_string_idx(k);
+            if (sidx >= ws.string_heap.size())
+                continue;
+            const auto& s = ws.string_heap[sidx];
+            EvalValue v{vals[i]};
+            if (!is_int(v))
+                continue;
+            if (s == "mutation-epoch")
+                mut = as_int(v);
+            else if (s == "generation")
+                gen = as_int(v);
+            else if (s == "query-result-tag" || s == "schema-2933")
+                tag = as_int(v);
+        }
+        if (tag == 0 && mut < 0)
+            return mev("bad-arg", "query:result-fresh?: not a QueryResult (missing schema-2933)");
+        aura::core::QueryResult qr;
+        qr.epoch.mutation_epoch = static_cast<std::uint64_t>(mut < 0 ? 0 : mut);
+        qr.epoch.generation = static_cast<std::uint64_t>(gen < 0 ? 0 : gen);
+        const auto live_gen = static_cast<std::uint64_t>(ws.workspace_flat->generation());
+        const bool fresh = aura::core::query_result_check_fresh(qr, live_gen);
+        if (!fresh && aura::core::query_epoch_strict())
+            return mev("query-epoch-stale", "QueryResult epoch stale under strict mode "
+                                            "(see engine:metrics \"query:query-epoch-stats\")");
+        return make_bool(fresh);
+    });
+
+    // Issue #2933: (query:result-matches qr) — extract matches list if
+    // fresh; under strict stale → query-epoch-stale; Soft returns matches
+    // even when epoch advanced (Agent may still inspect, metric bumps).
+    add("query:result-matches", [ws, mev](const auto& a) -> EvalValue {
+        if (a.empty() || !is_hash(a[0]))
+            return mev("bad-arg", "usage: (query:result-matches query-result-hash)");
+        if (!ws.workspace_flat)
+            return mev("no-workspace", "no workspace AST loaded");
+        auto hidx = as_hash_idx(a[0]);
+        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+            return mev("bad-arg", "query:result-matches: invalid hash");
+        auto* ht = g_hash_tables[hidx];
+        std::int64_t mut = -1;
+        std::int64_t gen = -1;
+        EvalValue matches = make_void();
+        bool have_matches = false;
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            EvalValue k{keys[i]};
+            if (!is_string(k))
+                continue;
+            auto sidx = as_string_idx(k);
+            if (sidx >= ws.string_heap.size())
+                continue;
+            const auto& s = ws.string_heap[sidx];
+            EvalValue v{vals[i]};
+            if (s == "matches") {
+                matches = v;
+                have_matches = true;
+            } else if (s == "mutation-epoch" && is_int(v)) {
+                mut = as_int(v);
+            } else if (s == "generation" && is_int(v)) {
+                gen = as_int(v);
+            }
+        }
+        if (!have_matches)
+            return mev("bad-arg", "query:result-matches: missing matches key");
+        aura::core::QueryResult qr;
+        qr.epoch.mutation_epoch = static_cast<std::uint64_t>(mut < 0 ? 0 : mut);
+        qr.epoch.generation = static_cast<std::uint64_t>(gen < 0 ? 0 : gen);
+        const auto live_gen = static_cast<std::uint64_t>(ws.workspace_flat->generation());
+        const bool fresh = aura::core::query_result_check_fresh(qr, live_gen);
+        if (!fresh && aura::core::query_epoch_strict())
+            return mev("query-epoch-stale", "QueryResult epoch stale under strict mode "
+                                            "(see engine:metrics \"query:query-epoch-stats\")");
+        return matches;
+    });
+
     // Issue #2192: (engine:metrics "query:query-epoch-stats") /
     // (engine:metrics "query:last-epoch") — QueryEpoch snapshot contract.
+    // Issue #2933: additive QueryResult counters on the same surface.
     // SlimSurface: register_stats_impl only (no new public add ceiling).
     // Schema 2192 keys: last-mutation-epoch, last-generation, last-bridge-epoch,
     // last-workspace-id, capture-total, mismatch-total, stale-total, strict,
     // current-mutation-epoch, wired, schema-2192.
+    // Schema 2933 keys: query-result-created-total, query-result-fresh-hits-total,
+    // query-result-stale-total, query-result-wired, schema-2933.
     auto query_epoch_stats_fn = [ws](const auto&) -> EvalValue {
         aura::core::maybe_init_query_epoch_strict_from_env();
-        auto* ht = FlatHashTable::create(32);
+        auto* ht = FlatHashTable::create(48);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -3004,6 +3251,30 @@ void register_workspace_query_primitives(
         insert_kv("schema-2192", 2192);
         insert_kv("issue-2192", 2192);
         insert_kv("schema", 2192);
+        // Issue #2933: QueryResult metrics (additive on same surface).
+        insert_kv("query-result-created-total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_result_created_total().load(std::memory_order_relaxed)));
+        insert_kv("query_result_created_total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_result_created_total().load(std::memory_order_relaxed)));
+        insert_kv("query-result-fresh-hits-total",
+                  static_cast<std::int64_t>(aura::core::g_query_result_fresh_hits_total().load(
+                      std::memory_order_relaxed)));
+        insert_kv("query_result_fresh_hits_total",
+                  static_cast<std::int64_t>(aura::core::g_query_result_fresh_hits_total().load(
+                      std::memory_order_relaxed)));
+        insert_kv("query-result-stale-total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_result_stale_total().load(std::memory_order_relaxed)));
+        insert_kv("query_result_stale_total",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_result_stale_total().load(std::memory_order_relaxed)));
+        insert_kv("query-result-wired",
+                  static_cast<std::int64_t>(
+                      aura::core::g_query_result_wired().load(std::memory_order_relaxed)));
+        insert_kv("schema-2933", 2933);
+        insert_kv("issue-2933", 2933);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

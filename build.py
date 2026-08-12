@@ -684,6 +684,18 @@ def cmd_lint():
             "Issue #2932 hold-budget forced fail-closed linter failed — run python3 scripts/coverage/checks/check_hold_budget_forced_fail_closed_2932.py"
         )
         return r
+    # Issue #2933: first-class QueryResult binding (QueryEpoch + matches +
+    # optional pin; :as-query-result opt-in; result-fresh?/matches).
+    qrb_script = COVERAGE_CHECKS / "check_query_result_binding_2933.py"
+    if not qrb_script.exists():
+        fail(f"missing {qrb_script}")
+        return 1
+    r = run([sys.executable, str(qrb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2933 QueryResult binding linter failed — run python3 scripts/coverage/checks/check_query_result_binding_2933.py"
+        )
+        return r
     # Issue #2754: region concurrent cone / ImpactScope mask-AND
     # disjointness (#2724 residual). Equal keys + proven cone masks
     # (mask AND == 0) → concurrent admit; true overlap still rejects.
@@ -9422,6 +9434,25 @@ def cmd_hold_budget_forced_fail_closed_2932_coverage():
     return 0
 
 
+def cmd_query_result_binding_2933_coverage():
+    """Issue #2933: first-class QueryResult binding for multi-round AI memory.
+
+    QueryEpoch + matches + optional pin; :as-query-result opt-in on major
+    query:* surfaces; result-fresh? / result-matches; additive metrics.
+    """
+    print(f"{B}=== query result binding coverage (#2933) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_result_binding_2933.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query result binding (#2933) coverage contract rows failed")
+        return 1
+    ok("query result binding (#2933) coverage clean")
+    return 0
+
+
 def cmd_chaos_steal_gc_nightly_2931():
     """Issue #2931: nightly hard gate — steal×mutate×GC×mailbox chaos soak.
 
@@ -12624,6 +12655,7 @@ def main():
         "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,
         "chaos-steal-gc-nightly-2931-coverage": cmd_chaos_steal_gc_nightly_2931_coverage,
         "hold-budget-forced-fail-closed-2932": cmd_hold_budget_forced_fail_closed_2932_coverage,
+        "query-result-binding-2933": cmd_query_result_binding_2933_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,
