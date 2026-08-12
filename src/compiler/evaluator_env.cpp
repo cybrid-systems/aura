@@ -7,8 +7,11 @@ module;
 #include "observability_metrics.h"
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "aura_jit_bridge.h" // Issue #2091: aura_set_aot_live_env_frame_version / linear_state_fingerprint
-#include "core/densify_consistency_report.h" // Issue #2368: DensifyRemapPairingResult
+#include "compiler/bridge_epoch_zero_stats.h" // Issue #2930: zero-epoch counters
+#include "core/densify_consistency_report.h"  // Issue #2368: DensifyRemapPairingResult
 #include "serve/fiber.h" // Issue #2498: orphan_root_release registration on fiber context
+
+#include <cstdlib> // Issue #2930: getenv AURA_BRIDGE_EPOCH_LEGACY_TRUST
 
 module aura.compiler.evaluator;
 
@@ -103,6 +106,36 @@ void Evaluator::stamp_closure_bridge_epoch(Closure& cl) const noexcept {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->linear_closure_state_stamp_total.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// Issue #1365 / #2930: bridge_epoch staleness (fail-closed for unstamped).
+// Defined out-of-line so bridge_epoch_zero_stats.h is shared with the JIT
+// dual-freshness path without importing Evaluator into aura_jit_bridge.cpp.
+std::uint64_t Evaluator::bridge_epoch_zero_observed_total_v_read() noexcept {
+    return aura::compiler::bridge_epoch_zero::observed_v_read();
+}
+std::uint64_t Evaluator::bridge_epoch_zero_treated_stale_total_v_read() noexcept {
+    return aura::compiler::bridge_epoch_zero::treated_stale_v_read();
+}
+
+bool Evaluator::is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t current_epoch) noexcept {
+    if (current_epoch == 0)
+        return false; // tracking inactive — zero extra work
+    if (bridge_epoch == 0) {
+        // Issue #1365 / #2930: production fail-closed for unstamped.
+        aura::compiler::bridge_epoch_zero::note_observed();
+        // Soft fixtures: AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 restores trust.
+        static const bool legacy_trust = []() noexcept {
+            if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
+                return e[0] != '0' && e[0] != '\0';
+            return false;
+        }();
+        if (legacy_trust)
+            return false;
+        aura::compiler::bridge_epoch_zero::note_treated_stale();
+        return true;
+    }
+    return bridge_epoch != current_epoch;
 }
 using types::make_hash;
 using types::make_int;

@@ -9346,6 +9346,25 @@ def cmd_steal_invariant_table_2929_coverage():
     return 0
 
 
+def cmd_bridge_epoch_zero_stale_2930_coverage():
+    """Issue #2930: production residual treat bridge_epoch==0 as stale.
+
+    Post-#1365 harden: unstamped epoch fail-closed under production;
+    LEGACY_TRUST for Soft fixtures; zero counters + construction inventory.
+    """
+    print(f"{B}=== bridge_epoch zero stale coverage (#2930) ==={N}")
+    script = COVERAGE_CHECKS / "check_bridge_epoch_zero_stale_2930.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("bridge_epoch zero stale (#2930) coverage contract rows failed")
+        return 1
+    ok("bridge_epoch zero stale (#2930) coverage clean")
+    return 0
+
+
 def cmd_chaos_release_blocker_2902_coverage():
     """Issue #2902: static contract for chaos hard release blocker."""
     print(f"{B}=== chaos hard release blocker coverage (#2902) ==={N}")
@@ -12464,6 +12483,7 @@ def main():
         "force-jit-reason-bit-map-2927": cmd_force_jit_reason_bit_map_2927_coverage,
         "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
+        "bridge-epoch-zero-stale-2930": cmd_bridge_epoch_zero_stale_2930_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "coverage": cmd_coverage,

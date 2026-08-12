@@ -8574,10 +8574,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> invalidate_per_block_dirty_active{1};    // #1286
     std::atomic<std::uint64_t> closure_bridge_epoch_safety_enforced{0}; // #1287
     std::atomic<std::uint64_t> closure_bridge_epoch_safety_active{1};   // #1287
-    std::atomic<std::uint64_t> guard_shape_linear_unified_active{1};    // #1288
-    std::atomic<std::uint64_t> guard_shape_linear_unified_checks{0};    // #1288
-    std::atomic<std::uint64_t> jit_unhandled_fail_fast_active{1};       // #1289
-    std::atomic<std::uint64_t> ownership_lambda_params_fixed{1};        // #1290
+    // Issue #2930: residual unstamped bridge_epoch==0 under production
+    // fail-closed. Observed = is_bridge_stale saw 0 while tracking active;
+    // treated_stale = returned true (not LEGACY_TRUST). Soft/quiet when
+    // all closures non-zero → counters stay 0.
+    std::atomic<std::uint64_t> closure_bridge_epoch_zero_observed_total{0};      // #2930
+    std::atomic<std::uint64_t> closure_bridge_epoch_zero_treated_stale_total{0}; // #2930
+    std::atomic<std::uint64_t> guard_shape_linear_unified_active{1};             // #1288
+    std::atomic<std::uint64_t> guard_shape_linear_unified_checks{0};             // #1288
+    std::atomic<std::uint64_t> jit_unhandled_fail_fast_active{1};                // #1289
+    std::atomic<std::uint64_t> ownership_lambda_params_fixed{1};                 // #1290
 
     // ── Issues #1291–#1295: fiber fid, workspace UAF, compile/fiber caps, exception clear ──
     std::atomic<std::uint64_t> production_sweep_1291_1295_active{1};
