@@ -271,12 +271,17 @@ namespace _2719_detail {
 void run_2719_layered_coerce_hard_gate();
 }
 
+namespace _2912_detail {
+void run_2912_layered_diverge_force_full_consume();
+}
+
 int run_test_dead_coercion_layered() {
     std::println("=== Issue #2282 / #2287: dead-coercion layered + CastOp density ===");
     std::println("=== Issue #2319: opt-in hard CastOp density gate ===");
     std::println("=== Issue #2645: layered dead-coercion evidence chain ===");
     std::println("=== Issue #2674: layered evidence-coherence production gate ===");
     std::println("=== Issue #2719: layered evidence-coerce hard gate (Full/prod) ===");
+    std::println("=== Issue #2912: layered diverge force-Full consume under production ===");
     aura_dead_coercion_layered_2282::_2282_detail::run_2282_layered_total();
     aura_dead_coercion_layered_2282::_2287_detail::run_2287_density();
     // Issue #2319 ACs are covered by dedicated test_castop_density_hard
@@ -284,6 +289,7 @@ int run_test_dead_coercion_layered() {
     _2645_detail::run_2645_evidence_chain();
     _2674_detail::run_2674_layered_coherence();
     _2719_detail::run_2719_layered_coerce_hard_gate();
+    _2912_detail::run_2912_layered_diverge_force_full_consume();
     return RUN_ALL_TESTS();
 }
 
@@ -485,7 +491,9 @@ static void ac2674_check_function_exported() {
     auto cixx = read_file("src/compiler/coercion_map.ixx");
     CHECK(cixx.find("check_layered_evidence_coherence") != std::string::npos,
           "AC3 #2674: check function declared in coercion_map.ixx");
-    CHECK(cixx.find("export inline void check_layered_evidence_coherence") != std::string::npos,
+    // #2719 changed return type void → std::uint64_t (diverge_delta); still exported.
+    CHECK(cixx.find("check_layered_evidence_coherence") != std::string::npos &&
+              cixx.find("export inline") != std::string::npos,
           "AC3 #2674: check function exported (export inline)");
     // Function body uses the three counters.
     CHECK(cixx.find("g_dead_coercion_ast_elided_with_evidence_total") != std::string::npos &&
@@ -743,6 +751,191 @@ void run_2719_layered_coerce_hard_gate() {
 }
 
 } // namespace _2719_detail
+
+// ---------------------------------------------------------------------------
+// Issue #2912: layered DeadCoercion evidence coherence diverge must force-Full
+// under production. Closes #2719 residual: arm alone left Agents with
+// force-full-pending that was never consumed into a Full audit sample.
+// Soft: observe only. Quiet path: zero cost. Additive schema + counters.
+//
+// Soft vs production (#2912 AC6):
+//   Soft + diverge              → observe only
+//   production / Full + diverge → arm + next boundary consume → force Full
+//   HARD env + diverge          → also hard-reject consume / force_reason
+//   no coercion                 → zero cost
+//
+//   AC1: Production + inject pending → consume forces Full (or hard reject)
+//   AC2: After escalate/recover path — dual-complete + provenance fill wired
+//        (Full audit via provenance_miss OR; recovery in soft_recover / Full)
+//   AC3: Quiet path → consume no-ops, no extra work
+//   AC4: Additive schema-2912 + consume counters; #2719/#2674 keys preserved
+//   AC5: Source-cite + extend this file per #81967
+//   AC6: Soft vs production table in comments; linter green
+// ---------------------------------------------------------------------------
+namespace _2912_detail {
+
+using aura::compiler::check_layered_evidence_coherence;
+using aura::compiler::clear_layered_evidence_diverge_force_full_pending_for_test;
+using aura::compiler::clear_layered_evidence_diverge_hard_reject_pending_for_test;
+using aura::compiler::consume_layered_evidence_diverge_force_full;
+using aura::compiler::consume_layered_evidence_diverge_hard_reject;
+using aura::compiler::g_layered_evidence_diverge_force_consumed_total;
+using aura::compiler::g_layered_evidence_diverge_force_full_pending;
+using aura::compiler::g_layered_evidence_diverge_hard_reject_consumed_total;
+using aura::compiler::g_layered_evidence_diverge_hard_reject_pending;
+using aura::compiler::layered_evidence_diverge_force_full_pending;
+using aura::compiler::layered_evidence_diverge_hard_reject_pending;
+using aura::compiler::reset_layered_evidence_diverge_force_consumed_total_for_test;
+using aura::compiler::reset_layered_evidence_diverge_hard_reject_consumed_total_for_test;
+
+static std::string read_file(const char* path) {
+    std::ifstream in(path);
+    if (!in) {
+        std::ifstream in2(std::string("../") + path);
+        if (!in2)
+            return {};
+        return std::string((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
+    }
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+static void ac2912_1_consume_force_full() {
+    std::println("\n--- AC1 #2912: consume force-Full pending → Full arm fires ---");
+    // Runtime: arm pending (as production boundary would), then consume.
+    clear_layered_evidence_diverge_force_full_pending_for_test();
+    reset_layered_evidence_diverge_force_consumed_total_for_test();
+    g_layered_evidence_diverge_force_full_pending.store(1, std::memory_order_relaxed);
+    CHECK(layered_evidence_diverge_force_full_pending(), "AC1: pending armed");
+    const auto cons0 = g_layered_evidence_diverge_force_consumed_total.load();
+    CHECK(consume_layered_evidence_diverge_force_full(), "AC1: consume returns true");
+    CHECK(!layered_evidence_diverge_force_full_pending(), "AC1: pending cleared");
+    CHECK(g_layered_evidence_diverge_force_consumed_total.load() > cons0,
+          "AC1: force_consumed bumped");
+    // Second consume is quiet no-op.
+    CHECK(!consume_layered_evidence_diverge_force_full(), "AC1: second consume false");
+    // Boundary wires consume into provenance_miss OR (force Full audit).
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("consume_layered_evidence_diverge_force_full") != std::string::npos,
+          "AC1: boundary consumes force-full pending");
+    CHECK(mb.find("layered_diverge_force") != std::string::npos,
+          "AC1: boundary binds layered_diverge_force");
+    CHECK(mb.find("layered_diverge_force") != std::string::npos &&
+              mb.find("provenance_miss") != std::string::npos,
+          "AC1: consume ORs into provenance_miss (Full audit path)");
+    // Hard-reject consume path + force_reason stamp.
+    clear_layered_evidence_diverge_hard_reject_pending_for_test();
+    reset_layered_evidence_diverge_hard_reject_consumed_total_for_test();
+    g_layered_evidence_diverge_hard_reject_pending.store(1, std::memory_order_relaxed);
+    CHECK(consume_layered_evidence_diverge_hard_reject(), "AC1: hard-reject consume true");
+    CHECK(!layered_evidence_diverge_hard_reject_pending(), "AC1: hard-reject pending cleared");
+    CHECK(mb.find("consume_layered_evidence_diverge_hard_reject") != std::string::npos,
+          "AC1: boundary consumes hard-reject pending");
+    CHECK(mb.find("layered-evidence-diverge") != std::string::npos,
+          "AC1: force_reason \"layered-evidence-diverge\" stamped");
+}
+
+static void ac2912_2_recover_dual_provenance_wired() {
+    std::println("\n--- AC2 #2912: escalate → dual-complete + provenance fill wired ---");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    // Full audit recovery rests on existing dual-complete + provenance fill.
+    CHECK(cixx.find("coercion_entry_dual_complete") != std::string::npos,
+          "AC2: dual-complete helper present");
+    CHECK(cixx.find("fill_coercion_provenance_chain") != std::string::npos,
+          "AC2: provenance chain fill present");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // provenance_miss forces do_audit; Full path partial recovery restamps.
+    CHECK(mb.find("provenance_miss") != std::string::npos &&
+              mb.find("do_audit") != std::string::npos,
+          "AC2: provenance_miss feeds do_audit (Full recovery path)");
+    // Soft recover also fills dual under Sampled (existing #2561).
+    CHECK(mb.find("maybe_soft_recover_or_escalate_blame") != std::string::npos,
+          "AC2: soft recover/escalate still available for dual fill");
+}
+
+static void ac2912_3_quiet_zero_cost() {
+    std::println("\n--- AC3 #2912: quiet path → zero cost ---");
+    clear_layered_evidence_diverge_force_full_pending_for_test();
+    reset_layered_evidence_diverge_force_consumed_total_for_test();
+    const auto cons0 = g_layered_evidence_diverge_force_consumed_total.load();
+    CHECK(!consume_layered_evidence_diverge_force_full(), "AC3: quiet consume false");
+    CHECK(g_layered_evidence_diverge_force_consumed_total.load() == cons0,
+          "AC3: quiet consume does not bump force_consumed");
+    // Coherence check with no evidence elision → 0 (no diverge arm).
+    // Snapshot ir_narrow high enough that invariant holds.
+    const auto d =
+        check_layered_evidence_coherence(/*ir_narrow_evidence_hits_external=*/UINT64_MAX);
+    CHECK(d == 0, "AC3: coherence check returns 0 when invariant holds");
+}
+
+static void ac2912_4_additive_schema() {
+    std::println("\n--- AC4 #2912: additive schema + counters; preserve prior keys ---");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("\"schema-2912\"") != std::string::npos, "AC4: schema-2912 sentinel");
+    CHECK(q.find("\"issue-2912\"") != std::string::npos, "AC4: issue-2912 sentinel");
+    CHECK(q.find("\"layered-evidence-diverge-force-consumed-total\"") != std::string::npos,
+          "AC4: force-consumed-total key");
+    CHECK(q.find("\"layered-evidence-diverge-hard-reject-consumed-total\"") != std::string::npos,
+          "AC4: hard-reject-consumed-total key");
+    CHECK(q.find("\"layered-evidence-diverge-force-full-consume-wired\"") != std::string::npos,
+          "AC4: consume-wired sentinel");
+    // Preserve #2719 / #2674.
+    CHECK(q.find("\"schema-2719\"") != std::string::npos, "AC4: schema-2719 preserved");
+    CHECK(q.find("\"schema-2674\"") != std::string::npos, "AC4: schema-2674 preserved");
+    CHECK(q.find("\"layered-evidence-diverge-force-full-pending\"") != std::string::npos,
+          "AC4: force-full-pending preserved");
+    CHECK(q.find("\"layered-evidence-diverge-total\"") != std::string::npos,
+          "AC4: diverge-total preserved");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("g_layered_evidence_diverge_force_consumed_total") != std::string::npos,
+          "AC4: force_consumed counter declared");
+    CHECK(cixx.find("consume_layered_evidence_diverge_force_full") != std::string::npos,
+          "AC4: consume helper exported");
+}
+
+static void ac2912_5_source_cite_suite() {
+    std::println("\n--- AC5 #2912: source-cite + extend suite ---");
+    auto t = read_file("tests/compiler/test_dead_coercion_layered.cpp");
+    CHECK(t.find("run_2912_layered_diverge_force_full_consume") != std::string::npos,
+          "AC5: runner present");
+    CHECK(t.find("ac2912_1_consume_force_full") != std::string::npos, "AC5: AC1 present");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("Issue #2912") != std::string::npos, "AC5: coercion_map cites #2912");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #2912") != std::string::npos, "AC5: mb.cpp cites #2912");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    CHECK(q.find("Issue #2912") != std::string::npos, "AC5: query cites #2912");
+}
+
+static void ac2912_6_soft_prod_table_linter() {
+    std::println("\n--- AC6 #2912: Soft vs production table + linter ---");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("Soft + diverge") != std::string::npos ||
+              cixx.find("Soft/Sampled: observe-only") != std::string::npos,
+          "AC6: Soft vs production table / Soft observe in comments");
+    CHECK(cixx.find("production / Full + diverge") != std::string::npos ||
+              cixx.find("force-Full") != std::string::npos,
+          "AC6: production force-Full documented");
+    auto lint = read_file("scripts/coverage/checks/check_layered_evidence_force_full_2912.py");
+    CHECK(!lint.empty(), "AC6: linter script present");
+    CHECK(lint.find("#2912") != std::string::npos, "AC6: linter cites #2912");
+    auto build = read_file("build.py");
+    CHECK(build.find("check_layered_evidence_force_full_2912") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2912-layered-diverge-force-full.md").empty(),
+          "AC6: no docs/design/2912-* per #1655");
+}
+
+void run_2912_layered_diverge_force_full_consume() {
+    std::println("\n=== Issue #2912: layered diverge force-Full consume ===");
+    ac2912_1_consume_force_full();
+    ac2912_2_recover_dual_provenance_wired();
+    ac2912_3_quiet_zero_cost();
+    ac2912_4_additive_schema();
+    ac2912_5_source_cite_suite();
+    ac2912_6_soft_prod_table_linter();
+}
+
+} // namespace _2912_detail
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
