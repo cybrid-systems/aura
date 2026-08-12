@@ -1453,7 +1453,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_orch_admission_decay.cpp` (—) [domain_suite, theme_orch] — AC1: decay window — BP event → counter > 0 → spawn denied
 - `tests/orch/test_orch_agent_batch.cpp` (—) [batch_driver, domain_suite, theme_orch] — test_orch_agent_batch.cpp — thematic multi-TU batch
 - `tests/serve/test_orch_agent_mutation_boundary.cpp` (—) [domain_suite, theme_serve] — AC1: soft-boundary agent body → depth>0, is_at_mutation_boundary_safe false
-- `tests/orch/test_orch_scope.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_orch_scope.cpp
+- `tests/orch/test_orch_scope.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_orch_scope.cpp
 - `tests/compiler/test_orch_scope_child.cpp` (—) [domain_suite, theme_compiler] — AC1: spawn_child hierarchy + cancel_all top-down propagation
 - `tests/serve/test_orch_soft_boundary_unified.cpp` (—) [domain_suite, theme_serve] — AC1: soft 进入/退出必 publish mirrors（source-cite）—
 - `tests/serve/test_orchestration_steal_boost.cpp` (—) [domain_suite, theme_serve] — tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492
