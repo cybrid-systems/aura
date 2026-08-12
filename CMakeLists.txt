@@ -38,6 +38,11 @@ set(AURA_EVALUATOR_SOURCE_FILES
     src/compiler/evaluator_primitives_math.cpp
     src/compiler/evaluator_primitives_reflect.cpp
     src/compiler/evaluator_primitives_query.cpp
+    src/compiler/evaluator_primitives_query_obs_mid.cpp
+    src/compiler/evaluator_primitives_query_type_stats.cpp
+    src/compiler/evaluator_primitives_query_reflect.cpp
+    src/compiler/evaluator_primitives_query_lifecycle.cpp
+    src/compiler/evaluator_primitives_query_tail.cpp
     src/compiler/evaluator_primitives_query_workspace.cpp
     src/compiler/evaluator_primitives_query_defuse.cpp
     src/compiler/evaluator_primitives_mutate.cpp
