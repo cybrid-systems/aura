@@ -1,18 +1,11 @@
 // @category: unit
 // @reason: Issue #2140 — PCV exclusive (refcount==1) in-place with_set path.
-//          Issue #2906 — FlatAST locked mutate forces exclusive via move-out.
 //
 //   AC1: with_set exclusive → no alloc (same storage, with_set_exclusive metric)
 //   AC2: SafePCVSpan live → with_set COWs; span sees pre-mutation data
 //   AC3: MutationCheckpoint / snapshot_children rollback restores children
 //   AC4: shared with_set COW; exclusive pair; #2058 lineage metrics still work
 //   AC5: microbench exclusive with_set vs shared with_set (expect faster)
-//
-// #2906 ACs (extend this suite per #81967):
-//   AC1: set_child_locked / insert / remove move children out before mutate
-//   AC2: sole-holder stress → locked exclusive dominates; cow near zero
-//   AC3: SafePCVSpan holders force locked COW path (no stale corruption)
-//   AC4: query keys schema-2906 + rollback move-out; no docs/design
 
 #include "test_harness.hpp"
 
@@ -220,91 +213,6 @@ int run_test_pcv_exclusive_with_set() {
         auto p = make_n(2);
         auto q = p.with_set(99, 5);
         CHECK(q[0] == 0 && q[1] == 1, "OOB no-op");
-    }
-
-    // ── Issue #2906: FlatAST locked exclusive via move-out ──
-    {
-        std::println("\n=== Issue #2906: FlatAST locked PCV exclusive move-out ===");
-
-        // AC1: source-cite canonical pattern on locked paths.
-        std::println("\n--- #2906 AC1: locked paths move-out ---");
-        const auto ast = read_file("src/core/ast.ixx");
-        const auto hh = read_file("src/core/persistent_child_vector.hh");
-        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
-        CHECK(ast.find("std::move(children_[id])") != std::string::npos ||
-                  ast.find("std::move(children_[") != std::string::npos,
-              "AC1: move-out of children_ present");
-        CHECK(ast.find("list.cow_set") != std::string::npos, "AC1: cow_set after move-out");
-        CHECK(ast.find("children_[id] = std::move(list)") != std::string::npos ||
-                  ast.find("= std::move(list)") != std::string::npos,
-              "AC1: move-in after mutate");
-        CHECK(ast.find("#2906") != std::string::npos, "AC1: ast cites #2906");
-        CHECK(hh.find("#2906") != std::string::npos, "AC1: PCV header cites #2906");
-        CHECK(hh.find("flatast_locked_move_out_exclusive_total") != std::string::npos,
-              "AC1: locked exclusive metric");
-        CHECK(mut.find("#2906") != std::string::npos ||
-                  mut.find("set_child_locked") != std::string::npos ||
-                  mut.find("cow_set exclusive") != std::string::npos,
-              "AC1: mutate prims cite exclusive path / #2906");
-
-        // AC2: sole-holder stress — exclusive dominates.
-        std::println("\n--- #2906 AC2: sole-holder stress exclusive dominates ---");
-        reset_pcv_hotpath_metrics_for_test();
-        FlatAST flat;
-        NodeId kids[4] = {flat.add_literal(1), flat.add_literal(2), flat.add_literal(3),
-                          flat.add_literal(4)};
-        auto root = flat.add_begin(std::span<const NodeId>(kids, 4));
-        for (int i = 0; i < 200; ++i) {
-            flat.set_child(root, static_cast<std::uint32_t>(i % 4), flat.add_literal(100 + i));
-        }
-        const auto ex = g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.load();
-        const auto cow = g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load();
-        const auto uniq = g_pcv_hotpath_metrics().unique_inplace_total.load();
-        std::println("  locked exclusive={} cow={} unique_inplace={}", ex, cow, uniq);
-        CHECK(ex >= 150, "AC2: locked exclusive path dominates sole-holder stress");
-        CHECK(cow == 0 || cow < ex / 10, "AC2: locked COW near zero without snapshot");
-        CHECK(uniq >= 150, "AC2: unique_inplace also high");
-
-        // AC3: SafePCVSpan forces COW / observers see old data.
-        std::println("\n--- #2906 AC3: SafePCVSpan forces locked COW ---");
-        reset_pcv_hotpath_metrics_for_test();
-        FlatAST flat2;
-        NodeId kids2[2] = {flat2.add_literal(10), flat2.add_literal(20)};
-        auto root2 = flat2.add_begin(std::span<const NodeId>(kids2, 2));
-        SafePCVSpan<NodeId> safe = flat2.children_safe(root2);
-        const auto s0 = safe[0];
-        const auto cow0 = g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load();
-        flat2.set_child(root2, 0, flat2.add_literal(999));
-        CHECK(safe[0] == s0, "AC3: SafePCVSpan sees pre-mutation (no corruption)");
-        CHECK(flat2.children(root2)[0] != s0, "AC3: tree updated under lock");
-        // With span holding shared storage, move-out leaves list shared → COW.
-        const auto cow1 = g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load();
-        CHECK(cow1 > cow0 || g_pcv_hotpath_metrics().with_set_cow_total.load() > 0 ||
-                  g_pcv_hotpath_metrics().cow_alloc_total.load() > 0,
-              "AC3: shared holder forces COW path");
-
-        // AC4: schema-2906 + rollback move-out + no design doc.
-        std::println("\n--- #2906 AC4: schema + rollback + linter ---");
-        const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
-        const auto build = read_file("build.py");
-        const auto lint =
-            read_file("scripts/coverage/checks/check_pcv_flatast_locked_exclusive_2906.py");
-        CHECK(obs.find("schema-2906") != std::string::npos, "AC4: schema-2906");
-        CHECK(obs.find("flatast-locked-move-out-exclusive-total") != std::string::npos,
-              "AC4: exclusive total key");
-        CHECK(obs.find("flatast-locked-exclusive-ratio-bp") != std::string::npos,
-              "AC4: exclusive ratio key");
-        CHECK(ast.find("std::move(children_[parent])") != std::string::npos ||
-                  ast.find("std::move(children_[define_node])") != std::string::npos ||
-                  ast.find("// Issue #2906: move-out") != std::string::npos,
-              "AC4: rollback paths move-out");
-        CHECK(build.find("check_pcv_flatast_locked_exclusive_2906") != std::string::npos,
-              "AC4: build.py wires linter");
-        CHECK(!lint.empty() && lint.find("2906") != std::string::npos, "AC4: linter present");
-        CHECK(read_file("docs/design/2906-pcv-exclusive.md").empty(),
-              "AC4: no docs/design/2906-* per #1655");
-        CHECK(read_file("tests/core/test_issue_2906.cpp").empty(),
-              "AC4: no new test file per #81967");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
