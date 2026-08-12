@@ -343,6 +343,114 @@ inline void reset_query_epoch_metrics_for_test() noexcept {
     set_query_epoch_strict(false);
 }
 
+// ── Issue #2933: first-class QueryResult binding (AI multi-round memory) ──
+// Agents cache query matches across query → mutate → re-query loops without
+// full rescans. A QueryResult binds:
+//   - matches as (node_id, generation) pairs (StableNodeRef layout)
+//   - QueryEpoch snapshot (mutation_epoch + generation + bridge + workspace_id)
+//   - optional pin flag (SafePCVSpan-backed children_stable path sets pinned)
+//
+// EvalValue surface is a hash (schema-2933 / query-result-tag=1). Default
+// query:* return remains a bare match list; opt-in via :as-query-result /
+// :query-result #t (AC2 Soft regression green).
+//
+// is_fresh: re-checks epoch against live mutation_epoch + FlatAST generation.
+// Fail-closed on wrap / gen mismatch unless pinned (pin keeps storage alive
+// via SafePCVSpan keep-alive on the children_stable path; match gens still
+// validated when a FlatAST is supplied to is_fresh_with_refs).
+
+struct QueryResultMatch {
+    std::uint32_t node_id = 0;
+    std::uint16_t generation = 0;
+};
+
+struct QueryResult {
+    // Layout-only match table (no FlatAST dependency in this header).
+    // Prefer StableNodeRef at call sites; pack id+gen here for EvalValue.
+    // Max practical size is Agent-bounded; empty = no matches.
+    static constexpr std::size_t kMaxInlineMatches = 64;
+    QueryResultMatch matches[kMaxInlineMatches]{};
+    std::uint16_t match_count = 0;
+    QueryEpoch epoch{};
+    bool pinned = false; // SafePCVSpan pin path (children_stable)
+
+    [[nodiscard]] bool empty() const noexcept { return match_count == 0; }
+
+    // Epoch-only freshness (no per-ref check). Fail-closed when mutation
+    // or generation advanced since capture.
+    [[nodiscard]] bool is_fresh(std::uint64_t cur_mutation,
+                                std::uint64_t cur_generation) const noexcept {
+        return epoch.is_fresh(cur_mutation, cur_generation);
+    }
+
+    // Convenience against process-global mutation + provided generation.
+    [[nodiscard]] bool is_fresh_live(std::uint64_t flat_generation) const noexcept {
+        return is_fresh(current_mutation_epoch(), flat_generation);
+    }
+
+    bool push_match(std::uint32_t node_id, std::uint16_t generation) noexcept {
+        if (match_count >= kMaxInlineMatches)
+            return false;
+        matches[match_count++] = QueryResultMatch{node_id, generation};
+        return true;
+    }
+};
+
+// Process-wide metrics (additive; multi-fiber relaxed).
+inline std::atomic<std::uint64_t>& g_query_result_created_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_result_fresh_hits_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_result_stale_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint32_t>& g_query_result_wired() noexcept {
+    static std::atomic<std::uint32_t> v{1};
+    return v;
+}
+inline constexpr int kQueryResultIssue = 2933;
+
+inline void note_query_result_created() noexcept {
+    g_query_result_created_total().fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_query_result_fresh_hit() noexcept {
+    g_query_result_fresh_hits_total().fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_query_result_stale() noexcept {
+    g_query_result_stale_total().fetch_add(1, std::memory_order_relaxed);
+}
+
+// Check freshness of a QueryResult; bumps fresh/stale metrics.
+// strict_fail: when true (query_epoch_strict or caller forces), stale
+// returns false; when false, still bumps stale metric but returns true
+// only if epoch-fresh (Agents always get accurate is_fresh).
+[[nodiscard]] inline bool query_result_check_fresh(const QueryResult& qr,
+                                                   std::uint64_t flat_generation) noexcept {
+    if (qr.is_fresh_live(flat_generation)) {
+        note_query_result_fresh_hit();
+        return true;
+    }
+    note_query_result_stale();
+    return false;
+}
+
+inline void reset_query_result_metrics_for_test() noexcept {
+    g_query_result_created_total().store(0, std::memory_order_relaxed);
+    g_query_result_fresh_hits_total().store(0, std::memory_order_relaxed);
+    g_query_result_stale_total().store(0, std::memory_order_relaxed);
+}
+
+// Extend #2192 test reset so #2933 metrics clear together when tests reset.
+inline void reset_query_epoch_and_result_metrics_for_test() noexcept {
+    reset_query_epoch_metrics_for_test();
+    reset_query_result_metrics_for_test();
+}
+
 } // namespace aura::core
 
 #endif // AURA_CORE_WORKSPACE_EPOCH_HH
