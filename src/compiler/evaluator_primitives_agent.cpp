@@ -2824,6 +2824,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         // Issue #2400 / #2886 / #2923: isolation-level for Agent control planes.
         // Sole authority: aura::serve::parallel_orch::decide_isolation (pure).
         // Do NOT re-derive the pure_mode / region-key ternary here.
+        // Do NOT advertise pure as transactional isolation (AC4 #2400 / #2230).
         //   Serialized       — default :pure #f, zero/overlap/single keys
         //   BestEffortPure   — pure_mode (never "transactional"; #2230)
         //   RegionConcurrent — ≥2 distinct non-zero region_keys, !pure
