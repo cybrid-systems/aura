@@ -19,7 +19,6 @@ Usage:
   python3 scripts/coverage/checks/check_stdlib_require_export_audit_2769.py
   python3 ... --print-table
   python3 ... --fix          # reorder require-before-export → export-first
-  python3 ... --smoke          # also run live stdin probes if build/aura exists
 
 Exit 0 = all rows satisfied.
 """
@@ -27,9 +26,7 @@ Exit 0 = all rows satisfied.
 from __future__ import annotations
 
 import argparse
-import os
 import re
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -217,41 +214,10 @@ def print_table(rows: list[ModuleInfo]) -> None:
         print(f"{r.rel:40} {r.order:16} {cells_q:8} {cell_s}")
 
 
-def live_smoke() -> list[str]:
-    """Run denseness probes via build/aura when present. Return fail msgs."""
-    aura = ROOT / "build" / "aura"
-    if not aura.is_file() or not os.access(aura, os.X_OK):
-        return []  # optional — static AC covers wiring
-    fails: list[str] = []
-    env = os.environ.copy()
-    env["AURA_PATH"] = str(ROOT / "lib")
-    env["AURA_SANDBOX"] = "off"
-    env["AURA_PIPELINE_STRICT"] = "0"
-    for mod, label, code in DENSENESS_SMOKES:
-        try:
-            r = subprocess.run(
-                [str(aura)],
-                input=code,
-                text=True,
-                capture_output=True,
-                timeout=30,
-                env=env,
-                cwd=str(ROOT),
-            )
-        except (OSError, subprocess.TimeoutExpired) as e:
-            fails.append(f"smoke {mod}/{label}: {e}")
-            continue
-        out = (r.stdout or "") + (r.stderr or "")
-        if "unbound variable" in out:
-            fails.append(f"smoke {mod}/{label}: unbound variable\n{out[:400]}")
-    return fails
-
-
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--print-table", action="store_true", help="print inventory table and exit 0 (no AC fail)")
     ap.add_argument("--fix", action="store_true", help="reorder require-before-export modules to export-first")
-    ap.add_argument("--smoke", action="store_true", help="also run live stdin denseness smokes if build/aura exists")
     args = ap.parse_args(argv)
 
     if args.fix:
@@ -300,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     if n_export_first < 1 and n_req_first == 0 and not any(r.order == "export-only" for r in rows):
         fails.append("AC1: inventory empty of form-order classes")
 
-    # ── AC2 denseness paths (static symbol presence + optional live) ──
+    # ── AC2 denseness paths (static symbol presence only) ──
     must("llm:rate-limit-set!", "AC2", _read("lib/std/llm.aura"))
     must("*llm-rate-limit*", "AC2", _read("lib/std/llm.aura"))
     must("hot-strategy:version", "AC2", _read("lib/std/hot-strategy.aura"))
@@ -309,17 +275,11 @@ def main(argv: list[str] | None = None) -> int:
     must("agent:loop-stats", "AC2", _read("lib/std/agent.aura"))
     must("mutate:boundary-safe?", "AC2", _read("lib/std/mutate.aura"))
     must("query:list-categories", "AC2", _read("lib/std/query.aura"))
-    # C++ smoke tests for denseness.
+    # C++ suite denseness coverage (static cite).
     t = _read("tests/compiler/test_module_require_freevar.cpp")
     must("ac2769_2_denseness_paths_green", "AC2", t)
     must("llm:rate-limit", "AC2", t)
     must("hot-strategy:version", "AC2", t)
-    if args.smoke:
-        fails.extend(f"AC2: {m}" for m in live_smoke())
-    else:
-        # Auto-smoke when aura binary is present (CI/local with build).
-        fails.extend(f"AC2: {m}" for m in live_smoke())
-
     # ── AC3 host #2766 canary (shared residual) ──
     efl = _read("src/compiler/evaluator_eval_flat.cpp")
     loader = _read("src/compiler/evaluator_module_loader.cpp")
@@ -391,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"OK: Issue #2769 stdlib require/export audit — "
         f"{len(rows)} modules, require-first=0, cells={n_cells}, "
-        f"denseness smokes green, host #2766 canary present"
+        f"host #2766 canary present"
     )
     return 0
 

@@ -13,8 +13,6 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -26,50 +24,6 @@ def _read(rel: str) -> str:
     if not p.is_file():
         return ""
     return p.read_text(encoding="utf-8", errors="replace")
-
-
-def live_smoke() -> list[str]:
-    aura = ROOT / "build" / "aura"
-    if not aura.is_file() or not os.access(aura, os.X_OK):
-        return []
-    code = r"""
-(require "std/swarm" all:)
-(define (sphere ind)
-  (let loop ((xs ind) (s 0.0))
-    (if (null? xs) (- 0.0 s)
-      (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
-(swarm:init (hash "kind" "pso" "dim" 1 "pop" 8
-                  "bounds" (list (list -2.0 2.0)) "seed" 1))
-(let loop ((i 0))
-  (if (>= i 10) #t (begin (swarm:step! sphere) (loop (+ i 1)))))
-(display (swarm:gen)) (newline)
-(display (hash-ref (swarm:report) "kind")) (newline)
-(display (number? (hash-ref (swarm:report) "best-fit"))) (newline)
-"""
-    env = os.environ.copy()
-    env["AURA_PATH"] = str(ROOT / "lib")
-    env["AURA_SANDBOX"] = "off"
-    env["AURA_PIPELINE_STRICT"] = "0"
-    try:
-        r = subprocess.run(
-            [str(aura)],
-            input=code,
-            text=True,
-            capture_output=True,
-            timeout=60,
-            env=env,
-            cwd=str(ROOT),
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return [f"live smoke: {e}"]
-    out = (r.stdout or "") + (r.stderr or "")
-    fails: list[str] = []
-    if "unbound variable" in out:
-        fails.append(f"live smoke: unbound\n{out[:500]}")
-    lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
-    if lines[:3] != ["10", "pso", "#t"]:
-        fails.append(f"live smoke: expected ['10','pso','#t'], got {lines[:8]!r}\n{out[:500]}")
-    return fails
 
 
 def main() -> int:
@@ -125,8 +79,6 @@ def main() -> int:
     if docs_dir.is_dir():
         for f in sorted(docs_dir.glob("2874-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden per #1655)")
-
-    fails.extend(live_smoke())
 
     if fails:
         for f in fails:

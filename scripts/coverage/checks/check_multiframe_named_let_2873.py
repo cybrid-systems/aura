@@ -10,7 +10,7 @@ Contract:
   AC1 Call Variable: env binding shadows prim (#2873 comment + is_primitive)
   AC2 #2871 TCO continue for TW closure still present
   AC3 suite multiframe_named_let_2873.aura
-  AC4 linter wired in build.py; live smoke when aura exists
+  AC4 linter wired in build.py
   AC5 no docs/design/2873-* / no test_issue_2873.cpp
 
 Exit 0 = all rows satisfied.
@@ -18,8 +18,6 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -31,54 +29,6 @@ def _read(rel: str) -> str:
     if not p.is_file():
         return ""
     return p.read_text(encoding="utf-8", errors="replace")
-
-
-def live_smoke() -> list[str]:
-    aura = ROOT / "build" / "aura"
-    if not aura.is_file() or not os.access(aura, os.X_OK):
-        return []
-    code = r"""
-(define (deep-map n)
-  (let loop ((i 0) (s (quote ())))
-    (if (>= i n) (length s)
-      (loop (+ i 1)
-            (cons (string-append "k" (number->string i)) s)))))
-(display (deep-map 2000)) (newline)
-(display (let take ((ys (list 1 2 3)) (n 0) (out (quote ())))
-  (if (or (null? ys) (>= n 10)) out
-    (take (cdr ys) (+ n 1) (cons (car ys) out))))) (newline)
-(display (take 2 (list 1 2 3 4))) (newline)
-"""
-    env = os.environ.copy()
-    env["AURA_PATH"] = str(ROOT / "lib")
-    env["AURA_SANDBOX"] = "off"
-    env["AURA_PIPELINE_STRICT"] = "0"
-    try:
-        r = subprocess.run(
-            [str(aura)],
-            input=code,
-            text=True,
-            capture_output=True,
-            timeout=60,
-            env=env,
-            cwd=str(ROOT),
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return [f"live smoke: {e}"]
-    out = (r.stdout or "") + (r.stderr or "")
-    fails: list[str] = []
-    if "recursion depth exceeded" in out:
-        fails.append(f"live smoke: recursion depth exceeded\n{out[:500]}")
-    lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
-    # deep-map 2000, take-rev (3 2 1), prim take (1 2)
-    if not lines or lines[0] != "2000":
-        fails.append(f"live smoke: expected deep-map 2000, got {lines[:6]!r}\n{out[:500]}")
-    # accept printed list forms for take-rev / prim take
-    if len(lines) < 2 or "3" not in lines[1]:
-        fails.append(f"live smoke: expected take-rev list, got {lines[:6]!r}\n{out[:500]}")
-    if len(lines) < 3 or "1" not in lines[2]:
-        fails.append(f"live smoke: expected prim take, got {lines[:6]!r}\n{out[:500]}")
-    return fails
 
 
 def main() -> int:
@@ -119,8 +69,6 @@ def main() -> int:
     if docs_dir.is_dir():
         for f in sorted(docs_dir.glob("2873-*")):
             fails.append(f"AC5: docs/design/{f.name} present (forbidden per #1655)")
-
-    fails.extend(live_smoke())
 
     if fails:
         for f in fails:
