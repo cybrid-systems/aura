@@ -42,8 +42,15 @@ def main() -> int:
     build = _read("build.py")
 
     must("#2655" in misc, "AC1: misc cites #2655")
-    must('add("current-time-ms"' in misc, "AC1: current-time-ms")
-    must('add("monotonic-ms"' in misc, "AC1: monotonic-ms")
+    # Issue #2915: misc uses register_prim; accept either style.
+    must(
+        'add("current-time-ms"' in misc or '"current-time-ms"' in misc,
+        "AC1: current-time-ms",
+    )
+    must(
+        'add("monotonic-ms"' in misc or '"monotonic-ms"' in misc,
+        "AC1: monotonic-ms",
+    )
 
     must("system_clock" in misc, "AC2: system_clock")
     must("steady_clock" in misc, "AC2: steady_clock")
