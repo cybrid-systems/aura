@@ -8165,6 +8165,11 @@ struct CompilerMetrics {
     // Pairs with g_residual_defer_after_exit_total process-wide (#2846).
     // Agents alert on growth under multi-fiber denseness (GC starvation).
     std::atomic<std::uint64_t> residual_defer_after_exit_total{0}; // #2846
+    // Issue #2975: production outermost-exit hard-fail when residual
+    // leftover or last densify window !pin_contract_held / incomplete-remap.
+    // Soft residual-after-exit total above is preserved (observe-only).
+    std::atomic<std::uint64_t> residual_after_exit_hard_fail_total{0}; // #2975
+    std::atomic<std::uint64_t> pin_contract_fail_on_exit_total{0};     // #2975
     // Issue #2853: gauge — bumped each Phase-5 outermost-success residual
     // check where production lock was actively gating the policy
     // (production_defaults_active() + sandbox != off + not test override).

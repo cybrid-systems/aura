@@ -2013,6 +2013,19 @@ def cmd_lint():
     if r != 0:
         fail("Issue #2974 workflow-run linter failed — run python3 scripts/coverage/checks/check_workflow_run_2974.py")
         return r
+    # Issue #2975: outermost MutationBoundary exit residual + pin_contract
+    # production hard gate. Extends test_residual_gc_defer_assert (#81967);
+    # no docs/design/ (#1655).
+    oerp_script = COVERAGE_CHECKS / "check_outermost_exit_residual_pin_2975.py"
+    if not oerp_script.exists():
+        fail(f"missing {oerp_script}")
+        return 1
+    r = run([sys.executable, str(oerp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2975 outermost-exit residual+pin linter failed — run python3 scripts/coverage/checks/check_outermost_exit_residual_pin_2975.py"
+        )
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
@@ -6488,6 +6501,24 @@ def cmd_residual_defer_after_exit_coverage():
         )
         return 1
     ok("residual-defer-after-exit closed loop (#2846) coverage clean")
+    return 0
+
+
+def cmd_outermost_exit_residual_pin_2975_coverage():
+    """Issue #2975: outermost-exit residual + pin_contract production hard gate."""
+    print(f"{B}=== outermost-exit residual+pin hard gate (#2975) ==={N}")
+    script = COVERAGE_CHECKS / "check_outermost_exit_residual_pin_2975.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail(
+            "Issue #2975 outermost-exit residual+pin linter failed — run "
+            "python3 scripts/coverage/checks/check_outermost_exit_residual_pin_2975.py"
+        )
+        return 1
+    ok("outermost-exit residual+pin hard gate (#2975) coverage clean")
     return 0
 
 
@@ -13771,6 +13802,8 @@ def main():
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
+        "outermost-exit-residual-pin-2975": cmd_outermost_exit_residual_pin_2975_coverage,
+        "outermost-exit-residual-pin-2975-coverage": cmd_outermost_exit_residual_pin_2975_coverage,
         "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,
         "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,

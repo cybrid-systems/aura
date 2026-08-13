@@ -6198,6 +6198,22 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"close-residual-defer-after-exit-wired", make_int(1)},
                 {"schema-2846", make_int(2846)},
                 {"issue-2846", make_int(2846)},
+                // Issue #2975: outermost-exit residual + pin_contract hard gate.
+                // Additive — Soft residual-after-exit-total preserved (AC5).
+                {"residual-after-exit-hard-fail-total",
+                 make_int(m ? load(m->residual_after_exit_hard_fail_total)
+                            : static_cast<std::int64_t>(
+                                  aura::gc_hooks::residual_after_exit_hard_fail_total()))},
+                {"pin-contract-fail-on-exit-total",
+                 make_int(m ? load(m->pin_contract_fail_on_exit_total)
+                            : static_cast<std::int64_t>(
+                                  aura::gc_hooks::pin_contract_fail_on_exit_total()))},
+                {"outermost-exit-force-reason",
+                 make_int(static_cast<std::int64_t>(
+                     aura::gc_hooks::last_outermost_exit_force_reason()))},
+                {"outermost-exit-residual-pin-gate-wired", make_int(1)},
+                {"schema-2975", make_int(aura::gc_hooks::kOutermostExitResidualPinGateIssue)},
+                {"issue-2975", make_int(aura::gc_hooks::kOutermostExitResidualPinGateIssue)},
                 // Issue #2934: restamp budget on Guard exit (Agent latency
                 // control). Live FlatAST counters when workspace loaded.
                 {"restamp-budget",

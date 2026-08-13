@@ -3289,7 +3289,7 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         // Issue #2546 + #2846: residual hard-AND + residual-after-exit closed
         // loop. Production/Hard force-clears via close_residual_defer_after_exit;
         // Soft observes leftover. Zero cost when residual already 0.
-        if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
+        if (aura::gc_hooks::residual_defer_leftover()) {
             void* clear_id = prev_eval_id;
             if (auto* ev = evaluator_for_scheduler_hooks()) {
                 if (clear_id == nullptr)
@@ -3297,6 +3297,7 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
                 const bool production_force = aura::serve::is_steal_snapshot_hard_mode();
                 // #2846 sole residual-after-exit gate on steal-complete
                 // (force_clear + after-exit counter when residual seen).
+                // Issue #2975: leftover predicate shared with outermost exit.
                 const auto after =
                     aura::gc_hooks::close_residual_defer_after_exit(clear_id, production_force);
                 if (after.residual_seen) {
@@ -3322,7 +3323,8 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             }
         }
         // Hard-AND: residual still non-zero after force_clear?
-        if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
+        // Issue #2975: same leftover predicate as outermost Guard exit.
+        if (aura::gc_hooks::residual_defer_leftover()) {
             if (aura::serve::is_steal_snapshot_hard_mode()) {
                 // Production / Hard: cancel fiber — worker must not enqueue Ready.
                 aura::gc_hooks::g_residual_defer_steal_hard_fail_total.fetch_add(

@@ -3169,6 +3169,47 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 static_cast<std::uint64_t>(densify_root_remap_fails),
                 static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared));
         }
+        // Issue #2975: production hard gate on every outermost Phase-5 exit
+        // (success *and* non-intentional-failure). Shared residual leftover
+        // predicate with steal-complete (#2546 / #2890). Soft observe-only
+        // (never force-clear or fail). Composes with #2932 hold-budget
+        // fail-closed (independent counters; both can fire on one exit).
+        // Intentional partial recovery keeps residual armed — skip.
+        {
+            const bool partial_recovery = !success && had_panic_checkpoint_ && !panic_handled;
+            if (!partial_recovery) {
+                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const bool dev_off =
+                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
+                const bool residual_force = !(dev_off || test_soft);
+                const bool fail_closed =
+                    typed_audit::production_defaults_active() && residual_force;
+                const bool pin_ok = pin_contract_held && densify_consistency.pin_ok;
+                const bool incomplete =
+                    densify_incomplete_remap || !untracked_ok || densify_untracked_kept > 0;
+                const auto gate = aura::gc_hooks::gate_outermost_exit_residual_and_pin(
+                    static_cast<void*>(ev_), residual_force, pin_ok, incomplete, fail_closed);
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    if (gate.residual.residual_seen)
+                        m->residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
+                    if (gate.hard_fail)
+                        m->residual_after_exit_hard_fail_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    if (!pin_ok)
+                        m->pin_contract_fail_on_exit_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (gate.hard_fail) {
+                    // Fail-closed for agents: flip the caller flag even if
+                    // ev_->outermost_mutation_success_flag_ was already
+                    // cleared earlier in Phase 5. #2932 may already have
+                    // flipped it — both reasons compose.
+                    if (flag_)
+                        *flag_ = false;
+                    ev_->mark_outermost_mutation_failed();
+                }
+            }
+        }
         // Issue #2682: single unified Moving success predicate — folds all
         // 5 conditions (moving_blocked_precondition / pin_contract_held /
         // root_remap fails / untracked_kept_count > 0 when objects_moved > 0)

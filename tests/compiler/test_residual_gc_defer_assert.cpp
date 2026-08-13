@@ -669,6 +669,157 @@ static void ac2846_5_source_linter_query() {
           "AC5: no invent test file per #81967");
 }
 
+// ── Issue #2975: outermost-exit residual + pin_contract hard gate ──
+static void ac2975_1_happy_path_zero_cost() {
+    std::println("\n--- #2975 AC1/AC3: happy path single load, no fail ---");
+    using aura::gc_hooks::gate_outermost_exit_residual_and_pin;
+    using aura::gc_hooks::kOutermostExitResidualPinGateIssue;
+    CHECK(kOutermostExitResidualPinGateIssue == 2975, "AC1: issue stamp 2975");
+    drain_known_defer();
+    aura::gc_hooks::reset_outermost_exit_residual_pin_gate_for_test();
+    const auto hf0 = aura::gc_hooks::residual_after_exit_hard_fail_total();
+    const auto pin0 = aura::gc_hooks::pin_contract_fail_on_exit_total();
+    const auto after0 = aura::gc_hooks::residual_defer_after_exit_total();
+    CompilerService cs;
+    const auto g = gate_outermost_exit_residual_and_pin(static_cast<void*>(&cs.evaluator()),
+                                                        /*production_force=*/true,
+                                                        /*pin_contract_held=*/true,
+                                                        /*incomplete_remap=*/false,
+                                                        /*fail_closed=*/true);
+    CHECK(g.happy_path, "AC3: happy_path when residual==0 && pin held");
+    CHECK(!g.hard_fail, "AC3: no hard_fail on happy path");
+    CHECK(g.force_reason == aura::gc_hooks::OutermostExitForceReason::None, "AC3: force none");
+    CHECK(aura::gc_hooks::residual_after_exit_hard_fail_total() == hf0, "AC3: no hard-fail bump");
+    CHECK(aura::gc_hooks::pin_contract_fail_on_exit_total() == pin0, "AC3: no pin-fail bump");
+    CHECK(aura::gc_hooks::residual_defer_after_exit_total() == after0,
+          "AC3: no residual-after-exit work");
+}
+
+static void ac2975_2_soft_observe_no_fail() {
+    std::println("\n--- #2975 AC2: Soft observe-only — no clear, no fail ---");
+    using aura::gc_hooks::gate_outermost_exit_residual_and_pin;
+    drain_known_defer();
+    aura::gc_hooks::reset_outermost_exit_residual_pin_gate_for_test();
+    CompilerService cs;
+    aura::gc_hooks::arm_mutation_hold_defer();
+    const auto after0 = aura::gc_hooks::residual_defer_after_exit_total();
+    const auto hf0 = aura::gc_hooks::residual_after_exit_hard_fail_total();
+    const auto g = gate_outermost_exit_residual_and_pin(static_cast<void*>(&cs.evaluator()),
+                                                        /*production_force=*/false,
+                                                        /*pin_contract_held=*/true,
+                                                        /*incomplete_remap=*/false,
+                                                        /*fail_closed=*/false);
+    CHECK(g.residual.residual_seen, "AC2: Soft residual_seen");
+    CHECK(!g.hard_fail, "AC2: Soft never hard-fails");
+    CHECK(aura::gc_hooks::residual_defer_after_exit_total() > after0,
+          "AC2: Soft bumps residual_after_exit");
+    CHECK(aura::gc_hooks::residual_after_exit_hard_fail_total() == hf0,
+          "AC2: Soft does not bump hard-fail");
+    CHECK(aura::gc_hooks::mutation_hold_defer_active(), "AC2: Soft does not force-clear residual");
+    drain_known_defer();
+}
+
+static void ac2975_3_production_pin_fail_closed() {
+    std::println("\n--- #2975 AC1: production pin/incomplete fail-closed ---");
+    using aura::gc_hooks::gate_outermost_exit_residual_and_pin;
+    using aura::gc_hooks::OutermostExitForceReason;
+    drain_known_defer();
+    aura::gc_hooks::reset_outermost_exit_residual_pin_gate_for_test();
+    CompilerService cs;
+    bool ok = true;
+    const auto pin0 = aura::gc_hooks::pin_contract_fail_on_exit_total();
+    const auto g = gate_outermost_exit_residual_and_pin(static_cast<void*>(&cs.evaluator()),
+                                                        /*production_force=*/true,
+                                                        /*pin_contract_held=*/false,
+                                                        /*incomplete_remap=*/false,
+                                                        /*fail_closed=*/true);
+    CHECK(g.hard_fail, "AC1: production fail-closed on !pin_contract_held");
+    CHECK(g.force_reason == OutermostExitForceReason::PinContract, "AC1: force-reason=pin");
+    CHECK(aura::gc_hooks::pin_contract_fail_on_exit_total() == pin0 + 1,
+          "AC1: pin-contract-fail-on-exit +1");
+    CHECK(aura::gc_hooks::last_outermost_exit_force_reason() ==
+              static_cast<std::uint8_t>(OutermostExitForceReason::PinContract),
+          "AC1: last force-reason published");
+    if (g.hard_fail)
+        ok = false;
+    CHECK(!ok, "AC1: caller flag flipped on hard_fail (mark_outermost equivalent)");
+
+    aura::gc_hooks::reset_outermost_exit_residual_pin_gate_for_test();
+    const auto g2 = gate_outermost_exit_residual_and_pin(static_cast<void*>(&cs.evaluator()),
+                                                         /*production_force=*/true,
+                                                         /*pin_contract_held=*/true,
+                                                         /*incomplete_remap=*/true,
+                                                         /*fail_closed=*/true);
+    CHECK(g2.hard_fail, "AC1: incomplete-remap fail-closed");
+    CHECK(g2.force_reason == OutermostExitForceReason::IncompleteRemap,
+          "AC1: force-reason=incomplete");
+}
+
+static void ac2975_4_steal_shares_leftover_predicate() {
+    std::println("\n--- #2975 AC4: steal-complete shares residual leftover predicate ---");
+    const auto gh = read_file("src/core/gc_hooks.h");
+    const auto mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(gh.find("residual_defer_leftover") != std::string::npos, "AC4: leftover helper");
+    CHECK(gh.find("outermost_exit_should_fail_closed") != std::string::npos,
+          "AC4: shared fail-closed predicate");
+    CHECK(mut.find("residual_defer_leftover") != std::string::npos,
+          "AC4: steal-complete uses leftover predicate");
+    CHECK(mut.find("#2975") != std::string::npos, "AC4: steal cites #2975");
+    CHECK(mb.find("gate_outermost_exit_residual_and_pin") != std::string::npos,
+          "AC4: Phase 5 calls shared gate");
+    CHECK(mb.find("mark_outermost_mutation_failed") != std::string::npos,
+          "AC4: Phase 5 fail-closed via mark_outermost");
+    CHECK(mb.find("#2932") != std::string::npos, "AC4: composes with #2932 hold-budget");
+    drain_known_defer();
+    CHECK(!aura::gc_hooks::residual_defer_leftover(), "AC4: leftover false when empty");
+    aura::gc_hooks::arm_mutation_hold_defer();
+    CHECK(aura::gc_hooks::residual_defer_leftover(), "AC4: leftover true when armed");
+    drain_known_defer();
+}
+
+static void ac2975_5_additive_metrics() {
+    std::println("\n--- #2975 AC5: additive hard-fail / pin-fail keys; Soft total preserved ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    CHECK(obs.find("residual_after_exit_hard_fail_total") != std::string::npos,
+          "AC5: CompilerMetrics hard-fail");
+    CHECK(obs.find("pin_contract_fail_on_exit_total") != std::string::npos,
+          "AC5: CompilerMetrics pin-fail");
+    CHECK(q.find("residual-after-exit-hard-fail-total") != std::string::npos, "AC5: query key");
+    CHECK(q.find("pin-contract-fail-on-exit-total") != std::string::npos, "AC5: pin query key");
+    CHECK(q.find("schema-2975") != std::string::npos, "AC5: schema-2975");
+    CHECK(q.find("schema-2846") != std::string::npos, "AC5: Soft residual schema-2846 preserved");
+    CHECK(q.find("residual-defer-after-exit-total") != std::string::npos,
+          "AC5: Soft residual-after-exit-total preserved");
+}
+
+static void ac2975_6_tests_linter_chaos() {
+    std::println("\n--- #2975 AC6: extend existing suite + linter + chaos + no design ---");
+    const auto t = read_file("tests/compiler/test_residual_gc_defer_assert.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_outermost_exit_residual_pin_2975.py");
+    const auto chaos = read_file("tests/serve/test_chaos_steal_mutation_gc.cpp");
+    CHECK(t.find("ac2975_1_happy_path_zero_cost") != std::string::npos, "AC6: AC1/AC3 test");
+    CHECK(t.find("ac2975_2_soft_observe_no_fail") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2975_3_production_pin_fail_closed") != std::string::npos, "AC6: AC1 pin test");
+    CHECK(t.find("ac2975_4_steal_shares_leftover_predicate") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2975_5_additive_metrics") != std::string::npos, "AC6: AC5 test");
+    CHECK(!lint.empty() && lint.find("2975") != std::string::npos, "AC6: linter present");
+    CHECK(build.find("check_outermost_exit_residual_pin_2975") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(chaos.find("2975") != std::string::npos, "AC6: chaos soak cites #2975");
+    CHECK(chaos.find("pin_contract_fail_on_exit") != std::string::npos,
+          "AC6: chaos checks pin-contract-fail-on-exit");
+    CHECK(t.find("ac2846_3_failure_exit_clears_under_production") != std::string::npos,
+          "AC6: intentional partial / failure path still present");
+    CHECK(read_file("docs/design/2975-outermost-exit-residual-pin.md").empty(),
+          "AC6: no docs/design/2975-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2975.cpp").empty(),
+          "AC6: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_residual_gc_defer_assert() {
@@ -696,6 +847,14 @@ int run_test_residual_gc_defer_assert() {
     ac2846_3_failure_exit_clears_under_production();
     ac2846_4_helper_and_steal_source();
     ac2846_5_source_linter_query();
+
+    std::println("\n=== Issue #2975: outermost-exit residual + pin_contract hard gate ===");
+    ac2975_1_happy_path_zero_cost();
+    ac2975_2_soft_observe_no_fail();
+    ac2975_3_production_pin_fail_closed();
+    ac2975_4_steal_shares_leftover_predicate();
+    ac2975_5_additive_metrics();
+    ac2975_6_tests_linter_chaos();
 
     std::println("\n=== test_residual_gc_defer_assert: {} passed, {} failed ===", g_passed,
                  g_failed);

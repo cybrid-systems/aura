@@ -211,6 +211,8 @@ static void run_chaos_matrix() {
     // #2931 AC2 baselines — residual-after-exit / resume-fence / ticket /
     // residual steal hard-fail / matching clears.
     const auto after_exit0 = aura::gc_hooks::residual_defer_after_exit_total();
+    const auto pin_fail0 = aura::gc_hooks::pin_contract_fail_on_exit_total();
+    const auto hard_exit0 = aura::gc_hooks::residual_after_exit_hard_fail_total();
     const auto cleared0 = aura::gc_hooks::residual_defer_cleared_on_steal_total();
     const auto defer_hard0 = aura::gc_hooks::residual_defer_steal_hard_fail_total();
     const auto ticket0 = Fiber::steal_safety_ticket_mismatch_total();
@@ -269,6 +271,8 @@ static void run_chaos_matrix() {
 
     // ── #2931 AC2: end-of-run hard-fail on residual / resume-fence ──
     const auto after_exit1 = aura::gc_hooks::residual_defer_after_exit_total();
+    const auto pin_fail1 = aura::gc_hooks::pin_contract_fail_on_exit_total();
+    const auto hard_exit1 = aura::gc_hooks::residual_after_exit_hard_fail_total();
     const auto cleared1 = aura::gc_hooks::residual_defer_cleared_on_steal_total();
     const auto defer_hard1 = aura::gc_hooks::residual_defer_steal_hard_fail_total();
     const auto ticket1 = Fiber::steal_safety_ticket_mismatch_total();
@@ -318,6 +322,18 @@ static void run_chaos_matrix() {
     // Residual bits must not remain armed after all fibers finish.
     CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0,
           "#2931: residual defer bits drained at end-of-run");
+
+    // Issue #2975: production soak must end with no leftover residual
+    // (same leftover predicate as steal-complete) and no residual
+    // pin-contract failures on outermost exit.
+    CHECK(!aura::gc_hooks::residual_defer_leftover(),
+          "#2975: residual_defer_leftover()==0 at end-of-run");
+    if (!soft) {
+        CHECK(pin_fail1 == pin_fail0,
+              "#2975: pin_contract_fail_on_exit delta == 0 under production");
+        CHECK(hard_exit1 == hard_exit0,
+              "#2975: residual_after_exit_hard_fail delta == 0 under production");
+    }
 
     if (soft) {
         // Explicit Soft override: ticket / resume_fence not hard-zeroed

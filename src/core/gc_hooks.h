@@ -1067,6 +1067,107 @@ inline ResidualAfterExitResult close_residual_defer_after_exit(void* evaluator_i
     return out;
 }
 
+// Issue #2975: shared residual leftover predicate — outermost Guard exit
+// and steal-complete (#2546 / #2890) use this one closed-loop definition.
+// Happy path: single relaxed load (same as defer_reasons_snapshot).
+[[nodiscard]] inline bool residual_defer_leftover() noexcept {
+    return defer_reasons_snapshot() != 0;
+}
+
+// Residual leftover after close, or last densify window reported
+// !pin_contract_held / incomplete-remap. Used by the production
+// outermost-exit hard gate (AC1 / AC4).
+[[nodiscard]] inline bool outermost_exit_should_fail_closed(bool residual_after,
+                                                            bool pin_contract_held,
+                                                            bool incomplete_remap) noexcept {
+    return residual_after || !pin_contract_held || incomplete_remap;
+}
+
+// Issue #2975: production hard gate on outermost MutationBoundary exit
+// (success *and* non-intentional-failure). Soft: never force-clear or fail
+// the mutation (observe-only, AC2). When residual==0 and pin held:
+// single relaxed load, no clear (AC3).
+inline constexpr int kOutermostExitResidualPinGateIssue = 2975;
+inline std::atomic<std::uint64_t> g_residual_after_exit_hard_fail_total{0};
+inline std::atomic<std::uint64_t> g_pin_contract_fail_on_exit_total{0};
+inline std::atomic<std::uint8_t> g_last_outermost_exit_force_reason{
+    0}; // 0=none 1=residual 2=pin 3=incomplete
+
+enum class OutermostExitForceReason : std::uint8_t {
+    None = 0,
+    ResidualDefer = 1,
+    PinContract = 2,
+    IncompleteRemap = 3,
+};
+
+struct OutermostExitHardGateResult {
+    ResidualAfterExitResult residual{};
+    bool residual_after = false;
+    bool pin_contract_held = true;
+    bool incomplete_remap = false;
+    bool hard_fail = false;
+    bool happy_path = false;
+    OutermostExitForceReason force_reason = OutermostExitForceReason::None;
+};
+
+[[nodiscard]] inline std::uint64_t residual_after_exit_hard_fail_total() noexcept {
+    return g_residual_after_exit_hard_fail_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t pin_contract_fail_on_exit_total() noexcept {
+    return g_pin_contract_fail_on_exit_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint8_t last_outermost_exit_force_reason() noexcept {
+    return g_last_outermost_exit_force_reason.load(std::memory_order_relaxed);
+}
+
+inline void reset_outermost_exit_residual_pin_gate_for_test() noexcept {
+    g_residual_after_exit_hard_fail_total.store(0, std::memory_order_relaxed);
+    g_pin_contract_fail_on_exit_total.store(0, std::memory_order_relaxed);
+    g_last_outermost_exit_force_reason.store(0, std::memory_order_relaxed);
+}
+
+// production_force: force-clear residual (Clear / production). Soft=false
+// observe-only (no clear). fail_closed: production hard-face — mark the
+// mutation failed when leftover residual / pin / incomplete remain.
+// Composes with #2932 hold-budget fail-closed (independent counters).
+inline OutermostExitHardGateResult
+gate_outermost_exit_residual_and_pin(void* evaluator_id, bool production_force,
+                                     bool pin_contract_held = true, bool incomplete_remap = false,
+                                     bool fail_closed = false) noexcept {
+    OutermostExitHardGateResult out{};
+    out.pin_contract_held = pin_contract_held;
+    out.incomplete_remap = incomplete_remap;
+    // AC3: zero happy-path cost — one relaxed residual load when pin held
+    // and no incomplete remap (locals already computed by Phase 5).
+    if (!residual_defer_leftover() && pin_contract_held && !incomplete_remap) {
+        out.happy_path = true;
+        return out;
+    }
+    if (residual_defer_leftover())
+        out.residual = close_residual_defer_after_exit(evaluator_id, production_force);
+    out.residual_after = residual_defer_leftover();
+    if (!outermost_exit_should_fail_closed(out.residual_after, pin_contract_held, incomplete_remap))
+        return out;
+    if (out.residual_after)
+        out.force_reason = OutermostExitForceReason::ResidualDefer;
+    else if (!pin_contract_held)
+        out.force_reason = OutermostExitForceReason::PinContract;
+    else
+        out.force_reason = OutermostExitForceReason::IncompleteRemap;
+    g_last_outermost_exit_force_reason.store(static_cast<std::uint8_t>(out.force_reason),
+                                             std::memory_order_relaxed);
+    if (!pin_contract_held)
+        g_pin_contract_fail_on_exit_total.fetch_add(1, std::memory_order_relaxed);
+    // Soft (AC2): observe-only — never fail the mutation. Production
+    // fail_closed flips hard_fail so the Guard can mark_outermost_failed.
+    if (fail_closed) {
+        out.hard_fail = true;
+        if (out.residual_after)
+            g_residual_after_exit_hard_fail_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return out;
+}
+
 // ── Issue #2364: PanicCheckpoint residual × densify closed loop ──
 // After densify (success or fail that leaves the evaluator live), residual
 // Panic defer must not outlive a cleared PanicCheckpoint, and a still-
