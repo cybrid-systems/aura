@@ -2085,6 +2085,25 @@ def cmd_lint():
             "Issue #2969 registry write-fence linter failed — run python3 scripts/coverage/checks/check_capability_write_fence_2969.py"
         )
         return r
+    # Issue #2970: JoinPolicy optional wait_reclaimed_ms — auto-wait after
+    # JoinStatus::Reclaimed so hosts do not have to remember a second
+    # wait_reclaimed_body prim call (#2661 footgun). nullopt = off (zero
+    # cost, AC1); body exit → Done-path cleanup once (#2924 idempotent);
+    # timeout keeps Reclaimed + no early free (#2661). Aura hash surfaces
+    # wait-reclaimed / wait-timeout only on the Reclaimed path; wait-us
+    # folds the auto-wait; orch:scope-join-all accepts :wait-reclaimed-ms.
+    # Extends tests/orch/test_join_drain_reclaim.cpp (#81967); no
+    # docs/design/ (#1655).
+    jwr_script = COVERAGE_CHECKS / "check_join_wait_reclaimed_2970.py"
+    if not jwr_script.exists():
+        fail(f"missing {jwr_script}")
+        return 1
+    r = run([sys.executable, str(jwr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2970 join wait-reclaimed linter failed — run python3 scripts/coverage/checks/check_join_wait_reclaimed_2970.py"
+        )
+        return r
     # Issue #2884: agent_send_safe — unify C++/language handoff_ref path for
     # StableNodeRef payloads (close #2663 / #2848 contract split). Closes
     # the largest orch-layer contract split for StableNodeRef cross-fiber

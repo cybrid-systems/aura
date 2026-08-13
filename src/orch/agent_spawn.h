@@ -302,9 +302,15 @@ inline constexpr int kKeepaliveHelperReclaimIssue = 2783;
 
 // Issue #2153: primary join timeout + secondary cancel-drain policy.
 // primary_ms nullopt = wait forever; drain_ms=0 = cancel only (no wait).
+// Issue #2970: optional auto-wait after JoinStatus::Reclaimed — nullopt =
+// off (preserve current zero-cost behavior); 0 = wait forever; N>0 =
+// deadline ms. When set and Fiber::join returns Reclaimed, join_agent /
+// join_agents call wait_reclaimed_body once so hosts do not have to
+// remember the second prim call (closes #2661 host footgun).
 struct JoinPolicy {
     std::optional<std::uint64_t> primary_ms{};
     std::uint64_t drain_ms = kDefaultJoinDrainMs;
+    std::optional<std::uint64_t> wait_reclaimed_ms{};
 };
 
 // Estimated per-agent arena footprint + mailbox high-water bytes (#1880).
@@ -1037,6 +1043,12 @@ struct AgentHandle {
     std::uint32_t consecutive_bp_count = 0;
     bool producer_throttled = false;
     std::uint64_t last_producer_bp_us = 0; // orch_now_us at last BP (quiet clear)
+    // Issue #2970: set by join_agent / join_agents when the Reclaimed path
+    // auto-waited via wait_reclaimed_body. Surface on the Aura join hash
+    // (wait-reclaimed / wait-timeout keys) so hosts branch without polling.
+    // Zero-cost: stays false when wait_reclaimed_ms unset (AC1).
+    bool wait_reclaimed_used = false;
+    bool wait_reclaimed_timeout = false;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -2119,6 +2131,21 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // Cancelled path runs the full detach + reservation release as
     // before (idempotent with ~AgentHandle).
     complete_agent_join_cleanup(h, jr);
+    // Issue #2970: optional auto-wait after JoinStatus::Reclaimed —
+    // hosts must not have to remember a second wait_reclaimed_body call
+    // (closes the #2661 host footgun). wait_reclaimed_ms nullopt = off
+    // (AC1: zero cost, identical to pre-issue join); 0 = wait forever;
+    // N>0 = deadline ms. Body exit → Done-path cleanup runs once
+    // (idempotent with #2924); timeout keeps the Reclaimed contract
+    // (no early free, #2661 preserved) and surfaces still-running.
+    h.wait_reclaimed_used = false;
+    h.wait_reclaimed_timeout = false;
+    if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
+        auto wr = wait_reclaimed_body(h, policy.wait_reclaimed_ms);
+        jr.wait_us += wr.wait_us; // fold auto-wait into join wait-us (AC4)
+        h.wait_reclaimed_used = true;
+        h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+    }
     return jr;
 }
 
@@ -2195,6 +2222,21 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // every agent takes the deferred path (matches #2009 invariant).
     for (auto& a : agents)
         complete_agent_join_cleanup(a, jr);
+    // Issue #2970: optional auto-wait after batch Reclaimed — same contract
+    // as join_agent: wait_reclaimed_ms nullopt = off (AC1 zero cost); body
+    // exit → Done-path cleanup once; timeout keeps Reclaimed + no early
+    // free (#2661). Folds wait_us into the batch join result; flags on
+    // each handle surface wait-reclaimed / wait-timeout on the Aura hash.
+    if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
+        for (auto& a : agents) {
+            a.wait_reclaimed_used = false;
+            a.wait_reclaimed_timeout = false;
+            auto wr = wait_reclaimed_body(a, policy.wait_reclaimed_ms);
+            jr.wait_us += wr.wait_us;
+            a.wait_reclaimed_used = true;
+            a.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+        }
+    }
     return jr;
 }
 
