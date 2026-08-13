@@ -2140,6 +2140,11 @@ public:
     // after failed atomic-batch / MutationBoundary. Pairs with
     // children_topology_restore_count_ for full topology fidelity.
     mutable std::atomic<std::uint64_t> parent_topology_restore_count_{0};
+    // Issue #2959: dual topology restore seal (children_ + parent_ under
+    // one structural exclusive) + inconsistency canary (target 0 under
+    // production densify×steal×abort soak).
+    mutable std::atomic<std::uint64_t> topology_dual_restore_total_{0};
+    mutable std::atomic<std::uint64_t> topology_dual_restore_inconsistency_total_{0};
     // Issue #1299/#1300: orphan ghost nodes freed on rollback.
     mutable std::atomic<std::uint64_t> ghost_orphan_nodes_freed_{0};
     // Issue #370: lifetime-safe view counter. Bumped in
@@ -5205,6 +5210,9 @@ public:
     // Issue #2455: restore while structural exclusive already held
     // (e.g. multi-step begin_structural_mutation scope). Does not
     // bump generation_ — the outer StructuralMutationGuard dtor does.
+    // Issue #2959: ends with dual-topology seal (children_ + parent_
+    // bidirectional canary) before the lock is released by the outer
+    // StructuralMutationGuard.
     void restore_children_locked(std::vector<PersistentChildVector<NodeId>>&& snapshot) {
         // Issue #487: pad the snapshot up to children_'s current
         // size before the move. Without padding, if the in-flight
@@ -5237,12 +5245,71 @@ public:
         children_topology_restore_count_.fetch_add(1, std::memory_order_relaxed);
         // Issue #1502: full parent_ topology restore from children_.
         rebuild_parent_links_from_children();
+        // Issue #2959: dual restore seal + canary under structural exclusive
+        // (densify×steal must not observe half-restored topology).
+        seal_dual_topology_restore_locked();
         // generation_ bumped by outer StructuralMutationGuard (restore_children)
         // or by caller if using restore_children_locked under their own guard.
         // When called only via restore_children_locked without outer guard,
         // caller is responsible for generation consistency.
         // Issue #1282: if a wrap was observed mid-mutation, restamp now.
         maybe_auto_restamp_on_wrap();
+    }
+
+    // Issue #2959: Guard abort dual topology path — mutation-log rollback
+    // + children_ snapshot restore + parent_ rebuild + dual canary, all
+    // under ONE StructuralMutationGuard so densify/steal cannot observe
+    // mid-window tears between partial structural inverse and full restore.
+    // Returns number of mutation-log records rolled (same as rollback_to_size).
+    // Prefer this over separate rollback_to_size + restore_children on abort.
+    std::size_t
+    abort_restore_dual_topology(std::size_t mutation_log_checkpoint,
+                                std::vector<PersistentChildVector<NodeId>>&& children_snapshot) {
+        StructuralMutationGuard guard(this);
+        contract_assert(static_cast<bool>(guard));
+        const auto rolled = rollback_to_size(mutation_log_checkpoint);
+        restore_children_locked(std::move(children_snapshot));
+        return rolled;
+    }
+
+    // Issue #2959: bidirectional children_/parent_ consistency check.
+    // Forward: every children_[id][i]=cid implies parent_[cid]==id.
+    // Reverse: every parent_[cid]=p (p live) implies cid ∈ children_[p].
+    // Call under structural exclusive (or single-threaded test).
+    [[nodiscard]] bool verify_children_parent_topology_consistent() const noexcept {
+        const std::size_t n = std::min(children_.size(), parent_.size());
+        for (NodeId id = 0; id < static_cast<NodeId>(n); ++id) {
+            for (NodeId cid : children_[id]) {
+                if (cid == NULL_NODE || cid >= parent_.size())
+                    continue;
+                if (parent_[cid] != id)
+                    return false;
+            }
+        }
+        for (NodeId cid = 0; cid < parent_.size(); ++cid) {
+            const NodeId p = parent_[cid];
+            if (p == NULL_NODE || p >= children_.size())
+                continue;
+            bool found = false;
+            for (NodeId c : children_[p]) {
+                if (c == cid) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                return false;
+        }
+        return true;
+    }
+
+    // Issue #2959: seal dual restore (must hold structural exclusive).
+    // Bumps dual_restore_total; on mismatch bumps inconsistency canary
+    // (Agent-visible; production soak target 0).
+    void seal_dual_topology_restore_locked() noexcept {
+        topology_dual_restore_total_.fetch_add(1, std::memory_order_relaxed);
+        if (!verify_children_parent_topology_consistent())
+            topology_dual_restore_inconsistency_total_.fetch_add(1, std::memory_order_relaxed);
     }
 
     // Issue #1502: capture parent_ SoA column for strong topology
@@ -7682,6 +7749,13 @@ public:
     // Issue #1502: parent_ topology restores (snapshot or rebuild).
     [[nodiscard]] std::uint64_t parent_topology_restore_count() const noexcept {
         return parent_topology_restore_count_.load(std::memory_order_relaxed);
+    }
+    // Issue #2959: dual topology restore seal counters.
+    [[nodiscard]] std::uint64_t topology_dual_restore_total() const noexcept {
+        return topology_dual_restore_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t topology_dual_restore_inconsistency_total() const noexcept {
+        return topology_dual_restore_inconsistency_total_.load(std::memory_order_relaxed);
     }
     // Issue #1282: auto-restamp after generation wrap.
     [[nodiscard]] std::uint64_t auto_restamp_on_wrap_count() const noexcept {
