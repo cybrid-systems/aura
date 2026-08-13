@@ -509,6 +509,20 @@ std::uint64_t HotUpdateRegistry::last_reemit_success_region_mask() const noexcep
     return last_reemit_success_region_mask_.load(std::memory_order_relaxed);
 }
 
+std::uint64_t HotUpdateRegistry::force_jit_regions_mask() const noexcept {
+    return force_jit_regions_mask_.load(std::memory_order_relaxed);
+}
+
+// Issue #2977: residual remount prefer (aura_jit_runtime.cpp) reads these
+// via C ABI so the runtime TU does not include this header.
+extern "C" std::uint64_t aura_hot_update_force_jit_regions_mask(void) {
+    return aura::compiler::hot_update_registry().force_jit_regions_mask();
+}
+
+extern "C" std::uint64_t aura_hot_update_last_reemit_success_region_mask(void) {
+    return aura::compiler::hot_update_registry().last_reemit_success_region_mask();
+}
+
 void HotUpdateRegistry::note_reemit_success_coverage(
     std::uint64_t covered_force_jit_bits) noexcept {
     // Sticky override applied on subsequent successes > 0 reemit calls

@@ -108,6 +108,8 @@ public:
     // Agents / bridge may publish a narrower coverage than the full
     // demoted mask via note_reemit_success_coverage.
     [[nodiscard]] std::uint64_t last_reemit_success_region_mask() const noexcept;
+    // Issue #2977: residual remount prefer reads this mask (OR force_jit).
+    [[nodiscard]] std::uint64_t force_jit_regions_mask() const noexcept;
     void note_reemit_success_coverage(std::uint64_t covered_force_jit_bits) noexcept;
     // Issue #2895 / #2949: partial re-promote (clear only force_mask ∩
     // last_success). Effective policy via resolve (env + sticky +
@@ -689,6 +691,7 @@ private:
     //   last_reemit_success_region_mask_: force-JIT reason bits covered by
     //     the last clean reemit success (stamped when successes > 0 and
     //     demoted != 0, or via note_reemit_success_coverage).
+    //     Issue #2977: residual remount prefer ORs this with force_jit.
     //   force_jit_repromote_only_covered_bits_: sticky value when override
     //     is set (1 = only_covered, 0 = wholesale). Ignored when
     //     only_covered_override_ == 0 (auto → production default on).
@@ -1157,6 +1160,10 @@ void aura_hot_update_on_reemit_throttled(void);
 // so external callers can branch on a single recovery-policy value.
 // Result mapping (uint8_t): 0=None, 1=Shape, 2=Global, 3=Both.
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+
+// Issue #2977: residual remount prefer (sid bit ∩ force_jit | last_success).
+extern "C" std::uint64_t aura_hot_update_force_jit_regions_mask(void);
+extern "C" std::uint64_t aura_hot_update_last_reemit_success_region_mask(void);
 
 // Issue #2367: agent-facing ReloadRecovery snapshot (C ABI).
 // Module partitions cannot attach HotUpdateRegistry — use this
