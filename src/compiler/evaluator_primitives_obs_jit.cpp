@@ -10296,6 +10296,27 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                               g_linear_ir_fastpath_wired.load(std::memory_order_relaxed)));
                 insert_kv("schema-2899", 2899);
                 insert_kv("issue-2899", 2899);
+                // Issue #2964: unified linear fast-path gate + force revalidate.
+                // Additive to #2899; Soft observe / production force counters.
+                {
+                    using aura::compiler::typed_audit::
+                        g_linear_fast_path_force_revalidate_observe_total;
+                    using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_total;
+                    using aura::compiler::typed_audit::g_linear_fast_path_unified_wired;
+                    insert_kv(
+                        "linear-fast-path-force-revalidate-total",
+                        static_cast<std::int64_t>(g_linear_fast_path_force_revalidate_total.load(
+                            std::memory_order_relaxed)));
+                    insert_kv("linear-fast-path-force-revalidate-observe-total",
+                              static_cast<std::int64_t>(
+                                  g_linear_fast_path_force_revalidate_observe_total.load(
+                                      std::memory_order_relaxed)));
+                    insert_kv("linear-fast-path-unified-wired",
+                              static_cast<std::int64_t>(g_linear_fast_path_unified_wired.load(
+                                  std::memory_order_relaxed)));
+                    insert_kv("schema-2964", 2964);
+                    insert_kv("issue-2964", 2964);
+                }
             }
             // Issue #2286: per-(eval, cow_gen) gate scoping.
             insert_kv("schema-2286", 2286);

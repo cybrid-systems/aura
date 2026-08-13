@@ -2549,6 +2549,17 @@ def cmd_lint():
             "Issue #2963 instance-repair-before-full linter failed — run python3 scripts/coverage/checks/check_instance_repair_before_full_2963.py"
         )
         return r
+    # Issue #2964: unified linear_fast_path_ok + force revalidate (refine #2899).
+    lfp2964 = COVERAGE_CHECKS / "check_linear_fast_path_unified_2964.py"
+    if not lfp2964.exists():
+        fail(f"missing {lfp2964}")
+        return 1
+    r = run([sys.executable, str(lfp2964)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2964 linear-fast-path-unified linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_unified_2964.py"
+        )
+        return r
     # Issue #2704: production hard-face on OccurrenceGoal rehydrate miss
     # after steal/densify fence. Wires
     # check_occurrence_empty_after_fence_2704.py so the new force_reason
@@ -9731,6 +9742,25 @@ def cmd_linear_ir_fastpath_2899_coverage():
     return 0
 
 
+def cmd_linear_fast_path_unified_2964_coverage():
+    """Issue #2964: unified linear_fast_path_ok + force revalidate.
+
+    Residual of #2899: single pure predicate; !ok under production forces
+    dirty-root revalidate on outermost MutationBoundary success.
+    """
+    print(f"{B}=== linear fast-path unified coverage (#2964) ==={N}")
+    script = COVERAGE_CHECKS / "check_linear_fast_path_unified_2964.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear fast-path unified (#2964) coverage contract rows failed")
+        return 1
+    ok("linear fast-path unified (#2964) coverage clean")
+    return 0
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -13649,6 +13679,8 @@ def main():
         "cone-outside-goal-drop-recover-reject-2962-coverage": cmd_cone_outside_goal_drop_recover_reject_2962_coverage,
         "instance-repair-before-full-2963": cmd_instance_repair_before_full_2963_coverage,
         "instance-repair-before-full-2963-coverage": cmd_instance_repair_before_full_2963_coverage,
+        "linear-fast-path-unified-2964": cmd_linear_fast_path_unified_2964_coverage,
+        "linear-fast-path-unified-2964-coverage": cmd_linear_fast_path_unified_2964_coverage,
         "occurrence-persist-production-2910": cmd_occurrence_persist_production_2910,
         "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,
         "occurrence-commit-snapshot-2938": cmd_occurrence_commit_snapshot_2938,

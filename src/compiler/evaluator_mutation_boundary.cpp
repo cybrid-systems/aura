@@ -57,7 +57,8 @@ module;
                                              // aura_hot_update_notify_epoch_bump
                                              // aura_hot_update_reemit_provider_wired
                                              // aura_reemit_aot_for_dirty
-#include "typed_mutation_audit.h"            // Issue #1589 / #1614 / #1894 / #2145
+#include "typed_mutation_audit.h"            // Issue #1589 / #1614 / #1894 / #2145 / #2964
+#include "linear_occurrence_mutate_stats.h"  // Issue #2964: record_revalidate_hit on force
 #include "core/sandbox.hh"                   // Issue #2145 Strict hard-gate
 #include "core/provenance_tracker.hh"        // Issue #2222: boundary LinearEnforce Strict hold
 #include "core/arena_auto_policy_stats.h"    // in_render_hotpath
@@ -2334,6 +2335,27 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     }
     ev_->exit_mutation_boundary(success);
     ev_->render_fast_exit_this_boundary_ = false;
+    // Issue #2964: unified linear fast-path gate on outermost success.
+    // Depth is 0 after pop (before exit fence). When !linear_fast_path_ok
+    // under production/Full → force dirty-root linear revalidate (no silent
+    // skip after IR elided under a now-stale proof). Soft → observe only.
+    // Quiet when proof fresh + all gates clear (AC4 zero extra cost).
+    if (outermost && success) {
+        using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_observe_total;
+        using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_total;
+        using aura::compiler::typed_audit::linear_fast_path_boundary_exit_action;
+        using aura::compiler::typed_audit::LinearFastPathExitAction;
+        const auto act = linear_fast_path_boundary_exit_action();
+        if (act == LinearFastPathExitAction::ForceRevalidate) {
+            g_linear_fast_path_force_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+            aura::compiler::linear_occurrence_mutate::record_revalidate_hit();
+            (void)ev_->linear_post_mutate_enforce_all();
+        } else if (act == LinearFastPathExitAction::SoftObserve) {
+            g_linear_fast_path_force_revalidate_observe_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
+        // Quiet: no extra revalidate / counter (matches #2899 quiet path).
+    }
     // Issue #2120: keep per-fiber mutation stack depth visible during
     // exit pipeline so steal/GC do not observe "depth==0 mid-probes".
     // exit_mutation_boundary already popped the real checkpoint; push a

@@ -116,6 +116,9 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                 // (set by Evaluator before lower_to_ir). Legacy
                 // escape_blocks_move_elision used process-wide state → cross-eval
                 // contamination (#2274 / #2275 lineage).
+                // Issue #2964: escape arm of linear_fast_path_ok — blocked
+                // bindings force MoveOp emit (no elision) so boundary exit
+                // revalidate remains sound after the IR path.
                 if (!binding_name.empty() && escape_blocks_move_elision_for_current(binding_name)) {
                     g_linear_move_elision_blocked_escape_total.fetch_add(1,
                                                                          std::memory_order_relaxed);

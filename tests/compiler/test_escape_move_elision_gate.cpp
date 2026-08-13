@@ -634,6 +634,188 @@ static void ac2899_5_source_cite() {
           "2899 AC5: no new test file per #81967");
 }
 
+// ── Issue #2964: unified linear_fast_path_ok + force revalidate ──
+// Single predicate: proof.fresh && linear_ok && depth==0 && !escape &&
+// !densify_pending. IR elision only when true. !ok on outermost success
+// under production/Full forces revalidate; Soft observe-only; quiet zero.
+
+static void ac2964_1_unified_predicate() {
+    std::println("\n--- #2964 AC1: linear_fast_path_ok single predicate ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    reset_linear_fast_path_force_revalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    CHECK(!linear_fast_path_ok(), "2964 AC1: no stamp → not ok");
+    stamp_type_linear_commit_proof(29641);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_fast_path_ok(), "2964 AC1: fresh proof + clear gates → ok");
+    CHECK(linear_ir_fastpath_try_skip(), "2964 AC1: try_skip uses unified ok");
+
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+}
+
+static void ac2964_2_force_revalidate_production() {
+    std::println("\n--- #2964 AC2: !ok under production → ForceRevalidate ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_fast_path_force_revalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    // Stale proof → ForceRevalidate under production.
+    CHECK(!linear_fast_path_ok(), "2964 AC2: stale → !ok");
+    CHECK(linear_fast_path_boundary_exit_action() == LinearFastPathExitAction::ForceRevalidate,
+          "2964 AC2: production ForceRevalidate on stale");
+
+    // Fresh ok → Quiet (no force).
+    stamp_type_linear_commit_proof(29642);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_fast_path_ok(), "2964 AC2: fresh ok");
+    CHECK(linear_fast_path_boundary_exit_action() == LinearFastPathExitAction::Quiet,
+          "2964 AC2: Quiet when ok under production");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac2964_3_independent_arms() {
+    std::println("\n--- #2964 AC3: mid-boundary / escape / densify each disable ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(29643);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_fast_path_ok(), "2964 AC3: baseline ok");
+
+    // mid-boundary arm
+    g_linear_ir_fastpath_boundary_depth_override = 2;
+    CHECK(!linear_fast_path_ok(), "2964 AC3: mid-boundary disables");
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    CHECK(linear_fast_path_ok(), "2964 AC3: depth clear restores");
+
+    // escape arm
+    set_escape_move_elision_gate(true, std::unordered_set<std::string>{"x"});
+    CHECK(!linear_fast_path_ok(), "2964 AC3: escape disables");
+    clear_escape_move_elision_gate();
+    CHECK(linear_fast_path_ok(), "2964 AC3: escape clear restores");
+
+    // densify-pending arm
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        1, std::memory_order_relaxed);
+    CHECK(!linear_fast_path_ok(), "2964 AC3: densify-pending disables");
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    CHECK(linear_fast_path_ok(), "2964 AC3: densify clear restores");
+
+    clear_type_linear_commit_proof_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac2964_4_soft_and_quiet() {
+    std::println("\n--- #2964 AC2/AC4: Soft observe + quiet zero cost ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_fast_path_force_revalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    // Soft strategy
+    set_strategy(AuditStrategy::Sampled);
+
+    CHECK(!linear_fast_path_ok(), "2964 AC4: stale !ok");
+    CHECK(linear_fast_path_boundary_exit_action() == LinearFastPathExitAction::SoftObserve,
+          "2964 AC2: Soft observe when !ok");
+
+    stamp_type_linear_commit_proof(29644);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    const auto force0 = linear_fast_path_force_revalidate_total_v_read();
+    const auto obs0 = linear_fast_path_force_revalidate_observe_total_v_read();
+    CHECK(linear_fast_path_boundary_exit_action() == LinearFastPathExitAction::Quiet,
+          "2964 AC4: Quiet when ok");
+    CHECK(linear_fast_path_force_revalidate_total_v_read() == force0,
+          "2964 AC4: force counter flat on Quiet");
+    CHECK(linear_fast_path_force_revalidate_observe_total_v_read() == obs0,
+          "2964 AC4: observe flat on Quiet");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac2964_5_additive_schema() {
+    std::println("\n--- #2964 AC5: additive schema + #2899 preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2964") == 2964, "2964 AC5: schema-2964");
+    CHECK(href(cs, "issue-2964") == 2964, "2964 AC5: issue-2964");
+    CHECK(href(cs, "linear-fast-path-unified-wired") == 1, "2964 AC5: wired");
+    CHECK(href(cs, "linear-fast-path-force-revalidate-total") >= 0, "2964 AC5: force key");
+    CHECK(href(cs, "linear-fast-path-force-revalidate-observe-total") >= 0,
+          "2964 AC5: observe key");
+    CHECK(href(cs, "schema-2899") == 2899, "2964 AC5: schema-2899 preserved");
+    CHECK(href(cs, "linear-ir-fastpath-skip-total") >= 0, "2964 AC5: #2899 skip preserved");
+    CHECK(href(cs, "schema-2263") == 2263, "2964 AC5: schema-2263 preserved");
+    CHECK(aura::compiler::typed_audit::kLinearFastPathUnifiedIssue == 2964,
+          "2964 AC5: issue constant");
+}
+
+static void ac2964_6_source_cite() {
+    std::println("\n--- #2964 AC6: source-cite + linter + no design ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto esc = read_file("src/compiler/ownership_escape_lowering_gate.h");
+    const auto low = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_linear_fast_path_unified_2964.py");
+    const auto build = read_file("build.py");
+    CHECK(aud.find("linear_fast_path_ok") != std::string::npos, "2964 AC6: linear_fast_path_ok");
+    CHECK(aud.find("2964") != std::string::npos, "2964 AC6: audit cites #2964");
+    CHECK(aud.find("linear_fast_path_boundary_exit_action") != std::string::npos,
+          "2964 AC6: boundary exit action");
+    CHECK(ir.find("2964") != std::string::npos, "2964 AC6: ir cites #2964");
+    CHECK(mb.find("linear_fast_path_boundary_exit_action") != std::string::npos,
+          "2964 AC6: boundary wires exit action");
+    CHECK(mb.find("record_revalidate_hit") != std::string::npos, "2964 AC6: revalidate hit");
+    CHECK(esc.find("2964") != std::string::npos, "2964 AC6: escape gate cites #2964");
+    CHECK(low.find("2964") != std::string::npos, "2964 AC6: lowering cites #2964");
+    CHECK(q.find("schema-2964") != std::string::npos, "2964 AC6: query schema");
+    CHECK(t.find("ac2964_1_unified_predicate") != std::string::npos, "2964 AC6: AC1 test");
+    CHECK(t.find("ac2964_3_independent_arms") != std::string::npos, "2964 AC6: densify/depth arms");
+    CHECK(!lint.empty() && lint.find("2964") != std::string::npos, "2964 AC6: linter");
+    CHECK(build.find("check_linear_fast_path_unified_2964") != std::string::npos,
+          "2964 AC6: build.py gate");
+    CHECK(read_file("docs/design/2964-linear-fast-path.md").empty(),
+          "2964 AC6: no docs/design/2964-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2964.cpp").empty(),
+          "2964 AC6: no new test file per #81967");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -661,6 +843,13 @@ int run_test_escape_move_elision_gate() {
     ac2899_3_no_proof_or_mid_boundary();
     ac2899_4_additive_query();
     ac2899_5_source_cite();
+    std::println("\n=== Issue #2964: unified linear_fast_path_ok gate ===");
+    ac2964_1_unified_predicate();
+    ac2964_2_force_revalidate_production();
+    ac2964_3_independent_arms();
+    ac2964_4_soft_and_quiet();
+    ac2964_5_additive_schema();
+    ac2964_6_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
