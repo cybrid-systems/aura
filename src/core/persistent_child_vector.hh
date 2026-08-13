@@ -649,11 +649,17 @@ private:
     // The elements are uninitialized (the caller fills them).
     static StoragePtr make_storage(size_type n) {
         if (n == 0) {
+            // Non-TLS alloc: clear the thread-local last-hit flag so a later
+            // note_pcv_alloc() does not mis-classify this as a TLS freelist
+            // hit (flag can linger from a prior TLS-on stress in the same
+            // thread, e.g. an earlier batch member).
+            tls_last_alloc_was_hit() = false;
             return std::make_shared<Storage>();
         }
         // Issue #2406 / #2521: constructors share TLS path when active + small.
         if (pcv_tls_scratch_active() && n <= kTlsMaxElems)
             return make_from_tls_or_new(n);
+        tls_last_alloc_was_hit() = false;
         return std::make_shared<Storage>(n);
     }
 
@@ -670,10 +676,16 @@ private:
     // TLS hits do not inflate cow_alloc (exclusive stress AC2).
     static StoragePtr make_storage_owned(size_type n) {
         if (n == 0) {
+            // Non-TLS alloc: clear the thread-local last-hit flag so a later
+            // note_pcv_alloc() does not mis-classify this as a TLS freelist
+            // hit (flag can linger from a prior TLS-on stress in the same
+            // thread, e.g. an earlier batch member).
+            tls_last_alloc_was_hit() = false;
             return std::make_shared<Storage>();
         }
         if (pcv_tls_scratch_active() && n <= kTlsMaxElems)
             return make_from_tls_or_new(n);
+        tls_last_alloc_was_hit() = false;
         return std::make_shared<Storage>(n);
     }
 
