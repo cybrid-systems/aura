@@ -6869,6 +6869,24 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("ensure-unique-clone-total", load(m.ensure_unique_clone_total));
             insert_kv("with-set-exclusive-total", load(m.with_set_exclusive_total));
             insert_kv("with-set-cow-total", load(m.with_set_cow_total));
+            // Issue #2906: FlatAST locked move-out exclusive vs COW ratio.
+            insert_kv("flatast-locked-move-out-exclusive-total",
+                      load(m.flatast_locked_move_out_exclusive_total));
+            insert_kv("flatast-locked-move-out-cow-total",
+                      load(m.flatast_locked_move_out_cow_total));
+            {
+                const auto ex =
+                    m.flatast_locked_move_out_exclusive_total.load(std::memory_order_relaxed);
+                const auto cow =
+                    m.flatast_locked_move_out_cow_total.load(std::memory_order_relaxed);
+                const auto sum = ex + cow;
+                // exclusive ratio in basis points (0..10000); 10000 if no samples.
+                const auto ratio_bp = sum == 0 ? 10000ull : (ex * 10000ull) / sum;
+                insert_kv("flatast-locked-exclusive-ratio-bp", static_cast<std::int64_t>(ratio_bp));
+            }
+            insert_kv("flatast-locked-exclusive-wired", 1);
+            insert_kv("schema-2906", aura::ast::kPcvFlatastLockedExclusiveIssue);
+            insert_kv("issue-2906", aura::ast::kPcvFlatastLockedExclusiveIssue);
             // Issue #2406 / #2521 TLS freelist surface
             insert_kv("tls-scratch-hit-total", load(m.tls_scratch_hit_total));
             insert_kv("tls-scratch-miss-total", load(m.tls_scratch_miss_total));

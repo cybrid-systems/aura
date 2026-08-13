@@ -38,14 +38,23 @@
 //  Header-only, no std::pmr dependency. Uses std::shared_ptr
 //  (atomic refcount — safe to share across fibers / threads).
 //
-//  Issue #2058 / #2140: unique-ownership hot path. When the PCV is the
-//  sole holder of storage (use_count()==1) — the common FlatAST pattern
-//  of "mutate then drop old view" after a move out of children_[id] —
-//  cow_* / with_set exclusive + ensure_unique + in-place writes avoid a
+//  Issue #2058 / #2140 / #2906: unique-ownership hot path. When the PCV
+//  is the sole holder of storage (use_count()==1) — the common FlatAST
+//  pattern of "mutate then drop old view" after a move out of children_[id]
+//  — cow_* / with_set exclusive + ensure_unique + in-place writes avoid a
 //  new allocation and the second atomic refcount trip. Snapshot /
 //  SafePCVSpan holders keep use_count()>1 so with_* still allocate
 //  (COW correctness). Issue #2140 extends exclusive in-place to const
-//  with_set (AI multi-round local replace-one-child).
+//  with_set (AI multi-round local replace-one-child). Issue #2906: FlatAST
+//  locked mutate paths (set_child_locked / insert_child_locked /
+//  remove_child_locked) force exclusive ownership by moving children_[id]
+//  out, mutating the local PCV (cow_* → unique in-place when sole holder),
+//  then moving back — canonical pattern:
+//    auto kids = std::move(children_[id]);
+//    kids.cow_set(i, new_child);
+//    children_[id] = std::move(kids);
+//  Rollback paths keep with_* (COW) semantics: they may run while
+//  snapshots / SafePCVSpans alias storage, so correctness first (#2906 AC3).
 //
 // Test plan (test_issue_221.cpp):
 //   1. Basic: construct, size, operator[], iterators
@@ -103,6 +112,11 @@ struct PcvHotpathMetrics {
     std::atomic<std::uint64_t> tls_scratch_hit_total{0};
     std::atomic<std::uint64_t> tls_scratch_miss_total{0};
     std::atomic<std::uint64_t> tls_scratch_recycle_total{0};
+    // Issue #2906: FlatAST locked move-out exclusive vs COW (append at
+    // struct END — never insert mid-struct: stale module BMIs writing at
+    // wrong offsets corrupt neighboring heap, e.g. IR cache string keys).
+    std::atomic<std::uint64_t> flatast_locked_move_out_exclusive_total{0};
+    std::atomic<std::uint64_t> flatast_locked_move_out_cow_total{0};
 };
 inline PcvHotpathMetrics& g_pcv_hotpath_metrics() noexcept {
     static PcvHotpathMetrics m;
@@ -119,6 +133,8 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
     m.cow_push_total.store(0, std::memory_order_relaxed);
     m.with_set_exclusive_total.store(0, std::memory_order_relaxed);
     m.with_set_cow_total.store(0, std::memory_order_relaxed);
+    m.flatast_locked_move_out_exclusive_total.store(0, std::memory_order_relaxed);
+    m.flatast_locked_move_out_cow_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_hit_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_miss_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_recycle_total.store(0, std::memory_order_relaxed);
@@ -127,6 +143,8 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
 inline constexpr int kPcvHotpathIssue = 2058;
 // Issue #2140: exclusive with_set (refcount==1) in-place, no alloc.
 inline constexpr int kPcvExclusiveSetIssue = 2140;
+// Issue #2906: FlatAST locked mutate forces exclusive PCV via move-out.
+inline constexpr int kPcvFlatastLockedExclusiveIssue = 2906;
 // Issue #2406: TLS scratch freelist foundation for exclusive PCV allocs.
 // Issue #2521: production default ON (mirror Moving compact / HighMutation).
 inline constexpr int kPcvTlsScratchIssue = 2406;
