@@ -1017,6 +1017,220 @@ int main() {
         }
     }
 
+    // ── #2969: registry write-fence — foreign-tenant grant/revoke requires
+    // TenantAdmin (Option A, minimal; storage/write-isolation face) ──
+    {
+        std::println("\n--- #2969 AC1: durable/session/revoke foreign-tenant gate ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+        aura::core::capability::CapabilityGrant g{};
+
+        // AC1: durable foreign grant denied without TenantAdmin (low-risk
+        // effect — isolates #2969 fence from the #2967 high-risk gate).
+        const auto deny_before =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
+        ev.grant_effect_durable(/*tenant=*/42, "dur-2969-foreign", kEffectWrite, /*mid=*/0,
+                                /*reason=*/"audit-reason");
+        const auto deny_after =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before + 1,
+              "AC1: durable foreign grant denied without TenantAdmin");
+        CHECK(
+            !aura::core::capability::g_capability_registry().find_grant(42, "dur-2969-foreign", g),
+            "AC1: no durable foreign grant written on deny");
+        // SE reason present in ring.
+        const auto& ring = g_security_event_ring();
+        bool found = false;
+        const auto cur = ring.seq.load(std::memory_order_acquire);
+        for (auto s = cur; s > 0 && s + 16 > cur; --s) {
+            const auto& e = ring.ring[(s - 1) % ring.ring.size()];
+            if (std::string_view(e.reason) == "grant-foreign-tenant-needs-tenant-admin") {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found, "AC1: SE reason 'grant-foreign-tenant-needs-tenant-admin' recorded");
+
+        // AC1: session foreign grant denied without TenantAdmin.
+        ev.grant_effect_session(/*tenant=*/42, "ses-2969-foreign", kEffectWrite, /*mid=*/0);
+        CHECK(
+            !aura::core::capability::g_capability_registry().find_grant(42, "ses-2969-foreign", g),
+            "AC1: no session foreign grant written on deny");
+
+        // AC1: revoke foreign denied without TenantAdmin — seed a foreign
+        // grant through the admin path, then a second (non-admin) Evaluator
+        // attempts the cross-tenant revoke (two-Evaluator verification).
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        ev.grant_effect_capability(/*tenant=*/42, "mut-2969-seed", kEffectWrite, /*mid=*/1);
+        CHECK(aura::core::capability::g_capability_registry().find_grant(42, "mut-2969-seed", g),
+              "AC1: admin path seeds foreign grant (audited)");
+        {
+            // Second (non-admin) Evaluator under a DIFFERENT tenant principal
+            // (9) attempts the cross-tenant revoke. No reset_all() here — it
+            // would clear the process-global registry (#2968) and drop the
+            // seeded foreign grant, defeating the survival check.
+            CompilerService cs2;
+            auto& ev2 = cs2.evaluator();
+            ev2.set_effect_sandbox_mode(1);
+            ev2.set_capability_tenant_id(9); // non-admin principal A
+            const auto deny2_before =
+                aura::core::capability::g_capability_effect_metrics()
+                    .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
+            ev2.revoke_effect_capability(/*tenant=*/42, "mut-2969-seed");
+            const auto deny2_after =
+                aura::core::capability::g_capability_effect_metrics()
+                    .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
+            CHECK(deny2_after == deny2_before + 1,
+                  "AC1: foreign revoke denied without TenantAdmin");
+            CHECK(aura::core::capability::g_capability_registry().find_grant(42, "mut-2969-seed",
+                                                                             g) &&
+                      !g.revoked,
+                  "AC1: foreign grant survives non-admin revoke attempt");
+        }
+    }
+
+    // ── #2969 AC2: same-tenant grant/revoke keep existing policy ──
+    {
+        std::println("\n--- #2969 AC2: same-tenant grant/revoke unchanged ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+        aura::core::capability::CapabilityGrant g{};
+        const auto deny_before =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
+        ev.grant_effect_durable(/*tenant=*/7, "dur-2969-self", kEffectWrite, /*mid=*/0,
+                                /*reason=*/"r");
+        CHECK(aura::core::capability::g_capability_registry().find_grant(7, "dur-2969-self", g),
+              "AC2: same-tenant durable grant stays allowed");
+        ev.grant_effect_session(/*tenant=*/7, "ses-2969-self", kEffectWrite, /*mid=*/0);
+        CHECK(aura::core::capability::g_capability_registry().find_grant(7, "ses-2969-self", g),
+              "AC2: same-tenant session grant stays allowed");
+        ev.revoke_effect_capability(/*tenant=*/7, "dur-2969-self");
+        CHECK(aura::core::capability::g_capability_registry().find_grant(7, "dur-2969-self", g) &&
+                  g.revoked,
+              "AC2: same-tenant revoke works");
+        const auto deny_after =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC2: no fence deny on same-tenant operations");
+    }
+
+    // ── #2969 AC3: Off path no hard fence (zero extra cost) ──
+    {
+        std::println("\n--- #2969 AC3: Off path no hard fence ---");
+        reset_all(); // Off
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        aura::core::capability::CapabilityGrant g{};
+        const auto deny_before =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
+        ev.grant_effect_durable(/*tenant=*/42, "dur-2969-off", kEffectWrite, /*mid=*/0,
+                                /*reason=*/"r");
+        CHECK(aura::core::capability::g_capability_registry().find_grant(42, "dur-2969-off", g),
+              "AC3: Off path durable foreign grant proceeds");
+        const auto deny_after =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC3: Off path no fence deny");
+    }
+
+    // ── #2969 AC4: allow counter bumps only on allow (deny does not) ──
+    {
+        std::println("\n--- #2969 AC4: allow counter only on allow ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+        const auto grants_before =
+            aura::core::capability::g_capability_effect_metrics().capability_grant_total.load(
+                std::memory_order_relaxed);
+        ev.grant_effect_durable(/*tenant=*/42, "dur-2969-noadmin", kEffectWrite, /*mid=*/0,
+                                /*reason=*/"r"); // deny
+        const auto grants_deny =
+            aura::core::capability::g_capability_effect_metrics().capability_grant_total.load(
+                std::memory_order_relaxed);
+        CHECK(grants_deny == grants_before, "AC4: deny does not bump capability_grant_total");
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        // grant_capability mirrors into the registry (bumps grant_total once
+        // for the tenant-admin grant itself) — snapshot AFTER it so the +1
+        // assertion isolates the durable allow path.
+        const auto grants_admin_granted =
+            aura::core::capability::g_capability_effect_metrics().capability_grant_total.load(
+                std::memory_order_relaxed);
+        ev.grant_effect_durable(/*tenant=*/42, "dur-2969-admin", kEffectWrite, /*mid=*/0,
+                                /*reason=*/"r"); // allow (admin)
+        const auto grants_allow =
+            aura::core::capability::g_capability_effect_metrics().capability_grant_total.load(
+                std::memory_order_relaxed);
+        CHECK(grants_allow == grants_admin_granted + 1, "AC4: allow bumps capability_grant_total");
+    }
+
+    // ── #2969 AC5: snapshot + posture additive keys ──
+    {
+        std::println("\n--- #2969 AC5: snapshot + posture additive keys ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.grant_effect_durable(/*tenant=*/42, "dur-2969-snap", kEffectWrite, /*mid=*/0,
+                                /*reason=*/"r"); // deny
+        const auto cap = aura::core::capability::snapshot_capability_effect_stats();
+        CHECK(cap.capability_grant_foreign_tenant_deny >= 1,
+              "AC5: snapshot exposes capability_grant_foreign_tenant_deny");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(posture.find("schema-2969") != std::string::npos, "AC5: posture cites schema-2969");
+        CHECK(posture.find("issue-2969") != std::string::npos, "AC5: posture cites issue-2969");
+        CHECK(posture.find("capability-grant-write-fence-wired") != std::string::npos,
+              "AC5: posture exposes capability-grant-write-fence-wired");
+        CHECK(posture.find("capability-grant-foreign-tenant-deny-total") != std::string::npos,
+              "AC5: posture exposes capability-grant-foreign-tenant-deny-total");
+    }
+
+    // ── #2969 AC6: source-cite + no invent + no docs/design/ ──
+    {
+        std::println("\n--- #2969 AC6: source-cite + no invent + no docs/design/ ---");
+        const auto model = read_file("src/core/capability_model.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        const auto build = read_file("build.py");
+        CHECK(model.find("#2969") != std::string::npos, "AC6: capability_model.hh cites #2969");
+        CHECK(sec.find("#2969") != std::string::npos, "AC6: evaluator_security.cpp cites #2969");
+        CHECK(posture.find("schema-2969") != std::string::npos,
+              "AC6: evaluator_primitives_security.cpp cites schema-2969");
+        CHECK(test_self.find("#2969") != std::string::npos, "AC6: test file cites #2969");
+        CHECK(build.find("check_capability_write_fence_2969") != std::string::npos,
+              "AC6: build.py wires #2969 linter");
+        std::ifstream invent("tests/core/test_issue_2969.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_2969.cpp");
+        CHECK(!invent.good(), "AC6: no tests/core/test_issue_2969.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("2969-") == std::string::npos,
+                      std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

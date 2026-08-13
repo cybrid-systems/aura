@@ -249,6 +249,12 @@ struct CapabilityEffectMetrics {
     // insert mid-struct: stale module BMIs writing at wrong offsets corrupt
     // neighboring heap — see #2906).
     std::atomic<std::uint64_t> capability_durable_grant_deny_total{0};
+    // Issue #2969: registry write-fence deny — grant/revoke targeting a
+    // foreign tenant id (tenant_id != 0 && tenant_id != capability_tenant_id_)
+    // under production (Restricted/Strict) without TenantAdmin. Appended at
+    // struct END (never insert mid-struct: stale module BMIs writing at wrong
+    // offsets corrupt neighboring heap — see #2906).
+    std::atomic<std::uint64_t> capability_grant_foreign_tenant_deny_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -1125,6 +1131,8 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_live_session_grants.store(0, std::memory_order_relaxed);
     // Issue #2967: durable high-risk call-site deny counter.
     m.capability_durable_grant_deny_total.store(0, std::memory_order_relaxed);
+    // Issue #2969: registry write-fence foreign-tenant deny counter.
+    m.capability_grant_foreign_tenant_deny_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -1177,6 +1185,8 @@ struct CapabilityEffectStatsSnapshot {
     // Issue #2967: durable high-risk call-site deny (missing TenantAdmin /
     // empty audit reason under production).
     std::uint64_t capability_durable_grant_deny = 0;
+    // Issue #2969: registry write-fence foreign-tenant deny.
+    std::uint64_t capability_grant_foreign_tenant_deny = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -1244,6 +1254,9 @@ struct CapabilityEffectStatsSnapshot {
         // Issue #2967: durable high-risk call-site deny.
         s.capability_durable_grant_deny =
             m.capability_durable_grant_deny_total.load(std::memory_order_acquire);
+        // Issue #2969: registry write-fence foreign-tenant deny.
+        s.capability_grant_foreign_tenant_deny =
+            m.capability_grant_foreign_tenant_deny_total.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&

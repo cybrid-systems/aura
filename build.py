@@ -2067,6 +2067,24 @@ def cmd_lint():
             "Issue #2968 cross-tenant grant gate linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_gate_2968.py"
         )
         return r
+    # Issue #2969: registry write-fence — under production (Restricted/
+    # Strict), grant/revoke targeting a foreign tenant id requires
+    # TenantAdmin. Deny → SE reason grant-foreign-tenant-needs-tenant-admin
+    # + capability_grant_foreign_tenant_deny_total. Fenced surfaces:
+    # grant_effect_durable / grant_effect_session / revoke_effect_capability
+    # (grant_effect_capability foreign path already gated by #2968).
+    # Extends test_tenant_isolation_enforcement.cpp (#81967); no
+    # docs/design/ (#1655).
+    wf_script = COVERAGE_CHECKS / "check_capability_write_fence_2969.py"
+    if not wf_script.exists():
+        fail(f"missing {wf_script}")
+        return 1
+    r = run([sys.executable, str(wf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2969 registry write-fence linter failed — run python3 scripts/coverage/checks/check_capability_write_fence_2969.py"
+        )
+        return r
     # Issue #2884: agent_send_safe — unify C++/language handoff_ref path for
     # StableNodeRef payloads (close #2663 / #2848 contract split). Closes
     # the largest orch-layer contract split for StableNodeRef cross-fiber
