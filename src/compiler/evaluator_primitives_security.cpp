@@ -759,6 +759,20 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("cross-tenant-grant-deny-total",
                           static_cast<std::int64_t>(iso.cross_tenant_grant_deny));
             }
+            // Issue #2969: registry write-fence — grant/revoke targeting a
+            // foreign tenant id under production requires TenantAdmin.
+            // Deny → SE reason grant-foreign-tenant-needs-tenant-admin + deny
+            // counter (capability_grant_foreign_tenant_deny_total). Additive
+            // keys only (AC5).
+            {
+                using aura::core::capability::snapshot_capability_effect_stats;
+                const auto cap = snapshot_capability_effect_stats();
+                insert_kv("schema-2969", 2969);
+                insert_kv("issue-2969", 2969);
+                insert_kv("capability-grant-write-fence-wired", 1);
+                insert_kv("capability-grant-foreign-tenant-deny-total",
+                          static_cast<std::int64_t>(cap.capability_grant_foreign_tenant_deny));
+            }
             // Issue #2883: production hard principal check on fiber
             // resume/steal handoff. Under production/Restricted, if the
             // current fiber resume had a hard principal mismatch (ambient
