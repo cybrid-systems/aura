@@ -2066,6 +2066,19 @@ def cmd_lint():
             "Issue #2885 join cleanup report linter failed — run python3 scripts/coverage/checks/check_join_cleanup_report_2885.py"
         )
         return r
+    # Issue #2945: reservation-held + mailbox-held on Reclaimed join hash
+    # (refine #2885/#2661). Zero-cost on Ok/Timeout/Cancelled. Extends
+    # test_join_drain_reclaim (#81967); no docs/design/ (#1655).
+    jhf_script = COVERAGE_CHECKS / "check_join_held_flags_2945.py"
+    if not jhf_script.exists():
+        fail(f"missing {jhf_script}")
+        return 1
+    r = run([sys.executable, str(jhf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2945 join held-flags linter failed — run python3 scripts/coverage/checks/check_join_held_flags_2945.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are

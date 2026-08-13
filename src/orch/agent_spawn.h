@@ -1732,6 +1732,13 @@ inline void join_keepalive_helper(AgentHandle& h,
 // free). The C++ helper itself stays unchanged; the per-Fiber timestamps and
 // still-running flag live in Fiber (#2397 / #2636 lineage) and are read by
 // the Aura surface at join return.
+//
+// Issue #2945: Reclaimed join hash also surfaces reservation-held
+// (reserved_memory_bytes != 0) and mailbox-held (mailbox != nullptr) so
+// Agents branch cleanup / quota policy from the hash alone without
+// polling C++ residual state. complete_agent_join_cleanup Reclaimed
+// branch still skips release_agent_memory_reservation / mailbox->detach
+// (#2661 preserved). Keys absent on Ok / Timeout / Cancelled (#2885 AC2).
 inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) noexcept {
     if (jr.status == serve::JoinStatus::Reclaimed) {
         // Defer path: global tables only, never body-stack.
