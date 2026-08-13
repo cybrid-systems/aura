@@ -18,6 +18,7 @@
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+#include "compiler/typed_mutation_audit.h" // #2952 production_defaults_active
 
 #include <cstdint>
 #include <cstdlib>
@@ -1087,11 +1088,203 @@ int run_test_exhausted_min_dirty_reemit() {
         }
     }
 
+    // ── #2952: production storm-clear auto coverage-verify min-dirty ──
+    // AC1: production + force_mask + residual uncovered + storm clear → scheduled
+    // AC2: Soft / mask idle → no schedule
+    // AC3: storm mid-pass → storm-skip counter; force state retained
+    // AC4: #2601 cap/backoff + #2895 coverage stamp preserved
+    // AC5: schema-2952 additive; #2544/#2601/#2895 preserved
+    // AC6: source-cite + linter; no docs/design
+    {
+        std::println("\n--- #2952 AC1–AC6: coverage-verify min-dirty closed loop ---");
+        auto& reg = aura::compiler::hot_update_registry();
+        reg.on_reload_success();
+        reg.reset_exhausted_min_dirty_retry_for_test();
+        reg.reset_coverage_verify_for_test();
+        reg.reset_storm_clear_health_pass_for_test();
+        reg.set_shape_storm_active(false);
+        unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        unsetenv("AURA_SANDBOX");
+
+        // AC2: Soft / no production → residual observe only, no schedule
+        {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(0, std::memory_order_relaxed);
+            reg.on_reload_success();
+            reg.reset_coverage_verify_for_test();
+            reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+            reg.on_force_jit_for_reason(AotReloadFail::Env);
+            const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+            reg.note_reemit_success_coverage(defuse_bit); // Env residual uncovered
+            CHECK(!reg.resolve_coverage_verify_min_dirty_enabled(), "2952 AC2: Soft resolve off");
+            const auto sched0 = reg.coverage_verify_scheduled_total();
+            const auto resid0 = reg.coverage_verify_residual_uncovered_total();
+            const bool drove = reg.maybe_coverage_verify_min_dirty();
+            CHECK(!drove, "2952 AC2: Soft does not schedule");
+            CHECK(reg.coverage_verify_scheduled_total() == sched0,
+                  "2952 AC2: scheduled unchanged under Soft");
+            CHECK(reg.coverage_verify_residual_uncovered_total() == resid0 + 1,
+                  "2952 AC2: residual-uncovered observe under Soft");
+        }
+
+        // AC2b: mask idle → zero cost
+        {
+            reg.on_reload_success();
+            reg.reset_coverage_verify_for_test();
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            const auto sched0 = reg.coverage_verify_scheduled_total();
+            const auto resid0 = reg.coverage_verify_residual_uncovered_total();
+            CHECK(!reg.maybe_coverage_verify_min_dirty(), "2952 AC2: idle mask no schedule");
+            CHECK(reg.coverage_verify_scheduled_total() == sched0, "2952 AC2: idle scheduled 0");
+            CHECK(reg.coverage_verify_residual_uncovered_total() == resid0,
+                  "2952 AC2: idle residual 0");
+        }
+
+        // AC1: production + residual + storm clear edge → scheduled
+        {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+            reg.on_reload_success();
+            reg.reset_coverage_verify_for_test();
+            reg.reset_exhausted_min_dirty_retry_for_test();
+            reg.reset_storm_clear_health_pass_for_test();
+            CHECK(reg.resolve_coverage_verify_min_dirty_enabled(),
+                  "2952 AC1: production resolve on");
+
+            reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+            reg.on_force_jit_for_reason(AotReloadFail::Env);
+            const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+            const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+            reg.note_reemit_success_coverage(defuse_bit); // residual Env
+            // Cap-empty so coverage-verify re-seeds budget.
+            reg.set_exhausted_min_dirty_retry_cap(3);
+            // Drain attempts via reset (attempts_left=0).
+            reg.reset_exhausted_min_dirty_retry_for_test();
+
+            const auto sched0 = reg.coverage_verify_scheduled_total();
+            const auto resid0 = reg.coverage_verify_residual_uncovered_total();
+            // Direct call (storm already None) — schedules residual min-dirty.
+            const bool drove = reg.maybe_coverage_verify_min_dirty();
+            CHECK(drove, "2952 AC1: production residual schedules");
+            CHECK(reg.coverage_verify_scheduled_total() == sched0 + 1, "2952 AC1: scheduled +1");
+            CHECK(reg.coverage_verify_residual_uncovered_total() == resid0 + 1,
+                  "2952 AC1: residual-uncovered +1");
+            CHECK((reg.reload_recovery_state().force_jit_regions_mask & env_bit) != 0,
+                  "2952 AC1: residual Env force bit retained");
+            // Storm-clear edge also drives body (force-JIT branch).
+            // Prefer C++ set_shape_storm_active — C ABI may be a weak no-op
+            // under light-link batch builds (see aura_jit_bridge_stub).
+            reg.set_shape_storm_active(true);
+            reg.on_reemit_pipeline_call(0, 0); // stamp prev storm
+            const auto pass0 = reg.reemit_storm_clear_health_pass_total();
+            reg.set_shape_storm_active(false);
+            reg.on_reemit_pipeline_call(0, 0);
+            CHECK(reg.reemit_storm_clear_health_pass_total() == pass0 + 1,
+                  "2952 AC1: storm-clear health pass on residual force");
+        }
+
+        // AC3: storm active → storm-skip; force mask retained
+        {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            reg.on_reload_success();
+            reg.reset_coverage_verify_for_test();
+            reg.on_force_jit_for_reason(AotReloadFail::Env);
+            reg.note_reemit_success_coverage(0); // no coverage
+            reg.set_shape_storm_active(true);
+            const auto skip0 = reg.coverage_verify_storm_skip_total();
+            const auto mask0 = reg.reload_recovery_state().force_jit_regions_mask;
+            const bool drove = reg.maybe_coverage_verify_min_dirty();
+            CHECK(!drove, "2952 AC3: storm active does not schedule drive");
+            CHECK(reg.coverage_verify_storm_skip_total() == skip0 + 1, "2952 AC3: storm-skip +1");
+            CHECK(reg.reload_recovery_state().force_jit_regions_mask == mask0,
+                  "2952 AC3: force mask not silently dropped");
+            reg.set_shape_storm_active(false);
+        }
+
+        // AC4: #2601 cap/backoff + #2895 stamp preserved
+        {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            reg.on_reload_success();
+            reg.reset_coverage_verify_for_test();
+            reg.reset_exhausted_min_dirty_retry_for_test();
+            reg.set_exhausted_min_dirty_retry_cap(2);
+            reg.set_exhausted_min_dirty_retry_backoff_ms(1000);
+            reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+            const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+            // Full cover → residual 0 → coverage-verify no-ops; #2895 stamp intact
+            reg.note_reemit_success_coverage(defuse_bit);
+            CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
+                  "2952 AC4: #2895 coverage stamp retained");
+            CHECK(!reg.maybe_coverage_verify_min_dirty(),
+                  "2952 AC4: full cover → no coverage-verify schedule");
+            // Cap=2 preserved after re-seed path on residual
+            reg.note_reemit_success_coverage(0);
+            reg.on_force_jit_for_reason(AotReloadFail::Env);
+            (void)reg.maybe_coverage_verify_min_dirty();
+            CHECK(reg.exhausted_min_dirty_retry_cap() == 2, "2952 AC4: #2601 cap preserved");
+            CHECK(reg.exhausted_min_dirty_retry_backoff_ms() == 1000,
+                  "2952 AC4: #2601 backoff preserved");
+        }
+
+        // AC5 / AC6: schema + source-cite
+        {
+            CompilerService cs;
+            reg.on_reload_success();
+            CHECK(href(cs, "query:reload-recovery-state", "schema-2952") == 2952,
+                  "2952 AC5: schema-2952 on recovery");
+            CHECK(href(cs, "query:reload-recovery-state", "issue-2952") == 2952,
+                  "2952 AC5: issue-2952 on recovery");
+            CHECK(href(cs, "query:reload-recovery-state", "coverage-verify-min-dirty-wired") == 1,
+                  "2952 AC5: wired sentinel");
+            CHECK(href(cs, "query:reload-recovery-state", "coverage-verify-scheduled-total") >= 0,
+                  "2952 AC5: scheduled-total queryable");
+            CHECK(href(cs, "query:reload-recovery-state", "schema-2601") == 2601,
+                  "2952 AC5: schema-2601 preserved");
+            CHECK(href(cs, "query:reload-recovery-state", "schema-2895") == 2895,
+                  "2952 AC5: schema-2895 preserved");
+            CHECK(href(cs, "query:reload-recovery-state", "schema-2544") == 2544,
+                  "2952 AC5: schema-2544 preserved");
+            CHECK(href(cs, "query:hot-update-registry-stats", "schema-2952") == 2952,
+                  "2952 AC5: schema-2952 on hot-update surface");
+
+            const auto hh = read_file("src/compiler/hot_update_registry.hh");
+            const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+            const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+            const auto build = read_file("build.py");
+            const auto lint =
+                read_file("scripts/coverage/checks/check_coverage_verify_min_dirty_2952.py");
+            CHECK(hh.find("maybe_coverage_verify_min_dirty") != std::string::npos,
+                  "2952 AC6: header declares maybe_coverage_verify_min_dirty");
+            CHECK(cpp.find("Issue #2952") != std::string::npos, "2952 AC6: cpp cites #2952");
+            CHECK(cpp.find("AURA_COVERAGE_VERIFY_MIN_DIRTY") != std::string::npos,
+                  "2952 AC6: env opt-out");
+            CHECK(mut.find("schema-2952") != std::string::npos, "2952 AC6: schema-2952 query");
+            CHECK(build.find("check_coverage_verify_min_dirty_2952") != std::string::npos,
+                  "2952 AC6: build.py wires linter");
+            CHECK(!lint.empty(), "2952 AC6: linter present");
+            CHECK(read_file("docs/design/2952-coverage-verify-min-dirty.md").empty(),
+                  "2952 AC6: no docs/design/");
+        }
+
+        // Restore Soft for subsequent suites / process exit.
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(0, std::memory_order_relaxed);
+        unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        unsetenv("AURA_SANDBOX");
+        reg.on_reload_success();
+        reg.reset_coverage_verify_for_test();
+        reg.set_shape_storm_active(false);
+    }
+
     if (g_failed)
         return 1;
-    std::println(
-        "exhausted min-dirty reemit #2544 + #2601 + #2639 + #2669 drive-body: OK ({} passed)",
-        g_passed);
+    std::println("exhausted min-dirty reemit #2544 + #2601 + #2639 + #2669 + #2952: OK ({} passed)",
+                 g_passed);
     return 0;
 }
 
