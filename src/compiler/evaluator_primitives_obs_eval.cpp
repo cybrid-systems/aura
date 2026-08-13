@@ -7683,6 +7683,21 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"post-mutate-push-cascade-wired", make_int(1)},
                 {"schema-2038", make_int(2038)},
                 {"issue-2038", make_int(2038)},
+                // Issue #2988: mutate success invalidate close-loop (additive).
+                {"mutate-invalidate-dirty-nodes-total",
+                 make_int(m ? load(m->mutate_invalidate_dirty_nodes_total) : 0)},
+                {"mutate-invalidate-defuse-bumps-total",
+                 make_int(m ? load(m->mutate_invalidate_defuse_bumps_total) : 0)},
+                {"mutate-invalidate-jit-total",
+                 make_int(m ? load(m->mutate_invalidate_jit_total) : 0)},
+                {"mutate-invalidate-binding-gen-bumps-total",
+                 make_int(m ? load(m->mutate_invalidate_binding_gen_bumps_total) : 0)},
+                {"mutate-invalidate-precise-wired",
+                 make_int(m ? static_cast<std::int64_t>(m->mutate_invalidate_precise_wired.load(
+                                  std::memory_order_relaxed))
+                            : 1)},
+                {"schema-2988", make_int(2988)},
+                {"issue-2988", make_int(2988)},
                 // Issue #2812: post-Guard BFS invalidate (closures of mutated defines).
                 // Additive — #2038 keys preserved.
                 {"cascade-bfs-invalidate-pending-total",

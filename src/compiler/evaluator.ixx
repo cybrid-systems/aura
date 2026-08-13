@@ -2559,10 +2559,11 @@ public:
     void finalize_define_mutate_invalidation(const aura::ast::FlatAST& flat,
                                              const std::string& name, aura::ast::NodeId define_id,
                                              bool run_full_invalidate = true);
-    // Issue #2038 / #2762: push-automatic cascade after successful outermost
-    // MutationBoundaryGuard. Walks mutation log [log_begin, end) (and
-    // defuse_affected_syms_) → mark_dirty_upward / mark_define_dirty /
-    // DefUse touch / finalize_define_mutate_invalidation + #2762
+    // Issue #2038 / #2762 / #2988: push-automatic cascade after successful
+    // outermost MutationBoundaryGuard. Walks mutation log [log_begin, end)
+    // (and defuse_affected_syms_) → mark_dirty_upward / mark_define_dirty /
+    // DefUse touch / binding_gen + JIT invalidate (#2988) /
+    // finalize_define_mutate_invalidation + #2762
     // post_mutation_macro_reexpand (call-site splice + MacroIntroduced
     // restamp). Scoped, not a global flush. Records post_mutate_incremental_*
     // and post_mutate_macro_reexpand_* metrics. Zero cost when macros_ empty.

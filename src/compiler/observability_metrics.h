@@ -288,6 +288,16 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> post_mutate_incremental_defines_total{0};
     std::atomic<std::uint64_t> post_mutate_incremental_latency_us_total{0};
     std::atomic<std::uint64_t> post_mutate_incremental_latency_samples{0};
+    // Issue #2988: mutate success → DefUse / IR / JIT invalidate close-loop.
+    // Precise is the production default; AURA_MUTATE_INVALIDATE_COARSE=1
+    // skips BFS enqueue (mark_define_dirty only). Atomic-batch suppress
+    // skips extra binding_gen / JIT bumps.
+    std::atomic<std::uint64_t> mutate_invalidate_dirty_nodes_total{0};       // #2988
+    std::atomic<std::uint64_t> mutate_invalidate_defuse_bumps_total{0};      // #2988
+    std::atomic<std::uint64_t> mutate_invalidate_jit_total{0};               // #2988
+    std::atomic<std::uint64_t> mutate_invalidate_binding_gen_bumps_total{0}; // #2988
+    std::atomic<std::uint64_t> mutate_invalidate_coarse_fallback_total{0};   // #2988
+    std::atomic<std::uint32_t> mutate_invalidate_precise_wired{1};           // #2988
     // Issue #2812: post-Guard BFS invalidate_function for mutated defines
     // (closures capturing mutated defines). Soft cascade under Guard enqueues;
     // drain after workspace unlock runs hard BFS.

@@ -9,6 +9,14 @@
 //   AC4: query:incremental-relower-stats schema-2038 + latency keys
 //   AC5: cascade is scoped (defines marked) not global no-op when log empty
 //   AC6: latency samples track cascade invocations
+//
+// Issue #2988: mutate success must drive DefUse / IR / JIT invalidate.
+//   ac2988_1 rebind then eval-current sees new body (no stale JIT)
+//   ac2988_2 query:mutate-invalidate-stats + incremental-relower schema-2988
+//   ac2988_3 binding_gen / jit / dirty counters advance
+//   ac2988_4 atomic-batch suppress extra bumps (source-cite)
+//   ac2988_5 multi-round mutate → eval
+//   ac2988_6 linter + no docs/design / invent test
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
@@ -46,6 +54,14 @@ static std::string read_file(const char* path) {
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(
         std::format("(hash-ref (engine:metrics \"query:incremental-relower-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static std::int64_t href_inv(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:mutate-invalidate-stats\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -150,6 +166,85 @@ static void ac6_latency_tracks() {
     CHECK(href(cs, "post_mutate_incremental_latency_us_total") >= 0, "latency us total");
 }
 
+static void ac2988_1_rebind_eval_fresh() {
+    std::println("\n--- #2988 AC1: rebind then eval-current is not stale ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (f x) (+ x 1)) (f 10)\")").has_value(), "set-code");
+    auto r0 = cs.eval("(eval-current)");
+    CHECK(r0 && is_int(*r0) && as_int(*r0) == 11, "f 10 → 11");
+    auto m = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 5))\" \"#2988\")");
+    CHECK(m.has_value(), "rebind returned");
+    auto r1 = cs.eval("(eval-current)");
+    CHECK(r1 && is_int(*r1) && as_int(*r1) == 15, "f 10 → 15 after rebind (no stale JIT)");
+}
+
+static void ac2988_2_query_stats() {
+    std::println("\n--- #2988 AC2: query:mutate-invalidate-stats ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href_inv(cs, "schema-2988") == 2988, "2988 AC2: schema-2988");
+    CHECK(href_inv(cs, "issue-2988") == 2988, "2988 AC2: issue-2988");
+    CHECK(href_inv(cs, "precise-wired") == 1, "2988 AC2: precise default");
+    CHECK(href_inv(cs, "dirty-nodes") >= 0, "2988 AC2: dirty-nodes");
+    CHECK(href_inv(cs, "defuse-bumps") >= 0, "2988 AC2: defuse-bumps");
+    CHECK(href_inv(cs, "jit-invalidate-count") >= 0, "2988 AC2: jit-invalidate-count");
+    CHECK(href_inv(cs, "binding-gen-bumps") >= 0, "2988 AC2: binding-gen-bumps");
+    CHECK(href(cs, "schema-2988") == 2988, "2988 AC2: incremental-relower schema-2988");
+    CHECK(href(cs, "schema-2038") == 2038, "2988 AC2: schema-2038 retained");
+}
+
+static void ac2988_3_counters_advance() {
+    std::println("\n--- #2988 AC3: invalidate counters advance ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (g x) x) (g 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    const auto d0 = href_inv(cs, "dirty-nodes");
+    const auto j0 = href_inv(cs, "jit-invalidate-count");
+    const auto b0 = href_inv(cs, "binding-gen-bumps");
+    (void)cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"#2988\")");
+    CHECK(href_inv(cs, "dirty-nodes") >= d0, "2988 AC3: dirty-nodes non-decreasing");
+    CHECK(href_inv(cs, "jit-invalidate-count") >= j0, "2988 AC3: jit-invalidate non-decreasing");
+    CHECK(href_inv(cs, "binding-gen-bumps") >= b0, "2988 AC3: binding-gen non-decreasing");
+}
+
+static void ac2988_4_atomic_batch_suppress() {
+    std::println("\n--- #2988 AC4: atomic-batch suppress extra bumps ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("atomic_batch_active()") != std::string::npos, "2988 AC4: suppress gate");
+    CHECK(mut.find("suppress_extra_2988") != std::string::npos, "2988 AC4: skip extra bumps");
+    CHECK(mut.find("AURA_MUTATE_INVALIDATE_COARSE") != std::string::npos,
+          "2988 AC4: coarse fallback env");
+}
+
+static void ac2988_5_multi_round() {
+    std::println("\n--- #2988 AC5: multi-round mutate → eval ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (h x) x) (h 0)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    for (int i = 0; i < 16; ++i) {
+        (void)cs.eval(
+            std::format("(mutate:set-body \"h\" \"(lambda (x) (+ x {}))\" \"r{}\")", i + 1, i));
+        auto r = cs.eval("(eval-current)");
+        CHECK(r && is_int(*r) && as_int(*r) == (i + 1), "2988 AC5: eval matches last mutate");
+    }
+}
+
+static void ac2988_6_source_and_linter() {
+    std::println("\n--- #2988 AC6: source-cite + linter ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mutate_invalidate_incremental_2988.py");
+    const auto t = read_file("tests/compiler/test_post_mutate_push_cascade.cpp");
+    const auto build = read_file("build.py");
+    CHECK(!lint.empty() && lint.find("2988") != std::string::npos, "2988 AC6: linter");
+    CHECK(t.find("ac2988_1_rebind_eval_fresh") != std::string::npos, "2988 AC6: AC1 test");
+    CHECK(build.find("check_mutate_invalidate_incremental_2988") != std::string::npos,
+          "2988 AC6: build.py");
+    CHECK(read_file("docs/design/2988-mutate-invalidate.md").empty(), "2988 AC6: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_2988.cpp").empty(), "2988 AC6: no invent test");
+    CHECK(read_file("tests/test_edsl_mutate_invalidate_incremental.cpp").empty(),
+          "2988 AC6: no invent edsl test file");
+}
+
 } // namespace
 
 int main() {
@@ -160,6 +255,13 @@ int main() {
     ac4_query_schema();
     ac5_scoped_not_empty_no_op();
     ac6_latency_tracks();
+    std::println("\n=== Issue #2988: mutate success invalidate close-loop ===");
+    ac2988_1_rebind_eval_fresh();
+    ac2988_2_query_stats();
+    ac2988_3_counters_advance();
+    ac2988_4_atomic_batch_suppress();
+    ac2988_5_multi_round();
+    ac2988_6_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

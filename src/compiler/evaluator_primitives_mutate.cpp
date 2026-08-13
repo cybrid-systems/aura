@@ -3,6 +3,7 @@
 
 module;
 #include <bit>
+#include <cstdlib> // #2988 AURA_MUTATE_INVALIDATE_COARSE
 
 #include "runtime_shared.h"
 #include "messaging_bridge.h"
@@ -8742,6 +8743,16 @@ void Evaluator::clear_cascade_bfs_invalidate() noexcept {
 // Issue #2038: single choke-point cascade for all successful mutate:*
 // under MutationBoundaryGuard. Ensures DefUse / IR cache dirty / JIT
 // soft paths see the mutation without a manual invalidate.
+// Issue #2988: production default is precise invalidate (BFS enqueue for
+// Define/closure). AURA_MUTATE_INVALIDATE_COARSE=1 is the coarse fallback
+// (mark_define_dirty only — no enqueue_cascade_bfs_invalidate).
+[[nodiscard]] static bool mutate_invalidate_precise_enabled() noexcept {
+    const char* e = std::getenv("AURA_MUTATE_INVALIDATE_COARSE");
+    if (e && e[0] == '1')
+        return false;
+    return true;
+}
+
 void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_begin) noexcept {
     if (!workspace_flat_ || !workspace_pool_)
         return;
@@ -8852,17 +8863,52 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
     // Soft IR-cache dirty once per unique name; defuse_touch only when a
     // live Define exists (Issue #2817).
     std::uint64_t ghost_name_touches = 0;
+    std::uint64_t defuse_bumps_2988 = 0;
     for (const auto& name : affected_names) {
         if (mark_define_dirty_fn_)
             mark_define_dirty_fn_(name);
         if (names_with_def.count(name) != 0) {
             const auto sid = pool.intern(name);
-            if (defuse_touch_fn_ && sid != aura::ast::INVALID_SYM)
+            if (defuse_touch_fn_ && sid != aura::ast::INVALID_SYM) {
                 defuse_touch_fn_(defuse_index_, sid);
+                ++defuse_bumps_2988;
+            }
         } else {
             // Ghost name: in defuse_affected_syms_ / affected_names but no
             // matching Define. Skip defuse_touch to avoid index pollution.
             ++ghost_name_touches;
+        }
+    }
+
+    // Issue #2988: mutate success close-loop — binding_gen + JIT invalidate
+    // signal so same-fiber apply_closure / eval-current cannot keep a stale
+    // JIT body. Atomic-batch suppress (bump_generation_suppressed_) skips
+    // extra bumps. Coarse env skips BFS enqueue.
+    const std::uint64_t dirty_nodes_2988 =
+        (mutation_log_begin < log.size())
+            ? static_cast<std::uint64_t>(log.size() - mutation_log_begin)
+            : 0;
+    std::uint64_t binding_bumps_2988 = 0;
+    std::uint64_t jit_inv_2988 = 0;
+    std::uint64_t coarse_skip_2988 = 0;
+    const bool suppress_extra_2988 = flat.atomic_batch_active();
+    const bool precise_2988 = mutate_invalidate_precise_enabled();
+    if (!suppress_extra_2988) {
+        for (const auto& [def_id, name] : affected_defs) {
+            (void)name;
+            if (def_id >= flat.size())
+                continue;
+            auto v = flat.get(def_id);
+            if (v.sym_id != aura::ast::INVALID_SYM) {
+                flat.bump_binding_gen(v.sym_id);
+                ++binding_bumps_2988;
+            }
+        }
+        if (!affected_names.empty()) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->jit_hotswap_invalidate_total.fetch_add(affected_names.size(),
+                                                          std::memory_order_relaxed);
+            jit_inv_2988 = static_cast<std::uint64_t>(affected_names.size());
         }
     }
 
@@ -8872,8 +8918,12 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         // Soft path under Guard: mark_dirty_upward + impact_scope.
         // Issue #2812: hard invalidate_function deferred to post-unlock.
         finalize_define_mutate_invalidation(flat, name, def_id, /*run_full=*/false);
-        if (define_needs_precise_invalidation_for_inval(flat, def_id))
-            enqueue_cascade_bfs_invalidate(name);
+        if (define_needs_precise_invalidation_for_inval(flat, def_id)) {
+            if (precise_2988)
+                enqueue_cascade_bfs_invalidate(name);
+            else
+                ++coarse_skip_2988;
+        }
     }
     // Name-only (ghost) entries still count so relower may run for cache keys.
     defines_n += ghost_name_touches;
@@ -8961,6 +9011,21 @@ void Evaluator::push_post_mutate_incremental_cascade(std::uint64_t mutation_log_
         m->post_mutate_incremental_defines_total.fetch_add(defines_n, std::memory_order_relaxed);
         m->post_mutate_incremental_latency_us_total.fetch_add(uus, std::memory_order_relaxed);
         m->post_mutate_incremental_latency_samples.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2988: Agent-visible mutate-invalidate close-loop totals.
+        if (dirty_nodes_2988 > 0)
+            m->mutate_invalidate_dirty_nodes_total.fetch_add(dirty_nodes_2988,
+                                                             std::memory_order_relaxed);
+        if (defuse_bumps_2988 > 0)
+            m->mutate_invalidate_defuse_bumps_total.fetch_add(defuse_bumps_2988,
+                                                              std::memory_order_relaxed);
+        if (jit_inv_2988 > 0)
+            m->mutate_invalidate_jit_total.fetch_add(jit_inv_2988, std::memory_order_relaxed);
+        if (binding_bumps_2988 > 0)
+            m->mutate_invalidate_binding_gen_bumps_total.fetch_add(binding_bumps_2988,
+                                                                   std::memory_order_relaxed);
+        if (coarse_skip_2988 > 0)
+            m->mutate_invalidate_coarse_fallback_total.fetch_add(coarse_skip_2988,
+                                                                 std::memory_order_relaxed);
         // Issue #2762: Agent-visible re-expand counters (cascade + sites).
         if (reexpand_sites > 0) {
             m->post_mutate_macro_reexpand_cascade_total.fetch_add(1, std::memory_order_relaxed);
