@@ -143,7 +143,7 @@ static void ac3_should_partial_consulted() {
           "below threshold");
     CHECK(!should_partial_relower(get_partial_relower_threshold()), "at threshold → full");
     auto low = read_file("src/compiler/lowering_impl.cpp");
-    auto pass = read_file("src/compiler/pass_manager.ixx");
+    auto pass = read_file("src/compiler/pass_pipeline_core.ixx");
     auto svc = read_file("src/compiler/service.ixx");
     CHECK(low.find("should_partial_relower") != std::string::npos,
           "lower_to_ir_with_cache consults");
@@ -217,7 +217,7 @@ static void ac7_cross_function_instr_2179() {
     CHECK(dirty.find("impact_scope_cross_fn_instrs_total") != std::string::npos,
           "instrs_total bumped");
     // Source-cite: query:impact-scope-stats primitive registered.
-    auto epq = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto epq = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
     CHECK(epq.find("\"query:impact-scope-stats\"") != std::string::npos, "primitive registered");
     CHECK(epq.find("impact-scope-cross-fn-blocks-total") != std::string::npos, "blocks key");
     CHECK(epq.find("impact-scope-cross-fn-instrs-total") != std::string::npos, "instrs key");
@@ -278,7 +278,7 @@ void ac8_cross_function_indirect_2246() {
     std::println("\n--- AC8: cross-fn indirect (Apply / closure) #2246 ---");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
     auto met = read_file("src/compiler/observability_metrics.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(pure.find("cross_fn_indirect_hits") != std::string::npos,
           "ImpactScope::cross_fn_indirect_hits field");
@@ -304,7 +304,7 @@ void ac9_cross_function_unresolved_2246() {
     std::println("\n--- AC9: cross-fn unresolved callish (block-level over-approx) #2246 ---");
     auto pure = read_file("src/compiler/ir_cache_pure.ixx");
     auto met = read_file("src/compiler/observability_metrics.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     CHECK(pure.find("unresolved_callee_hits") != std::string::npos,
           "ImpactScope::unresolved_callee_hits field");

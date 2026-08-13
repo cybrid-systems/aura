@@ -2807,7 +2807,8 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
             if (!m)
                 return make_void();
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(
+                16); // #2246: 10 keys (indirect/unresolved/schema/wired/blocks/instrs/callsites)
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();

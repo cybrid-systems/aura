@@ -187,9 +187,15 @@ int run_test_frame_budget_cascade_isolation() {
         CHECK(snap.hold_samples >= 40, "hold samples for each present");
         // p99 should be well under a 16.6ms frame in this synthetic harness.
         CHECK(p99 < 16000, "p99 under 16ms budget envelope");
-        CHECK(href(cs, "schema-2137") == 2137, "schema-2137");
-        CHECK(href(cs, "frame-budget-wired") == 1, "query wired");
-        CHECK(href(cs, "frame-budget-deferred-cascade-total") >= 0, "query deferred");
+        // query:render-stats aggregate was retired by #2625/#2626 (render
+        // stack purge) + #2629 (commercial budget scrub); frame-budget data
+        // remains on CompilerMetrics — verify there directly.
+        auto* ac4_m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+        if (ac4_m) {
+            CHECK(ac4_m->frame_budget_wired.load() == 1, "frame-budget wired");
+            CHECK(ac4_m->frame_budget_deferred_cascade_total.load() > 0,
+                  "frame-budget deferred total");
+        }
     }
 
     // ── AC6: direct budget guard API ──

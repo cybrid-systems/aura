@@ -48,6 +48,17 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// #2030 ratio keys live in the lifecycle / type-stats query handlers
+// (query_lifecycle.cpp + query_type_stats.cpp), and the agent-facing
+// surfaces are named in observability.cpp — concatenate all four so
+// q.find matches wherever the insert_kv actually lives.
+static std::string read_query_srcs() {
+    return read_file("src/compiler/evaluator_primitives_query.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_lifecycle.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_type_stats.cpp") +
+           read_file("src/compiler/evaluator_primitives_observability.cpp");
+}
+
 static std::int64_t href_q(CompilerService& cs, std::string_view query, std::string_view key) {
     auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", query, key));
     if (!r || !is_int(*r))
@@ -77,8 +88,8 @@ static void seed(CompilerService& cs) {
 
 static void ac1_source() {
     std::println("\n--- AC1: source cites #2030 ---");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
-    CHECK(!q.empty() && q.find("Issue #2030") != std::string::npos, "query.cpp cites #2030");
+    auto q = read_query_srcs();
+    CHECK(!q.empty() && q.find("Issue #2030") != std::string::npos, "query cites #2030");
     CHECK(q.find("blame_completeness_ratio") != std::string::npos, "blame_completeness_ratio key");
     CHECK(q.find("occurrence_narrowing_post_mutate_hit_rate") != std::string::npos,
           "occurrence hit rate key");
@@ -155,7 +166,7 @@ static void ac5_multi_delta() {
     CHECK(in_bp(evo(cs, "occurrence_narrowing_post_mutate_hit_rate")), "occ after mutates");
     CHECK(in_bp(evo(cs, "health-score-bp")), "health-score bp");
     // health folds 6 terms now (#2030)
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_query_srcs();
     CHECK(q.find("blame_completeness_ratio_bp +") != std::string::npos ||
               q.find("occurrence_narrowing_post_mutate_hit_rate_bp") != std::string::npos,
           "health folds #2030 ratios");
@@ -184,7 +195,7 @@ static void ac7_slim_surface() {
     CHECK(cat.find("\"query:blame-completeness") == std::string::npos ||
               cat.find("register_stats_impl") != std::string::npos,
           "no new public blame query via add()");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_query_srcs();
     CHECK(q.find("register_stats_impl") != std::string::npos, "uses register_stats_impl");
     // Keys live on existing self-evo-stats / fidelity-stats only
     CHECK(q.find("blame_completeness_ratio") != std::string::npos, "ratio on existing surface");
