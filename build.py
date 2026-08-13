@@ -2123,6 +2123,19 @@ def cmd_lint():
             "Issue #2948 BP threshold SSOT linter failed — run python3 scripts/coverage/checks/check_bp_threshold_ssot_2948.py"
         )
         return r
+    # Issue #2949: production default force_jit_repromote only_covered
+    # (refine #2895/#2502). Soft wholesale; env=0 opt-out; sticky set.
+    # Extends test_force_jit_repromote (#81967); no docs/design/ (#1655).
+    fjoc_script = COVERAGE_CHECKS / "check_force_jit_repromote_only_covered_default_2949.py"
+    if not fjoc_script.exists():
+        fail(f"missing {fjoc_script}")
+        return 1
+    r = run([sys.executable, str(fjoc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2949 force_jit only_covered default linter failed — run python3 scripts/coverage/checks/check_force_jit_repromote_only_covered_default_2949.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -5333,6 +5346,25 @@ def cmd_bp_threshold_ssot_2948_coverage():
         fail("BP threshold SSOT (#2948) coverage contract rows failed")
         return 1
     ok("BP threshold SSOT (#2948) coverage clean")
+    return 0
+
+
+def cmd_force_jit_repromote_only_covered_default_2949_coverage():
+    """Issue #2949: production default force_jit only_covered partial re-promote.
+
+    Refine #2895/#2502: production → only_covered; Soft wholesale;
+    env=0 opt-out; sticky set wins; schema-2949.
+    """
+    print(f"{B}=== force_jit only_covered default coverage (#2949) ==={N}")
+    script = COVERAGE_CHECKS / "check_force_jit_repromote_only_covered_default_2949.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("force_jit only_covered default (#2949) coverage contract rows failed")
+        return 1
+    ok("force_jit only_covered default (#2949) coverage clean")
     return 0
 
 

@@ -19,8 +19,10 @@
 
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/hot_update_registry.hh"
+#include "compiler/typed_mutation_audit.h" // #2949 production_defaults_active
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -411,7 +413,7 @@ static void ac2895_source_cite() {
     CHECK(hh.find("2895") != std::string::npos, "2895 AC5: #2895 cite in hh");
     CHECK(cpp.find("force_jit_repromote_partial_total_") != std::string::npos,
           "2895 AC5: partial counter in cpp");
-    CHECK(cpp.find("repromote_only_covered_bits") != std::string::npos ||
+    CHECK(cpp.find("resolve_force_jit_repromote_only_covered") != std::string::npos ||
               cpp.find("force_jit_repromote_only_covered_bits_") != std::string::npos,
           "2895 AC5: partial policy branch in cpp");
     CHECK(cpp.find("last_reemit_success_region_mask_") != std::string::npos,
@@ -425,6 +427,161 @@ static void ac2895_source_cite() {
     CHECK(cpp.find("force_jit_regions_mask_") != std::string::npos &&
               cpp.find("mask == 0") != std::string::npos,
           "2895 AC5: zero-cost idle short-circuit retained");
+}
+
+// ── #2949: production default only_covered ───────────────────────
+// AC1: production + multi-bit + partial coverage → clear intersection only
+// AC2: Soft → wholesale unless setter/env
+// AC3: quiet path (mask==0) zero extra
+// AC4: #2502 window/storm/on_reload_success + #2895 stamp preserved
+// AC5: schema-2949 additive; schema-2895/2502 preserved
+// AC6: source-cite; no docs/design
+static void ac2949_production_only_covered_default() {
+    std::println("\n--- #2949 AC1–AC6: production default only_covered ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_idle(reg);
+    unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    unsetenv("AURA_SANDBOX");
+
+    // AC2: Soft / no production → wholesale default (auto)
+    {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(0, std::memory_order_relaxed);
+        clear_idle(reg);
+        CHECK(!reg.force_jit_repromote_only_covered_bits(),
+              "2949 AC2: Soft auto → only_covered OFF (wholesale)");
+        CHECK(!reg.resolve_force_jit_repromote_only_covered(), "2949 AC2: resolve Soft false");
+    }
+
+    // AC2b: sandbox=off → wholesale even with production flag
+    {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        setenv("AURA_SANDBOX", "off", 1);
+        CHECK(!reg.resolve_force_jit_repromote_only_covered(), "2949 AC2: sandbox=off → wholesale");
+        unsetenv("AURA_SANDBOX");
+    }
+
+    // AC1: production → only_covered default; multi-bit partial clear
+    {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        unsetenv("AURA_SANDBOX");
+        unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+        clear_idle(reg); // clears sticky override → auto
+        CHECK(reg.resolve_force_jit_repromote_only_covered(),
+              "2949 AC1: production auto → only_covered ON");
+        CHECK(reg.force_jit_repromote_only_covered_bits(),
+              "2949 AC1: getter reports effective only_covered");
+
+        reg.set_force_jit_repromote_window(2);
+        // Do NOT call set_force_jit_repromote_only_covered_bits — use production default.
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+        const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+        const auto both = defuse_bit | env_bit;
+        CHECK((reg.reload_recovery_state().force_jit_regions_mask & both) == both,
+              "2949 AC1: multi-bit demoted");
+        reg.note_reemit_success_coverage(defuse_bit);
+        const auto part0 = reg.force_jit_repromote_partial_total();
+        reg.on_reemit_pipeline_call(1, 1);
+        reg.on_reemit_pipeline_call(1, 1); // window=2
+        const auto mask = reg.reload_recovery_state().force_jit_regions_mask;
+        CHECK((mask & defuse_bit) == 0, "2949 AC1: covered Defuse cleared");
+        CHECK((mask & env_bit) != 0, "2949 AC1: residual Env remains force-JIT");
+        CHECK(reg.force_jit_repromote_partial_total() == part0 + 1,
+              "2949 AC1: partial_total bumps when residual non-empty");
+    }
+
+    // AC: env=0 opt-out under production → wholesale
+    {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        setenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED", "0", 1);
+        clear_idle(reg);
+        CHECK(!reg.resolve_force_jit_repromote_only_covered(),
+              "2949 AC2: env=0 forces wholesale under production");
+        unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    }
+
+    // AC: sticky false under production → wholesale
+    {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        clear_idle(reg);
+        reg.set_force_jit_repromote_only_covered_bits(false);
+        CHECK(!reg.resolve_force_jit_repromote_only_covered(),
+              "2949 AC2: set(false) wholesale under production");
+    }
+
+    // AC3: quiet path mask==0 — streak stays 0 (existing short-circuit)
+    {
+        clear_idle(reg);
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        const auto part0 = reg.force_jit_repromote_partial_total();
+        const auto full0 = reg.force_jit_repromote_total();
+        reg.on_reemit_pipeline_call(2, 2);
+        CHECK(reg.force_jit_stable_successes() == 0, "2949 AC3: idle streak stays 0");
+        CHECK(reg.force_jit_repromote_partial_total() == part0, "2949 AC3: no partial when idle");
+        CHECK(reg.force_jit_repromote_total() == full0, "2949 AC3: no full when idle");
+    }
+
+    // AC4: on_reload_success still wholesale-clears
+    {
+        clear_idle(reg);
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        reg.set_force_jit_repromote_window(8);
+        reg.on_force_jit_for_reason(AotReloadFail::Region);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        CHECK(reg.reload_recovery_state().force_jit_regions_mask != 0, "2949 AC4: mask set");
+        reg.on_reload_success();
+        CHECK(reg.reload_recovery_state().force_jit_regions_mask == 0,
+              "2949 AC4: on_reload_success wholesale clear preserved");
+    }
+
+    // AC5 / AC6: query + source-cite
+    {
+        CompilerService cs;
+        clear_idle(reg);
+        CHECK(href(cs, "query:reload-recovery-state", "schema-2949") == 2949,
+              "2949 AC5: schema-2949");
+        CHECK(href(cs, "query:reload-recovery-state", "issue-2949") == 2949,
+              "2949 AC5: issue-2949");
+        CHECK(href(cs, "query:reload-recovery-state",
+                   "force-jit-repromote-only-covered-default-wired") == 1,
+              "2949 AC5: only-covered-default-wired");
+        CHECK(href(cs, "query:reload-recovery-state", "schema-2895") == 2895,
+              "2949 AC5: schema-2895 preserved");
+        CHECK(href(cs, "query:reload-recovery-state", "schema-2502") == 2502,
+              "2949 AC5: schema-2502 preserved");
+
+        const auto hh = read_file("src/compiler/hot_update_registry.hh");
+        const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto build = read_file("build.py");
+        CHECK(hh.find("2949") != std::string::npos || cpp.find("2949") != std::string::npos,
+              "2949 AC6: cites #2949");
+        CHECK(cpp.find("resolve_force_jit_repromote_only_covered") != std::string::npos,
+              "2949 AC6: resolve helper");
+        CHECK(cpp.find("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED") != std::string::npos,
+              "2949 AC6: env opt-out");
+        CHECK(mut.find("schema-2949") != std::string::npos, "2949 AC6: schema-2949 query");
+        CHECK(build.find("check_force_jit_repromote_only_covered_default_2949") !=
+                  std::string::npos,
+              "2949 AC6: build.py wires linter");
+        CHECK(read_file("docs/design/2949-force-jit-only-covered.md").empty(),
+              "2949 AC6: no docs/design/");
+    }
+
+    // Restore soft for subsequent suites.
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        0, std::memory_order_relaxed);
+    unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    unsetenv("AURA_SANDBOX");
+    clear_idle(reg);
 }
 
 } // namespace
@@ -441,9 +598,10 @@ int run_test_force_jit_repromote() {
     ac2895_query_surface();
     ac2895_storm_blocks();
     ac2895_source_cite();
+    ac2949_production_only_covered_default();
     if (g_failed)
         return 1;
-    std::println("force-jit re-promote #2502/#2895: OK ({} passed)", g_passed);
+    std::println("force-jit re-promote #2502/#2895/#2949: OK ({} passed)", g_passed);
     return 0;
 }
 

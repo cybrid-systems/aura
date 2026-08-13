@@ -109,10 +109,18 @@ public:
     // demoted mask via note_reemit_success_coverage.
     [[nodiscard]] std::uint64_t last_reemit_success_region_mask() const noexcept;
     void note_reemit_success_coverage(std::uint64_t covered_force_jit_bits) noexcept;
-    // When 1: on window match clear only force_jit_mask ∩ last_success_mask
-    // (partial re-promote). Default 0 preserves #2502 wholesale clear.
+    // Issue #2895 / #2949: partial re-promote (clear only force_mask ∩
+    // last_success). Effective policy via resolve (env + sticky +
+    // production default). set_* sticks an explicit value that wins over
+    // production auto (except env=0/1). Default after reset = auto:
+    // Soft/sandbox=off → wholesale (#2502); production → only_covered.
     void set_force_jit_repromote_only_covered_bits(bool only_covered) noexcept;
+    // Effective policy (resolved). For Agents / tests / snapshot.
     [[nodiscard]] bool force_jit_repromote_only_covered_bits() const noexcept;
+    // Pure resolve of only_covered policy (no atomics beyond sticky loads).
+    // Priority: env AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED=0/1 → sticky set
+    // → Soft/sandbox=off → production_defaults → false.
+    [[nodiscard]] bool resolve_force_jit_repromote_only_covered() const noexcept;
     [[nodiscard]] std::uint64_t force_jit_repromote_partial_total() const noexcept;
     // Test isolation: reset streak / totals / window defaults without
     // touching force_jit_regions_mask_ (use on_reload_success for that).
@@ -669,12 +677,16 @@ private:
     std::atomic<std::uint64_t> force_jit_repromote_total_{0};
     std::atomic<std::uint8_t> last_force_jit_repromote_reason_{0};
     std::atomic<std::uint64_t> last_force_jit_repromote_at_epoch_notify_{0};
-    // Issue #2895: coverage + partial re-promote (default off = #2502).
+    // Issue #2895 / #2949: coverage + partial re-promote.
     //   last_reemit_success_region_mask_: force-JIT reason bits covered by
     //     the last clean reemit success (stamped when successes > 0 and
     //     demoted != 0, or via note_reemit_success_coverage).
-    //   force_jit_repromote_only_covered_bits_: when 1, clear only
-    //     force_mask ∩ last_success (leave other demoted bits force-JIT).
+    //   force_jit_repromote_only_covered_bits_: sticky value when override
+    //     is set (1 = only_covered, 0 = wholesale). Ignored when
+    //     only_covered_override_ == 0 (auto → production default on).
+    //   force_jit_repromote_only_covered_override_: 0 = auto resolve
+    //     (#2949 production default only_covered; Soft wholesale);
+    //     1 = sticky bits_ wins (except env=0/1).
     //   force_jit_repromote_partial_total_: bumped when a window clear
     //     leaves a non-empty residual force mask.
     //   reemit_success_coverage_override_: when non-zero, success stamps
@@ -682,6 +694,7 @@ private:
     //     wholesale clear / reset — Agent / test injection).
     std::atomic<std::uint64_t> last_reemit_success_region_mask_{0};
     std::atomic<std::uint8_t> force_jit_repromote_only_covered_bits_{0};
+    std::atomic<std::uint8_t> force_jit_repromote_only_covered_override_{0};
     std::atomic<std::uint64_t> force_jit_repromote_partial_total_{0};
     std::atomic<std::uint64_t> reemit_success_coverage_override_{0};
     // Zero-cost when force_jit_regions_mask_ == 0 (idle path).
@@ -1142,10 +1155,14 @@ struct aura_reload_recovery_snapshot {
     std::int64_t schema_2502; // 2502 when wired
     // Issue #2895: last success coverage + partial re-promote (additive).
     std::int64_t last_reemit_success_region_mask;
-    std::int64_t force_jit_repromote_only_covered_bits;
+    std::int64_t force_jit_repromote_only_covered_bits; // effective (#2949 resolve)
     std::int64_t force_jit_repromote_partial_total;
     std::int64_t schema_2895; // 2895 when wired
     std::int64_t issue_2895;  // 2895
+    // Issue #2949: production default only_covered (additive sentinel).
+    std::int64_t force_jit_repromote_only_covered_default_wired; // 1 when #2949 resolve wired
+    std::int64_t schema_2949;                                    // 2949 when wired
+    std::int64_t issue_2949;                                     // 2949
     // Issue #2601: exhausted min-dirty retry closed loop (additive).
     std::int64_t aot_exhausted_min_dirty_retry_total;
     std::int64_t aot_exhausted_min_dirty_retry_success_total;
