@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**494** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**495** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 87 primitives (18%)
-- **core**: 362 primitives (73%)
+- **core**: 363 primitives (73%)
 - **internal-observable**: 44 primitives (9%)
 - **convenience**: 1 primitives (0%)
 
@@ -623,6 +623,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 - `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 
+## Type: (1)
+
+- `type:set-gradual-permissiveness` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
+
 ## Verify: (7)
 
 - `verify:assertion-failed` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -729,7 +733,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (362)
+### Core builtins (must remain primitive) (363)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1065,6 +1069,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `trunc` — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` — `src/compiler/evaluator_primitives_memory.cpp`
+- `type:set-gradual-permissiveness` — `src/compiler/evaluator_primitives_compile.cpp`
 - `type?` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `typecheck-current` — `src/compiler/evaluator_primitives_eval.cpp`
 - `typecheck-incremental` — `src/compiler/evaluator_primitives_eval.cpp`

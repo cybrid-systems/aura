@@ -637,6 +637,7 @@ public:
                                       std::uint64_t cache_epoch = 0, void* metrics = nullptr) {
         aura::compiler::TypeChecker tc(type_registry);
         tc.set_bidirectional_mode(bidirectional_mode_);
+        tc.set_gradual_permissiveness(gradual_permissiveness_);
         tc.set_cache_epoch(cache_epoch);
         if (metrics)
             tc.set_metrics(metrics);
@@ -650,10 +651,10 @@ public:
         // Issue #627: plumb cache_epoch + metrics so predicate
         // memo/epoch and bidirectional narrow counters stay
         // fresh post partial re-check / mutation.
-        auto result = aura::compiler::type_check_flat_pure(flat, pool, root, type_registry, diag,
-                                                           /*sigs=*/{}, /*module_src=*/{},
-                                                           /*strict=*/false, cache_epoch, metrics,
-                                                           bidirectional_mode_);
+        auto result = aura::compiler::type_check_flat_pure(
+            flat, pool, root, type_registry, diag,
+            /*sigs=*/{}, /*module_src=*/{},
+            /*strict=*/false, cache_epoch, metrics, bidirectional_mode_, gradual_permissiveness_);
         last_narrowing_evidence_ = result.narrow_evidence;
         // Apply deferred coercions now, before lowering reads
         // the AST. apply_coercion_map is idempotent — calling
@@ -701,6 +702,14 @@ public:
     void set_bidirectional_mode(bool b) noexcept { bidirectional_mode_ = b; }
     [[nodiscard]] bool bidirectional_mode() const noexcept { return bidirectional_mode_; }
 
+    // Issue #2992: AURA_GRADUAL_PERMISSIVENESS knob.
+    void set_gradual_permissiveness(aura::compiler::GradualPermissiveness p) noexcept {
+        gradual_permissiveness_ = p;
+    }
+    [[nodiscard]] aura::compiler::GradualPermissiveness gradual_permissiveness() const noexcept {
+        return gradual_permissiveness_;
+    }
+
 private:
     std::vector<aura::diag::Diagnostic> last_diags_;
     std::uint32_t last_narrowing_evidence_ = 0;
@@ -708,6 +717,8 @@ private:
     // behavior). CompilerService sets this from its own
     // bidirectional_mode_ before each check_before_lowering call.
     bool bidirectional_mode_ = true;
+    aura::compiler::GradualPermissiveness gradual_permissiveness_ =
+        aura::compiler::gradual_permissiveness_from_env();
 };
 
 // ── TypeSpecializationWrap — type-aware IR pass ────────────────

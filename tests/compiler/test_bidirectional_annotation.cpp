@@ -24,6 +24,11 @@
 //   AC4: backward compat — code without annotations still
 //        typechecks (the bidirectional check is opt-in per binding
 //        via TypeAnnotation presence)
+//   AC5 (#2992): (: x Int "hello") emits Warning in
+//        default non-strict Balanced mode (program still typechecks)
+//   AC6 (#2992): Dynamic ~ T stays silent
+//   AC7 (#2992): Int ↔ Float stays silent
+//   AC8 (#2992): permissive knob silences Int vs String
 //
 // Note: the top-level `infer_flat_bidirectional` orchestration
 // proposed in the issue body is a follow-up. This test
@@ -42,6 +47,7 @@ import aura.core.type;
 import aura.compiler.type_checker;
 import aura.compiler.service;
 import aura.diag;
+import aura.parser.parser;
 
 namespace test_bidirectional_annotation_detail {
 
@@ -111,8 +117,77 @@ int aura_issue_1413_run() {
         CHECK(ok, "AC4: plain let (no annotation) typechecks — backward compat");
     }
 
+    // ── #2992 helpers ──
+    auto infer_code = [](const std::string& code, aura::compiler::GradualPermissiveness gp,
+                         bool strict, aura::diag::DiagnosticCollector& diag) {
+        aura::core::TypeRegistry reg;
+        aura::compiler::TypeChecker tc(reg);
+        tc.set_strict(strict);
+        tc.set_gradual_permissiveness(gp);
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(code, flat, pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return;
+        flat.root = pr.root;
+        (void)tc.infer_flat(flat, pool, pr.root, diag);
+    };
+    auto has_kind_msg = [](const aura::diag::DiagnosticCollector& diag, aura::diag::ErrorKind kind,
+                           std::string_view needle) {
+        for (const auto& d : diag.diagnostics()) {
+            if (d.kind == kind && d.message.find(needle) != std::string::npos)
+                return true;
+        }
+        return false;
+    };
+
+    // ── AC5 (#2992): Int vs String → Warning in default non-strict ──
+    {
+        std::println("\n--- AC5 (#2992): Int vs String Warning (balanced) ---");
+        aura::diag::DiagnosticCollector diag;
+        infer_code("(: x Int \"hello\")", aura::compiler::GradualPermissiveness::Balanced,
+                   /*strict=*/false, diag);
+        CHECK(has_kind_msg(diag, aura::diag::ErrorKind::Warning, "incompatible ground types"),
+              "ac2992_1_int_string_warning: Int vs String produces Warning in default non-strict");
+    }
+
+    // ── AC6 (#2992): Dynamic ~ T stays permissive ──
+    {
+        std::println("\n--- AC6 (#2992): Dynamic ~ T silent ---");
+        aura::diag::DiagnosticCollector diag;
+        infer_code("(: x Any \"hello\")", aura::compiler::GradualPermissiveness::Balanced,
+                   /*strict=*/false, diag);
+        CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::Warning, "incompatible ground types"),
+              "ac2992_2_dynamic_permissive: Dynamic boundary stays fully permissive");
+    }
+
+    // ── AC7 (#2992): Int ↔ Float stays quiet ──
+    {
+        std::println("\n--- AC7 (#2992): Int ↔ Float silent ---");
+        aura::diag::DiagnosticCollector diag;
+        infer_code("(: x Float 1)", aura::compiler::GradualPermissiveness::Balanced,
+                   /*strict=*/false, diag);
+        CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::Warning, "incompatible ground types"),
+              "ac2992_3_numeric_quiet: intentional numeric coercion stays quiet");
+    }
+
+    // ── AC8 (#2992): permissive silences Int vs String ──
+    {
+        std::println("\n--- AC8 (#2992): permissive silences Int vs String ---");
+        aura::diag::DiagnosticCollector diag;
+        infer_code("(: x Int \"hello\")", aura::compiler::GradualPermissiveness::Permissive,
+                   /*strict=*/false, diag);
+        CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::Warning, "incompatible ground types"),
+              "ac2992_4_permissive_silent: permissive knob restores legacy silent ground "
+              "consistency");
+        CHECK(!has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "incompatible ground types"),
+              "AC8b: permissive does not elevate to TypeError");
+    }
+
     if (g_failed == 0) {
-        std::println("\n=== ALL 4 ACs PASS ===");
+        std::println("\n=== ALL 8 ACs PASS ===");
         return 0;
     }
     std::println("\n=== {} ACs FAILED ===", g_failed);

@@ -1697,7 +1697,11 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     }
 
     // Ground type consistency: any two ground/base types are CONSISTENT
-    // (they may need runtime coercion, but the type system allows it)
+    // (they may need runtime coercion, but the type system allows it).
+    // Issue #2992: do NOT flip this boolean — program continues. Agent
+    // feedback (Warning/TypeError) is emitted by
+    // InferenceEngine::maybe_report_ground_inconsistency after a
+    // successful unify at check/call sites.
     if (!reg_.is_var(t1) && !reg_.is_var(t2) && !f1 && !f2) {
         return true;
     }
@@ -3144,6 +3148,55 @@ bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
         return true;
     }
     return false;
+}
+
+// Issue #2992: Agent-facing diagnostic after a successful
+// consistent_unify of two concrete primitive grounds. Unify stays
+// true (program continues). Dynamic ~ T and Int ↔ Float stay quiet.
+void InferenceEngine::maybe_report_ground_inconsistency(TypeId inferred, TypeId expected) {
+    const auto mode = effective_gradual_permissiveness();
+    if (mode == GradualPermissiveness::Permissive)
+        return;
+    inferred = cs_.find(inferred);
+    expected = cs_.find(expected);
+    if (!inferred.valid() || !expected.valid() || inferred == expected)
+        return;
+    if (inferred == reg_.dynamic_type() || expected == reg_.dynamic_type())
+        return;
+    if (reg_.is_var(inferred) || reg_.is_var(expected))
+        return;
+    if (reg_.func_of(inferred) || reg_.func_of(expected))
+        return;
+    const auto from_tag = reg_.tag_of(inferred);
+    const auto to_tag = reg_.tag_of(expected);
+    auto is_prim = [](TypeTag t) {
+        return t == TypeTag::INT || t == TypeTag::BOOL || t == TypeTag::STRING ||
+               t == TypeTag::FLOAT || t == TypeTag::VOID;
+    };
+    if (!is_prim(from_tag) || !is_prim(to_tag) || from_tag == to_tag)
+        return;
+    // Intentional numeric allow-list stays silent / Note-level.
+    if ((from_tag == TypeTag::INT && to_tag == TypeTag::FLOAT) ||
+        (from_tag == TypeTag::FLOAT && to_tag == TypeTag::INT))
+        return;
+
+    auto msg = "incompatible ground types: expected " + std::string(reg_.format_type(expected)) +
+               ", got " + std::string(reg_.format_type(inferred));
+    const bool hard = (mode == GradualPermissiveness::Strict);
+    const auto kind = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+    diag_.report(Diagnostic(kind, std::move(msg), cur_loc_)
+                     .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"})
+                     .with_suggestion("add an explicit (cast ...) or fix the source type; "
+                                      "set AURA_GRADUAL_PERMISSIVENESS=permissive to silence"));
+    if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        if (hard)
+            m->gradual_ground_incompatible_error_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            m->gradual_ground_incompatible_warning_total.fetch_add(1, std::memory_order_relaxed);
+        m->gradual_permissiveness_mode.store(static_cast<std::uint64_t>(mode),
+                                             std::memory_order_relaxed);
+    }
 }
 
 void InferenceEngine::register_primitive(std::string name, std::vector<TypeId> param_types,
@@ -4934,13 +4987,17 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), saved_loc)
                                      .with_blame(BlameInfo{BlameParty::Caller, "", "compile"}));
                 }
-            } else if (arg_type == reg_.dynamic_type() && ft.args[i] != reg_.dynamic_type()) {
-                // Dynamic → Static: deferred CoercionNode (Issue #116)
-                auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
-                add_deferred_coercion(flat, v.id, static_cast<std::uint32_t>(i + 1), arg_id,
-                                      type_tag, ft.args[i].index, v.line, v.col,
-                                      cs_.active_mutation_id(), last_predicate_cond_id_,
-                                      last_if_narrowing_);
+            } else {
+                // Issue #2992: unify succeeded (incl. ground fallback).
+                maybe_report_ground_inconsistency(arg_type, ft.args[i]);
+                if (arg_type == reg_.dynamic_type() && ft.args[i] != reg_.dynamic_type()) {
+                    // Dynamic → Static: deferred CoercionNode (Issue #116)
+                    auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
+                    add_deferred_coercion(flat, v.id, static_cast<std::uint32_t>(i + 1), arg_id,
+                                          type_tag, ft.args[i].index, v.line, v.col,
+                                          cs_.active_mutation_id(), last_predicate_cond_id_,
+                                          last_if_narrowing_);
+                }
             }
         }
         std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
@@ -6948,9 +7005,11 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             auto var_type = env_.lookup(var_name);
             if (var_type.valid()) {
                 cs_.consistent_unify(val_type, var_type);
+                maybe_report_ground_inconsistency(val_type, var_type);
             }
             // Also unify with expected context
             cs_.consistent_unify(val_type, expected);
+            maybe_report_ground_inconsistency(val_type, expected);
         }
     } else if (v.tag == NodeTag::Define) {
         // (define name value): check value against expected if matched
@@ -7000,56 +7059,60 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                 diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
                                  .with_blame(BlameInfo{BlameParty::Annotation, "", "compile"}));
             }
-        } else if (inferred == reg_.dynamic_type() && expected != reg_.dynamic_type()) {
-            // Issue #691: skip coercion when env narrowing already matches expected.
-            bool narrowed_satisfies = false;
-            if (last_if_narrowing_ != 0 && v.tag == NodeTag::Variable) {
-                auto var_ty = env_.lookup(std::string(pool.resolve(v.sym_id)));
-                if (var_ty.valid()) {
-                    auto norm = cs_.normalize(var_ty);
-                    if (norm.index == expected.index || cs_.consistent_unify(norm, expected)) {
-                        narrowed_satisfies = true;
-                        if (cs_.metrics_) {
-                            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
-                            m->coercion_post_narrow_elim_opportunities_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            m->coercion_cast_elim_from_narrow_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            m->dead_coercion_elision_evidence_hits_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            m->dead_coercion_elision_narrowing_stable_paths_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            if (last_predicate_cond_id_ != 0 && !flat.all_mutations().empty()) {
-                                m->coercion_narrow_blame_chain_hits_total.fetch_add(
+        } else {
+            // Issue #2992: unify succeeded (incl. ground fallback).
+            maybe_report_ground_inconsistency(inferred, expected);
+            if (inferred == reg_.dynamic_type() && expected != reg_.dynamic_type()) {
+                // Issue #691: skip coercion when env narrowing already matches expected.
+                bool narrowed_satisfies = false;
+                if (last_if_narrowing_ != 0 && v.tag == NodeTag::Variable) {
+                    auto var_ty = env_.lookup(std::string(pool.resolve(v.sym_id)));
+                    if (var_ty.valid()) {
+                        auto norm = cs_.normalize(var_ty);
+                        if (norm.index == expected.index || cs_.consistent_unify(norm, expected)) {
+                            narrowed_satisfies = true;
+                            if (cs_.metrics_) {
+                                auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+                                m->coercion_post_narrow_elim_opportunities_total.fetch_add(
                                     1, std::memory_order_relaxed);
+                                m->coercion_cast_elim_from_narrow_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                m->dead_coercion_elision_evidence_hits_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                m->dead_coercion_elision_narrowing_stable_paths_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                if (last_predicate_cond_id_ != 0 && !flat.all_mutations().empty()) {
+                                    m->coercion_narrow_blame_chain_hits_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
                             }
                         }
                     }
                 }
-            }
-            if (!narrowed_satisfies) {
-                // Dynamic → Static boundary: consistent_unify succeeded because
-                // DYNAMIC is consistent with everything, but we need a runtime
-                // check at the boundary. Deferred CoercionNode (Issue #116).
-                auto type_tag = type_tag_for_coercion(expected, &reg_);
-                auto src_v = flat.get(id);
-                auto parent_id = flat.parent_of(id);
-                if (parent_id != aura::ast::NULL_NODE) {
-                    auto parent_v = flat.get(parent_id);
-                    for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
-                        if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
-                            add_deferred_coercion(flat, parent_id, static_cast<std::uint32_t>(ci),
-                                                  id, type_tag, expected.index, src_v.line,
-                                                  src_v.col, cs_.active_mutation_id(),
-                                                  last_predicate_cond_id_, last_if_narrowing_);
-                            break;
+                if (!narrowed_satisfies) {
+                    // Dynamic → Static boundary: consistent_unify succeeded because
+                    // DYNAMIC is consistent with everything, but we need a runtime
+                    // check at the boundary. Deferred CoercionNode (Issue #116).
+                    auto type_tag = type_tag_for_coercion(expected, &reg_);
+                    auto src_v = flat.get(id);
+                    auto parent_id = flat.parent_of(id);
+                    if (parent_id != aura::ast::NULL_NODE) {
+                        auto parent_v = flat.get(parent_id);
+                        for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
+                            if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
+                                add_deferred_coercion(
+                                    flat, parent_id, static_cast<std::uint32_t>(ci), id, type_tag,
+                                    expected.index, src_v.line, src_v.col, cs_.active_mutation_id(),
+                                    last_predicate_cond_id_, last_if_narrowing_);
+                                break;
+                            }
                         }
+                    } else {
+                        add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, id, type_tag,
+                                              expected.index, src_v.line, src_v.col,
+                                              cs_.active_mutation_id(), last_predicate_cond_id_,
+                                              last_if_narrowing_);
                     }
-                } else {
-                    add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, id, type_tag,
-                                          expected.index, src_v.line, src_v.col,
-                                          cs_.active_mutation_id(), last_predicate_cond_id_,
-                                          last_if_narrowing_);
                 }
             }
         }
@@ -7445,9 +7508,13 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
             diag_.report(Diagnostic(ErrorKind::TypeError, std::move(msg), cur_loc_)
                              .with_blame(BlameInfo{BlameParty::Caller, "", "compile"}));
         }
-    } else if (metrics_) {
-        static_cast<struct CompilerMetrics*>(metrics_)
-            ->compile_bidirectional_annotation_pass_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        maybe_report_ground_inconsistency(inferred, expected);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->compile_bidirectional_annotation_pass_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
     }
 }
 
@@ -7595,8 +7662,9 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     // to the pure function. The result struct bundles the
     // inferred type, deferred coercions, and per-call stats so
     // we don't need to call back into the engine.
-    auto r = type_check_flat_pure(flat, pool, node, types, diag, type_sigs_, type_module_src_,
-                                  strict_, cache_epoch_, metrics_, bidirectional_mode_);
+    auto r =
+        type_check_flat_pure(flat, pool, node, types, diag, type_sigs_, type_module_src_, strict_,
+                             cache_epoch_, metrics_, bidirectional_mode_, gradual_permissiveness_);
     stats_.cache_hits += r.cache_hits;
     stats_.cache_misses += r.cache_misses;
     stats_.stale_cache += r.stale_cache;
@@ -7653,15 +7721,17 @@ TypeCheckResult type_check_flat_pure(
     const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                              std::equal_to<>>& module_src,
     bool strict, std::uint64_t cache_epoch,
-    void* metrics,           // Issue #258: optional metrics pointer
-    bool bidirectional_mode) // Issue #283 f/u #5
+    void* metrics,                                // Issue #258: optional metrics pointer
+    bool bidirectional_mode,                      // Issue #283 f/u #5
+    GradualPermissiveness gradual_permissiveness) // Issue #2992
 {
     TypeCheckResult result;
     InferenceEngine engine(types, diag);
     engine.declared_modules_ = module_src;
     engine.declared_sigs_ = sigs;
-    engine.set_strict(strict);           // Issue #79: plumb strict mode
-    engine.set_cache_epoch(cache_epoch); // Issue #168
+    engine.set_strict(strict);                                 // Issue #79: plumb strict mode
+    engine.set_gradual_permissiveness(gradual_permissiveness); // Issue #2992
+    engine.set_cache_epoch(cache_epoch);                       // Issue #168
     // Issue #283 follow-up #5: plumb bidirectional_mode flag
     // from caller (default true to match post-#283 behavior).
     engine.set_bidirectional_mode(bidirectional_mode);
@@ -8332,8 +8402,9 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     InferenceEngine engine(types, diag);
     engine.declared_modules_ = type_module_src_;
     engine.declared_sigs_ = type_sigs_;
-    engine.set_strict(strict_);                         // Issue #79: plumb strict mode
-    engine.set_cache_epoch(cache_epoch_);               // Issue #168
+    engine.set_strict(strict_);                                 // Issue #79: plumb strict mode
+    engine.set_gradual_permissiveness(gradual_permissiveness_); // Issue #2992
+    engine.set_cache_epoch(cache_epoch_);                       // Issue #168
     engine.set_metrics(metrics_);                       // Issue #537: provenance refresh metrics
     engine.set_bidirectional_mode(bidirectional_mode_); // Issue #627
     engine.bind_declared_sigs();

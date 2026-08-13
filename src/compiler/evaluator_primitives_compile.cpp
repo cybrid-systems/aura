@@ -5732,6 +5732,25 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
             ev.string_heap_.push_back(mode_str);
             EvalValue mode_ev = make_string(mode_idx);
 
+            std::uint64_t ground_warn = 0;
+            std::uint64_t ground_err = 0;
+            std::uint64_t gradual_mode = 1;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                ground_warn =
+                    m->gradual_ground_incompatible_warning_total.load(std::memory_order_relaxed);
+                ground_err =
+                    m->gradual_ground_incompatible_error_total.load(std::memory_order_relaxed);
+                gradual_mode = m->gradual_permissiveness_mode.load(std::memory_order_relaxed);
+            }
+            GradualPermissiveness gp = GradualPermissiveness::Balanced;
+            if (auto* svc = static_cast<CompilerService*>(ev.compiler_service()))
+                gp = svc->gradual_permissiveness();
+            else
+                gp = static_cast<GradualPermissiveness>(gradual_mode > 2 ? 1 : gradual_mode);
+            auto gp_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::string(gradual_permissiveness_name(gp)));
+            EvalValue gp_ev = make_string(gp_idx);
+
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"mode", mode_ev},
                 {"check-calls", make_int(static_cast<std::int64_t>(check_call))},
@@ -5750,9 +5769,49 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
                 {"match-check-wired", make_int(1)},
                 {"schema-2348", make_int(2348)},
                 {"issue-2348", make_int(2348)},
+                // Issue #2992: ground-type permissiveness knob + diagnostics
+                {"gradual-permissiveness", gp_ev},
+                {"gradual-permissiveness-mode", make_int(static_cast<std::int64_t>(gp))},
+                {"ground-incompatible-warning-total",
+                 make_int(static_cast<std::int64_t>(ground_warn))},
+                {"ground-incompatible-error-total",
+                 make_int(static_cast<std::int64_t>(ground_err))},
+                {"gradual-permissiveness-wired", make_int(1)},
+                {"schema-2992", make_int(2992)},
+                {"issue-2992", make_int(2992)},
             };
             return build_kv_hash(ev, kv);
         });
+
+    // Issue #2992: (type:set-gradual-permissiveness 0|1|2|"permissive"|"balanced"|"strict")
+    // Default Balanced. Returns #t on success. Documented Agent knob for
+    // AURA_GRADUAL_PERMISSIVENESS (env still wins as process default).
+    add("type:set-gradual-permissiveness", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        auto* svc = static_cast<CompilerService*>(ev.compiler_service());
+        if (!svc || a.empty())
+            return make_bool(false);
+        GradualPermissiveness p = GradualPermissiveness::Balanced;
+        if (is_int(a[0])) {
+            const auto v = as_int(a[0]);
+            if (v == 0)
+                p = GradualPermissiveness::Permissive;
+            else if (v == 1)
+                p = GradualPermissiveness::Balanced;
+            else if (v == 2)
+                p = GradualPermissiveness::Strict;
+            else
+                return make_bool(false);
+        } else if (is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_bool(false);
+            p = parse_gradual_permissiveness(ev.string_heap_[idx]);
+        } else {
+            return make_bool(false);
+        }
+        svc->set_gradual_permissiveness(p);
+        return make_bool(true);
+    });
 }
 aura::ast::FlatAST* CompilePrims::pick_macro_flat(Evaluator& ev) {
     return ev.current_flat() ? ev.current_flat() : ev.workspace_flat();
