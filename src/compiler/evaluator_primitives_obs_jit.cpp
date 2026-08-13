@@ -11483,6 +11483,20 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("issue-2721", 2721);
                 insert_kv("schema-2699", 2699);
                 insert_kv("issue-2699", 2699);
+                // Issue #2901 residual re-arm + #2954 per-Fiber decision.
+                insert_kv("steal-safety-residual-rearm-race-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_residual_rearm_race_total_v_read()));
+                insert_kv("steal-decision-contention-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_decision_contention_total_v_read()));
+                insert_kv("steal-decision-per-fiber-wired",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_decision_per_fiber_wired_v_read()));
+                insert_kv("schema-2901", 2901);
+                insert_kv("issue-2901", 2901);
+                insert_kv("schema-2954", 2954);
+                insert_kv("issue-2954", 2954);
             }
             // Issue #2667: production-only hard residual GcDefer on
             // steal-complete + PanicCheckpoint rebind. Bumped when

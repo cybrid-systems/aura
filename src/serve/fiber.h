@@ -296,6 +296,21 @@ public:
         return resume_safety_ticket_;
     }
 
+    // Issue #2954: per-Fiber steal decision window (replaces process-wide
+    // g_steal_safety_decision_mu for #2901 residual hard-AND + ticket stamp).
+    // Concurrent steals of *different* fibers no longer serialize. Same-fiber
+    // concurrent decision is rare; try_begin CAS-spins with contention counter
+    // owned by steal_safety. Happy path: one CAS acquire + one release store.
+    [[nodiscard]] bool try_begin_steal_decision() noexcept {
+        std::uint8_t expected = 0;
+        return steal_decision_busy_.compare_exchange_strong(expected, 1, std::memory_order_acq_rel,
+                                                            std::memory_order_acquire);
+    }
+    void end_steal_decision() noexcept { steal_decision_busy_.store(0, std::memory_order_release); }
+    [[nodiscard]] bool steal_decision_busy() const noexcept {
+        return steal_decision_busy_.load(std::memory_order_acquire) != 0;
+    }
+
     // Issue #2184: publish fiber-visible held/defuse mirrors (Guard
     // enter/exit, checkpoint push/pop, resume sync). Seqlock write.
     void publish_mutation_safety_mirrors(std::size_t depth, bool held,
@@ -1198,6 +1213,9 @@ private:
     // Independent of LayoutStamp restamp (#2510) — no dual-compute conflict.
     std::uint64_t resume_safety_ticket_ = 0;
     bool has_resume_safety_ticket_ = false;
+    // Issue #2954: exclusive decision window for residual hard-AND + stamp
+    // on this victim only (0 = free, 1 = busy).
+    std::atomic<std::uint8_t> steal_decision_busy_{0};
     static std::atomic<std::uint64_t> mutation_steal_snapshot_mismatch_total_;
     // Issue #2310: see bump_steal_snapshot_mismatch_force_deopt().
     // Distinct from mutation_steal_snapshot_mismatch_total_ (observed-only).

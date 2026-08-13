@@ -38,7 +38,11 @@ def main() -> int:
     must("2901", "AC1", hdr)
     must("g_steal_safety_residual_rearm_race_total", "AC1", hdr)
     must("g_steal_safety_between_clear_and_hard_and_hook", "AC1", hdr)
-    must("g_steal_safety_decision_mu", "AC1", cpp)
+    # Issue #2954: decision window is per-Fiber CAS (not process-wide mutex).
+    if "std::mutex g_steal_safety_decision_mu" in cpp or "lock_guard" in cpp:
+        fails.append("AC1: process-wide decision mutex / lock_guard still present (#2954)")
+    if "try_begin_steal_decision" not in cpp and "StealDecisionGuard" not in cpp:
+        fails.append("AC1: missing per-Fiber decision window (try_begin / StealDecisionGuard)")
     must("evaluate_residual_hard_and", "AC1", cpp)
     must("residual_rearm_race", "AC1", cpp)
 

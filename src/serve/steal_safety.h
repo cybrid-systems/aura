@@ -103,6 +103,13 @@ inline std::atomic<std::uint32_t> g_steal_safety_residual_hard_and_wired{1};
 inline std::atomic<std::uint64_t> g_steal_safety_residual_rearm_race_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_residual_rearm_race_wired{1};
 inline constexpr int kStealSafetyResidualRearmRaceIssue = 2901;
+// Issue #2954: per-Fiber decision protocol (replaces process-wide mutex).
+// contention_total bumps when try_begin_steal_decision CAS fails (same
+// victim concurrent decision). per_fiber_wired=1 when Ok path uses Fiber
+// CAS instead of g_steal_safety_decision_mu.
+inline std::atomic<std::uint64_t> g_steal_decision_contention_total{0};
+inline std::atomic<std::uint32_t> g_steal_decision_per_fiber_wired{1};
+inline constexpr int kStealDecisionPerFiberIssue = 2954;
 
 // Issue #2929: SnapshotConsistent fail counter (inconsistency path before
 // residual hard-AND). Residual arms re-use residual_* counters above as
@@ -151,6 +158,13 @@ steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
 [[nodiscard]] inline std::uint32_t steal_safety_residual_rearm_race_wired_v_read() noexcept {
     return g_steal_safety_residual_rearm_race_wired.load(std::memory_order_relaxed);
 }
+// Issue #2954: per-Fiber decision observability.
+[[nodiscard]] inline std::uint64_t steal_decision_contention_total_v_read() noexcept {
+    return g_steal_decision_contention_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t steal_decision_per_fiber_wired_v_read() noexcept {
+    return g_steal_decision_per_fiber_wired.load(std::memory_order_relaxed);
+}
 // Issue #2929: StealInvariant table accessors.
 [[nodiscard]] inline std::uint64_t steal_safety_invariant_snapshot_fail_total_v_read() noexcept {
     return g_steal_safety_invariant_snapshot_fail_total.load(std::memory_order_relaxed);
@@ -192,8 +206,8 @@ steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
 StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept;
 
 // Issue #2901: test seam — optional hook invoked after on_steal_complete
-// clear and before residual hard-AND / stamp (under the decision lock).
-// Used to inject concurrent residual re-arm between clear and stamp.
+// clear and before residual hard-AND / stamp (under the per-Fiber decision
+// window). Used to inject concurrent residual re-arm between clear and stamp.
 // Nullptr default (production); never called on the quiet path when unset.
 // Set only from unit tests; cleared after use.
 inline thread_local void (*g_steal_safety_between_clear_and_hard_and_hook)() noexcept = nullptr;
@@ -212,6 +226,7 @@ inline void clear_steal_safety_transaction_for_test() noexcept {
     g_steal_safety_residual_rearm_race_total.store(0, std::memory_order_relaxed);
     g_steal_safety_invariant_snapshot_fail_total.store(0, std::memory_order_relaxed);
     g_steal_safety_last_reject_invariant_bits.store(0, std::memory_order_relaxed);
+    g_steal_decision_contention_total.store(0, std::memory_order_relaxed);
     g_steal_safety_between_clear_and_hard_and_hook = nullptr;
 }
 
