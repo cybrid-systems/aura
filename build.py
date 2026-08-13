@@ -2181,6 +2181,20 @@ def cmd_lint():
             "Issue #2951 cross-eval hard owner-scoped linter failed — run python3 scripts/coverage/checks/check_cross_eval_hard_owner_scoped_2951.py"
         )
         return r
+    # Issue #2952: production storm-clear auto coverage-verify min-dirty
+    # for residual force bits (refine #2895/#2601/#2544). Soft observe-
+    # only; env=0 opt-out. Extends test_exhausted_min_dirty_reemit
+    # (#81967); no docs/design/ (#1655).
+    cvm_script = COVERAGE_CHECKS / "check_coverage_verify_min_dirty_2952.py"
+    if not cvm_script.exists():
+        fail(f"missing {cvm_script}")
+        return 1
+    r = run([sys.executable, str(cvm_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2952 coverage-verify min-dirty linter failed — run python3 scripts/coverage/checks/check_coverage_verify_min_dirty_2952.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -5429,6 +5443,26 @@ def cmd_pure_anon_bg_remount_2950_coverage():
         fail("pure-anon bg remount (#2950) coverage contract rows failed")
         return 1
     ok("pure-anon bg remount (#2950) coverage clean")
+    return 0
+
+
+def cmd_coverage_verify_min_dirty_2952_coverage():
+    """Issue #2952: storm-clear + exhaust auto coverage-verify min-dirty.
+
+    Production residual (force & ~last_success) auto-seeds min-dirty +
+    one #2601-gated reemit on storm clear / force drain. Soft observe-
+    only; env=0 opt-out; schema-2952.
+    """
+    print(f"{B}=== coverage-verify min-dirty coverage (#2952) ==={N}")
+    script = COVERAGE_CHECKS / "check_coverage_verify_min_dirty_2952.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("coverage-verify min-dirty (#2952) coverage contract rows failed")
+        return 1
+    ok("coverage-verify min-dirty (#2952) coverage clean")
     return 0
 
 
@@ -13168,6 +13202,7 @@ def main():
         "closure-anon-captured-remount-2691": cmd_closure_anon_captured_remount_2691_coverage,
         "pure-anon-sync-remount-budget-2850": cmd_pure_anon_sync_remount_budget_2850_coverage,
         "pure-anon-adaptive-budget-2893": cmd_pure_anon_adaptive_budget_2893_coverage,
+        "coverage-verify-min-dirty-2952": cmd_coverage_verify_min_dirty_2952_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

@@ -199,10 +199,15 @@ void HotUpdateRegistry::maybe_storm_clear_health_pass() noexcept {
             reemit_pipeline_returned_n = aura_reemit_aot_for_dirty(v);
         drove_recovery = true;
     } else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0) {
-        // #2601 one-shot retry. Bridge owns decide_exhausted_min_dirty_retry
-        // + aura_reemit_aot_for_dirty. Success is observable via the
-        // existing aot_exhausted_min_dirty_retry_success_total counter.
-        aura_hot_update_maybe_retry_exhausted_min_dirty();
+        // Issue #2952: production residual coverage-verify may re-seed
+        // min-dirty for force & ~last_success and drive one #2601 retry.
+        // Soft / residual==0 → falls through to existing #2601 path.
+        if (!maybe_coverage_verify_min_dirty()) {
+            // #2601 one-shot retry. Bridge owns decide_exhausted_min_dirty_retry
+            // + aura_reemit_aot_for_dirty. Success is observable via the
+            // existing aot_exhausted_min_dirty_retry_success_total counter.
+            aura_hot_update_maybe_retry_exhausted_min_dirty();
+        }
         drove_recovery = true;
     } else if (last_region_mask_from_dirty_.load(std::memory_order_relaxed) != 0) {
         // #2502 cascade trigger: dirty-listener pipeline. Success via
@@ -229,6 +234,113 @@ void HotUpdateRegistry::reset_storm_clear_health_pass_for_test() noexcept {
     // Issue #2669: clear body-driven counter on test reset.
     reemit_storm_clear_health_pass_reemit_driven_total_.store(0, std::memory_order_relaxed);
     prev_storm_level_.store(StormLevel::None, std::memory_order_relaxed);
+}
+
+// Issue #2952: production default coverage-verify min-dirty on residual
+// force-JIT bits after storm clear / force drain. Priority mirrors #2949:
+//   1. AURA_COVERAGE_VERIFY_MIN_DIRTY=0 → off (opt-out)
+//   2. AURA_COVERAGE_VERIFY_MIN_DIRTY=1 → on (force)
+//   3. Soft / AURA_SANDBOX=off → off (observe residual only)
+//   4. production_defaults_active → on
+//   5. else off
+bool HotUpdateRegistry::resolve_coverage_verify_min_dirty_enabled() const noexcept {
+    const char* e = std::getenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+    if (e != nullptr && e[0] == '0' && e[1] == '\0')
+        return false;
+    if (e != nullptr && e[0] == '1' && e[1] == '\0')
+        return true;
+    const char* sb = std::getenv("AURA_SANDBOX");
+    if (sb != nullptr && sb[0] != '\0' && std::strcmp(sb, "off") == 0)
+        return false;
+    if (aura_production_defaults_active_probe() != 0)
+        return true;
+    return false;
+}
+
+void HotUpdateRegistry::reset_coverage_verify_for_test() noexcept {
+    coverage_verify_scheduled_total_.store(0, std::memory_order_relaxed);
+    coverage_verify_success_total_.store(0, std::memory_order_relaxed);
+    coverage_verify_residual_uncovered_total_.store(0, std::memory_order_relaxed);
+    coverage_verify_storm_skip_total_.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2952: auto-seed min-dirty for residual = force & ~last_success and
+// drive one #2601 retry. Soft / mask idle → zero-cost (residual observe only
+// under Soft when residual != 0). Returns true when scheduled (seed + drive
+// attempted via #2601 machinery). Cap/backoff/storm-skip from #2601 respected.
+bool HotUpdateRegistry::maybe_coverage_verify_min_dirty() noexcept {
+    const auto force = force_jit_regions_mask_.load(std::memory_order_relaxed);
+    if (force == 0)
+        return false; // idle zero-cost
+    // Deferred reemit already scheduled — leave that path sole owner.
+    if (has_deferred_reemit())
+        return false;
+
+    const auto last_cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
+    const auto residual = force & ~last_cov;
+    if (residual == 0)
+        return false; // fully covered — #2502/#2895 re-promote owns clear
+
+    // Soft / opt-out: observe residual only (no auto seed).
+    if (!resolve_coverage_verify_min_dirty_enabled()) {
+        coverage_verify_residual_uncovered_total_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    // Storm re-entry / still active → skip + counter; do not drop force mask.
+    if (current_storm_level() != StormLevel::None || hard_storm_active()) {
+        coverage_verify_storm_skip_total_.fetch_add(1, std::memory_order_relaxed);
+        coverage_verify_residual_uncovered_total_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    // Seed min-dirty for residual bits only (reuse #2544 region_mask + cascade).
+    on_region_mask_from_dirty(residual);
+    on_cascade_reemit_trigger(/*candidates_hint=*/1);
+
+    // Ensure #2601 has budget for at least this pass. Cap/backoff still gate
+    // the actual retry via decide_exhausted_min_dirty_retry(). When budget is
+    // empty after prior cap hits, re-seed full cap with last_at=0 so the first
+    // coverage-verify attempt is immediate (mirrors on_exhausted_min_dirty_queue).
+    const auto attempts_left =
+        exhausted_min_dirty_retry_attempts_left_.load(std::memory_order_relaxed);
+    if (attempts_left == 0) {
+        const auto cap = exhausted_min_dirty_retry_attempts_cap_.load(std::memory_order_relaxed);
+        if (cap == 0)
+            return false; // policy disabled
+        exhausted_min_dirty_retry_attempts_left_.store(cap, std::memory_order_relaxed);
+        exhausted_min_dirty_retry_last_at_ms_.store(0, std::memory_order_relaxed);
+        // Preserve last_reason when set; else stamp last force-JIT reason.
+        if (exhausted_min_dirty_retry_last_reason_.load(std::memory_order_relaxed) == 0) {
+            exhausted_min_dirty_retry_last_reason_.store(
+                last_force_jit_reason_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        }
+    }
+
+    coverage_verify_residual_uncovered_total_.fetch_add(1, std::memory_order_relaxed);
+    coverage_verify_scheduled_total_.fetch_add(1, std::memory_order_relaxed);
+
+    // Gate drive through #2601 decide (cap/backoff/storm). Drive reemit
+    // here so coverage-verify-success sees the pipeline return value
+    // (bridge driver updates CompilerMetrics only — not registry counters).
+    const auto decision = decide_exhausted_min_dirty_retry();
+    if (decision == ExhaustedMinDirtyRetryDecision::StormActive) {
+        coverage_verify_storm_skip_total_.fetch_add(1, std::memory_order_relaxed);
+        return true; // seeded; drive deferred until next quiet pass
+    }
+    if (decision != ExhaustedMinDirtyRetryDecision::Retry) {
+        // Backoff / no-attempts / no-force: seeded; lazy #2601 hook fires later.
+        return true;
+    }
+
+    consume_exhausted_min_dirty_retry_attempt();
+    aot_exhausted_min_dirty_retry_total_.fetch_add(1, std::memory_order_relaxed);
+    const auto n = aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+    if (n > 0) {
+        aot_exhausted_min_dirty_retry_success_total_.fetch_add(1, std::memory_order_relaxed);
+        coverage_verify_success_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    return true;
 }
 
 void HotUpdateRegistry::on_reload_success() noexcept {
@@ -1055,6 +1167,18 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
     out->force_jit_repromote_only_covered_default_wired = 1;
     out->schema_2949 = 2949;
     out->issue_2949 = 2949;
+    // Issue #2952: coverage-verify min-dirty closed loop (additive).
+    out->coverage_verify_scheduled_total =
+        static_cast<std::int64_t>(reg.coverage_verify_scheduled_total());
+    out->coverage_verify_success_total =
+        static_cast<std::int64_t>(reg.coverage_verify_success_total());
+    out->coverage_verify_residual_uncovered_total =
+        static_cast<std::int64_t>(reg.coverage_verify_residual_uncovered_total());
+    out->coverage_verify_storm_skip_total =
+        static_cast<std::int64_t>(reg.coverage_verify_storm_skip_total());
+    out->coverage_verify_min_dirty_wired = 1;
+    out->schema_2952 = 2952;
+    out->issue_2952 = 2952;
     // Issue #2601: exhausted min-dirty retry closed loop.
     out->aot_exhausted_min_dirty_retry_total =
         static_cast<std::int64_t>(reg.aot_exhausted_min_dirty_retry_total());
@@ -1283,8 +1407,10 @@ void HotUpdateRegistry::drain_pending_recovery(std::uint8_t why) noexcept {
         }
     }
     if (p.kinds & kPendingForceJit) {
-        // #2601 one-shot retry.
-        aura_hot_update_maybe_retry_exhausted_min_dirty();
+        // Issue #2952: production residual coverage-verify may re-seed
+        // min-dirty + drive; else #2601 one-shot retry.
+        if (!maybe_coverage_verify_min_dirty())
+            aura_hot_update_maybe_retry_exhausted_min_dirty();
         g_pending_recovery_success_total_atomic().fetch_add(1, std::memory_order_relaxed);
     }
     if (p.kinds & kPendingRegionMask) {
@@ -1744,6 +1870,18 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
     // Issue #2669: body-driven pass counter (any recovery branch drove work).
     s.reemit_storm_clear_health_pass_reemit_driven_total = static_cast<std::int64_t>(
         reemit_storm_clear_health_pass_reemit_driven_total_.load(std::memory_order_relaxed));
+    // Issue #2952: coverage-verify min-dirty counters.
+    s.coverage_verify_scheduled_total =
+        static_cast<std::int64_t>(coverage_verify_scheduled_total_.load(std::memory_order_relaxed));
+    s.coverage_verify_success_total =
+        static_cast<std::int64_t>(coverage_verify_success_total_.load(std::memory_order_relaxed));
+    s.coverage_verify_residual_uncovered_total = static_cast<std::int64_t>(
+        coverage_verify_residual_uncovered_total_.load(std::memory_order_relaxed));
+    s.coverage_verify_storm_skip_total = static_cast<std::int64_t>(
+        coverage_verify_storm_skip_total_.load(std::memory_order_relaxed));
+    s.coverage_verify_min_dirty_wired = 1;
+    s.schema_2952 = 2952;
+    s.issue_2952 = 2952;
     // schema_2601 / issue_2601 / schema_2639 / issue_2639 / schema_2669 / issue_2669 are constexpr
     // defaults.
     return s;

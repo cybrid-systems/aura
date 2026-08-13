@@ -217,6 +217,14 @@ struct aura_reload_recovery_snapshot {
     std::int64_t force_jit_repromote_only_covered_default_wired;
     std::int64_t schema_2949;
     std::int64_t issue_2949;
+    // Issue #2952: coverage-verify min-dirty (lockstep with header)
+    std::int64_t coverage_verify_scheduled_total;
+    std::int64_t coverage_verify_success_total;
+    std::int64_t coverage_verify_residual_uncovered_total;
+    std::int64_t coverage_verify_storm_skip_total;
+    std::int64_t coverage_verify_min_dirty_wired;
+    std::int64_t schema_2952;
+    std::int64_t issue_2952;
     // Issue #2601: exhausted min-dirty retry closed loop
     std::int64_t aot_exhausted_min_dirty_retry_total;
     std::int64_t aot_exhausted_min_dirty_retry_success_total;
@@ -8059,6 +8067,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                           rs.force_jit_repromote_only_covered_default_wired);
                 insert_kv("schema-2949", rs.schema_2949);
                 insert_kv("issue-2949", rs.issue_2949);
+                // Issue #2952: coverage-verify min-dirty closed loop.
+                insert_kv("coverage-verify-scheduled-total", rs.coverage_verify_scheduled_total);
+                insert_kv("coverage-verify-success-total", rs.coverage_verify_success_total);
+                insert_kv("coverage-verify-residual-uncovered-total",
+                          rs.coverage_verify_residual_uncovered_total);
+                insert_kv("coverage-verify-storm-skip-total", rs.coverage_verify_storm_skip_total);
+                insert_kv("coverage-verify-min-dirty-wired", rs.coverage_verify_min_dirty_wired);
+                insert_kv("schema-2952", rs.schema_2952);
+                insert_kv("issue-2952", rs.issue_2952);
                 // Issue #2927: reason→bit map cross-link on hot-update surface.
                 insert_kv("last-mapped-bit", rs.last_force_jit_mapped_bit);
                 insert_kv("force-jit-reason-bit-map-wired", rs.force_jit_reason_bit_map_wired);
@@ -8094,8 +8111,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto reload_recovery_builder = [&ev](const auto&) -> EvalValue {
             aura_reload_recovery_snapshot rs{};
             aura_hot_update_reload_recovery_get_snapshot(&rs);
-            // 64→128: #2502 adds re-promote keys (schema additive; power-of-2).
-            auto* ht = FlatHashTable::create(128);
+            // 128→256: #2952 coverage-verify keys (schema additive; power-of-2).
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -8133,6 +8150,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #2544: exhausted min-dirty reemit lineage (additive).
             insert_kv("schema-2544", 2544);
             insert_kv("issue-2544", 2544);
+            // Issue #2601: exhausted min-dirty retry closed loop (additive).
+            insert_kv("schema-2601", rs.schema_2601 != 0 ? rs.schema_2601 : 2601);
+            insert_kv("issue-2601", 2601);
             // ReloadRecoveryState 5-field core
             insert_kv("attempts-left", rs.attempts_left);
             insert_kv("force-jit-regions-mask", rs.force_jit_regions_mask);
@@ -8175,6 +8195,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                       rs.force_jit_repromote_only_covered_default_wired);
             insert_kv("schema-2949", rs.schema_2949);
             insert_kv("issue-2949", rs.issue_2949);
+            // Issue #2952: coverage-verify min-dirty closed loop.
+            insert_kv("coverage-verify-scheduled-total", rs.coverage_verify_scheduled_total);
+            insert_kv("coverage-verify-success-total", rs.coverage_verify_success_total);
+            insert_kv("coverage-verify-residual-uncovered-total",
+                      rs.coverage_verify_residual_uncovered_total);
+            insert_kv("coverage-verify-storm-skip-total", rs.coverage_verify_storm_skip_total);
+            insert_kv("coverage-verify-min-dirty-wired", rs.coverage_verify_min_dirty_wired);
+            insert_kv("schema-2952", rs.schema_2952);
+            insert_kv("issue-2952", rs.issue_2952);
             // Issue #2927: reason→bit map SSOT (additive; preserve 2367/2845).
             insert_kv("last-mapped-bit", rs.last_force_jit_mapped_bit);
             insert_kv("force-jit-reason-bit-map-wired", rs.force_jit_reason_bit_map_wired);

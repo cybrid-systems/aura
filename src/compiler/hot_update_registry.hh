@@ -561,6 +561,14 @@ public:
         std::int64_t reemit_storm_clear_health_pass_reemit_driven_total = 0;
         std::int64_t schema_2669 = 2669;
         std::int64_t issue_2669 = 2669;
+        // Issue #2952: coverage-verify min-dirty on storm clear / drain.
+        std::int64_t coverage_verify_scheduled_total = 0;
+        std::int64_t coverage_verify_success_total = 0;
+        std::int64_t coverage_verify_residual_uncovered_total = 0;
+        std::int64_t coverage_verify_storm_skip_total = 0;
+        std::int64_t coverage_verify_min_dirty_wired = 1;
+        std::int64_t schema_2952 = 2952;
+        std::int64_t issue_2952 = 2952;
     };
     [[nodiscard]] Snapshot snapshot() const noexcept;
 
@@ -734,6 +742,16 @@ private:
     // recovery body (any of: deferred reemit / #2601 retry / cascade trigger).
     // Distinguishes body-driven passes from the #2639 counter-only baseline.
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_reemit_driven_total_{0};
+
+    // Issue #2952: auto coverage-verify min-dirty on storm clear / force drain.
+    //   scheduled: residual uncovered + production → min-dirty re-seed + drive
+    //   success: reemit pipeline accepted (n>0) after schedule
+    //   residual_uncovered: residual observed (Soft observe + production schedule)
+    //   storm_skip: residual path aborted because storm re-active mid-pass
+    std::atomic<std::uint64_t> coverage_verify_scheduled_total_{0};
+    std::atomic<std::uint64_t> coverage_verify_success_total_{0};
+    std::atomic<std::uint64_t> coverage_verify_residual_uncovered_total_{0};
+    std::atomic<std::uint64_t> coverage_verify_storm_skip_total_{0};
 
     // Issue #2014: sliding window deopt rate.
     std::atomic<std::uint64_t> deopt_window_start_ms_{0};
@@ -910,6 +928,29 @@ public:
     }
     // Test isolation: reset storm-clear health pass state.
     void reset_storm_clear_health_pass_for_test() noexcept;
+
+    // Issue #2952: production storm-clear / force-drain auto coverage-verify
+    // min-dirty for residual force bits (force & ~last_reemit_success).
+    // Soft / mask idle → zero extra work (observe residual-uncovered only).
+    // Returns true when a min-dirty reemit was scheduled (seed + #2601 drive).
+    // Cap/backoff/storm-skip from #2601 respected; no silent drop on re-entry.
+    bool maybe_coverage_verify_min_dirty() noexcept;
+    // Pure resolve: env AURA_COVERAGE_VERIFY_MIN_DIRTY=0/1 → Soft/sandbox=off
+    // → production_defaults → false.
+    [[nodiscard]] bool resolve_coverage_verify_min_dirty_enabled() const noexcept;
+    [[nodiscard]] std::uint64_t coverage_verify_scheduled_total() const noexcept {
+        return coverage_verify_scheduled_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t coverage_verify_success_total() const noexcept {
+        return coverage_verify_success_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t coverage_verify_residual_uncovered_total() const noexcept {
+        return coverage_verify_residual_uncovered_total_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t coverage_verify_storm_skip_total() const noexcept {
+        return coverage_verify_storm_skip_total_.load(std::memory_order_relaxed);
+    }
+    void reset_coverage_verify_for_test() noexcept;
 
     // Issue #2367: force-JIT observability (paired with recovery query).
     [[nodiscard]] std::uint64_t force_jit_for_reason_total() const noexcept {
@@ -1163,6 +1204,14 @@ struct aura_reload_recovery_snapshot {
     std::int64_t force_jit_repromote_only_covered_default_wired; // 1 when #2949 resolve wired
     std::int64_t schema_2949;                                    // 2949 when wired
     std::int64_t issue_2949;                                     // 2949
+    // Issue #2952: coverage-verify min-dirty closed loop (additive).
+    std::int64_t coverage_verify_scheduled_total;
+    std::int64_t coverage_verify_success_total;
+    std::int64_t coverage_verify_residual_uncovered_total;
+    std::int64_t coverage_verify_storm_skip_total;
+    std::int64_t coverage_verify_min_dirty_wired; // 1 when #2952 path wired
+    std::int64_t schema_2952;                     // 2952 when wired
+    std::int64_t issue_2952;                      // 2952
     // Issue #2601: exhausted min-dirty retry closed loop (additive).
     std::int64_t aot_exhausted_min_dirty_retry_total;
     std::int64_t aot_exhausted_min_dirty_retry_success_total;
