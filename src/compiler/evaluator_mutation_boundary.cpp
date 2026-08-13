@@ -72,6 +72,7 @@ module;
 #include "serve/multi_fiber_mailbox.h"       // Issue #2347: clear recv boundary reject window
 #include "compiler/shape_profiler.h"         // Issue #2255: current_global_shape_version
 #include "orch/security_schedule_gate.h"     // Issue #2630: evaluate_security_schedule admit
+#include "compiler/mutation_concurrency_health.hh" // Issue #2985: health admit gate
 
 #include <cassert>
 #include <chrono>
@@ -1268,6 +1269,68 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
 // under the held locks.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Issue #2985: fill live concurrency-health snapshot from existing
+// process counters (same sources as query:mutation-concurrency-health).
+// Test override (armed) skips live loads so inject/clear is hermetic.
+static MutationConcurrencyHealthSnapshot
+capture_mutation_concurrency_health_snapshot(Evaluator& ev) noexcept {
+    if (mutation_concurrency_health_admit_override_armed())
+        return mutation_concurrency_health_admit_override_snapshot();
+    MutationConcurrencyHealthSnapshot snap;
+    snap.steal_force_deopt_total = aura::serve::Fiber::steal_snapshot_mismatch_force_deopt_total();
+    snap.steal_hard_fail_total = aura::serve::Fiber::steal_snapshot_hard_fail_total();
+    snap.residual_defer_cleared_on_steal_total =
+        aura::gc_hooks::residual_defer_cleared_on_steal_total();
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+        snap.residual_hard_fail_total =
+            m->mutation_boundary_residual_defer_hard_fail_total.load(std::memory_order_relaxed) +
+            m->residual_defer_steal_hard_fail_total.load(std::memory_order_relaxed);
+        snap.hold_slo_violation_total =
+            m->mutation_hold_slo_violation_total.load(std::memory_order_relaxed);
+        snap.hold_over_budget_total =
+            m->mutation_hold_over_budget_total.load(std::memory_order_relaxed);
+    }
+    snap.densify_consistency_fail_total =
+        aura::core::densify_consistency::densify_consistency_fail_total();
+    snap.last_densify_envframe_ok =
+        aura::core::densify_consistency::last_densify_envframe_ok() ? 1 : 0;
+    snap.last_densify_closure_remount_ok =
+        aura::core::densify_consistency::last_densify_closure_remount_ok() ? 1 : 0;
+    using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+    snap.mailbox_defer_starvation_total =
+        g_mf_mailbox_stats.mailbox_defer_starvation_total.load(std::memory_order_relaxed);
+    snap.mailbox_deferred_depth =
+        g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed);
+    snap.mailbox_deferred_mutation_hold_total =
+        g_mf_mailbox_stats.mailbox_deferred_mutation_hold_total.load(std::memory_order_relaxed);
+    snap.mailbox_hold_exit_starvation_total =
+        g_mf_mailbox_stats.mailbox_hold_exit_starvation_total.load(std::memory_order_relaxed);
+    snap.mailbox_hold_starvation_hard_total =
+        g_mf_mailbox_stats.mailbox_hold_starvation_hard_total.load(std::memory_order_relaxed);
+    snap.agent_throttle_for_mailbox_starvation =
+        g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.load(std::memory_order_relaxed);
+    snap.mailbox_under_boundary_wait_us_max =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    return snap;
+}
+
+// Issue #2985: after hold-budget / security-schedule. Happy path (full
+// health) is snapshot + score only — no extra stores (AC3).
+static std::optional<aura::core::AuraError>
+maybe_reject_mutation_concurrency_health(Evaluator& ev, bool region_concurrent) noexcept {
+    const auto snap = capture_mutation_concurrency_health_snapshot(ev);
+    const auto h = compute_mutation_concurrency_health(snap);
+    const auto act = mutation_concurrency_health_admit_action(h, region_concurrent);
+    note_mutation_concurrency_health_admit(act);
+    if (act != MutationConcurrencyHealthAdmitAction::Reject)
+        return std::nullopt;
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+        m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+    return aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                 std::string("AdmissionRejected: concurrency-health:") +
+                                     std::string(h.force_reason));
+}
+
 // ── try_acquire (#1547 / #1556 / #1590) ──────────────────────────────────
 aura::core::AuraResult<std::unique_ptr<Evaluator::MutationBoundaryGuard>>
 Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pending_count,
@@ -1345,6 +1408,11 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         }
         // Soft path: fall through (metric-only — counters always bump).
     }
+    // Issue #2985: mutation-concurrency-health auto-reject (after
+    // hold-budget / security-schedule). GlobalExclusive: hard reason
+    // or health_bp < budget. Soft: observe only.
+    if (auto herr = maybe_reject_mutation_concurrency_health(ev, /*region_concurrent=*/false))
+        return std::unexpected(std::move(*herr));
     // Issue #1547 / #1618 / #1628: typed ResourceQuotaExceeded —
     // never PanicCheckpoint / runtime_error on quota reject.
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
@@ -1466,6 +1534,10 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                 aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded, *reason));
         }
     }
+    // Issue #2985: region-concurrent — hard force_reason only
+    // (budget-only still admits cone-disjoint mutates).
+    if (auto herr = maybe_reject_mutation_concurrency_health(ev, /*region_concurrent=*/true))
+        return std::unexpected(std::move(*herr));
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
         m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
     if (auto err = ev.check_mutation_quota(pending_count)) {

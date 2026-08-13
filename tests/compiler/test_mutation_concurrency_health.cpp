@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/mutation_concurrency_health.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
@@ -23,6 +24,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -192,7 +194,8 @@ static void ac4_query_surface() {
 // ── AC5: source-cite ──
 static void ac5_source_cite() {
     std::println("\n--- AC5: source-cite ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
     const auto hh = read_file("src/compiler/mutation_concurrency_health.hh");
     const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
     CHECK(q.find("query:mutation-concurrency-health") != std::string::npos,
@@ -208,6 +211,154 @@ static void ac5_source_cite() {
     CHECK(obs.find("query:mutation-concurrency-health") != std::string::npos, "AC5: catalog entry");
 }
 
+// ── Issue #2985: production admit close-loop ──
+
+static void ac2985_1_prod_hard_reason_rejects() {
+    std::println("\n--- #2985 AC1: production + steal-mismatch → try_acquire rejects ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    MutationConcurrencyHealthSnapshot steal;
+    steal.steal_force_deopt_total = 1;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(steal);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    bool ok = true;
+    const auto rej0 =
+        aura::compiler::g_mutation_concurrency_health_reject_total.load(std::memory_order_relaxed);
+    auto gr = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(!gr.has_value(), "2985 AC1: production try_acquire rejects");
+    if (!gr.has_value()) {
+        CHECK(gr.error().message.find("concurrency-health") != std::string::npos,
+              "2985 AC1: concurrency-health reason");
+    }
+    CHECK(aura::compiler::g_mutation_concurrency_health_reject_total.load(
+              std::memory_order_relaxed) == rej0 + 1,
+          "2985 AC1: reject_total +1");
+
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    const auto obs0 = aura::compiler::g_mutation_concurrency_health_soft_observe_total.load(
+        std::memory_order_relaxed);
+    const auto rej1 =
+        aura::compiler::g_mutation_concurrency_health_reject_total.load(std::memory_order_relaxed);
+    auto grs = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(grs.has_value(), "2985 AC1: Soft admits (metric-only)");
+    CHECK(aura::compiler::g_mutation_concurrency_health_soft_observe_total.load(
+              std::memory_order_relaxed) == obs0 + 1,
+          "2985 AC1: Soft observe +1");
+    CHECK(aura::compiler::g_mutation_concurrency_health_reject_total.load(
+              std::memory_order_relaxed) == rej1,
+          "2985 AC1: Soft does not bump reject");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+static void ac2985_2_under_budget_rejects() {
+    std::println("\n--- #2985 AC2: production + health_bp < budget → reject ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    MutationConcurrencyHealthSnapshot soft;
+    soft.hold_slo_violation_total = 10;
+    soft.mailbox_defer_starvation_total = 8;
+    const auto scored = compute_mutation_concurrency_health(soft);
+    CHECK(scored.health_bp < scored.health_budget_bp, "2985 AC2: stacked soft < budget");
+    CHECK(scored.force_reason_code >= 4, "2985 AC2: soft force_reason only");
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(soft);
+    CompilerService cs;
+    bool ok = true;
+    auto gr = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+    CHECK(!gr.has_value(), "2985 AC2: under-budget rejects GlobalExclusive");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+static void ac2985_3_happy_zero_extra() {
+    std::println("\n--- #2985 AC3: happy path → no extra admit stores ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    const auto rej0 =
+        aura::compiler::g_mutation_concurrency_health_reject_total.load(std::memory_order_relaxed);
+    const auto obs0 = aura::compiler::g_mutation_concurrency_health_soft_observe_total.load(
+        std::memory_order_relaxed);
+    CompilerService cs;
+    bool ok = true;
+    auto gr = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+    CHECK(gr.has_value(), "2985 AC3: full health admits");
+    CHECK(aura::compiler::g_mutation_concurrency_health_reject_total.load(
+              std::memory_order_relaxed) == rej0,
+          "2985 AC3: reject_total unchanged");
+    CHECK(aura::compiler::g_mutation_concurrency_health_soft_observe_total.load(
+              std::memory_order_relaxed) == obs0,
+          "2985 AC3: observe_total unchanged");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+static void ac2985_4_additive_query() {
+    std::println("\n--- #2985 AC4: additive query keys; score non-regressing ---");
+    CompilerService cs;
+    CHECK(href_int(cs, "query:mutation-concurrency-health", "schema-2985") == 2985,
+          "2985 AC4: schema-2985");
+    CHECK(href_int(cs, "query:mutation-concurrency-health", "issue-2985") == 2985,
+          "2985 AC4: issue-2985");
+    CHECK(href_int(cs, "query:mutation-concurrency-health",
+                   "mutation-concurrency-health-admit-wired") == 1,
+          "2985 AC4: admit-wired");
+    CHECK(href_int(cs, "query:mutation-concurrency-health",
+                   "mutation-concurrency-health-reject-total") >= 0,
+          "2985 AC4: reject-total");
+    CHECK(href_int(cs, "query:mutation-concurrency-health", "schema-2379") == 2379,
+          "2985 AC4: schema-2379");
+    MutationConcurrencyHealthSnapshot s;
+    auto r = compute_mutation_concurrency_health(s);
+    CHECK(r.health_bp == 10000 && r.force_reason_code == 0, "2985 AC4: pure score unchanged");
+}
+
+static void ac2985_5_inject_clear_resumes() {
+    std::println("\n--- #2985 AC5: inject deny; clear → admit resumes ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    MutationConcurrencyHealthSnapshot residual;
+    residual.residual_hard_fail_total = 1;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(residual);
+    CompilerService cs;
+    bool ok = true;
+    auto deny =
+        aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+    CHECK(!deny.has_value(), "2985 AC5: residual inject denies");
+    MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    auto allow =
+        aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+    CHECK(allow.has_value(), "2985 AC5: clear/vacuous override resumes admit");
+    aura::compiler::clear_mutation_concurrency_health_admit_snapshot_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+static void ac2985_6_source_and_linter() {
+    std::println("\n--- #2985 AC6: source-cite + linter ---");
+    const auto hh = read_file("src/compiler/mutation_concurrency_health.hh");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_mutation_concurrency_health.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mutation_concurrency_health_admit_2985.py");
+    const auto build = read_file("build.py");
+    CHECK(hh.find("Issue #2985") != std::string::npos, "2985 AC6: header cites");
+    CHECK(hh.find("set_mutation_concurrency_health_soft_for_test") != std::string::npos,
+          "2985 AC6: Soft-for-test");
+    CHECK(mb.find("Issue #2985") != std::string::npos, "2985 AC6: try_acquire cites");
+    CHECK(mb.find("maybe_reject_mutation_concurrency_health") != std::string::npos,
+          "2985 AC6: admit helper");
+    CHECK(t.find("ac2985_1_prod_hard_reason_rejects") != std::string::npos, "2985 AC6: AC1 test");
+    CHECK(!lint.empty() && lint.find("2985") != std::string::npos, "2985 AC6: linter");
+    CHECK(build.find("check_mutation_concurrency_health_admit_2985") != std::string::npos,
+          "2985 AC6: build.py");
+    CHECK(read_file("docs/design/2985-concurrency-health-admit.md").empty(),
+          "2985 AC6: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_2985.cpp").empty(), "2985 AC6: no invent test");
+}
+
 } // namespace
 
 int run_test_mutation_concurrency_health() {
@@ -217,7 +368,14 @@ int run_test_mutation_concurrency_health() {
     ac3_pure_identical();
     ac4_query_surface();
     ac5_source_cite();
-    std::println("\n=== #2379: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2985: production health admit close-loop ===");
+    ac2985_1_prod_hard_reason_rejects();
+    ac2985_2_under_budget_rejects();
+    ac2985_3_happy_zero_extra();
+    ac2985_4_additive_query();
+    ac2985_5_inject_clear_resumes();
+    ac2985_6_source_and_linter();
+    std::println("\n=== #2379 + #2985: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
