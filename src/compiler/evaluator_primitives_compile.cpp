@@ -2644,8 +2644,8 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
                 wrapped = static_cast<std::int64_t>(
                     m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed));
             }
-            // #1931 adds AC wire keys — create(64) headroom.
-            auto* ht = FlatHashTable::create(64);
+            // #1931 adds AC wire keys; #2986 adds fail-closed — create(128).
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2712,6 +2712,26 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             insert_kv("exception-auto-rollback-wired", 1); // uncaught_exceptions dtor flip
             insert_kv("run-under-mutation-guard-helper", 1);
             insert_kv("active", 1);
+            // Issue #2986: mutate:* Guard coverage + production naked fail-closed.
+            insert_kv("schema-2986", 2986);
+            insert_kv("issue-2986", 2986);
+            insert_kv("naked-mutate-fail-closed-wired", 1);
+            insert_kv("mutate-guard-coverage-linter-wired", 1);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                insert_kv("naked-mutate-attempt",
+                          static_cast<std::int64_t>(
+                              m->naked_mutate_attempt.load(std::memory_order_relaxed)));
+                insert_kv("mutate-guard-enforced",
+                          static_cast<std::int64_t>(
+                              m->mutate_guard_enforced.load(std::memory_order_relaxed)));
+                insert_kv("naked-mutate-fail-closed-total",
+                          static_cast<std::int64_t>(
+                              m->naked_mutate_fail_closed_total.load(std::memory_order_relaxed)));
+            } else {
+                insert_kv("naked-mutate-attempt", 0);
+                insert_kv("mutate-guard-enforced", 0);
+                insert_kv("naked-mutate-fail-closed-total", 0);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

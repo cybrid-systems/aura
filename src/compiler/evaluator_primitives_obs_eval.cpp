@@ -8739,7 +8739,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
         "query:mutation-boundary-coverage-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(64);
+                auto* ht = FlatHashTable::create(128);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -8784,6 +8784,8 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
             };
             const std::int64_t naked = m ? load(m->naked_mutate_attempt) : 0;
+            const std::int64_t naked_fail = m ? load(m->naked_mutate_fail_closed_total) : 0;
+            const std::int64_t guard_enforced = m ? load(m->mutate_guard_enforced) : 0;
             const std::int64_t boundary_depth =
                 static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
             const std::int64_t boundary_held =
@@ -8797,6 +8799,12 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t extreme_total = m ? load(m->long_mutation_extreme_total) : 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"naked-mutate-attempt", make_int(naked)},
+                {"mutate-guard-enforced", make_int(guard_enforced)},
+                {"naked-mutate-fail-closed-total", make_int(naked_fail)},
+                {"naked-mutate-fail-closed-wired",
+                 make_int(m ? load(m->naked_mutate_fail_closed_wired) : 1)},
+                {"schema-2986", make_int(2986)},
+                {"issue-2986", make_int(2986)},
                 {"boundary-depth", make_int(boundary_depth)},
                 {"boundary-held", make_int(boundary_held)},
                 {"threshold-us", make_int(threshold_us)},

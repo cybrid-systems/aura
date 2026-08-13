@@ -757,146 +757,165 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // capability effect + workspace isolation BEFORE the body runs; records
     // concrete op name for Agent audit. PrimMeta.required_effects is stamped
     // with effect_enforced_in_body=true so dispatch does not double-audit.
-    auto add_mutate = [&](std::string name, auto fn) {
+    // Issue #2986: optional guard_exempt marks metadata/policy setters that
+    // intentionally skip MutationBoundaryGuard (paired with // GUARD_EXEMPT:).
+    auto add_mutate = [&](std::string name, auto fn, bool guard_exempt = false) {
         // Capture concrete op name for check_and_record_effect / isolation.
         auto op_name = std::make_shared<std::string>(std::move(name));
-        add(*op_name, [&ev, mev, fn, op_name](std::span<const EvalValue> a) -> EvalValue {
-            using aura::compiler::security::kCapMutate;
-            using aura::compiler::security::kCapWildcard;
-            using aura::compiler::security::kEffectMutate;
-            const char* op = op_name->c_str();
+        add(*op_name,
+            [&ev, mev, fn, op_name, guard_exempt](std::span<const EvalValue> a) -> EvalValue {
+                using aura::compiler::security::kCapMutate;
+                using aura::compiler::security::kCapWildcard;
+                using aura::compiler::security::kEffectMutate;
+                const char* op = op_name->c_str();
 
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->mutate_force_effect_check_total.fetch_add(1, std::memory_order_relaxed);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->mutate_force_effect_check_total.fetch_add(1, std::memory_order_relaxed);
 
-            // Issue #1565 / #2052: effect matrix + provenance audit FIRST so
-            // denied paths always hit the mutation audit ring + sandbox metrics
-            // (legacy string gate alone used to skip them).
-            // Best-effort target_node from first int / StableNodeRef arg.
-            aura::ast::NodeId target_node = 0;
-            std::uint64_t ref_tenant = 0;
-            if (!a.empty()) {
-                if (is_int(a[0])) {
-                    target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-                } else if (is_pair(a[0])) {
-                    // Packed StableNodeRef: (id . (gen . …)) optionally with tenant.
-                    const auto outer = as_pair_idx(a[0]);
-                    if (outer < ev.pairs_.size() && is_int(ev.pairs_[outer].car)) {
-                        target_node = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
-                        auto cdr = ev.pairs_[outer].cdr;
-                        if (is_pair(cdr)) {
-                            const auto inner = as_pair_idx(cdr);
-                            if (inner < ev.pairs_.size()) {
-                                auto c2 = ev.pairs_[inner].cdr;
-                                if (is_pair(c2)) {
-                                    const auto tidx = as_pair_idx(c2);
-                                    if (tidx < ev.pairs_.size() && is_int(ev.pairs_[tidx].car))
-                                        ref_tenant =
-                                            static_cast<std::uint64_t>(as_int(ev.pairs_[tidx].car));
-                                } else if (is_int(c2) && (as_int(c2) <= 0 || as_int(c2) >= 65536)) {
-                                    ref_tenant = static_cast<std::uint64_t>(as_int(c2));
+                // Issue #1565 / #2052: effect matrix + provenance audit FIRST so
+                // denied paths always hit the mutation audit ring + sandbox metrics
+                // (legacy string gate alone used to skip them).
+                // Best-effort target_node from first int / StableNodeRef arg.
+                aura::ast::NodeId target_node = 0;
+                std::uint64_t ref_tenant = 0;
+                if (!a.empty()) {
+                    if (is_int(a[0])) {
+                        target_node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                    } else if (is_pair(a[0])) {
+                        // Packed StableNodeRef: (id . (gen . …)) optionally with tenant.
+                        const auto outer = as_pair_idx(a[0]);
+                        if (outer < ev.pairs_.size() && is_int(ev.pairs_[outer].car)) {
+                            target_node =
+                                static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
+                            auto cdr = ev.pairs_[outer].cdr;
+                            if (is_pair(cdr)) {
+                                const auto inner = as_pair_idx(cdr);
+                                if (inner < ev.pairs_.size()) {
+                                    auto c2 = ev.pairs_[inner].cdr;
+                                    if (is_pair(c2)) {
+                                        const auto tidx = as_pair_idx(c2);
+                                        if (tidx < ev.pairs_.size() && is_int(ev.pairs_[tidx].car))
+                                            ref_tenant = static_cast<std::uint64_t>(
+                                                as_int(ev.pairs_[tidx].car));
+                                    } else if (is_int(c2) &&
+                                               (as_int(c2) <= 0 || as_int(c2) >= 65536)) {
+                                        ref_tenant = static_cast<std::uint64_t>(as_int(c2));
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // Issue #1566 / #2052 / Issue #2658: multi-tenant workspace isolation +
-            // capability check. Issue #2942: concrete NodeId targets MUST go
-            // through require_effect_for_node_id (principal stamp) or
-            // require_effect_on_ref (stamped / foreign tenant) — never bare
-            // 2/3-arg require_effect with default ref_tenant=0 (late isolation
-            // window). Under Strict, also refuse when last hygiene stamp
-            // belongs to a foreign tenant (parity with mutate:atomic-batch
-            // #1878) — the strict heuristic must run BEFORE the gate so
-            // ref_tenant is correct for on_ref.
-            const bool strict_iso =
-                (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
-            if (strict_iso && ref_tenant == 0) {
-                const auto self = ev.capability_tenant_id();
-                if (self != 0) {
-                    const auto& hs = aura::core::provenance::g_provenance_tracker().last_hygiene;
-                    if (hs.tenant_id != 0 && hs.tenant_id != self)
-                        ref_tenant = hs.tenant_id;
-                }
-            }
-            // Issue #2942: pick mandated entry by target shape.
-            bool effect_ok = false;
-            if (target_node != 0) {
-                if (ref_tenant != 0) {
-                    // Foreign or arg-stamped tenant — do not re-stamp principal.
-                    StableNodeRef gate_ref{};
-                    gate_ref.id = target_node;
-                    gate_ref.tenant_id = ref_tenant;
-                    effect_ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
-                                                         op, gate_ref);
-                } else {
-                    // NodeId-only: stamp current principal then on_ref.
-                    effect_ok = ev.require_effect_for_node_id(
-                        static_cast<std::uint16_t>(kEffectMutate), op, target_node);
-                }
-            } else {
-                // No concrete workspace NodeId (e.g. global mutate ops) —
-                // documented non-target path keeps 2-arg require_effect.
-                effect_ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), op);
-            }
-            if (!effect_ok) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    // Heuristic: distinguish capability vs isolation deny for metric
-                    // downstream. require_effect* runs isolation first (auto-gate) then
-                    // capability check — if ref_tenant is foreign, the deny is
-                    // isolation; otherwise capability.
-                    if (ref_tenant != 0 && ref_tenant != ev.capability_tenant_id()) {
-                        m->mutate_force_isolation_denied_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                        return mev(
-                            "tenant-isolation-denied",
-                            std::string("cross-tenant ") + op +
-                                " denied by WorkspaceIsolationPolicy (#1566/#2052/#2658/#2942)");
+                // Issue #1566 / #2052 / Issue #2658: multi-tenant workspace isolation +
+                // capability check. Issue #2942: concrete NodeId targets MUST go
+                // through require_effect_for_node_id (principal stamp) or
+                // require_effect_on_ref (stamped / foreign tenant) — never bare
+                // 2/3-arg require_effect with default ref_tenant=0 (late isolation
+                // window). Under Strict, also refuse when last hygiene stamp
+                // belongs to a foreign tenant (parity with mutate:atomic-batch
+                // #1878) — the strict heuristic must run BEFORE the gate so
+                // ref_tenant is correct for on_ref.
+                const bool strict_iso =
+                    (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
+                if (strict_iso && ref_tenant == 0) {
+                    const auto self = ev.capability_tenant_id();
+                    if (self != 0) {
+                        const auto& hs =
+                            aura::core::provenance::g_provenance_tracker().last_hygiene;
+                        if (hs.tenant_id != 0 && hs.tenant_id != self)
+                            ref_tenant = hs.tenant_id;
                     }
-                    m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
-                    // Issue #2076: unified Agent-readable deny reason (merr pair).
-                    return mev("capability-denied",
-                               aura::compiler::security::format_deny_reason(
-                                   kEffectMutate, ev.capability_tenant_id(), op));
                 }
-                return mev("capability-denied", "mutate capability denied under sandbox");
-            }
-
-            // Issue #676: legacy string capability gate (still required when
-            // sandbox is on but effect mode is Off — require_effect's effect
-            // check always-allows under Off, so the string gate is the backstop
-            // that keeps legacy sandbox-mode enforcement active).
-            if (ev.sandbox_mode() && !ev.has_capability(kCapMutate) &&
-                !ev.has_capability(kCapWildcard)) {
-                ev.bump_capability_denial();
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
-                    m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
-                }
-                return mev("capability-denied", "mutate capability required in sandbox mode");
-            }
-
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->mutate_force_effect_allowed_total.fetch_add(1, std::memory_order_relaxed);
-
-            std::uint64_t wraps_before = 0;
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                wraps_before =
-                    m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
-            auto result = fn(a);
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                const auto wraps_after =
-                    m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
-                if (wraps_after == wraps_before) {
-                    m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2942: pick mandated entry by target shape.
+                bool effect_ok = false;
+                if (target_node != 0) {
+                    if (ref_tenant != 0) {
+                        // Foreign or arg-stamped tenant — do not re-stamp principal.
+                        StableNodeRef gate_ref{};
+                        gate_ref.id = target_node;
+                        gate_ref.tenant_id = ref_tenant;
+                        effect_ok = ev.require_effect_on_ref(
+                            static_cast<std::uint16_t>(kEffectMutate), op, gate_ref);
+                    } else {
+                        // NodeId-only: stamp current principal then on_ref.
+                        effect_ok = ev.require_effect_for_node_id(
+                            static_cast<std::uint16_t>(kEffectMutate), op, target_node);
+                    }
                 } else {
-                    m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
+                    // No concrete workspace NodeId (e.g. global mutate ops) —
+                    // documented non-target path keeps 2-arg require_effect.
+                    effect_ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), op);
                 }
-            }
-            return result;
-        });
+                if (!effect_ok) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                        // Heuristic: distinguish capability vs isolation deny for metric
+                        // downstream. require_effect* runs isolation first (auto-gate) then
+                        // capability check — if ref_tenant is foreign, the deny is
+                        // isolation; otherwise capability.
+                        if (ref_tenant != 0 && ref_tenant != ev.capability_tenant_id()) {
+                            m->mutate_force_isolation_denied_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            return mev("tenant-isolation-denied",
+                                       std::string("cross-tenant ") + op +
+                                           " denied by WorkspaceIsolationPolicy "
+                                           "(#1566/#2052/#2658/#2942)");
+                        }
+                        m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+                        // Issue #2076: unified Agent-readable deny reason (merr pair).
+                        return mev("capability-denied",
+                                   aura::compiler::security::format_deny_reason(
+                                       kEffectMutate, ev.capability_tenant_id(), op));
+                    }
+                    return mev("capability-denied", "mutate capability denied under sandbox");
+                }
+
+                // Issue #676: legacy string capability gate (still required when
+                // sandbox is on but effect mode is Off — require_effect's effect
+                // check always-allows under Off, so the string gate is the backstop
+                // that keeps legacy sandbox-mode enforcement active).
+                if (ev.sandbox_mode() && !ev.has_capability(kCapMutate) &&
+                    !ev.has_capability(kCapWildcard)) {
+                    ev.bump_capability_denial();
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                        m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+                        m->capability_denial_mutate_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    return mev("capability-denied", "mutate capability required in sandbox mode");
+                }
+
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->mutate_force_effect_allowed_total.fetch_add(1, std::memory_order_relaxed);
+
+                std::uint64_t wraps_before = 0;
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    wraps_before =
+                        m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+                auto result = fn(a);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    const auto wraps_after =
+                        m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+                    if (wraps_after == wraps_before) {
+                        m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                        // Issue #2986: production + non-exempt naked body → hard
+                        // fail-closed (counter + optional outermost mark-failed).
+                        // Happy Guard path does not load production_defaults.
+                        if (!guard_exempt &&
+                            aura::compiler::typed_audit::production_defaults_active()) {
+                            m->naked_mutate_fail_closed_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                            ev.mark_outermost_mutation_failed();
+                            return mev(
+                                "naked-mutate",
+                                std::string(op) +
+                                    " skipped MutationBoundaryGuard under production (#2986)");
+                        }
+                    } else {
+                        m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                return result;
+            });
         // Issue #2057: declare Effect contract on PrimMeta (body already
         // enforces — effect_enforced_in_body avoids double require_effect).
         ::aura::compiler::PrimMeta meta{};
@@ -907,6 +926,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         meta.safety_flags = ::aura::compiler::kPrimSafetyMutates;
         meta.category = "security-gated";
         meta.doc = "mutate:* via add_mutate (#2052/#2057 AURA_SIDE_EFFECT_PRIM)";
+        meta.guard_exempt = guard_exempt;
+        if (guard_exempt)
+            meta.doc = "GUARD_EXEMPT: metadata/policy mutate:* (#2986)";
         ev.primitives().set_meta_for_name(*op_name, std::move(meta));
     };
 
@@ -915,6 +937,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // author_fingerprint stamping. 0 = system. Does not require a
     // MutationBoundaryGuard (metadata only — not an AST mutate).
     // SECURITY_EXEMPT: metadata-only agent identity stamp (#2057/#2152 allowlist).
+    // GUARD_EXEMPT: metadata-only agent identity stamp (#2986). PrimMeta.guard_exempt.
     add("mutate:set-agent-fingerprint", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (mutate:set-agent-fingerprint <int>)");
@@ -925,8 +948,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     {
         ::aura::compiler::PrimMeta ex{};
         ex.security_exempt = true;
+        ex.guard_exempt = true;
         ex.pure = false;
-        ex.doc = "SECURITY_EXEMPT: metadata-only agent fingerprint (#2152)";
+        ex.doc = "SECURITY_EXEMPT / GUARD_EXEMPT: metadata-only agent fingerprint (#2152/#2986)";
         ev.primitives().set_meta_for_name("mutate:set-agent-fingerprint", std::move(ex));
     }
 
@@ -2390,47 +2414,51 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // node-id still has the same generation, #f otherwise.
     // Useful for agents that want to do an early validity check
     // before invoking a more expensive mutation.
-    add_mutate("mutate:check-stable-ref", [&ev, mev, safe_str](const auto& a) -> EvalValue {
-        // Wave1 B-09: pin adopts outer Guard exclusive — no nested shared.
-        auto pin = ev.pin_workspace_flat();
-        if (!is_pair(a[0]))
-            return mev("bad-arg", "usage: (mutate:check-stable-ref (id . gen))");
-        if (!pin)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto& flat = *pin;
-        // Unpack the (id . gen) pair
-        auto outer = as_pair_idx(a[0]);
-        if (!is_int(ev.pairs_[outer].car))
-            return mev("bad-arg", "stable-ref car must be a node id (int)");
-        auto node = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
-        auto cdr = ev.pairs_[outer].cdr;
-        if (!is_pair(cdr))
-            return mev("bad-arg", "stable-ref cdr must be a pair (gen . nil)");
-        auto inner = as_pair_idx(cdr);
-        if (!is_int(ev.pairs_[inner].car))
-            return mev("bad-arg", "stable-ref gen must be an int");
-        auto captured_gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
-        // Issue #391: consult the StaleRefPolicy. The
-        // validity check is identical; the policy only
-        // affects whether a stale ref blocks the mutate
-        // (Strict) or just bumps the warned counter
-        // (Warn). Disabled skips both.
-        bool valid = (node < flat.size()) && (flat.generation() == captured_gen);
-        if (!valid) {
-            const auto policy = ev.get_stale_ref_policy();
-            if (policy == aura::compiler::Evaluator::StaleRefPolicy::Disabled) {
-                // No-op: don't bump counters, don't block.
-            } else if (policy == aura::compiler::Evaluator::StaleRefPolicy::Strict) {
-                ev.bump_stale_ref_blocked_count();
-                // Issue #1681: tagged error without string_heap_ pollution.
-                return mev("stale-ref", "stable-ref is stale (Strict policy blocked)");
-            } else {
-                // Warn
-                ev.bump_stale_ref_warned_count();
+    // GUARD_EXEMPT: read-only stable-ref probe — no AST write (#2986). PrimMeta.guard_exempt.
+    add_mutate(
+        "mutate:check-stable-ref",
+        [&ev, mev, safe_str](const auto& a) -> EvalValue {
+            // Wave1 B-09: pin adopts outer Guard exclusive — no nested shared.
+            auto pin = ev.pin_workspace_flat();
+            if (!is_pair(a[0]))
+                return mev("bad-arg", "usage: (mutate:check-stable-ref (id . gen))");
+            if (!pin)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto& flat = *pin;
+            // Unpack the (id . gen) pair
+            auto outer = as_pair_idx(a[0]);
+            if (!is_int(ev.pairs_[outer].car))
+                return mev("bad-arg", "stable-ref car must be a node id (int)");
+            auto node = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
+            auto cdr = ev.pairs_[outer].cdr;
+            if (!is_pair(cdr))
+                return mev("bad-arg", "stable-ref cdr must be a pair (gen . nil)");
+            auto inner = as_pair_idx(cdr);
+            if (!is_int(ev.pairs_[inner].car))
+                return mev("bad-arg", "stable-ref gen must be an int");
+            auto captured_gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
+            // Issue #391: consult the StaleRefPolicy. The
+            // validity check is identical; the policy only
+            // affects whether a stale ref blocks the mutate
+            // (Strict) or just bumps the warned counter
+            // (Warn). Disabled skips both.
+            bool valid = (node < flat.size()) && (flat.generation() == captured_gen);
+            if (!valid) {
+                const auto policy = ev.get_stale_ref_policy();
+                if (policy == aura::compiler::Evaluator::StaleRefPolicy::Disabled) {
+                    // No-op: don't bump counters, don't block.
+                } else if (policy == aura::compiler::Evaluator::StaleRefPolicy::Strict) {
+                    ev.bump_stale_ref_blocked_count();
+                    // Issue #1681: tagged error without string_heap_ pollution.
+                    return mev("stale-ref", "stable-ref is stale (Strict policy blocked)");
+                } else {
+                    // Warn
+                    ev.bump_stale_ref_warned_count();
+                }
             }
-        }
-        return make_bool(valid);
-    });
+            return make_bool(valid);
+        },
+        /*guard_exempt=*/true);
 
     // Issue #391: (mutate:set-stale-ref-policy "warn"|"strict"|"disabled")
     // — set the global StaleRefPolicy for automatic
@@ -2438,27 +2466,31 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // P0: 3 policies. Disabled = no checks; Warn =
     // observe but don't block; Strict = block (return
     // tagged stale-ref error) on stale detection.
-    add_mutate("mutate:set-stale-ref-policy", [&ev, safe_str](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
+    // GUARD_EXEMPT: policy setter — no AST write (#2986). PrimMeta.guard_exempt.
+    add_mutate(
+        "mutate:set-stale-ref-policy",
+        [&ev, safe_str](const auto& a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_bool(false);
+            const auto& s = ev.string_heap_[idx];
+            if (s == "disabled" || s == "off" || s == "false") {
+                ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Disabled);
+                return make_bool(true);
+            }
+            if (s == "strict" || s == "hard") {
+                ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Strict);
+                return make_bool(true);
+            }
+            if (s == "warn" || s == "observe" || s == "soft") {
+                ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Warn);
+                return make_bool(true);
+            }
             return make_bool(false);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_bool(false);
-        const auto& s = ev.string_heap_[idx];
-        if (s == "disabled" || s == "off" || s == "false") {
-            ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Disabled);
-            return make_bool(true);
-        }
-        if (s == "strict" || s == "hard") {
-            ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Strict);
-            return make_bool(true);
-        }
-        if (s == "warn" || s == "observe" || s == "soft") {
-            ev.set_stale_ref_policy(aura::compiler::Evaluator::StaleRefPolicy::Warn);
-            return make_bool(true);
-        }
-        return make_bool(false);
-    });
+        },
+        /*guard_exempt=*/true);
 
     // Issue #2176: (mutate:rollback-macro-introduced root-id [:keep-provenance? #f])
     // — primary Agent-facing primitive for experimental self-evolution
@@ -2583,27 +2615,31 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         });
 
     // Issue #490: (mutate:set-pattern-index-policy "lazy"|"eager-after-mutate"|"eager-after-cow")
-    add_mutate("mutate:set-pattern-index-policy", [&ev, safe_str](const auto& a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
+    // GUARD_EXEMPT: policy setter — no AST write (#2986). PrimMeta.guard_exempt.
+    add_mutate(
+        "mutate:set-pattern-index-policy",
+        [&ev, safe_str](const auto& a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_bool(false);
+            const auto& s = ev.string_heap_[idx];
+            if (s == "lazy" || s == "default") {
+                ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::Lazy);
+                return make_bool(true);
+            }
+            if (s == "eager-after-mutate" || s == "eager-mutate") {
+                ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::EagerAfterMutate);
+                return make_bool(true);
+            }
+            if (s == "eager-after-cow" || s == "eager-cow") {
+                ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::EagerAfterCow);
+                return make_bool(true);
+            }
             return make_bool(false);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_bool(false);
-        const auto& s = ev.string_heap_[idx];
-        if (s == "lazy" || s == "default") {
-            ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::Lazy);
-            return make_bool(true);
-        }
-        if (s == "eager-after-mutate" || s == "eager-mutate") {
-            ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::EagerAfterMutate);
-            return make_bool(true);
-        }
-        if (s == "eager-after-cow" || s == "eager-cow") {
-            ev.set_pattern_index_policy(Evaluator::PatternIndexPolicy::EagerAfterCow);
-            return make_bool(true);
-        }
-        return make_bool(false);
-    });
+        },
+        /*guard_exempt=*/true);
 
     // Issue #490: (query:pattern-index-policy) — current rebuild policy string.
     ObservabilityPrims::register_stats_impl(
@@ -2656,14 +2692,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // timeout is recorded (bump wait counter + bump
     // wait_total_ns) but the actual wait is a no-op
     // (the follow-up wires the real implementation).
-    add_mutate("mutate:request-gc-safepoint", [&ev, safe_str](const auto& a) -> EvalValue {
-        const int result = ev.request_gc_safepoint();
-        if (a.size() >= 1 && is_int(a[0])) {
-            const auto timeout_ms = static_cast<std::uint64_t>(as_int(a[0]));
-            ev.wait_for_safepoint(timeout_ms);
-        }
-        return make_int(static_cast<std::int64_t>(result));
-    });
+    // GUARD_EXEMPT: safepoint request — no AST write (#2986). PrimMeta.guard_exempt.
+    add_mutate(
+        "mutate:request-gc-safepoint",
+        [&ev, safe_str](const auto& a) -> EvalValue {
+            const int result = ev.request_gc_safepoint();
+            if (a.size() >= 1 && is_int(a[0])) {
+                const auto timeout_ms = static_cast<std::uint64_t>(as_int(a[0]));
+                ev.wait_for_safepoint(timeout_ms);
+            }
+            return make_int(static_cast<std::int64_t>(result));
+        },
+        /*guard_exempt=*/true);
 
     // (mutate:rebind name new-code-string "summary") — Replace function definition by name
     // Unlike mutate:replace-value, this works by function name (no node ID needed).
@@ -6727,14 +6767,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // implemented. Both primitives route through add_mutate so
     // they share the workspace_mtx_ + capability + isolation
     // gating with every other mutate:* op (#2052/#2057).
-    add_mutate("mutate:save-hygiene-checkpoint", [&ev](const auto& a) -> EvalValue {
-        (void)a;
-        // No MutationBoundaryGuard needed — the save itself does
-        // not mutate workspace state; it just snapshots the current
-        // metadata columns. The next mutate call (e.g. an Agent
-        // expand) is what the Guard wraps.
-        return make_int(static_cast<std::int64_t>(ev.save_hygiene_checkpoint_handle()));
-    });
+    // GUARD_EXEMPT: hygiene checkpoint save — metadata snapshot only (#2986).
+    // PrimMeta.guard_exempt.
+    add_mutate(
+        "mutate:save-hygiene-checkpoint",
+        [&ev](const auto& a) -> EvalValue {
+            (void)a;
+            // No MutationBoundaryGuard needed — the save itself does
+            // not mutate workspace state; it just snapshots the current
+            // metadata columns. The next mutate call (e.g. an Agent
+            // expand) is what the Guard wraps.
+            return make_int(static_cast<std::int64_t>(ev.save_hygiene_checkpoint_handle()));
+        },
+        /*guard_exempt=*/true);
     add_mutate("mutate:restore-hygiene-checkpoint", [&ev, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0])) {
             return mev("bad-arg",
@@ -6763,6 +6808,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // are invoked via lookup so behavior stays identical.
     // EDA/SV (mutate:sv-*, eda:*) stay registered but are flagged as
     // extension-scope (not part of the 6-op kernel surface).
+    // GUARD_EXEMPT: dispatcher-only — delegates to named mutate:* prims (#2986).
+    // PrimMeta.guard_exempt.
     add("mutate", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
         auto kw_name = [&](const EvalValue& v) -> std::string {
             if (!is_keyword(v))
@@ -6885,6 +6932,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                   "' — use :rebind :replace :move :extract :validate :atomic "
                                   ":render-optimize :closed-loop-tick");
     });
+    {
+        ::aura::compiler::PrimMeta dx{};
+        dx.pure = false;
+        dx.guard_exempt = true;
+        dx.doc = "GUARD_EXEMPT: 6-op dispatcher delegates to named mutate:* (#2986)";
+        ev.primitives().set_meta_for_name("mutate", std::move(dx));
+    }
 
     // Issue #1436: deprecate core mutate:* aliases in favor of (mutate :op).
     {

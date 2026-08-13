@@ -8244,6 +8244,8 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> ir_soa_cache_reset_epoch_bumps{0};             // #1258
     std::atomic<std::uint64_t> mutate_guard_enforced{0};                      // #1259
     std::atomic<std::uint64_t> naked_mutate_attempt{0};                       // #1259
+    std::atomic<std::uint64_t> naked_mutate_fail_closed_total{0};             // #2986
+    std::atomic<std::uint64_t> naked_mutate_fail_closed_wired{1};             // #2986
     std::atomic<std::uint64_t> panic_transfer_on_steal{0};                    // #1260
     std::atomic<std::uint64_t> panic_transfer_failed{0};                      // #1260
     // Issue #2086: fiber-steal / cross-evaluator resume clears orphan
