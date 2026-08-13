@@ -3663,6 +3663,15 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("layered-evidence-diverge-force-full-consume-wired", 1);
                 insert_kv("schema-2912", 2912);
                 insert_kv("issue-2912", 2912);
+                // Issue #2979: Phase-5 outermost consume + Full sample.
+                insert_kv(
+                    "layered-evidence-diverge-force-full-sample-total",
+                    static_cast<std::int64_t>(
+                        ::aura::compiler::g_layered_evidence_diverge_force_full_sample_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv("layered-evidence-diverge-phase5-consume-wired", 1);
+                insert_kv("schema-2979", 2979);
+                insert_kv("issue-2979", 2979);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

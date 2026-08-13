@@ -275,6 +275,10 @@ namespace _2912_detail {
 void run_2912_layered_diverge_force_full_consume();
 }
 
+namespace _2979_detail {
+void run_2979_phase5_consume_force_full_sample();
+}
+
 int run_test_dead_coercion_layered() {
     std::println("=== Issue #2282 / #2287: dead-coercion layered + CastOp density ===");
     std::println("=== Issue #2319: opt-in hard CastOp density gate ===");
@@ -282,6 +286,7 @@ int run_test_dead_coercion_layered() {
     std::println("=== Issue #2674: layered evidence-coherence production gate ===");
     std::println("=== Issue #2719: layered evidence-coerce hard gate (Full/prod) ===");
     std::println("=== Issue #2912: layered diverge force-Full consume under production ===");
+    std::println("=== Issue #2979: outermost Phase-5 consume + Full sample ===");
     aura_dead_coercion_layered_2282::_2282_detail::run_2282_layered_total();
     aura_dead_coercion_layered_2282::_2287_detail::run_2287_density();
     // Issue #2319 ACs are covered by dedicated test_castop_density_hard
@@ -290,6 +295,7 @@ int run_test_dead_coercion_layered() {
     _2674_detail::run_2674_layered_coherence();
     _2719_detail::run_2719_layered_coerce_hard_gate();
     _2912_detail::run_2912_layered_diverge_force_full_consume();
+    _2979_detail::run_2979_phase5_consume_force_full_sample();
     return RUN_ALL_TESTS();
 }
 
@@ -936,6 +942,168 @@ void run_2912_layered_diverge_force_full_consume() {
 }
 
 } // namespace _2912_detail
+
+// ---------------------------------------------------------------------------
+// Issue #2979: outermost Phase-5 must consume layered-evidence force-Full
+// pending and run a one-shot Full invariant sample (#2912 residual).
+// Soft observe-only. Quiet: one exchange. HARD consume stamps force_reason;
+// default is sample not commit reject.
+//   AC1: Production/Full + pending → Phase-5 consume + sample
+//   AC2: Soft/Sampled: no force-Full from this channel
+//   AC3: Quiet pending clear: consume no-op
+//   AC4: HARD env consume stamps force_reason; default not reject
+//   AC5: Additive schema-2979; #2674/#2912 preserved
+//   AC6: source-cite + this suite; no docs/design/
+// ---------------------------------------------------------------------------
+namespace _2979_detail {
+
+using aura::compiler::clear_layered_evidence_diverge_force_full_pending_for_test;
+using aura::compiler::clear_layered_evidence_diverge_hard_reject_pending_for_test;
+using aura::compiler::consume_layered_evidence_diverge_force_full;
+using aura::compiler::g_layered_evidence_diverge_force_consumed_total;
+using aura::compiler::g_layered_evidence_diverge_force_full_pending;
+using aura::compiler::g_layered_evidence_diverge_force_full_sample_total;
+using aura::compiler::g_layered_evidence_diverge_hard_reject_pending;
+using aura::compiler::layered_evidence_diverge_force_full_pending;
+using aura::compiler::note_layered_evidence_diverge_force_full_sample;
+using aura::compiler::reset_layered_evidence_diverge_force_consumed_total_for_test;
+using aura::compiler::reset_layered_evidence_diverge_force_full_sample_total_for_test;
+
+static std::string read_file(const char* path) {
+    std::ifstream in(path);
+    if (!in) {
+        std::ifstream in2(std::string("../") + path);
+        if (!in2)
+            return {};
+        return std::string((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
+    }
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+static void ac2979_1_phase5_consume_sample() {
+    std::println("\n--- AC1 #2979: Phase-5 consume + Full sample ---");
+    clear_layered_evidence_diverge_force_full_pending_for_test();
+    reset_layered_evidence_diverge_force_consumed_total_for_test();
+    reset_layered_evidence_diverge_force_full_sample_total_for_test();
+    g_layered_evidence_diverge_force_full_pending.store(1, std::memory_order_relaxed);
+    CHECK(layered_evidence_diverge_force_full_pending(), "AC1: pending armed");
+    const auto cons0 = g_layered_evidence_diverge_force_consumed_total.load();
+    const auto samp0 = g_layered_evidence_diverge_force_full_sample_total.load();
+    CHECK(consume_layered_evidence_diverge_force_full(), "AC1: consume true");
+    note_layered_evidence_diverge_force_full_sample();
+    CHECK(!layered_evidence_diverge_force_full_pending(), "AC1: pending cleared");
+    CHECK(g_layered_evidence_diverge_force_consumed_total.load() > cons0, "AC1: consumed bumped");
+    CHECK(g_layered_evidence_diverge_force_full_sample_total.load() > samp0, "AC1: sample bumped");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #2979") != std::string::npos, "AC1: Phase-5 cites #2979");
+    CHECK(mb.find("consume_layered_evidence_diverge_force_full") != std::string::npos,
+          "AC1: Phase-5 consumes force-full");
+    CHECK(mb.find("note_layered_evidence_diverge_force_full_sample") != std::string::npos,
+          "AC1: Phase-5 notes Full sample");
+    CHECK(mb.find("ensure_mutation_invariants") != std::string::npos,
+          "AC1: one-shot Full invariant sample");
+    CHECK(mb.find("partial_recovery_2979") != std::string::npos,
+          "AC1: skip intentional partial recovery");
+    CHECK(mb.find(
+              "!nested_boundary && aura::compiler::layered_evidence_diverge_force_full_pending") !=
+                  std::string::npos ||
+              mb.find("!nested_boundary &&") != std::string::npos,
+          "AC1: nested must not steal pending");
+}
+
+static void ac2979_2_soft_observe_only() {
+    std::println("\n--- AC2 #2979: Soft/Sampled no force-Full from this channel ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("layered_diverge_delta > 0 &&") != std::string::npos &&
+              mb.find("typed_audit::production_defaults_active()") != std::string::npos,
+          "AC2: arm still gated on prod/Full (Soft skip)");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("Soft + diverge") != std::string::npos, "AC2: Soft observe documented");
+    CHECK(cixx.find("g_layered_evidence_diverge_total.fetch_add") != std::string::npos,
+          "AC2: diverge observe-only counter still bumped");
+}
+
+static void ac2979_3_quiet_zero_cost() {
+    std::println("\n--- AC3 #2979: quiet pending-clear → consume no-op ---");
+    clear_layered_evidence_diverge_force_full_pending_for_test();
+    reset_layered_evidence_diverge_force_consumed_total_for_test();
+    reset_layered_evidence_diverge_force_full_sample_total_for_test();
+    const auto cons0 = g_layered_evidence_diverge_force_consumed_total.load();
+    const auto samp0 = g_layered_evidence_diverge_force_full_sample_total.load();
+    CHECK(!consume_layered_evidence_diverge_force_full(), "AC3: quiet consume false");
+    CHECK(g_layered_evidence_diverge_force_consumed_total.load() == cons0,
+          "AC3: quiet does not bump consumed");
+    CHECK(g_layered_evidence_diverge_force_full_sample_total.load() == samp0,
+          "AC3: quiet does not bump sample");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("pending==0") != std::string::npos ||
+              mb.find("one exchange") != std::string::npos,
+          "AC3: quiet one-exchange documented");
+}
+
+static void ac2979_4_hard_force_reason() {
+    std::println("\n--- AC4 #2979: HARD consume stamps force_reason; default not reject ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("consume_layered_evidence_diverge_hard_reject") != std::string::npos,
+          "AC4: Phase-5 consumes hard-reject pending");
+    CHECK(mb.find("layered-evidence-diverge") != std::string::npos, "AC4: force_reason stamp");
+    CHECK(mb.find("default is sample not") != std::string::npos ||
+              mb.find("not hard-reject of the current commit") != std::string::npos,
+          "AC4: default remains force-Full sample not commit reject");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("AURA_LAYERED_COERCION_DIVERGE_HARD") != std::string::npos,
+          "AC4: HARD env still documented");
+}
+
+static void ac2979_5_additive_schema() {
+    std::println("\n--- AC5 #2979: additive schema; #2674/#2912 preserved ---");
+    auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(q.find("\"schema-2979\"") != std::string::npos, "AC5: schema-2979 on layered stats");
+    CHECK(q.find("\"issue-2979\"") != std::string::npos, "AC5: issue-2979");
+    CHECK(q.find("\"layered-evidence-diverge-force-full-sample-total\"") != std::string::npos,
+          "AC5: sample-total key");
+    CHECK(q.find("\"layered-evidence-diverge-phase5-consume-wired\"") != std::string::npos,
+          "AC5: phase5-consume-wired");
+    CHECK(q.find("\"schema-2912\"") != std::string::npos, "AC5: schema-2912 preserved");
+    CHECK(q.find("\"schema-2674\"") != std::string::npos, "AC5: schema-2674 preserved");
+    auto tl = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+    CHECK(tl.find("\"schema-2979\"") != std::string::npos,
+          "AC5: schema-2979 on type-linear health");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("g_layered_evidence_diverge_force_full_sample_total") != std::string::npos,
+          "AC5: sample counter declared");
+}
+
+static void ac2979_6_source_and_linter() {
+    std::println("\n--- AC6 #2979: source-cite + linter + no docs/design ---");
+    auto t = read_file("tests/compiler/test_dead_coercion_layered.cpp");
+    CHECK(t.find("run_2979_phase5_consume_force_full_sample") != std::string::npos,
+          "AC6: runner present");
+    CHECK(t.find("ac2979_1_phase5_consume_sample") != std::string::npos, "AC6: AC1 present");
+    auto cixx = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cixx.find("Issue #2979") != std::string::npos, "AC6: coercion_map cites #2979");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #2979") != std::string::npos, "AC6: mb.cpp cites #2979");
+    auto lint = read_file("scripts/coverage/checks/check_layered_evidence_phase5_consume_2979.py");
+    CHECK(!lint.empty() && lint.find("2979") != std::string::npos, "AC6: linter present");
+    auto build = read_file("build.py");
+    CHECK(build.find("check_layered_evidence_phase5_consume_2979") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2979-layered-phase5-consume.md").empty(),
+          "AC6: no docs/design/2979-* per #1655");
+}
+
+void run_2979_phase5_consume_force_full_sample() {
+    std::println("\n=== Issue #2979: Phase-5 consume + Full sample ===");
+    ac2979_1_phase5_consume_sample();
+    ac2979_2_soft_observe_only();
+    ac2979_3_quiet_zero_cost();
+    ac2979_4_hard_force_reason();
+    ac2979_5_additive_schema();
+    ac2979_6_source_and_linter();
+}
+
+} // namespace _2979_detail
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {

@@ -183,18 +183,21 @@ export inline std::atomic<std::uint64_t> g_dead_coercion_ast_elided_with_evidenc
 // Full/Production: optional escalate via fidelity-health note. No abort path.
 export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_total{0};
 
-// Issue #2719 / #2912: Full/production hard gate on layered evidence
-// diverge (#2674 residual). Soft vs production table (#2912 AC6):
+// Issue #2719 / #2912 / #2979: Full/production hard gate on layered evidence
+// diverge (#2674 residual). Soft vs production table:
 //
 //   Path                          | Behavior
 //   ------------------------------|------------------------------------------
 //   Soft + diverge                | observe g_layered_evidence_diverge_total only
-//   production / Full + diverge   | arm force-Full pending (#2719) + on next
-//                                 | boundary *consume* → force Full audit
-//                                 | (#2912 residual: arm alone was not enough)
-//   production + HARD env + diverge | also arm hard-reject-pending (Agents /
-//                                 | boundary may reject with force_reason)
-//   no coercion / no diverge      | zero cost (pure loads; consume no-ops)
+//   production / Full + diverge   | arm force-Full pending (#2719) + next
+//                                 | *outermost Phase-5* consume → one-shot
+//                                 | Full invariant sample (#2979; #2912
+//                                 | consume-in-exit could be stolen by nested
+//                                 | or dropped by Sampled recover)
+//   production + HARD env + diverge | also arm hard-reject-pending; Phase-5
+//                                 | consume stamps force_reason (default is
+//                                 | still force-Full sample, not commit reject)
+//   no coercion / no diverge      | zero cost (one Phase-5 exchange no-op)
 //
 // When diverge is observed under production_defaults_active() || Full:
 //   - (default arm) bump force-armed + set force-full-pending so the *next*
@@ -209,6 +212,10 @@ export inline std::atomic<std::uint32_t> g_layered_evidence_diverge_hard_reject_
 // Issue #2912: one-shot consume totals (mirrors coercion_prov_slo_force_consumed).
 export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_force_consumed_total{0};
 export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_hard_reject_consumed_total{0};
+// Issue #2979: Phase-5 outermost actually ran a Full invariant sample
+// after consume (distinct from consume-total, which can fire without a
+// sample if only the helper is unit-tested).
+export inline std::atomic<std::uint64_t> g_layered_evidence_diverge_force_full_sample_total{0};
 
 // Env var helper for #2719 hard-reject arm. Reads
 // AURA_LAYERED_COERCION_DIVERGE_HARD (any non-zero value enables).
@@ -296,6 +303,18 @@ layered_evidence_diverge_hard_reject_consumed_total_v_read() noexcept {
 }
 export inline void reset_layered_evidence_diverge_hard_reject_consumed_total_for_test() noexcept {
     g_layered_evidence_diverge_hard_reject_consumed_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2979: one-shot Full invariant sample after Phase-5 consume.
+export [[nodiscard]] inline std::uint64_t
+layered_evidence_diverge_force_full_sample_total_v_read() noexcept {
+    return g_layered_evidence_diverge_force_full_sample_total.load(std::memory_order_relaxed);
+}
+export inline void reset_layered_evidence_diverge_force_full_sample_total_for_test() noexcept {
+    g_layered_evidence_diverge_force_full_sample_total.store(0, std::memory_order_relaxed);
+}
+export inline void note_layered_evidence_diverge_force_full_sample() noexcept {
+    g_layered_evidence_diverge_force_full_sample_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2102 / #2185: provenance-miss policy atomics + helpers live in
