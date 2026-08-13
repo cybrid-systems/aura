@@ -606,6 +606,9 @@ struct OrchModuleStats {
     // AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard-aborts; =0 forces metric-only.
     // Not a lock — ownership model stays single-owner serialize (no mutex).
     std::atomic<std::uint64_t> agent_scope_concurrent_misuse_total{0};
+    // Issue #2976: MutexGuarded API enter (only when ScopeConcurrency::
+    // MutexGuarded). SingleOwner never bumps this (zero-lock default).
+    std::atomic<std::uint64_t> agent_scope_mutex_guarded_enter_total{0};
     // Issue #2946: production hard-deny face of concurrent enter (structured
     // fail — second enter does not mutate handles_). Subset of misuse_total.
     std::atomic<std::uint64_t> agent_scope_concurrent_hard_deny_total{0};

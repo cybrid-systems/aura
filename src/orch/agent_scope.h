@@ -52,6 +52,7 @@
 #include <cstring>
 #include <string_view>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -75,6 +76,20 @@ inline constexpr int kAgentScopeHierarchyCancelIssue = 2781;
 // Issue #2782: AgentScope borrowed Scheduler* lifetime — Scheduler
 // notifies observers before fiber teardown; ops fail-closed if dangling.
 inline constexpr int kAgentScopeSchedulerLifetimeIssue = 2782;
+// Issue #2976: opt-in MutexGuarded concurrency (default SingleOwner).
+inline constexpr int kAgentScopeConcurrencyIssue = 2976;
+
+// Issue #2976: per-scope concurrency mode. Default SingleOwner is
+// zero-lock (misuse metric / optional abort — unchanged). MutexGuarded
+// serializes mutating + directory APIs with a per-scope recursive_mutex.
+enum class ScopeConcurrency : std::uint8_t {
+    SingleOwner = 0,  // default: misuse metric (+ optional abort)
+    MutexGuarded = 1, // recursive_mutex around mutating + directory APIs
+};
+
+struct AgentScopeOptions {
+    ScopeConcurrency concurrency = ScopeConcurrency::SingleOwner;
+};
 
 // Issue #2751: one row in a session-scoped agent directory snapshot.
 // Best-effort at call time (not transactional with concurrent spawn).
@@ -183,29 +198,43 @@ struct ScopeWatchResult {
 //
 // Thread-safety: spawn / spawn_child / join_all / cancel_all / watch_all /
 // handles / directory_snapshot / child_at / size are NOT safe to call
-// concurrently from multiple threads. The owner must serialize access
-// (matches the underlying Scheduler single-owner model). Child scopes
-// inherit the same serial model (#2399 / #2777).
+// concurrently from multiple threads under SingleOwner (default). The
+// owner must serialize access (matches the underlying Scheduler
+// single-owner model). Child scopes inherit the same serial model
+// (#2399 / #2777).
+//
+// Issue #2976: opt-in MutexGuarded takes a per-scope recursive_mutex on
+// those APIs so multi-thread hosts need not wrap every call. Default
+// remains SingleOwner (zero lock). Hierarchy v1: parent-before-child
+// when a MutexGuarded parent walks a MutexGuarded child (cancel/find);
+// hosts should still treat the tree as root-serialized. No process-global
+// registry — mutex is per-scope only.
 //
 // Issue #2399 / #2777 / #2946: concurrent enter is *detected* (metric
-// + production hard deny / optional abort) but not locked — no internal
-// mutex, no global registry. Soft: metric-only (body may still run).
-// Production (#2946): HardDeny — mutators skip handle mutation.
-// Env AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 HardAbort; =0 Soft opt-out.
-// Same-thread re-entry (e.g. ~AgentScope → cancel_all → join_all) is
-// allowed via depth. Read APIs (#2777) also take ScopeEnterGuard so
-// directory_snapshot / handles / child_at concurrent with ~AgentScope
-// are not silent.
+// + production hard deny / optional abort) but not locked under
+// SingleOwner — no mutex on that path, no global registry. Soft:
+// metric-only (body may still run). Production (#2946): HardDeny —
+// mutators skip handle mutation. Env AURA_AGENT_SCOPE_CONCURRENT_ABORT=1
+// HardAbort; =0 Soft opt-out. Same-thread re-entry (e.g. ~AgentScope →
+// cancel_all → join_all) is allowed via depth. Read APIs (#2777) also
+// take ScopeEnterGuard so directory_snapshot / handles / child_at
+// concurrent with ~AgentScope are not silent.
 class AgentScope {
 public:
     // Issue #2782: stores Scheduler* (not a raw reference) and registers
     // as a lifetime observer. If Scheduler is destroyed first, the
     // observer nulls sched_ + fiber pointers so later ops fail-closed
     // instead of UAF. API still takes Scheduler& at construction.
-    explicit AgentScope(serve::Scheduler& sched) noexcept
-        : sched_(&sched) {
+    // Issue #2976: optional AgentScopeOptions selects SingleOwner (default)
+    // or MutexGuarded. Existing AgentScope(sched) callers are unchanged.
+    explicit AgentScope(serve::Scheduler& sched, AgentScopeOptions opts = {}) noexcept
+        : sched_(&sched)
+        , mode_(opts.concurrency) {
         sched.register_agent_scope_observer(this, &AgentScope::on_scheduler_destroyed_trampoline_);
     }
+
+    // Issue #2976: construction mode (immutable). No lock.
+    [[nodiscard]] ScopeConcurrency concurrency() const noexcept { return mode_; }
 
     AgentScope(const AgentScope&) = delete;
     AgentScope& operator=(const AgentScope&) = delete;
@@ -280,12 +309,13 @@ public:
             // Child without a live Scheduler — construct via a temporary
             // path is impossible without a reference; use a detaching
             // ctor that leaves sched_ null (no observer register).
-            auto child = std::unique_ptr<AgentScope>(new AgentScope(nullptr));
+            auto child =
+                std::unique_ptr<AgentScope>(new AgentScope(nullptr, AgentScopeOptions{mode_}));
             child->parent_ = this;
             children_.push_back(std::move(child));
             return *children_.back();
         }
-        auto child = std::make_unique<AgentScope>(*sched_);
+        auto child = std::make_unique<AgentScope>(*sched_, AgentScopeOptions{mode_});
         child->parent_ = this;
         children_.push_back(std::move(child));
         return *children_.back();
@@ -708,8 +738,9 @@ public:
 private:
     // Issue #2782: construct with null Scheduler (parent already dead).
     // No observer registration.
-    explicit AgentScope(std::nullptr_t) noexcept
-        : sched_(nullptr) {}
+    explicit AgentScope(std::nullptr_t, AgentScopeOptions opts = {}) noexcept
+        : sched_(nullptr)
+        , mode_(opts.concurrency) {}
 
     // Issue #2782: Scheduler dtor callback — null sched_ + fiber pointers
     // before owned fibers are destroyed (prevents UAF).
@@ -750,8 +781,17 @@ private:
                 1, std::memory_order_relaxed);
         }
         for (auto& c : children_) {
-            if (c)
+            if (!c)
+                continue;
+            // Issue #2976: MutexGuarded child — parent-before-child lock
+            // (parent already holds its mutex via cancel_all enter).
+            // SingleOwner children stay unlocked (#2781 no false-positive).
+            if (c->mode_ == ScopeConcurrency::MutexGuarded) {
+                ScopeEnterGuard cg(c.get(), "cancel_all_unlocked");
                 c->cancel_all_unlocked_(/*from_hierarchy=*/true);
+            } else {
+                c->cancel_all_unlocked_(/*from_hierarchy=*/true);
+            }
         }
         // Issue #2782: null fiber after Scheduler destroy — skip cancel.
         for (auto& h : handles_) {
@@ -774,15 +814,33 @@ private:
     // enter once on the scope being cancelled.
     struct ScopeEnterGuard {
         const AgentScope* self = nullptr;
+        std::unique_lock<std::recursive_mutex> lk; // empty unless MutexGuarded
         bool holds = false;
         bool hard_denied = false; // #2946 production concurrent hard deny
         ScopeEnterGuard(const AgentScope* s, const char* site) noexcept
             : self(s) {
             if (!self)
                 return;
+            // Issue #2976: MutexGuarded serializes via recursive_mutex.
+            // SingleOwner stays zero-lock (try_enter misuse detect only).
+            if (self->mode_ == ScopeConcurrency::MutexGuarded) {
+                try {
+                    lk = std::unique_lock<std::recursive_mutex>(self->api_mu_);
+                } catch (...) {
+                    // [SILENCE-PRIM-#615] lock failure is fail-closed (hard deny).
+                    hard_denied = true;
+                    return;
+                }
+                g_orch_module_stats.agent_scope_mutex_guarded_enter_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                holds = true;
+                return;
+            }
             holds = self->try_enter(site, &hard_denied);
         }
         ~ScopeEnterGuard() noexcept {
+            if (self && self->mode_ == ScopeConcurrency::MutexGuarded)
+                return; // lk unlocks
             if (holds && self)
                 self->leave();
         }
@@ -964,8 +1022,14 @@ private:
     // children_ owns descendants; cleared in ~AgentScope after cancel.
     AgentScope* parent_ = nullptr;
     std::vector<std::unique_ptr<AgentScope>> children_;
+    // Issue #2976: construction mode. SingleOwner = zero lock.
+    ScopeConcurrency mode_ = ScopeConcurrency::SingleOwner;
+    // Taken only when mode_ == MutexGuarded. recursive so ~AgentScope
+    // → cancel_all → join_all same-thread re-entry does not deadlock.
+    mutable std::recursive_mutex api_mu_;
     // Issue #2399: single-owner detection (not a mutex).
     // owner_tid_ empty = free; depth tracks same-thread re-entry.
+    // Unused on the MutexGuarded path (lock serializes instead).
     mutable std::atomic<std::thread::id> owner_tid_{};
     mutable std::atomic<std::uint32_t> enter_depth_{0};
 };

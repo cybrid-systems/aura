@@ -52,10 +52,12 @@ using aura::core::resource_quota::process_resource_quota;
 using aura::core::resource_quota::reset_process_resource_quota_for_test;
 using aura::orch::AgentHandle;
 using aura::orch::AgentScope;
+using aura::orch::AgentScopeOptions;
 using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
 using aura::orch::KeepaliveWatchStatus;
 using aura::orch::note_agent_progress;
+using aura::orch::ScopeConcurrency;
 using aura::orch::ScopeWatchResult;
 using aura::orch::StallPolicy;
 using aura::orch::watch_agent_liveness;
@@ -969,6 +971,136 @@ static void ac2782_source_and_query() {
           "ac2782: wired sentinel");
 }
 
+// ── Issue #2976: SingleOwner default vs MutexGuarded ──
+static void ac2976_1_default_single_owner() {
+    std::println("\n--- #2976 AC1: default SingleOwner; misuse still counted ---");
+    using aura::orch::kAgentScopeConcurrencyIssue;
+    using aura::orch::ScopeConcurrency;
+    CHECK(kAgentScopeConcurrencyIssue == 2976, "AC1: issue stamp 2976");
+    Scheduler sched(1);
+    AgentScope scope(sched);
+    CHECK(scope.concurrency() == ScopeConcurrency::SingleOwner, "AC1: default SingleOwner");
+    AgentScopeOptions opts{};
+    CHECK(opts.concurrency == ScopeConcurrency::SingleOwner, "AC1: options default SingleOwner");
+}
+
+static void ac2976_2_mutex_guarded_concurrent_spawn() {
+    std::println("\n--- #2976 AC2: MutexGuarded concurrent spawn, no misuse ---");
+    using aura::orch::AgentScopeOptions;
+    using aura::orch::ScopeConcurrency;
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    AgentScope scope(sched, AgentScopeOptions{.concurrency = ScopeConcurrency::MutexGuarded});
+    CHECK(scope.concurrency() == ScopeConcurrency::MutexGuarded, "AC2: mode MutexGuarded");
+    const auto m0 = g_orch_module_stats.agent_scope_concurrent_misuse_total.load();
+    const auto e0 = g_orch_module_stats.agent_scope_mutex_guarded_enter_total.load();
+    auto body = [] {
+        for (int i = 0; i < 4; ++i)
+            Fiber::yield(YieldReason::Explicit);
+    };
+    std::thread t1([&] { scope.spawn({.name = "mg-a", .body = body}); });
+    std::thread t2([&] { scope.spawn({.name = "mg-b", .body = body}); });
+    t1.join();
+    t2.join();
+    CHECK(scope.size() == 2, "AC2: both spawns recorded");
+    CHECK(g_orch_module_stats.agent_scope_concurrent_misuse_total.load() == m0,
+          "AC2: no misuse bump under MutexGuarded");
+    CHECK(g_orch_module_stats.agent_scope_mutex_guarded_enter_total.load() > e0,
+          "AC2: mutex-guarded enter counted");
+    scope.cancel_all();
+    (void)scope.join_all(std::optional<std::uint64_t>{2000});
+}
+
+static void ac2976_3_mutex_guarded_join_cancel_concurrent() {
+    std::println("\n--- #2976 AC3: MutexGuarded join/cancel under concurrent spawn ---");
+    using aura::orch::AgentScopeOptions;
+    using aura::orch::ScopeConcurrency;
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    AgentScope scope(sched, AgentScopeOptions{.concurrency = ScopeConcurrency::MutexGuarded});
+    std::atomic<bool> stop{false};
+    auto body = [&stop] {
+        while (!stop.load(std::memory_order_relaxed)) {
+            if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())
+                break;
+            Fiber::yield(YieldReason::Explicit);
+        }
+    };
+    std::thread spawner([&] {
+        for (int i = 0; i < 6; ++i)
+            scope.spawn({.name = std::format("jc-{}", i), .body = body});
+    });
+    std::thread joiner([&] {
+        for (int i = 0; i < 6; ++i) {
+            (void)scope.join_all(std::optional<std::uint64_t>{20});
+            scope.cancel_all();
+        }
+    });
+    spawner.join();
+    joiner.join();
+    stop.store(true, std::memory_order_relaxed);
+    scope.cancel_all();
+    (void)scope.join_all(std::optional<std::uint64_t>{2000});
+    CHECK(scope.size() >= 1, "AC3: handles consistent after concurrent spawn/join");
+    CHECK(scope.scheduler_alive(), "AC3: Scheduler lifetime rules preserved (#2782)");
+}
+
+static void ac2976_4_soft_unit_zero_lock() {
+    std::println("\n--- #2976 AC4: Soft / unit default still SingleOwner zero-lock ---");
+    using aura::orch::ScopeConcurrency;
+    Scheduler sched(1);
+    AgentScope a(sched);
+    AgentScope b(sched);
+    CHECK(a.concurrency() == ScopeConcurrency::SingleOwner, "AC4: a SingleOwner");
+    CHECK(b.concurrency() == ScopeConcurrency::SingleOwner, "AC4: b SingleOwner");
+    const auto header = read_file("src/orch/agent_scope.h");
+    CHECK(header.find("zero lock") != std::string::npos, "AC4: SingleOwner documented zero lock");
+    CHECK(header.find("only taken when MutexGuarded") != std::string::npos ||
+              header.find("Taken only when mode_ == MutexGuarded") != std::string::npos,
+          "AC4: mutex only when MutexGuarded");
+}
+
+static void ac2976_5_source_linter() {
+    std::println("\n--- #2976 AC5: source-cite + linter + no design ---");
+    const auto header = read_file("src/orch/agent_scope.h");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto t = read_file("tests/orch/test_agent_scope.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_agent_scope_concurrency_2976.py");
+    const auto readme = read_file("src/orch/README.md");
+    CHECK(header.find("kAgentScopeConcurrencyIssue") != std::string::npos, "AC5: stamp");
+    CHECK(header.find("struct AgentScopeOptions") != std::string::npos, "AC5: options");
+    CHECK(header.find("MutexGuarded") != std::string::npos, "AC5: MutexGuarded");
+    CHECK(header.find("recursive_mutex") != std::string::npos, "AC5: recursive_mutex");
+    CHECK(spawn.find("agent_scope_mutex_guarded_enter_total") != std::string::npos,
+          "AC5: enter counter");
+    CHECK(q.find("schema-2976") != std::string::npos, "AC5: schema-2976");
+    CHECK(q.find("agent-scope-concurrency-wired") != std::string::npos, "AC5: wired");
+    CHECK(q.find("agent-scope-mutex-guarded-enter-total") != std::string::npos, "AC5: query key");
+    CHECK(t.find("ac2976_1_default_single_owner") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2976_2_mutex_guarded_concurrent_spawn") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac2976_3_mutex_guarded_join_cancel_concurrent") != std::string::npos,
+          "AC5: AC3 test");
+    CHECK(build.find("check_agent_scope_concurrency_2976") != std::string::npos, "AC5: build.py");
+    CHECK(!lint.empty() && lint.find("2976") != std::string::npos, "AC5: linter present");
+    CHECK(readme.find("2976") != std::string::npos, "AC5: README cites #2976");
+    CHECK(read_file("docs/design/2976-agent-scope-concurrency.md").empty(),
+          "AC5: no docs/design/2976-* per #1655");
+    CHECK(read_file("tests/orch/test_issue_2976.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
+static void ac2976_6_mvp() {
+    std::println("\n--- #2976 AC6: MVP scope linter — no AgentRegistry ---");
+    const auto header = read_file("src/orch/agent_scope.h");
+    CHECK(header.find("class AgentRegistry") == std::string::npos, "AC6: no AgentRegistry");
+    CHECK(header.find("conduct_parallel(") == std::string::npos, "AC6: no conduct_parallel");
+    CHECK(header.find("per-scope only") != std::string::npos ||
+              header.find("per-scope mutex") != std::string::npos,
+          "AC6: mutex is per-scope only");
+}
+
 } // namespace
 
 int run_test_agent_scope() {
@@ -987,8 +1119,15 @@ int run_test_agent_scope() {
     std::println("\n=== Issue #2782: AgentScope Scheduler lifetime ===");
     ac2782_scheduler_destroyed_before_scope();
     ac2782_source_and_query();
-    std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782: passed={} failed={} ===", g_passed,
-                 g_failed);
+    std::println("\n=== Issue #2976: AgentScope SingleOwner / MutexGuarded ===");
+    ac2976_1_default_single_owner();
+    ac2976_2_mutex_guarded_concurrent_spawn();
+    ac2976_3_mutex_guarded_join_cancel_concurrent();
+    ac2976_4_soft_unit_zero_lock();
+    ac2976_5_source_linter();
+    ac2976_6_mvp();
+    std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976: passed={} failed={} ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

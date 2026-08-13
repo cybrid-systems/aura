@@ -208,7 +208,10 @@ Cancel / destroy order:
 2. **`~AgentScope`**: `cancel_all`, then `children_.clear()` (each child dtor
    drains its own handles), then join local handles.
 
-Single-owner serial model (#2399) still applies per scope. `watch_all` /
+Single-owner serial model (#2399) still applies per scope by default.
+Opt-in `ScopeConcurrency::MutexGuarded` (#2976) serializes spawn / join /
+cancel / watch / directory / find with a per-scope recursive mutex; default
+`AgentScope(sched)` stays SingleOwner (zero lock). `watch_all` /
 RestartN remain scope-local (no cross-scope restart map).
 
 Regression: `tests/orch/test_agent_scope` (AC1-AC6 + #2161 watch_all);

@@ -2026,6 +2026,18 @@ def cmd_lint():
             "Issue #2975 outermost-exit residual+pin linter failed — run python3 scripts/coverage/checks/check_outermost_exit_residual_pin_2975.py"
         )
         return r
+    # Issue #2976: AgentScope SingleOwner / MutexGuarded. Extends
+    # test_agent_scope (#81967); no docs/design/ (#1655).
+    ascm_script = COVERAGE_CHECKS / "check_agent_scope_concurrency_2976.py"
+    if not ascm_script.exists():
+        fail(f"missing {ascm_script}")
+        return 1
+    r = run([sys.executable, str(ascm_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2976 AgentScope concurrency linter failed — run python3 scripts/coverage/checks/check_agent_scope_concurrency_2976.py"
+        )
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
@@ -5624,6 +5636,21 @@ def cmd_agent_scope_concurrent_coverage():
         fail("AgentScope concurrent detect (#2399) coverage contract rows failed")
         return 1
     ok("AgentScope concurrent detect (#2399) coverage clean")
+    return 0
+
+
+def cmd_agent_scope_concurrency_2976_coverage():
+    """Issue #2976: AgentScope SingleOwner (default) vs MutexGuarded."""
+    print(f"{B}=== AgentScope concurrency modes (#2976) ==={N}")
+    script = COVERAGE_CHECKS / "check_agent_scope_concurrency_2976.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("AgentScope concurrency modes (#2976) coverage contract rows failed")
+        return 1
+    ok("AgentScope concurrency modes (#2976) coverage clean")
     return 0
 
 
@@ -13802,6 +13829,8 @@ def main():
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
+        "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,
+        "agent-scope-concurrency-2976-coverage": cmd_agent_scope_concurrency_2976_coverage,
         "outermost-exit-residual-pin-2975": cmd_outermost_exit_residual_pin_2975_coverage,
         "outermost-exit-residual-pin-2975-coverage": cmd_outermost_exit_residual_pin_2975_coverage,
         "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,

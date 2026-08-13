@@ -5082,6 +5082,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("issue-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("agent-scope-concurrent-detect-wired", 1);
+            // Issue #2976: opt-in MutexGuarded enter counter. Additive —
+            // SingleOwner misuse keys above unchanged (AC1 / AC4).
+            insert_kv("agent-scope-mutex-guarded-enter-total",
+                      static_cast<std::int64_t>(os.agent_scope_mutex_guarded_enter_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("schema-2976", aura::orch::kAgentScopeConcurrencyIssue);
+            insert_kv("issue-2976", aura::orch::kAgentScopeConcurrencyIssue);
+            insert_kv("agent-scope-concurrency-wired", 1);
             // Issue #2946: production concurrent hard deny face.
             insert_kv("agent-scope-concurrent-hard-deny-total",
                       static_cast<std::int64_t>(os.agent_scope_concurrent_hard_deny_total.load(
