@@ -1265,7 +1265,10 @@ export class InferenceEngine {
     void add_deferred_coercion(const aura::ast::FlatAST& flat, aura::ast::NodeId parent,
                                std::uint32_t child_index, aura::ast::NodeId original_child,
                                std::uint32_t type_tag, std::uint32_t type_id,
-                               std::uint32_t src_line, std::uint32_t src_col);
+                               std::uint32_t src_line, std::uint32_t src_col,
+                               std::uint64_t explicit_source_mutation_id = 0,
+                               std::uint32_t explicit_predicate_cond_node = 0,
+                               std::uint32_t explicit_narrow_evidence = 0);
 
 public:
     // Issue #79: set strict mode. Called by TypeChecker::infer_flat

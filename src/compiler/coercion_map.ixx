@@ -162,6 +162,17 @@ export inline std::atomic<std::uint32_t> g_coercion_provenance_ban_weak_ir_wired
 // the authority for apply-time quality.
 export inline std::atomic<std::uint64_t> g_coercion_stamp_at_add_total{0};
 export inline std::atomic<std::uint32_t> g_coercion_stamp_at_add_wired{1};
+// Issue #2991: high-frequency mutate blame completeness.
+// complete = session mid stamped on deferred add / insert.
+// missing = session mid was zero on entry and had to be force-stamped
+//   (or still missing after resolve).
+// epoch-restamp = wrong-epoch mid (log.back / leftover narrowing) replaced
+//   with the active mutate session.
+export inline std::atomic<std::uint64_t> g_coercion_blame_chain_complete_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_blame_missing_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_blame_epoch_restamp_total{0};
+export inline std::atomic<std::uint32_t> g_coercion_blame_hf_mutate_wired{1};
+export inline constexpr int kCoercionBlameHfMutateIssue = 2991;
 // Issue #2562: dual-require drop counter is process-wide in policy.hh
 // (g_coercion_dual_require_drop_total); re-exported above.
 // Issue #2025: AST-level identity elision count (apply_coercion_map) for
@@ -478,6 +489,79 @@ export [[nodiscard]] inline bool is_weak_coercion_mutation_id(const CoercionEntr
     if (e.original_child == 0 && e.source_mutation_id == 1ull)
         return true;
     return false;
+}
+
+// Issue #2991: first-class provenance for deferred add. Session mid
+// (explicit / engine / TLS) always wins over mutation-log.back() and
+// leftover NarrowingRecords from earlier mutates.
+export struct DeferredCoercionProvenanceIn {
+    std::uint64_t explicit_mid = 0;
+    std::uint32_t explicit_pred = 0;
+    std::uint32_t explicit_narrow = 0;
+    std::uint64_t engine_active_mid = 0;
+    std::uint32_t engine_active_pred = 0;
+    std::uint32_t engine_last_narrow = 0;
+    std::uint64_t log_back_mid = 0;
+    std::uint64_t narrowing_mid = 0;
+    std::uint32_t narrowing_pred = 0;
+    std::uint32_t narrowing_evidence = 0;
+};
+
+export [[nodiscard]] inline std::uint64_t
+deferred_coercion_session_mid(const DeferredCoercionProvenanceIn& in) noexcept {
+    if (in.explicit_mid != 0)
+        return in.explicit_mid;
+    if (in.engine_active_mid != 0)
+        return in.engine_active_mid;
+    if (s_coercion_active_mutation_id != 0)
+        return s_coercion_active_mutation_id;
+    return 0;
+}
+
+export inline void resolve_deferred_coercion_provenance(CoercionEntry& e,
+                                                        const DeferredCoercionProvenanceIn& in) {
+    const auto session = deferred_coercion_session_mid(in);
+    if (e.source_mutation_id == 0) {
+        if (in.explicit_mid != 0)
+            e.source_mutation_id = in.explicit_mid;
+        else if (in.engine_active_mid != 0)
+            e.source_mutation_id = in.engine_active_mid;
+        else if (s_coercion_active_mutation_id != 0)
+            e.source_mutation_id = s_coercion_active_mutation_id;
+        else if (in.narrowing_mid != 0)
+            e.source_mutation_id = in.narrowing_mid;
+        else if (in.log_back_mid != 0)
+            e.source_mutation_id = in.log_back_mid;
+    }
+    if (session != 0 && e.source_mutation_id != 0 && e.source_mutation_id != session &&
+        !is_weak_coercion_mutation_id(e)) {
+        e.source_mutation_id = session;
+        g_coercion_blame_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (session != 0 && e.source_mutation_id == 0) {
+        e.source_mutation_id = session;
+        g_coercion_blame_missing_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (e.predicate_cond_node == 0) {
+        if (in.explicit_pred != 0)
+            e.predicate_cond_node = in.explicit_pred;
+        else if (in.engine_active_pred != 0)
+            e.predicate_cond_node = in.engine_active_pred;
+        else if (s_coercion_active_predicate != 0)
+            e.predicate_cond_node = s_coercion_active_predicate;
+        else if (in.narrowing_pred != 0)
+            e.predicate_cond_node = in.narrowing_pred;
+    }
+    if (e.narrow_evidence == 0) {
+        if (in.explicit_narrow != 0)
+            e.narrow_evidence = in.explicit_narrow;
+        else if (in.engine_last_narrow != 0)
+            e.narrow_evidence = in.engine_last_narrow;
+        else if (in.narrowing_evidence != 0)
+            e.narrow_evidence = in.narrowing_evidence;
+    }
+    if (session != 0 && e.source_mutation_id != 0)
+        g_coercion_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2562: dual-field completeness predicate (pred + non-weak mid).
@@ -996,6 +1080,15 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // Unified contract (#2620 Phase A): incomplete dual provenance never
         // becomes executable IR under any non-Off strategy (default).
         const bool prov_complete = fill_coercion_provenance_chain(flat, e);
+        // Issue #2991: under a live mutate session, CoercionNode/CastOp must
+        // carry non-zero source_mutation_id (post-condition). Force-stamp
+        // TLS session if fill left mid empty.
+        if (s_coercion_active_mutation_id != 0 && e.source_mutation_id == 0) {
+            e.source_mutation_id = s_coercion_active_mutation_id;
+            g_coercion_blame_missing_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (s_coercion_active_mutation_id != 0 && e.source_mutation_id != 0)
+            g_coercion_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
         if (!prov_complete) {
             using aura::compiler::typed_audit::AuditStrategy;
             using aura::compiler::typed_audit::get_strategy;

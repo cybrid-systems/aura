@@ -2045,6 +2045,24 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                           std::memory_order_relaxed)));
             insert_kv("schema-2512", 2512);
             insert_kv("issue-2512", 2512);
+            // Issue #2991: high-frequency mutate blame completeness.
+            insert_kv("schema-2991", 2991);
+            insert_kv("issue-2991", 2991);
+            insert_kv("coercion-blame-chain-complete-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::g_coercion_blame_chain_complete_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("coercion-blame-missing-total",
+                      static_cast<std::int64_t>(aura::compiler::g_coercion_blame_missing_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv(
+                "coercion-blame-epoch-restamp-total",
+                static_cast<std::int64_t>(aura::compiler::g_coercion_blame_epoch_restamp_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "coercion-blame-hf-mutate-wired",
+                static_cast<std::int64_t>(aura::compiler::g_coercion_blame_hf_mutate_wired.load(
+                    std::memory_order_relaxed)));
             // Issue #2148: precision meet/join lattice
             // observability.
             const std::int64_t meet_prec =

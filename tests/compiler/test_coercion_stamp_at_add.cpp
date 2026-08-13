@@ -35,13 +35,19 @@ using aura::compiler::clear_coercion_active_mutation_context;
 using aura::compiler::CoercionEntry;
 using aura::compiler::CoercionMap;
 using aura::compiler::CompilerService;
+using aura::compiler::DeferredCoercionProvenanceIn;
+using aura::compiler::g_coercion_blame_chain_complete_total;
+using aura::compiler::g_coercion_blame_epoch_restamp_total;
+using aura::compiler::g_coercion_blame_missing_total;
 using aura::compiler::g_coercion_provenance_chain_walk_total;
 using aura::compiler::g_coercion_provenance_complete_total;
 using aura::compiler::g_coercion_provenance_fast_path_total;
 using aura::compiler::g_coercion_provenance_miss_total;
 using aura::compiler::g_coercion_stamp_at_add_total;
+using aura::compiler::kCoercionBlameHfMutateIssue;
 using aura::compiler::reject_apply_on_provenance_miss;
 using aura::compiler::reset_coercion_provenance_miss_policy_for_test;
+using aura::compiler::resolve_deferred_coercion_provenance;
 using aura::compiler::set_coercion_active_mutation_context;
 using aura::compiler::set_reject_apply_on_provenance_miss;
 using aura::compiler::stamp_coercion_entry_from_active_context;
@@ -196,7 +202,8 @@ static void ac5_source_schema() {
     std::println("\n--- #2512 AC5: source-cite + schema ---");
     const auto cm = read_file("src/compiler/coercion_map.ixx");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto cmake = read_file("CMakeLists.txt");
 
     CHECK(cm.find("stamp_coercion_entry_from_active_context") != std::string::npos,
@@ -205,7 +212,9 @@ static void ac5_source_schema() {
     CHECK(cm.find("Issue #2512") != std::string::npos, "AC5: #2512 in coercion_map");
     CHECK(impl.find("add_deferred_coercion") != std::string::npos, "AC5: add_deferred_coercion");
     CHECK(impl.find("Issue #2512") != std::string::npos ||
-              impl.find("coercion_active_mutation_id") != std::string::npos,
+              impl.find("coercion_active_mutation_id") != std::string::npos ||
+              impl.find("#2991") != std::string::npos ||
+              impl.find("resolve_deferred_coercion_provenance") != std::string::npos,
           "AC5: engine stamp path");
     CHECK(q.find("schema-2512") != std::string::npos, "AC5: query schema");
     CHECK(q.find("coercion-stamp-at-add-total") != std::string::npos, "AC5: query key");
@@ -222,6 +231,98 @@ static void ac5_source_schema() {
     CHECK(href(cs, "coercion-provenance-fast-path-total") >= 0, "AC5: fast path retained");
 }
 
+// ── Issue #2991: high-frequency mutate provenance ──
+
+static void ac2991_1_session_beats_log_back() {
+    std::println("\n--- #2991 AC1: session mid beats log.back() ---");
+    CHECK(kCoercionBlameHfMutateIssue == 2991, "AC1: issue stamp");
+    clear_coercion_active_mutation_context();
+    CoercionEntry e{};
+    DeferredCoercionProvenanceIn in;
+    in.engine_active_mid = 100;
+    in.log_back_mid = 200; // later mutate
+    resolve_deferred_coercion_provenance(e, in);
+    CHECK(e.source_mutation_id == 100, "AC1: session 100 not stolen by log 200");
+
+    CoercionEntry e2{};
+    e2.source_mutation_id = 999; // leftover wrong epoch
+    in.explicit_mid = 100;
+    in.engine_active_mid = 100;
+    in.log_back_mid = 200;
+    resolve_deferred_coercion_provenance(e2, in);
+    CHECK(e2.source_mutation_id == 100, "AC1: wrong-epoch restamp to session");
+}
+
+static void ac2991_2_occurrence_predicate() {
+    std::println("\n--- #2991 AC2: occurrence predicate attached ---");
+    clear_coercion_active_mutation_context();
+    CoercionEntry e{};
+    DeferredCoercionProvenanceIn in;
+    in.engine_active_mid = 42;
+    in.engine_active_pred = 77;
+    in.engine_last_narrow = 0x4;
+    resolve_deferred_coercion_provenance(e, in);
+    CHECK(e.predicate_cond_node == 77, "AC2: pred from engine");
+    CHECK(e.narrow_evidence == 0x4, "AC2: narrow evidence");
+    CHECK(e.source_mutation_id == 42, "AC2: mid");
+}
+
+static void ac2991_3_multi_mutate_loop() {
+    std::println("\n--- #2991 AC3: multi-mutate loop stamps correct mid ---");
+    clear_coercion_active_mutation_context();
+    const auto c0 = g_coercion_blame_chain_complete_total.load();
+    const auto m0 = g_coercion_blame_missing_total.load();
+    for (int i = 1; i <= 20; ++i) {
+        CoercionEntry e{};
+        DeferredCoercionProvenanceIn in;
+        in.explicit_mid = static_cast<std::uint64_t>(i);
+        in.log_back_mid = static_cast<std::uint64_t>(i + 50); // later epoch
+        in.explicit_pred = static_cast<std::uint32_t>(1000 + i);
+        resolve_deferred_coercion_provenance(e, in);
+        CHECK(e.source_mutation_id == static_cast<std::uint64_t>(i),
+              "AC3: mid matches session not later log");
+        CHECK(e.predicate_cond_node == static_cast<std::uint32_t>(1000 + i), "AC3: pred");
+    }
+    const auto complete = g_coercion_blame_chain_complete_total.load() - c0;
+    const auto missing = g_coercion_blame_missing_total.load() - m0;
+    const auto denom = complete + missing;
+    CHECK(complete >= 20, "AC3: 20 complete stamps");
+    CHECK(denom == 0 || (complete * 100) / denom >= 95, "AC3: >=95% complete");
+}
+
+static void ac2991_4_metrics_schema() {
+    std::println("\n--- #2991 AC4: metrics + schema-2991 ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2991") == 2991, "AC4: schema-2991");
+    CHECK(href(cs, "issue-2991") == 2991, "AC4: issue-2991");
+    CHECK(href(cs, "coercion-blame-hf-mutate-wired") == 1, "AC4: wired");
+    CHECK(href(cs, "coercion-blame-chain-complete-total") >= 0, "AC4: complete key");
+    CHECK(href(cs, "coercion-blame-missing-total") >= 0, "AC4: missing key");
+    CHECK(href(cs, "schema-2512") == 2512, "AC4: #2512 retained");
+}
+
+static void ac2991_5_source_linter() {
+    std::println("\n--- #2991 AC5: source-cite + linter ---");
+    const auto cm = read_file("src/compiler/coercion_map.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto t = read_file("tests/compiler/test_coercion_stamp_at_add.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_coercion_provenance_hf_mutate_2991.py");
+    CHECK(cm.find("#2991") != std::string::npos, "AC5: coercion_map cites #2991");
+    CHECK(cm.find("resolve_deferred_coercion_provenance") != std::string::npos, "AC5: resolver");
+    CHECK(impl.find("explicit_source_mutation_id") != std::string::npos, "AC5: explicit param");
+    CHECK(impl.find("cs_.active_mutation_id()") != std::string::npos,
+          "AC5: check_flat/synthesize pass session");
+    CHECK(t.find("ac2991_1_session_beats_log_back") != std::string::npos, "AC5: AC1 test");
+    CHECK(build.find("check_coercion_provenance_hf_mutate_2991") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty(), "AC5: linter present");
+    CHECK(read_file("docs/design/2991-coercion-provenance-hf-mutate.md").empty(),
+          "AC5: no docs/design/2991-* per #1655");
+}
+
 } // namespace
 
 int run_test_coercion_stamp_at_add() {
@@ -231,6 +332,11 @@ int run_test_coercion_stamp_at_add() {
     ac3_no_active_remains_zero();
     ac4_reject_on_miss();
     ac5_source_schema();
+    ac2991_1_session_beats_log_back();
+    ac2991_2_occurrence_predicate();
+    ac2991_3_multi_mutate_loop();
+    ac2991_4_metrics_schema();
+    ac2991_5_source_linter();
     if (g_failed)
         return 1;
     std::println("coercion stamp-at-add #2512: OK ({} passed)", g_passed);

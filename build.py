@@ -2435,6 +2435,18 @@ def cmd_lint():
             "Issue #2990 ConcurrentMutationPolicy linter failed — run python3 scripts/coverage/checks/check_workspace_concurrent_policy_2990.py"
         )
         return r
+    # Issue #2991: coercion provenance under high-frequency mutate.
+    # Extends test_coercion_stamp_at_add (#81967); no docs/design/.
+    cph_script = COVERAGE_CHECKS / "check_coercion_provenance_hf_mutate_2991.py"
+    if not cph_script.exists():
+        fail(f"missing {cph_script}")
+        return 1
+    r = run([sys.executable, str(cph_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2991 coercion provenance hf-mutate linter failed — run python3 scripts/coverage/checks/check_coercion_provenance_hf_mutate_2991.py"
+        )
+        return r
     # Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count.
     # Extends test_type_linear_commit_health (#81967); no docs/design/.
     lcrc_script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
@@ -10238,6 +10250,21 @@ def cmd_workspace_concurrent_policy_2990_coverage():
     return 0
 
 
+def cmd_coercion_provenance_hf_mutate_2991_coverage():
+    """Issue #2991: coercion provenance completeness under hf mutate."""
+    print(f"{B}=== coercion provenance hf-mutate coverage (#2991) ==={N}")
+    script = COVERAGE_CHECKS / "check_coercion_provenance_hf_mutate_2991.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("coercion provenance hf-mutate (#2991) coverage contract rows failed")
+        return 1
+    ok("coercion provenance hf-mutate (#2991) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -14212,6 +14239,7 @@ def main():
         "mutate-invalidate-incremental-2988": cmd_mutate_invalidate_incremental_2988_coverage,
         "query-concurrent-hygiene-safe-span-2989": cmd_query_concurrent_hygiene_safe_span_2989_coverage,
         "workspace-concurrent-policy-2990": cmd_workspace_concurrent_policy_2990_coverage,
+        "coercion-provenance-hf-mutate-2991": cmd_coercion_provenance_hf_mutate_2991_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
