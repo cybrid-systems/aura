@@ -2051,6 +2051,22 @@ def cmd_lint():
             "Issue #2967 durable grant gate linter failed — run python3 scripts/coverage/checks/check_capability_durable_gate_2967.py"
         )
         return r
+    # Issue #2968: cross-tenant grant write path — grant_cross_tenant_access
+    # + foreign-tenant grant_effect_capability require TenantAdmin under
+    # production. Deny → SE reason cross-tenant-grant-needs-tenant-admin +
+    # cross_tenant_grant_deny_total. Extends
+    # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
+    # (#1655).
+    cts_script = COVERAGE_CHECKS / "check_cross_tenant_grant_gate_2968.py"
+    if not cts_script.exists():
+        fail(f"missing {cts_script}")
+        return 1
+    r = run([sys.executable, str(cts_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2968 cross-tenant grant gate linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_gate_2968.py"
+        )
+        return r
     # Issue #2884: agent_send_safe — unify C++/language handoff_ref path for
     # StableNodeRef payloads (close #2663 / #2848 contract split). Closes
     # the largest orch-layer contract split for StableNodeRef cross-fiber

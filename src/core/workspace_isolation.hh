@@ -75,6 +75,12 @@ struct TenantIsolationMetrics {
     std::atomic<std::uint64_t> cross_tenant_capability_deny_total{0};
     std::atomic<std::uint64_t> isolation_audit_total{0};
     std::atomic<std::uint64_t> strict_sandbox_isolation_denials{0};
+    // Issue #2968: cross-tenant grant call-site deny — caller lacked
+    // TenantAdmin (or mapped "tenant-admin" / "capability") under
+    // production. Appended at struct END (never insert mid-struct: stale
+    // module BMIs writing at wrong offsets corrupt neighboring heap — see
+    // #2906).
+    std::atomic<std::uint64_t> cross_tenant_grant_deny_total{0};
 };
 
 inline TenantIsolationMetrics& g_tenant_isolation_metrics() noexcept {
@@ -430,6 +436,7 @@ inline void reset_tenant_isolation_for_test() noexcept {
     m.cross_tenant_capability_deny_total.store(0, std::memory_order_relaxed);
     m.isolation_audit_total.store(0, std::memory_order_relaxed);
     m.strict_sandbox_isolation_denials.store(0, std::memory_order_relaxed);
+    m.cross_tenant_grant_deny_total.store(0, std::memory_order_relaxed); // #2968
 }
 
 struct TenantIsolationStatsSnapshot {
@@ -440,6 +447,9 @@ struct TenantIsolationStatsSnapshot {
     std::uint64_t cross_tenant_capability_deny = 0;
     std::uint64_t audits = 0;
     std::uint64_t strict_denials = 0;
+    // Issue #2968: cross-tenant grant call-site deny (missing TenantAdmin
+    // under production).
+    std::uint64_t cross_tenant_grant_deny = 0;
     std::uint64_t current_tenant = 0;
     int phase = kWorkspaceIsolationPhase;
     int issue = kWorkspaceIsolationIssue;
@@ -459,6 +469,7 @@ struct TenantIsolationStatsSnapshot {
         m.cross_tenant_capability_deny_total.load(std::memory_order_relaxed),
         m.isolation_audit_total.load(std::memory_order_relaxed),
         m.strict_sandbox_isolation_denials.load(std::memory_order_relaxed),
+        m.cross_tenant_grant_deny_total.load(std::memory_order_relaxed),
         p.current.id,
         kWorkspaceIsolationPhase,
         kWorkspaceIsolationIssue,

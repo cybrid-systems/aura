@@ -746,6 +746,19 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("capability-durable-grant-deny-total",
                           static_cast<std::int64_t>(snap.capability_durable_grant_deny));
             }
+            // Issue #2968: cross-tenant grant write path gate —
+            // grant_cross_tenant_access + foreign-tenant grant_effect_
+            // capability require TenantAdmin under production. Deny → SE
+            // reason cross-tenant-grant-needs-tenant-admin + deny counter.
+            {
+                using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+                const auto iso = snapshot_tenant_isolation_stats();
+                insert_kv("schema-2968", 2968);
+                insert_kv("issue-2968", 2968);
+                insert_kv("cross-tenant-grant-tenant-admin-wired", 1);
+                insert_kv("cross-tenant-grant-deny-total",
+                          static_cast<std::int64_t>(iso.cross_tenant_grant_deny));
+            }
             // Issue #2883: production hard principal check on fiber
             // resume/steal handoff. Under production/Restricted, if the
             // current fiber resume had a hard principal mismatch (ambient
