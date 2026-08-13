@@ -1250,6 +1250,70 @@ struct aura_reload_recovery_snapshot {
 };
 void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
 
+// Issue #2953: Agent recovery playbook — single recommended action from
+// existing recovery snapshot atomics. Pure observe-only (no reemit/drain/
+// reload). Decision table (priority top→bottom; source-cite not docs/design):
+//   1. reject-cross-ws  last cross-workspace reject != None (#2178/#2240)
+//   2. wait-storm       storm_level != None || hard_storm
+//   3. force-drain      deferred pending && force_drain_deadline>0 && age>=deadline
+//                       (#2748/#2855)
+//   4. retry-reload     attempts_left>0 && last_reason in Version|Env|Linear|Defuse
+//   5. reemit           storm None && (pending_dirty || deferred || residual force)
+//                       residual = force_mask & ~last_reemit_success_region_mask
+//   6. fall-back-jit    force_mask != 0 (exhausted / demotion-only, no reemit work)
+//   7. idle             recovery_active == 0 (and no higher branch)
+enum class ReloadRecoveryPlaybookAction : std::uint8_t {
+    Idle = 0,
+    WaitStorm = 1,
+    ForceDrain = 2,
+    Reemit = 3,
+    RetryReload = 4,
+    FallBackJit = 5,
+    RejectCrossWs = 6,
+};
+// Pure decision input (tests / C ABI fill from live atomics).
+struct ReloadRecoveryPlaybookInput {
+    std::uint8_t storm_level = 0;
+    std::uint8_t hard_storm_active = 0;
+    std::uint8_t deferred_pending = 0; // recovery v2 and/or boundary deferred
+    std::uint64_t deferred_age_ms = 0;
+    std::uint64_t force_drain_deadline_ms = 0; // 0 = force-drain branch disabled
+    std::uint32_t attempts_left = 0;
+    std::uint8_t last_reason = 0; // AotReloadFail
+    std::uint64_t force_jit_regions_mask = 0;
+    std::uint64_t last_reemit_success_region_mask = 0;
+    std::uint64_t pending_dirty_count = 0;
+    std::uint8_t cross_ws_reject = 0; // CrossWorkspaceReject; 0 = None
+    std::uint8_t recovery_active = 0;
+};
+struct ReloadRecoveryPlaybookResult {
+    ReloadRecoveryPlaybookAction action = ReloadRecoveryPlaybookAction::Idle;
+    // Rationale echo (same values Agents already OR — single action is primary).
+    std::int64_t storm_level = 0;
+    std::int64_t deferred_pending = 0;
+    std::int64_t deferred_age_ms = 0;
+    std::int64_t force_drain_deadline_ms = 0;
+    std::int64_t attempts_left = 0;
+    std::int64_t last_reason = 0;
+    std::int64_t force_jit_regions_mask = 0;
+    std::int64_t residual_force_mask = 0; // force & ~last_success
+    std::int64_t pending_dirty_count = 0;
+    std::int64_t cross_ws_reject = 0;
+    std::int64_t recovery_active = 0;
+    std::int64_t playbook_wired = 1;
+    std::int64_t schema_2953 = 2953;
+    std::int64_t issue_2953 = 2953;
+};
+// Pure: no atomics, no mutation. Soft empty input → Idle.
+// C++ linkage OK for unit tests (not called from module partitions).
+[[nodiscard]] ReloadRecoveryPlaybookResult
+aura_reload_recovery_playbook_decide(const ReloadRecoveryPlaybookInput& in) noexcept;
+// Live fill from existing atomics (snapshot + age + cross-ws + deadline).
+// Observe-only: does not call reemit/drain/reload.
+// extern "C" so module partitions (evaluator) can call without module attachment.
+extern "C" void
+aura_hot_update_reload_recovery_playbook_get(ReloadRecoveryPlaybookResult* out) noexcept;
+
 // Issue #2094: setter for ShapeProfiler (or tests) to publish its
 // deopt_storm_active state without needing to import shape_profiler.h.
 extern "C" void aura_hot_update_set_shape_storm_active(int active);

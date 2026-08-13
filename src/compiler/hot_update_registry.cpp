@@ -1889,6 +1889,97 @@ HotUpdateRegistry::Snapshot HotUpdateRegistry::snapshot() const noexcept {
 
 } // namespace aura::compiler
 
+// Issue #2953: pure recovery playbook decision (global C ABI section).
+// Priority top→bottom — Agents branch on action alone (no multi-key OR).
+// Observe-only: no reemit/drain/reload side effects.
+ReloadRecoveryPlaybookResult
+aura_reload_recovery_playbook_decide(const ReloadRecoveryPlaybookInput& in) noexcept {
+    ReloadRecoveryPlaybookResult out{};
+    out.storm_level = static_cast<std::int64_t>(in.storm_level);
+    out.deferred_pending = in.deferred_pending ? 1 : 0;
+    out.deferred_age_ms = static_cast<std::int64_t>(in.deferred_age_ms);
+    out.force_drain_deadline_ms = static_cast<std::int64_t>(in.force_drain_deadline_ms);
+    out.attempts_left = static_cast<std::int64_t>(in.attempts_left);
+    out.last_reason = static_cast<std::int64_t>(in.last_reason);
+    out.force_jit_regions_mask = static_cast<std::int64_t>(in.force_jit_regions_mask);
+    const auto residual = in.force_jit_regions_mask & ~in.last_reemit_success_region_mask;
+    out.residual_force_mask = static_cast<std::int64_t>(residual);
+    out.pending_dirty_count = static_cast<std::int64_t>(in.pending_dirty_count);
+    out.cross_ws_reject = static_cast<std::int64_t>(in.cross_ws_reject);
+    out.recovery_active = in.recovery_active ? 1 : 0;
+    out.playbook_wired = 1;
+    out.schema_2953 = 2953;
+    out.issue_2953 = 2953;
+
+    // 1. reject-cross-ws
+    if (in.cross_ws_reject != 0) {
+        out.action = ReloadRecoveryPlaybookAction::RejectCrossWs;
+        return out;
+    }
+    // 2. wait-storm
+    if (in.storm_level != 0 || in.hard_storm_active != 0) {
+        out.action = ReloadRecoveryPlaybookAction::WaitStorm;
+        return out;
+    }
+    // 3. force-drain (deferred + age ≥ production force-drain deadline)
+    if (in.deferred_pending != 0 && in.force_drain_deadline_ms > 0 &&
+        in.deferred_age_ms >= in.force_drain_deadline_ms) {
+        out.action = ReloadRecoveryPlaybookAction::ForceDrain;
+        return out;
+    }
+    // 4. retry-reload (multi-round budget remaining on recoverable reasons)
+    if (in.attempts_left > 0) {
+        const auto r = static_cast<AotReloadFail>(in.last_reason);
+        if (r == AotReloadFail::Version || r == AotReloadFail::Env || r == AotReloadFail::Linear ||
+            r == AotReloadFail::Defuse) {
+            out.action = ReloadRecoveryPlaybookAction::RetryReload;
+            return out;
+        }
+    }
+    // 5. reemit — pending dirty / deferred / residual force (storm already None)
+    if (in.pending_dirty_count > 0 || in.deferred_pending != 0 || residual != 0) {
+        out.action = ReloadRecoveryPlaybookAction::Reemit;
+        return out;
+    }
+    // 6. fall-back-jit — force mask only (covered residual empty; demotion sticky)
+    if (in.force_jit_regions_mask != 0) {
+        out.action = ReloadRecoveryPlaybookAction::FallBackJit;
+        return out;
+    }
+    // 7. idle
+    out.action = ReloadRecoveryPlaybookAction::Idle;
+    return out;
+}
+
+// Issue #2953: live playbook fill from existing atomics. Observe-only.
+// C linkage — module partitions (evaluator) must not attach this symbol.
+extern "C" void
+aura_hot_update_reload_recovery_playbook_get(ReloadRecoveryPlaybookResult* out) noexcept {
+    if (!out)
+        return;
+    aura_reload_recovery_snapshot snap{};
+    aura_hot_update_reload_recovery_get_snapshot(&snap);
+    auto& reg = aura::compiler::hot_update_registry();
+    ReloadRecoveryPlaybookInput in{};
+    in.storm_level = static_cast<std::uint8_t>(snap.storm_level);
+    in.hard_storm_active = snap.hard_storm_active != 0 ? 1 : 0;
+    // Deferred: recovery v2 flag OR boundary handshake pending OR has_deferred.
+    const bool deferred = snap.deferred_reemit_pending != 0 ||
+                          snap.reemit_deferred_pending_boundary != 0 || reg.has_deferred_reemit();
+    in.deferred_pending = deferred ? 1 : 0;
+    in.deferred_age_ms = reg.deferred_reemit_age_ms();
+    in.force_drain_deadline_ms = aura::compiler::HotUpdateRegistry::force_drain_deadline_ms();
+    in.attempts_left = static_cast<std::uint32_t>(snap.attempts_left);
+    in.last_reason = static_cast<std::uint8_t>(snap.last_reason);
+    in.force_jit_regions_mask = static_cast<std::uint64_t>(snap.force_jit_regions_mask);
+    in.last_reemit_success_region_mask =
+        static_cast<std::uint64_t>(snap.last_reemit_success_region_mask);
+    in.pending_dirty_count = static_cast<std::uint64_t>(snap.pending_dirty_count);
+    in.cross_ws_reject = aura_last_cross_workspace_reject_reason_v_read();
+    in.recovery_active = snap.recovery_active != 0 ? 1 : 0;
+    *out = aura_reload_recovery_playbook_decide(in);
+}
+
 extern "C" void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out) {
     if (!out)
         return;

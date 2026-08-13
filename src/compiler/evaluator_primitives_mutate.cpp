@@ -256,11 +256,32 @@ struct aura_reload_recovery_snapshot {
     std::int64_t reload_recovery_wired;
 };
 void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
+// Issue #2953: recovery playbook C ABI (lockstep with hot_update_registry.hh).
+// action: 0=idle 1=wait-storm 2=force-drain 3=reemit 4=retry-reload
+//         5=fall-back-jit 6=reject-cross-ws
+struct ReloadRecoveryPlaybookResult {
+    std::uint8_t action;
+    std::int64_t storm_level;
+    std::int64_t deferred_pending;
+    std::int64_t deferred_age_ms;
+    std::int64_t force_drain_deadline_ms;
+    std::int64_t attempts_left;
+    std::int64_t last_reason;
+    std::int64_t force_jit_regions_mask;
+    std::int64_t residual_force_mask;
+    std::int64_t pending_dirty_count;
+    std::int64_t cross_ws_reject;
+    std::int64_t recovery_active;
+    std::int64_t playbook_wired;
+    std::int64_t schema_2953;
+    std::int64_t issue_2953;
+};
+void aura_hot_update_reload_recovery_playbook_get(ReloadRecoveryPlaybookResult* out) noexcept;
 // Issue #2370: SpecJIT PerEval storm counters (spec_jit_controller.cpp).
 std::uint64_t aura_specjit_storm_clear_total_v_read(void);
 std::uint64_t aura_specjit_per_eval_storm_clear_total_v_read(void);
 std::uint64_t aura_specjit_per_eval_storm_skip_foreign_total_v_read(void);
-}
+} // extern "C"
 
 namespace aura::compiler::primitives_detail {
 
@@ -8153,6 +8174,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Issue #2601: exhausted min-dirty retry closed loop (additive).
             insert_kv("schema-2601", rs.schema_2601 != 0 ? rs.schema_2601 : 2601);
             insert_kv("issue-2601", 2601);
+            // Issue #2953: playbook action (additive; full surface on
+            // query:reload-recovery-playbook).
+            {
+                ReloadRecoveryPlaybookResult pb{};
+                aura_hot_update_reload_recovery_playbook_get(&pb);
+                insert_kv("playbook-action", static_cast<std::int64_t>(pb.action));
+                insert_kv("playbook-wired", pb.playbook_wired);
+                insert_kv("schema-2953", pb.schema_2953);
+                insert_kv("issue-2953", pb.issue_2953);
+            }
             // ReloadRecoveryState 5-field core
             insert_kv("attempts-left", rs.attempts_left);
             insert_kv("force-jit-regions-mask", rs.force_jit_regions_mask);
@@ -8235,6 +8266,74 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         ObservabilityPrims::register_stats_impl("query:aot-reload-recovery-stats",
                                                 reload_recovery_builder);
     }
+
+    // ── Issue #2953: query:reload-recovery-playbook ──
+    // Single recommended recovery action from existing snapshot atomics.
+    // Observe-only (no reemit/drain/reload). Soft empty → action=idle.
+    ObservabilityPrims::register_stats_impl(
+        "query:reload-recovery-playbook", [&ev](const auto&) -> EvalValue {
+            ReloadRecoveryPlaybookResult pb{};
+            aura_hot_update_reload_recovery_playbook_get(&pb);
+            auto* ht = FlatHashTable::create(64);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            insert_kv("schema", 2953);
+            insert_kv("issue", 2953);
+            insert_kv("schema-2953", 2953);
+            insert_kv("issue-2953", 2953);
+            insert_kv("playbook-action", static_cast<std::int64_t>(pb.action));
+            insert_kv("playbook-wired", pb.playbook_wired);
+            // Decision-table sentinels (stable ABI for Agents).
+            insert_kv("playbook-idle", 0);
+            insert_kv("playbook-wait-storm", 1);
+            insert_kv("playbook-force-drain", 2);
+            insert_kv("playbook-reemit", 3);
+            insert_kv("playbook-retry-reload", 4);
+            insert_kv("playbook-fall-back-jit", 5);
+            insert_kv("playbook-reject-cross-ws", 6);
+            // Rationale echo (existing signals Agents previously OR'd).
+            insert_kv("storm-level", pb.storm_level);
+            insert_kv("deferred-pending", pb.deferred_pending);
+            insert_kv("deferred-age-ms", pb.deferred_age_ms);
+            insert_kv("force-drain-deadline-ms", pb.force_drain_deadline_ms);
+            insert_kv("attempts-left", pb.attempts_left);
+            insert_kv("last-reason", pb.last_reason);
+            insert_kv("force-jit-regions-mask", pb.force_jit_regions_mask);
+            insert_kv("residual-force-mask", pb.residual_force_mask);
+            insert_kv("pending-dirty-count", pb.pending_dirty_count);
+            insert_kv("cross-ws-reject", pb.cross_ws_reject);
+            insert_kv("recovery-active", pb.recovery_active);
+            // Lineage preserved (agents can still poll recovery-state).
+            insert_kv("schema-2367", 2367);
+            insert_kv("schema-2302", 2302);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // ── Issue #1882: query:aot-hotupdate-audit-stats ──
     // Dedicated AOT hot-update TypedMutationAudit surface (sampled success,

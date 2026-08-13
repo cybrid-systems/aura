@@ -789,6 +789,217 @@ static void ac2927_5_source_and_linter() {
           "AC5: no invent test file per #81967");
 }
 
+// ── Issue #2953: Agent recovery playbook (single action from snapshot) ──
+// AC1: controlled snapshots match decision table
+// AC2: idle → Idle
+// AC3: observe-only (no reemit/drain in decide path)
+// AC4: schema-2953 additive; recovery keys preserved
+// AC5: Soft regression green (idle path)
+// AC6: source-cite + linter; no docs/design
+static void ac2953_playbook_decision_table() {
+    std::println("\n--- #2953 AC1–AC3: pure playbook decision table ---");
+    using Act = ReloadRecoveryPlaybookAction;
+
+    // AC2: soft empty → Idle
+    {
+        ReloadRecoveryPlaybookInput in{};
+        const auto r = aura_reload_recovery_playbook_decide(in);
+        CHECK(r.action == Act::Idle, "2953 AC2: empty input → Idle");
+        CHECK(r.playbook_wired == 1, "2953 AC2: wired");
+        CHECK(r.schema_2953 == 2953, "2953 AC2: schema");
+    }
+
+    // AC1: wait-storm
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.storm_level = 2; // Global
+        in.force_jit_regions_mask = 1;
+        in.recovery_active = 1;
+        CHECK(aura_reload_recovery_playbook_decide(in).action == Act::WaitStorm,
+              "2953 AC1: storm → WaitStorm (beats force)");
+    }
+
+    // AC1: reject-cross-ws (highest priority)
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.cross_ws_reject = 1; // ForeignEval
+        in.storm_level = 2;
+        CHECK(aura_reload_recovery_playbook_decide(in).action == Act::RejectCrossWs,
+              "2953 AC1: cross-ws → RejectCrossWs (beats storm)");
+    }
+
+    // AC1: force-drain
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.deferred_pending = 1;
+        in.deferred_age_ms = 500;
+        in.force_drain_deadline_ms = 100;
+        in.recovery_active = 1;
+        CHECK(aura_reload_recovery_playbook_decide(in).action == Act::ForceDrain,
+              "2953 AC1: aged deferred → ForceDrain");
+    }
+
+    // AC1: deferred without deadline → Reemit (not ForceDrain)
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.deferred_pending = 1;
+        in.deferred_age_ms = 9999;
+        in.force_drain_deadline_ms = 0;
+        CHECK(aura_reload_recovery_playbook_decide(in).action == Act::Reemit,
+              "2953 AC1: deferred no deadline → Reemit");
+    }
+
+    // AC1: retry-reload
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.attempts_left = 2;
+        in.last_reason = static_cast<std::uint8_t>(AotReloadFail::Env);
+        in.recovery_active = 1;
+        CHECK(aura_reload_recovery_playbook_decide(in).action == Act::RetryReload,
+              "2953 AC1: attempts+Env → RetryReload");
+    }
+
+    // AC1: reemit residual force
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.force_jit_regions_mask = 0b11;
+        in.last_reemit_success_region_mask = 0b01; // residual bit1
+        in.recovery_active = 1;
+        const auto r = aura_reload_recovery_playbook_decide(in);
+        CHECK(r.action == Act::Reemit, "2953 AC1: residual force → Reemit");
+        CHECK(r.residual_force_mask == 0b10, "2953 AC1: residual mask echo");
+    }
+
+    // AC1: fall-back-jit (force covered, no pending)
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.force_jit_regions_mask = 0b01;
+        in.last_reemit_success_region_mask = 0b01; // fully covered
+        in.recovery_active = 1;
+        CHECK(aura_reload_recovery_playbook_decide(in).action == Act::FallBackJit,
+              "2953 AC1: covered force only → FallBackJit");
+    }
+
+    // AC1: reemit pending dirty
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.pending_dirty_count = 3;
+        in.recovery_active = 1;
+        CHECK(aura_reload_recovery_playbook_decide(in).action == Act::Reemit,
+              "2953 AC1: pending dirty → Reemit");
+    }
+
+    // AC3: decide is pure — no reemit/drain/reload in decide body
+    {
+        const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+        const auto start = cpp.find("aura_reload_recovery_playbook_decide");
+        CHECK(start != std::string::npos, "2953 AC3: decide function present");
+        const auto body = cpp.substr(start, 1600);
+        CHECK(body.find("aura_reemit_aot_for_dirty") == std::string::npos,
+              "2953 AC3: decide does not call reemit");
+        CHECK(body.find("drain_pending_recovery") == std::string::npos,
+              "2953 AC3: decide does not drain");
+        CHECK(body.find("aura_reload_aot") == std::string::npos,
+              "2953 AC3: decide does not reload");
+    }
+}
+
+static void ac2953_playbook_query_and_source() {
+    std::println("\n--- #2953 AC4–AC6: query surface + source-cite ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    CompilerService cs;
+    clear_recovery_idle(reg);
+    aura_test_reset_last_cross_workspace_reject_reason();
+
+    // AC2/AC5: live idle → action Idle (C get; metrics eval can re-seed deferred
+    // like #2367 AC1 — action checked on C path, schema/sentinels on query).
+    {
+        clear_recovery_idle(reg);
+        aura_test_reset_last_cross_workspace_reject_reason();
+        ReloadRecoveryPlaybookResult pb{};
+        aura_hot_update_reload_recovery_playbook_get(&pb);
+        CHECK(pb.action == ReloadRecoveryPlaybookAction::Idle, "2953 AC2: live get Idle");
+        CHECK(href(cs, "query:reload-recovery-playbook", "playbook-wired") == 1,
+              "2953 AC4: playbook-wired");
+        CHECK(href(cs, "query:reload-recovery-playbook", "schema-2953") == 2953,
+              "2953 AC4: schema-2953");
+        CHECK(href(cs, "query:reload-recovery-playbook", "issue-2953") == 2953,
+              "2953 AC4: issue-2953");
+        CHECK(href(cs, "query:reload-recovery-playbook", "playbook-wait-storm") == 1,
+              "2953 AC4: wait-storm sentinel");
+        CHECK(href(cs, "query:reload-recovery-playbook", "playbook-reject-cross-ws") == 6,
+              "2953 AC4: reject-cross-ws sentinel");
+        // playbook-action is integer >= 0 (idle or transient deferred side-effect)
+        CHECK(href(cs, "query:reload-recovery-playbook", "playbook-action") >= 0,
+              "2953 AC2: query playbook-action queryable");
+    }
+
+    // AC1 live: force-JIT residual → Reemit via query
+    {
+        clear_recovery_idle(reg);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        CHECK(href(cs, "query:reload-recovery-playbook", "playbook-action") ==
+                  static_cast<std::int64_t>(ReloadRecoveryPlaybookAction::Reemit),
+              "2953 AC1: live force residual → Reemit");
+        CHECK(href(cs, "query:reload-recovery-state", "schema-2953") == 2953,
+              "2953 AC4: schema-2953 on recovery-state");
+        CHECK(href(cs, "query:reload-recovery-state", "playbook-action") ==
+                  static_cast<std::int64_t>(ReloadRecoveryPlaybookAction::Reemit),
+              "2953 AC4: playbook-action on recovery-state");
+        CHECK(href(cs, "query:reload-recovery-state", "schema-2367") == 2367,
+              "2953 AC4: schema-2367 preserved");
+        clear_recovery_idle(reg);
+    }
+
+    // AC1 live: storm → WaitStorm
+    {
+        reg.set_shape_storm_active(true);
+        reg.on_force_jit_for_reason(AotReloadFail::Version);
+        CHECK(href(cs, "query:reload-recovery-playbook", "playbook-action") ==
+                  static_cast<std::int64_t>(ReloadRecoveryPlaybookAction::WaitStorm),
+              "2953 AC1: live storm → WaitStorm");
+        reg.set_shape_storm_active(false);
+        clear_recovery_idle(reg);
+    }
+
+    // AC1 live: cross-ws reject
+    {
+        aura_test_set_last_cross_workspace_reject_reason(
+            static_cast<std::uint8_t>(CrossWorkspaceReject::ForeignEval));
+        CHECK(href(cs, "query:reload-recovery-playbook", "playbook-action") ==
+                  static_cast<std::int64_t>(ReloadRecoveryPlaybookAction::RejectCrossWs),
+              "2953 AC1: live cross-ws → RejectCrossWs");
+        aura_test_reset_last_cross_workspace_reject_reason();
+    }
+
+    // AC6: source-cite + linter
+    {
+        const auto hh = read_file("src/compiler/hot_update_registry.hh");
+        const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto build = read_file("build.py");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_reload_recovery_playbook_2953.py");
+        CHECK(hh.find("Issue #2953") != std::string::npos, "2953 AC6: header cites #2953");
+        CHECK(hh.find("aura_reload_recovery_playbook_decide") != std::string::npos,
+              "2953 AC6: decide declared");
+        CHECK(hh.find("ReloadRecoveryPlaybookAction") != std::string::npos,
+              "2953 AC6: action enum");
+        CHECK(cpp.find("aura_reload_recovery_playbook_decide") != std::string::npos,
+              "2953 AC6: decide defined");
+        CHECK(mut.find("query:reload-recovery-playbook") != std::string::npos,
+              "2953 AC6: dedicated query");
+        CHECK(mut.find("schema-2953") != std::string::npos, "2953 AC6: schema-2953 query");
+        CHECK(build.find("check_reload_recovery_playbook_2953") != std::string::npos,
+              "2953 AC6: build.py wires linter");
+        CHECK(!lint.empty(), "2953 AC6: linter present");
+        CHECK(read_file("docs/design/2953-reload-recovery-playbook.md").empty(),
+              "2953 AC6: no docs/design/");
+    }
+    clear_recovery_idle(reg);
+    aura_test_reset_last_cross_workspace_reject_reason();
+}
+
 } // namespace
 
 int run_test_reload_recovery_query() {
@@ -820,10 +1031,14 @@ int run_test_reload_recovery_query() {
     ac2927_3_soft_success_no_mask_change();
     ac2927_4_query_keys();
     ac2927_5_source_and_linter();
+    std::println("\n=== Issue #2953: recovery playbook single action ===");
+    ac2953_playbook_decision_table();
+    ac2953_playbook_query_and_source();
     if (g_failed)
         return 1;
-    std::println("reload recovery query #2367 + #2753 + #2776 + #2845 + #2927: OK ({} passed)",
-                 g_passed);
+    std::println(
+        "reload recovery query #2367 + #2753 + #2776 + #2845 + #2927 + #2953: OK ({} passed)",
+        g_passed);
     return 0;
 }
 
