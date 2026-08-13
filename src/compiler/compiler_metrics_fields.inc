@@ -769,6 +769,10 @@ AURA_COMPILER_METRICS_FIELD(let_poly_regeneralize_check_total)
 AURA_COMPILER_METRICS_FIELD(let_poly_truncation_fallback_total)
 // Issue #2356: truncated reverify one-shot expand (occurrence/let-poly).
 AURA_COMPILER_METRICS_FIELD(delta_reverify_expand_total)
+// Issue #2939: dep-closure reverify (BFS over var_to_constraints_).
+AURA_COMPILER_METRICS_FIELD(delta_reverify_closure_nodes_total)
+AURA_COMPILER_METRICS_FIELD(delta_reverify_closure_edges_total)
+AURA_COMPILER_METRICS_FIELD(delta_reverify_closure_cap_hit_total)
 // Issue #2357: linear synth Move/Drop violations (first-class).
 AURA_COMPILER_METRICS_FIELD(linear_synth_violation_total)
 AURA_COMPILER_METRICS_FIELD(linear_synth_hard_fail_total)

@@ -5047,6 +5047,12 @@ struct CompilerMetrics {
     // Issue #2356: one-shot expand of truncated reverify scoped to
     // occurrence/let-poly priority roots (at most once per solve_delta).
     std::atomic<std::uint64_t> delta_reverify_expand_total{0}; // #2356
+    // Issue #2939: dep-closure reverify (BFS over var_to_constraints_).
+    //   nodes = UF roots visited; edges = constraint index walks;
+    //   cap_hit = closure collection hit effective_reverify_limit.
+    std::atomic<std::uint64_t> delta_reverify_closure_nodes_total{0};   // #2939
+    std::atomic<std::uint64_t> delta_reverify_closure_edges_total{0};   // #2939
+    std::atomic<std::uint64_t> delta_reverify_closure_cap_hit_total{0}; // #2939
     std::atomic<std::uint64_t> solve_delta_pending_full_solve_roots_last{0};
     std::atomic<std::uint64_t> solve_delta_pending_full_solve_enqueued_total{0};
     std::atomic<std::uint64_t> reverify_adaptive_wired{1};

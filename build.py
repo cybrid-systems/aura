@@ -9209,6 +9209,31 @@ def cmd_solver_budget_2900_coverage():
     return 0
 
 
+def cmd_solve_delta_dep_closure_2939_coverage():
+    """Issue #2939: solve_delta reverify dep-closure (static)."""
+    print(f"{B}=== solve_delta dep-closure reverify coverage (#2939) ==={N}")
+    script = COVERAGE_CHECKS / "check_solve_delta_dep_closure_2939.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("solve_delta dep-closure (#2939) coverage contract rows failed")
+        return 1
+    ok("solve_delta dep-closure (#2939) coverage clean")
+    return 0
+
+
+def cmd_solve_delta_dep_closure_2939():
+    """Issue #2939: bounded dep-closure reverify for true O(delta).
+
+    Replace unbounded clean collect with BFS over var_to_constraints_ +
+    UF reps; cap → pending_full_solve residual. Soft empty seeds zero cost.
+    """
+    print(f"{B}=== solve_delta dep-closure reverify (#2939) ==={N}")
+    return cmd_solve_delta_dep_closure_2939_coverage()
+
+
 def cmd_solve_delta_locality_slo_2913_coverage():
     """Issue #2913: solve_delta locality SLO (anti silent under-constrain).
 
@@ -12822,6 +12847,8 @@ def main():
         "restamp-budget-2934": cmd_restamp_budget_2934_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
+        "solve-delta-dep-closure-2939": cmd_solve_delta_dep_closure_2939,
+        "solve-delta-dep-closure-2939-coverage": cmd_solve_delta_dep_closure_2939_coverage,
         "coverage": cmd_coverage,
         "fuzz": cmd_fuzz,
         "production-concurrency": cmd_production_concurrency,
