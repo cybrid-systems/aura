@@ -1973,6 +1973,18 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(general_object_pin_adopt_site_count_v_read()));
                 insert_kv("schema-2709", 2709);
                 insert_kv("issue-2709", 2709);
+                // Issue #2971: production-required create auto-wire +
+                // pre-move densify gate. Existing auto-wire / required-
+                // enforced / breach-densify-fail keys (above) stay the
+                // success signals; this block is additive only.
+                using aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read;
+                using aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue;
+                insert_kv("general-object-pin-pre-move-unpinned-block-total",
+                          static_cast<std::int64_t>(
+                              general_object_pin_pre_move_unpinned_block_total_v_read()));
+                insert_kv("general-object-pin-create-densify-wired", 1);
+                insert_kv("schema-2971", kGeneralObjectPinCreateDensifyIssue);
+                insert_kv("issue-2971", kGeneralObjectPinCreateDensifyIssue);
             }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in

@@ -1976,6 +1976,19 @@ def cmd_lint():
             "Issue #2935 known-roots sticky recovery linter failed — run python3 scripts/coverage/checks/check_moving_known_roots_sticky_recovery_2935.py"
         )
         return r
+    # Issue #2971: production-required GeneralObjectPin on ASTArena::create
+    # + Moving densify fail-closed BEFORE address movement. Extends
+    # test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
+    gopcd_script = COVERAGE_CHECKS / "check_general_object_pin_create_densify_2971.py"
+    if not gopcd_script.exists():
+        fail(f"missing {gopcd_script}")
+        return 1
+    r = run([sys.executable, str(gopcd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2971 GeneralObjectPin create+densify linter failed — run python3 scripts/coverage/checks/check_general_object_pin_create_densify_2971.py"
+        )
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
@@ -7107,6 +7120,34 @@ def cmd_moving_known_roots_sticky_recovery_2935():
     """
     print(f"{B}=== moving known-roots sticky recovery (#2935) ==={N}")
     return cmd_moving_known_roots_sticky_recovery_2935_coverage()
+
+
+def cmd_general_object_pin_create_densify_2971_coverage():
+    """Issue #2971: production-required create auto-wire + pre-move densify gate (static)."""
+    print(f"{B}=== general-object-pin create densify coverage (#2971) ==={N}")
+    script = COVERAGE_CHECKS / "check_general_object_pin_create_densify_2971.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("general-object-pin create densify (#2971) coverage contract rows failed")
+        return 1
+    ok("general-object-pin create densify (#2971) coverage clean")
+    return 0
+
+
+def cmd_general_object_pin_create_densify_2971():
+    """Issue #2971: production-required GeneralObjectPin on intermediate create.
+
+    ASTArena::create auto-wires non-render intermediates when required is
+    active; live_compact(Moving) fail-closes BEFORE address movement if
+    any live intermediate is unpinned / unslotted. Soft / unset stays a
+    single atomic load. Additive schema-2971 on densify-health +
+    lifetime-pin-stats.
+    """
+    print(f"{B}=== general-object-pin create densify (#2971) ==={N}")
+    return cmd_general_object_pin_create_densify_2971_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -13659,6 +13700,8 @@ def main():
         "moving-sticky-densify-off-2905-coverage": cmd_moving_sticky_densify_off_2905_coverage,
         "moving-known-roots-sticky-recovery-2935": cmd_moving_known_roots_sticky_recovery_2935,
         "moving-known-roots-sticky-recovery-2935-coverage": cmd_moving_known_roots_sticky_recovery_2935_coverage,
+        "general-object-pin-create-densify-2971": cmd_general_object_pin_create_densify_2971,
+        "general-object-pin-create-densify-2971-coverage": cmd_general_object_pin_create_densify_2971_coverage,
         "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,
         "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
