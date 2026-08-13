@@ -30,6 +30,7 @@
 #include <fstream>
 #include <iterator>
 #include <print>
+#include <span>
 #include <string>
 
 import std;
@@ -73,6 +74,8 @@ static std::string read_file(const char* path) {
 static void ac2852_run_added_tests();
 // Issue #2843: Aura orch:compose-workflow surface (extend-in-place).
 static void ac2843_run_added_tests();
+// Issue #2974: multi-stage workflow primitive (extend-in-place).
+static void ac2974_run_added_tests();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -389,9 +392,11 @@ int run_test_failure_policy_bridge() {
     ac2852_run_added_tests(); // forward-declared below (defined at file end).
     // Issue #2843: Aura orch:compose-workflow surface (per #81967).
     ac2843_run_added_tests();
+    // Issue #2974: multi-stage workflow (per #81967 extend-in-place).
+    ac2974_run_added_tests();
 
-    std::println("\n=== #2539 + #2756 + #2852 + #2843 results: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== #2539 + #2756 + #2852 + #2843 + #2974 results: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
@@ -723,6 +728,198 @@ static void ac2843_run_added_tests() {
     ac2843_3_schema_and_soft();
     ac2843_4_project_kwargs_for_prims();
     ac2843_5_source_linter_mvp();
+}
+
+// ── Issue #2974: multi-stage workflow primitive ──
+static void ac2974_1_ordered_stages_stop_on_fail() {
+    std::println("\n--- #2974 AC1: two+ stages in order; stop_on_batch_fail ---");
+    using aura::orch::AgentScope;
+    using aura::orch::kWorkflowRunIssue;
+    using aura::orch::run_workflow;
+    using aura::orch::WorkflowStage;
+    CHECK(kWorkflowRunIssue == 2974, "AC1: issue stamp 2974");
+
+    aura::serve::Scheduler sched;
+    AgentScope scope(sched);
+
+    // Two empty stages both succeed (empty batch → Ok, no worker threads).
+    WorkflowStage ok1{};
+    WorkflowStage ok2{};
+    WorkflowStage ok_arr[] = {ok1, ok2};
+    auto r_ok = run_workflow(sched, scope, ok_arr);
+    CHECK(r_ok.stages.size() == 2, "AC1: both success stages ran");
+    CHECK(r_ok.stages_ok == 2, "AC1: stages_ok=2");
+    CHECK(r_ok.stages_failed == 0, "AC1: no failures");
+    CHECK(r_ok.stopped_at == 0, "AC1: completed all → stopped_at=0");
+
+    // Stage 1 invalid policy → fail; stop_on_batch_fail skips stage 2.
+    WorkflowStage fail{};
+    fail.batch.max_concurrency = 0; // validate_policy → Invalid
+    fail.stop_on_batch_fail = true;
+    WorkflowStage skipped{};
+    WorkflowStage stop_arr[] = {fail, skipped};
+    auto r_stop = run_workflow(sched, scope, stop_arr);
+    CHECK(r_stop.stages.size() == 1, "AC1: stage 2 did not start");
+    CHECK(r_stop.stages_failed == 1, "AC1: one failed stage");
+    CHECK(r_stop.stages_ok == 0, "AC1: no ok stages");
+    CHECK(r_stop.stopped_at == 1, "AC1: stopped_at=1 (1-based)");
+
+    // Same fail but stop_on_batch_fail=false → stage 2 still runs.
+    fail.stop_on_batch_fail = false;
+    WorkflowStage cont_arr[] = {fail, skipped};
+    auto r_cont = run_workflow(sched, scope, cont_arr);
+    CHECK(r_cont.stages.size() == 2, "AC1: continue-on-fail runs stage 2");
+    CHECK(r_cont.stages_failed == 1, "AC1: stage 1 still failed");
+    CHECK(r_cont.stages_ok == 1, "AC1: stage 2 ok");
+    CHECK(r_cont.stopped_at == 0, "AC1: no stop when stop_on_batch_fail=false");
+}
+
+static void ac2974_2_per_stage_policy_projection() {
+    std::println("\n--- #2974 AC2: per-stage policy matches #2539/#2756 ---");
+    using aura::orch::make_workflow_stage;
+    using aura::serve::parallel_orch::TaskSpec;
+    std::span<const TaskSpec> none{};
+    {
+        auto s = make_workflow_stage(none, FailurePolicy::FailFast);
+        CHECK(s.batch.failure_policy == FailurePolicy::FailFast, "AC2: FailFast batch");
+        CHECK(s.watch.on_stall == AgentFailureAction::Cancel, "AC2: FailFast → Cancel");
+    }
+    {
+        auto s = make_workflow_stage(none, FailurePolicy::CollectAll);
+        CHECK(s.watch.on_stall == AgentFailureAction::ReportOnly, "AC2: CollectAll → ReportOnly");
+    }
+    {
+        auto s = make_workflow_stage(none, FailurePolicy::RetryN, ResidualReclaimPreference::Report,
+                                     /*max_retries=*/4);
+        CHECK(s.batch.failure_policy == FailurePolicy::RetryN, "AC2: RetryN batch");
+        CHECK(s.watch.on_stall == AgentFailureAction::RestartN, "AC2: RetryN → RestartN");
+        CHECK(s.watch.max_restarts == 4, "AC2: max_retries → max_restarts");
+    }
+    {
+        auto s = make_workflow_stage(none, FailurePolicy::CircuitBreaker,
+                                     ResidualReclaimPreference::Report, 0, 6);
+        CHECK(s.watch.on_stall == AgentFailureAction::Cancel, "AC2: CircuitBreaker → Cancel");
+        CHECK(s.watch.consecutive_stall_limit == 6, "AC2: CircuitBreaker limit");
+    }
+}
+
+static void ac2974_3_residual_observe_only() {
+    std::println("\n--- #2974 AC3: residual only note_workflow_residual_reclaim_under_policy ---");
+    using aura::orch::AgentScope;
+    using aura::orch::run_workflow;
+    using aura::orch::WorkflowStage;
+    const auto before = g_orch_module_stats.workflow_residual_reclaim_under_policy_total.load();
+    aura::serve::Scheduler sched;
+    AgentScope scope(sched);
+    WorkflowStage fail{};
+    fail.batch.max_concurrency = 0;
+    WorkflowStage arr[] = {fail};
+    auto r = run_workflow(sched, scope, arr, ResidualReclaimPreference::Cancel);
+    CHECK(r.residual_observed, "AC3: residual_observed on failed stage");
+    CHECK(g_orch_module_stats.workflow_residual_reclaim_under_policy_total.load() == before + 1,
+          "AC3: residual observe +1");
+    const auto header = read_file("src/orch/agent_scope.h");
+    CHECK(header.find("note_workflow_residual_reclaim_under_policy") != std::string::npos,
+          "AC3: run_workflow calls note helper");
+    CHECK(header.find("run_workflow") != std::string::npos, "AC3: run_workflow defined");
+    // No #2661 reclaim from this helper (observe-only).
+    CHECK(header.find("complete_agent_join_cleanup") == std::string::npos ||
+              header.find("Does not reclaim") != std::string::npos ||
+              header.find("observe only") != std::string::npos ||
+              header.find("observe-only") != std::string::npos,
+          "AC3: residual observe-only documented");
+}
+
+static void ac2974_4_defaults_unchanged() {
+    std::println("\n--- #2974 AC4: unused callers keep #2007/#2229/#2852 defaults ---");
+    AgentFailurePolicy def;
+    CHECK(def.on_stall == AgentFailureAction::Cancel, "AC4: AgentFailurePolicy default Cancel");
+    ParallelPolicy pp;
+    CHECK(pp.failure_policy == FailurePolicy::CollectAll, "AC4: ParallelPolicy default CollectAll");
+    CHECK(pp.max_retries == 0, "AC4: default max_retries 0");
+    WorkflowFailurePolicy w;
+    CHECK(w.batch_policy == FailurePolicy::CollectAll, "AC4: WorkflowFailurePolicy default");
+    CHECK(w.residual == ResidualReclaimPreference::Report, "AC4: residual Report default");
+    const auto header = read_file("src/orch/agent_spawn.h");
+    CHECK(header.find("apply_workflow") != std::string::npos &&
+              header.find("workflow_apply_total") != std::string::npos,
+          "AC4: apply_workflow still present");
+}
+
+static void ac2974_5_additive_metrics() {
+    std::println("\n--- #2974 AC5: workflow-run-total / stage-fail-total / schema-2974 ---");
+    using aura::orch::AgentScope;
+    using aura::orch::run_workflow;
+    using aura::orch::WorkflowStage;
+    const auto run_before = g_orch_module_stats.workflow_run_total.load();
+    const auto fail_before = g_orch_module_stats.workflow_stage_fail_total.load();
+    const auto compose_before = g_orch_module_stats.workflow_compose_total.load();
+    const auto apply_before = g_orch_module_stats.workflow_apply_total.load();
+    aura::serve::Scheduler sched;
+    AgentScope scope(sched);
+    WorkflowStage ok{};
+    WorkflowStage fail{};
+    fail.batch.max_concurrency = 0;
+    fail.stop_on_batch_fail = true;
+    WorkflowStage arr[] = {fail, ok};
+    auto r = run_workflow(sched, scope, arr);
+    CHECK(r.stages_failed == 1, "AC5: one stage fail");
+    CHECK(g_orch_module_stats.workflow_run_total.load() == run_before + 1,
+          "AC5: workflow_run_total +1");
+    CHECK(g_orch_module_stats.workflow_stage_fail_total.load() == fail_before + 1,
+          "AC5: workflow_stage_fail_total +1");
+    CHECK(g_orch_module_stats.workflow_compose_total.load() == compose_before,
+          "AC5: compose-total unchanged by run_workflow");
+    CHECK(g_orch_module_stats.workflow_apply_total.load() == apply_before,
+          "AC5: apply-total unchanged by run_workflow");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(q.find("workflow-run-total") != std::string::npos, "AC5: workflow-run-total query key");
+    CHECK(q.find("workflow-stage-fail-total") != std::string::npos,
+          "AC5: workflow-stage-fail-total query key");
+    CHECK(q.find("schema-2974") != std::string::npos, "AC5: schema-2974");
+    CHECK(q.find("orch:run-workflow") != std::string::npos, "AC5: Aura prim registered");
+}
+
+static void ac2974_6_tests_linter_mvp() {
+    std::println("\n--- #2974 AC6: extend test_failure_policy_bridge + linter + no design ---");
+    const auto header = read_file("src/orch/agent_spawn.h");
+    const auto scope = read_file("src/orch/agent_scope.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto readme = read_file("src/orch/README.md");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_workflow_run_2974.py");
+    CHECK(header.find("kWorkflowRunIssue") != std::string::npos, "AC6: kWorkflowRunIssue");
+    CHECK(header.find("struct WorkflowStage") != std::string::npos, "AC6: WorkflowStage");
+    CHECK(header.find("run_workflow") != std::string::npos, "AC6: run_workflow declared");
+    CHECK(header.find("workflow_run_total") != std::string::npos, "AC6: workflow_run_total");
+    CHECK(scope.find("run_workflow") != std::string::npos, "AC6: run_workflow defined");
+    CHECK(q.find("orch:run-workflow") != std::string::npos, "AC6: prim registered");
+    CHECK(readme.find("2974") != std::string::npos, "AC6: README cites #2974");
+    CHECK(readme.find("orch:run-workflow") != std::string::npos, "AC6: README documents prim");
+    CHECK(t.find("ac2974_1_ordered_stages_stop_on_fail") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac2974_2_per_stage_policy_projection") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2974_3_residual_observe_only") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac2974_4_defaults_unchanged") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2974_5_additive_metrics") != std::string::npos, "AC6: AC5 test");
+    CHECK(build.find("check_workflow_run_2974") != std::string::npos, "AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2974") != std::string::npos, "AC6: linter present");
+    CHECK(header.find("class AgentRegistry") == std::string::npos, "AC6: no AgentRegistry");
+    CHECK(header.find("conduct_parallel(") == std::string::npos, "AC6: no conduct_parallel");
+    CHECK(q.find("class AgentRegistry") == std::string::npos, "AC6: prims no AgentRegistry");
+    CHECK(read_file("docs/design/2974-workflow-run.md").empty(),
+          "AC6: no docs/design/2974-* per #1655");
+    CHECK(read_file("tests/orch/test_issue_2974.cpp").empty(),
+          "AC6: no invent test file per #81967");
+}
+
+static void ac2974_run_added_tests() {
+    ac2974_1_ordered_stages_stop_on_fail();
+    ac2974_2_per_stage_policy_projection();
+    ac2974_3_residual_observe_only();
+    ac2974_4_defaults_unchanged();
+    ac2974_5_additive_metrics();
+    ac2974_6_tests_linter_mvp();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

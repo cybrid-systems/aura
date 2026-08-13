@@ -2002,6 +2002,17 @@ def cmd_lint():
             "Issue #2973 pre-densify completeness linter failed — run python3 scripts/coverage/checks/check_moving_pre_densify_completeness_2973.py"
         )
         return r
+    # Issue #2974: multi-stage workflow primitive (ordered stages over
+    # parallel_intend + scope watch). Extends test_failure_policy_bridge
+    # (#81967); no docs/design/ (#1655).
+    wr2974_script = COVERAGE_CHECKS / "check_workflow_run_2974.py"
+    if not wr2974_script.exists():
+        fail(f"missing {wr2974_script}")
+        return 1
+    r = run([sys.executable, str(wr2974_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #2974 workflow-run linter failed — run python3 scripts/coverage/checks/check_workflow_run_2974.py")
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
@@ -4516,6 +4527,21 @@ def cmd_workflow_compose_aura_2843_coverage():
         fail("workflow compose Aura surface (#2843) coverage contract rows failed")
         return 1
     ok("workflow compose Aura surface (#2843) coverage clean")
+    return 0
+
+
+def cmd_workflow_run_2974_coverage():
+    """Issue #2974: multi-stage workflow primitive (ordered DAG stages)."""
+    print(f"{B}=== workflow run multi-stage (#2974) coverage ==={N}")
+    script = COVERAGE_CHECKS / "check_workflow_run_2974.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("workflow run multi-stage (#2974) coverage contract rows failed")
+        return 1
+    ok("workflow run multi-stage (#2974) coverage clean")
     return 0
 
 
@@ -13743,6 +13769,8 @@ def main():
         "general-object-pin-create-densify-2971-coverage": cmd_general_object_pin_create_densify_2971_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
+        "workflow-run-2974": cmd_workflow_run_2974_coverage,
+        "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,
         "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
