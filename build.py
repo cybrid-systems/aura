@@ -2560,6 +2560,17 @@ def cmd_lint():
             "Issue #2964 linear-fast-path-unified linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_unified_2964.py"
         )
         return r
+    # Issue #2966: ast:snapshot fail reason (never silent -1).
+    asfr2966 = COVERAGE_CHECKS / "check_ast_snapshot_fail_reason_2966.py"
+    if not asfr2966.exists():
+        fail(f"missing {asfr2966}")
+        return 1
+    r = run([sys.executable, str(asfr2966)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2966 ast-snapshot-fail-reason linter failed — run python3 scripts/coverage/checks/check_ast_snapshot_fail_reason_2966.py"
+        )
+        return r
     # Issue #2704: production hard-face on OccurrenceGoal rehydrate miss
     # after steal/densify fence. Wires
     # check_occurrence_empty_after_fence_2704.py so the new force_reason
@@ -9934,6 +9945,24 @@ def cmd_ast_snapshot_workspace_2918_coverage():
     return 0
 
 
+def cmd_ast_snapshot_fail_reason_2966_coverage():
+    """Issue #2966: ast:snapshot fail reason (never silent -1).
+
+    Denseness/stdin without set-code → -1 + :no-workspace; set-code path ok.
+    """
+    print(f"{B}=== ast snapshot fail-reason coverage (#2966) ==={N}")
+    script = COVERAGE_CHECKS / "check_ast_snapshot_fail_reason_2966.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ast snapshot fail-reason (#2966) coverage contract rows failed")
+        return 1
+    ok("ast snapshot fail-reason (#2966) coverage clean")
+    return 0
+
+
 def cmd_current_source_unparse_2919_coverage():
     """Issue #2919: current-source unparse P0 tags + string/lambda roundtrip.
 
@@ -13577,6 +13606,8 @@ def main():
         "prim-heap-quota-2916": cmd_prim_heap_quota_2916_coverage,
         "agent-recovery-2917": cmd_agent_recovery_2917_coverage,
         "ast-snapshot-workspace-2918": cmd_ast_snapshot_workspace_2918_coverage,
+        "ast-snapshot-fail-reason-2966": cmd_ast_snapshot_fail_reason_2966_coverage,
+        "ast-snapshot-fail-reason-2966-coverage": cmd_ast_snapshot_fail_reason_2966_coverage,
         "current-source-unparse-2919": cmd_current_source_unparse_2919_coverage,
         "workspace-source-ssot-2920": cmd_workspace_source_ssot_2920_coverage,
         "current-source-roundtrip-2921": cmd_current_source_roundtrip_2921_coverage,

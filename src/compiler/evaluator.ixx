@@ -5016,6 +5016,14 @@ private:
         std::uint64_t cow_epoch = 0;
     };
     std::vector<FlatSnapshot> snapshot_flats_;
+    // Issue #2966: last ast:snapshot failure reason (never silent -1).
+    // 0=none/ok, 1=guard-reject, 2=no-workspace, 3=empty-source.
+    // Contract: snapshot requires a non-empty workspace established by
+    // set-code / mutate:*; top-level (define …) alone is insufficient.
+    // Cross-link #2918: successful snapshots store workspace unparse.
+    std::uint8_t last_ast_snapshot_fail_reason_ = 0;
+    std::uint64_t ast_snapshot_fail_total_ = 0;
+    std::uint64_t ast_snapshot_ok_total_ = 0;
     // Issue #263: last post-restore validation result (0 = consistent).
     std::size_t last_post_restore_violations_ = 0;
     aura::ast::PostRestoreReport last_post_restore_report_{};
@@ -6386,6 +6394,25 @@ public:
     }
     [[nodiscard]] bool gc_defer_armed_for_pending_panic() const noexcept {
         return gc_defer_armed_for_panic_cp_;
+    }
+    // Issue #2966: ast:snapshot failure observability (never silent -1).
+    // reason: 0=none, 1=guard-reject, 2=no-workspace, 3=empty-source.
+    [[nodiscard]] std::uint8_t last_ast_snapshot_fail_reason() const noexcept {
+        return last_ast_snapshot_fail_reason_;
+    }
+    [[nodiscard]] std::uint64_t ast_snapshot_fail_total() const noexcept {
+        return ast_snapshot_fail_total_;
+    }
+    [[nodiscard]] std::uint64_t ast_snapshot_ok_total() const noexcept {
+        return ast_snapshot_ok_total_;
+    }
+    void note_ast_snapshot_fail(std::uint8_t reason) noexcept {
+        last_ast_snapshot_fail_reason_ = reason;
+        ++ast_snapshot_fail_total_;
+    }
+    void note_ast_snapshot_ok() noexcept {
+        last_ast_snapshot_fail_reason_ = 0;
+        ++ast_snapshot_ok_total_;
     }
     // Issue #548: panic-checkpoint lifecycle counters
     // + bump helpers. Public so the

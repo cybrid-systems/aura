@@ -9,6 +9,11 @@
 (if (= no-ws -1)
     #t
     (begin (display "FAIL-2918 expected -1 without workspace\n") (set! ok #f)))
+; Issue #2966: fail reason must be observable (never silent -1 only)
+(define fr (ast:snapshot-fail-reason))
+(if (eq? fr :no-workspace)
+    #t
+    (begin (display "FAIL-2966 expected :no-workspace fail-reason\n") (set! ok #f)))
 
 ; Install a distinctive workspace (must differ from suite/eval current-source)
 (set-code "(define unique-ws-2918-marker 42)")

@@ -23,6 +23,7 @@
 #include "test_harness.hpp"
 
 #include <cctype>
+#include <format>
 #include <fstream>
 #include <print>
 #include <string>
@@ -39,6 +40,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_keyword;
 using aura::compiler::types::is_string;
 using aura::compiler::types::is_void;
 using aura::test::g_failed;
@@ -245,6 +247,93 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// ── Issue #2966: observable snapshot fail (never silent -1) ──
+// Contract: snapshot requires set-code/mutate workspace; define-only denseness
+// path fails with -1 **and** queryable reason (:no-workspace).
+
+static std::int64_t href_ws_snap(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:workspace-snapshot-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static void ac2966_1_no_workspace_observable() {
+    std::println("\n--- #2966 AC1: define-only denseness path → -1 + reason ---");
+    CompilerService cs;
+    // Simulate denseness: no set-code, just snapshot (top-level define alone
+    // never populates workspace_flat_ in this host path either).
+    auto snap = cs.eval("(ast:snapshot \"denseness\")");
+    CHECK(snap && is_int(*snap) && as_int(*snap) == -1, "2966 AC1: still returns -1");
+    auto reason = cs.eval("(ast:snapshot-fail-reason)");
+    CHECK(reason.has_value(), "2966 AC1: fail-reason primitive present");
+    // reason is keyword :no-workspace
+    CHECK(is_keyword(*reason), "2966 AC1: reason is keyword");
+    CHECK(href_ws_snap(cs, "last-ast-snapshot-fail-reason") == 2,
+          "2966 AC1: last reason code = no-workspace (2)");
+    CHECK(href_ws_snap(cs, "ast-snapshot-fail-total") >= 1, "2966 AC1: fail total bumps");
+    CHECK(href_ws_snap(cs, "schema-2966") == 2966, "2966 AC1: schema-2966");
+    CHECK(href_ws_snap(cs, "ast-snapshot-fail-wired") == 1, "2966 AC1: wired");
+}
+
+static void ac2966_2_set_code_path_ok() {
+    std::println("\n--- #2966 AC2: set-code bootstrap → snapshot id >= 0 ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define score (lambda (x) (* x 2)))\")").has_value(),
+          "2966 AC2: set-code");
+    auto sid = cs.eval("(ast:snapshot \"ok\")");
+    CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "2966 AC2: snapshot succeeds");
+    auto reason = cs.eval("(ast:snapshot-fail-reason)");
+    CHECK(reason && is_keyword(*reason), "2966 AC2: reason keyword");
+    CHECK(href_ws_snap(cs, "last-ast-snapshot-fail-reason") == 0,
+          "2966 AC2: last reason cleared to none");
+    CHECK(href_ws_snap(cs, "ast-snapshot-ok-total") >= 1, "2966 AC2: ok total bumps");
+    // #2918 cross-check: workspace source non-empty
+    auto ws = workspace_source(cs);
+    CHECK(!ws.empty(), "2966 AC2: workspace source present after set-code");
+}
+
+static void ac2966_3_empty_set_code_fails() {
+    std::println("\n--- #2966 AC3: empty set-code → empty-source fail ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"\")").has_value() || true, "2966 AC3: set-code empty attempt");
+    auto sid = cs.eval("(ast:snapshot \"empty\")");
+    // Either no workspace survived empty set-code (code 2) or empty source (code 3).
+    CHECK(sid && is_int(*sid) && as_int(*sid) == -1, "2966 AC3: empty → -1");
+    auto code = href_ws_snap(cs, "last-ast-snapshot-fail-reason");
+    CHECK(code == 2 || code == 3, "2966 AC3: reason no-workspace or empty-source");
+}
+
+static void ac2966_4_source_cite() {
+    std::println("\n--- #2966 AC4: source-cite + contract + no design ---");
+    const auto ast = read_file("src/compiler/evaluator_primitives_ast.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
+    const auto t = read_file("tests/compiler/test_current_source_roundtrip.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_ast_snapshot_fail_reason_2966.py");
+    const auto build = read_file("build.py");
+    CHECK(ast.find("2966") != std::string::npos, "2966 AC4: ast cites #2966");
+    CHECK(ast.find("ast:snapshot-fail-reason") != std::string::npos, "2966 AC4: fail-reason prim");
+    CHECK(ast.find("no-workspace") != std::string::npos ||
+              ast.find("NoWorkspace") != std::string::npos ||
+              ast.find("kSnapFailNoWorkspace") != std::string::npos,
+          "2966 AC4: no-workspace reason");
+    CHECK(ast.find("set-code") != std::string::npos, "2966 AC4: contract cites set-code");
+    CHECK(ixx.find("last_ast_snapshot_fail_reason") != std::string::npos,
+          "2966 AC4: evaluator field");
+    CHECK(q.find("schema-2966") != std::string::npos, "2966 AC4: query schema");
+    CHECK(q.find("last-ast-snapshot-fail-reason") != std::string::npos, "2966 AC4: query key");
+    CHECK(t.find("ac2966_1_no_workspace_observable") != std::string::npos, "2966 AC4: AC1 test");
+    CHECK(!lint.empty() && lint.find("2966") != std::string::npos, "2966 AC4: linter");
+    CHECK(build.find("check_ast_snapshot_fail_reason_2966") != std::string::npos,
+          "2966 AC4: build.py");
+    CHECK(read_file("docs/design/2966-ast-snapshot.md").empty(),
+          "2966 AC4: no docs/design/2966-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2966.cpp").empty(),
+          "2966 AC4: no invent test_issue file");
+}
+
 static void ac_wiring() {
     std::println("\n--- #2921 AC15: source + cmake wiring ---");
     const auto self = read_file("tests/compiler/test_current_source_roundtrip.cpp");
@@ -271,7 +360,12 @@ int run_test_current_source_roundtrip() {
     ac_depth_limit();
     ac_null_workspace();
     ac_wiring();
-    std::println("\n=== #2921: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2966: ast:snapshot fail reason (never silent -1) ===");
+    ac2966_1_no_workspace_observable();
+    ac2966_2_set_code_path_ok();
+    ac2966_3_empty_set_code_fails();
+    ac2966_4_source_cite();
+    std::println("\n=== #2921/#2966: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

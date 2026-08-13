@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**488** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**489** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,7 +10,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 84 primitives (17%)
+- **mutation-safety**: 85 primitives (17%)
 - **core**: 361 primitives (74%)
 - **internal-observable**: 42 primitives (9%)
 - **convenience**: 1 primitives (0%)
@@ -68,7 +68,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `mutate:set-agent-fingerprint` *[mutation-safety]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-reflected` *[mutation-safety]* — `src/compiler/evaluator_primitives_query_tail.cpp`
 
-## Ast: (15)
+## Ast: (16)
 
 - `ast:compact-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
@@ -81,6 +81,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ast:ref-workspace-id` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot-fail-reason` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:stable-ref` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-nodes` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-ownership` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
@@ -633,7 +634,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (84)
+### Mutation safety (must remain primitive) (85)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -647,6 +648,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ast:ref-workspace-id` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:restore` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:snapshot` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot-fail-reason` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:stable-ref` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`

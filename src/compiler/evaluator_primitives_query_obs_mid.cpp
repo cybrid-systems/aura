@@ -1238,7 +1238,9 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             if (!ev)
                 return make_void();
             auto* ws = ev->workspace_flat();
-            auto* ht = FlatHashTable::create(16);
+            // Issue #2966: capacity 32 so schema-2966 + fail-reason keys fit
+            // with existing workspace-snapshot counters (was 16 → silent drop).
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1294,6 +1296,18 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("panic-safe-source-len", static_cast<std::int64_t>(source_len));
             insert_kv("workspace-snapshot-total", static_cast<std::int64_t>(total));
             insert_kv("workspace-snapshot-recommendation", recommendation);
+            // Issue #2966: ast:snapshot failure observability (never silent -1).
+            // last-ast-snapshot-fail-reason: 0=none, 1=guard, 2=no-workspace, 3=empty
+            // Contract: snapshot requires set-code/mutate workspace; define-only → 2.
+            insert_kv("last-ast-snapshot-fail-reason",
+                      static_cast<std::int64_t>(ev->last_ast_snapshot_fail_reason()));
+            insert_kv("ast-snapshot-fail-total",
+                      static_cast<std::int64_t>(ev->ast_snapshot_fail_total()));
+            insert_kv("ast-snapshot-ok-total",
+                      static_cast<std::int64_t>(ev->ast_snapshot_ok_total()));
+            insert_kv("ast-snapshot-fail-wired", 1);
+            insert_kv("schema-2966", 2966);
+            insert_kv("issue-2966", 2966);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
