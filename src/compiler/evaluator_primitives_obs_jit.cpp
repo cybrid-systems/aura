@@ -11975,7 +11975,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             totals.moving_blocked_precondition_total =
                 aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed);
             const auto s = mdh::snapshot(totals);
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -12091,6 +12091,28 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2935", 2935);
             insert_kv("issue-2935",
                       aura::core::densify_consistency::kMovingStickyDensifyRecoveryIssue);
+            // Issue #2971: production-required create auto-wire + pre-move
+            // densify gate on densify-health. Additive — existing Soft
+            // metrics / pin-contract-held stay the success signal.
+            insert_kv("general-object-pin-auto-wire-total",
+                      static_cast<std::int64_t>(
+                          aura::core::lifetime::general_object_pin_auto_wire_total_v_read()));
+            insert_kv("general-object-pin-required-enforced-total",
+                      static_cast<std::int64_t>(
+                          aura::core::lifetime::g_general_object_pin_required_enforced_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "general-object-pin-required-breach-densify-fail-total",
+                static_cast<std::int64_t>(
+                    aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total
+                        .load(std::memory_order_relaxed)));
+            insert_kv("general-object-pin-pre-move-unpinned-block-total",
+                      static_cast<std::int64_t>(
+                          aura::core::lifetime::
+                              general_object_pin_pre_move_unpinned_block_total_v_read()));
+            insert_kv("general-object-pin-create-densify-wired", 1);
+            insert_kv("schema-2971", aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue);
+            insert_kv("issue-2971", aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

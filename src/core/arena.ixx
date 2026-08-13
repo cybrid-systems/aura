@@ -13,6 +13,7 @@ module;
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include "core/gc_hooks.h"
@@ -999,6 +1000,24 @@ public:
         external_root_slots_for_densify_.clear();
     }
 
+    // Issue #2971: live auto-wired intermediate creates under required.
+    // Soft / unset leaves this 0 (create never inserts). Tests + Agent
+    // soak use this to prove zero residual unpinned intermediates after
+    // a blocked densify (objects still live, just not moved).
+    [[nodiscard]] std::size_t intermediate_create_auto_wire_count() const noexcept {
+        return intermediate_creates_.size();
+    }
+
+    // Issue #2971: EXEMPT a previously auto-wired create (stable-handle /
+    // RootRemap-registered / hot-path-bypass). Removes it from the
+    // pre-move inventory so densify is not blocked by this pointer.
+    void mark_intermediate_create_exempt(void* p) noexcept {
+        if (!p)
+            return;
+        erase_intermediate_create_(p);
+        ++aura::core::lifetime::g_lifetime_pin_stats.general_object_pin_exempt_total;
+    }
+
     // Issue #2837: register a *slot* (void**) holding a pointer that may
     // reference a densify-tracked object. After live_compact(Moving)
     // relocates tracked objects, *slot is rewritten to the new address
@@ -1101,6 +1120,14 @@ public:
         // Issue #2166: record size/align for opt-in Moving densify remap.
         dtors_.push_back(
             {result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T)});
+        // Issue #2971: production-required auto-wire of intermediate creates.
+        // Soft / unset (pref <= 0) is a single atomic load — no inventory,
+        // no pin, no counter bump (AC6 zero Soft cost). Render hotpath is
+        // exempt (PinOwner / FFI present stays orthogonal).
+        if (aura::core::lifetime::general_object_pin_required_active() &&
+            !aura::core::arena_policy::in_render_hotpath()) {
+            note_intermediate_create_auto_wire_(result);
+        }
         return result;
     }
 
@@ -1127,6 +1154,7 @@ public:
                 dtors_.erase(it);
                 // Issue #1518: recycle small-pool slots for freelist relocate.
                 (void)small_pool_.recycle(ptr, sizeof(T));
+                erase_intermediate_create_(ptr);
                 return;
             }
         }
@@ -1134,6 +1162,7 @@ public:
         // ownership already moved). Best-effort dtor call.
         ptr->~T();
         (void)small_pool_.recycle(ptr, sizeof(T));
+        erase_intermediate_create_(ptr);
     }
 
     // Release all allocated memory in one shot. Destructors run in
@@ -1473,6 +1502,36 @@ public:
                     result.force_blocked_by_envframe_guard = true;
                     ++stats_.force_compact_blocked_by_envframe_guard;
                     g_force_compact_blocked_by_envframe_guard_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                ++stats_.moving_blocked_precondition_total;
+                g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
+                return result;
+            }
+            // Issue #2971: production-required unpinned-intermediate gate.
+            // MUST run before relocate_tracked_objects_for_moving_ so
+            // address movement cannot create a dangling raw pointer
+            // window. Soft / pref<=0 skips (single atomic load).
+            // Covered == pinned in the existing LifetimePin registry OR
+            // registered as a #2837/#2935 external-root slot. Uncovered
+            // live creates fail-closed: pin_contract_held=false + sticky
+            // densify-off + no relocate.
+            if (aura::core::lifetime::general_object_pin_required_active() &&
+                has_unpinned_intermediate_creates_()) {
+                result.pin_contract_held = false;
+                result.moving_incomplete_remap = true;
+                result.moving_blocked_precondition = true;
+                result.soft_gated = true;
+                aura::core::lifetime::g_general_object_pin_required_breach.store(
+                    1, std::memory_order_release);
+                aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total
+                    .fetch_add(1, std::memory_order_relaxed);
+                aura::core::lifetime::g_general_object_pin_pre_move_unpinned_block_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                const auto prev_sticky = g_moving_incomplete_remap_sticky_densify_off.exchange(
+                    1, std::memory_order_acq_rel);
+                if (prev_sticky == 0) {
+                    g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(
                         1, std::memory_order_relaxed);
                 }
                 ++stats_.moving_blocked_precondition_total;
@@ -2058,6 +2117,53 @@ private:
             it->dtor(it->ptr);
         }
         dtors_.clear();
+        // Issue #2971: drop auto-wired inventory with the objects. Soft
+        // path: vector is empty → no extra work beyond the empty check.
+        if (!intermediate_creates_.empty()) {
+            for (void* p : intermediate_creates_)
+                external_roots_for_densify_.erase(p);
+            intermediate_creates_.clear();
+        }
+    }
+
+    // Issue #2971: record a required-regime create. Extends the existing
+    // wire_general_object_create_pair* adoption surface (auto_wire_total)
+    // plus #2775 prep-root set so #2935 known-root inventory can see the
+    // intermediate as densify-visible. Not a LifetimePin — live pins
+    // would trip live_pin_count() and block all Moving.
+    void note_intermediate_create_auto_wire_(void* p) noexcept {
+        if (!p)
+            return;
+        intermediate_creates_.push_back(p);
+        aura::core::lifetime::note_general_object_create_auto_wire();
+        register_external_root_for_densify(p);
+    }
+
+    void erase_intermediate_create_(void* p) noexcept {
+        if (!p || intermediate_creates_.empty())
+            return;
+        auto it = std::find(intermediate_creates_.begin(), intermediate_creates_.end(), p);
+        if (it != intermediate_creates_.end()) {
+            *it = intermediate_creates_.back();
+            intermediate_creates_.pop_back();
+        }
+        external_roots_for_densify_.erase(p);
+    }
+
+    [[nodiscard]] bool has_unpinned_intermediate_creates_() const noexcept {
+        if (intermediate_creates_.empty())
+            return false;
+        std::unordered_set<void*> covered;
+        aura::core::lifetime::collect_pinned_ptrs_for_arena(arena_id_, covered);
+        for (void** slot : external_root_slots_for_densify_) {
+            if (slot && *slot)
+                covered.insert(*slot);
+        }
+        for (void* p : intermediate_creates_) {
+            if (p && covered.find(p) == covered.end())
+                return true;
+        }
+        return false;
     }
 
     // Issue #187 (P0) + Issue #300 follow-up #3 (real root
@@ -2366,6 +2472,10 @@ private:
     // register_external_root_slot_for_densify. Rewritten after densify when
     // *slot is a key in last_object_remap_. Cleared with the prep set.
     std::vector<void**> external_root_slots_for_densify_;
+    // Issue #2971: live intermediate creates auto-wired under production
+    // required (pref > 0). Soft / unset never inserts (zero hot-path
+    // work). Pre-move densify gate walks this vs pin registry + slots.
+    std::vector<void*> intermediate_creates_;
     // Issue #300 Phase 3: see request_defrag() / defrag_requested()
     // / clear_defrag_request() for semantics.
     std::atomic<bool> defrag_requested_{false};

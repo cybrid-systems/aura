@@ -245,6 +245,26 @@ inline std::atomic<int> g_general_object_pin_required_pref{-1};
 inline std::atomic<std::uint8_t> g_general_object_pin_required_breach{0};
 inline std::atomic<std::uint64_t> g_general_object_pin_required_breach_densify_fail_total{0};
 inline constexpr int kGeneralObjectPinRequiredProdDefaultIssue = 2840;
+// Issue #2971: production-required auto-wire of ASTArena::create
+// intermediates + Moving densify fail-closed BEFORE address movement.
+// Completes the residual UAF window left by #2840 (breach checked after
+// relocate_tracked_objects_for_moving_). Soft / pref<=0 stays a single
+// atomic load on the create hot path (no inventory, no pin).
+inline constexpr int kGeneralObjectPinCreateDensifyIssue = 2971;
+// Bumped when live_compact(Moving) refuses to relocate because a
+// required-regime intermediate is still unpinned / unslotted at the
+// start of the densify window (pre-move gate). Distinct from
+// breach_densify_fail_total which also covers the post-move #2840 path.
+inline std::atomic<std::uint64_t> g_general_object_pin_pre_move_unpinned_block_total{0};
+
+[[nodiscard]] inline std::uint64_t
+general_object_pin_pre_move_unpinned_block_total_v_read() noexcept {
+    return g_general_object_pin_pre_move_unpinned_block_total.load(std::memory_order_relaxed);
+}
+
+inline void reset_general_object_pin_pre_move_block_for_test() noexcept {
+    g_general_object_pin_pre_move_unpinned_block_total.store(0, std::memory_order_relaxed);
+}
 
 [[nodiscard]] inline bool general_object_pin_required_active() noexcept {
     return g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0;
@@ -835,6 +855,26 @@ verify_linear_pins_under_moving_compact(const std::unordered_set<void*>& old_add
 // a new address or removed from the linear_roots registry before the
 // Moving compact is allowed to proceed. The combined result is
 // returned: if either check fails, the compact must yield.
+// Issue #2971: collect live pin ptrs for an arena so ASTArena can treat
+// a required-regime intermediate as covered (pinned) at the pre-move
+// densify gate. arena_id == 0 collects every pinned ptr. Empty registry
+// is a no-op (no extra work). Not a second pin registry — reads the
+// existing sharded LifetimePin table.
+inline void collect_pinned_ptrs_for_arena(std::uint64_t arena_id,
+                                          std::unordered_set<void*>& out) noexcept {
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+        auto& shard = pin_registry_shards()[i];
+        std::lock_guard<std::mutex> lock(shard.mtx);
+        for (auto* p : shard.pins) {
+            if (!p || !p->pinned())
+                continue;
+            if (arena_id != 0 && p->arena_id() != arena_id)
+                continue;
+            out.insert(p->ptr());
+        }
+    }
+}
+
 inline bool
 verify_pins_under_moving_compact(std::uint64_t arena_id,
                                  const std::unordered_set<void*>& old_addresses) noexcept {
@@ -1063,6 +1103,13 @@ private:
 // Issue #2337 / #2363: bump wire counter once per adopted create site.
 inline void note_general_object_pin_mutate_wire() noexcept {
     ++g_lifetime_pin_stats.general_object_pin_mutate_wire_total;
+}
+
+// Issue #2971: bump auto_wire when ASTArena::create installs an
+// intermediate inventory entry under production required. Soft callers
+// never reach this (gated on general_object_pin_required_active()).
+inline void note_general_object_create_auto_wire() noexcept {
+    ++g_lifetime_pin_stats.general_object_pin_auto_wire_total;
 }
 
 // Issue #2363: pin both intermediate create buffers (typically

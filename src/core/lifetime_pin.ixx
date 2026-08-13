@@ -35,6 +35,7 @@ using ::aura::core::lifetime::kLifetimePinPhase;
 // Stats + process atomics
 using ::aura::core::lifetime::apply_general_object_pin_required_env;
 using ::aura::core::lifetime::clear_general_object_pin_required_breach;
+using ::aura::core::lifetime::g_general_object_pin_pre_move_unpinned_block_total;
 using ::aura::core::lifetime::g_general_object_pin_required_breach;
 using ::aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total;
 using ::aura::core::lifetime::g_general_object_pin_required_enforced_total;
@@ -49,11 +50,14 @@ using ::aura::core::lifetime::g_moving_compact_pin_contract_fail_total;
 using ::aura::core::lifetime::g_moving_compact_pin_hits_total;
 using ::aura::core::lifetime::g_moving_compact_remap_us_total;
 using ::aura::core::lifetime::g_pin_registry_lock_wait_us_total;
+using ::aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read;
 using ::aura::core::lifetime::general_object_pin_required_active;
 using ::aura::core::lifetime::general_object_pin_required_breach_active;
+using ::aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue;
 using ::aura::core::lifetime::kGeneralObjectPinRequiredProdDefaultIssue;
 using ::aura::core::lifetime::LifetimePinStats;
 using ::aura::core::lifetime::pin_registry_lock_wait_us_total;
+using ::aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test;
 
 // Pin owner + pin type
 using ::aura::core::lifetime::GeneralObjectPin;
@@ -93,10 +97,12 @@ using ::aura::core::lifetime::reset_linear_roots_for_test;
 using ::aura::core::lifetime::unpin_linear_root;
 
 // General-object pin protocol
+using ::aura::core::lifetime::collect_pinned_ptrs_for_arena;
 using ::aura::core::lifetime::general_object_pin_adopt_site_count;
 using ::aura::core::lifetime::general_object_pin_adopt_site_count_v_read;
 using ::aura::core::lifetime::general_object_pin_auto_wire_total_v_read;
 using ::aura::core::lifetime::general_object_pin_exempt_total_v_read;
+using ::aura::core::lifetime::note_general_object_create_auto_wire;
 using ::aura::core::lifetime::note_general_object_pin_mutate_wire;
 using ::aura::core::lifetime::pin_or_fail;
 using ::aura::core::lifetime::validate_general_object;

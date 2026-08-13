@@ -42,6 +42,7 @@
 
 import std;
 import aura.core.arena;
+import aura.core.lifetime_pin;
 
 namespace {
 
@@ -1126,6 +1127,216 @@ static void ac2935_6_linter_and_no_design() {
           "AC6: no new invent test file per #81967");
 }
 
+// ── Issue #2971: production-required GeneralObjectPin on create + densify ──
+// Residual of #2840: production locks required, but ASTArena::create did
+// not auto-wire intermediates and live_compact(Moving) checked breach
+// only AFTER relocate. #2971 auto-wires create under required and
+// fail-closes Moving BEFORE address movement. pin_contract_held remains
+// the single success signal. Soft / unset stays a single atomic load.
+//
+//   AC1: production default still forces required (step 15) + create
+//        auto-wire path source-cited.
+//   AC2: required + unpinned intermediates → densify blocked before
+//        relocate (payloads intact, objects_moved==0).
+//   AC3: slot-covered intermediates ( #2935 / #2837 ) allow densify.
+//   AC4: additive schema keys on densify-health / lifetime-pin-stats.
+//   AC5: Soft / unset — create does not bump auto_wire; no pre-move gate.
+//   AC6: tests + coverage linter + no docs/design/ / no invent file.
+
+struct RequiredPinGuard {
+    int prev = -1;
+    explicit RequiredPinGuard(int enable) {
+        prev = aura::core::lifetime::g_general_object_pin_required_pref.load(
+            std::memory_order_relaxed);
+        aura::core::lifetime::g_general_object_pin_required_pref.store(enable,
+                                                                       std::memory_order_release);
+    }
+    ~RequiredPinGuard() {
+        aura::core::lifetime::g_general_object_pin_required_pref.store(prev,
+                                                                       std::memory_order_release);
+        aura::core::lifetime::clear_general_object_pin_required_breach();
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    }
+};
+
+static void ac2971_1_production_default_and_create_auto_wire() {
+    std::println("\n--- #2971 AC1: production default + create auto-wire ---");
+    const auto hh = read_file("src/compiler/security_defaults.hh");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(hh.find("#2971") != std::string::npos, "AC1: security_defaults cites #2971");
+    CHECK(hh.find("g_general_object_pin_required_pref.store(1, std::memory_order_release)") !=
+              std::string::npos,
+          "AC1: production still locks required when env unset");
+    CHECK(arena.find("note_intermediate_create_auto_wire_") != std::string::npos,
+          "AC1: ASTArena::create auto-wires intermediates");
+    CHECK(arena.find("note_general_object_create_auto_wire") != std::string::npos,
+          "AC1: create path bumps auto_wire via existing helper");
+    CHECK(arena.find("register_external_root_for_densify") != std::string::npos,
+          "AC1: auto-wired intermediates are densify-visible (#2935)");
+    CHECK(lp.find("kGeneralObjectPinCreateDensifyIssue = 2971") != std::string::npos,
+          "AC1: issue stamp 2971");
+    CHECK(lp.find("note_general_object_create_auto_wire") != std::string::npos,
+          "AC1: create auto-wire helper");
+}
+
+static void ac2971_2_pre_move_densify_gate() {
+    std::println("\n--- #2971 AC2: unpinned intermediates block Moving before relocate ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
+    const auto wire0 = aura::core::lifetime::general_object_pin_auto_wire_total_v_read();
+    const auto block0 =
+        aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "AC2: creates succeeded");
+    CHECK(arena.intermediate_create_auto_wire_count() == 3, "AC2: three intermediates auto-wired");
+    CHECK(aura::core::lifetime::general_object_pin_auto_wire_total_v_read() >= wire0 + 3,
+          "AC2: auto_wire_total rose under required");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "AC2: no address movement (pre-move gate)");
+    CHECK(!r.pin_contract_held, "AC2: pin_contract_held is the fail signal");
+    CHECK(r.moving_blocked_precondition, "AC2: Moving blocked as precondition");
+    CHECK(r.moving_incomplete_remap, "AC2: incomplete-remap marked");
+    CHECK(aura::core::lifetime::general_object_pin_required_breach_active(),
+          "AC2: sticky breach armed");
+    CHECK(aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read() >=
+              block0 + 1,
+          "AC2: pre-move block counter bumped");
+    // Chaos soak: residual unpinned intermediates must still be readable
+    // at the original addresses (densify did not move them).
+    CHECK(p0->a == 1 && p0->b == 2 && p0->c == 3 && p0->d == 4,
+          "AC2: p0 payload intact after blocked densify");
+    CHECK(p1->a == 5 && p1->b == 6 && p1->c == 7 && p1->d == 8,
+          "AC2: p1 payload intact after blocked densify");
+    CHECK(p2->a == 9 && p2->b == 10 && p2->c == 11 && p2->d == 12,
+          "AC2: p2 payload intact after blocked densify");
+    CHECK(arena.intermediate_create_auto_wire_count() == 3,
+          "AC2: zero residual drop — intermediates still live + tracked");
+}
+
+static void ac2971_3_slot_covered_allows_densify() {
+    std::println("\n--- #2971 AC3: slot-covered intermediates allow densify ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
+    const auto block0 =
+        aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read() == block0,
+          "AC3: pre-move gate does not fire when slots cover creates");
+    // Either no-move (quiet pool) or a real move with contract held.
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "AC3: pin_contract_held after slot-covered move");
+        CHECK(!r.moving_blocked_precondition || r.pin_contract_held,
+              "AC3: slot-covered densify is not a required-pin breach");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5 && p2->a == 9, "AC3: no-move payloads intact");
+    }
+    (void)r;
+}
+
+static void ac2971_4_observability_schema() {
+    std::println("\n--- #2971 AC4: additive schema keys ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto health = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto pinq = read_file("src/compiler/evaluator_primitives_stdlib_review.cpp");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(obs.find("schema-2971") != std::string::npos, "AC4: live-compact-stats schema-2971");
+    CHECK(obs.find("issue-2971") != std::string::npos, "AC4: live-compact-stats issue-2971");
+    CHECK(obs.find("general-object-pin-pre-move-unpinned-block-total") != std::string::npos,
+          "AC4: pre-move block key on live-compact-stats");
+    CHECK(obs.find("general-object-pin-auto-wire-total") != std::string::npos,
+          "AC4: auto-wire key preserved");
+    CHECK(obs.find("general-object-pin-required-enforced-total") != std::string::npos,
+          "AC4: required-enforced key preserved");
+    CHECK(obs.find("general-object-pin-required-breach-densify-fail-total") != std::string::npos,
+          "AC4: breach-densify-fail key preserved");
+    CHECK(health.find("schema-2971") != std::string::npos, "AC4: densify-health schema-2971");
+    CHECK(health.find("general-object-pin-auto-wire-total") != std::string::npos,
+          "AC4: densify-health auto-wire");
+    CHECK(health.find("general-object-pin-required-enforced-total") != std::string::npos,
+          "AC4: densify-health required-enforced");
+    CHECK(health.find("general-object-pin-required-breach-densify-fail-total") != std::string::npos,
+          "AC4: densify-health breach-densify-fail");
+    CHECK(pinq.find("schema-2971") != std::string::npos, "AC4: lifetime-pin-stats schema-2971");
+    CHECK(pinq.find("general-object-pin-auto-wire-total") != std::string::npos,
+          "AC4: lifetime-pin-stats auto-wire");
+    CHECK(lp.find("g_general_object_pin_pre_move_unpinned_block_total") != std::string::npos,
+          "AC4: pre-move counter declared");
+}
+
+static void ac2971_5_soft_zero_cost() {
+    std::println("\n--- #2971 AC5: Soft / unset zero extra create work ---");
+    RequiredPinGuard off(0);
+    const auto wire0 = aura::core::lifetime::general_object_pin_auto_wire_total_v_read();
+    const auto block0 =
+        aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
+    MovingFlagGuard on(1);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    CHECK(arena.intermediate_create_auto_wire_count() == 0,
+          "AC5: Soft create does not install inventory");
+    CHECK(aura::core::lifetime::general_object_pin_auto_wire_total_v_read() == wire0,
+          "AC5: auto_wire_total unchanged on Soft create");
+    (void)arena.live_compact(LiveCompactMode::Moving);
+    CHECK(aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read() == block0,
+          "AC5: pre-move gate does not fire when required is off");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("general_object_pin_required_active()") != std::string::npos,
+          "AC5: create + densify gates on required_active");
+    CHECK(arena_src.find("has_unpinned_intermediate_creates_()") != std::string::npos,
+          "AC5: pre-move check is a named helper");
+    (void)p0;
+    (void)p1;
+    (void)p2;
+}
+
+static void ac2971_6_linter_and_no_design() {
+    std::println("\n--- #2971 AC6: linter + no docs/design/ ---");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_general_object_pin_create_densify_2971.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac2971_1_production_default_and_create_auto_wire") != std::string::npos,
+          "AC6: AC1 test");
+    CHECK(t.find("ac2971_2_pre_move_densify_gate") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2971_3_slot_covered_allows_densify") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac2971_4_observability_schema") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2971_5_soft_zero_cost") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac2971_6_linter_and_no_design") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2971") != std::string::npos,
+          "AC6: coverage linter present and cites #2971");
+    CHECK(build.find("check_general_object_pin_create_densify_2971") != std::string::npos,
+          "AC6: build.py gate entry");
+    std::ifstream design("docs/design/2971-general-object-pin-create-densify.md");
+    if (!design) {
+        design.open("../docs/design/2971-general-object-pin-create-densify.md");
+    }
+    CHECK(!design.good(), "AC6: no docs/design/2971-* per #1655");
+    CHECK(read_file("tests/core/test_issue_2971.cpp").empty(),
+          "AC6: no new invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -1191,6 +1402,14 @@ int run_test_moving_densify_fail_closed() {
     ac2935_4_additive_metrics_and_schema();
     ac2935_5_soft_zero_work_and_moving_off();
     ac2935_6_linter_and_no_design();
+    // Issue #2971: production-required create auto-wire + pre-move densify
+    // gate (extends #2495 test file per #81967).
+    ac2971_1_production_default_and_create_auto_wire();
+    ac2971_2_pre_move_densify_gate();
+    ac2971_3_slot_covered_allows_densify();
+    ac2971_4_observability_schema();
+    ac2971_5_soft_zero_cost();
+    ac2971_6_linter_and_no_design();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 

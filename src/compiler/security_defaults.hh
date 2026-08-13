@@ -606,18 +606,21 @@ inline void apply_production_security_defaults() noexcept {
         }
     }
 
-    // 15) Issue #2597 / #2840: production default AURA_GENERAL_OBJECT_PIN=required
-    //     (align with Moving default ON + GeneralObjectPin inventory).
-    //     Closes the GeneralObjectPin vs render dual-track gap that lets
-    //     new mutate/agent/scratch creates land without a pin wire
-    //     (creating Moving densify untracked externals — #2495 / #2840).
-    //     Operator env always wins (AC3: AURA_GENERAL_OBJECT_PIN=off under
-    //     production keeps Soft observe-only). Soft / AURA_SANDBOX=off +
-    //     env unset keeps observe-only (pref=-1). Calls the existing
+    // 15) Issue #2597 / #2840 / #2971: production default
+    //     AURA_GENERAL_OBJECT_PIN=required (align with Moving default ON +
+    //     GeneralObjectPin inventory). Closes the GeneralObjectPin vs
+    //     render dual-track gap that lets new mutate/agent/scratch
+    //     creates land without a pin wire (creating Moving densify
+    //     untracked externals — #2495 / #2840). Operator env always
+    //     wins (AC3: AURA_GENERAL_OBJECT_PIN=off under production keeps
+    //     Soft observe-only). Soft / AURA_SANDBOX=off + env unset keeps
+    //     observe-only (pref=-1). Calls the existing
     //     apply_general_object_pin_required_env helper which handles env
     //     parsing (required / off), then applies the production-default
     //     lock when env was unset. #2840: required mode + wire failure
-    //     sets sticky densify breach so Moving fail-closes (not observe-only).
+    //     sets sticky densify breach so Moving fail-closes (not
+    //     observe-only). #2971: ASTArena::create auto-wires intermediates
+    //     and Moving refuse-relocates before address movement.
     {
         using aura::core::lifetime::apply_general_object_pin_required_env;
         using aura::core::lifetime::g_general_object_pin_required_pref;
