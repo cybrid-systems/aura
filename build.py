@@ -2094,6 +2094,20 @@ def cmd_lint():
             "Issue #2946 AgentScope concurrent hard deny linter failed — run python3 scripts/coverage/checks/check_agent_scope_concurrent_hard_deny_2946.py"
         )
         return r
+    # Issue #2947: mailbox under-boundary wait p99 SLO → security_schedule
+    # gate deny (refine #2903/#2590). production → mailbox_hold_slo;
+    # Soft observe-only; #2587 remains independent. Extends
+    # test_security_schedule_gate (#81967); no docs/design/ (#1655).
+    mhss_script = COVERAGE_CHECKS / "check_mailbox_hold_slo_security_schedule_2947.py"
+    if not mhss_script.exists():
+        fail(f"missing {mhss_script}")
+        return 1
+    r = run([sys.executable, str(mhss_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2947 mailbox hold SLO security-schedule linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_slo_security_schedule_2947.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -5266,6 +5280,25 @@ def cmd_agent_scope_concurrent_hard_deny_2946_coverage():
         fail("AgentScope concurrent hard deny (#2946) coverage contract rows failed")
         return 1
     ok("AgentScope concurrent hard deny (#2946) coverage clean")
+    return 0
+
+
+def cmd_mailbox_hold_slo_security_schedule_2947_coverage():
+    """Issue #2947: mailbox under-boundary wait p99 SLO → security schedule deny.
+
+    Refine #2903/#2590: production deny on p99≥SLO or throttle; Soft
+    observe-only; priority never masks commit_not_ready; schema-2947.
+    """
+    print(f"{B}=== mailbox hold SLO security-schedule coverage (#2947) ==={N}")
+    script = COVERAGE_CHECKS / "check_mailbox_hold_slo_security_schedule_2947.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox hold SLO security-schedule (#2947) coverage contract rows failed")
+        return 1
+    ok("mailbox hold SLO security-schedule (#2947) coverage clean")
     return 0
 
 

@@ -418,18 +418,24 @@ int run_test_security_schedule_gate() {
     // AC4: #2587 mailbox starvation gate still fires independently.
     // We verify the function symbols exist + the integration site
     // (evaluator_mutation_boundary.cpp) still calls both gates.
+    // Symbol is aura_orch_mailbox_starvation_throttled (header-inline
+    // probe in multi_fiber_mailbox.h — not the short aura_mailbox_* alias).
     {
         std::println("\n--- #2660 AC4: #2587 mailbox starvation gate still independent ---");
         const auto mbc = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-        CHECK(mbc.find("aura_mailbox_starvation_throttled") != std::string::npos,
+        CHECK(mbc.find("aura_orch_mailbox_starvation_throttled") != std::string::npos,
               "AC4: #2587 mailbox starvation gate still wired in try_acquire");
-        CHECK(mbc.find("evaluate_security_schedule") != std::string::npos,
+        CHECK(mbc.find("make_security_schedule_input_live") != std::string::npos ||
+                  mbc.find("evaluate_security_schedule") != std::string::npos ||
+                  mbc.find("admit_security_schedule") != std::string::npos,
               "AC4: #2590/#2660 security-schedule gate still wired");
         // Both gates observable in the same site — order documented in
-        // evaluator_mutation_boundary.cpp: #2587 first, then #2590/#2660.
-        const auto mb_pos = mbc.find("aura_mailbox_starvation_throttled");
-        const auto ss_pos = mbc.find("evaluate_security_schedule");
-        CHECK(mb_pos < ss_pos,
+        // evaluator_mutation_boundary.cpp: #2587 first, then #2590/#2660/#2947.
+        const auto mb_pos = mbc.find("aura_orch_mailbox_starvation_throttled");
+        const auto ss_pos = mbc.find("make_security_schedule_input_live");
+        const auto ss_pos2 = mbc.find("admit_security_schedule");
+        const auto ss_eff = (ss_pos != std::string::npos) ? ss_pos : ss_pos2;
+        CHECK(mb_pos != std::string::npos && ss_eff != std::string::npos && mb_pos < ss_eff,
               "AC4: #2587 mailbox starvation gate fires before #2590/#2660 security-schedule");
     }
 
@@ -487,8 +493,170 @@ int run_test_security_schedule_gate() {
               "AC6: no docs/design/ — design rationale in commit + close comment");
     }
 
+    // ─── Issue #2947: mailbox under-boundary wait p99 → gate deny ───
+    // AC1: production + high p99 or throttle → deny mailbox_hold_slo
+    // AC2: Soft → allow for this reason alone
+    // AC3: zero samples / zero throttle → allow (quiet)
+    // AC4: commit_not_ready still wins over mailbox signal
+    // AC5: schema-2947 + deny-mailbox-hold-slo-total query keys
+    // AC6: source-cite + linter; no docs/design per #1655
+    {
+        std::println("\n--- #2947 AC1–AC6: mailbox hold SLO security schedule ---");
+        CHECK(aura::orch::kSecurityScheduleMailboxHoldSloIssue == 2947, "2947: issue stamp");
+
+        // AC1: production + synthetic high p99 → deny
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.soft_mode = false;
+            in.mailbox_wait_p99_us = 250'000; // 250 ms
+            in.mailbox_wait_slo_us = 100'000; // 100 ms default
+            CHECK(aura::orch::mailbox_hold_slo_signal(in),
+                  "2947 AC1: high p99 trips mailbox_hold_slo_signal");
+            const auto d = evaluate_security_schedule(in);
+            CHECK(!d.would_allow_new_mutate, "2947 AC1: production + high p99 → deny");
+            CHECK(d.force_reason == SecurityScheduleForceReason::mailbox_hold_slo,
+                  "2947 AC1: force_reason = mailbox_hold_slo");
+            CHECK(g_orch_security_schedule_counters.deny_mailbox_hold_slo_total.load(
+                      std::memory_order_relaxed) == 1,
+                  "2947 AC1: deny_mailbox_hold_slo_total++");
+            const auto rej = aura::orch::admit_security_schedule(in);
+            CHECK(rej.has_value(), "2947 AC1: admit rejects under production");
+            CHECK(rej.value_or("").find("mailbox-hold-slo") != std::string::npos,
+                  "2947 AC1: admit reason = mailbox-hold-slo");
+        }
+
+        // AC1b: throttle flag alone → deny
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.mailbox_starvation_throttled = true;
+            in.mailbox_wait_slo_us = 100'000;
+            in.mailbox_wait_p99_us = 0; // no p99 samples
+            const auto d = evaluate_security_schedule(in);
+            CHECK(!d.would_allow_new_mutate, "2947 AC1: throttle alone → deny");
+            CHECK(d.force_reason == SecurityScheduleForceReason::mailbox_hold_slo,
+                  "2947 AC1: throttle force_reason = mailbox_hold_slo");
+        }
+
+        // AC2: Soft + high p99 → allow (observe-only)
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = false;
+            in.soft_mode = true;
+            in.mailbox_wait_p99_us = 500'000;
+            in.mailbox_wait_slo_us = 100'000;
+            in.mailbox_starvation_throttled = true;
+            const auto d = evaluate_security_schedule(in);
+            CHECK(d.would_allow_new_mutate,
+                  "2947 AC2: Soft → would_allow stays true for mailbox reason alone");
+            CHECK(d.force_reason == SecurityScheduleForceReason::ok,
+                  "2947 AC2: Soft force_reason = ok");
+            CHECK(g_orch_security_schedule_counters.allow_total.load(std::memory_order_relaxed) ==
+                      1,
+                  "2947 AC2: Soft bumps allow_total");
+            CHECK(g_orch_security_schedule_counters.deny_mailbox_hold_slo_total.load(
+                      std::memory_order_relaxed) == 0,
+                  "2947 AC2: Soft does not bump deny_mailbox_hold_slo_total");
+            CHECK(!aura::orch::admit_security_schedule(in).has_value(),
+                  "2947 AC2: Soft admit never rejects on mailbox alone");
+        }
+
+        // AC3: zero samples + no throttle → allow under production
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.mailbox_wait_p99_us = 0;
+            in.mailbox_wait_slo_us = 100'000;
+            in.mailbox_starvation_throttled = false;
+            CHECK(!aura::orch::mailbox_hold_slo_signal(in), "2947 AC3: quiet path signal false");
+            const auto d = decide_security_schedule(in);
+            CHECK(d.would_allow_new_mutate, "2947 AC3: zero samples → allow");
+            CHECK(d.force_reason == SecurityScheduleForceReason::ok, "2947 AC3: force_reason ok");
+            // SLO=0 disables p99 arm even with high p99
+            in.mailbox_wait_p99_us = 999'999;
+            in.mailbox_wait_slo_us = 0;
+            CHECK(!aura::orch::mailbox_hold_slo_signal(in), "2947 AC3: slo=0 disables latency arm");
+        }
+
+        // AC4: commit_not_ready wins over mailbox (priority)
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.commit_readiness_would_allow = false;
+            in.commit_readiness_hard_reject = true;
+            in.mailbox_wait_p99_us = 500'000;
+            in.mailbox_wait_slo_us = 100'000;
+            in.mailbox_starvation_throttled = true;
+            const auto d = decide_security_schedule(in);
+            CHECK(!d.would_allow_new_mutate, "2947 AC4: still deny");
+            CHECK(d.force_reason == SecurityScheduleForceReason::commit_not_ready,
+                  "2947 AC4: mailbox does not mask commit_not_ready");
+            CHECK(d.force_reason != SecurityScheduleForceReason::mailbox_hold_slo,
+                  "2947 AC4: force_reason is not mailbox_hold_slo when commit hot");
+        }
+
+        // AC5 / AC6: query + source-cite
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.mailbox_wait_p99_us = 200'000;
+            in.mailbox_wait_slo_us = 100'000;
+            (void)evaluate_security_schedule(in);
+            CHECK(href(cs, "deny-mailbox-hold-slo-total") == 1,
+                  "2947 AC5: query deny-mailbox-hold-slo-total");
+            CHECK(href(cs, "force-reason-code") ==
+                      static_cast<std::int64_t>(SecurityScheduleForceReason::mailbox_hold_slo),
+                  "2947 AC5: query force-reason-code = mailbox_hold_slo");
+            CHECK(href(cs, "schema-2947") == 2947, "2947 AC5: schema-2947");
+            CHECK(href(cs, "issue-2947") == 2947, "2947 AC5: issue-2947");
+            CHECK(href(cs, "security-schedule-mailbox-hold-slo-wired") == 1,
+                  "2947 AC5: wired sentinel");
+            CHECK(href(cs, "schema-2590") == 2590, "2947 AC5: schema-2590 preserved");
+
+            const auto gate_h = read_file("src/orch/security_schedule_gate.h");
+            CHECK(gate_h.find("mailbox_hold_slo") != std::string::npos,
+                  "2947 AC6: force reason enum");
+            CHECK(gate_h.find("mailbox_wait_p99_us") != std::string::npos,
+                  "2947 AC6: input field p99");
+            CHECK(gate_h.find("fill_mailbox_hold_slo_live_") != std::string::npos,
+                  "2947 AC6: live fill helper");
+            CHECK(gate_h.find("Issue #2947") != std::string::npos ||
+                      gate_h.find("#2947") != std::string::npos,
+                  "2947 AC6: cites #2947");
+            const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+            CHECK(prim.find("deny-mailbox-hold-slo-total") != std::string::npos,
+                  "2947 AC6: query key in prims");
+            CHECK(prim.find("schema-2947") != std::string::npos, "2947 AC6: schema-2947 in prims");
+            const auto build = read_file("build.py");
+            CHECK(build.find("check_mailbox_hold_slo_security_schedule_2947") != std::string::npos,
+                  "2947 AC6: build.py wires linter");
+            const auto readme = read_file("src/orch/README.md");
+            CHECK(readme.find("mailbox_hold_slo") != std::string::npos ||
+                      readme.find("mailbox-hold-slo") != std::string::npos,
+                  "2947 AC6: README documents mailbox_hold_slo");
+            // #2587 still independent
+            const auto mbc = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+            CHECK(mbc.find("aura_mailbox_starvation_throttled") != std::string::npos ||
+                      mbc.find("aura_orch_mailbox_starvation_throttled") != std::string::npos,
+                  "2947 AC6: #2587 starvation gate still present (defense-in-depth)");
+            std::ifstream invent("tests/orch/test_issue_2947.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_2947.cpp");
+            CHECK(!invent.good(), "2947 AC6: no test_issue_2947.cpp");
+            CHECK(read_file("docs/design/2947-mailbox-hold-slo.md").empty(),
+                  "2947 AC6: no docs/design/ per #1655");
+        }
+    }
+
     reset_orch_security_schedule_counters_for_test();
-    std::println("\n=== #2590: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    std::println("\n=== #2590/#2947: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
