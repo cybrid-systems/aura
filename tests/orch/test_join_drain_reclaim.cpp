@@ -49,6 +49,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 #include <thread>
@@ -78,11 +79,16 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 }
 
 // Local helper: read a text file into a string (used by source-cite ACs).
+// Try path, ../path, ../../path so suites work from build/ or repo root.
 std::string read_file(const char* path) {
-    std::ifstream in(path);
-    if (!in)
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 void reset_between_acs() {
@@ -809,6 +815,137 @@ int run_test_join_drain_reclaim() {
                 const auto name = entry.path().filename().string();
                 CHECK(name.find("2885-") == std::string::npos,
                       std::string("2885 AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
+    // ── #2945: reservation-held + mailbox-held on Reclaimed join hash ──
+    {
+        std::println("\n--- #2945 AC1: held flags on Reclaimed hash surface ---");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(agent.find("reservation-held") != std::string::npos,
+              "2945 AC1: reservation-held key on agent-join");
+        CHECK(agent.find("mailbox-held") != std::string::npos,
+              "2945 AC1: mailbox-held key on agent-join");
+        CHECK(agent.find("reserved_memory_bytes") != std::string::npos,
+              "2945 AC1: reserved_memory_bytes drives reservation-held");
+        CHECK(agent.find("mailbox != nullptr") != std::string::npos ||
+                  agent.find("hp->mailbox != nullptr") != std::string::npos,
+              "2945 AC1: mailbox pointer drives mailbox-held");
+        // Synthetic residual: after Reclaimed cleanup reservation stays held.
+        using aura::orch::AgentHandle;
+        using aura::orch::complete_agent_join_cleanup;
+        using aura::serve::Fiber;
+        using aura::serve::JoinResult;
+        using aura::serve::JoinStatus;
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = fiber_owned.get();
+        h.reserved_memory_bytes = 8192;
+        // mailbox stays null in unit path — flag logic is source-cited above.
+        JoinResult jr;
+        jr.status = JoinStatus::Reclaimed;
+        complete_agent_join_cleanup(h, jr);
+        CHECK(h.reserved_memory_bytes == 8192,
+              "2945 AC1/AC3: reservation held after Reclaimed cleanup (#2661)");
+        CHECK(h.reclaimed_deferred_cleanup, "2945 AC1: deferred cleanup flag set");
+        CHECK(fiber_owned->still_running_after_reclaim_counted(),
+              "2945 AC1: still-running after mark_reclaimed");
+        fiber_owned->note_body_exit_if_reclaimed();
+    }
+    {
+        std::println("\n--- #2945 AC2: zero-cost on Ok/Timeout/Cancelled (keys guarded) ---");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto reclaimed_if =
+            agent.find("if (jr.status == aura::serve::JoinStatus::Reclaimed)");
+        const auto res_key = agent.find("reservation-held");
+        const auto mb_key = agent.find("mailbox-held");
+        CHECK(reclaimed_if != std::string::npos && res_key != std::string::npos &&
+                  reclaimed_if < res_key,
+              "2945 AC2: reservation-held only after Reclaimed guard");
+        CHECK(reclaimed_if != std::string::npos && mb_key != std::string::npos &&
+                  reclaimed_if < mb_key,
+              "2945 AC2: mailbox-held only after Reclaimed guard");
+        // #2885 keys preserved.
+        CHECK(agent.find("still-running") != std::string::npos,
+              "2945 AC5: still-running preserved");
+        CHECK(agent.find("schema-2885") != std::string::npos, "2945 AC5: schema-2885 preserved");
+    }
+    {
+        std::println("\n--- #2945 AC3: #2661 Reclaimed cleanup unchanged ---");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        const auto start = spawn.find("if (jr.status == serve::JoinStatus::Reclaimed)");
+        CHECK(start != std::string::npos, "2945 AC3: Reclaimed branch present");
+        // Reclaimed block ends at first early return after the if.
+        auto end = spawn.find("return;", start);
+        if (end == std::string::npos)
+            end = start + 800;
+        const auto block = spawn.substr(start, end - start + 16);
+        CHECK(block.find("release_orphan_roots") != std::string::npos,
+              "2945 AC3: release_orphan_roots on Reclaimed");
+        CHECK(block.find("release_agent_memory_reservation") == std::string::npos,
+              "2945 AC3: no reservation release on Reclaimed");
+        CHECK(block.find("mailbox->detach") == std::string::npos,
+              "2945 AC3: no mailbox detach on Reclaimed");
+        CHECK(spawn.find("Issue #2945") != std::string::npos ||
+                  spawn.find("#2945") != std::string::npos,
+              "2945 AC6: agent_spawn.h cites #2945");
+    }
+    {
+        std::println("\n--- #2945 AC4: body exit + Done cleanup clears reservation ---");
+        // Interaction with #2924: after wait/body exit Done-path cleanup
+        // releases reservation (held flags would clear on next observation).
+        using aura::orch::AgentHandle;
+        using aura::orch::complete_agent_join_cleanup;
+        using aura::orch::wait_reclaimed_body;
+        using aura::serve::Fiber;
+        using aura::serve::FiberState;
+        using aura::serve::JoinResult;
+        using aura::serve::JoinStatus;
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = fiber_owned.get();
+        h.reserved_memory_bytes = 4096;
+        JoinResult jr;
+        jr.status = JoinStatus::Reclaimed;
+        complete_agent_join_cleanup(h, jr);
+        CHECK(h.reserved_memory_bytes == 4096, "2945 AC4: held after Reclaimed");
+        fiber_owned->set_state(FiberState::Done);
+        fiber_owned->note_body_exit_if_reclaimed();
+        auto wr = wait_reclaimed_body(h, std::optional<std::uint64_t>{1000});
+        CHECK(wr.cleanup_completed || h.reserved_memory_bytes == 0,
+              "2945 AC4: Done-path cleanup clears reservation");
+        CHECK(h.reserved_memory_bytes == 0, "2945 AC4: reserved_memory_bytes==0 after cleanup");
+    }
+    {
+        std::println("\n--- #2945 AC5+AC6: schema + linter + no invent ---");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto build = read_file("build.py");
+        CHECK(agent.find("schema-2945") != std::string::npos, "2945 AC5: schema-2945");
+        CHECK(agent.find("issue-2945") != std::string::npos, "2945 AC5: issue-2945");
+        CHECK(agent.find("agent-join-held-flags-wired") != std::string::npos,
+              "2945 AC5: agent-join-held-flags-wired");
+        CHECK(agent.find("Issue #2945") != std::string::npos ||
+                  agent.find("#2945") != std::string::npos,
+              "2945 AC6: evaluator_primitives_agent.cpp cites #2945");
+        CHECK(build.find("check_join_held_flags_2945") != std::string::npos,
+              "2945 AC6: build.py wires linter");
+        std::ifstream invent("tests/orch/test_issue_2945.cpp");
+        if (!invent.good())
+            invent.open("../tests/orch/test_issue_2945.cpp");
+        CHECK(!invent.good(), "2945 AC6: no test_issue_2945.cpp");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("2945-") == std::string::npos,
+                      std::string("2945 AC6: no docs/design/") + name);
             }
         }
     }

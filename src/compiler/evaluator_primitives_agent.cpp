@@ -3319,6 +3319,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Soft / unit / sandbox=off regression green (these keys only
             // surface when Reclaimed is observed, which only happens under
             // Restricted/Strict production hard-reclaim).
+            //
+            // Issue #2945: reservation-held + mailbox-held explicit flags
+            // on Reclaimed only (refine #2885/#2661). Hosts branch cleanup
+            // policy from the join hash without polling C++ residual state.
+            // Zero-cost on Ok/Timeout/Cancelled (keys absent). Does not
+            // change complete_agent_join_cleanup Reclaimed mechanics.
             if (jr.status == aura::serve::JoinStatus::Reclaimed) {
                 bool still_running = false;
                 std::int64_t reclaim_age_ms = 0;
@@ -3333,12 +3339,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                             reclaim_age_ms = (now_ns - reclaimed_ns) / 1000000;
                     }
                 }
+                // Issue #2945: explicit held flags (1 iff residual still owned).
+                const bool reservation_held = (hp->reserved_memory_bytes != 0);
+                const bool mailbox_held = (hp->mailbox != nullptr);
                 kv.emplace_back("still-running", make_bool(still_running));
                 kv.emplace_back("reclaim-age-ms", make_int(reclaim_age_ms));
                 kv.emplace_back("deferred-cleanup", make_bool(true));
+                kv.emplace_back("reservation-held", make_bool(reservation_held));
+                kv.emplace_back("mailbox-held", make_bool(mailbox_held));
                 kv.emplace_back("schema-2885", make_int(2885));
                 kv.emplace_back("issue-2885", make_int(2885));
                 kv.emplace_back("agent-join-still-running-wired", make_int(1));
+                kv.emplace_back("schema-2945", make_int(2945));
+                kv.emplace_back("issue-2945", make_int(2945));
+                kv.emplace_back("agent-join-held-flags-wired", make_int(1));
             }
             return build_orch_hash(kv);
         });
