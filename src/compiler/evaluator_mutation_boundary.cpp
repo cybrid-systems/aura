@@ -1653,6 +1653,13 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     int prev = ++(*slot);
     bool outermost = (prev == 1);
     is_outermost_ = outermost;
+    // Issue #2944: capture Mutation epoch mid for session-grant revoke on
+    // outermost exit. Nested boundaries do not stamp (session_mid stays 0).
+    if (outermost) {
+        session_mid_at_enter_ = aura::core::current_mutation_epoch();
+        if (session_mid_at_enter_ == 0)
+            session_mid_at_enter_ = 1; // non-zero join for session stamps
+    }
     // Issue #2215: RenderFastExit eligible when outermost Guard is entered
     // under render hotpath (RenderHotEntryGuard / enter_render_hotpath).
     // Success path skips Full audit + full linear/dual-path probes and
@@ -1928,6 +1935,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             1, std::memory_order_relaxed);
     }
     bool success = flag_ ? *flag_ : true;
+    // Issue #2944: outermost MutationBoundary exit revokes mutation-session
+    // grants bound to session_mid_at_enter_ (success or fail). Nested
+    // guards skip (session_mid_at_enter_==0). Zero cost when no live
+    // session grants (capability_live_session_grants==0 early-out, AC3).
+    if (is_outermost_ && session_mid_at_enter_ != 0) {
+        using ::aura::core::capability::g_capability_registry;
+        (void)g_capability_registry().revoke_session_grants_for_mid(session_mid_at_enter_);
+    }
     // Issue #2847: region type/occurrence commit bind. When this Guard
     // admitted a non-zero cone/ImpactScope mask, any OccurrenceGoal
     // predicate node outside that mask is type-cross-talk. Soft: observe
@@ -3617,6 +3632,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , atomic_batch_active_(o.atomic_batch_active_)
     , suppress_bump_(o.suppress_bump_)
     , is_outermost_(o.is_outermost_)
+    , session_mid_at_enter_(o.session_mid_at_enter_) // #2944
     , region_mode_(o.region_mode_)
     , region_shard_(o.region_shard_)
     , admitted_region_key_(o.admitted_region_key_)
@@ -3640,6 +3656,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.atomic_batch_active_ = false;
     o.suppress_bump_ = false;
     o.is_outermost_ = false;
+    o.session_mid_at_enter_ = 0; // #2944 ownership transferred
     o.region_mode_ = false;
     o.region_shard_ = 0;
     o.admitted_region_key_ = 0;
@@ -3671,6 +3688,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         atomic_batch_active_ = o.atomic_batch_active_;
         suppress_bump_ = o.suppress_bump_;
         is_outermost_ = o.is_outermost_;
+        session_mid_at_enter_ = o.session_mid_at_enter_; // #2944
         region_mode_ = o.region_mode_;
         region_shard_ = o.region_shard_;
         admitted_region_key_ = o.admitted_region_key_;
@@ -3687,6 +3705,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         lock_ = std::move(o.lock_);
         shared_lock_ = std::move(o.shared_lock_);
         region_lock_ = std::move(o.region_lock_);
+        o.session_mid_at_enter_ = 0;
         o.had_panic_checkpoint_ = false;
         o.fine_rollback_ = false;
         o.atomic_batch_active_ = false;

@@ -133,6 +133,13 @@ struct CapabilityGrant {
     // serialized / stable-layout consumers keep binary compat.
     // Deny path does NOT consume (retryable).
     bool single_use = false;
+    // Issue #2944: mutation-session grant — valid only while call mid
+    // equals bound_mutation_id under Restricted/Strict; auto-revoked on
+    // outermost MutationBoundary exit for that mid (success or fail).
+    // Complements single_use (first-success consume) for multi-step
+    // self-evo under one mid without durable sticky grants. Soft/Off
+    // ignores session_bound for enforcement (zero cost, AC3).
+    bool session_bound = false;
 };
 
 // Sandbox mode mirror for effect checks (written only via sandbox::set_mode).
@@ -228,6 +235,14 @@ struct CapabilityEffectMetrics {
     // common-case auto-revoke path (#2586).
     std::atomic<std::uint64_t> capability_high_risk_forced_single_use_total{0};
     std::atomic<std::uint64_t> capability_durable_high_risk_grant_total{0};
+    // Issue #2944: mutation-session grant lifecycle.
+    // session_grant_total: grants stamped session_bound=true.
+    // session_revoke_total: auto-revokes on outermost boundary exit.
+    // live_session_grants: residual live session-bound grants (zero-cost
+    // early-out for Soft / no-session happy path, AC3).
+    std::atomic<std::uint64_t> capability_session_grant_total{0};
+    std::atomic<std::uint64_t> capability_session_revoke_total{0};
+    std::atomic<std::uint64_t> capability_live_session_grants{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -443,14 +458,20 @@ struct CapabilityRegistry {
     // Issue #2586: single_use=true marks this grant for auto-revoke after
     // first successful check_and_record_effect that uses its bits; re-grant
     // resets the flag (fresh grant semantics).
+    // Issue #2944: session_bound=true marks a mutation-session grant —
+    // mid-bound under Restricted/Strict; auto-revoked on outermost
+    // MutationBoundary exit for bound_mutation_id (session-mid-exit).
     void grant(TenantId tenant, std::string_view name, Effect effects,
-               const EffectProvenance& prov = {}, bool single_use = false) {
+               const EffectProvenance& prov = {}, bool single_use = false,
+               bool session_bound = false) {
         std::lock_guard<std::mutex> lock(mtx);
         auto& vec = by_tenant[tenant];
         auto apply = [&](CapabilityGrant& g) {
             g.effects = g.effects | effects;
             // Issue #2586: re-grant resets single_use flag (fresh grant).
+            const bool was_session = g.session_bound && !g.revoked;
             g.single_use = single_use;
+            g.session_bound = session_bound; // #2944
             g.revoked = false;
             g.bound_mutation_id = prov.mutation_id;
             g.bound_node_id = prov.node_id;
@@ -459,7 +480,9 @@ struct CapabilityRegistry {
             // Issue #2531: under Restricted/Strict, never leave bound_mid=0 so
             // provenance_ok mid join cannot silently skip (anti mid-join hole).
             // Soft/Off (sandbox_mode==Off) keeps legacy optional mid.
-            if (sandbox_mode.load(std::memory_order_acquire) != EffectSandboxMode::Off &&
+            // Issue #2944: session_bound always needs non-zero mid stamp.
+            if ((sandbox_mode.load(std::memory_order_acquire) != EffectSandboxMode::Off ||
+                 session_bound) &&
                 g.bound_mutation_id == 0) {
                 g.bound_mutation_id = g.grant_epoch != 0 ? g.grant_epoch : 1;
             }
@@ -470,6 +493,16 @@ struct CapabilityRegistry {
                 met.capability_grant_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
             if (prov.fiber_id != 0)
                 met.capability_grant_fiber_bound_total.fetch_add(1, std::memory_order_relaxed);
+            // Live session residual: new session grant that was not already live.
+            if (session_bound && !was_session) {
+                met.capability_session_grant_total.fetch_add(1, std::memory_order_relaxed);
+                met.capability_live_session_grants.fetch_add(1, std::memory_order_relaxed);
+            } else if (!session_bound && was_session) {
+                // Re-grant cleared session_bound — drop live residual.
+                auto cur = met.capability_live_session_grants.load(std::memory_order_relaxed);
+                if (cur > 0)
+                    met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
+            }
         };
         for (auto& g : vec) {
             if (g.name == name) {
@@ -481,7 +514,8 @@ struct CapabilityRegistry {
         g.name = std::string(name);
         g.effects = effects;
         g.tenant_id = tenant;
-        g.single_use = single_use; // #2586
+        // single_use / session_bound left default false so apply() sees
+        // was_session=false and correctly bumps live residual (#2944).
         apply(g);
         vec.push_back(std::move(g));
     }
@@ -492,6 +526,59 @@ struct CapabilityRegistry {
     void grant_once(TenantId tenant, std::string_view name, Effect effects,
                     const EffectProvenance& prov = {}) {
         grant(tenant, name, effects, prov, /*single_use=*/true);
+    }
+
+    // Issue #2944: mutation-session grant sugar — mid-bound + session_bound.
+    // Equivalent to grant(..., single_use, /*session_bound=*/true).
+    // Prefer Evaluator::grant_effect_session for production high-risk force.
+    void grant_session(TenantId tenant, std::string_view name, Effect effects,
+                       const EffectProvenance& prov = {}, bool single_use = false) {
+        grant(tenant, name, effects, prov, single_use, /*session_bound=*/true);
+    }
+
+    // Issue #2944: revoke all live session_bound grants whose
+    // bound_mutation_id matches mid. Called from outermost
+    // MutationBoundaryGuard dtor (success or fail). Zero cost when
+    // capability_live_session_grants == 0 (AC3 Soft happy path).
+    // Returns number of grants revoked. Dual-writes audit reason
+    // "session-mid-exit" per revoke.
+    std::size_t revoke_session_grants_for_mid(std::uint64_t mid) {
+        if (mid == 0)
+            return 0;
+        auto& met = g_capability_effect_metrics();
+        if (met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
+            return 0; // AC3: zero extra work when no session grants
+        std::lock_guard<std::mutex> lock(mtx);
+        std::size_t n = 0;
+        auto ep = ::aura::core::current_mutation_epoch();
+        if (ep == 0)
+            ep = 1;
+        EffectProvenance audit_prov{};
+        audit_prov.mutation_id = mid;
+        audit_prov.epoch = ep;
+        for (auto& [tenant, vec] : by_tenant) {
+            for (auto& g : vec) {
+                if (g.revoked || !g.session_bound)
+                    continue;
+                if (g.bound_mutation_id != mid)
+                    continue;
+                g.revoked = true;
+                g.effects = Effect::None;
+                g.revoke_epoch = ep;
+                g.session_bound = false; // no longer live
+                ++n;
+                met.capability_session_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                met.capability_revoke_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
+                auto cur = met.capability_live_session_grants.load(std::memory_order_relaxed);
+                if (cur > 0)
+                    met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
+                // SE dual-write reason for Agent audit trail.
+                record_audit(Effect::None, Effect::None, tenant, audit_prov,
+                             /*denied=*/false, "session-mid-exit", "session-mid-exit");
+            }
+        }
+        return n;
     }
 
     // Issue #2055: revoke stamps revoke_epoch (WorkspaceEpoch Mutation) for audit.
@@ -925,8 +1012,10 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
                         continue;
                     if (!has_effect(g.effects, required))
                         continue;
+                    const bool was_session = g.session_bound;
                     g.revoked = true;
                     g.effects = Effect::None;
+                    g.session_bound = false; // #2944: no longer live session
                     auto ep = ::aura::core::current_mutation_epoch();
                     if (ep == 0)
                         ep = 1; // non-zero audit stamp at process origin
@@ -934,6 +1023,13 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
                     met.capability_single_use_consumed_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
                     met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                    if (was_session) {
+                        auto cur =
+                            met.capability_live_session_grants.load(std::memory_order_relaxed);
+                        if (cur > 0)
+                            met.capability_live_session_grants.fetch_sub(1,
+                                                                         std::memory_order_relaxed);
+                    }
                     // #2586 AC5: audit / SE dual-write reason "single-use-consumed"
                     // (record_audit pushes to SecurityEvent ring + WAL via
                     // emit_security_event_durable).
@@ -1017,6 +1113,10 @@ inline void reset_capability_effects_for_test() noexcept {
     // (forced-on + durable admin overrides).
     m.capability_high_risk_forced_single_use_total.store(0, std::memory_order_relaxed);
     m.capability_durable_high_risk_grant_total.store(0, std::memory_order_relaxed);
+    // Issue #2944: session grant lifecycle.
+    m.capability_session_grant_total.store(0, std::memory_order_relaxed);
+    m.capability_session_revoke_total.store(0, std::memory_order_relaxed);
+    m.capability_live_session_grants.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -1062,6 +1162,10 @@ struct CapabilityEffectStatsSnapshot {
     // (Mutate / MacroSelfEvo / TenantAdmin / Syscall) under Restricted/Strict.
     std::uint64_t capability_high_risk_forced_single_use = 0;
     std::uint64_t capability_durable_high_risk_grant = 0;
+    // Issue #2944: mutation-session grant lifecycle.
+    std::uint64_t capability_session_grant = 0;
+    std::uint64_t capability_session_revoke = 0;
+    std::uint64_t capability_live_session_grants = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -1119,6 +1223,13 @@ struct CapabilityEffectStatsSnapshot {
             m.capability_high_risk_forced_single_use_total.load(std::memory_order_acquire);
         s.capability_durable_high_risk_grant =
             m.capability_durable_high_risk_grant_total.load(std::memory_order_acquire);
+        // Issue #2944: session grant lifecycle.
+        s.capability_session_grant =
+            m.capability_session_grant_total.load(std::memory_order_acquire);
+        s.capability_session_revoke =
+            m.capability_session_revoke_total.load(std::memory_order_acquire);
+        s.capability_live_session_grants =
+            m.capability_live_session_grants.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&

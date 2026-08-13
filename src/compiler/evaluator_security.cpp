@@ -673,6 +673,45 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
         grant_capability(std::string(name));
 }
 
+// Issue #2944: mutation-session grant — mid-bound + session_bound=true.
+// Outermost MutationBoundary exit revokes matching session grants
+// (capability_session_revoke_total + SE reason session-mid-exit).
+// High-risk production force (#2882) still applies single_use unless
+// already requested; durable sticky remains grant_effect_durable.
+void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view name,
+                                     std::uint16_t effect_bits,
+                                     std::uint64_t provenance_mutation_id,
+                                     bool single_use) noexcept {
+    using namespace ::aura::core::capability;
+    const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+    const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
+    auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+    // Ensure non-zero mid for session binding (Soft may leave zero → force 1).
+    if (prov.mutation_id == 0)
+        prov.mutation_id = prov.epoch != 0 ? prov.epoch : 1;
+    using aura::compiler::security::kEffectMacroSelfEvo;
+    using aura::compiler::security::kEffectMutate;
+    using aura::compiler::security::kEffectSyscall;
+    using aura::compiler::security::kEffectTenantAdmin;
+    constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
+        kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+    const bool production_defaults = force_bind;
+    const bool is_high_risk = (effect_bits & kHighRiskMask) != 0;
+    if (production_defaults && is_high_risk && !single_use) {
+        single_use = true;
+        g_capability_effect_metrics().capability_high_risk_forced_single_use_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov,
+                                  single_use, /*session_bound=*/true);
+    if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!name.empty())
+        grant_capability(std::string(name));
+}
+
 // Issue #2055: revoke with WorkspaceEpoch Mutation stamp for audit trail.
 void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_view name) noexcept {
     using namespace ::aura::core::capability;

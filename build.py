@@ -2020,6 +2020,20 @@ def cmd_lint():
             "Issue #2882 production default single-use linter failed — run python3 scripts/coverage/checks/check_production_default_single_use_2882.py"
         )
         return r
+    # Issue #2944: mutation-session grants (mid-bound + auto-revoke on
+    # outermost MutationBoundary exit). Extends
+    # test_capability_single_use_consume.cpp (#81967); no docs/design/
+    # (#1655).
+    msg_script = COVERAGE_CHECKS / "check_mutation_session_grant_2944.py"
+    if not msg_script.exists():
+        fail(f"missing {msg_script}")
+        return 1
+    r = run([sys.executable, str(msg_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2944 mutation-session grant linter failed — run python3 scripts/coverage/checks/check_mutation_session_grant_2944.py"
+        )
+        return r
     # Issue #2884: agent_send_safe — unify C++/language handoff_ref path for
     # StableNodeRef payloads (close #2663 / #2848 contract split). Closes
     # the largest orch-layer contract split for StableNodeRef cross-fiber

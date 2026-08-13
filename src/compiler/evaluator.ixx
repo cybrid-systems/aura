@@ -6184,6 +6184,14 @@ public:
     void grant_effect_durable(std::uint64_t tenant_id, std::string_view name,
                               std::uint16_t effect_bits,
                               std::uint64_t provenance_mutation_id = 0) noexcept;
+    // Issue #2944: mutation-session grant — mid-bound + session_bound=true.
+    // Auto-revoked on outermost MutationBoundary exit for that mid
+    // (success or fail). High-risk production force still applies
+    // single_use unless caller passes single_use=true already; durable
+    // sticky path remains grant_effect_durable (not session).
+    void grant_effect_session(std::uint64_t tenant_id, std::string_view name,
+                              std::uint16_t effect_bits, std::uint64_t provenance_mutation_id,
+                              bool single_use = false) noexcept;
     // Issue #2055: revoke with WorkspaceEpoch Mutation stamp for audit.
     void revoke_effect_capability(std::uint64_t tenant_id, std::string_view name) noexcept;
     void set_effect_sandbox_mode(std::uint8_t mode) noexcept; // 0 Off, 1 Restricted, 2 Strict
@@ -14034,6 +14042,10 @@ public:
         bool suppress_bump_ = false;
         // Issue #1253: outermost mutation hold-time tracking.
         bool is_outermost_ = false;
+        // Issue #2944: Mutation epoch mid at outermost enter — used to
+        // revoke session_bound grants on exit (success or fail). Nested
+        // guards leave 0 (no session revoke until outermost for that mid).
+        std::uint64_t session_mid_at_enter_ = 0;
         // Issue #2121: RegionExclusive vs GlobalExclusive lock mode.
         bool region_mode_ = false;
         std::uint32_t region_shard_ = 0;
