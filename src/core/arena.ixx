@@ -19,6 +19,7 @@ module;
 #include "core/gc_hooks.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
+#include "core/densify_consistency_report.h" // Issue #2973 pre-densify counters
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 export module aura.core.arena;
 import std;
@@ -1508,6 +1509,39 @@ public:
                 g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
                 return result;
             }
+            // Issue #2973: production hard pre-densify external-root
+            // completeness. Soft / hard_pref<=0 is a single atomic load
+            // (AC2 / AC6 — no walk, no extra pin work). When hard, walk
+            // declared external roots (#2775/#2935 inventory) and require
+            // every densify-tracked candidate that would move is covered
+            // by a registered slot or LifetimePin. Uncovered → block
+            // BEFORE relocate (no UAF window). Post-move incomplete-remap
+            // stays defense-in-depth.
+            if (g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) > 0) {
+                const auto untracked = count_pre_densify_untracked_external_roots_();
+                if (untracked > 0) {
+                    result.pin_contract_held = false;
+                    result.moving_incomplete_remap = true;
+                    result.moving_blocked_precondition = true;
+                    result.soft_gated = true;
+                    result.untracked_kept_count = untracked;
+                    aura::core::densify_consistency::g_moving_pre_densify_reject_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aura::core::densify_consistency::g_moving_pre_densify_untracked_total.fetch_add(
+                        untracked, std::memory_order_relaxed);
+                    g_moving_incomplete_remap_densify_hard_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    const auto prev_sticky = g_moving_incomplete_remap_sticky_densify_off.exchange(
+                        1, std::memory_order_acq_rel);
+                    if (prev_sticky == 0) {
+                        g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                    ++stats_.moving_blocked_precondition_total;
+                    g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
+                    return result;
+                }
+            }
             // Issue #2971: production-required unpinned-intermediate gate.
             // MUST run before relocate_tracked_objects_for_moving_ so
             // address movement cannot create a dangling raw pointer
@@ -2164,6 +2198,39 @@ private:
                 return true;
         }
         return false;
+    }
+
+    // Issue #2973: declared external roots (#2775 value-only / #2935
+    // inventory) that would actually move and are not covered by a
+    // registered slot or LifetimePin. Empty prep set → 0 without a
+    // dtors_ walk (Soft/no-registration stays cheap even if called).
+    [[nodiscard]] std::size_t count_pre_densify_untracked_external_roots_() const noexcept {
+        if (external_roots_for_densify_.empty())
+            return 0;
+        std::unordered_set<void*> covered;
+        aura::core::lifetime::collect_pinned_ptrs_for_arena(arena_id_, covered);
+        for (void** slot : external_root_slots_for_densify_) {
+            if (slot && *slot)
+                covered.insert(*slot);
+        }
+        std::size_t untracked = 0;
+        for (void* p : external_roots_for_densify_) {
+            if (!p || covered.count(p))
+                continue;
+            bool would_move = false;
+            for (const auto& e : dtors_) {
+                if (e.ptr != p)
+                    continue;
+                if (e.size == 0 || e.dtor == nullptr)
+                    break;
+                if (small_pool_.owns(e.ptr) && e.size <= SmallObjectPool::kMaxSmallSize)
+                    would_move = true;
+                break;
+            }
+            if (would_move)
+                ++untracked;
+        }
+        return untracked;
     }
 
     // Issue #187 (P0) + Issue #300 follow-up #3 (real root

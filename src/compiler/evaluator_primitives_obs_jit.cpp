@@ -12113,6 +12113,22 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("general-object-pin-create-densify-wired", 1);
             insert_kv("schema-2971", aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue);
             insert_kv("issue-2971", aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue);
+            // Issue #2973: production hard pre-densify external-root
+            // completeness. Additive — post-move incomplete-remap counters
+            // stay the Soft observe-only path.
+            insert_kv(
+                "pre-densify-reject-total",
+                static_cast<std::int64_t>(
+                    aura::core::densify_consistency::moving_pre_densify_reject_total_v_read()));
+            insert_kv(
+                "pre-densify-untracked-total",
+                static_cast<std::int64_t>(
+                    aura::core::densify_consistency::moving_pre_densify_untracked_total_v_read()));
+            insert_kv("pre-densify-completeness-wired", 1);
+            insert_kv("schema-2973",
+                      aura::core::densify_consistency::kMovingPreDensifyCompletenessIssue);
+            insert_kv("issue-2973",
+                      aura::core::densify_consistency::kMovingPreDensifyCompletenessIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
