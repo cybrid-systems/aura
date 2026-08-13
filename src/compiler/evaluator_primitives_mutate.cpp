@@ -4225,9 +4225,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // return + at primitive exit.
         ValidateSchemaGuard schema_guard_rp(ev, parse_validate_schema_on_commit_opt_in(ev, a) ||
                                                     ev.validate_schema_on_commit());
-        const bool allow_macro_all =
-            ev.get_allow_macro_mutate() || allow_macro_kw || include_macro_introduced;
+        // Issue #2961: :include-macro-introduced only controls matcher
+        // visibility. Mutate still requires :allow-macro? / global opt-out
+        // (parity with replace-subtree / move-node #2801).
+        const bool allow_macro_all = ev.get_allow_macro_mutate() || allow_macro_kw;
         int replaced_count = 0;
+        // Collect parents for post-success dirty cascade (#2961).
+        std::vector<NodeId> dirty_parents;
+        dirty_parents.reserve(matches.size());
         flat.begin_atomic_batch();
         for (auto& match : matches) {
             // Issue #2800: stale StableNodeRef or detached parent edge —
@@ -4256,11 +4261,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 continue;
 
             auto match_id = match.match_ref.id;
-            // Issue #2037: stamp / FailOnStale / hygiene-protected for MacroIntroduced.
+            // Issue #2037 / #2961: stamp / FailOnStale / hygiene-protected for
+            // MacroIntroduced. Count replace_pattern_hygiene_reject on deny.
             bool was_macro = false;
             if (auto err = enforce_macro_hygiene_mutate_hotpath(
                     ev, flat, match_id, &match.match_ref, allow_macro_all,
                     /*per_call already folded into allow_macro_all*/ false, mev, &was_macro)) {
+                flat.note_replace_pattern_hygiene_reject();
                 flat.rollback_atomic_batch();
                 ok = false;
                 return *err;
@@ -4342,6 +4349,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
             // Replace the matched node
             flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
+            dirty_parents.push_back(parent_id);
             // Issue #2037 + #2858: propagate MacroIntroduced so re-query
             // keeps hygiene (root + descendant cascade + dirty + provenance).
             if (was_macro)
@@ -4359,6 +4367,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                        "no replacements were applied (capture mismatch or parse failure)");
         }
         flat.commit_atomic_batch();
+
+        // Issue #2961: topology dirty cascade + StableNodeRef restamp so
+        // subsequent query:*-stable does not hold pre-mutate gens.
+        for (auto pid : dirty_parents) {
+            if (pid != NULL_NODE && flat.is_live_node(pid))
+                flat.mark_dirty_upward(pid);
+        }
+        flat.restamp_all_node_generations();
 
         // Issue #484: invalidate the tag_arity_index. The index
         // walker (in query_workspace) now skips orphans (parent_
@@ -5813,7 +5829,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     };
 
     // ── mutate:rename-symbol ────────────────────────────────────
-    // (mutate:rename-symbol old-name new-name "summary")
+    // (mutate:rename-symbol old-name new-name "summary" [:allow-macro? #t])
     //   → #t/#f
     //   Renames all definitions and references of old-name to new-name.
     //   Uses def-use index for finding all references.
@@ -5824,10 +5840,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // the summary record. The rollback path is "bump version
     // + invalidate ev.defuse_index_" (no per-node data restoration
     // because there are too many).
+    // Issue #2961: MacroIntroduced / MacroDef sites default-reject
+    // without :allow-macro?; success restamps all node gens so
+    // query:*-stable does not leak pre-rename StableNodeRefs.
     add_mutate("mutate:rename-symbol", [&ev, safe_str](const auto& a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
-        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+        // Issue #2124 / #2961: force try_acquire (quota + metrics); no legacy ctor.
         auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
             ev, /*pending=*/1, &ok, /*fine_rollback=*/true);
         if (!guard_r) {
@@ -5842,7 +5861,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return ev.make_merr("bad-arg", "usage: (mutate:rename-symbol old-name new-name)");
+            return ev.make_merr("bad-arg", "usage: (mutate:rename-symbol old-name new-name "
+                                           "[:allow-macro? #t] [summary])");
         }
         auto old_name_idx = as_string_idx(a[0]);
         auto new_name_idx = as_string_idx(a[1]);
@@ -5854,9 +5874,45 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto old_sym = ev.workspace_pool_->intern(old_name);
         auto new_sym = ev.workspace_pool_->intern(new_name);
 
-        std::string summary = (a.size() > 2 && is_string(a[2]))
-                                  ? safe_str(a[2])
-                                  : "rename " + old_name + " → " + new_name;
+        // Issue #2961: :allow-macro? opt-in (parity with replace-pattern / move-node).
+        const bool allow_macro = ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+
+        std::string summary = "rename " + old_name + " → " + new_name;
+        for (std::size_t ai = 2; ai < a.size(); ++ai) {
+            if (is_string(a[ai]))
+                summary = safe_str(a[ai]);
+        }
+
+        // Issue #2961: pre-scan for MacroIntroduced / MacroDef sites. Default
+        // reject without :allow-macro? so multi-site rename never touches
+        // macro hygiene without explicit Agent opt-in (no partial write).
+        if (!allow_macro) {
+            for (NodeId id = 0; id < flat.size(); ++id) {
+                if (!flat.is_live_node(id))
+                    continue;
+                const bool hit_sym = (flat.sym_id(id) == old_sym);
+                bool lambda_has_old = false;
+                if (flat.tag(id) == NodeTag::Lambda) {
+                    auto v = flat.get(id);
+                    for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                        if (v.params[pi] == old_sym) {
+                            lambda_has_old = true;
+                            break;
+                        }
+                    }
+                }
+                if (!hit_sym && !lambda_has_old)
+                    continue;
+                if (flat.is_macro_introduced(id) || flat.tag(id) == NodeTag::MacroDef) {
+                    ok = false;
+                    flat.note_rename_symbol_hygiene_reject();
+                    ev.record_hygiene_violation_attempt();
+                    return ev.make_merr("hygiene",
+                                        "cannot rename-symbol through MacroIntroduced / MacroDef "
+                                        "without :allow-macro? #t");
+                }
+            }
+        }
 
         // Scan entire AST for nodes with this sym_id (defs + uses)
         int count = 0;
@@ -5870,6 +5926,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     tag == NodeTag::DefineType || tag == NodeTag::DefineModule ||
                     tag == NodeTag::Let || tag == NodeTag::LetRec || tag == NodeTag::Set ||
                     tag == NodeTag::MacroDef) {
+                    // Issue #2961: when allow_macro, still may touch MacroIntroduced.
                     flat.sym_id(id) = new_sym;
                     // Direct sym_id_ write does not bump generation or dirty
                     // bits — without this, eval-current incremental cache
@@ -5902,6 +5959,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                 std::string("symbol \"") + old_name + "\" not found in AST");
         }
 
+        // Issue #2961: restamp all node gens so StableNodeRef captures
+        // from before rename fail is_valid (no silent half-green query).
+        flat.restamp_all_node_generations();
         // Force epoch advance so eval-current cannot hit the gen-equal
         // short-circuit with a stale last_eval_current_result_.
         flat.bump_generation();
