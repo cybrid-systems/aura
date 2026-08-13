@@ -107,6 +107,23 @@ __attribute__((weak, used)) void aura_evaluator_on_steal_complete(void* /*fiber_
     aura::gc_hooks::bump_steal_complete_entry_missing_total();
 }
 
+// Issue #2955: weak strong-identity markers (return 0 = not production-strong).
+// Strong defs live next to the real steal/mutation implementations.
+// Production self-check requires all markers == 1 before multi-worker Ready.
+extern "C" __attribute__((weak, used)) int aura_abi_strong_steal_complete_v(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak, used)) int aura_abi_strong_fiber_eval_id_v(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak, used)) int aura_abi_strong_mutation_held_v(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak, used)) int
+aura_abi_strong_mutation_depth_from_ptr_v(void) noexcept {
+    return 0;
+}
+
 // Issue #2310 / #2372: fail-closed force-deopt on steal snapshot
 // inconsistency. Strong def in evaluator_fiber_mutation.cpp (with
 // Evaluator module access — bumps per-CompilerMetrics counter + runs

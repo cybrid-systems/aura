@@ -6,8 +6,11 @@
 
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
+#include "serve/runtime_production_abi.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -139,7 +142,120 @@ int run_test_steal_complete_strong_entry() {
               "AC5: query missing key");
     }
 
-    std::println("\n=== #2377 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── Issue #2955: production ABI self-check ──
+    {
+        std::println("\n=== Issue #2955: production ABI self-check ===");
+        using aura::serve::aura_runtime_require_production_abi;
+        using aura::serve::clear_production_abi_selfcheck_for_test;
+        using aura::serve::g_production_abi_selfcheck_fail_total;
+        using aura::serve::g_production_abi_selfcheck_ok_total;
+        using aura::serve::production_abi_selfcheck_required;
+
+        // AC2: Soft / no production_defaults → not required; no abort
+        {
+            std::println("\n--- #2955 AC2: Soft path no forced abort ---");
+            clear_production_abi_selfcheck_for_test();
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(0, std::memory_order_relaxed);
+            unsetenv("AURA_SANDBOX");
+            CHECK(!production_abi_selfcheck_required(), "2955 AC2: Soft not required");
+            const auto fail0 =
+                g_production_abi_selfcheck_fail_total.load(std::memory_order_relaxed);
+            CHECK(aura_runtime_require_production_abi(), "2955 AC2: Soft require returns true");
+            CHECK(g_production_abi_selfcheck_fail_total.load(std::memory_order_relaxed) == fail0,
+                  "2955 AC2: Soft no fail bump");
+        }
+
+        // AC2b: sandbox=off opts out even with production_defaults
+        {
+            std::println("\n--- #2955 AC2: sandbox=off opts out ---");
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            setenv("AURA_SANDBOX", "off", 1);
+            CHECK(!production_abi_selfcheck_required(), "2955 AC2: sandbox=off not required");
+            CHECK(aura_runtime_require_production_abi(), "2955 AC2: sandbox=off require ok");
+            unsetenv("AURA_SANDBOX");
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(0, std::memory_order_relaxed);
+        }
+
+        // AC3: full production link (this binary links strong evaluator + fiber)
+        // with production_defaults → ok path when markers present
+        {
+            std::println("\n--- #2955 AC3: full link self-check ok ---");
+            clear_production_abi_selfcheck_for_test();
+            unsetenv("AURA_SANDBOX");
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(1, std::memory_order_relaxed);
+            CHECK(production_abi_selfcheck_required(), "2955 AC3: production requires check");
+            // Strong markers present in this link unit (evaluator_fiber_mutation + fiber).
+            CHECK(aura_abi_strong_steal_complete_v() == 1, "2955 AC3: steal-complete strong");
+            CHECK(aura_abi_strong_fiber_eval_id_v() == 1, "2955 AC3: fiber eval-id strong");
+            CHECK(aura_abi_strong_mutation_held_v() == 1, "2955 AC3: mutation held strong");
+            CHECK(aura_abi_strong_mutation_depth_from_ptr_v() == 1,
+                  "2955 AC3: depth-from-ptr strong");
+            const auto ok0 = g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed);
+            CHECK(aura_runtime_require_production_abi(), "2955 AC3: require ok");
+            CHECK(g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed) == ok0 + 1,
+                  "2955 AC3: ok_total +1");
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(0, std::memory_order_relaxed);
+            clear_production_abi_selfcheck_for_test();
+        }
+
+        // AC1 source: production required + missing marker → abort (source-cite)
+        {
+            std::println("\n--- #2955 AC1: fail path source (abort on missing strong) ---");
+            const auto cpp = read_file("src/serve/runtime_production_abi.cpp");
+            const auto main_c = read_file("src/main.cpp");
+            CHECK(cpp.find("std::abort()") != std::string::npos, "2955 AC1: abort on fail");
+            CHECK(cpp.find("production ABI self-check failed") != std::string::npos,
+                  "2955 AC1: FATAL message");
+            CHECK(main_c.find("aura_runtime_require_production_abi") != std::string::npos,
+                  "2955 AC1: main calls self-check after production defaults");
+            CHECK(main_c.find("apply_production_security_defaults") != std::string::npos,
+                  "2955 AC1: production defaults before self-check");
+            // Order: defaults then self-check
+            const auto dpos = main_c.find("apply_production_security_defaults");
+            const auto cpos = main_c.find("aura_runtime_require_production_abi");
+            CHECK(dpos != std::string::npos && cpos != std::string::npos && dpos < cpos,
+                  "2955 AC1: defaults before self-check order");
+        }
+
+        // AC4/AC5: query + source
+        {
+            std::println("\n--- #2955 AC4–AC5: query + source-cite ---");
+            CompilerService cs;
+            CHECK(href(cs, "schema-2955") == 2955, "2955 AC4: schema-2955");
+            CHECK(href(cs, "issue-2955") == 2955, "2955 AC4: issue-2955");
+            CHECK(href(cs, "production-abi-selfcheck-wired") == 1, "2955 AC4: wired sentinel");
+            CHECK(href(cs, "production-abi-selfcheck-ok-total") >= 0, "2955 AC4: ok-total");
+            CHECK(href(cs, "production-abi-selfcheck-fail-total") >= 0, "2955 AC4: fail-total");
+            CHECK(href(cs, "schema-2377") == 2377, "2955 AC4: schema-2377 preserved");
+
+            const auto hh = read_file("src/serve/runtime_production_abi.h");
+            const auto cpp = read_file("src/serve/runtime_production_abi.cpp");
+            const auto fb = read_file("src/compiler/fiber_bridge.cpp");
+            const auto build = read_file("build.py");
+            const auto lint =
+                read_file("scripts/coverage/checks/check_production_abi_selfcheck_2955.py");
+            CHECK(hh.find("Issue #2955") != std::string::npos, "2955 AC5: header cites #2955");
+            CHECK(cpp.find("Issue #2955") != std::string::npos ||
+                      cpp.find("#2955") != std::string::npos,
+                  "2955 AC5: cpp cites #2955");
+            CHECK(fb.find("aura_abi_strong_steal_complete_v") != std::string::npos,
+                  "2955 AC5: weak markers in fiber_bridge");
+            CHECK(build.find("check_production_abi_selfcheck_2955") != std::string::npos,
+                  "2955 AC5: build.py wires linter");
+            CHECK(!lint.empty(), "2955 AC5: linter present");
+            CHECK(read_file("docs/design/2955-production-abi-selfcheck.md").empty(),
+                  "2955 AC6: no docs/design/");
+            CHECK(read_file("tests/serve/test_issue_2955.cpp").empty(),
+                  "2955 AC6: no invent test file");
+        }
+    }
+
+    std::println("\n=== #2377 + #2955 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
