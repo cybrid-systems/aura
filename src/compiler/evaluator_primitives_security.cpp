@@ -4745,6 +4745,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(::aura::compiler::kResidualNodeIdInventoryCount));
             insert_kv("schema-2881", 2881);
             insert_kv("issue-2881", 2881);
+            // Issue #2942: mandate require_effect_for_node_id / on_ref on all
+            // workspace NodeId side-effect prims (closes residual late-
+            // isolation window after #2881). Agent surface for dashboards.
+            insert_kv("node-id-side-effect-mandate-wired",
+                      static_cast<std::int64_t>(::aura::compiler::kNodeIdMandateWired));
+            insert_kv("node-id-mandate-exempt-ops-count",
+                      static_cast<std::int64_t>(::aura::compiler::kNodeIdMandateExemptOpsCount));
+            insert_kv("schema-2942", 2942);
+            insert_kv("issue-2942", 2942);
             const auto checks = cap.checks == 0 ? 1 : cap.checks;
             insert_kv("effect-deny-rate-bp",
                       static_cast<std::int64_t>((cap.denied * 10000) / checks));

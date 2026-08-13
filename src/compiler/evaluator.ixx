@@ -450,6 +450,16 @@ export inline constexpr std::int64_t kResidualNodeIdExemptOpsCount = 5;
 export inline constexpr std::int64_t kResidualNodeIdScopeFilesCount = 17;
 export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 22;
 
+// Issue #2942: late-isolation NodeId mandate — every workspace-mutating
+// prim with a concrete NodeId goes through require_effect_for_node_id
+// or require_effect_on_ref. Coverage linter
+// check_side_effect_node_id_mandate_2942.py validates EXEMPT_2ARG_OPS
+// (non-workspace file/io/network/exec only) and scans prim TUs for bare
+// require_effect near NodeId without the mandated helpers. Soft/Off
+// unchanged (additive schema only).
+export inline constexpr std::int64_t kNodeIdMandateExemptOpsCount = 5;
+export inline constexpr std::int64_t kNodeIdMandateWired = 1;
+
 // Issue #1861: Env is a single-writer structure (same quiescence class
 // as compiler_metrics_ / type_registry_ / compiler_service_ — #1835–
 // #1839). bind / bind_with_linear_state / bind_symid* mutate

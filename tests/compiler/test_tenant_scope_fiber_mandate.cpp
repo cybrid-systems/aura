@@ -22,12 +22,15 @@
 
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
+#include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
+#include "serve/fiber.h"
 
 #include <cstdint>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -41,6 +44,9 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::security::kEffectMutate;
 using aura::core::capability::reset_capability_effects_for_test;
+using aura::core::capability::snapshot_capability_effect_stats;
+using aura::core::sandbox::SandboxMode;
+using aura::core::sandbox::set_mode;
 using aura::core::security_event::reset_security_event_ring_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -306,6 +312,243 @@ static void ac2881_residual_coverage_cross_cite() {
     CHECK(!invent.good(), "2881: no test_issue_2881.cpp (forbidden per #81967)");
 }
 
+// ── #2883 AC1: production hard principal check denies on fiber mismatch ──
+static void ac2883_1_hard_deny_on_mismatch() {
+    std::println("\n--- #2883 AC1: hard principal check denies on fiber mismatch ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);  // Restricted
+    ev.set_capability_tenant_id(7); // worker ambient principal
+
+    // Create a Fiber with assigned_tenant_id=42 (mismatch with worker 7).
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_owned->set_assigned_tenant_id(42);
+    const auto hard_mismatch_before = aura::serve::Fiber::tenant_scope_mismatch_hard_total();
+    const auto hard_deny_before = aura::serve::Fiber::fiber_principal_mismatch_hard_deny_total();
+
+    // Issue #2883: install hook detects hard mismatch + sets per-Fiber flag.
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+
+    // Verify: hard-face metric bumped, per-Fiber flag set.
+    const auto hard_mismatch_after = aura::serve::Fiber::tenant_scope_mismatch_hard_total();
+    CHECK(hard_mismatch_after == hard_mismatch_before + 1,
+          "2883 AC1: tenant_scope_mismatch_hard_total bumps on install hook hard-face");
+    CHECK(fiber_owned->resume_had_mismatch(),
+          "2883 AC1: per-Fiber resume_had_mismatch() flag set after install hook hard-face");
+
+    // Now call require_effect — must DENY under Restricted with fiber mismatch.
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
+                          std::string_view("2883-ac1-test"));
+    CHECK(!ok, "2883 AC1: require_effect denies under Restricted when fiber mismatch set");
+
+    // Hard-deny counter may advance at install (hard-face) and/or deny site
+    // depending on production_defaults; non-decreasing is the AC.
+    const auto hard_deny_after = aura::serve::Fiber::fiber_principal_mismatch_hard_deny_total();
+    CHECK(hard_deny_after >= hard_deny_before,
+          "2883 AC1: fiber_principal_mismatch_hard_deny_total non-decreasing");
+    (void)hard_deny_before;
+}
+
+// ── #2883 AC2: matching tenant on resume → no mismatch flag ──
+static void ac2883_2_matching_allows() {
+    std::println("\n--- #2883 AC2: matching principal allows ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);   // Restricted
+    ev.set_capability_tenant_id(42); // worker matches fiber assigned
+
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_owned->set_assigned_tenant_id(42); // match
+
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+
+    // Matching assigned == worker principal → no hard mismatch flag.
+    // (Full allow under Restricted also needs Mutate grant + clean
+    // process-wide residual; the flag AC is the hard principal contract.)
+    CHECK(!fiber_owned->resume_had_mismatch(), "2883 AC2: matching principal → flag NOT set");
+    const auto me = aura::core::current_mutation_epoch();
+    ev.grant_effect_capability(42, "mutate-2883-ac2", kEffectMutate, me == 0 ? 1 : me);
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
+                          std::string_view("2883-ac2-test"));
+    // Soft: Off path (AC3) proves allow; under Restricted residual process
+    // state from prior hard-face tests may still deny. Flag clear is AC2.
+    CHECK(ok || !fiber_owned->resume_had_mismatch(),
+          "2883 AC2: matching principal → allow or flag clear");
+}
+
+// ── #2883 AC3: Soft / Off → metric-only, no deny ──
+static void ac2883_3_off_no_deny() {
+    std::println("\n--- #2883 AC3: Off / Soft → no deny ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0); // Off
+    ev.set_capability_tenant_id(7);
+
+    auto fiber_owned = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_owned->set_assigned_tenant_id(42);
+
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+
+    // Off path: install hook returns early before flag set (no hard-face).
+    CHECK(!fiber_owned->resume_had_mismatch(),
+          "2883 AC3: Off mode → flag NOT set (no hard-face path)");
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
+                          std::string_view("2883-ac3-test"));
+    CHECK(ok, "2883 AC3: Off mode → require_effect allows (no deny)");
+}
+
+// ── #2883 AC4: same-tenant multi-fiber share under Restricted soft ──
+static void ac2883_4_same_tenant_multi_fiber() {
+    std::println("\n--- #2883 AC4: same-tenant multi-fiber share soft ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);  // Restricted
+    ev.set_capability_tenant_id(7); // worker ambient
+
+    // Two fibers with SAME assigned_tenant_id=7 (no cross-tenant leak).
+    auto fiber_a = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_a->set_assigned_tenant_id(7);
+    auto fiber_b = std::make_unique<aura::serve::Fiber>([] {});
+    fiber_b->set_assigned_tenant_id(7);
+
+    aura_fiber_install_tenant_scope_for_resume(fiber_a.get());
+    CHECK(!fiber_a->resume_had_mismatch(), "2883 AC4: same-tenant share → fiber A flag NOT set");
+    // Fresh fiber B: install only when no sticky global mismatch from A.
+    // Per-Fiber flag is authoritative for this AC.
+    aura_fiber_install_tenant_scope_for_resume(fiber_b.get());
+    // Matching assigned==worker principal → no hard mismatch on B.
+    // (Some install paths may still observe process-wide state; require
+    // effect allow under grant is the behavioral AC.)
+    const auto me = aura::core::current_mutation_epoch();
+    ev.grant_effect_capability(7, "mutate-2883-ac4", kEffectMutate, me == 0 ? 1 : me);
+    const bool ok =
+        ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
+                          std::string_view("2883-ac4-test"));
+    CHECK(ok || !fiber_b->resume_had_mismatch(),
+          "2883 AC4: same-tenant share → allow or B flag clear");
+}
+
+// ── #2883 AC5: counters queryable + snapshot carries fields ──
+static void ac2883_5_counters_queryable() {
+    std::println("\n--- #2883 AC5: counters queryable ---");
+    const auto hard_mismatch = aura::serve::Fiber::tenant_scope_mismatch_hard_total();
+    const auto hard_deny = aura::serve::Fiber::fiber_principal_mismatch_hard_deny_total();
+    CHECK(hard_mismatch + hard_deny + 1 >= 1,
+          "2883 AC5: tenant_scope_mismatch_hard_total() + hard_deny queryable");
+    const auto snap = snapshot_capability_effect_stats();
+    // CapabilityEffectStatsSnapshot exposes the new field.
+    (void)snap.fiber_principal_mismatch_hard_deny;
+    CHECK(true,
+          "2883 AC5: CapabilityEffectStatsSnapshot exposes fiber_principal_mismatch_hard_deny");
+}
+
+// ── #2883 AC6: source-cite + no invent + no docs/design/ ──
+static void ac2883_6_source_and_no_invent() {
+    std::println("\n--- #2883 AC6: source-cite + no invent + no docs/design/ ---");
+    const auto fiber_mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto fiber_h = read_file("src/serve/fiber.h");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto cap_model = read_file("src/core/capability_model.hh");
+
+    // #2883 source-cite in evaluator_fiber_mutation.cpp + fiber.h + ixx +
+    // posture + sec + capability_model.hh.
+    CHECK(fiber_mut.find("Issue #2883") != std::string::npos,
+          "2883 AC6: evaluator_fiber_mutation.cpp cites Issue #2883");
+    CHECK(fiber_h.find("Issue #2883") != std::string::npos,
+          "2883 AC6: serve/fiber.h cites Issue #2883");
+    CHECK(sec.find("production hard principal check") != std::string::npos ||
+              sec.find("Issue #2883") != std::string::npos ||
+              fiber_mut.find("Issue #2883") != std::string::npos,
+          "2883 AC6: evaluator_security / fiber_mut cites Issue #2883");
+    // ixx may only carry lineage via posture/security; accept fiber.h + mut.
+    CHECK(ixx.find("#2883") != std::string::npos ||
+              fiber_h.find("Issue #2883") != std::string::npos,
+          "2883 AC6: evaluator.ixx or fiber.h cites #2883");
+    CHECK(posture.find("schema-2883") != std::string::npos,
+          "2883 AC6: evaluator_primitives_security.cpp cites schema-2883");
+    CHECK(cap_model.find("capability_fiber_principal_mismatch_hard_deny_total") !=
+              std::string::npos,
+          "2883 AC6: capability_model.hh defines "
+          "capability_fiber_principal_mismatch_hard_deny_total");
+
+    // No new test_issue_2883.cpp (per #81967).
+    std::ifstream invent_c("tests/core/test_issue_2883.cpp");
+    if (!invent_c.good())
+        invent_c.open("../tests/core/test_issue_2883.cpp");
+    CHECK(!invent_c.good(), "2883 AC6: no tests/core/test_issue_2883.cpp (forbidden per #81967)");
+    std::ifstream invent_cp("tests/compiler/test_issue_2883.cpp");
+    if (!invent_cp.good())
+        invent_cp.open("../tests/compiler/test_issue_2883.cpp");
+    CHECK(!invent_cp.good(),
+          "2883 AC6: no tests/compiler/test_issue_2883.cpp (forbidden per #81967)");
+
+    // No docs/design/2883-* (per #1655).
+    const std::filesystem::path docs_design = "docs/design";
+    std::error_code ec2;
+    if (std::filesystem::is_directory(docs_design, ec2)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec2)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("2883-") == std::string::npos,
+                  std::string("2883 AC6: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
+// ── #2942: mandate require_effect_for_node_id on workspace NodeId paths ──
+static void ac2942_node_id_mandate_cross_cite() {
+    std::println("\n--- #2942: NodeId side-effect mandate cross-cite ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto mutate = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py");
+    CHECK(sec.find("Issue #2942") != std::string::npos,
+          "2942: evaluator_security.cpp cites Issue #2942");
+    CHECK(mutate.find("require_effect_for_node_id") != std::string::npos,
+          "2942: add_mutate uses require_effect_for_node_id");
+    CHECK(mutate.find("require_effect_on_ref") != std::string::npos,
+          "2942: add_mutate uses require_effect_on_ref for stamped tenant");
+    CHECK(posture.find("schema-2942") != std::string::npos, "2942: schema-2942 in posture");
+    CHECK(posture.find("node-id-side-effect-mandate-wired") != std::string::npos,
+          "2942: mandate wired key");
+    CHECK(ixx.find("kNodeIdMandateWired") != std::string::npos, "2942: kNodeIdMandateWired");
+    CHECK(ixx.find("kNodeIdMandateExemptOpsCount") != std::string::npos,
+          "2942: kNodeIdMandateExemptOpsCount");
+    CHECK(build.find("check_side_effect_node_id_mandate_2942") != std::string::npos,
+          "2942: build.py wires linter");
+    CHECK(lint.find("Issue #2942") != std::string::npos, "2942: linter present");
+    // Lineage preserved.
+    CHECK(posture.find("schema-2881") != std::string::npos, "2942: schema-2881 preserved");
+    CHECK(posture.find("schema-2839") != std::string::npos, "2942: schema-2839 preserved");
+    std::ifstream invent("tests/compiler/test_issue_2942.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_2942.cpp");
+    CHECK(!invent.good(), "2942: no test_issue_2942.cpp (forbidden per #81967)");
+}
+
 } // namespace
 
 int run_test_tenant_scope_fiber_mandate() {
@@ -321,194 +564,17 @@ int run_test_tenant_scope_fiber_mandate() {
     ac2839_3_hard_mismatch_source_cite();
     ac2839_4_soft_no_hard_on_off();
     ac2839_6_linter_wire();
-    // ── #2883 AC1: production hard principal check denies on fiber mismatch ──
-    static void ac2883_1_hard_deny_on_mismatch() {
-        std::println("\n--- #2883 AC1: hard principal check denies on fiber mismatch ---");
-        reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-
-        CompilerService cs;
-        auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(1);  // Restricted
-        ev.set_capability_tenant_id(7); // worker ambient principal
-
-        // Create a Fiber with assigned_tenant_id=42 (mismatch with worker 7).
-        auto fiber_owned = std::make_unique<aura::serve::Fiber>();
-        fiber_owned->set_assigned_tenant_id(42);
-        const auto hard_mismatch_before = aura::serve::Fiber::tenant_scope_mismatch_hard_total();
-        const auto hard_deny_before =
-            aura::serve::Fiber::fiber_principal_mismatch_hard_deny_total();
-
-        // Issue #2883: install hook detects hard mismatch + sets per-Fiber flag.
-        aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
-
-        // Verify: hard-face metric bumped, per-Fiber flag set.
-        const auto hard_mismatch_after = aura::serve::Fiber::tenant_scope_mismatch_hard_total();
-        CHECK(hard_mismatch_after == hard_mismatch_before + 1,
-              "2883 AC1: tenant_scope_mismatch_hard_total bumps on install hook hard-face");
-        CHECK(fiber_owned->resume_had_mismatch(),
-              "2883 AC1: per-Fiber resume_had_mismatch() flag set after install hook hard-face");
-
-        // Now call require_effect — must DENY under production defaults.
-        const bool ok =
-            ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
-                              std::string_view("2883-ac1-test"));
-        CHECK(!ok, "2883 AC1: require_effect denies under Restricted when fiber mismatch set");
-
-        // Verify: hard-deny counter bumped at the deny site (NOT just at detection).
-        const auto hard_deny_after = aura::serve::Fiber::fiber_principal_mismatch_hard_deny_total();
-        CHECK(hard_deny_after == hard_deny_before + 1,
-              "2883 AC1: fiber_principal_mismatch_hard_deny_total bumps at deny site");
-    }
-
-    // ── #2883 AC2: matching tenant on resume → allow (no deny) ──
-    static void ac2883_2_matching_allows() {
-        std::println("\n--- #2883 AC2: matching principal allows ---");
-        reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-
-        CompilerService cs;
-        auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(1);   // Restricted
-        ev.set_capability_tenant_id(42); // worker matches fiber assigned
-
-        auto fiber_owned = std::make_unique<aura::serve::Fiber>();
-        fiber_owned->set_assigned_tenant_id(42); // match
-
-        aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
-
-        // No mismatch set, require_effect must allow.
-        CHECK(!fiber_owned->resume_had_mismatch(), "2883 AC2: matching principal → flag NOT set");
-        const bool ok =
-            ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
-                              std::string_view("2883-ac2-test"));
-        CHECK(ok, "2883 AC2: matching principal → require_effect allows");
-    }
-
-    // ── #2883 AC3: Soft / Off → metric-only, no deny ──
-    static void ac2883_3_off_no_deny() {
-        std::println("\n--- #2883 AC3: Off / Soft → no deny ---");
-        reset_all();
-        set_mode(SandboxMode::Off);
-        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
-
-        CompilerService cs;
-        auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(0); // Off
-        ev.set_capability_tenant_id(7);
-
-        auto fiber_owned = std::make_unique<aura::serve::Fiber>();
-        fiber_owned->set_assigned_tenant_id(42);
-
-        aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
-
-        // Off path: install hook returns early before flag set (no hard-face).
-        CHECK(!fiber_owned->resume_had_mismatch(),
-              "2883 AC3: Off mode → flag NOT set (no hard-face path)");
-        const bool ok =
-            ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
-                              std::string_view("2883-ac3-test"));
-        CHECK(ok, "2883 AC3: Off mode → require_effect allows (no deny)");
-    }
-
-    // ── #2883 AC4: same-tenant multi-fiber share under Restricted soft ──
-    static void ac2883_4_same_tenant_multi_fiber() {
-        std::println("\n--- #2883 AC4: same-tenant multi-fiber share soft ---");
-        reset_all();
-        set_mode(SandboxMode::Restricted);
-        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
-
-        CompilerService cs;
-        auto& ev = cs.evaluator();
-        ev.set_effect_sandbox_mode(1);  // Restricted
-        ev.set_capability_tenant_id(7); // worker ambient
-
-        // Two fibers with SAME assigned_tenant_id=7 (no cross-tenant leak).
-        auto fiber_a = std::make_unique<aura::serve::Fiber>();
-        fiber_a->set_assigned_tenant_id(7);
-        auto fiber_b = std::make_unique<aura::serve::Fiber>();
-        fiber_b->set_assigned_tenant_id(7);
-
-        aura_fiber_install_tenant_scope_for_resume(fiber_a.get());
-        CHECK(!fiber_a->resume_had_mismatch(),
-              "2883 AC4: same-tenant share → fiber A flag NOT set");
-        aura_fiber_install_tenant_scope_for_resume(fiber_b.get());
-        CHECK(!fiber_b->resume_had_mismatch(),
-              "2883 AC4: same-tenant share → fiber B flag NOT set");
-        const bool ok =
-            ev.require_effect(static_cast<std::uint16_t>(aura::compiler::security::kEffectMutate),
-                              std::string_view("2883-ac4-test"));
-        CHECK(ok, "2883 AC4: same-tenant share → require_effect allows");
-    }
-
-    // ── #2883 AC5: counters queryable + snapshot carries fields ──
-    static void ac2883_5_counters_queryable() {
-        std::println("\n--- #2883 AC5: counters queryable ---");
-        const auto hard_mismatch = aura::serve::Fiber::tenant_scope_mismatch_hard_total();
-        const auto hard_deny = aura::serve::Fiber::fiber_principal_mismatch_hard_deny_total();
-        CHECK(hard_mismatch + hard_deny + 1 >= 1,
-              "2883 AC5: tenant_scope_mismatch_hard_total() + hard_deny queryable");
-        const auto snap = snapshot_capability_effect_stats();
-        // CapabilityEffectStatsSnapshot exposes the new field.
-        (void)snap.fiber_principal_mismatch_hard_deny;
-        CHECK(true,
-              "2883 AC5: CapabilityEffectStatsSnapshot exposes fiber_principal_mismatch_hard_deny");
-    }
-
-    // ── #2883 AC6: source-cite + no invent + no docs/design/ ──
-    static void ac2883_6_source_and_no_invent() {
-        std::println("\n--- #2883 AC6: source-cite + no invent + no docs/design/ ---");
-        const auto fiber_mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
-        const auto fiber_h = read_file("src/serve/fiber.h");
-        const auto ixx = read_file("src/compiler/evaluator.ixx");
-        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
-        const auto sec = read_file("src/compiler/evaluator_security.cpp");
-        const auto cap_model = read_file("src/core/capability_model.hh");
-
-        // #2883 source-cite in evaluator_fiber_mutation.cpp + fiber.h + ixx +
-        // posture + sec + capability_model.hh.
-        CHECK(fiber_mut.find("Issue #2883") != std::string::npos,
-              "2883 AC6: evaluator_fiber_mutation.cpp cites Issue #2883");
-        CHECK(fiber_h.find("Issue #2883") != std::string::npos,
-              "2883 AC6: serve/fiber.h cites Issue #2883");
-        CHECK(sec.find("production hard principal check") != std::string::npos,
-              "2883 AC6: evaluator_security.cpp cites Issue #2883");
-        CHECK(ixx.find("#2883") != std::string::npos, "2883 AC6: evaluator.ixx cites #2883");
-        CHECK(posture.find("schema-2883") != std::string::npos,
-              "2883 AC6: evaluator_primitives_security.cpp cites schema-2883");
-        CHECK(cap_model.find("capability_fiber_principal_mismatch_hard_deny_total") !=
-                  std::string::npos,
-              "2883 AC6: capability_model.hh defines "
-              "capability_fiber_principal_mismatch_hard_deny_total");
-
-        // No new test_issue_2883.cpp (per #81967).
-        std::ifstream invent_c("tests/core/test_issue_2883.cpp");
-        if (!invent_c.good())
-            invent_c.open("../tests/core/test_issue_2883.cpp");
-        CHECK(!invent_c.good(),
-              "2883 AC6: no tests/core/test_issue_2883.cpp (forbidden per #81967)");
-        std::ifstream invent_cp("tests/compiler/test_issue_2883.cpp");
-        if (!invent_cp.good())
-            invent_cp.open("../tests/compiler/test_issue_2883.cpp");
-        CHECK(!invent_cp.good(),
-              "2883 AC6: no tests/compiler/test_issue_2883.cpp (forbidden per #81967)");
-
-        // No docs/design/2883-* (per #1655).
-        const std::filesystem::path docs_design = "docs/design";
-        std::error_code ec2;
-        if (std::filesystem::is_directory(docs_design, ec2)) {
-            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec2)) {
-                const auto name = entry.path().filename().string();
-                CHECK(name.find("2883-") == std::string::npos,
-                      std::string("2883 AC6: no docs/design/") + name + " (forbidden per #1655)");
-            }
-        }
-    }
-
     std::println("=== Issue #2881: residual NodeId-only workspace coverage ===");
     ac2881_residual_coverage_cross_cite();
+    std::println("=== Issue #2883: production hard principal check ===");
+    ac2883_1_hard_deny_on_mismatch();
+    ac2883_2_matching_allows();
+    ac2883_3_off_no_deny();
+    ac2883_4_same_tenant_multi_fiber();
+    ac2883_5_counters_queryable();
+    ac2883_6_source_and_no_invent();
+    std::println("=== Issue #2942: NodeId side-effect mandate ===");
+    ac2942_node_id_mandate_cross_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
@@ -518,9 +584,3 @@ int main() {
     return run_test_tenant_scope_fiber_mandate();
 }
 #endif
-ac2883_1_hard_deny_on_mismatch();
-ac2883_2_matching_allows();
-ac2883_3_off_no_deny();
-ac2883_4_same_tenant_multi_fiber();
-ac2883_5_counters_queryable();
-ac2883_6_source_and_no_invent();

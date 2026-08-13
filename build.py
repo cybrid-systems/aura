@@ -1977,6 +1977,20 @@ def cmd_lint():
             "Issue #2839 side-effect + fiber principal linter failed — run python3 scripts/coverage/checks/check_side_effect_fiber_principal_2839.py"
         )
         return r
+    # Issue #2942: mandate require_effect_for_node_id / on_ref on all
+    # workspace NodeId side-effect prims (close residual late-isolation
+    # window after #2881). Extends require_effect_auto_isolation +
+    # tenant_scope_fiber tests (#81967); no docs/design/ (#1655).
+    se2942_script = COVERAGE_CHECKS / "check_side_effect_node_id_mandate_2942.py"
+    if not se2942_script.exists():
+        fail(f"missing {se2942_script}")
+        return 1
+    r = run([sys.executable, str(se2942_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2942 NodeId side-effect mandate linter failed — run python3 scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py"
+        )
+        return r
     # Issue #2882: production default single-use for high-risk grants
     # (Mutate / MacroSelfEvo / TenantAdmin / Syscall) under Restricted/Strict.
     # grant_effect_capability force-promotes single_use=true; explicit

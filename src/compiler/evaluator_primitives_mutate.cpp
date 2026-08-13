@@ -760,15 +760,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
 
             // Issue #1566 / #2052 / Issue #2658: multi-tenant workspace isolation +
-            // capability check, consolidated through require_effect so the
-            // StableNodeRef ref_tenant is carried through to the auto-isolation
-            // gate (previously the manual check_workspace_isolation call with
-            // hardcoded ref_tenant=0 was the standard pattern; Issue #2658 closes
-            // the late-isolation-deny window by making ref_tenant mandatory
-            // for stamped-ref paths). Under Strict, also refuse when last
-            // hygiene stamp belongs to a foreign tenant (parity with
-            // mutate:atomic-batch #1878) — the strict heuristic must run
-            // BEFORE require_effect so ref_tenant is correct.
+            // capability check. Issue #2942: concrete NodeId targets MUST go
+            // through require_effect_for_node_id (principal stamp) or
+            // require_effect_on_ref (stamped / foreign tenant) — never bare
+            // 2/3-arg require_effect with default ref_tenant=0 (late isolation
+            // window). Under Strict, also refuse when last hygiene stamp
+            // belongs to a foreign tenant (parity with mutate:atomic-batch
+            // #1878) — the strict heuristic must run BEFORE the gate so
+            // ref_tenant is correct for on_ref.
             const bool strict_iso =
                 (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
             if (strict_iso && ref_tenant == 0) {
@@ -779,19 +778,39 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         ref_tenant = hs.tenant_id;
                 }
             }
-            if (!ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), op, target_node,
-                                   ref_tenant)) {
+            // Issue #2942: pick mandated entry by target shape.
+            bool effect_ok = false;
+            if (target_node != 0) {
+                if (ref_tenant != 0) {
+                    // Foreign or arg-stamped tenant — do not re-stamp principal.
+                    StableNodeRef gate_ref{};
+                    gate_ref.id = target_node;
+                    gate_ref.tenant_id = ref_tenant;
+                    effect_ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
+                                                         op, gate_ref);
+                } else {
+                    // NodeId-only: stamp current principal then on_ref.
+                    effect_ok = ev.require_effect_for_node_id(
+                        static_cast<std::uint16_t>(kEffectMutate), op, target_node);
+                }
+            } else {
+                // No concrete workspace NodeId (e.g. global mutate ops) —
+                // documented non-target path keeps 2-arg require_effect.
+                effect_ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), op);
+            }
+            if (!effect_ok) {
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     // Heuristic: distinguish capability vs isolation deny for metric
-                    // downstream. require_effect runs isolation first (auto-gate) then
+                    // downstream. require_effect* runs isolation first (auto-gate) then
                     // capability check — if ref_tenant is foreign, the deny is
                     // isolation; otherwise capability.
                     if (ref_tenant != 0 && ref_tenant != ev.capability_tenant_id()) {
                         m->mutate_force_isolation_denied_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
-                        return mev("tenant-isolation-denied",
-                                   std::string("cross-tenant ") + op +
-                                       " denied by WorkspaceIsolationPolicy (#1566/#2052/#2658)");
+                        return mev(
+                            "tenant-isolation-denied",
+                            std::string("cross-tenant ") + op +
+                                " denied by WorkspaceIsolationPolicy (#1566/#2052/#2658/#2942)");
                     }
                     m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
                     // Issue #2076: unified Agent-readable deny reason (merr pair).
