@@ -26,6 +26,10 @@ extern "C" void aura_bump_pure_anon_bg_totals(std::uint64_t enqueue, std::uint64
 extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_t budget_skip);
 // Issue #2977: prefer-path counters (force_jit / last_success coverage).
 extern "C" void aura_bump_residual_remount_prefer_totals(std::uint64_t enter, std::uint64_t hit);
+// Issue #2978: reemit-success sync covered-named remount counters.
+extern "C" void aura_bump_reemit_success_sync_covered_remount_totals(std::uint64_t ok,
+                                                                     std::uint64_t fail,
+                                                                     std::uint64_t cap_hit);
 // Issue #2977: force_jit + last_success masks (HotUpdateRegistry C ABI).
 extern "C" std::uint64_t aura_hot_update_force_jit_regions_mask(void);
 extern "C" std::uint64_t aura_hot_update_last_reemit_success_region_mask(void);
@@ -2717,6 +2721,129 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         g_residual_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
         aura_bump_residual_remount_totals(ok, /*budget_skip=*/0);
     }
+}
+
+// ── Issue #2978: reemit-success sync covered-named remount ──
+// After last_reemit_success_region_mask is stamped, remount named
+// (sid != 0) closures whose sid bit intersects the coverage mask.
+// Budget-exempt vs residual (#2928); cap N so a huge named table
+// cannot stall the pipeline. Overflow stays MustDeopt and residual
+// still rotates them (AC4). Anonymous / pure-anon stay on residual
+// / #2950 (AC3). Soft / mask==0 / cap==0 → zero walk (AC2).
+// On remount ok: clear MustDeopt + restamp (same heal as #2928)
+// so the next call does not force-deopt.
+
+static std::atomic<std::uint64_t> g_reemit_success_sync_covered_ok_total{0};
+static std::atomic<std::uint64_t> g_reemit_success_sync_covered_fail_total{0};
+static std::atomic<std::uint64_t> g_reemit_success_sync_covered_cap_hit_total{0};
+static std::atomic<std::uint64_t> g_reemit_success_sync_covered_cap_override{UINT64_MAX};
+
+extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept {
+    const auto ov = g_reemit_success_sync_covered_cap_override.load(std::memory_order_relaxed);
+    if (ov != UINT64_MAX)
+        return ov;
+    const char* e = std::getenv("AURA_REEMIT_SUCCESS_SYNC_COVERED_CAP");
+    if (e && *e) {
+        std::uint64_t v = 0;
+        for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
+            v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+        return v; // explicit 0 = off
+    }
+    // Soft / sandbox / tests → 0; production slightly above residual 32.
+    return aura::compiler::typed_audit::production_defaults_active() ? 64ull : 0ull;
+}
+
+extern "C" std::uint64_t aura_reemit_success_sync_covered_ok_total_v_read() noexcept {
+    return g_reemit_success_sync_covered_ok_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_reemit_success_sync_covered_fail_total_v_read() noexcept {
+    return g_reemit_success_sync_covered_fail_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_hit_total_v_read() noexcept {
+    return g_reemit_success_sync_covered_cap_hit_total.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_test_set_reemit_success_sync_covered_cap(std::uint64_t cap) noexcept {
+    g_reemit_success_sync_covered_cap_override.store(cap, std::memory_order_relaxed);
+}
+
+extern "C" void aura_test_reset_reemit_success_sync_covered_state() noexcept {
+    g_reemit_success_sync_covered_cap_override.store(UINT64_MAX, std::memory_order_relaxed);
+}
+
+extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask,
+                                                              std::uint64_t cap) {
+    // AC2: mask idle / cap=0 → zero walk (no table lock).
+    if (mask == 0 || cap == 0)
+        return;
+
+    std::uint64_t ok = 0;
+    std::uint64_t fail = 0;
+    std::uint64_t leftover = 0;
+    {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        aura_lock_workspace_write();
+
+        const std::size_t nslots = g_closure_func_ids.size();
+        if (nslots == 0) {
+            aura_unlock_workspace_write();
+            return;
+        }
+        if (g_closure_stable_func_ids.size() < nslots)
+            g_closure_stable_func_ids.resize(nslots, 0);
+        if (g_closure_must_deopt.size() < nslots)
+            g_closure_must_deopt.resize(nslots, 0);
+        if (g_closure_bridge_epochs.size() < nslots)
+            g_closure_bridge_epochs.resize(nslots, 0);
+        if (g_closure_defuse_versions.size() < nslots)
+            g_closure_defuse_versions.resize(nslots, 0);
+        if (g_closure_env_gen.size() < nslots)
+            g_closure_env_gen.resize(nslots, 0);
+
+        const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        const std::uint64_t host_defuse = aura_get_aot_defuse_version();
+
+        std::uint64_t used = 0;
+        for (std::size_t cid = 0; cid < nslots; ++cid) {
+            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                continue;
+            const std::uint32_t sid = g_closure_stable_func_ids[cid];
+            if (sid == 0)
+                continue; // AC3: anon / pure-anon stay residual / #2950
+            if ((residual_closure_sid_region_bits_unlocked(cid) & mask) == 0)
+                continue;
+            if (used >= cap) {
+                ++leftover; // AC4: overflow → residual still rotates
+                continue;
+            }
+            ++used;
+            if (remount_or_force_deopt_unlocked_no_call_time_counter(
+                    static_cast<std::int64_t>(cid), live_env,
+                    /*linear_fp=*/0, table_epoch) != 0) {
+                g_closure_must_deopt[cid] = 0;
+                g_closure_bridge_epochs[cid] = table_epoch;
+                g_closure_defuse_versions[cid] = host_defuse;
+                g_closure_env_gen[cid] = live_env;
+                invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
+                ++ok;
+            } else {
+                ++fail;
+            }
+        }
+        aura_unlock_workspace_write();
+    }
+
+    if (ok)
+        g_reemit_success_sync_covered_ok_total.fetch_add(ok, std::memory_order_relaxed);
+    if (fail)
+        g_reemit_success_sync_covered_fail_total.fetch_add(fail, std::memory_order_relaxed);
+    if (leftover)
+        g_reemit_success_sync_covered_cap_hit_total.fetch_add(leftover, std::memory_order_relaxed);
+    if (ok || fail || leftover)
+        aura_bump_reemit_success_sync_covered_remount_totals(ok, fail, leftover);
 }
 
 // Issue #660 / #2092 / #2550: set the closure's name after allocation.

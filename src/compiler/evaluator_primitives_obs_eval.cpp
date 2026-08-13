@@ -15185,6 +15185,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t residual_remount_budget_skip = 0;
             std::uint64_t residual_remount_prefer_enter = 0;
             std::uint64_t residual_remount_prefer_hit = 0;
+            std::uint64_t reemit_sync_covered_ok = 0;
+            std::uint64_t reemit_sync_covered_fail = 0;
+            std::uint64_t reemit_sync_covered_cap = 0;
             // Issue #2605: residual / assign / preserve / named-invent axes.
             std::uint64_t residual_backfill = 0;
             std::uint64_t sid_assign = 0;
@@ -15229,6 +15232,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     m->residual_remount_prefer_force_jit_total.load(std::memory_order_relaxed);
                 residual_remount_prefer_hit =
                     m->residual_remount_prefer_hit_total.load(std::memory_order_relaxed);
+                reemit_sync_covered_ok =
+                    m->reemit_success_sync_covered_remount_ok_total.load(std::memory_order_relaxed);
+                reemit_sync_covered_fail = m->reemit_success_sync_covered_remount_fail_total.load(
+                    std::memory_order_relaxed);
+                reemit_sync_covered_cap = m->reemit_success_sync_covered_remount_cap_hit_total.load(
+                    std::memory_order_relaxed);
                 residual_backfill =
                     m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
                 sid_assign = m->stable_func_id_assigned_total.load(std::memory_order_relaxed);
@@ -15460,6 +15469,16 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"residual-remount-prefer-wired", make_int(1)},
                 {"schema-2977", make_int(2977)},
                 {"issue-2977", make_int(2977)},
+                // Issue #2978: reemit-success sync covered-named remount.
+                {"reemit-success-sync-covered-remount-ok-total",
+                 make_int(static_cast<std::int64_t>(reemit_sync_covered_ok))},
+                {"reemit-success-sync-covered-remount-fail-total",
+                 make_int(static_cast<std::int64_t>(reemit_sync_covered_fail))},
+                {"reemit-success-sync-covered-remount-cap-hit-total",
+                 make_int(static_cast<std::int64_t>(reemit_sync_covered_cap))},
+                {"reemit-success-sync-covered-remount-wired", make_int(1)},
+                {"schema-2978", make_int(2978)},
+                {"issue-2978", make_int(2978)},
                 // Issue #2638: residual sid=0 growth hard cap + fail-closed
                 // drop/MustDeopt under sustained reemit. env
                 // AURA_RESIDUAL_SID0_CAP (default 256 under production;

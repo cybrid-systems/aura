@@ -576,6 +576,16 @@ static void ac2949_production_only_covered_default() {
               "2949 AC6: no docs/design/");
     }
 
+    // Issue #2978: coverage stamp still feeds last_reemit_success; sync
+    // covered-named remount is wired from on_reemit_pipeline_call.
+    {
+        std::println("\n--- #2978: coverage stamp wires sync covered remount ---");
+        const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(cpp.find("aura_sync_remount_covered_named_live_closures") != std::string::npos,
+              "2978: pipeline wires covered-named remount");
+        CHECK(cpp.find("Issue #2978") != std::string::npos, "2978: registry cites #2978");
+    }
+
     // Restore soft for subsequent suites.
     aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
         0, std::memory_order_relaxed);
@@ -601,7 +611,7 @@ int run_test_force_jit_repromote() {
     ac2949_production_only_covered_default();
     if (g_failed)
         return 1;
-    std::println("force-jit re-promote #2502/#2895/#2949: OK ({} passed)", g_passed);
+    std::println("force-jit re-promote #2502/#2895/#2949/#2978: OK ({} passed)", g_passed);
     return 0;
 }
 

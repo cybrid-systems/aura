@@ -1203,6 +1203,16 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"residual-remount-prefer-wired", make_int(1)},
                 {"schema-2977", make_int(2977)},
                 {"issue-2977", make_int(2977)},
+                // Issue #2978: reemit-success sync covered-named remount.
+                {"reemit-success-sync-covered-remount-ok-total",
+                 make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_ok_total))},
+                {"reemit-success-sync-covered-remount-fail-total",
+                 make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_fail_total))},
+                {"reemit-success-sync-covered-remount-cap-hit-total",
+                 make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_cap_hit_total))},
+                {"reemit-success-sync-covered-remount-wired", make_int(1)},
+                {"schema-2978", make_int(2978)},
+                {"issue-2978", make_int(2978)},
                 // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
                 // assert. Soft single-eval / process-default (filter
                 // eval = nullptr) keeps this at 0. Production hard

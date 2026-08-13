@@ -1190,6 +1190,167 @@ static void ac2977_6_source_and_linter() {
           "AC6: no invent test per #81967");
 }
 
+// ── Issue #2978: reemit-success sync covered-named remount ──
+
+static void ac2978_restore(std::uint32_t save) {
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        save, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_reemit_success_sync_covered_state();
+}
+
+static void ac2978_1_sync_covered_named() {
+    std::println("\n--- #2978 AC1: production + covered reemit remounts named in R ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_reemit_success_sync_covered_state();
+    aura_test_set_reemit_success_sync_covered_cap(64);
+    const auto dummy = aura_alloc_closure(/*func_id=*/0);
+    CHECK(dummy >= 0, "AC1: dummy alloc");
+    aura_test_set_closure_stable_func_id(dummy, 0);
+    aura_closure_set_must_deopt(dummy, 1);
+    const auto named = aura_alloc_closure(/*func_id=*/0);
+    CHECK(named >= 0, "AC1: named alloc");
+    aura_test_set_closure_stable_func_id(named, 1); // Env bit
+    aura_closure_set_must_deopt(named, 1);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    // Pipeline success stamps coverage then runs the sync walk.
+    reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
+    CHECK(reg.last_reemit_success_region_mask() != 0, "AC1: coverage stamped");
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() > ok0 ||
+              aura_closure_get_must_deopt(named) == 0,
+          "AC1: covered named remounted / MustDeopt cleared");
+    CHECK(aura_closure_get_must_deopt(dummy) == 1, "AC1: anonymous dummy not in sync walk");
+    ac2978_restore(save);
+}
+
+static void ac2978_2_soft_mask_idle() {
+    std::println("\n--- #2978 AC2: Soft / mask==0 → no sync covered walk ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(0, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    aura_test_reset_reemit_success_sync_covered_state();
+    const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
+    const auto hit0 = aura_reemit_success_sync_covered_cap_hit_total_v_read();
+    CHECK(aura_reemit_success_sync_covered_cap_default() == 0, "AC2: Soft cap default 0");
+    aura_sync_remount_covered_named_live_closures(/*mask=*/0, /*cap=*/64);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() == ok0, "AC2: mask=0 no ok");
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK(aura_reemit_success_sync_covered_ok_total_v_read() == ok0, "AC2: Soft pipeline no walk");
+    CHECK(aura_reemit_success_sync_covered_cap_hit_total_v_read() == hit0, "AC2: Soft no cap hit");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("mask == 0 || cap == 0") != std::string::npos, "AC2: zero-walk gate");
+    ac2978_restore(save);
+}
+
+static void ac2978_3_anon_filters() {
+    std::println("\n--- #2978 AC3: anon / pure-anon stay residual / #2950 ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("sid == 0") != std::string::npos, "AC3: skips sid==0");
+    CHECK(rt.find("anon / pure-anon stay residual") != std::string::npos ||
+              rt.find("#2950") != std::string::npos,
+          "AC3: residual/#2950 own sid==0");
+    CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "AC3: #2602 named path preserved");
+    CHECK(rt.find("aura_sync_remount_anon_captured_live_closures") != std::string::npos,
+          "AC3: #2691 captured preserved");
+    CHECK(rt.find("aura_pure_anon_bg_remount_drain") != std::string::npos ||
+              rt.find("aura_sync_remount_pure_anon_live_closures") != std::string::npos,
+          "AC3: #2950/#2850 preserved");
+}
+
+static void ac2978_4_cap_overflow_residual() {
+    std::println("\n--- #2978 AC4: cap hit does not drop named (residual rotates) ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    aura_test_reset_reemit_success_sync_covered_state();
+    aura_test_set_reemit_success_sync_covered_cap(1);
+    const auto a = aura_alloc_closure(/*func_id=*/0);
+    const auto b = aura_alloc_closure(/*func_id=*/0);
+    CHECK(a >= 0 && b >= 0, "AC4: two named alloc");
+    aura_test_set_closure_stable_func_id(a, 1);
+    aura_test_set_closure_stable_func_id(b, 1);
+    aura_closure_set_must_deopt(a, 1);
+    aura_closure_set_must_deopt(b, 1);
+    const auto hit0 = aura_reemit_success_sync_covered_cap_hit_total_v_read();
+    const auto env = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    aura_sync_remount_covered_named_live_closures(env, /*cap=*/1);
+    CHECK(aura_reemit_success_sync_covered_cap_hit_total_v_read() > hit0,
+          "AC4: cap_hit advanced (overflow)");
+    // Residual still owns leftover MustDeopt named.
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("overflow → residual still rotates") != std::string::npos ||
+              rt.find("leftover") != std::string::npos,
+          "AC4: leftover documented for residual");
+    CHECK(rt.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC4: residual tick still present");
+    ac2978_restore(save);
+}
+
+static void ac2978_5_query_keys() {
+    std::println("\n--- #2978 AC5: additive query keys; remount/coverage preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2978") == 2978, "AC5: schema-2978");
+    CHECK(href(cs, "issue-2978") == 2978, "AC5: issue-2978");
+    CHECK(href(cs, "reemit-success-sync-covered-remount-wired") == 1, "AC5: wired");
+    CHECK(href(cs, "reemit-success-sync-covered-remount-ok-total") >= 0, "AC5: ok-total");
+    CHECK(href(cs, "reemit-success-sync-covered-remount-fail-total") >= 0, "AC5: fail-total");
+    CHECK(href(cs, "reemit-success-sync-covered-remount-cap-hit-total") >= 0, "AC5: cap-hit");
+    CHECK(href(cs, "schema-2928") == 2928, "AC5: schema-2928 preserved");
+    CHECK(href(cs, "schema-2977") == 2977, "AC5: schema-2977 preserved");
+    CHECK(href(cs, "residual-remount-wired") == 1, "AC5: residual wired preserved");
+    const auto q = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(q.find("schema-2895") != std::string::npos, "AC5: schema-2895 preserved");
+    CHECK(q.find("schema-2949") != std::string::npos, "AC5: schema-2949 preserved");
+}
+
+static void ac2978_6_source_and_linter() {
+    std::println("\n--- #2978 AC6: source-cite + linter + no docs/design ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
+    const auto ft = read_file("tests/compiler/test_force_jit_repromote.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_reemit_success_sync_covered_remount_2978.py");
+    CHECK(rt.find("Issue #2978") != std::string::npos, "AC6: runtime cites #2978");
+    CHECK(rt.find("aura_sync_remount_covered_named_live_closures") != std::string::npos,
+          "AC6: sync covered helper");
+    CHECK(br.find("aura_bump_reemit_success_sync_covered_remount_totals") != std::string::npos,
+          "AC6: bridge bump");
+    CHECK(reg.find("aura_sync_remount_covered_named_live_closures") != std::string::npos,
+          "AC6: pipeline wires walk");
+    CHECK(hh.find("Issue #2978") != std::string::npos, "AC6: registry header cites #2978");
+    CHECK(obs.find("reemit_success_sync_covered_remount_ok_total") != std::string::npos,
+          "AC6: metrics ok");
+    CHECK(obs.find("reemit_success_sync_covered_remount_cap_hit_total") != std::string::npos,
+          "AC6: metrics cap");
+    CHECK(t.find("ac2978_1_sync_covered_named") != std::string::npos, "AC6: AC1 test");
+    CHECK(ft.find("2978") != std::string::npos, "AC6: force-jit suite cites #2978");
+    CHECK(!lint.empty() && lint.find("2978") != std::string::npos, "AC6: linter present");
+    CHECK(build.find("check_reemit_success_sync_covered_remount_2978") != std::string::npos ||
+              build.find("reemit-success-sync-covered-2978") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2978-reemit-success-sync-covered.md").empty(),
+          "AC6: no docs/design/2978-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2978.cpp").empty(),
+          "AC6: no invent test per #81967");
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
@@ -1552,9 +1713,16 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2977_4_cursor_no_starvation();
     ac2977_5_query_keys();
     ac2977_6_source_and_linter();
+    std::println("\n=== Issue #2978: reemit-success sync covered-named remount ===");
+    ac2978_1_sync_covered_named();
+    ac2978_2_soft_mask_idle();
+    ac2978_3_anon_filters();
+    ac2978_4_cap_overflow_residual();
+    ac2978_5_query_keys();
+    ac2978_6_source_and_linter();
 
-    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977: {} passed, "
-                 "{} failed ===",
+    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978: {} "
+                 "passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

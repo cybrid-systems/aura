@@ -9264,6 +9264,12 @@ struct CompilerMetrics {
     // prefer_hit_total: remount-ok on a cid whose sid bit intersected.
     std::atomic<std::uint64_t> residual_remount_prefer_force_jit_total{0}; // #2977
     std::atomic<std::uint64_t> residual_remount_prefer_hit_total{0};       // #2977
+    // Issue #2978: reemit-success sync remount of named closures whose
+    // sid bit intersects last_reemit_success_region_mask. Cap overflow
+    // falls through to residual (#2928/#2977). Soft / mask idle → 0.
+    std::atomic<std::uint64_t> reemit_success_sync_covered_remount_ok_total{0};      // #2978
+    std::atomic<std::uint64_t> reemit_success_sync_covered_remount_fail_total{0};    // #2978
+    std::atomic<std::uint64_t> reemit_success_sync_covered_remount_cap_hit_total{0}; // #2978
     // Issue #2092: live closures retargeted via the (off-by-default)
     // name fallback path because their stable_func_id stamp was 0
     // (legacy closure / define processed after set_name). Non-zero

@@ -692,6 +692,7 @@ private:
     //     the last clean reemit success (stamped when successes > 0 and
     //     demoted != 0, or via note_reemit_success_coverage).
     //     Issue #2977: residual remount prefer ORs this with force_jit.
+    //     Issue #2978: reemit-success sync covered-named remount reads this.
     //   force_jit_repromote_only_covered_bits_: sticky value when override
     //     is set (1 = only_covered, 0 = wholesale). Ignored when
     //     only_covered_override_ == 0 (auto → production default on).

@@ -217,6 +217,18 @@ extern "C" void aura_test_set_closure_stable_func_id(std::int64_t closure_id,
                                                      std::uint32_t sid) noexcept;
 extern "C" void aura_test_set_residual_remount_force_skip(int v) noexcept;
 extern "C" void aura_test_reset_residual_remount_state() noexcept;
+// Issue #2978: reemit-success sync remount of named closures whose sid
+// bit intersects last_reemit_success_region_mask. Cap default 64
+// production / 0 Soft. Overflow falls through to residual. Soft /
+// mask==0 / cap==0 → zero walk.
+extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept;
+extern "C" std::uint64_t aura_reemit_success_sync_covered_ok_total_v_read() noexcept;
+extern "C" std::uint64_t aura_reemit_success_sync_covered_fail_total_v_read() noexcept;
+extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_hit_total_v_read() noexcept;
+extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask,
+                                                              std::uint64_t cap);
+extern "C" void aura_test_set_reemit_success_sync_covered_cap(std::uint64_t cap) noexcept;
+extern "C" void aura_test_reset_reemit_success_sync_covered_state() noexcept;
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
