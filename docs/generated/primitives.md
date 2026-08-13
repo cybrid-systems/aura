@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**492** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**494** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,8 +10,8 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 85 primitives (17%)
-- **core**: 362 primitives (74%)
+- **mutation-safety**: 87 primitives (18%)
+- **core**: 362 primitives (73%)
 - **internal-observable**: 44 primitives (9%)
 - **convenience**: 1 primitives (0%)
 
@@ -89,9 +89,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ast:validate-ownership` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-post-restore` *[mutation-safety]* — `src/compiler/evaluator_primitives_ast.cpp`
 
-## Workspace: (14)
+## Workspace: (16)
 
 - `workspace:can-write?` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:concurrent-mutation-policy` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:delete` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:discard` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -102,6 +103,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:resolve-stable-ref` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-latest` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-to` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-concurrent-mutation-policy` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:set-memory-limit` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` *[mutation-safety]* — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -637,7 +639,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (85)
+### Mutation safety (must remain primitive) (87)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -711,6 +713,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace-persist-info` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` — `src/compiler/evaluator_primitives_agent.cpp`
 - `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:concurrent-mutation-policy` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:delete` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:discard` — `src/compiler/evaluator_primitives_workspace.cpp`
@@ -721,6 +724,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:resolve-stable-ref` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-latest` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:rollback-to` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-concurrent-mutation-policy` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:set-memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`

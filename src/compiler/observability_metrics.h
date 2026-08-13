@@ -8120,6 +8120,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> workspace_mtx_region_collision_total{0}; // #2523
     std::atomic<std::uint64_t> workspace_mtx_waiters_now{0};            // #2523
     std::atomic<std::uint64_t> workspace_mtx_waiters_peak{0};           // #2523
+    // Issue #2990: ConcurrentMutationPolicy observability.
+    std::atomic<std::uint64_t> scoped_parallel_opt_in_total{0};            // #2990
+    std::atomic<std::uint64_t> scoped_parallel_redirect_total{0};          // #2990
+    std::atomic<std::uint64_t> scoped_parallel_admit_total{0};             // #2990
+    std::atomic<std::uint64_t> scoped_parallel_conflict_fallback_total{0}; // #2990
+    std::atomic<std::uint64_t> single_writer_serialize_total{0};           // #2990
     // ── Issue #2090: MutationBoundaryGuard outermost reemit pipeline ──
     // Pairs with #2035 cascade path: non-cascade exits (fiber-steal restore,
     // partial recovery, compact-only, exception unwind) drive the same

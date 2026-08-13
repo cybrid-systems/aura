@@ -291,6 +291,127 @@ static void ac6_throughput_speedup() {
     CHECK(speedup >= 1.5, "region path ≥1.5× throughput vs global unique (N=4)");
 }
 
+// ── Issue #2990: ConcurrentMutationPolicy (prefer-existing #2121 suite) ──
+
+static std::int64_t href_ws(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:workspace-concurrency-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static void ac2990_1_single_writer_default() {
+    std::println("\n--- #2990 AC1: SingleWriter default (zero try_acquire redirect) ---");
+    const auto hh = read_file("src/compiler/workspace_concurrent_policy.hh");
+    const auto eix = read_file("src/compiler/evaluator.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(hh.find("ConcurrentMutationPolicy") != std::string::npos, "AC1: policy header");
+    CHECK(hh.find("SingleWriter") != std::string::npos, "AC1: SingleWriter");
+    CHECK(hh.find("ScopedParallel") != std::string::npos, "AC1: ScopedParallel");
+    CHECK(eix.find("scoped_parallel_enabled") != std::string::npos, "AC1: evaluator getter");
+    CHECK(mb.find("scoped_parallel_enabled") != std::string::npos, "AC1: try_acquire gated");
+    CHECK(mb.find("#2990") != std::string::npos, "AC1: boundary cites #2990");
+
+    CompilerService cs;
+    CHECK(cs.evaluator().concurrent_mutation_policy() ==
+              Evaluator::ConcurrentMutationPolicy::SingleWriter,
+          "AC1: default SingleWriter");
+    CHECK(!cs.evaluator().scoped_parallel_enabled(), "AC1: scoped_parallel off");
+    auto p = cs.eval("(workspace:concurrent-mutation-policy)");
+    CHECK(p.has_value() && is_int(*p) && as_int(*p) == 0, "AC1: EDSL getter 0");
+
+    // TLS region_key must NOT redirect try_acquire under SingleWriter.
+    Evaluator& ev = cs.evaluator();
+    ev.set_workspace_region_concurrency_enabled(true);
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "AC1: metrics");
+    const auto red0 = m->scoped_parallel_redirect_total.load(std::memory_order_relaxed);
+    const auto ser0 = m->single_writer_serialize_total.load(std::memory_order_relaxed);
+    Evaluator::note_parallel_task_region_key(0xABCDu);
+    bool ok = true;
+    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(gr.has_value() && *gr, "AC1: try_acquire still admits");
+    Evaluator::clear_parallel_task_region_key();
+    CHECK(m->scoped_parallel_redirect_total.load(std::memory_order_relaxed) == red0,
+          "AC1: no region redirect under SingleWriter");
+    CHECK(m->single_writer_serialize_total.load(std::memory_order_relaxed) > ser0,
+          "AC1: serialize counter bumped");
+}
+
+static void ac2990_2_scoped_parallel_disjoint() {
+    std::println("\n--- #2990 AC2: ScopedParallel disjoint admit ---");
+    CompilerService cs;
+    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+          "AC2: opt-in ScopedParallel");
+    auto p = cs.eval("(workspace:concurrent-mutation-policy)");
+    CHECK(p.has_value() && is_int(*p) && as_int(*p) == 1, "AC2: policy == 1");
+    Evaluator& ev = cs.evaluator();
+    CHECK(ev.scoped_parallel_enabled(), "AC2: scoped_parallel on");
+    ev.set_workspace_region_concurrency_enabled(true);
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    const auto red0 = m->scoped_parallel_redirect_total.load(std::memory_order_relaxed);
+    Evaluator::note_parallel_task_region_key(Evaluator::workspace_region_key_from_name("d0"));
+    bool ok = true;
+    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+    CHECK(gr.has_value() && *gr, "AC2: try_acquire redirects + admits");
+    Evaluator::clear_parallel_task_region_key();
+    CHECK(m->scoped_parallel_redirect_total.load(std::memory_order_relaxed) > red0,
+          "AC2: redirect credited");
+}
+
+static void ac2990_3_overlap_fallback() {
+    std::println("\n--- #2990 AC3: ScopedParallel overlap → SingleWriter fallback ---");
+    CompilerService cs;
+    (void)cs.eval("(workspace:set-concurrent-mutation-policy \"scoped-parallel\")");
+    Evaluator& ev = cs.evaluator();
+    ev.set_workspace_region_concurrency_enabled(true);
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    const auto fb0 = m->scoped_parallel_conflict_fallback_total.load(std::memory_order_relaxed);
+    const auto key = Evaluator::workspace_region_key_from_name("same-cone");
+    bool ok1 = true;
+    auto g1 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok1);
+    CHECK(g1.has_value() && *g1, "AC3: first region admit");
+    (*g1).reset(); // release before second acquire on same thread
+    bool ok2 = true;
+    auto g2 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok2);
+    CHECK(g2.has_value() && *g2, "AC3: overlap admits via SingleWriter fallback");
+    CHECK(m->scoped_parallel_conflict_fallback_total.load(std::memory_order_relaxed) > fb0,
+          "AC3: conflict-fallback credited");
+}
+
+static void ac2990_4_stats_and_health() {
+    std::println("\n--- #2990 AC4: query:workspace-concurrency-stats + #2985/#2976 ---");
+    CompilerService cs;
+    CHECK(href_ws(cs, "schema-2990") == 2990, "AC4: schema-2990");
+    CHECK(href_ws(cs, "issue-2990") == 2990, "AC4: issue-2990");
+    CHECK(href_ws(cs, "policy-single-writer-default-wired") == 1, "AC4: default wired");
+    CHECK(href_ws(cs, "health-admit-wired") == 1, "AC4: #2985 health wired (not reimplemented)");
+    CHECK(href_ws(cs, "agent-scope-policy-wired") == 1, "AC4: #2976 wired");
+    CHECK(href_ws(cs, "policy") == 0, "AC4: default policy 0");
+    (void)cs.eval("(workspace:set-concurrent-mutation-policy 1)");
+    CHECK(href_ws(cs, "policy") == 1, "AC4: policy 1 after opt-in");
+    CHECK(href_ws(cs, "scoped-parallel-opt-in-total") >= 1, "AC4: opt-in total");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("maybe_reject_mutation_concurrency_health") != std::string::npos,
+          "AC4: health admit still called (no duplicate throttle)");
+}
+
+static void ac2990_5_throughput_and_linter() {
+    std::println("\n--- #2990 AC5: source-cite + linter + no invented test ---");
+    const auto t = read_file("tests/compiler/test_workspace_region_concurrency.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_workspace_concurrent_policy_2990.py");
+    CHECK(t.find("ac2990_1_single_writer_default") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2990_3_overlap_fallback") != std::string::npos, "AC5: AC3 test");
+    CHECK(build.find("check_workspace_concurrent_policy_2990") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty(), "AC5: linter present");
+    CHECK(read_file("docs/design/2990-workspace-concurrent-policy.md").empty(),
+          "AC5: no docs/design/2990-* per #1655");
+}
+
 } // namespace
 
 int run_test_workspace_region_concurrency() {
@@ -300,6 +421,13 @@ int run_test_workspace_region_concurrency() {
     ac4_mixed_stress();
     ac5_query_schema();
     ac6_throughput_speedup();
+
+    std::println("\n=== Issue #2990: ConcurrentMutationPolicy ===");
+    ac2990_1_single_writer_default();
+    ac2990_2_scoped_parallel_disjoint();
+    ac2990_3_overlap_fallback();
+    ac2990_4_stats_and_health();
+    ac2990_5_throughput_and_linter();
 
     std::println("\n=== test_workspace_region_concurrency: {} passed, {} failed ===", g_passed,
                  g_failed);

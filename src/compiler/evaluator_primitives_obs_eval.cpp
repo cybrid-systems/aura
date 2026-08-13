@@ -6639,6 +6639,81 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             return build_hash(kv);
         });
 
+    // Issue #2990: query:workspace-concurrency-stats — ConcurrentMutationPolicy
+    // + ScopedParallel admit / conflict-fallback. Complements #2523 contention
+    // and #2985 health (does not reimplement health throttle).
+    ObservabilityPrims::register_stats_impl(
+        "query:workspace-concurrency-stats", [&ev](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                    if (fp == 0xFF)
+                        fp = 0xFE;
+                    auto kidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(k);
+                    EvalValue key_ev = make_string(kidx);
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto slot = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[slot] == 0xFF) {
+                            meta[slot] = fp;
+                            keys[slot] = key_ev.val;
+                            vals[slot] = v.val;
+                            ht->size++;
+                            break;
+                        }
+                    }
+                }
+                auto hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                return make_hash(hidx);
+            };
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
+                                     : nullptr;
+            auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
+                return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+            };
+            const auto pol = static_cast<std::int64_t>(
+                static_cast<std::uint8_t>(ev.concurrent_mutation_policy()));
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"schema-2990", make_int(2990)},
+                {"issue-2990", make_int(2990)},
+                {"schema", make_int(2990)},
+                {"issue", make_int(2990)},
+                {"policy", make_int(pol)},
+                {"policy-single-writer", make_int(pol == 0 ? 1 : 0)},
+                {"policy-scoped-parallel", make_int(pol == 1 ? 1 : 0)},
+                {"policy-single-writer-default-wired", make_int(1)},
+                {"scoped-parallel-opt-in-total",
+                 make_int(m ? load(m->scoped_parallel_opt_in_total) : 0)},
+                {"scoped-parallel-redirect-total",
+                 make_int(m ? load(m->scoped_parallel_redirect_total) : 0)},
+                {"scoped-parallel-admit-total",
+                 make_int(m ? load(m->scoped_parallel_admit_total) : 0)},
+                {"scoped-parallel-conflict-fallback-total",
+                 make_int(m ? load(m->scoped_parallel_conflict_fallback_total) : 0)},
+                {"single-writer-serialize-total",
+                 make_int(m ? load(m->single_writer_serialize_total) : 0)},
+                {"region-concurrency-enabled",
+                 make_int(ev.workspace_region_concurrency_enabled() ? 1 : 0)},
+                {"health-admit-wired", make_int(1)},       // #2985, not reimplemented
+                {"agent-scope-policy-wired", make_int(1)}, // #2976
+                {"maybe-reject-health-wired", make_int(1)},
+            };
+            return build_hash(kv);
+        });
+
     // Issue #2405: (query:mutation-hold-estimate) — predictive pure query
     // for Agent batch planning. Surfaces recent outermost hold p50/p99,
     // live budget/slo config, dirty-scope estimate, and recommend-split
