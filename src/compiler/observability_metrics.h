@@ -9234,6 +9234,13 @@ struct CompilerMetrics {
     // Soft / budget=0 → counters stay 0 (zero extra work).
     std::atomic<std::uint64_t> live_closure_sync_remount_pure_anon_ok_total{0};          // #2850
     std::atomic<std::uint64_t> live_closure_sync_remount_pure_anon_skip_budget_total{0}; // #2850
+    // Issue #2950: pure-anon pressure-driven background remount queue
+    // (budget-exhausted skips enqueued; drained on BoundaryExit /
+    // pipeline amortized path — never steal-complete #2715).
+    std::atomic<std::uint64_t> pure_anon_bg_enqueue_total{0};    // #2950
+    std::atomic<std::uint64_t> pure_anon_bg_drain_ok_total{0};   // #2950
+    std::atomic<std::uint64_t> pure_anon_bg_drain_fail_total{0}; // #2950
+    std::atomic<std::uint64_t> pure_anon_bg_overflow_total{0};   // #2950
     // Issue #2928: residual round-robin remount outside reemit-success.
     // residual_remount_ok: remount+heal success per tick; budget_skip:
     // tick skipped under hard storm / reemit throttle (no remount storm).

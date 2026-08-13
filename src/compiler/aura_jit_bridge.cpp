@@ -259,6 +259,21 @@ extern "C" void aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64
     }
 }
 
+// Issue #2950: pure-anon background remount queue counters.
+extern "C" void aura_bump_pure_anon_bg_totals(std::uint64_t enqueue, std::uint64_t drain_ok,
+                                              std::uint64_t drain_fail, std::uint64_t overflow) {
+    if (auto* m = aot_metrics()) {
+        if (enqueue)
+            m->pure_anon_bg_enqueue_total.fetch_add(enqueue, std::memory_order_relaxed);
+        if (drain_ok)
+            m->pure_anon_bg_drain_ok_total.fetch_add(drain_ok, std::memory_order_relaxed);
+        if (drain_fail)
+            m->pure_anon_bg_drain_fail_total.fetch_add(drain_fail, std::memory_order_relaxed);
+        if (overflow)
+            m->pure_anon_bg_overflow_total.fetch_add(overflow, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2928: residual round-robin remount counters (outside reemit-success).
 extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_t budget_skip) {
     if (auto* m = aot_metrics()) {

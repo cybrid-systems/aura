@@ -15074,13 +15074,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     m->aot_stale_probe_hard_reject_total.load(std::memory_order_relaxed);
             }
             keep_enabled = ::aura_reemit_keep_fail_enabled();
-            constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
-            auto dd_idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(kDebugDir);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // #2369/#2605/#2606 keys expand this surface — capacity 128.
-                auto* ht = FlatHashTable::create(128);
+                // #2369/#2605/#2606/#2850/#2893/#2950 expand this surface.
+                auto* ht = FlatHashTable::create(256);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -15133,6 +15130,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             // Issue #2850: pure-anon bounded sync remount.
             std::uint64_t sync_remount_pure_ok = 0;
             std::uint64_t sync_remount_pure_skip = 0;
+            // Issue #2950: pure-anon background remount queue.
+            std::uint64_t pure_anon_bg_enq = 0;
+            std::uint64_t pure_anon_bg_ok = 0;
+            std::uint64_t pure_anon_bg_fail = 0;
+            std::uint64_t pure_anon_bg_ovf = 0;
             // Issue #2928: residual round-robin remount (outside reemit-success).
             std::uint64_t residual_remount_ok = 0;
             std::uint64_t residual_remount_budget_skip = 0;
@@ -15168,6 +15170,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 sync_remount_pure_skip =
                     m->live_closure_sync_remount_pure_anon_skip_budget_total.load(
                         std::memory_order_relaxed);
+                pure_anon_bg_enq = m->pure_anon_bg_enqueue_total.load(std::memory_order_relaxed);
+                pure_anon_bg_ok = m->pure_anon_bg_drain_ok_total.load(std::memory_order_relaxed);
+                pure_anon_bg_fail =
+                    m->pure_anon_bg_drain_fail_total.load(std::memory_order_relaxed);
+                pure_anon_bg_ovf = m->pure_anon_bg_overflow_total.load(std::memory_order_relaxed);
                 residual_remount_ok = m->residual_remount_ok_total.load(std::memory_order_relaxed);
                 residual_remount_budget_skip =
                     m->residual_remount_budget_skip_total.load(std::memory_order_relaxed);
@@ -15186,7 +15193,15 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
                 {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
                 {"aot-reemit-keep-fail-enabled", make_int(keep_enabled)},
-                {"aot-reemit-keep-fail-debug-dir", make_string(dd_idx)},
+                {"aot-reemit-keep-fail-debug-dir",
+                 [&] {
+                     // Keep string_heap_ push adjacent to make_string so
+                     // #1668 dead-heap audit sees a real use (window ≤120).
+                     constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
+                     auto dd_idx = ev.string_heap_.size();
+                     ev.string_heap_.push_back(kDebugDir);
+                     return make_string(dd_idx);
+                 }()},
                 // Issue #2252: hard-reject native execution when AOT
                 // slot table_generation != live epoch. Dedicated
                 // counter (distinct from aot_slot_stale_reject_total /
@@ -15341,6 +15356,28 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-sync-remount-pure-anon-wired", make_int(1)},
                 {"schema-2850", make_int(2850)},
                 {"issue-2850", make_int(2850)},
+                // Issue #2893: adaptive pure-anon budget + pressure (additive).
+                {"live-closure-sync-remount-pure-anon-budget-current",
+                 make_int(static_cast<std::int64_t>(aura_sync_remount_pure_anon_budget_current()))},
+                {"live-closure-sync-remount-pure-anon-pressure-bp",
+                 make_int(static_cast<std::int64_t>(aura_pure_anon_pressure_bp()))},
+                {"live-closure-sync-remount-pure-anon-adaptive-wired", make_int(1)},
+                {"schema-2893", make_int(2893)},
+                {"issue-2893", make_int(2893)},
+                // Issue #2950: pure-anon pressure-driven bg remount queue.
+                {"pure-anon-bg-enqueue-total",
+                 make_int(static_cast<std::int64_t>(pure_anon_bg_enq))},
+                {"pure-anon-bg-drain-ok-total",
+                 make_int(static_cast<std::int64_t>(pure_anon_bg_ok))},
+                {"pure-anon-bg-drain-fail-total",
+                 make_int(static_cast<std::int64_t>(pure_anon_bg_fail))},
+                {"pure-anon-bg-overflow-total",
+                 make_int(static_cast<std::int64_t>(pure_anon_bg_ovf))},
+                {"pure-anon-bg-pending",
+                 make_int(static_cast<std::int64_t>(aura_pure_anon_bg_pending()))},
+                {"pure-anon-bg-remount-wired", make_int(1)},
+                {"schema-2950", make_int(2950)},
+                {"issue-2950", make_int(2950)},
                 // Issue #2928: residual round-robin remount outside reemit-success.
                 {"residual-remount-ok-total",
                  make_int(static_cast<std::int64_t>(residual_remount_ok))},

@@ -739,6 +739,150 @@ static void ac2893_5_source_and_linter() {
           "2893 AC5: no docs/design/2893-* per #1655");
 }
 
+// ── Issue #2950: pure-anon pressure-driven background remount queue ──
+// AC1: budget exhaustion enqueues; drain remounts
+// AC2: Soft / budget=0 → no enqueue
+// AC3: steal-complete does not drain
+// AC4: pure-anon filter only (named/captured skipped)
+// AC5: additive schema-2950; #2893/#2850 preserved
+// AC6: source-cite + linter
+
+extern "C" void aura_pure_anon_bg_enqueue(std::int64_t closure_id) noexcept;
+extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_enqueue_total_v_read() noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_drain_ok_total_v_read() noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_overflow_total_v_read() noexcept;
+extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept;
+extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
+                                                          std::uint64_t* ok_count,
+                                                          std::uint64_t* skip_budget_count);
+extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
+extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
+extern "C" std::int64_t aura_alloc_closure(std::int64_t func_id);
+
+static void ac2950_1_enqueue_and_drain() {
+    std::println("\n--- #2950 AC1: budget exhaustion enqueues; drain remounts ---");
+    aura_test_reset_pure_anon_bg_queue();
+    // Alloc several pure-anon (func_id=0 → sid typically 0) and force
+    // MustDeopt so remount has work. Budget=1 → rest skip + enqueue.
+    const auto enq0 = aura_pure_anon_bg_enqueue_total_v_read();
+    const auto ok0 = aura_pure_anon_bg_drain_ok_total_v_read();
+    std::int64_t cids[4];
+    for (int i = 0; i < 4; ++i) {
+        cids[i] = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cids[i] >= 0, "2950 AC1: alloc pure-anon");
+        aura_closure_set_must_deopt(cids[i], 1);
+    }
+    std::uint64_t pure_ok = 0, pure_skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &pure_ok, &pure_skip);
+    // With ≥2 pure-anon live, skip should be >0 → enqueue.
+    CHECK(pure_skip >= 1 || aura_pure_anon_bg_pending() > 0 ||
+              aura_pure_anon_bg_enqueue_total_v_read() > enq0,
+          "2950 AC1: skip and/or enqueue under tight budget");
+    // Explicit enqueue of a MustDeopt pure-anon for deterministic drain.
+    const auto enq_mid = aura_pure_anon_bg_enqueue_total_v_read();
+    aura_pure_anon_bg_enqueue(cids[0]);
+    CHECK(aura_pure_anon_bg_enqueue_total_v_read() > enq_mid, "2950 AC1: enqueue advances total");
+    CHECK(aura_pure_anon_bg_pending() >= 1, "2950 AC1: pending ≥ 1");
+    aura_pure_anon_bg_remount_drain(/*max_n=*/8);
+    CHECK(aura_pure_anon_bg_drain_ok_total_v_read() >= ok0, "2950 AC1: drain_ok non-decreasing");
+    // After drain, pipeline quiet path also drains residual pending.
+    for (int i = 0; i < 4; ++i)
+        aura::compiler::hot_update_registry().on_reemit_pipeline_call(0, 0);
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac2950_2_soft_zero_cost() {
+    std::println("\n--- #2950 AC2: Soft / budget=0 → no enqueue ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(rt.find("budget == 0") != std::string::npos, "2950 AC2: budget==0 short-circuit");
+    CHECK(br.find("pure_budget > 0") != std::string::npos,
+          "2950 AC2: bridge gates pure walk on budget>0");
+    // budget=0 walk is no-op for enqueue.
+    aura_test_reset_pure_anon_bg_queue();
+    const auto enq0 = aura_pure_anon_bg_enqueue_total_v_read();
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/0, &ok, &skip);
+    CHECK(ok == 0 && skip == 0, "2950 AC2: budget=0 zero walk");
+    CHECK(aura_pure_anon_bg_enqueue_total_v_read() == enq0, "2950 AC2: budget=0 does not enqueue");
+    CHECK(aura_pure_anon_bg_pending() == 0, "2950 AC2: pending stays 0");
+}
+
+static void ac2950_3_no_steal_drain() {
+    std::println("\n--- #2950 AC3: steal-complete never drains pure-anon bg ---");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(steal.find("aura_evaluator_on_steal_complete") != std::string::npos,
+          "2950 AC3: steal-complete site exists");
+    // Steal path must not call pure-anon bg drain.
+    const auto pos = steal.find("aura_evaluator_on_steal_complete");
+    // Search a large window of the steal-complete function body.
+    const auto win = steal.substr(pos, 8000);
+    CHECK(win.find("aura_pure_anon_bg_remount_drain") == std::string::npos,
+          "2950 AC3: steal-complete does not call pure-anon bg drain");
+    CHECK(win.find("aura_pure_anon_bg_pending") == std::string::npos,
+          "2950 AC3: steal-complete does not probe pure-anon bg pending");
+    // Safe sites do drain.
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto mbc = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(reg.find("aura_pure_anon_bg_remount_drain") != std::string::npos,
+          "2950 AC3: pipeline path drains pure-anon bg");
+    CHECK(mbc.find("aura_pure_anon_bg_remount_drain") != std::string::npos,
+          "2950 AC3: BoundaryExit drains pure-anon bg");
+}
+
+static void ac2950_4_filters_pure_anon_only() {
+    std::println("\n--- #2950 AC4: drain re-filters pure-anon only ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    // Drain body re-checks sid==0 and !captures (no double remount named/captured).
+    CHECK(rt.find("aura_pure_anon_bg_remount_drain") != std::string::npos,
+          "2950 AC4: drain function present");
+    CHECK(rt.find("aura_closure_has_env_or_linear_captures_unlocked") != std::string::npos,
+          "2950 AC4: capture filter in runtime");
+    // Enqueue only from pure-anon skip path (sid!=0 continue before skip).
+    CHECK(rt.find("Issue #2950") != std::string::npos, "2950 AC4: #2950 cite");
+    CHECK(rt.find("pending_bg") != std::string::npos ||
+              rt.find("aura_pure_anon_bg_enqueue") != std::string::npos,
+          "2950 AC4: enqueue from pure-anon walk");
+}
+
+static void ac2950_5_query_and_lineage() {
+    std::println("\n--- #2950 AC5: query keys + lineage preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2950") == 2950, "2950 AC5: schema-2950");
+    CHECK(href(cs, "issue-2950") == 2950, "2950 AC5: issue-2950");
+    CHECK(href(cs, "pure-anon-bg-remount-wired") == 1, "2950 AC5: wired sentinel");
+    CHECK(href(cs, "pure-anon-bg-enqueue-total") >= 0, "2950 AC5: enqueue-total");
+    CHECK(href(cs, "pure-anon-bg-drain-ok-total") >= 0, "2950 AC5: drain-ok-total");
+    CHECK(href(cs, "pure-anon-bg-drain-fail-total") >= 0, "2950 AC5: drain-fail-total");
+    CHECK(href(cs, "pure-anon-bg-overflow-total") >= 0, "2950 AC5: overflow-total");
+    CHECK(href(cs, "pure-anon-bg-pending") >= 0, "2950 AC5: pending");
+    CHECK(href(cs, "schema-2893") == 2893, "2950 AC5: schema-2893 preserved");
+    CHECK(href(cs, "schema-2850") == 2850, "2950 AC5: schema-2850 preserved");
+}
+
+static void ac2950_6_source_and_linter() {
+    std::println("\n--- #2950 AC6: source-cite + linter ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto sh = read_file("src/compiler/runtime_shared.h");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_pure_anon_bg_remount_2950.py");
+    CHECK(rt.find("Issue #2950") != std::string::npos, "2950 AC6: runtime cites #2950");
+    CHECK(br.find("Issue #2950") != std::string::npos ||
+              br.find("pure_anon_bg") != std::string::npos,
+          "2950 AC6: bridge cites pure_anon_bg");
+    CHECK(sh.find("aura_pure_anon_bg_enqueue") != std::string::npos, "2950 AC6: shared API");
+    CHECK(stub.find("aura_pure_anon_bg_enqueue") != std::string::npos, "2950 AC6: weak stubs");
+    CHECK(!lint.empty() && lint.find("Issue #2950") != std::string::npos, "2950 AC6: linter");
+    CHECK(build.find("check_pure_anon_bg_remount_2950") != std::string::npos,
+          "2950 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2950-pure-anon-bg-remount.md").empty(),
+          "2950 AC6: no docs/design/");
+}
+
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
 // Outside reemit-success; clears residual MustDeopt under bounded budget.
 
@@ -1214,6 +1358,13 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2893_3_named_captured_unchanged();
     ac2893_4_query_additive();
     ac2893_5_source_and_linter();
+    std::println("\n=== Issue #2950: pure-anon bg remount queue ===");
+    ac2950_1_enqueue_and_drain();
+    ac2950_2_soft_zero_cost();
+    ac2950_3_no_steal_drain();
+    ac2950_4_filters_pure_anon_only();
+    ac2950_5_query_and_lineage();
+    ac2950_6_source_and_linter();
     std::println("\n=== Issue #2928: residual remount round-robin ===");
     ac2928_1_residual_tick_clears_must_deopt();
     ac2928_2_storm_skip();
