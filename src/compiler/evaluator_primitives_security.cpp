@@ -659,6 +659,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(snap.hard_fiber_isolation));
                 insert_kv("fiber-hard-deny", static_cast<std::int64_t>(snap.fiber_hard_deny));
                 insert_kv("hard-fiber-isolation-wired", 1);
+                // Issue #2943: production multi-tenant/Strict hard default
+                // (query:capability-effect-stats surface; lineage #2151).
+                insert_kv("schema-2943", 2943);
+                insert_kv("issue-2943", 2943);
+                insert_kv("production-hard-fiber-default-wired", 1);
             }
             // Issue #2154: sliding grant_min_valid_epoch retain window
             {
@@ -4717,6 +4722,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2835", 2835);
             insert_kv("issue-2835", 2835);
             insert_kv("restricted-multi-tenant-hard-fiber-wired", 1);
+            // Issue #2943: multi-tenant OR Strict → hard_fiber_isolation
+            // production default (closes pure-Strict residual soft share).
+            insert_kv("schema-2943", 2943);
+            insert_kv("issue-2943", 2943);
+            insert_kv("production-hard-fiber-default-wired", 1);
             // Issue #2839: residual fiber-principal mismatch hard face +
             // NodeId-stamped require_effect_for_node_id surface.
             insert_kv("tenant-scope-mismatch-total",

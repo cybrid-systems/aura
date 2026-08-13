@@ -212,7 +212,83 @@ int run_test_hard_fiber_restricted() {
         CHECK(sec.find("schema-2536") != std::string::npos, "posture schema");
         CHECK(sec.find("schema-2835") != std::string::npos, "posture schema-2835");
     }
-    std::println("\n=== #2536/#2835: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #2943: production multi-tenant OR Strict → hard_fiber_isolation ──
+    {
+        std::println("\n--- #2943 AC1: pure Strict arms hard fiber ---");
+        reset_all();
+        set_env("AURA_SANDBOX", "strict");
+        // No AURA_MULTI_TENANT — Strict alone must hard-deny grant_fiber
+        // mismatch (closes residual soft share after #2835 multi-only).
+        apply_production_security_defaults();
+        CHECK(g_capability_registry().hard_fiber_isolation(),
+              "ac2943 AC1: pure Strict → hard_fiber_isolation=true");
+        auto prov = make_grant_provenance(0, true, 0, 1);
+        g_capability_registry().grant(43, "mutate", Effect::Mutate, prov);
+        const auto hd0 = g_capability_effect_metrics().capability_fiber_hard_deny_total.load();
+        EffectProvenance call;
+        call.mutation_id = prov.mutation_id;
+        call.epoch = prov.epoch;
+        call.fiber_id = 2; // fiber B ≠ grant fiber A
+        CHECK(!g_capability_registry().provenance_ok(43, call),
+              "ac2943 AC1: Strict hard deny fiber B on grant_fiber mismatch");
+        CHECK(g_capability_effect_metrics().capability_fiber_hard_deny_total.load() > hd0,
+              "ac2943 AC1: capability_fiber_hard_deny_total bumps");
+    }
+    {
+        std::println("\n--- #2943 AC2: HFI=0 forces soft under Strict ---");
+        reset_all();
+        set_env("AURA_SANDBOX", "strict");
+        set_env("AURA_HARD_FIBER_ISOLATION", "0");
+        apply_production_security_defaults();
+        CHECK(!g_capability_registry().hard_fiber_isolation(),
+              "ac2943 AC2: HFI=0 forces soft under Strict");
+    }
+    {
+        std::println("\n--- #2943 AC3: Off soft; Restricted soft; multi hard ---");
+        reset_all();
+        set_env("AURA_SANDBOX", "off");
+        apply_production_security_defaults();
+        CHECK(!g_capability_registry().hard_fiber_isolation(), "ac2943 AC3: Off soft");
+
+        reset_all();
+        set_env("AURA_SANDBOX", "restricted");
+        apply_production_security_defaults();
+        CHECK(!g_capability_registry().hard_fiber_isolation(),
+              "ac2943 AC3: pure Restricted soft (#2536)");
+
+        reset_all();
+        set_env("AURA_SANDBOX", "restricted");
+        set_env("AURA_MULTI_TENANT", "1");
+        apply_production_security_defaults();
+        CHECK(g_capability_registry().hard_fiber_isolation(),
+              "ac2943 AC3: multi-tenant still hard (#2835 lineage)");
+    }
+    {
+        std::println("\n--- #2943 AC5/AC6: schema + linter + no invent ---");
+        reset_all();
+        set_env("AURA_SANDBOX", "strict");
+        apply_production_security_defaults();
+        CompilerService cs;
+        CHECK(posture(cs, "schema-2943") == 2943, "ac2943 AC5: schema-2943");
+        CHECK(posture(cs, "production-hard-fiber-default-wired") == 1,
+              "ac2943 AC5: production-hard-fiber-default-wired");
+        CHECK(posture(cs, "schema-2835") == 2835, "ac2943 AC5: schema-2835 preserved");
+        CHECK(posture(cs, "hard-fiber-isolation") == 1, "ac2943 AC5: Strict hard on posture");
+        const auto def = read_file("src/compiler/security_defaults.hh");
+        const auto cap = read_file("src/core/capability_model.hh");
+        const auto build = read_file("build.py");
+        CHECK(def.find("Issue #2943") != std::string::npos ||
+                  def.find("#2943") != std::string::npos,
+              "ac2943 AC6: security_defaults cites #2943");
+        CHECK(cap.find("2943") != std::string::npos, "ac2943 AC6: capability_model cites #2943");
+        CHECK(build.find("check_production_hard_fiber_default_2943") != std::string::npos,
+              "ac2943 AC6: build.py wires linter");
+        std::ifstream invent("tests/compiler/test_issue_2943.cpp");
+        if (!invent.good())
+            invent.open("../tests/compiler/test_issue_2943.cpp");
+        CHECK(!invent.good(), "ac2943 AC6: no test_issue_2943.cpp");
+    }
+    std::println("\n=== #2536/#2835/#2943: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

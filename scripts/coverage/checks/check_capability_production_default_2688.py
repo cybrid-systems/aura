@@ -63,10 +63,12 @@ def main() -> int:
     # for multi-tenant/Strict. Loose check: the constant names appear
     # in security_defaults.hh (the arming block reads them).
     # #2835: multi_tenant alone arms hard (was multi_tenant && strict when
-    # multi forced Strict). Accept either lineage string.
+    # multi forced Strict). #2943: multi_tenant || strict_sandbox (Strict
+    # alone also hard). Accept any lineage string.
     has_mt_hard = (
         "multi_tenant && strict" in sec
         or "hard_default = multi_tenant" in sec
+        or "multi_tenant || strict" in sec
         or "set_hard_fiber_isolation(hard_default)" in sec
         or "set_hard_fiber_isolation(multi_tenant)" in sec
         or ("multi_tenant" in sec and "set_hard_fiber_isolation" in sec)
