@@ -437,6 +437,25 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("solver-budget-wired", 1);
                 insert_kv("schema-2900", 2900);
                 insert_kv("issue-2900", 2900);
+                // Issue #2963: production instance-repair-before-full surface.
+                // Additive to #2900 / #2277; Soft quiet remains zero-cost.
+                insert_kv("delta-instance-repair-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.delta_instance_repair_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv(
+                    "delta-instance-repair-resolved-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.delta_instance_repair_resolved_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "delta-timeout-full-after-repair-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.delta_timeout_full_after_repair_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv("delta-instance-repair-wired", 1);
+                insert_kv("schema-2963", 2963);
+                insert_kv("issue-2963", 2963);
             }
             // Issue #2913: solve_delta locality SLO (anti silent under-constrain).
             // Soft residual → observe; production/Full residual → escalate/reject.

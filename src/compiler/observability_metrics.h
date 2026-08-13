@@ -1234,6 +1234,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solver_budget_timeout_export_total{0};
     std::atomic<std::uint64_t> solver_budget_full_escalate_total{0};
     std::atomic<std::uint64_t> solver_budget_instance_repair_prefer_total{0};
+    // Issue #2963: instance-repair-before-full metrics (mirror audit).
+    std::atomic<std::uint64_t> delta_instance_repair_total{0};
+    std::atomic<std::uint64_t> delta_instance_repair_resolved_total{0};
+    std::atomic<std::uint64_t> delta_timeout_full_after_repair_total{0};
     // Issue #690: constraint typed-mutation reverify + blame completeness.
     //   - reverify_truncated_total: clean-constraint reverify scans that
     //     hit the dynamic scan cap before checking all candidates

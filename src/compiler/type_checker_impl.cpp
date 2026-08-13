@@ -2467,6 +2467,133 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     return SolveResult::SOLVED;
 }
 
+// Issue #2963: local instance repair over dirty + pending_full_solve roots.
+// No full constraint scan — only dirty worklist for local roots (or all
+// residual dirty when no local roots). Zero-cost when no dirty and no
+// pending/local roots (returns TIMEOUT so caller may full-escalate).
+SolveResult
+ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unresolved_out) {
+    const bool have_local_roots = !touched_roots_.empty() || !occurrence_priority_roots_.empty() ||
+                                  !let_poly_dirty_roots_.empty() ||
+                                  !pending_full_solve_roots_.empty();
+    // AC4: zero cost when no TIMEOUT residual work.
+    if (dirty_count_ == 0 && !have_local_roots)
+        return SolveResult::TIMEOUT;
+
+    std::vector<std::size_t> worklist;
+    worklist.reserve(dirty_count_ > 0 ? dirty_count_ : 8);
+    std::vector<bool> seen;
+    seen.resize(std::max(constraints_.size(), constraint_dirty_.size()), false);
+
+    auto push_dirty = [&](std::size_t idx) {
+        if (idx >= constraints_.size() || idx >= constraint_dirty_.size())
+            return;
+        if (!constraint_dirty_[idx] || seen[idx])
+            return;
+        worklist.push_back(idx);
+        seen[idx] = true;
+    };
+
+    if (have_local_roots && !var_to_constraints_.empty()) {
+        auto collect_for_root = [&](std::uint32_t root) {
+            auto it = var_to_constraints_.find(root);
+            if (it == var_to_constraints_.end())
+                return;
+            for (auto idx : it->second)
+                push_dirty(idx);
+        };
+        for (auto root : occurrence_priority_roots_)
+            collect_for_root(root);
+        for (auto root : let_poly_dirty_roots_)
+            collect_for_root(root);
+        for (auto root : touched_roots_)
+            collect_for_root(root);
+        for (auto root : pending_full_solve_roots_)
+            collect_for_root(root);
+        // Residual dirty still set after delta TIMEOUT — include for repair.
+        for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+            if (constraint_dirty_[i] && !seen[i])
+                push_dirty(i);
+        }
+    } else {
+        for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+            if (constraint_dirty_[i])
+                push_dirty(i);
+        }
+    }
+
+    if (worklist.empty())
+        return SolveResult::TIMEOUT;
+
+    if (worklist.size() > 1) {
+        std::stable_sort(worklist.begin(), worklist.end(), [&](std::size_t a, std::size_t b) {
+            return constraint_reverify_priority(a) > constraint_reverify_priority(b);
+        });
+    }
+
+    std::size_t max_passes = solver_budget_.max_delta_passes > 0
+                                 ? static_cast<std::size_t>(solver_budget_.max_delta_passes)
+                                 : std::size_t{10};
+
+    while (!worklist.empty() && max_passes-- > 0) {
+        auto current = std::move(worklist);
+        worklist.clear();
+        const auto dirty_before = dirty_count_;
+        for (auto idx : current) {
+            if (idx >= constraints_.size())
+                continue;
+            if (idx < seen.size())
+                seen[idx] = true;
+            auto& cons = constraints_[idx];
+            bool ok;
+            if (cons.kind == Constraint::EQUAL)
+                ok = unify(cons.lhs, cons.rhs);
+            else if (cons.kind == Constraint::SUBTYPE)
+                ok = consistent_subtype(cons.lhs, cons.rhs);
+            else if (cons.kind == Constraint::INSTANCE) {
+                bool depth_capped = false;
+                ok = consistent_instance(cons.lhs, cons.rhs, 0, &depth_capped);
+                if (ok && depth_capped) {
+                    worklist.push_back(idx);
+                    continue;
+                }
+            } else
+                ok = consistent_unify(cons.lhs, cons.rhs);
+            if (!ok) {
+                if (unresolved_out)
+                    unresolved_out->push_back(cons);
+                return SolveResult::CONFLICT;
+            }
+        }
+        if (dirty_count_ > dirty_before) {
+            for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+                if (!constraint_dirty_[i] || (i < seen.size() && seen[i]))
+                    continue;
+                bool already = std::find(worklist.begin(), worklist.end(), i) != worklist.end();
+                if (!already)
+                    push_dirty(i);
+            }
+        }
+    }
+
+    if (!worklist.empty()) {
+        if (unresolved_out) {
+            unresolved_out->clear();
+            for (auto idx : worklist) {
+                if (idx < constraints_.size())
+                    unresolved_out->push_back(constraints_[idx]);
+            }
+        }
+        return SolveResult::TIMEOUT;
+    }
+
+    // Local cone cleared — commit dirty bits and drain pending backlog.
+    mark_clean();
+    pending_full_solve_roots_.clear();
+    clear_touched_roots();
+    return SolveResult::SOLVED;
+}
+
 // Issue #2277: production-default TIMEOUT escalation (Option A — issue body).
 // If `prior` is SolveResult::TIMEOUT AND production_defaults_active(),
 // attempt one-shot full fixpoint (this->solve(unresolved_out)); if still
@@ -2482,8 +2609,9 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
 //   Soft + allow_timeout_commit: keep TIMEOUT (never SOLVED); bump
 //     solver_budget_timeout_export_total
 //   Soft + default: pass-through (unchanged)
-//   prefer_instance_repair_before_full: note counter (hints already exported
-//     by solve_delta_occurrence #2643 path); production still full-solves.
+// Issue #2963: prefer_instance_repair_before_full (default true) runs
+//   try_instance_repair_before_full over local dirty + pending roots
+//   before full-solve; Soft never pays repair cost.
 SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
                                                      std::vector<Constraint>* unresolved_out) {
     if (prior != SolveResult::TIMEOUT)
@@ -2512,22 +2640,64 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
     }
 
     if (!prod)
-        return prior; // Soft default: pure pass-through (#2277 AC3)
+        return prior; // Soft default: pure pass-through (#2277 AC3 / #2963 AC2)
 
-    // Production: always escalate (budget cannot disable).
+    // Production: prefer local instance repair before full-solve (#2963).
+    // Soft path above already returned — repair never runs under Soft.
+    if (budget.prefer_instance_repair_before_full) {
+        c.solver_budget_instance_repair_prefer_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->solver_budget_instance_repair_prefer_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        }
+        const bool have_work = dirty_count_ > 0 || !pending_full_solve_roots_.empty() ||
+                               !touched_roots_.empty() || !occurrence_priority_roots_.empty() ||
+                               !let_poly_dirty_roots_.empty();
+        if (have_work) {
+            c.delta_instance_repair_total.fetch_add(1, std::memory_order_relaxed);
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->delta_instance_repair_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (unresolved_out)
+                unresolved_out->clear();
+            const SolveResult repaired = try_instance_repair_before_full(unresolved_out);
+            if (repaired == SolveResult::SOLVED) {
+                c.delta_instance_repair_resolved_total.fetch_add(1, std::memory_order_relaxed);
+                if (metrics_) {
+                    static_cast<struct CompilerMetrics*>(metrics_)
+                        ->delta_instance_repair_resolved_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
+                // Local repair SOLVED — no full-solve, no half-ship.
+                return SolveResult::SOLVED;
+            }
+            if (repaired == SolveResult::CONFLICT) {
+                // Local conflict is definitive; do not half-ship.
+                c.delta_timeout_reject_total.fetch_add(1, std::memory_order_relaxed);
+                if (metrics_) {
+                    static_cast<struct CompilerMetrics*>(metrics_)
+                        ->delta_timeout_reject_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                return SolveResult::CONFLICT;
+            }
+            // TIMEOUT residual → full escalate after repair.
+            c.delta_timeout_full_after_repair_total.fetch_add(1, std::memory_order_relaxed);
+            if (metrics_) {
+                static_cast<struct CompilerMetrics*>(metrics_)
+                    ->delta_timeout_full_after_repair_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    // Production: always escalate full when residual remains (budget cannot
+    // disable / allow half-solved). Non-default budget notes Agent override.
     if (!budget.is_default()) {
         c.solver_budget_full_escalate_total.fetch_add(1, std::memory_order_relaxed);
         if (metrics_) {
             static_cast<struct CompilerMetrics*>(metrics_)
                 ->solver_budget_full_escalate_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (budget.prefer_instance_repair_before_full) {
-            c.solver_budget_instance_repair_prefer_total.fetch_add(1, std::memory_order_relaxed);
-            if (metrics_) {
-                static_cast<struct CompilerMetrics*>(metrics_)
-                    ->solver_budget_instance_repair_prefer_total.fetch_add(
-                        1, std::memory_order_relaxed);
-            }
         }
     }
     // Issue #2308: mark the CS as production-escalated so the next

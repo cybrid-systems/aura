@@ -2537,6 +2537,18 @@ def cmd_lint():
             "Issue #2962 cone-outside-goal-drop recover-reject linter failed — run python3 scripts/coverage/checks/check_cone_outside_goal_drop_recover_reject_2962.py"
         )
         return r
+    # Issue #2963: production prefer instance-repair before full-solve on
+    # SolverBudget / delta TIMEOUT (refine #2900 / #2277).
+    irbf2963 = COVERAGE_CHECKS / "check_instance_repair_before_full_2963.py"
+    if not irbf2963.exists():
+        fail(f"missing {irbf2963}")
+        return 1
+    r = run([sys.executable, str(irbf2963)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2963 instance-repair-before-full linter failed — run python3 scripts/coverage/checks/check_instance_repair_before_full_2963.py"
+        )
+        return r
     # Issue #2704: production hard-face on OccurrenceGoal rehydrate miss
     # after steal/densify fence. Wires
     # check_occurrence_empty_after_fence_2704.py so the new force_reason
@@ -9738,6 +9750,25 @@ def cmd_solver_budget_2900_coverage():
     return 0
 
 
+def cmd_instance_repair_before_full_2963_coverage():
+    """Issue #2963: production prefer instance-repair before full-solve.
+
+    Residual of #2900: prefer_instance_repair_before_full default true;
+    local dirty/pending repair before #2277 full escalate; schema-2963.
+    """
+    print(f"{B}=== instance-repair-before-full coverage (#2963) ==={N}")
+    script = COVERAGE_CHECKS / "check_instance_repair_before_full_2963.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("instance-repair-before-full (#2963) coverage contract rows failed")
+        return 1
+    ok("instance-repair-before-full (#2963) coverage clean")
+    return 0
+
+
 def cmd_solve_delta_dep_closure_2939_coverage():
     """Issue #2939: solve_delta reverify dep-closure (static)."""
     print(f"{B}=== solve_delta dep-closure reverify coverage (#2939) ==={N}")
@@ -13616,6 +13647,8 @@ def main():
         "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,
         "cone-outside-goal-drop-recover-reject-2962": cmd_cone_outside_goal_drop_recover_reject_2962_coverage,
         "cone-outside-goal-drop-recover-reject-2962-coverage": cmd_cone_outside_goal_drop_recover_reject_2962_coverage,
+        "instance-repair-before-full-2963": cmd_instance_repair_before_full_2963_coverage,
+        "instance-repair-before-full-2963-coverage": cmd_instance_repair_before_full_2963_coverage,
         "occurrence-persist-production-2910": cmd_occurrence_persist_production_2910,
         "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,
         "occurrence-commit-snapshot-2938": cmd_occurrence_commit_snapshot_2938,
