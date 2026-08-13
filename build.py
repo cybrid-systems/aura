@@ -2281,6 +2281,18 @@ def cmd_lint():
             "Issue #2956 mutation mirror canary linter failed — run python3 scripts/coverage/checks/check_mutation_mirror_canary_2956.py"
         )
         return r
+    # Issue #2957: residual hard-AND arm (f) last LifetimeConsistencyProof.
+    # Extends test_steal_complete_restamp_txn (#81967); no docs/design (#1655).
+    slpr_script = COVERAGE_CHECKS / "check_steal_lifetime_proof_residual_2957.py"
+    if not slpr_script.exists():
+        fail(f"missing {slpr_script}")
+        return 1
+    r = run([sys.executable, str(slpr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2957 steal lifetime-proof residual linter failed — run python3 scripts/coverage/checks/check_steal_lifetime_proof_residual_2957.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -9983,6 +9995,25 @@ def cmd_mutation_mirror_canary_2956_coverage():
     return 0
 
 
+def cmd_steal_lifetime_proof_residual_2957_coverage():
+    """Issue #2957: residual hard-AND arm (f) last LifetimeConsistencyProof.
+
+    Production + fresh negative proof after densify → RejectHard without
+    ticket stamp. Soft / no densify / would_allow: no new rejects.
+    """
+    print(f"{B}=== steal lifetime-proof residual coverage (#2957) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_lifetime_proof_residual_2957.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal lifetime-proof residual (#2957) coverage contract rows failed")
+        return 1
+    ok("steal lifetime-proof residual (#2957) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -13370,6 +13401,7 @@ def main():
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
+        "steal-lifetime-proof-residual-2957": cmd_steal_lifetime_proof_residual_2957_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

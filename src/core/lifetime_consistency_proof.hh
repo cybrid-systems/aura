@@ -211,6 +211,20 @@ struct LastProofPoll {
     return poll;
 }
 
+// Issue #2957: cheap residual hard-AND probes (single relaxed load each).
+// Proof "present" = stamped_total > 0 (quiet path never stamps → unset).
+// Steal residual arm (f) gates only when present + !would_allow + recent densify
+// under production/Hard — Soft skips the arm entirely.
+[[nodiscard]] inline bool last_lifetime_consistency_proof_present() noexcept {
+    return g_lcp_stamped_total().load(std::memory_order_relaxed) > 0;
+}
+[[nodiscard]] inline bool last_lifetime_consistency_would_allow() noexcept {
+    return g_lcp_last_would_allow_commit().load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline std::uint32_t last_lifetime_consistency_force_reason() noexcept {
+    return g_lcp_last_force_reason_code().load(std::memory_order_relaxed);
+}
+
 // Test hook: reset the last-proof atomics to healthy-empty (stamped_total
 // included so tests can assert exact stamp counts).
 inline void reset_lifetime_consistency_proof_for_test() noexcept {

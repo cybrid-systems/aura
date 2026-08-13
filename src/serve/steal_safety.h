@@ -58,7 +58,8 @@ enum class StealInvariant : std::uint8_t {
     TicketFresh = 3,        // resume ticket matches snap.ticket
     GcDeferClear = 4,       // victim evaluator GC defer clear
     EnvFrameOk = 5,         // densify EnvFrame residual (#2745)
-    Count = 6,
+    LifetimeProofOk = 6,    // last LifetimeConsistencyProof would_allow (#2957)
+    Count = 7,
 };
 
 [[nodiscard]] inline constexpr std::uint64_t steal_invariant_mask(StealInvariant inv) noexcept {
@@ -96,7 +97,11 @@ inline std::atomic<std::uint64_t> g_steal_safety_residual_ticket_mismatch_total{
 inline std::atomic<std::uint64_t> g_steal_safety_residual_gc_defer_armed_total{0};
 // Issue #2745: EnvFrame residual (last densify envframe_ok=false or dual_epoch lag).
 inline std::atomic<std::uint64_t> g_steal_safety_residual_envframe_lag_total{0};
+// Issue #2957: last LifetimeConsistencyProof negative after recent densify
+// (production residual arm (f)). Soft / no densify / no proof: no bump.
+inline std::atomic<std::uint64_t> g_steal_safety_residual_lifetime_proof_reject_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_residual_hard_and_wired{1};
+inline constexpr int kStealSafetyLifetimeProofResidualIssue = 2957;
 // Issue #2901: residual re-arm race between on_steal_complete clear and
 // hard-AND / ticket stamp. Bumped only on the fail path (RejectHard after
 // clear when residual is still/re-observed). Quiet happy path: zero bump.
@@ -149,6 +154,10 @@ steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
 [[nodiscard]] inline std::uint64_t steal_safety_residual_envframe_lag_total_v_read() noexcept {
     return g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t
+steal_safety_residual_lifetime_proof_reject_total_v_read() noexcept {
+    return g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
+}
 [[nodiscard]] inline std::uint32_t steal_safety_residual_hard_and_wired_v_read() noexcept {
     return g_steal_safety_residual_hard_and_wired.load(std::memory_order_relaxed);
 }
@@ -191,6 +200,8 @@ steal_safety_residual_layout_stamp_mismatch_total_v_read() noexcept {
             return steal_safety_residual_gc_defer_armed_total_v_read();
         case StealInvariant::EnvFrameOk:
             return steal_safety_residual_envframe_lag_total_v_read();
+        case StealInvariant::LifetimeProofOk:
+            return steal_safety_residual_lifetime_proof_reject_total_v_read();
         case StealInvariant::Count:
         default:
             return 0;
@@ -223,6 +234,7 @@ inline void clear_steal_safety_transaction_for_test() noexcept {
     g_steal_safety_residual_ticket_mismatch_total.store(0, std::memory_order_relaxed);
     g_steal_safety_residual_gc_defer_armed_total.store(0, std::memory_order_relaxed);
     g_steal_safety_residual_envframe_lag_total.store(0, std::memory_order_relaxed);
+    g_steal_safety_residual_lifetime_proof_reject_total.store(0, std::memory_order_relaxed);
     g_steal_safety_residual_rearm_race_total.store(0, std::memory_order_relaxed);
     g_steal_safety_invariant_snapshot_fail_total.store(0, std::memory_order_relaxed);
     g_steal_safety_last_reject_invariant_bits.store(0, std::memory_order_relaxed);
