@@ -1830,6 +1830,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         aura::serve::publish_current_fiber_mutation_safety(
             Evaluator::active_mutation_stack_static().size(), /*held=*/true,
             defuse_version_at_enter_);
+        // Issue #2956: outermost enter post-publish mirror canary
+        // (held/depth/process-held). Nested Guards skip (is_active=0).
+        // Soft: metric-only; production hard canary via steal hard mode.
+        (void)aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1,
+                                                               /*expect_held=*/1,
+                                                               /*check_process=*/1);
         // Issue #1252: coverage counter — every outermost Guard wrap.
         // Issue #1364: mutation × safepoint telemetry (benign race).
         if (m) {
@@ -2708,6 +2714,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         aura::serve::publish_current_fiber_mutation_safety(
             Evaluator::active_mutation_stack_static().size(), /*held=*/false,
             defuse_version_at_enter_);
+        // Issue #2956: outermost exit post-publish mirror canary (after
+        // residual close + held=false publish). Nested skip via outermost.
+        (void)aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1,
+                                                               /*expect_held=*/0,
+                                                               /*check_process=*/1);
         // Issue #2121: unlock matching acquire mode.
         if (region_mode_) {
             if (region_lock_.owns_lock()) {

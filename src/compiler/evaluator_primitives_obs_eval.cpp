@@ -93,6 +93,9 @@ extern "C" std::uint64_t aura_fiber_static_steal_safety_ticket_mismatch_total();
 extern "C" std::uint64_t aura_fiber_static_layout_stamp_resume_mismatch_total();
 extern "C" std::uint64_t aura_fiber_static_resume_fence_fail_total();
 extern "C" std::uint64_t aura_fiber_static_steal_outermost_mutation_boundary_total();
+// Issue #2956: Guard/soft post-publish mirror canary counters.
+extern "C" std::uint64_t aura_mutation_mirror_inconsistency_hard_total() noexcept;
+extern "C" std::uint64_t aura_mutation_mirror_inconsistency_soft_total() noexcept;
 extern "C" std::uint64_t aura_jit_guest_exception_bridge_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_err_total();
 extern "C" std::uint64_t aura_scheduler_init_aura_result_ok_total();
@@ -13555,6 +13558,16 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mutation-safety-snapshot-wired", 1);
             insert_kv("schema-2184", 2184);
             insert_kv("issue-2184", 2184);
+            // Issue #2956: Guard enter/exit (and soft orch) post-publish
+            // mirror canary — earlier detection than steal-time sample.
+            // Soft metric-only; production hard canary + optional mark-failed.
+            insert_kv("mutation-mirror-inconsistency-hard-total",
+                      static_cast<std::int64_t>(aura_mutation_mirror_inconsistency_hard_total()));
+            insert_kv("mutation-mirror-inconsistency-soft-total",
+                      static_cast<std::int64_t>(aura_mutation_mirror_inconsistency_soft_total()));
+            insert_kv("mutation-mirror-canary-wired", 1);
+            insert_kv("schema-2956", 2956);
+            insert_kv("issue-2956", 2956);
             // Issue #2310: fail-closed force-deopt counter (production
             // default). Distinct from the observed-only
             // mutation-steal-snapshot-mismatch-total above. Bumped by

@@ -28,6 +28,17 @@ extern "C" int aura_evaluator_mutation_boundary_held();
 // gate + steal observers use the count via aura_evaluator_mutation_boundary_held.
 extern "C" void aura_process_mutation_boundary_held_enter() noexcept;
 extern "C" void aura_process_mutation_boundary_held_exit() noexcept;
+// Issue #2956: process-wide outermost held count (observe-only; 0 when weak).
+extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
+// Issue #2956: post-publish mirror canary (outermost Guard / soft orch boundary).
+// is_active: 0 → nested no-op (AC2); 1 → sample snapshot + process probe.
+// expect_held: 1 after enter publish, 0 after exit publish.
+// check_process: 1 for full Guard (enter requires process held > 0); 0 for soft.
+// Returns 1 if consistent/skipped, 0 if inconsistency detected (and counted).
+extern "C" int aura_mutation_boundary_assert_mirrors_consistent(int is_active, int expect_held,
+                                                                int check_process) noexcept;
+extern "C" std::uint64_t aura_mutation_mirror_inconsistency_hard_total() noexcept;
+extern "C" std::uint64_t aura_mutation_mirror_inconsistency_soft_total() noexcept;
 extern "C" std::uint64_t aura_fiber_current_id();
 
 // Issue #2491: TenantScope install / release hooks at fiber resume /

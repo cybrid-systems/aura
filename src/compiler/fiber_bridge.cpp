@@ -47,6 +47,19 @@ __attribute__((weak)) int aura_evaluator_mutation_boundary_held() {
 // Issue #2849: process-wide held enter/exit weak no-ops (Evaluator not linked).
 __attribute__((weak)) void aura_process_mutation_boundary_held_enter() noexcept {}
 __attribute__((weak)) void aura_process_mutation_boundary_held_exit() noexcept {}
+// Issue #2956: mirror canary weak stubs (light-link without evaluator_fiber_mutation).
+__attribute__((weak)) std::uint32_t aura_process_mutation_boundary_held_count() noexcept {
+    return 0;
+}
+__attribute__((weak)) int aura_mutation_boundary_assert_mirrors_consistent(int, int, int) noexcept {
+    return 1; // consistent / no-op
+}
+__attribute__((weak)) std::uint64_t aura_mutation_mirror_inconsistency_hard_total() noexcept {
+    return 0;
+}
+__attribute__((weak)) std::uint64_t aura_mutation_mirror_inconsistency_soft_total() noexcept {
+    return 0;
+}
 
 // Issue #2347: weak no-op when Evaluator not linked (mailbox Strict force path).
 extern "C" __attribute__((weak)) void aura_evaluator_mark_outermost_mutation_failed() noexcept {}
