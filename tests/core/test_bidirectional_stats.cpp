@@ -40,6 +40,12 @@
 //        compile_bidirectional_check_call_total (the new field
 //        landed in the :compile group of the facade via prefix
 //        rule).
+//   AC5 (#2992): compile:bidirectional-stats exposes
+//        gradual-permissiveness + schema-2992 (default balanced).
+//   AC6 (#2992): eval of (: x String 1) bumps
+//        ground-incompatible-warning-total.
+//   AC7 (#2992): (type:set-gradual-permissiveness "permissive")
+//        is accepted and surfaces on the stats hash.
 //
 // Sampled mode is a follow-up — requires bidirectional_mode_
 // bool→enum upgrade in type_checker.ixx, deferred to keep this
@@ -201,8 +207,66 @@ int aura_issue_1420_run() {
         }
     }
 
+    // ── AC5 (#2992): knob + schema on compile:bidirectional-stats ──
+    {
+        std::println("\n--- AC5 (#2992): gradual-permissiveness defaults ---");
+        aura::compiler::CompilerService cs;
+        CHECK(hash_str_eq(cs, "(stats:get \"compile:bidirectional-stats\")",
+                          "gradual-permissiveness", "balanced"),
+              "AC5a: default gradual-permissiveness is balanced");
+        CHECK(hash_int(cs, "(stats:get \"compile:bidirectional-stats\")", "schema-2992") == 2992,
+              "ac2992_5_schema: schema-2992 present");
+        CHECK(hash_int(cs, "(stats:get \"compile:bidirectional-stats\")",
+                       "gradual-permissiveness-wired") == 1,
+              "AC5c: gradual-permissiveness-wired");
+        CHECK(hash_int(cs, "(stats:get \"query:type-incremental-fidelity-stats\")",
+                       "schema-2992") == 2992,
+              "AC5d: query:type-incremental-fidelity-stats schema-2992");
+    }
+
+    // ── AC6 (#2992): Int vs String bumps warning counter ──
+    {
+        std::println("\n--- AC6 (#2992): Int vs String warning metric ---");
+        aura::compiler::CompilerService cs;
+        const auto before = hash_int(cs, "(stats:get \"compile:bidirectional-stats\")",
+                                     "ground-incompatible-error-total");
+        auto tr = cs.typecheck_full("(: x String 1)");
+        bool saw = false;
+        for (const auto& d : tr.diagnostics) {
+            if (d.message.find("incompatible ground types") != std::string::npos)
+                saw = true;
+        }
+        CHECK(saw, "ac2992_6_eval_continues: typecheck_full reports incompatible grounds");
+        const auto after = hash_int(cs, "(stats:get \"compile:bidirectional-stats\")",
+                                    "ground-incompatible-error-total");
+        CHECK(after > before,
+              std::format("AC6b: ground-incompatible-error-total advanced ({} -> {})", before,
+                          after));
+    }
+
+    // ── AC7 (#2992): setter + permissive silences increment ──
+    {
+        std::println("\n--- AC7 (#2992): type:set-gradual-permissiveness ---");
+        aura::compiler::CompilerService cs;
+        auto set_r = cs.eval("(type:set-gradual-permissiveness \"permissive\")");
+        CHECK(set_r && aura::compiler::types::is_bool(*set_r) &&
+                  aura::compiler::types::as_bool(*set_r),
+              "ac2992_7_setter: type:set-gradual-permissiveness returns #t");
+        CHECK(hash_str_eq(cs, "(stats:get \"compile:bidirectional-stats\")",
+                          "gradual-permissiveness", "permissive"),
+              "AC7b: stats reflect permissive");
+        const auto before = hash_int(cs, "(stats:get \"compile:bidirectional-stats\")",
+                                     "ground-incompatible-warning-total");
+        (void)run_eval(cs, "(: x String 1)");
+        const auto after = hash_int(cs, "(stats:get \"compile:bidirectional-stats\")",
+                                    "ground-incompatible-warning-total");
+        CHECK(
+            after == before,
+            std::format("AC7c: permissive does not bump warning total ({} -> {})", before, after));
+    }
+
     if (g_failed == 0) {
-        std::println("\n=== ALL 4 ACs PASS ===");
+        std::println("\n=== ALL 7 ACs PASS ===");
         return 0;
     }
     std::println("\n=== {} ACs FAILED ===", g_failed);

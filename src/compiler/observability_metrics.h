@@ -6675,6 +6675,15 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> compile_bidirectional_annotation_pass_total{0};
     std::atomic<std::uint64_t> compile_bidirectional_annotation_fail_total{0};
     std::atomic<std::uint64_t> compile_bidirectional_coercion_deferred_total{0};
+    // Issue #2992: non-strict ground-type Agent feedback.
+    //   - gradual_ground_incompatible_warning_total: Int~String etc.
+    //     in Balanced mode (default non-strict).
+    //   - gradual_ground_incompatible_error_total: same pairs as
+    //     TypeError when effective mode is Strict.
+    //   - gradual_permissiveness_mode: 0=permissive 1=balanced 2=strict
+    std::atomic<std::uint64_t> gradual_ground_incompatible_warning_total{0};
+    std::atomic<std::uint64_t> gradual_ground_incompatible_error_total{0};
+    std::atomic<std::uint64_t> gradual_permissiveness_mode{1};
     // Issue #2348: bidirectional check-mode for ADT match + GuardShape.
     //   - bidirectional_match_check_total: entries into check_flat_match
     //     (bidirectional_mode on + __match_tmp Let under expected type).

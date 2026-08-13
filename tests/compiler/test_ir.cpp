@@ -1735,6 +1735,129 @@ int main() {
             }
         }
 
+        // ── Issue #2992: non-strict ground-type Agent feedback ──
+        // Default Balanced emits Warning on Int~String; Dynamic ~ T
+        // and Int↔Float stay quiet; unify boolean is unchanged.
+        {
+            auto infer_gp = [](const char* code, aura::compiler::GradualPermissiveness gp) {
+                aura::core::TypeRegistry treg;
+                aura::compiler::TypeChecker tc(treg);
+                tc.set_strict(false);
+                tc.set_gradual_permissiveness(gp);
+                aura::diag::DiagnosticCollector diag;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat(code, flat, pool);
+                if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    flat.root = pr.root;
+                    (void)tc.infer_flat(flat, pool, pr.root, diag);
+                }
+                return diag;
+            };
+            auto has_incompat = [](const aura::diag::DiagnosticCollector& diag,
+                                   aura::diag::ErrorKind kind) {
+                for (const auto& d : diag.diagnostics()) {
+                    if (d.kind == kind &&
+                        d.message.find("incompatible ground types") != std::string::npos)
+                        return true;
+                }
+                return false;
+            };
+            {
+                auto diag = infer_gp("(: x Int \"hello\")",
+                                     aura::compiler::GradualPermissiveness::Balanced);
+                if (has_incompat(diag, aura::diag::ErrorKind::Warning)) {
+                    ++ts_passed;
+                    std::println("TS OK: #2992 Int vs String Warning (balanced)");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: #2992 Int vs String should Warning");
+                }
+            }
+            {
+                auto diag = infer_gp("(: x Any \"hello\")",
+                                     aura::compiler::GradualPermissiveness::Balanced);
+                if (!has_incompat(diag, aura::diag::ErrorKind::Warning)) {
+                    ++ts_passed;
+                    std::println("TS OK: #2992 Dynamic ~ T stays permissive");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: #2992 Dynamic should stay silent");
+                }
+            }
+            {
+                auto diag =
+                    infer_gp("(: x Float 1)", aura::compiler::GradualPermissiveness::Balanced);
+                if (!has_incompat(diag, aura::diag::ErrorKind::Warning)) {
+                    ++ts_passed;
+                    std::println("TS OK: #2992 Int↔Float stays quiet");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: #2992 numeric allow-list was noisy");
+                }
+            }
+            // EDSL knob + eval continues + warning metric (Agent surface)
+            {
+                aura::compiler::CompilerService cs;
+                auto set_r = cs.eval("(type:set-gradual-permissiveness \"balanced\")");
+                if (set_r && aura::compiler::types::is_bool(*set_r) &&
+                    aura::compiler::types::as_bool(*set_r)) {
+                    ++ts_passed;
+                    std::println("TS OK: #2992 type:set-gradual-permissiveness");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: #2992 setter primitive");
+                }
+                auto ev = cs.eval("(: x String 1)");
+                if (ev) {
+                    ++ts_passed;
+                    std::println("TS OK: #2992 eval continues after ground Warning");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: #2992 eval should continue");
+                }
+                // typecheck_full is always strict → TypeError + error metric
+                auto tc = cs.typecheck_full("(: x String 1)");
+                bool saw_incompat = false;
+                for (const auto& d : tc.diagnostics) {
+                    if (d.message.find("incompatible ground types") != std::string::npos)
+                        saw_incompat = true;
+                }
+                if (saw_incompat) {
+                    ++ts_passed;
+                    std::println("TS OK: #2992 typecheck_full surfaces incompatible grounds");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: #2992 typecheck_full missed ground diag");
+                }
+                auto er = cs.eval("(hash-ref (stats:get \"compile:bidirectional-stats\") "
+                                  "\"ground-incompatible-error-total\")");
+                if (er && aura::compiler::types::is_int(*er) &&
+                    aura::compiler::types::as_int(*er) >= 1) {
+                    ++ts_passed;
+                    std::println("TS OK: #2992 error metric after typecheck_full");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: #2992 error metric (got {})",
+                                 (er && aura::compiler::types::is_int(*er))
+                                     ? aura::compiler::types::as_int(*er)
+                                     : -1);
+                }
+                auto sch = cs.eval(
+                    "(hash-ref (stats:get \"compile:bidirectional-stats\") \"schema-2992\")");
+                if (sch && aura::compiler::types::is_int(*sch) &&
+                    aura::compiler::types::as_int(*sch) == 2992) {
+                    ++ts_passed;
+                    std::println("TS OK: #2992 schema-2992");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: #2992 schema-2992");
+                }
+            }
+        }
+
         // ── 2c. Issue #100: is_coercible structural coercion ──────
         // Extend is_coercible to support Record / Variant / ADT
         // (ADT is just Variant in Aura) width matching. Test the

@@ -2048,6 +2048,22 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
             // Issue #2991: high-frequency mutate blame completeness.
             insert_kv("schema-2991", 2991);
             insert_kv("issue-2991", 2991);
+            // Issue #2992: non-strict ground-type Agent feedback.
+            insert_kv("schema-2992", 2992);
+            insert_kv("issue-2992", 2992);
+            insert_kv("gradual-permissiveness-wired", 1);
+            {
+                const std::int64_t gw =
+                    m ? static_cast<std::int64_t>(m->gradual_ground_incompatible_warning_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t ge =
+                    m ? static_cast<std::int64_t>(m->gradual_ground_incompatible_error_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                insert_kv("ground-incompatible-warning-total", gw);
+                insert_kv("ground-incompatible-error-total", ge);
+            }
             insert_kv("coercion-blame-chain-complete-total",
                       static_cast<std::int64_t>(
                           aura::compiler::g_coercion_blame_chain_complete_total.load(

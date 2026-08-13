@@ -1466,6 +1466,17 @@ public:
     // construction (see service.ixx:3291 for one example).
     bool bidirectional_mode() const { return bidirectional_mode_; }
 
+    // Issue #2992: AURA_GRADUAL_PERMISSIVENESS=permissive|balanced|strict
+    // (default balanced). set_strict_mode(true) still wins at the engine.
+    void set_gradual_permissiveness(GradualPermissiveness p) {
+        gradual_permissiveness_ = p;
+        metrics_.gradual_permissiveness_mode.store(static_cast<std::uint64_t>(p),
+                                                   std::memory_order_relaxed);
+    }
+    [[nodiscard]] GradualPermissiveness gradual_permissiveness() const noexcept {
+        return gradual_permissiveness_;
+    }
+
     // ---- Unified evaluation (IR-first with fallback) -----------------
 
     // Issue #2213: production gate on silent tree-walker fallback.
@@ -2350,6 +2361,7 @@ public:
         aura::compiler::TypeCheckWrap tc_pass;
         aura::diag::DiagnosticCollector diags;
         tc_pass.set_bidirectional_mode(bidirectional_mode_);
+        tc_pass.set_gradual_permissiveness(gradual_permissiveness_);
         tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, expanded_root, type_registry_, diags,
                                       aura::core::current_mutation_epoch(), &metrics_);
         {
@@ -2846,6 +2858,7 @@ public:
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
+            tc_pass.set_gradual_permissiveness(gradual_permissiveness_);
             tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
                                           diags, aura::core::current_mutation_epoch(), &metrics_);
             bool has_type_error = false;
@@ -3077,6 +3090,7 @@ public:
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
+            tc_pass.set_gradual_permissiveness(gradual_permissiveness_);
             tc_pass.check_before_lowering(*flat_ptr, *pool_ptr, flat_ptr->root, type_registry_,
                                           diags, aura::core::current_mutation_epoch(), &metrics_);
             bool has_type_error = false;
@@ -3710,6 +3724,7 @@ public:
         // gradual-coercion path reports cross-type mismatches as `Note`
         // diagnostics that pass through `has_errors() == false` (Bug A).
         tc.set_strict(true);
+        tc.set_gradual_permissiveness(gradual_permissiveness_);
 
         // Issue #168: gate the type cache by the global mutation
         // epoch. Any mutation since the last infer_flat bumps the
@@ -3851,6 +3866,7 @@ public:
         aura::compiler::TypeChecker tc(type_registry_);
         aura::diag::DiagnosticCollector diag;
         tc.set_strict(true); // match the typecheck() default
+        tc.set_gradual_permissiveness(gradual_permissiveness_);
         // Issue #168: gate by global mutation epoch (same as
         // the typecheck() path).
         tc.set_cache_epoch(aura::core::current_mutation_epoch());
@@ -7662,6 +7678,7 @@ public:
             aura::compiler::TypeCheckWrap tc_pass;
             aura::diag::DiagnosticCollector diags;
             tc_pass.set_bidirectional_mode(bidirectional_mode_);
+            tc_pass.set_gradual_permissiveness(gradual_permissiveness_);
             tc_pass.check_before_lowering(flat, pool, expanded_root, type_registry_, diags,
                                           aura::core::current_mutation_epoch(), &metrics_);
             bool has_type_error = false;
@@ -11530,6 +11547,8 @@ public:
     // application in check_flat's If branch (falls back to the
     // original uniform check).
     bool bidirectional_mode_ = true;
+    // Issue #2992: default Balanced (env AURA_GRADUAL_PERMISSIVENESS).
+    GradualPermissiveness gradual_permissiveness_ = gradual_permissiveness_from_env();
 
     // Persistent JIT for --jit mode
     aura::jit::AuraJIT jit_;

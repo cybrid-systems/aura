@@ -71,6 +71,63 @@ export inline constexpr std::size_t kTypeDepBucketCap = 256;
     return cached;
 }
 
+// Issue #2992: non-strict ground-type Agent feedback.
+//
+// `consistent_unify` still treats two concrete grounds as consistent
+// (program continues; no EDSL benchmark regression). The knob only
+// controls the diagnostic:
+//   permissive — legacy silent ground consistency
+//   balanced   — default; Warning on Int~String and similar pairs
+//   strict     — TypeError on those pairs (set_strict(true) also wins)
+//
+// Int ↔ Float stays silent. Dynamic ~ T stays fully permissive.
+// Env: AURA_GRADUAL_PERMISSIVENESS=permissive|balanced|strict
+// EDSL: (type:set-gradual-permissiveness ...) + compile:bidirectional-stats
+export enum class GradualPermissiveness : std::uint8_t {
+    Permissive = 0,
+    Balanced = 1,
+    Strict = 2,
+};
+
+export constexpr std::string_view gradual_permissiveness_name(GradualPermissiveness p) noexcept {
+    switch (p) {
+        case GradualPermissiveness::Permissive:
+            return "permissive";
+        case GradualPermissiveness::Balanced:
+            return "balanced";
+        case GradualPermissiveness::Strict:
+            return "strict";
+    }
+    return "balanced";
+}
+
+export inline GradualPermissiveness parse_gradual_permissiveness(std::string_view s) noexcept {
+    char buf[16];
+    std::size_t n = s.size() < 15 ? s.size() : 15;
+    for (std::size_t i = 0; i < n; ++i) {
+        char c = s[i];
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+        buf[i] = c;
+    }
+    buf[n] = '\0';
+    std::string_view v{buf, n};
+    if (v == "permissive" || v == "0")
+        return GradualPermissiveness::Permissive;
+    if (v == "strict" || v == "2")
+        return GradualPermissiveness::Strict;
+    if (v == "balanced" || v == "1")
+        return GradualPermissiveness::Balanced;
+    return GradualPermissiveness::Balanced;
+}
+
+export inline GradualPermissiveness gradual_permissiveness_from_env() noexcept {
+    const char* e = std::getenv("AURA_GRADUAL_PERMISSIVENESS");
+    if (e == nullptr || e[0] == '\0')
+        return GradualPermissiveness::Balanced;
+    return parse_gradual_permissiveness(e);
+}
+
 // ── Type Environment ─────────────────────────────────────
 export class TypeEnv {
     aura::core::TypeRegistry& reg_;
@@ -1243,6 +1300,11 @@ export class InferenceEngine {
     // and errors are still TypeError.
     bool permissive_ = true;
 
+    // Issue #2992: 3-level ground-type diagnostic knob. Distinct from
+    // Issue #103 `permissive_` (solver TIMEOUT policy). Default
+    // Balanced. set_strict(true) still wins (effective Strict).
+    GradualPermissiveness gradual_permissiveness_ = gradual_permissiveness_from_env();
+
     // ADT constructors are looked up via TypeRegistry::get_adt_constructors()
 
     // Issue #280: most recent IfExpr's narrowing evidence bitmask.
@@ -1280,6 +1342,20 @@ public:
     // solve failure, even in non-strict mode). Strict mode
     // (set_strict(true)) always wins — strict+permissive = strict.
     void set_permissive(bool p) { permissive_ = p; }
+
+    // Issue #2992: AURA_GRADUAL_PERMISSIVENESS knob (permissive|
+    // balanced|strict). Default Balanced. set_strict(true) wins.
+    void set_gradual_permissiveness(GradualPermissiveness p) noexcept {
+        gradual_permissiveness_ = p;
+    }
+    [[nodiscard]] GradualPermissiveness gradual_permissiveness() const noexcept {
+        return gradual_permissiveness_;
+    }
+    [[nodiscard]] GradualPermissiveness effective_gradual_permissiveness() const noexcept {
+        return strict_ ? GradualPermissiveness::Strict : gradual_permissiveness_;
+    }
+    void maybe_report_ground_inconsistency(aura::core::TypeId inferred,
+                                           aura::core::TypeId expected);
 
     // Issue #168 Phase 1: set the cache epoch. CompilerService
     // calls this before every infer_flat with the current
@@ -2029,7 +2105,8 @@ export TypeCheckResult type_check_flat_pure(
                              std::equal_to<>>& module_src = {},
     bool strict = false, std::uint64_t cache_epoch = 0,
     void* metrics = nullptr,        // Issue #258: optional metrics pointer
-    bool bidirectional_mode = true) // Issue #283 follow-up #5
+    bool bidirectional_mode = true, // Issue #283 follow-up #5
+    GradualPermissiveness gradual_permissiveness = GradualPermissiveness::Balanced) // Issue #2992
     // Issue #213 follow-up: C++26 contract. The function
     // is total: it handles any `root` (including
     // NULL_NODE — returns an invalid TypeId), any sigs /
@@ -2480,6 +2557,15 @@ export struct TypeChecker {
     void set_strict(bool s) { strict_ = s; }
     bool is_strict() const { return strict_; }
 
+    // Issue #2992: ground-type diagnostic knob. Forwarded to the
+    // per-call InferenceEngine. set_strict(true) still wins.
+    void set_gradual_permissiveness(GradualPermissiveness p) noexcept {
+        gradual_permissiveness_ = p;
+    }
+    [[nodiscard]] GradualPermissiveness gradual_permissiveness() const noexcept {
+        return gradual_permissiveness_;
+    }
+
     explicit TypeChecker(aura::core::TypeRegistry& reg)
         : types(reg)
         , solve_delta_cs_(reg) {
@@ -2571,6 +2657,9 @@ private:
     // rejects cross-type coercions (Int ↔ String, Int ↔ Bool, etc.) and
     // reports them as TypeError instead of silently coercing via Notes.
     bool strict_ = false;
+
+    // Issue #2992: ground-type diagnostic knob (env default Balanced).
+    GradualPermissiveness gradual_permissiveness_ = gradual_permissiveness_from_env();
 
     // Issue #168: cache epoch. Set by CompilerService to the
     // global mutation_epoch_ (#166) before each infer_flat
