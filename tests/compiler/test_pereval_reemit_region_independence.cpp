@@ -54,6 +54,14 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// #2606 schema / filter-wired keys are registered in the query-tail
+// handler (query_tail.cpp), not primitives_query.cpp — concatenate both
+// so q.find matches wherever the insert_kv actually lives.
+static std::string read_query_srcs() {
+    return read_file("src/compiler/evaluator_primitives_query.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_tail.cpp");
+}
+
 static std::int64_t href(CompilerService& cs, const char* key) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:aot-incremental-reemit-stats\") \"{}\")", key));
@@ -117,7 +125,7 @@ static void ac5_source_cite() {
     auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
     auto hdr = read_file("src/compiler/aura_jit_bridge.h");
     auto obs = read_file("src/compiler/observability_metrics.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_query_srcs();
     auto dirty = read_file("src/compiler/service_dirty.cpp");
     auto cmake = read_file("CMakeLists.txt");
 

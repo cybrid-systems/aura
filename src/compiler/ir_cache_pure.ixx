@@ -456,10 +456,14 @@ is_unresolved_callish_for_2246(const aura::ir::IRInstruction& ins) noexcept {
     switch (ins.opcode) {
         case aura::ir::IROpcode::Apply:
             // Apply without resolvable closure slot -> unresolved.
-            return ins.operands.empty();
+            // operands is std::array<uint32_t,4> (fixed size); "empty" =
+            // all slots zero (no closure slot / no callee index).
+            return ins.operands[0] == 0 && ins.operands[1] == 0 && ins.operands[2] == 0 &&
+                   ins.operands[3] == 0;
         case aura::ir::IROpcode::Call:
             // Call with empty operands (defensive) -> unresolved.
-            return ins.operands.empty();
+            return ins.operands[0] == 0 && ins.operands[1] == 0 && ins.operands[2] == 0 &&
+                   ins.operands[3] == 0;
         default:
             return false;
     }
