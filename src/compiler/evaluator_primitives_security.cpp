@@ -326,6 +326,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"deny-posture-degraded-total",
                  make_int(static_cast<std::int64_t>(
                      c.deny_posture_degraded_total.load(std::memory_order_relaxed)))},
+                // Issue #2947: mailbox under-boundary wait p99 / throttle deny face.
+                {"deny-mailbox-hold-slo-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.deny_mailbox_hold_slo_total.load(std::memory_order_relaxed)))},
                 {"security-schedule-gate-wired", make_int(1)},
                 {"schema-2590", make_int(2590)},
                 {"issue-2590", make_int(2590)},
@@ -335,6 +339,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"security-schedule-mutate-admit-wired", make_int(1)},
                 {"schema-2630", make_int(2630)},
                 {"issue-2630", make_int(2630)},
+                // Issue #2947: mailbox hold SLO face of the same gate.
+                {"security-schedule-mailbox-hold-slo-wired", make_int(1)},
+                {"schema-2947", make_int(static_cast<std::int64_t>(
+                                    aura::orch::kSecurityScheduleMailboxHoldSloIssue))},
+                {"issue-2947", make_int(static_cast<std::int64_t>(
+                                   aura::orch::kSecurityScheduleMailboxHoldSloIssue))},
             };
             return build_hash(kv);
         });

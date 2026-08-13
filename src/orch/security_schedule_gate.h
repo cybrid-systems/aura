@@ -1,12 +1,13 @@
-// src/orch/security_schedule_gate.h — Issue #2590
+// src/orch/security_schedule_gate.h — Issue #2590 / #2947
 //
 // Pure security schedule gate that decides whether the orch / agent-body
 // should ADMIT a NEW mutate. Synthesizes commit_readiness (#2553),
-// capability deny rate (#2534 trail), mid-fallback SLO breach, and
-// posture wal_off under Restricted (#2076). Soft / sandbox=off is
-// observe-only (counted but never denies) — production default denies
-// new mutate when gate flips false (mailbox already enqueued is not
-// killed — additive over existing admission).
+// capability deny rate (#2534 trail), mid-fallback SLO breach,
+// posture wal_off under Restricted (#2076), and mailbox under-boundary
+// wait p99 / starvation throttle (#2903 / #2551 / #2947). Soft /
+// sandbox=off is observe-only (counted but never denies) — production
+// default denies new mutate when gate flips false (mailbox already
+// enqueued is not killed — additive over existing admission).
 //
 // Design follows the #2543 AOT throttle precedent
 // (aot_hot_update_health.hh::decide_hot_update_throttle):
@@ -20,20 +21,32 @@
 // BEFORE admitting new mutate; if decision.would_allow_new_mutate == false
 // in production mode, deny the new work and return a typed error. Counters
 // always bump (soft + production both observable).
+//
+// Issue #2947: mailbox_hold_slo is lowest priority among deny reasons so
+// it never masks commit_not_ready / deny_storm / mid_fallback_slo /
+// posture_degraded. #2587 mutate reject sites remain independent
+// defense-in-depth (not weakened).
 
 #pragma once
 
-#include "core/audit_wal_metrics.h"          // #2076 wal_off posture gauge
-#include "core/capability_model.hh"          // #2534 capability deny storm window
-#include "core/mutation_audit_wal.hh"        // audit_wal_enabled (#2076)
-#include "compiler/audit_mid_fallback_slo.h" // #2594 mid-fallback SLO
-#include "compiler/typed_mutation_audit.h"   // #2553 commit_readiness; production_defaults_active
+#include "core/audit_wal_metrics.h"                // #2076 wal_off posture gauge
+#include "core/capability_model.hh"                // #2534 capability deny storm window
+#include "core/mutation_audit_wal.hh"              // audit_wal_enabled (#2076)
+#include "compiler/audit_mid_fallback_slo.h"       // #2594 mid-fallback SLO
+#include "compiler/mutation_concurrency_health.hh" // #2903/#2947 wait SLO
+#include "compiler/typed_mutation_audit.h" // #2553 commit_readiness; production_defaults_active
+#include "serve/multi_fiber_mailbox.h"     // #2947 p99 + throttle live loads
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace aura::orch {
+
+// Issue #2947: mailbox under-boundary wait / starvation throttle face.
+inline constexpr int kSecurityScheduleMailboxHoldSloIssue = 2947;
 
 // ── Decision types ───────────────────────────────────────────────
 enum class SecurityScheduleForceReason : std::uint8_t {
@@ -42,6 +55,7 @@ enum class SecurityScheduleForceReason : std::uint8_t {
     deny_storm = 2,
     mid_fallback_slo = 3,
     posture_degraded = 4,
+    mailbox_hold_slo = 5, // #2947 under-boundary wait p99 / throttle
 };
 
 [[nodiscard]] inline std::string_view
@@ -57,6 +71,8 @@ security_schedule_force_reason_name(SecurityScheduleForceReason r) noexcept {
             return "mid-fallback-slo";
         case SecurityScheduleForceReason::posture_degraded:
             return "posture-degraded";
+        case SecurityScheduleForceReason::mailbox_hold_slo:
+            return "mailbox-hold-slo";
     }
     return "unknown";
 }
@@ -76,11 +92,28 @@ struct SecurityScheduleInput {
     bool mid_fallback_slo_breach = false;
     // posture wal_off under Restricted force (#2076).
     bool posture_wal_off_restricted = false;
+    // Issue #2947: under-boundary wait p99 (µs) from #2903 hist face.
+    // Zero when no samples — quiet path does not walk hist.
+    std::uint64_t mailbox_wait_p99_us = 0;
+    // Issue #2947: agent_throttle_for_mailbox_starvation (#2551/#2587).
+    bool mailbox_starvation_throttled = false;
+    // Issue #2947: SLO threshold (µs). 0 disables p99 latency arm.
+    // Live path fills from mailbox_under_boundary_wait_slo_us()
+    // (default 100 ms; AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US).
+    std::uint64_t mailbox_wait_slo_us = 0;
     // Production default: AURA_SECURITY_HARD or production profile.
     bool production_mode = false;
     // Soft mode: AURA_SECURITY_SOFT or sandbox=off → observe only.
     bool soft_mode = false;
 };
+
+// Issue #2947: pure predicate — p99 ≥ SLO (SLO>0) or throttle flag.
+// Separated so tests can assert without full decide matrix.
+[[nodiscard]] inline bool mailbox_hold_slo_signal(const SecurityScheduleInput& in) noexcept {
+    const bool wait_hot =
+        in.mailbox_wait_slo_us != 0 && in.mailbox_wait_p99_us >= in.mailbox_wait_slo_us;
+    return wait_hot || in.mailbox_starvation_throttled;
+}
 
 // ── Pure decision (#2590 AC1: same input → same output, no atomics) ──
 //
@@ -89,6 +122,7 @@ struct SecurityScheduleInput {
 //   2. deny-storm         (capability_deny_storm && production && !soft)
 //   3. mid-fallback-slo   (mid_fallback_slo_breach && production && !soft)
 //   4. posture-degraded   (posture_wal_off_restricted && production && !soft)
+//   5. mailbox-hold-slo   (p99≥SLO || throttle; #2947 — never masks 1–4)
 //   else: ok / allow
 [[nodiscard]] inline SecurityScheduleDecision
 decide_security_schedule(const SecurityScheduleInput& in) noexcept {
@@ -114,10 +148,16 @@ decide_security_schedule(const SecurityScheduleInput& in) noexcept {
         d.force_reason = SecurityScheduleForceReason::posture_degraded;
         return d;
     }
+    // Issue #2947: lowest priority so commit_not_ready etc. always win.
+    if (enforce && mailbox_hold_slo_signal(in)) {
+        d.would_allow_new_mutate = false;
+        d.force_reason = SecurityScheduleForceReason::mailbox_hold_slo;
+        return d;
+    }
     return d;
 }
 
-// ── Process-wide counters (#2590 AC2 + AC5) ───────────────────────
+// ── Process-wide counters (#2590 AC2 + AC5 / #2947) ───────────────
 struct OrchSecurityScheduleCounters {
     std::atomic<std::uint64_t> checks_total{0};
     std::atomic<std::uint64_t> deny_total{0};
@@ -126,6 +166,8 @@ struct OrchSecurityScheduleCounters {
     std::atomic<std::uint64_t> deny_deny_storm_total{0};
     std::atomic<std::uint64_t> deny_mid_fallback_slo_total{0};
     std::atomic<std::uint64_t> deny_posture_degraded_total{0};
+    // Issue #2947: production deny face for under-boundary wait / throttle.
+    std::atomic<std::uint64_t> deny_mailbox_hold_slo_total{0};
     std::atomic<std::int64_t> last_force_reason_code{0};
     std::atomic<std::int64_t> last_would_allow{1}; // 1=allow, 0=deny
 };
@@ -159,6 +201,9 @@ evaluate_security_schedule(const SecurityScheduleInput& in) noexcept {
             case SecurityScheduleForceReason::posture_degraded:
                 c.deny_posture_degraded_total.fetch_add(1, std::memory_order_relaxed);
                 break;
+            case SecurityScheduleForceReason::mailbox_hold_slo:
+                c.deny_mailbox_hold_slo_total.fetch_add(1, std::memory_order_relaxed);
+                break;
             default:
                 break;
         }
@@ -179,6 +224,7 @@ inline void reset_orch_security_schedule_counters_for_test() noexcept {
     c.deny_deny_storm_total.store(0, std::memory_order_relaxed);
     c.deny_mid_fallback_slo_total.store(0, std::memory_order_relaxed);
     c.deny_posture_degraded_total.store(0, std::memory_order_relaxed);
+    c.deny_mailbox_hold_slo_total.store(0, std::memory_order_relaxed);
     c.last_force_reason_code.store(0, std::memory_order_relaxed);
     c.last_would_allow.store(1, std::memory_order_relaxed);
 }
@@ -252,6 +298,18 @@ inline bool posture_wal_off_restricted_live(std::uint8_t sandbox_mode) noexcept 
 // evaluate_security_schedule() which bumps counters and decides
 // admit. Production default denies; soft / sandbox=off stays
 // observe-only (counter-only, no deny).
+// Issue #2947: two relaxed loads (p99 + throttle flag) — no hist walk.
+// Quiet path (no samples, throttle=0) is the same cost as a pair of
+// loads; matches #2903 AC zero-extra-work when depth==0.
+inline void fill_mailbox_hold_slo_live_(SecurityScheduleInput& in) noexcept {
+    using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+    in.mailbox_wait_p99_us =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed);
+    in.mailbox_starvation_throttled =
+        aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled();
+    in.mailbox_wait_slo_us = aura::compiler::mailbox_under_boundary_wait_slo_us();
+}
+
 inline SecurityScheduleInput make_security_schedule_input_live(std::uint8_t eval_sandbox_mode,
                                                                bool production_defaults,
                                                                bool soft_mode) noexcept {
@@ -264,6 +322,8 @@ inline SecurityScheduleInput make_security_schedule_input_live(std::uint8_t eval
     in.capability_deny_storm = capability_deny_storm_live();
     in.mid_fallback_slo_breach = mid_fallback_slo_breach_live();
     in.posture_wal_off_restricted = posture_wal_off_restricted_live(eval_sandbox_mode);
+    // Issue #2947: mailbox under-boundary wait / throttle into same gate.
+    fill_mailbox_hold_slo_live_(in);
     return in;
 }
 
