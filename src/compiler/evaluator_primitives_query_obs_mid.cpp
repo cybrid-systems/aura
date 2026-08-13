@@ -2552,7 +2552,8 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                   : 0;
             const std::uint64_t epoch_mismatch =
                 m ? m->children_stable_epoch_mismatch_total.load(std::memory_order_relaxed) : 0;
-            auto* ht = FlatHashTable::create(32);
+            // Capacity 64: #2862 keys + #2960 stamp counters / schema.
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -2587,6 +2588,18 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       static_cast<std::int64_t>(invalidation_detected));
             insert_kv("children-stable-epoch-mismatch-total",
                       static_cast<std::int64_t>(epoch_mismatch));
+            // Issue #2960: query stable-return stamp counters (Agent export).
+            insert_kv("query-stable-ref-stamped-total",
+                      static_cast<std::int64_t>(
+                          aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "query-stable-ref-unstamped-prevented-total",
+                static_cast<std::int64_t>(
+                    aura::core::provenance::g_query_stable_ref_unstamped_prevented_total_atomic()
+                        .load(std::memory_order_relaxed)));
+            insert_kv("schema-2960", 2960);
+            insert_kv("issue-2960", 2960);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

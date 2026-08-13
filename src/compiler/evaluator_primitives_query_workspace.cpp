@@ -6,9 +6,10 @@ module;
 #include "runtime_shared.h"
 #include "hash_meta.h" // FNV constants (#901)
 #include "observability_metrics.h"
-#include "core/workspace_epoch.hh" // Issue #2192 QueryEpoch + #2933 QueryResult
-#include "serve/fiber.h"           // Issue #1630: aura_fiber_current_id for query:stable-ref
-#include "typed_mutation_audit.h"  // Issue #1892: hygiene skip audit trail
+#include "core/workspace_epoch.hh"    // Issue #2192 QueryEpoch + #2933 QueryResult
+#include "core/provenance_tracker.hh" // Issue #2960: query_stable_ref_stamped counters
+#include "serve/fiber.h"              // Issue #1630: aura_fiber_current_id for query:stable-ref
+#include "typed_mutation_audit.h"     // Issue #1892: hygiene skip audit trail
 
 module aura.compiler.evaluator;
 
@@ -232,9 +233,14 @@ void register_workspace_query_primitives(
         if (auto packed = unpack_query_stable_ref(arg)) {
             from_packed = true;
             ref = *packed;
-            // Stamp tenant/fiber when Agent re-feeds a packed pair that may
-            // lack full provenance (id.gen-only shape from EDSL).
-            ev.stamp_stable_ref(ref);
+            // Issue #2960 / #2186: packed EDSL shape is (id . gen) only —
+            // remake layout (wrap/cow/mutation) when workspace advanced, then
+            // stamp tenant+fiber. stamp_stable_ref alone left wrap/cow at 0
+            // and multi-round restamp could fail closed after the first pass.
+            ev.stamp_query_stable_ref_export(ref);
+            // Preserve Agent-held gen for staleness detect (refresh path).
+            if (packed->gen != 0)
+                ref.gen = packed->gen;
             ev.bump_stable_ref_validated_in_primitives_count();
         } else if (is_int(arg)) {
             const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
@@ -354,8 +360,9 @@ void register_workspace_query_primitives(
     // Issue #2186: parent handle goes through ensure_valid_or_refresh.
     // Issue #2404 soft path: for_each_stable_child captures at live gen
     // (already-valid export); re-export of stored pairs uses query:ensure-ref.
-    // Issue #2759: stamp each child via Evaluator (sole production authority)
-    // before packing id.gen — process-global capture is Soft-only under hard-close.
+    // Issue #2759 / #2960: stamp each child via Evaluator (sole production
+    // authority) before packing id.gen — process-global capture is Soft-only
+    // under hard-close. FlatAST for_each_stable_child is layout-only (#2960).
     (*q_impls)["query:children-stable"] = PrimFn{[ws, mev, resolve_query_node_arg,
                                                   begin_query_epoch, end_query_epoch_maybe_result,
                                                   &ev](const auto& a) -> EvalValue {
@@ -415,8 +422,8 @@ void register_workspace_query_primitives(
         // The list-node cdr is filled in the second loop.
         std::size_t i = 0;
         flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
-            // Issue #2759: sole production isolation stamp before Agent export pack.
-            ev.stamp_stable_ref(ref);
+            // Issue #2759 / #2960: sole production isolation stamp + query counters.
+            ev.stamp_query_stable_ref_export(ref);
             const auto gen_idx = static_cast<int>(base + 3 * i);
             const auto pair_idx = static_cast<int>(base + 3 * i + 1);
             const auto list_idx = static_cast<int>(base + 3 * i + 2);
@@ -455,14 +462,16 @@ void register_workspace_query_primitives(
         if (!ok)
             return err;
         auto& flat = *ws.workspace_flat;
+        // Issue #2960: parent_stable is layout-only; Agent export stamps.
         auto pref = flat.parent_stable(node);
         if (pref.id == aura::ast::NULL_NODE)
             return make_void();
-        // Issue #2404: Agent export of parent handle via export_ref_safe.
+        // Issue #2404 / #2960: export_ref_safe stamps + finalize_agent_export.
         const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
         auto exported = ev.export_ref_safe(pref.id, /*workspace_id=*/0, cur_fiber);
         if (exported.id == aura::ast::NULL_NODE || !exported.is_valid_in(flat))
             return mev("stale-ref", "query:parent-stable: Agent export failed");
+        ::aura::core::provenance::record_query_stable_ref_stamped();
         // Build (parent-id . gen) pair
         auto gen_pid = ws.pairs.size();
         ws.pairs.push_back({make_int(static_cast<std::int64_t>(exported.gen)), make_void()});
@@ -558,7 +567,8 @@ void register_workspace_query_primitives(
         if (node >= flat.size())
             return mev("out-of-range", "node ID " + std::to_string(node) + " >= flat size " +
                                            std::to_string(flat.size()));
-        // Issue #738 / #1630 / #2404: export_ref_safe stamps + finalize_agent_export.
+        // Issue #738 / #1630 / #2404 / #2960: export_ref_safe stamps + finalize
+        // (sole Agent export path); query counter tracks the stamp.
         std::uint32_t layer = 0;
         if (ev.workspace_tree()) {
             auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
@@ -568,6 +578,9 @@ void register_workspace_query_primitives(
         auto ref = ev.export_ref_safe(node, layer, cur_fiber);
         if (ref.id == aura::ast::NULL_NODE || !ref.is_valid_in(flat))
             return mev("stale-ref", "query:stable-ref: Agent export validate_or_refresh failed");
+        // Issue #2960: export_ref_safe already stamped via make_stamped_safe_ref;
+        // count as query stable export stamp (primary path — residual 0).
+        ::aura::core::provenance::record_query_stable_ref_stamped();
         ev.pin_stable_ref_for_cow_boundary(ref);
         // Build (node-id . gen) pair using post-refresh gen.
         auto gen_pid = ws.pairs.size();

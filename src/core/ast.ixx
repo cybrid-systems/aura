@@ -9076,16 +9076,18 @@ public:
     // and is_valid(ref) returns false. This is the recommended
     // way to use NodeIds in EDSL / query / mutate code that
     // may span multiple mutating calls.
-    // Issue #1500: return full provenance via make_ref (wrap_epoch /
+    // Issue #1500 / #2960: layout-only full provenance (wrap_epoch /
     // cow_epoch / mutation_id / subtree_gen), not brace-init {id, gen}
     // which left wrap_epoch/cow_epoch at 0 and skipped #368/#738 checks.
+    // Isolation tenant/fiber is stamped by Evaluator::stamp_query_stable_ref_export
+    // / make_stamped_ref (#2759 sole production authority) — not Soft make_ref.
     [[nodiscard]] StableNodeRef parent_stable(NodeId id) const noexcept {
         if (id >= parent_.size())
             return StableNodeRef{};
         auto pid = parent_[id];
         if (pid == NULL_NODE)
             return StableNodeRef{};
-        return make_ref(pid);
+        return make_ref_layout(pid);
     }
 
     // Issue #678: generation-tagged parent accessor for query
@@ -9097,11 +9099,12 @@ public:
         return parent_stable(id);
     }
 
-    // Issue #1500 / #2036: full-provenance StableNodeRef per child
-    // (make_ref). Pins underlying PCV storage via children_safe_view
+    // Issue #1500 / #2036 / #2960: layout-only StableNodeRef per child
+    // (make_ref_layout). Pins underlying PCV storage via children_safe_view
     // for the duration of the walk so concurrent mutate/rollback
     // cannot free the NodeId array mid-iteration. Returned vector
-    // owns StableNodeRefs (safe across mutation boundaries).
+    // owns StableNodeRefs (safe across mutation boundaries). Caller that
+    // hands refs to Agent must Evaluator-stamp (#2759 / #2960).
     [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {
         std::vector<StableNodeRef> out;
         auto safe = children_safe_view(id); // Issue #2036: default SafePCVSpan pin
@@ -9111,7 +9114,7 @@ public:
             auto cid = safe[i];
             if (cid == NULL_NODE)
                 continue;
-            out.push_back(make_ref(cid));
+            out.push_back(make_ref_layout(cid));
         }
         return out;
     }
@@ -9162,16 +9165,18 @@ public:
             auto cid = pin_keep[i];
             if (cid == NULL_NODE)
                 continue;
-            buf.push_back(make_ref(cid));
+            // Issue #2960: layout-only; Evaluator stamps on Agent export.
+            buf.push_back(make_ref_layout(cid));
         }
         return {buf.data(), buf.size()};
     }
 
-    // Issue #398 / #1500 / #2036: zero-allocation iteration over stable
+    // Issue #398 / #1500 / #2036 / #2960: zero-allocation iteration over stable
     // children. Pins via SafePCVSpan for the walk (children_safe_view).
     // Equivalent to children_stable() but does NOT allocate a vector —
-    // each non-NULL child is delivered as a StableNodeRef. Prefer
-    // children_stable() when storing refs across mutation boundaries.
+    // each non-NULL child is delivered as a layout-only StableNodeRef.
+    // Prefer children_stable() when storing refs across mutation boundaries;
+    // production Agent paths must stamp via Evaluator (#2759 / #2960).
     template <typename Fn> void for_each_stable_child(NodeId id, Fn&& fn) const {
         // Issue #2036 / #2614: pin via SafePCVSpan; force ChildColumnar walk.
         auto safe = children_columnar(id);
@@ -9182,7 +9187,7 @@ public:
         aura::core::walk_children_column(safe, [&](NodeId cid) {
             if (cid == NULL_NODE)
                 return;
-            fn(make_ref(cid));
+            fn(make_ref_layout(cid));
         });
     }
 

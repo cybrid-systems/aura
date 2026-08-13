@@ -6277,6 +6277,11 @@ public:
     void stamp_ref_tenant(ast::FlatAST::StableNodeRef& ref) const noexcept;
     // Issue #2056: full mandate stamp (tenant_id + fiber if unset).
     void stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcept;
+    // Issue #2960: query:*-stable / children_stable Agent export stamp.
+    // Remakes brace-init residuals via make_ref_layout when workspace has
+    // non-zero wrap/cow (counts unstamped_prevented), then stamp_stable_ref
+    // and bumps query_stable_ref_stamped_total.
+    void stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) const noexcept;
     // Issue #2056: create helpers that stamp before returning to Agent code.
     [[nodiscard]] ast::FlatAST::StableNodeRef make_stamped_ref(ast::NodeId id) const noexcept;
     [[nodiscard]] ast::FlatAST::StableNodeRef

@@ -1141,6 +1141,29 @@ void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcep
     ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
 }
 
+// Issue #2960: query Agent export — remake brace-init residuals, stamp tenant+fiber,
+// count stamped / unstamped_prevented (target 0 residual under production).
+void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) const noexcept {
+    if (workspace_flat_ && ref.id != ast::NULL_NODE) {
+        const auto we = workspace_flat_->wrap_epoch();
+        const auto ce = workspace_flat_->workspace_cow_epoch();
+        // Brace-init {id, gen} leaves wrap/cow at 0 while advanced workspaces
+        // have non-zero state; layout-only capture always matches FlatAST.
+        const bool layout_missing =
+            (we != 0 && ref.wrap_epoch == 0) || (ce != 0 && ref.cow_epoch_at_capture == 0);
+        if (layout_missing) {
+            const auto gen = ref.gen;
+            const auto id = ref.id;
+            ref = workspace_flat_->make_ref_layout(id);
+            if (gen != 0)
+                ref.gen = gen;
+            ::aura::core::provenance::record_query_stable_ref_unstamped_prevented();
+        }
+    }
+    stamp_stable_ref(ref);
+    ::aura::core::provenance::record_query_stable_ref_stamped();
+}
+
 ast::FlatAST::StableNodeRef Evaluator::make_stamped_ref(ast::NodeId id) const noexcept {
     // Issue #2759: layout-only capture then Evaluator stamp (sole production
     // authority). Avoid make_ref → maybe_stamp under hard-close, which would

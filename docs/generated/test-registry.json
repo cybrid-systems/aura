@@ -4139,7 +4139,7 @@
     {
       "file": "tests/core/test_stable_ref_tenant_capture.cpp",
       "category": "unit",
-      "reason": "Issue #2125 — stamp isolation principal on all StableNodeRef",
+      "reason": "Issue #2125 — stamp isolation principal on Soft StableNodeRef",
       "issue": null
     },
     {

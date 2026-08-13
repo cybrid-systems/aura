@@ -119,6 +119,19 @@ if [ "$producer_key" = "aura_test_objects.dir" ]; then
     # (test_ir / test_gc_evaluator_integration after a recent
     # aura_test_objects compile).
     consumers=()
+    # Optional: AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS=a.dir,b.dir limits
+    # post-compile BMI symlink fan-out (default: all test_*/issue_*/cycle_*).
+    # Speeds single-target rebuilds when 600+ consumers would each get ~N .gcm
+    # symlinks after every aura_test_objects object.
+    if [ -n "${AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS:-}" ]; then
+        IFS=',' read -r -a _limit_names <<< "${AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS}"
+        for name in "${_limit_names[@]}"; do
+            name="${name// /}"
+            [ -n "$name" ] || continue
+            d="$BUILD_DIR/CMakeFiles/$name"
+            [ -d "$d" ] && consumers+=("$d")
+        done
+    else
     # NOTE: bash doesn't expand globs inside variable values
     # (e.g. "$BUILD_DIR/CMakeFiles/$pat"*.dir keeps the `*` from
     # $pat as a literal). Use find with -name, which handles
@@ -135,6 +148,7 @@ if [ "$producer_key" = "aura_test_objects.dir" ]; then
     done < <(find "$BUILD_DIR/CMakeFiles" -maxdepth 1 \
                   \( -name 'test_*.dir' -o -name 'issue_*.dir' \
                      -o -name 'cycle_*.dir' \) -type d 2>/dev/null)
+    fi
 else
     # Other producers (aura, test_ir, etc.) have different flags
     # (e.g. -DAURA_HAVE_LLVM=1, -I.../compiler) and their BMIs
