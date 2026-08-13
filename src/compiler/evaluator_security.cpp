@@ -425,6 +425,13 @@ bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view o
 // tracks both exempt ops and per-file scope. New mutating prims MUST use
 // this helper; refactor sites that hit the late-isolation-deny window are
 // not allowed after #2881.
+//
+// Issue #2942: mandate this helper (or require_effect_on_ref) on ALL
+// workspace NodeId side-effect prims — closes residual late-isolation
+// window after #2881 (add_mutate + any new NodeId path). Bare 2-arg
+// require_effect remains only for documented non-workspace ops
+// (EXEMPT_2ARG_OPS). Coverage linter:
+// scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py.
 bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_view op,
                                            ast::NodeId node_id) noexcept {
     // make_stamped_ref stamps capability_tenant_id_ + fiber so ref_tenant
