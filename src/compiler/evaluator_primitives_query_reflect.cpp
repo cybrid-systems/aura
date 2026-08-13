@@ -320,8 +320,8 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
             const auto scored = compute_type_linear_commit_health(snap);
 
-            // #2648/#2911 add evidence-loss + refined-consistency keys — 128 slots.
-            auto* ht = FlatHashTable::create(128);
+            // #2648/#2911/#2984 add evidence-loss + refined + compact keys.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -413,6 +413,24 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("force-reason-occurrence-empty-after-fence", 11);
             insert_kv("schema-2981", 2981);
             insert_kv("issue-2981", 2981);
+            // Issue #2984: compact vs last proof linear_root_count.
+            insert_kv("linear-compact-root-check-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::linear_compact_root_check_total_v_read()));
+            insert_kv(
+                "linear-compact-root-mismatch-observe-total",
+                static_cast<std::int64_t>(aura::compiler::typed_audit::
+                                              linear_compact_root_mismatch_observe_total_v_read()));
+            insert_kv(
+                "linear-compact-root-mismatch-total",
+                static_cast<std::int64_t>(
+                    aura::compiler::typed_audit::linear_compact_root_mismatch_total_v_read()));
+            insert_kv("linear-compact-root-mismatch-wired", 1);
+            insert_kv("schema-2984", 2984);
+            insert_kv("issue-2984", 2984);
+            insert_kv("schema-2673", 2673);
+            insert_kv("schema-2899", 2899);
+            insert_kv("schema-2908", 2908);
             insert_kv("commit-readiness-wired", 1); // #2553 lineage face
             insert_kv("schema-2613", kTypeLinearCommitHealthIssue);
             insert_kv("issue-2613", kTypeLinearCommitHealthIssue);
@@ -1650,6 +1668,21 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("linear-densify-hard-path-wired", make_int(1));
             insert_kv("schema-2673", make_int(2673));
             insert_kv("issue-2673", make_int(2673));
+            // Issue #2984: compact linear-root family (align #2673).
+            insert_kv("linear-compact-root-check-total",
+                      make_int(static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::linear_compact_root_check_total_v_read())));
+            insert_kv("linear-compact-root-mismatch-observe-total",
+                      make_int(static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::
+                              linear_compact_root_mismatch_observe_total_v_read())));
+            insert_kv(
+                "linear-compact-root-mismatch-total",
+                make_int(static_cast<std::int64_t>(
+                    aura::compiler::typed_audit::linear_compact_root_mismatch_total_v_read())));
+            insert_kv("linear-compact-root-mismatch-wired", make_int(1));
+            insert_kv("schema-2984", make_int(2984));
+            insert_kv("issue-2984", make_int(2984));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -610,6 +610,9 @@ public:
                 // Issue #1521: always soft-coordinate ShapeProfiler (version bump
                 // + ArenaCompact deopt hooks, keep is_stable / history).
                 const auto touched = shape_profiler_.on_arena_compact();
+                // Issue #2984: arena compact hook (no densify Phase-5).
+                // last_proof_linear_root_count==0 → no extra collect.
+                (void)typed_audit::note_arena_compact_linear_root_consistency();
                 metrics_.shape_inval_on_compact_triggered_total.fetch_add(
                     1, std::memory_order_relaxed);
                 metrics_.shape_stability_post_compact_preserved_total.store(
