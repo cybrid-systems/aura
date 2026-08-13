@@ -809,6 +809,27 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"schema-2157", make_int(aura::ast::kForceCompactHardMutexIssue)},
                 {"issue-2157", make_int(2157)},
                 {"force-hard-mutex-wired", make_int(1)},
+                // Issue #2971: production-required create auto-wire +
+                // pre-move densify gate. Additive on lifetime-pin-stats.
+                {"general-object-pin-auto-wire-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::lifetime::general_object_pin_auto_wire_total_v_read()))},
+                {"general-object-pin-required-enforced-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::lifetime::g_general_object_pin_required_enforced_total.load(
+                         std::memory_order_relaxed)))},
+                {"general-object-pin-required-breach-densify-fail-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total
+                         .load(std::memory_order_relaxed)))},
+                {"general-object-pin-pre-move-unpinned-block-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::lifetime::
+                         general_object_pin_pre_move_unpinned_block_total_v_read()))},
+                {"general-object-pin-create-densify-wired", make_int(1)},
+                {"schema-2971",
+                 make_int(aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue)},
+                {"issue-2971", make_int(aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue)},
             };
             return build_kv_hash(ev, kv);
         });
