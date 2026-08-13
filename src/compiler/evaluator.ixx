@@ -3453,6 +3453,11 @@ public:
     void stage_composite_required_unbound_var_for_test() noexcept;
     // Issue #2898: stage a TypeVar bound to int as required_solved (green).
     void stage_composite_required_bound_var_for_test() noexcept;
+    // Issue #2983: stage unbound touched TypeVar without setting required
+    // (empty-span under-mark so production auto-fill can derive it).
+    void stage_composite_touched_unbound_for_test() noexcept;
+    // Issue #2983: stage N unbound touched TypeVars (auto-fill cap test).
+    void stage_composite_touched_n_for_test(std::uint32_t n) noexcept;
     // Issue #2672: drift-injection soak for #2646 cone-truncate outside-cone
     // invalidate. Test-only helper — forces the per-engine partial-cone
     // truncate state (last_partial_cone_truncated_ +

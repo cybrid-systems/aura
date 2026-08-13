@@ -2363,6 +2363,19 @@ def cmd_lint():
             "Issue #2953 reload recovery playbook linter failed — run python3 scripts/coverage/checks/check_reload_recovery_playbook_2953.py"
         )
         return r
+    # Issue #2983: production default required TypeId set on
+    # composite_txn_commit (anti under-mark). Extends
+    # test_composite_txn_commit (#81967); no docs/design/ (#1655).
+    crtd_script = COVERAGE_CHECKS / "check_composite_required_type_default_2983.py"
+    if not crtd_script.exists():
+        fail(f"missing {crtd_script}")
+        return 1
+    r = run([sys.executable, str(crtd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2983 composite required TypeId default linter failed — run python3 scripts/coverage/checks/check_composite_required_type_default_2983.py"
+        )
+        return r
     # Issue #2982: Staging/Dlopen ops recovery surface. Extends
     # test_reload_recovery_query (#81967); no docs/design/ (#1655).
     sdor_script = COVERAGE_CHECKS / "check_staging_dlopen_ops_recovery_2982.py"
@@ -10021,6 +10034,21 @@ def cmd_composite_required_type_2898_coverage():
     return 0
 
 
+def cmd_composite_required_type_default_2983_coverage():
+    """Issue #2983: production default required TypeId set."""
+    print(f"{B}=== composite required TypeId default coverage (#2983) ==={N}")
+    script = COVERAGE_CHECKS / "check_composite_required_type_default_2983.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("composite required TypeId default (#2983) coverage contract rows failed")
+        return 1
+    ok("composite required TypeId default (#2983) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -13987,6 +14015,7 @@ def main():
         "coverage-verify-min-dirty-2952": cmd_coverage_verify_min_dirty_2952_coverage,
         "reload-recovery-playbook-2953": cmd_reload_recovery_playbook_2953_coverage,
         "staging-dlopen-ops-recovery-2982": cmd_staging_dlopen_ops_recovery_2982_coverage,
+        "composite-required-type-default-2983": cmd_composite_required_type_default_2983_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,

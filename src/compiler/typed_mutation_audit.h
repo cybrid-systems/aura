@@ -345,6 +345,13 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> composite_required_type_observe_total{0}; // #2898 Soft
     std::atomic<std::uint64_t> composite_required_type_checked_total{0}; // #2898 ids scanned
     std::atomic<std::uint32_t> composite_required_type_wired{1};         // #2898
+    // Issue #2983: production default required set when Agents under-mark
+    // (empty span + non-empty touched). Derive-then-check, cap 16. Soft
+    // never auto-fills. Reject-over-infer is env/test override.
+    std::atomic<std::uint64_t> composite_required_type_auto_fill_total{0};         // #2983
+    std::atomic<std::uint64_t> composite_required_type_auto_fill_capped_total{0};  // #2983
+    std::atomic<std::uint64_t> composite_required_type_reject_over_infer_total{0}; // #2983
+    std::atomic<std::uint32_t> composite_required_type_auto_fill_wired{1};         // #2983
     // Issue #2458: outermost commit gate on truncated reverify / incomplete
     // blame (non-empty under-scanned CS — residual half-green after #2345).
     // Soft/Sampled: observe only (commit may still succeed).
@@ -569,6 +576,33 @@ inline void clear_composite_required_solved() noexcept {
 [[nodiscard]] inline std::span<const CompositeRequiredTypeId>
 composite_required_solved_pending() noexcept {
     return g_composite_required_solved_pending;
+}
+
+// Issue #2983: production default required TypeId set (anti under-mark).
+// Cap keeps the worklist bounded (soft-cone discipline).
+inline constexpr std::size_t kCompositeRequiredTypeAutoFillCap = 16;
+inline constexpr int kCompositeRequiredTypeDefaultIssue = 2983;
+// -1 = use env AURA_COMPOSITE_REQUIRED_REJECT_OVER_INFER; 0/1 = test override.
+inline std::atomic<std::int32_t> g_composite_required_reject_over_infer_override{-1};
+
+inline void set_composite_required_reject_over_infer_for_test(bool on) noexcept {
+    g_composite_required_reject_over_infer_override.store(on ? 1 : 0, std::memory_order_relaxed);
+}
+inline void reset_composite_required_reject_over_infer_for_test() noexcept {
+    g_composite_required_reject_over_infer_override.store(-1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool composite_required_reject_over_infer() noexcept {
+    const auto o = g_composite_required_reject_over_infer_override.load(std::memory_order_relaxed);
+    if (o == 0 || o == 1)
+        return o == 1;
+    static const bool cached = []() {
+        const char* e = std::getenv("AURA_COMPOSITE_REQUIRED_REJECT_OVER_INFER");
+        if (e == nullptr || e[0] == '\0')
+            return false;
+        return e[0] == '1';
+    }();
+    return cached;
 }
 
 // Issue #2621: process-wide last partial cone truncate (Agents + pure tests).
@@ -2738,7 +2772,14 @@ inline void reset_for_test() noexcept {
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.composite_required_type_checked_total.store(
         0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_auto_fill_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_auto_fill_capped_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_reject_over_infer_total.store(
+        0, std::memory_order_relaxed);
     clear_composite_required_solved();
+    reset_composite_required_reject_over_infer_for_test();
     // Issue #2458
     g_typed_mutation_audit_counters.truncate_commit_observe_total.store(0,
                                                                         std::memory_order_relaxed);

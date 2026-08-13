@@ -1201,7 +1201,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp` (—) [domain_suite, theme_compiler] — test_compiler_closure_env_safety_post_invalidate.cpp —
 - `tests/compiler/test_composite_auto_partial_from_cone.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Production + cone dirty + empty CS + !txn_dirty → hard reject;
 - `tests/compiler/test_composite_nested_txn_invariant_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2027; composite counters + partial recover helpers
-- `tests/compiler/test_composite_txn_commit.cpp` (—) [domain_suite, theme_compiler] — AC1: Nested/atomic_batch success path runs ordered revalidate before clean
+- `tests/compiler/test_composite_txn_commit.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Nested/atomic_batch success path runs ordered revalidate before clean
 - `tests/compiler/test_composite_typed_mutate.cpp` (—) [domain_suite, theme_compiler] — Issue #1408: Inline no-op stubs for aura::jit::AuraJIT::invalidate_prefix
 - `tests/compiler/test_comprehensive_live_closure_expire.cpp` (—) [domain_suite, theme_compiler] — Issue #2042 — comprehensive live IRClosure / tree-walker / PrimCall
 - `tests/compiler/test_constraint_solver_surface_cross_delta.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2028; solve_delta_occurrence +
