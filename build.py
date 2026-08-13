@@ -1989,6 +1989,19 @@ def cmd_lint():
             "Issue #2971 GeneralObjectPin create+densify linter failed — run python3 scripts/coverage/checks/check_general_object_pin_create_densify_2971.py"
         )
         return r
+    # Issue #2973: production hard pre-densify external-root completeness
+    # (block BEFORE address movement). Extends test_moving_densify_fail_closed
+    # (#81967); no docs/design/ (#1655).
+    mpdc_script = COVERAGE_CHECKS / "check_moving_pre_densify_completeness_2973.py"
+    if not mpdc_script.exists():
+        fail(f"missing {mpdc_script}")
+        return 1
+    r = run([sys.executable, str(mpdc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2973 pre-densify completeness linter failed — run python3 scripts/coverage/checks/check_moving_pre_densify_completeness_2973.py"
+        )
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
@@ -7148,6 +7161,32 @@ def cmd_general_object_pin_create_densify_2971():
     """
     print(f"{B}=== general-object-pin create densify (#2971) ==={N}")
     return cmd_general_object_pin_create_densify_2971_coverage()
+
+
+def cmd_moving_pre_densify_completeness_2973_coverage():
+    """Issue #2973: production hard pre-densify external-root completeness (static)."""
+    print(f"{B}=== moving pre-densify completeness coverage (#2973) ==={N}")
+    script = COVERAGE_CHECKS / "check_moving_pre_densify_completeness_2973.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving pre-densify completeness (#2973) coverage contract rows failed")
+        return 1
+    ok("moving pre-densify completeness (#2973) coverage clean")
+    return 0
+
+
+def cmd_moving_pre_densify_completeness_2973():
+    """Issue #2973: production hard pre-densify external-root completeness.
+
+    live_compact(Moving) walks declared external roots before address
+    movement when hard_pref > 0; uncovered would-move candidates block
+    densify + arm sticky. Soft stays post-move observe-only.
+    """
+    print(f"{B}=== moving pre-densify completeness (#2973) ==={N}")
+    return cmd_moving_pre_densify_completeness_2973_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -13702,6 +13741,8 @@ def main():
         "moving-known-roots-sticky-recovery-2935-coverage": cmd_moving_known_roots_sticky_recovery_2935_coverage,
         "general-object-pin-create-densify-2971": cmd_general_object_pin_create_densify_2971,
         "general-object-pin-create-densify-2971-coverage": cmd_general_object_pin_create_densify_2971_coverage,
+        "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
+        "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,
         "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,

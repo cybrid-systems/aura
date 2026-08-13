@@ -547,8 +547,10 @@ static void ac2837_3_sticky_densify_off_under_hard() {
     const auto sticky_before = aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
         std::memory_order_relaxed);
     const auto r = arena.live_compact(LiveCompactMode::Moving);
-    CHECK(r.objects_moved > 0, "2837 AC3: objects_moved > 0");
+    // Issue #2973: production hard now fail-closes BEFORE address movement.
+    CHECK(r.objects_moved == 0, "2837 AC3: #2973 pre-move block (no address movement)");
     CHECK(r.moving_incomplete_remap, "2837 AC3: incomplete remap");
+    CHECK(p0->a == 1 && p0->b == 2, "2837 AC3: payload intact (no remap)");
     CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
           "2837 AC3: sticky densify-off armed");
     CHECK(aura::ast::moving_compact_enabled() == 0,
@@ -809,7 +811,7 @@ static void ac2905_3_hard_arms_soft_never() {
         void* ext = p0;
         arena.register_external_root_for_densify(ext); // value-only → incomplete
         const auto r = arena.live_compact(LiveCompactMode::Moving);
-        if (r.objects_moved > 0 && r.moving_incomplete_remap) {
+        if (r.moving_incomplete_remap || r.moving_blocked_precondition) {
             CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
                   "AC3: hard incomplete arms sticky");
         }
@@ -985,7 +987,7 @@ static void ac2935_2_hard_arms_soft_never_preserved() {
         void* ext = p0;
         arena.register_external_root_for_densify(ext); // value-only → incomplete under hard
         const auto r = arena.live_compact(LiveCompactMode::Moving);
-        if (r.objects_moved > 0 && r.moving_incomplete_remap) {
+        if (r.moving_incomplete_remap || r.moving_blocked_precondition) {
             CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
                   "AC2: production hard incomplete still arms sticky");
         }
@@ -1337,6 +1339,160 @@ static void ac2971_6_linter_and_no_design() {
           "AC6: no new invent test file per #81967");
 }
 
+// ── Issue #2973: production hard pre-densify external-root completeness ──
+// Residual of #2935: inventory + recovery exist, but densify still moved
+// first and fail-closed after the fact. Production hard now walks
+// declared external roots BEFORE relocate and blocks if any would-move
+// candidate is not slot- or pin-covered. Soft stays post-move observe-only.
+//
+//   AC1: production hard + value-only omitted slot → no movement, sticky.
+//   AC2: Soft / hard_pref<=0 still moves and observes post-move incomplete.
+//   AC3: slot-covered declared roots pass the pre-check.
+//   AC4: additive pre-check counters + schema-2973 on densify-health.
+//   AC5: recovery primitive still the recovery surface (source-cite).
+//   AC6: linter + no docs/design/ / no invent file.
+
+static void ac2973_1_hard_blocks_before_move() {
+    std::println("\n--- #2973 AC1: production hard blocks BEFORE remap ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::core::densify_consistency::reset_moving_pre_densify_completeness_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    arena.register_external_root_for_densify(ext); // omit slot — known untracked
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "AC1: no address movement");
+    CHECK(r.moving_blocked_precondition, "AC1: blocked as precondition");
+    CHECK(r.moving_incomplete_remap, "AC1: incomplete-remap marked");
+    CHECK(!r.pin_contract_held, "AC1: pin_contract_held is the fail signal");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC1: sticky densify-off armed");
+    CHECK(aura::core::densify_consistency::moving_pre_densify_reject_total_v_read() >= 1,
+          "AC1: pre-densify-reject-total bumped");
+    CHECK(aura::core::densify_consistency::moving_pre_densify_untracked_total_v_read() >= 1,
+          "AC1: pre-densify-untracked-total bumped");
+    CHECK(p0->a == 1 && p0->b == 2 && p0->c == 3 && p0->d == 4, "AC1: p0 payload intact");
+    CHECK(p1->a == 5 && p1->b == 6, "AC1: p1 payload intact");
+    CHECK(p2->a == 9 && p2->b == 10, "AC1: p2 payload intact");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+}
+
+static void ac2973_2_soft_still_observe_only() {
+    std::println("\n--- #2973 AC2: Soft remains post-move observe-only ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    const auto rej0 = aura::core::densify_consistency::moving_pre_densify_reject_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    arena.register_external_root_for_densify(ext);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "AC2: Soft still densifies");
+    CHECK(r.moving_incomplete_remap || r.external_roots_stale_unremapped_count >= 1,
+          "AC2: post-move incomplete still observed");
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC2: Soft never arms sticky");
+    CHECK(aura::core::densify_consistency::moving_pre_densify_reject_total_v_read() == rej0,
+          "AC2: pre-check reject counter unchanged on Soft");
+    (void)p1;
+    (void)p2;
+}
+
+static void ac2973_3_slot_covered_passes() {
+    std::println("\n--- #2973 AC3: slot-covered declared roots pass pre-check ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    const auto rej0 = aura::core::densify_consistency::moving_pre_densify_reject_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(aura::core::densify_consistency::moving_pre_densify_reject_total_v_read() == rej0,
+          "AC3: pre-check does not reject slot-covered roots");
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "AC3: pin_contract_held after covered move");
+    }
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac2973_4_observability_schema() {
+    std::println("\n--- #2973 AC4: additive schema keys ---");
+    const auto h = read_file("src/core/densify_consistency_report.h");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(h.find("g_moving_pre_densify_reject_total") != std::string::npos,
+          "AC4: pre-densify-reject counter");
+    CHECK(h.find("g_moving_pre_densify_untracked_total") != std::string::npos,
+          "AC4: pre-densify-untracked counter");
+    CHECK(h.find("kMovingPreDensifyCompletenessIssue = 2973") != std::string::npos,
+          "AC4: issue stamp 2973");
+    CHECK(h.find("reset_moving_pre_densify_completeness_for_test") != std::string::npos,
+          "AC4: test reset helper");
+    CHECK(obs.find("pre-densify-reject-total") != std::string::npos, "AC4: densify-health reject");
+    CHECK(obs.find("pre-densify-untracked-total") != std::string::npos,
+          "AC4: densify-health untracked");
+    CHECK(obs.find("pre-densify-completeness-wired") != std::string::npos, "AC4: wired sentinel");
+    CHECK(obs.find("schema-2973") != std::string::npos, "AC4: schema-2973");
+    CHECK(obs.find("issue-2973") != std::string::npos, "AC4: issue-2973");
+    CHECK(obs.find("schema-2935") != std::string::npos, "AC4: schema-2935 preserved");
+    CHECK(obs.find("schema-2495") != std::string::npos, "AC4: schema-2495 preserved");
+}
+
+static void ac2973_5_recovery_and_soft_zero() {
+    std::println("\n--- #2973 AC5: recovery surface + Soft / Moving-off zero work ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(mb.find("recover_moving_sticky_densify_off") != std::string::npos,
+          "AC5: recovery primitive retained");
+    CHECK(mb.find("register_known_moving_densify_root_slots") != std::string::npos,
+          "AC5: #2935 inventory still the SSOT");
+    CHECK(arena.find("count_pre_densify_untracked_external_roots_") != std::string::npos,
+          "AC5: pre-check helper");
+    CHECK(arena.find("g_moving_untracked_hard_abort_pref.load") != std::string::npos,
+          "AC5: gated on production hard pref");
+    CHECK(arena.find("relocate_tracked_objects_for_moving_") != std::string::npos,
+          "AC5: relocate still present (defense-in-depth after pre-check)");
+}
+
+static void ac2973_6_linter_and_no_design() {
+    std::println("\n--- #2973 AC6: linter + no docs/design/ ---");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_moving_pre_densify_completeness_2973.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac2973_1_hard_blocks_before_move") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac2973_2_soft_still_observe_only") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2973_3_slot_covered_passes") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac2973_4_observability_schema") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2973_5_recovery_and_soft_zero") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac2973_6_linter_and_no_design") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2973") != std::string::npos,
+          "AC6: coverage linter present and cites #2973");
+    CHECK(build.find("check_moving_pre_densify_completeness_2973") != std::string::npos,
+          "AC6: build.py gate entry");
+    std::ifstream design("docs/design/2973-pre-densify-completeness.md");
+    if (!design) {
+        design.open("../docs/design/2973-pre-densify-completeness.md");
+    }
+    CHECK(!design.good(), "AC6: no docs/design/2973-* per #1655");
+    CHECK(read_file("tests/core/test_issue_2973.cpp").empty(),
+          "AC6: no new invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -1410,6 +1566,14 @@ int run_test_moving_densify_fail_closed() {
     ac2971_4_observability_schema();
     ac2971_5_soft_zero_cost();
     ac2971_6_linter_and_no_design();
+    // Issue #2973: production hard pre-densify external-root completeness
+    // (extends #2495 test file per #81967).
+    ac2973_1_hard_blocks_before_move();
+    ac2973_2_soft_still_observe_only();
+    ac2973_3_slot_covered_passes();
+    ac2973_4_observability_schema();
+    ac2973_5_recovery_and_soft_zero();
+    ac2973_6_linter_and_no_design();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 
