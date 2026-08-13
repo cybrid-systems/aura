@@ -19,6 +19,9 @@ extern "C" void aura_bump_live_closure_sync_remount_anon_captured_totals(std::ui
 // Issue #2850: bounded pure-anon sync remount counters (sid==0 && !captures).
 extern "C" void aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64_t ok,
                                                                      std::uint64_t skip_budget);
+// Issue #2950: pure-anon bg queue counter bumps (strong in bridge; weak no-op).
+extern "C" void aura_bump_pure_anon_bg_totals(std::uint64_t enqueue, std::uint64_t drain_ok,
+                                              std::uint64_t drain_fail, std::uint64_t overflow);
 // Issue #2928: residual round-robin remount counters (outside reemit-success).
 extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_t budget_skip);
 // Issue #2638 residual sid=0 cap-hit counter.
@@ -2257,11 +2260,18 @@ extern "C" std::uint64_t aura_pure_anon_pressure_bp() noexcept {
 // Named (#2602) + captured (#2691) filter opposite sets — no double
 // remount (sid!=0 skipped; has captures skipped). Soft / budget=0 →
 // zero extra work (call site gates before this).
+// Issue #2950: budget-exhausted pure-anon slots are enqueued for a
+// bounded background remount drained on BoundaryExit / pipeline
+// amortized path (never steal-complete #2715). Cap = budget ceiling.
 extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
                                                           std::uint64_t* ok_count,
                                                           std::uint64_t* skip_budget_count) {
     std::uint64_t ok = 0;
     std::uint64_t skip = 0;
+    // Deferred enqueue list (filled under table lock; enqueued after unlock
+    // so bg queue mutex never nests under g_closure_table_mtx).
+    std::int64_t pending_bg[256];
+    std::size_t pending_n = 0;
 
     if (budget == 0) {
         if (ok_count)
@@ -2306,6 +2316,9 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
                 continue;
             if (used >= budget) {
                 ++skip; // past budget — leave on touch-time MustDeopt policy
+                // Issue #2950: enqueue for background remount (cap 256).
+                if (pending_n < 256)
+                    pending_bg[pending_n++] = static_cast<std::int64_t>(cid);
                 continue;
             }
             // remount_or_force_deopt: for pure anon capture remount is a
@@ -2322,6 +2335,10 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
         aura_unlock_workspace_write();
     }
 
+    // Issue #2950: enqueue budget-exhausted pure-anon after table unlock.
+    for (std::size_t i = 0; i < pending_n; ++i)
+        aura_pure_anon_bg_enqueue(pending_bg[i]);
+
     aura_bump_live_closure_sync_remount_pure_anon_totals(ok, skip);
 
     // Issue #2893: feed this walk's outcome into the adaptive pressure
@@ -2335,6 +2352,126 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
         *ok_count = ok;
     if (skip_budget_count)
         *skip_budget_count = skip;
+}
+
+// ── Issue #2950: pure-anon background remount queue ──────────────
+// Bounded ring (cap 256 = #2893 budget ceiling). Enqueue on budget-
+// exhausted pure-anon slots during reemit-success walk; drain on
+// outermost MutationBoundary success exit and reemit pipeline
+// amortized path. Never steal-complete (#2715). Soft / budget=0 never
+// walks → no enqueue. Empty queue drain = one relaxed size load.
+static constexpr std::size_t kPureAnonBgQueueCap = 256;
+static std::mutex g_pure_anon_bg_mtx;
+static std::int64_t g_pure_anon_bg_q[kPureAnonBgQueueCap];
+static std::size_t g_pure_anon_bg_head = 0;
+static std::size_t g_pure_anon_bg_tail = 0;
+static std::atomic<std::size_t> g_pure_anon_bg_size{0};
+static std::atomic<std::uint64_t> g_pure_anon_bg_enqueue_total{0};
+static std::atomic<std::uint64_t> g_pure_anon_bg_drain_ok_total{0};
+static std::atomic<std::uint64_t> g_pure_anon_bg_drain_fail_total{0};
+static std::atomic<std::uint64_t> g_pure_anon_bg_overflow_total{0};
+
+extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept {
+    return static_cast<std::uint64_t>(g_pure_anon_bg_size.load(std::memory_order_relaxed));
+}
+
+extern "C" std::uint64_t aura_pure_anon_bg_enqueue_total_v_read() noexcept {
+    return g_pure_anon_bg_enqueue_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_pure_anon_bg_drain_ok_total_v_read() noexcept {
+    return g_pure_anon_bg_drain_ok_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_pure_anon_bg_drain_fail_total_v_read() noexcept {
+    return g_pure_anon_bg_drain_fail_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_pure_anon_bg_overflow_total_v_read() noexcept {
+    return g_pure_anon_bg_overflow_total.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept {
+    std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+    g_pure_anon_bg_head = 0;
+    g_pure_anon_bg_tail = 0;
+    g_pure_anon_bg_size.store(0, std::memory_order_relaxed);
+    // Totals stay monotonic (Agents delta); do not zero.
+}
+
+extern "C" void aura_pure_anon_bg_enqueue(std::int64_t closure_id) noexcept {
+    if (closure_id < 0)
+        return;
+    std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+    const auto sz = g_pure_anon_bg_size.load(std::memory_order_relaxed);
+    if (sz >= kPureAnonBgQueueCap) {
+        g_pure_anon_bg_overflow_total.fetch_add(1, std::memory_order_relaxed);
+        aura_bump_pure_anon_bg_totals(/*enqueue=*/0, /*drain_ok=*/0, /*drain_fail=*/0,
+                                      /*overflow=*/1);
+        return;
+    }
+    g_pure_anon_bg_q[g_pure_anon_bg_tail] = closure_id;
+    g_pure_anon_bg_tail = (g_pure_anon_bg_tail + 1) % kPureAnonBgQueueCap;
+    g_pure_anon_bg_size.store(sz + 1, std::memory_order_relaxed);
+    g_pure_anon_bg_enqueue_total.fetch_add(1, std::memory_order_relaxed);
+    aura_bump_pure_anon_bg_totals(/*enqueue=*/1, /*drain_ok=*/0, /*drain_fail=*/0,
+                                  /*overflow=*/0);
+}
+
+extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
+    // Quiet path: empty queue → single relaxed load, no remount work.
+    if (g_pure_anon_bg_size.load(std::memory_order_relaxed) == 0 || max_n == 0)
+        return;
+
+    // Pop up to max_n under queue lock, then remount under table lock
+    // (never nest queue mutex under table lock the other way).
+    std::int64_t batch[kPureAnonBgQueueCap];
+    std::size_t n = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+        auto sz = g_pure_anon_bg_size.load(std::memory_order_relaxed);
+        while (n < max_n && sz > 0) {
+            batch[n++] = g_pure_anon_bg_q[g_pure_anon_bg_head];
+            g_pure_anon_bg_head = (g_pure_anon_bg_head + 1) % kPureAnonBgQueueCap;
+            --sz;
+        }
+        g_pure_anon_bg_size.store(sz, std::memory_order_relaxed);
+    }
+    if (n == 0)
+        return;
+
+    std::uint64_t ok = 0;
+    std::uint64_t fail = 0;
+    {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        aura_lock_workspace_write();
+        const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
+        const std::uint64_t table_epoch = aura_aot_func_table_epoch();
+        const std::size_t nslots = g_closure_func_ids.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto cid = batch[i];
+            if (cid < 0 || static_cast<std::size_t>(cid) >= nslots)
+                continue;
+            if (static_cast<std::size_t>(cid) < g_closure_freed.size() &&
+                g_closure_freed[static_cast<std::size_t>(cid)] != 0)
+                continue;
+            // Pure-anon only (named/captured filters) — skip if status changed.
+            if (static_cast<std::size_t>(cid) < g_closure_stable_func_ids.size() &&
+                g_closure_stable_func_ids[static_cast<std::size_t>(cid)] != 0)
+                continue;
+            if (aura_closure_has_env_or_linear_captures_unlocked(cid))
+                continue;
+            if (remount_or_force_deopt_unlocked_no_call_time_counter(cid, live_env,
+                                                                     /*linear_fp=*/0,
+                                                                     table_epoch) != 0)
+                ++ok;
+            else
+                ++fail;
+        }
+        aura_unlock_workspace_write();
+    }
+    if (ok)
+        g_pure_anon_bg_drain_ok_total.fetch_add(ok, std::memory_order_relaxed);
+    if (fail)
+        g_pure_anon_bg_drain_fail_total.fetch_add(fail, std::memory_order_relaxed);
+    aura_bump_pure_anon_bg_totals(/*enqueue=*/0, ok, fail, /*overflow=*/0);
 }
 
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──

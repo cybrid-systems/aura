@@ -104,6 +104,10 @@ extern "C" void aura_periodic_epoch_invariant_walk_if_due(void);
 // Issue #2928: residual remount tick (aura_jit_runtime.cpp; weak stub light-link).
 extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
+// Issue #2950: pure-anon bg remount drain (BoundaryExit safe site).
+extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
+extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept;
 
 // Issue #2640: production Restricted default periodic epoch-invariant soft walk
 // (gated by mode=Soft + production_defaults_active + steady_ms rate limit;
@@ -3597,6 +3601,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         const auto b = aura_residual_remount_budget_default();
         if (b > 0)
             aura_residual_live_closure_remount_tick(b);
+        // Issue #2950: pure-anon background remount drain (safe site).
+        // Empty queue → single relaxed load. Never steal-complete (#2715).
+        if (aura_pure_anon_bg_pending() > 0) {
+            const auto max_n = aura_sync_remount_pure_anon_budget_base();
+            if (max_n > 0)
+                aura_pure_anon_bg_remount_drain(max_n);
+        }
     }
     // Issue #2727: clear the durable per-Fiber evaluator_id so stale
     // steals cannot observe a previous evaluator. Only outermost

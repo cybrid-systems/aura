@@ -460,6 +460,29 @@ extern "C" __attribute__((weak)) std::uint64_t aura_sync_remount_pure_anon_budge
 extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_pressure_bp() {
     return 0;
 }
+// Issue #2950: pure-anon bg remount queue weak stubs (light-link).
+extern "C" __attribute__((weak)) void aura_pure_anon_bg_enqueue(std::int64_t /*closure_id*/) {}
+extern "C" __attribute__((weak)) void aura_pure_anon_bg_remount_drain(std::uint64_t /*max_n*/) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_bg_pending() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_bg_enqueue_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_bg_drain_ok_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_bg_drain_fail_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_bg_overflow_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_test_reset_pure_anon_bg_queue() {}
+extern "C" __attribute__((weak)) void aura_bump_pure_anon_bg_totals(std::uint64_t /*enqueue*/,
+                                                                    std::uint64_t /*drain_ok*/,
+                                                                    std::uint64_t /*drain_fail*/,
+                                                                    std::uint64_t /*overflow*/) {}
 // Issue #2928: residual round-robin remount weak stubs (light-link).
 extern "C" __attribute__((weak)) void
 aura_bump_residual_remount_totals(std::uint64_t /*ok*/, std::uint64_t /*budget_skip*/) {}

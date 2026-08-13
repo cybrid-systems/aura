@@ -2136,6 +2136,20 @@ def cmd_lint():
             "Issue #2949 force_jit only_covered default linter failed — run python3 scripts/coverage/checks/check_force_jit_repromote_only_covered_default_2949.py"
         )
         return r
+    # Issue #2950: pure-anon pressure-driven bg remount queue (close
+    # #2893 residual). Enqueue on budget skip; drain BoundaryExit /
+    # pipeline; never steal (#2715). Extends
+    # test_anonymous_residual_stable_id_policy (#81967); no docs/design.
+    pabg_script = COVERAGE_CHECKS / "check_pure_anon_bg_remount_2950.py"
+    if not pabg_script.exists():
+        fail(f"missing {pabg_script}")
+        return 1
+    r = run([sys.executable, str(pabg_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2950 pure-anon bg remount linter failed — run python3 scripts/coverage/checks/check_pure_anon_bg_remount_2950.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -5365,6 +5379,25 @@ def cmd_force_jit_repromote_only_covered_default_2949_coverage():
         fail("force_jit only_covered default (#2949) coverage contract rows failed")
         return 1
     ok("force_jit only_covered default (#2949) coverage clean")
+    return 0
+
+
+def cmd_pure_anon_bg_remount_2950_coverage():
+    """Issue #2950: pure-anon pressure-driven background remount queue.
+
+    Budget-exhausted pure-anon enqueued; drained on BoundaryExit /
+    pipeline (never steal); schema-2950.
+    """
+    print(f"{B}=== pure-anon bg remount coverage (#2950) ==={N}")
+    script = COVERAGE_CHECKS / "check_pure_anon_bg_remount_2950.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pure-anon bg remount (#2950) coverage contract rows failed")
+        return 1
+    ok("pure-anon bg remount (#2950) coverage clean")
     return 0
 
 

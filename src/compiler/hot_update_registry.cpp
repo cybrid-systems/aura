@@ -19,6 +19,10 @@ extern "C" int aura_evaluator_mutation_boundary_held();
 // Issue #2928: residual remount tick (production in aura_jit_runtime.cpp).
 extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
+// Issue #2950: pure-anon bg remount drain (never steal-complete #2715).
+extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
+extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept;
 // Issue #2949: production_defaults_active probe (strong in
 // typed_mutation_audit_hooks; weak no-op in fiber.cpp).
 extern "C" int aura_production_defaults_active_probe() noexcept;
@@ -123,6 +127,15 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
         const auto b = aura_residual_remount_budget_default();
         if (b > 0)
             aura_residual_live_closure_remount_tick(b);
+    }
+    // Issue #2950: pure-anon background remount drain (amortized).
+    // Empty queue → single relaxed load. Never steal-complete (#2715).
+    // Drain after residual tick so reemit-success enqueue in this call
+    // can also be drained on quiet follow-up pipeline ticks.
+    if (aura_pure_anon_bg_pending() > 0) {
+        const auto max_n = aura_sync_remount_pure_anon_budget_base();
+        if (max_n > 0)
+            aura_pure_anon_bg_remount_drain(max_n);
     }
 }
 

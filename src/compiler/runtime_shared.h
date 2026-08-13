@@ -186,6 +186,18 @@ extern "C" void aura_pure_anon_note_walk_outcome(std::uint64_t ok, std::uint64_t
 extern "C" void aura_pure_anon_observe_deopt_window(std::uint64_t deopt_window_count) noexcept;
 extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_current() noexcept;
 extern "C" std::uint64_t aura_pure_anon_pressure_bp() noexcept;
+// Issue #2950: pure-anon pressure-driven background remount queue.
+// Enqueue on budget-exhausted pure-anon slots during reemit-success walk;
+// drain on BoundaryExit / reemit pipeline amortized path (never steal
+// #2715). Cap = 256 (budget ceiling). Soft / budget=0 → no enqueue.
+extern "C" void aura_pure_anon_bg_enqueue(std::int64_t closure_id) noexcept;
+extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_enqueue_total_v_read() noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_drain_ok_total_v_read() noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_drain_fail_total_v_read() noexcept;
+extern "C" std::uint64_t aura_pure_anon_bg_overflow_total_v_read() noexcept;
+extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept;
 // Issue #2928: budgeted residual live-closure remount (round-robin cursor +
 // budget B, default 32 production / 0 Soft). Outside reemit-success paths
 // (#2602/#2691/#2850). budget_skip under hard storm / reemit throttle.

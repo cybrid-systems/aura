@@ -800,7 +800,9 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
         "query:soa-dirty-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(128); // #2031 + #2109 instr-level keys
+                // #2031 + #2109 + #2850/#2893/#2950 pure-anon / residual keys:
+                // capacity must leave open-addressing headroom for ~190 kvs.
+                auto* ht = FlatHashTable::create(256);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -1166,6 +1168,20 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-sync-remount-pure-anon-adaptive-wired", make_int(1)},
                 {"schema-2893", make_int(2893)},
                 {"issue-2893", make_int(2893)},
+                // Issue #2950: pure-anon pressure-driven bg remount queue.
+                {"pure-anon-bg-enqueue-total",
+                 make_int(L(&CompilerMetrics::pure_anon_bg_enqueue_total))},
+                {"pure-anon-bg-drain-ok-total",
+                 make_int(L(&CompilerMetrics::pure_anon_bg_drain_ok_total))},
+                {"pure-anon-bg-drain-fail-total",
+                 make_int(L(&CompilerMetrics::pure_anon_bg_drain_fail_total))},
+                {"pure-anon-bg-overflow-total",
+                 make_int(L(&CompilerMetrics::pure_anon_bg_overflow_total))},
+                {"pure-anon-bg-pending",
+                 make_int(static_cast<std::int64_t>(aura_pure_anon_bg_pending()))},
+                {"pure-anon-bg-remount-wired", make_int(1)},
+                {"schema-2950", make_int(2950)},
+                {"issue-2950", make_int(2950)},
                 // Issue #2928: residual round-robin remount (outside reemit-success).
                 {"residual-remount-ok-total",
                  make_int(L(&CompilerMetrics::residual_remount_ok_total))},
