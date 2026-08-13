@@ -2363,6 +2363,18 @@ def cmd_lint():
             "Issue #2953 reload recovery playbook linter failed — run python3 scripts/coverage/checks/check_reload_recovery_playbook_2953.py"
         )
         return r
+    # Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count.
+    # Extends test_type_linear_commit_health (#81967); no docs/design/.
+    lcrc_script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
+    if not lcrc_script.exists():
+        fail(f"missing {lcrc_script}")
+        return 1
+    r = run([sys.executable, str(lcrc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2984 linear compact root consistency linter failed — run python3 scripts/coverage/checks/check_linear_compact_root_consistency_2984.py"
+        )
+        return r
     # Issue #2983: production default required TypeId set on
     # composite_txn_commit (anti under-mark). Extends
     # test_composite_txn_commit (#81967); no docs/design/ (#1655).
@@ -10049,6 +10061,21 @@ def cmd_composite_required_type_default_2983_coverage():
     return 0
 
 
+def cmd_linear_compact_root_consistency_2984_coverage():
+    """Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count."""
+    print(f"{B}=== linear compact root consistency coverage (#2984) ==={N}")
+    script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear compact root consistency (#2984) coverage contract rows failed")
+        return 1
+    ok("linear compact root consistency (#2984) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -14016,6 +14043,7 @@ def main():
         "reload-recovery-playbook-2953": cmd_reload_recovery_playbook_2953_coverage,
         "staging-dlopen-ops-recovery-2982": cmd_staging_dlopen_ops_recovery_2982_coverage,
         "composite-required-type-default-2983": cmd_composite_required_type_default_2983_coverage,
+        "linear-compact-root-consistency-2984": cmd_linear_compact_root_consistency_2984_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,

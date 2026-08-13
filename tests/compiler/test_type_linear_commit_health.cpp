@@ -1002,6 +1002,124 @@ static void ac2981_2_health_schema() {
     CHECK(href_evolv(cs, "schema-2981") == 2981, "2981: evolution snapshot schema-2981");
 }
 
+// ── Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count ──
+
+static void ac2984_1_prod_mismatch_rejects() {
+    std::println("\n--- #2984 AC1: production + prior count + compact mismatch → reject ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::set_last_proof_linear_root_count_for_test(3);
+    const auto chk0 = typed_audit::linear_compact_root_check_total_v_read();
+    const auto mis0 = typed_audit::linear_compact_root_mismatch_total_v_read();
+    const bool hit = typed_audit::note_arena_compact_linear_root_consistency();
+    CHECK(hit, "2984 AC1: mismatch detected");
+    CHECK(typed_audit::linear_compact_root_check_total_v_read() == chk0 + 1,
+          "2984 AC1: check_total +1 (collect ran)");
+    CHECK(typed_audit::linear_compact_root_mismatch_total_v_read() == mis0 + 1,
+          "2984 AC1: mismatch_total +1");
+    CHECK(typed_audit::linear_compact_root_mismatch_blocks_proof(),
+          "2984 AC1: reject face latched");
+    CHECK(last_type_linear_proof_outcome_v_read() == typed_audit::kTypeLinearProofOutcomeReject,
+          "2984 AC1: outcome Reject");
+    CHECK(typed_audit::g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0,
+          "2984 AC1: last proof linear_ok=0");
+    CHECK(typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "2984 AC1: would_allow_commit=0");
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+}
+
+static void ac2984_2_soft_observe() {
+    std::println("\n--- #2984 AC2: Soft mismatch → observe only ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::set_last_proof_linear_root_count_for_test(3);
+    const auto obs0 = typed_audit::linear_compact_root_mismatch_observe_total_v_read();
+    const auto mis0 = typed_audit::linear_compact_root_mismatch_total_v_read();
+    const bool hit = typed_audit::note_arena_compact_linear_root_consistency();
+    CHECK(!hit, "2984 AC2: Soft does not force reject");
+    CHECK(typed_audit::linear_compact_root_mismatch_observe_total_v_read() == obs0 + 1,
+          "2984 AC2: observe_total +1");
+    CHECK(typed_audit::linear_compact_root_mismatch_total_v_read() == mis0,
+          "2984 AC2: hard mismatch_total unchanged");
+    CHECK(!typed_audit::linear_compact_root_mismatch_blocks_proof(),
+          "2984 AC2: Soft face does not block");
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+}
+
+static void ac2984_3_quiet_no_collect() {
+    std::println("\n--- #2984 AC3: last==0 / no compact → no extra collect ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::set_last_proof_linear_root_count_for_test(0);
+    const auto chk0 = typed_audit::linear_compact_root_check_total_v_read();
+    const auto obs0 = typed_audit::linear_compact_root_mismatch_observe_total_v_read();
+    const bool hit = typed_audit::note_arena_compact_linear_root_consistency();
+    CHECK(!hit, "2984 AC3: no mismatch");
+    CHECK(typed_audit::linear_compact_root_check_total_v_read() == chk0,
+          "2984 AC3: check_total unchanged (no collect)");
+    CHECK(typed_audit::linear_compact_root_mismatch_observe_total_v_read() == obs0,
+          "2984 AC3: observe unchanged");
+    apply_dev_audit_defaults();
+}
+
+static void ac2984_4_family_2673() {
+    std::println("\n--- #2984 AC4: same linear-root consistency family as #2673 ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto dens = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(tma.find("note_arena_compact_linear_root_consistency") != std::string::npos,
+          "2984 AC4: compact helper");
+    CHECK(tma.find("linear_densify_scan_mismatch") != std::string::npos,
+          "2984 AC4: #2673 densify family retained");
+    CHECK(dens.find("scan_linear_roots_after_densify") != std::string::npos,
+          "2984 AC4: densify scan still present");
+    CHECK(tma.find("Issue #2673") != std::string::npos, "2984 AC4: #2673 cite retained");
+}
+
+static void ac2984_5_schema() {
+    std::println("\n--- #2984 AC5: additive schema; #2908/#2899/#2673 preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2984") == 2984, "2984 AC5: schema-2984");
+    CHECK(href(cs, "issue-2984") == 2984, "2984 AC5: issue-2984");
+    CHECK(href(cs, "linear-compact-root-mismatch-wired") == 1, "2984 AC5: wired");
+    CHECK(href(cs, "linear-compact-root-check-total") >= 0, "2984 AC5: check-total");
+    CHECK(href(cs, "schema-2613") == 2613, "2984 AC5: schema-2613");
+    CHECK(href(cs, "schema-2673") == 2673, "2984 AC5: schema-2673");
+    CHECK(href(cs, "schema-2899") == 2899, "2984 AC5: schema-2899");
+    CHECK(href(cs, "schema-2908") == 2908, "2984 AC5: schema-2908");
+    CHECK(href(cs, "schema-2981") == 2981, "2984 AC5: schema-2981");
+}
+
+static void ac2984_6_source_and_linter() {
+    std::println("\n--- #2984 AC6: source-cite compact hooks + linter ---");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_linear_compact_root_consistency_2984.py");
+    const auto build = read_file("build.py");
+    CHECK(gc.find("Issue #2984") != std::string::npos, "2984 AC6: evaluator_gc cites #2984");
+    CHECK(gc.find("note_arena_compact_linear_root_consistency") != std::string::npos,
+          "2984 AC6: compact_sweep calls helper");
+    CHECK(svc.find("Issue #2984") != std::string::npos, "2984 AC6: arena compact hook cites");
+    CHECK(svc.find("note_arena_compact_linear_root_consistency") != std::string::npos,
+          "2984 AC6: on_compact_hook calls helper");
+    CHECK(tma.find("build_type_linear_commit_proof_from_live_with_outcome") != std::string::npos,
+          "2984 AC6: proof stamp");
+    CHECK(t.find("ac2984_1_prod_mismatch_rejects") != std::string::npos, "2984 AC6: AC1 test");
+    CHECK(!lint.empty() && lint.find("2984") != std::string::npos, "2984 AC6: linter present");
+    CHECK(build.find("check_linear_compact_root_consistency_2984") != std::string::npos,
+          "2984 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2984-linear-compact-root.md").empty(),
+          "2984 AC6: no docs/design/ per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2984.cpp").empty(),
+          "2984 AC6: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -1062,10 +1180,17 @@ int run_test_type_linear_commit_health() {
     std::println("\n=== Issue #2981: empty-after-fence same-txn proof bind ===");
     ac2981_1_helper_and_with_outcome();
     ac2981_2_health_schema();
-    std::println(
-        "\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981: {} passed, {} "
-        "failed ===",
-        g_passed, g_failed);
+    std::println("\n=== Issue #2984: compact vs TypeLinearCommitProof.linear_root_count ===");
+    ac2984_1_prod_mismatch_rejects();
+    ac2984_2_soft_observe();
+    ac2984_3_quiet_no_collect();
+    ac2984_4_family_2673();
+    ac2984_5_schema();
+    ac2984_6_source_and_linter();
+    std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984: {} "
+                 "passed, {} "
+                 "failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

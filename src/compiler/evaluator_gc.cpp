@@ -11,6 +11,7 @@ module;
 #include "core/provenance_tracker.hh"    // Issue #2026 / #2197: validate_linear_provenance
 #include "coercion_provenance_policy.hh" // Issue #2197: note_provenance_miss force-audit
 #include "lock_order_audit.h"            // Issue #2354: Closures rank
+#include "typed_mutation_audit.h"        // Issue #2984: compact vs proof linear_root_count
 
 module aura.compiler.evaluator;
 
@@ -1137,6 +1138,10 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
             static_cast<std::uint64_t>(lc.root_remap_closure_capture_fail_total),
             std::memory_order_relaxed);
     }
+
+    // Issue #2984: post-compact TypeLinearCommitProof.linear_root_count
+    // consistency (pure compact, no densify Phase-5). last==0 → no collect.
+    (void)typed_audit::note_arena_compact_linear_root_consistency();
 
     return result;
 }

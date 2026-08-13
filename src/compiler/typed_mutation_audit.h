@@ -1401,6 +1401,43 @@ inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 [[nodiscard]] inline std::uint64_t last_proof_linear_root_count_v_read() noexcept {
     return g_last_proof_linear_root_count.load(std::memory_order_relaxed);
 }
+
+// Issue #2984: arena compact vs last TypeLinearCommitProof.linear_root_count.
+// Quiet (last==0): no collect. Soft: observe only. Production/Full mismatch
+// latches a reject face so the next Success stamp cannot stay green.
+inline constexpr int kLinearCompactRootConsistencyIssue = 2984;
+inline std::atomic<std::uint8_t> g_linear_compact_root_mismatch_face{0};
+inline std::atomic<std::uint64_t> g_linear_compact_root_check_total{0};
+inline std::atomic<std::uint64_t> g_linear_compact_root_mismatch_observe_total{0};
+inline std::atomic<std::uint64_t> g_linear_compact_root_mismatch_total{0};
+inline std::atomic<std::uint32_t> g_linear_compact_root_mismatch_wired{1};
+
+inline void set_last_proof_linear_root_count_for_test(std::uint64_t n) noexcept {
+    g_last_proof_linear_root_count.store(n, std::memory_order_relaxed);
+}
+
+inline void reset_linear_compact_root_consistency_for_test() noexcept {
+    g_linear_compact_root_mismatch_face.store(0, std::memory_order_relaxed);
+    g_linear_compact_root_check_total.store(0, std::memory_order_relaxed);
+    g_linear_compact_root_mismatch_observe_total.store(0, std::memory_order_relaxed);
+    g_linear_compact_root_mismatch_total.store(0, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t linear_compact_root_check_total_v_read() noexcept {
+    return g_linear_compact_root_check_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t linear_compact_root_mismatch_observe_total_v_read() noexcept {
+    return g_linear_compact_root_mismatch_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t linear_compact_root_mismatch_total_v_read() noexcept {
+    return g_linear_compact_root_mismatch_total.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool linear_compact_root_mismatch_blocks_proof() noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return false;
+    return g_linear_compact_root_mismatch_face.load(std::memory_order_relaxed) != 0;
+}
 [[nodiscard]] inline std::uint64_t last_proof_goal_fingerprint_v_read() noexcept {
     return g_last_proof_goal_fingerprint.load(std::memory_order_relaxed);
 }
@@ -1617,6 +1654,13 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
         p.force_reason_code = 11; // occurrence_empty_after_fence
         g_type_linear_proof_reject_empty_after_fence_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #2984: compact mismatch latches reject before Success trail.
+    if (p.would_allow_commit && linear_compact_root_mismatch_blocks_proof()) {
+        p.would_allow_commit = false;
+        p.linear_ok = false;
+        p.occurrence_consistent = false;
+        p.force_reason_code = 3; // linear
+    }
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (same as live path).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
@@ -1628,6 +1672,34 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     // Issue #2899: publish face bits for IR Move/Drop fast-path.
     publish_last_proof_face(p.would_allow_commit, p.linear_ok);
     return p;
+}
+
+// Issue #2984: post-arena-compact linear_root_count vs last proof.
+// last==0 → return without collect (AC3). Mismatch: Soft observe;
+// production/Full latch face + stamp reject (force_reason linear=3).
+// Aligns with #2673 densify scan family (same linear-root consistency).
+inline bool note_arena_compact_linear_root_consistency() noexcept {
+    const auto last = last_proof_linear_root_count_v_read();
+    if (last == 0)
+        return false; // AC3: no extra collect
+    g_linear_compact_root_check_total.fetch_add(1, std::memory_order_relaxed);
+    const auto n =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    if (n == last)
+        return false;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard) {
+        g_linear_compact_root_mismatch_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_linear_compact_root_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+    g_linear_compact_root_mismatch_face.store(1, std::memory_order_relaxed);
+    const auto epoch = last_type_linear_commit_proof_stamp_v_read();
+    (void)build_type_linear_commit_proof_from_live_with_outcome(
+        epoch == 0 ? 1 : epoch, /*would_allow=*/false, /*linear_ok=*/false,
+        kProofLiveGoalCountHintAuto, 0, false, /*force_reason=*/3);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    return true;
 }
 
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
@@ -2842,6 +2914,8 @@ inline void reset_for_test() noexcept {
                                                                          std::memory_order_relaxed);
     g_typed_mutation_audit_counters.linear_cross_closure_prod_depth_default.store(
         2, std::memory_order_relaxed);
+    reset_linear_compact_root_consistency_for_test();
+    set_last_proof_linear_root_count_for_test(0);
     apply_dev_audit_defaults(); // Sampled/4 + dev_audit_opt_in; clears production
     std::lock_guard lock(g_trail().mu);
     for (auto& e : g_trail().ring)
