@@ -11905,13 +11905,15 @@ public:
         // Issue #1476: defuse_version_ in lockstep (acq_rel) for #1475 readers.
         evaluator_.bump_defuse_version_for_test();
         metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
-        // Issue #2841 / #2744: stamp current Evaluator as reemit/register
-        // owner before the AOT table epoch bump so multi-eval production
-        // cascade can prefer owner-scoped stale-slot invalidate (no peer
-        // force-stale of g_aot_table_epoch). Soft mark_define_dirty relies
-        // on this TLS alone; hard invalidate_function notes force-bump
-        // first so the joint epoch still advances. Single-eval: map size
-        // ≤1 short-circuits throttle (zero extra cost beyond owner TLS).
+        // Issue #2841 / #2744 / #2951: stamp current Evaluator as
+        // reemit/register owner before the AOT table epoch bump so
+        // multi-eval production cascade can prefer owner-scoped
+        // stale-slot invalidate (no peer force-stale of g_aot_table_epoch).
+        // Soft mark_define_dirty relies on this TLS alone; hard
+        // invalidate_function under #2951 production multi-eval also
+        // prefers owner-scoped (notes hard_owner_scoped, not force-bump);
+        // Soft / env opt-out still force-bumps. Single-eval: map size ≤1
+        // short-circuits throttle (zero extra cost beyond owner TLS).
         struct CascadeEvalOwnerGuard {
             void* prev_reemit;
             void* prev_reg;

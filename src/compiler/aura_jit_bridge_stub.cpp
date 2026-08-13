@@ -223,8 +223,18 @@ extern "C" __attribute__((weak)) std::uint64_t aura_aot_func_table_epoch(void) {
     return g_aot_table_epoch_stub.load(std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) void aura_aot_note_cross_eval_epoch_force_bump(void) {}
+extern "C" __attribute__((weak)) void aura_aot_note_cross_eval_hard_owner_scoped(void) {}
+extern "C" __attribute__((weak)) int aura_aot_cross_eval_hard_owner_scoped_armed(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t
 cross_eval_epoch_action_throttled_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t cross_eval_hard_owner_scoped_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t cross_eval_hard_global_bump_total_v_read(void) {
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_aot_bump_func_table_epoch(void) {

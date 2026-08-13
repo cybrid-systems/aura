@@ -707,18 +707,27 @@ void aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept;
 [[nodiscard]] std::uint64_t aura_cross_cow_soft_migrate_max_drift(void) noexcept;
 // Force-bump table epoch (test / hot-swap seam).
 void aura_aot_bump_func_table_epoch(void);
-// Issue #2713 / #2744 / #2841 observability (file-scope counters in
-// aura_jit_bridge.cpp). #2841: production multi-eval cascade defaults to
-// owner-scoped (no peer force-stale); hard invalidate notes force-bump.
+// Issue #2713 / #2744 / #2841 / #2951 observability (file-scope counters in
+// aura_jit_bridge.cpp). #2841: production multi-eval soft cascade defaults
+// to owner-scoped (no peer force-stale). #2951: hard invalidate may also
+// prefer owner-scoped under production multi-eval; true process-wide
+// recovery still notes force-bump.
 std::uint64_t cross_eval_epoch_bump_total_v_read(void);
 void* last_cross_eval_epoch_bump_owner_v_read(void);
 std::uint32_t cross_eval_epoch_bump_wired_v_read(void);
 // Issue #2744 / #2841: next aura_aot_bump_func_table_epoch() always advances
 // the process-global table epoch (skip multi-eval cascade throttle).
-// Hard invalidate_function / reload fall-back call this first.
+// Reload fall-back / process-wide recovery call this first.
 void aura_aot_note_cross_eval_epoch_force_bump(void);
+// Issue #2951: hard invalidate prefers owner-scoped (no force global bump).
+void aura_aot_note_cross_eval_hard_owner_scoped(void);
+// Issue #2951: 1 when production multi-eval hard owner-scoped is armed.
+int aura_aot_cross_eval_hard_owner_scoped_armed(void);
 // Issue #2744 / #2841: multi-eval cascade bumps that were owner-scoped throttled.
 std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void);
+// Issue #2951: hard invalidate owner-scoped / hard global multi bump totals.
+std::uint64_t cross_eval_hard_owner_scoped_total_v_read(void);
+std::uint64_t cross_eval_hard_global_bump_total_v_read(void);
 
 // Issue #2304 / #2366: epoch invariant mode (process-level).
 //   0 = off (production default; single relaxed load, zero walk cost)

@@ -1082,14 +1082,16 @@ static void ac2841_1_dual_eval_cascade_owner_scoped() {
 
 static void ac2841_2_hard_force_advances_joint_epoch() {
     std::println("\n--- #2841 AC2: hard force-bump still advances joint epoch ---");
-    // Source-cite: invalidate_function notes force-bump before unified bump.
+    // Source-cite: force-bump API still available (reload fall-back / Soft
+    // hard path). #2951 may skip force-bump under production multi-eval
+    // hard owner-scoped; Soft/opt-out still notes force-bump.
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
     CHECK(dirty.find("aura_aot_note_cross_eval_epoch_force_bump()") != std::string::npos,
-          "AC2: invalidate_function notes force-bump");
-    CHECK(dirty.find("Issue #2841") != std::string::npos ||
-              dirty.find("#2841") != std::string::npos,
-          "AC2: service_dirty cites #2841");
+          "AC2: invalidate_function Soft/opt-out notes force-bump");
+    CHECK(dirty.find("aura_aot_note_cross_eval_hard_owner_scoped") != std::string::npos ||
+              dirty.find("aura_aot_cross_eval_hard_owner_scoped_armed") != std::string::npos,
+          "AC2: #2951 hard owner-scoped gate present on invalidate");
     CHECK(cpp.find("aura_aot_note_cross_eval_epoch_force_bump()") != std::string::npos,
           "AC2: hard reload fall-back also notes force-bump");
 
@@ -1180,6 +1182,155 @@ static void ac2841_6_source_and_linter() {
           "AC6: no docs/design/2841 per #1655");
 }
 
+// ── Issue #2951: multi-eval hard invalidate owner-scoped option ──
+// AC1 dual-eval + hard owner-scoped → no joint epoch advance; peer not force-staled
+// AC2 Soft / single-eval → joint bump (force path)
+// AC3 force-bump still available for process-wide recovery
+// AC4 same-eval joint / sid owner asserts preserved
+// AC5 schema-2951 + hard-owner-scoped / hard-global-bump keys
+// AC6 source-cite + linter
+
+static void ac2951_1_hard_owner_scoped_no_joint_advance() {
+    std::println("\n--- #2951 AC1: dual-eval hard owner-scoped does not advance joint epoch ---");
+    // Source-cite always: hard owner-scoped notes + counter + invalidate path.
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(cpp.find("g_cross_eval_hard_owner_scoped_total") != std::string::npos,
+          "2951 AC1: hard_owner_scoped_total counter");
+    CHECK(cpp.find("hard_os_pref") != std::string::npos ||
+              cpp.find("g_cross_eval_hard_owner_scoped_pref") != std::string::npos,
+          "2951 AC1: hard_os_pref on throttle path");
+    CHECK(dirty.find("aura_aot_note_cross_eval_hard_owner_scoped") != std::string::npos,
+          "2951 AC1: invalidate notes hard owner-scoped when armed");
+
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA2951ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB2951ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    if (aura_aot_state_map_size() < 2) {
+        CHECK(true, "2951 AC1: light-link map size ≤1 — contract source-cited");
+        aura_cleanup_aot_state(eval_a);
+        aura_cleanup_aot_state(eval_b);
+        return;
+    }
+    ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
+    ::setenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED", "1", 1);
+    aura_aot_set_reemit_owner_eval(eval_a);
+    aura_aot_set_register_owner_eval(eval_a);
+    const auto epoch0 = aura_aot_func_table_epoch();
+    const auto hos0 = cross_eval_hard_owner_scoped_total_v_read();
+    const auto thr0 = cross_eval_epoch_action_throttled_total_v_read();
+    // Prefer hard owner-scoped (no force); multi + throttle + owner → no joint advance.
+    aura_aot_note_cross_eval_hard_owner_scoped();
+    aura_aot_bump_func_table_epoch();
+    const auto epoch1 = aura_aot_func_table_epoch();
+    const auto hos1 = cross_eval_hard_owner_scoped_total_v_read();
+    const auto thr1 = cross_eval_epoch_action_throttled_total_v_read();
+    CHECK(epoch1 == epoch0, "2951 AC1: joint table epoch stable under hard owner-scoped");
+    CHECK(hos1 > hos0, "2951 AC1: hard_owner_scoped_total advances");
+    CHECK(thr1 > thr0, "2951 AC1: throttled total advances (owner-scoped path)");
+    // Peer B remains generation-current (no global epoch advance).
+    CHECK(aura_aot_func_table_epoch() == epoch0, "2951 AC1: peer not force-staled by joint bump");
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    ::unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    ::unsetenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED");
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+}
+
+static void ac2951_2_soft_force_joint() {
+    std::println("\n--- #2951 AC2: Soft / force path still advances joint epoch ---");
+    ::setenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED", "0", 1);
+    CHECK(aura_aot_cross_eval_hard_owner_scoped_armed() == 0,
+          "2951 AC2: env=0 disarms hard owner-scoped");
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xC2951ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xD2951ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    ::setenv("AURA_CROSS_EVAL_EPOCH_THROTTLE", "1", 1);
+    const auto epoch0 = aura_aot_func_table_epoch();
+    aura_aot_set_reemit_owner_eval(eval_a);
+    aura_aot_set_register_owner_eval(eval_a);
+    aura_aot_note_cross_eval_epoch_force_bump();
+    aura_aot_bump_func_table_epoch();
+    CHECK(aura_aot_func_table_epoch() == epoch0 + 1,
+          "2951 AC2: force-bump advances joint epoch under multi");
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    ::unsetenv("AURA_CROSS_EVAL_EPOCH_THROTTLE");
+    ::unsetenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED");
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+}
+
+static void ac2951_3_force_still_available() {
+    std::println("\n--- #2951 AC3: force-bump path still available for process-wide ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(cpp.find("aura_aot_note_cross_eval_epoch_force_bump") != std::string::npos,
+          "2951 AC3: force-bump API present");
+    CHECK(cpp.find("aura_aot_note_cross_eval_epoch_force_bump()") != std::string::npos,
+          "2951 AC3: reload fall-back still notes force-bump");
+    CHECK(dirty.find("aura_aot_cross_eval_hard_owner_scoped_armed") != std::string::npos,
+          "2951 AC3: invalidate gates on hard owner-scoped armed");
+    CHECK(cpp.find("g_cross_eval_hard_global_bump_total") != std::string::npos,
+          "2951 AC3: hard global bump counter");
+}
+
+static void ac2951_4_same_eval_joint_preserved() {
+    std::println("\n--- #2951 AC4: same-eval joint / owner asserts preserved ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("aura_aot_state_map_size() > 1") != std::string::npos,
+          "2951 AC4: multi gate preserved");
+    CHECK(cpp.find("if (multi && !force && cross_eval_epoch_throttle_armed())") !=
+              std::string::npos,
+          "2951 AC4: throttle gate preserved");
+    CHECK(cpp.find("notify_epoch_bump") != std::string::npos,
+          "2951 AC4: joint notify_epoch_bump on global path");
+}
+
+static void ac2951_5_query_additive() {
+    std::println("\n--- #2951 AC5: additive schema-2951 keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-2951") != std::string::npos, "2951 AC5: schema-2951");
+    CHECK(q.find("issue-2951") != std::string::npos, "2951 AC5: issue-2951");
+    CHECK(q.find("cross-eval-hard-owner-scoped-total") != std::string::npos,
+          "2951 AC5: hard-owner-scoped-total");
+    CHECK(q.find("cross-eval-hard-global-bump-total") != std::string::npos,
+          "2951 AC5: hard-global-bump-total");
+    CHECK(q.find("cross-eval-hard-owner-scoped-armed") != std::string::npos,
+          "2951 AC5: hard-owner-scoped-armed");
+    CHECK(q.find("schema-2841") != std::string::npos, "2951 AC5: schema-2841 preserved");
+    CHECK(q.find("schema-2744") != std::string::npos, "2951 AC5: schema-2744 preserved");
+    CHECK(q.find("schema-2713") != std::string::npos, "2951 AC5: schema-2713 preserved");
+}
+
+static void ac2951_6_source_and_linter() {
+    std::println("\n--- #2951 AC6: source-cite + linter ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto hdr = read_file("src/compiler/aura_jit_bridge.h");
+    const auto t = read_file("tests/compiler/test_named_closure_stable_id_at_create.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_cross_eval_hard_owner_scoped_2951.py");
+    CHECK(cpp.find("Issue #2951") != std::string::npos || cpp.find("#2951") != std::string::npos,
+          "2951 AC6: bridge cites #2951");
+    CHECK(dirty.find("Issue #2951") != std::string::npos ||
+              dirty.find("#2951") != std::string::npos,
+          "2951 AC6: service_dirty cites #2951");
+    CHECK(hdr.find("aura_aot_note_cross_eval_hard_owner_scoped") != std::string::npos,
+          "2951 AC6: header declares hard owner-scoped API");
+    CHECK(t.find("ac2951_1_hard_owner_scoped_no_joint_advance") != std::string::npos,
+          "2951 AC6: AC1 test");
+    CHECK(!lint.empty() && lint.find("Issue #2951") != std::string::npos, "2951 AC6: linter");
+    CHECK(build.find("check_cross_eval_hard_owner_scoped_2951") != std::string::npos,
+          "2951 AC6: build.py wires linter");
+    CHECK(!std::filesystem::exists("docs/design/2951-cross-eval-hard-owner-scoped.md"),
+          "2951 AC6: no docs/design/");
+}
+
 int run_test_named_closure_stable_id_at_create() {
     std::println("=== Issue #2550 + #2670: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
@@ -1225,6 +1376,14 @@ int run_test_named_closure_stable_id_at_create() {
     ac2841_4_soft_opt_in_production_default();
     ac2841_5_query_additive();
     ac2841_6_source_and_linter();
+    // Issue #2951: multi-eval hard invalidate owner-scoped option.
+    std::println("\n=== Issue #2951: multi-eval hard invalidate owner-scoped ===");
+    ac2951_1_hard_owner_scoped_no_joint_advance();
+    ac2951_2_soft_force_joint();
+    ac2951_3_force_still_available();
+    ac2951_4_same_eval_joint_preserved();
+    ac2951_5_query_additive();
+    ac2951_6_source_and_linter();
     // Issue #2857: atomic eval cleanup (single ordered transaction).
     std::println("\n=== Issue #2857: atomic eval cleanup (single ordered transaction) ===");
     ac2857_1_dual_eval_destroy_a_reemit_b();
