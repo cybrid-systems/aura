@@ -2064,6 +2064,20 @@ def cmd_lint():
             "Issue #2978 reemit-success sync covered remount linter failed — run python3 scripts/coverage/checks/check_reemit_success_sync_covered_remount_2978.py"
         )
         return r
+    # Issue #2980: merge event-driven Soft epoch-invariant walk with
+    # residual remount on bump/reemit edge. Extends
+    # test_anonymous_residual_stable_id_policy +
+    # test_epoch_invariant_walk (#81967); no docs/design/ (#1655).
+    erh_script = COVERAGE_CHECKS / "check_epoch_residual_merged_heal_2980.py"
+    if not erh_script.exists():
+        fail(f"missing {erh_script}")
+        return 1
+    r = run([sys.executable, str(erh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2980 epoch+residual merged heal linter failed — run python3 scripts/coverage/checks/check_epoch_residual_merged_heal_2980.py"
+        )
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
@@ -7530,6 +7544,21 @@ def cmd_residual_remount_prefer_force_jit_2977_coverage():
         fail("residual remount prefer force_jit (#2977) coverage contract rows failed")
         return 1
     ok("residual remount prefer force_jit (#2977) coverage clean")
+    return 0
+
+
+def cmd_epoch_residual_merged_heal_2980_coverage():
+    """Issue #2980: event-walk + residual remount merged heal."""
+    print(f"{B}=== epoch+residual merged heal coverage (#2980) ==={N}")
+    script = COVERAGE_CHECKS / "check_epoch_residual_merged_heal_2980.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("epoch+residual merged heal (#2980) coverage contract rows failed")
+        return 1
+    ok("epoch+residual merged heal (#2980) coverage clean")
     return 0
 
 
@@ -13852,6 +13881,7 @@ def main():
         "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,
         "residual-remount-prefer-2977": cmd_residual_remount_prefer_force_jit_2977_coverage,
         "reemit-success-sync-covered-2978": cmd_reemit_success_sync_covered_remount_2978_coverage,
+        "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "bridge-epoch-zero-stale-2930": cmd_bridge_epoch_zero_stale_2930_coverage,
         "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,

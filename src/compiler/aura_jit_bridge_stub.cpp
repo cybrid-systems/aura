@@ -1009,6 +1009,10 @@ aura_epoch_invariant_event_skipped_wrong_mode_total_v_read(void) {
     return g_epoch_invariant_event_skipped_wrong_mode_total_stub.load(std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) void aura_event_driven_epoch_invariant_walk_if_due(void) {}
+// Issue #2980: merged heal counter (light-link no-op).
+extern "C" __attribute__((weak)) std::uint64_t aura_epoch_residual_merged_heal_total_v_read(void) {
+    return 0;
+}
 
 // Issue #2693: Soft epoch-invariant consecutive-dirty fuse stubs
 // (light bundles without the production bridge TU). Mirror the

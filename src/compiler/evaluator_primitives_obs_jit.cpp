@@ -1213,6 +1213,13 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"reemit-success-sync-covered-remount-wired", make_int(1)},
                 {"schema-2978", make_int(2978)},
                 {"issue-2978", make_int(2978)},
+                // Issue #2980: event-walk + residual remount merged heal.
+                {"epoch-residual-merged-heal-total",
+                 make_int(
+                     static_cast<std::int64_t>(aura_epoch_residual_merged_heal_total_v_read()))},
+                {"epoch-residual-merged-heal-wired", make_int(1)},
+                {"schema-2980", make_int(2980)},
+                {"issue-2980", make_int(2980)},
                 // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
                 // assert. Soft single-eval / process-default (filter
                 // eval = nullptr) keeps this at 0. Production hard

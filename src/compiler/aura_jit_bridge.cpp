@@ -1277,9 +1277,10 @@ void commit_func_table_swap() {
     }
     // Issue #2012 / #1956: fan-out epoch listeners (reload + reemit).
     aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
-    // Issue #2668: event-driven soft walk on the epoch-bump edge.
-    // Closes the burst-mutation window that pure periodic Soft leaves
-    // open under reemit storms. Production + Soft only.
+    // Issue #2668 / #2980: event-driven soft walk on the epoch-bump
+    // edge. Closes the burst-mutation window that pure periodic Soft
+    // leaves open under reemit storms. Production + Soft only.
+    // #2980 merges residual remount into the same heal when budget>0.
     aura_event_driven_epoch_invariant_walk_if_due();
     // Issue #2753: stamp success proof (would_allow_native=true) after
     // commit so Agents can re-check without N-key join.
@@ -2024,8 +2025,9 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
     // Fan-out: same path as commit_func_table_swap so invalidate and
     // successful reload share one epoch-listener contract.
     aura::compiler::hot_update_registry().notify_epoch_bump(new_epoch);
-    // Issue #2668: event-driven soft walk on the epoch-bump edge
-    // (covers reemit / reload paths). Production + Soft only.
+    // Issue #2668 / #2980: event-driven soft walk on the epoch-bump
+    // edge (covers reemit / reload paths). Production + Soft only.
+    // #2980 merges residual remount into the same heal when budget>0.
     aura_event_driven_epoch_invariant_walk_if_due();
 }
 
@@ -4811,6 +4813,10 @@ std::atomic<std::uint64_t> g_epoch_invariant_periodic_period_ms{5000}; // defaul
 inline std::atomic<std::uint64_t> g_epoch_invariant_event_walks_total{0};              // #2668
 inline std::atomic<std::uint64_t> g_epoch_invariant_event_skipped_off_total{0};        // #2668
 inline std::atomic<std::uint64_t> g_epoch_invariant_event_skipped_wrong_mode_total{0}; // #2668
+// Issue #2980: merged heal — event walk actually ran residual remount
+// on the same bump/reemit edge (budget > 0). Distinct from event
+// walks_total (walk can fire with budget=0 / residual idle).
+inline std::atomic<std::uint64_t> g_epoch_residual_merged_heal_total{0}; // #2980
 } // namespace
 
 extern "C" std::uint64_t aura_epoch_invariant_periodic_walks_total_v_read(void) {
@@ -4840,6 +4846,10 @@ extern "C" std::uint64_t aura_epoch_invariant_event_skipped_off_total_v_read(voi
 }
 extern "C" std::uint64_t aura_epoch_invariant_event_skipped_wrong_mode_total_v_read(void) {
     return g_epoch_invariant_event_skipped_wrong_mode_total.load(std::memory_order_relaxed);
+}
+// Issue #2980: merged event-walk + residual remount heal counter.
+extern "C" std::uint64_t aura_epoch_residual_merged_heal_total_v_read(void) {
+    return g_epoch_residual_merged_heal_total.load(std::memory_order_relaxed);
 }
 extern "C" std::uint64_t aura_epoch_invariant_periodic_period_ms_v_read(void) {
     return g_epoch_invariant_periodic_period_ms.load(std::memory_order_relaxed);
@@ -5036,12 +5046,16 @@ extern "C" void aura_periodic_epoch_invariant_walk_if_due(void) {
     aura_2693_soft_fuse_record(behind_after_clear);
 }
 
-// Issue #2668: event-driven soft walk on commit_func_table_swap /
+// Issue #2668 / #2980: event-driven soft walk on commit_func_table_swap /
 // aura_aot_bump_func_table_epoch. Closes the burst-mutation window
 // that pure periodic Soft leaves open under reemit storms. Shares
 // last_walk_at_ms atomic with periodic path so double-walk on
 // boundary+swap in the same ms is amortized. Production + Soft only;
 // Soft / Off / mode=0: zero extra work on bump path.
+// Issue #2980: same-edge residual remount when budget > 0 so
+// generation-behind slots and residual MustDeopt heal together.
+// Quiet (budget==0): one relaxed load. Storm skip inside residual.
+// Hard / epoch_invariant off: no residual merge (returned above).
 extern "C" void aura_event_driven_epoch_invariant_walk_if_due(void) {
     if (!aura::compiler::typed_audit::production_defaults_active()) {
         g_epoch_invariant_event_skipped_off_total.fetch_add(1, std::memory_order_relaxed);
@@ -5071,6 +5085,15 @@ extern "C" void aura_event_driven_epoch_invariant_walk_if_due(void) {
     const std::size_t behind_after_clear = aura_aot_invalidate_all_stale_slots_for_eval(nullptr);
     (void)aura_epoch_invariant_must_deopt_stale_live_closures();
     aura_2693_soft_fuse_record(behind_after_clear);
+    // Issue #2980: merge residual remount into this Soft production
+    // heal pass. Quiet (budget==0): one relaxed load, no remount.
+    // #2928 cursor/budget + storm skip unchanged. Soft fuse K
+    // unchanged (#2693). Hard abort path not entered (mode==Soft).
+    const auto residual_b = aura_residual_remount_budget_default();
+    if (residual_b > 0) {
+        aura_residual_live_closure_remount_tick(residual_b);
+        g_epoch_residual_merged_heal_total.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 extern "C" bool aura_emit_object_file(const void* mod, const char* path) {

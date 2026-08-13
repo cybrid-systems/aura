@@ -955,14 +955,17 @@ void aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms);
 // #2541 soft walk on the active path. Called from
 // MutationBoundaryGuard::~MutationBoundaryGuard outermost success exit.
 void aura_periodic_epoch_invariant_walk_if_due(void);
-// Issue #2668: event-driven soft walk on epoch-bump / reemit edge.
+// Issue #2668 / #2980: event-driven soft walk on epoch-bump / reemit edge.
 // Declared here so commit_func_table_swap / aura_aot_bump_func_table_epoch
 // call sites (earlier in aura_jit_bridge.cpp) compile under -Werror.
+// #2980: same-edge residual remount when budget > 0 (Soft production).
 void aura_event_driven_epoch_invariant_walk_if_due(void);
 // Issue #2668 observability counters (query hash in obs_eval).
 [[nodiscard]] std::uint64_t aura_epoch_invariant_event_walks_total_v_read(void);
 [[nodiscard]] std::uint64_t aura_epoch_invariant_event_skipped_off_total_v_read(void);
 [[nodiscard]] std::uint64_t aura_epoch_invariant_event_skipped_wrong_mode_total_v_read(void);
+// Issue #2980: merged event-walk + residual remount heal invocations.
+[[nodiscard]] std::uint64_t aura_epoch_residual_merged_heal_total_v_read(void);
 // Issue #2693: Soft epoch-invariant consecutive-dirty fuse
 // (refine #2640 / #2668 — bumps epoch_invariant_soft_fuse_total
 // after K consecutive Soft walks that all left behind slots uncleared).

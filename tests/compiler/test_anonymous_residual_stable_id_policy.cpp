@@ -1351,6 +1351,163 @@ static void ac2978_6_source_and_linter() {
           "AC6: no invent test per #81967");
 }
 
+// ── Issue #2980: merge event-driven Soft walk + residual remount ──
+// Same bump/reemit edge: walk clears gen-behind slots, then residual
+// advances up to budget B. Quiet / Hard / off unchanged.
+
+static void ac2980_restore(std::uint32_t save) {
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        save, std::memory_order_relaxed);
+    aura_set_epoch_invariant_mode(0);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_test_reset_residual_remount_state();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac2980_1_merged_heal_same_edge() {
+    std::println("\n--- #2980 AC1: Soft production bump clears slot + residual ---");
+    const auto save = aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                          .production_defaults_active.load(std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_set_epoch_invariant_mode(1);               // Soft
+    aura_set_epoch_invariant_periodic_period_ms(0); // no rate-limit skip
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    for (int i = 0; i < 16; ++i)
+        aura_aot_clear_slot_for_test(i);
+    aura_aot_inject_live_stale_slot_for_test(11);
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "AC1: alloc residual closure");
+    aura_closure_set_must_deopt(cid, 1);
+    CHECK(aura_closure_get_must_deopt(cid) == 1, "AC1: MustDeopt set");
+    const auto ev0 = aura_epoch_invariant_event_walks_total_v_read();
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    const auto mh0 = aura_epoch_residual_merged_heal_total_v_read();
+    aura_event_driven_epoch_invariant_walk_if_due();
+    const bool walk_live = aura_epoch_invariant_event_walks_total_v_read() > ev0;
+    if (!walk_live) {
+        // Light-link: aura_jit_bridge_stub no-op. Residual tick still
+        // heals MustDeopt when invoked directly (#2928).
+        std::println("  (light link: event walk stub → behavioral via residual tick)");
+        aura_residual_live_closure_remount_tick(32);
+        CHECK(aura_closure_get_must_deopt(cid) == 0, "AC1: residual tick still heals");
+        CHECK(aura_residual_remount_ok_total_v_read() > ok0, "AC1: residual ok via standalone");
+    } else {
+        CHECK(aura_aot_count_live_generation_behind_slots() == 0, "AC1: slot cleared on same edge");
+        CHECK(aura_closure_get_must_deopt(cid) == 0, "AC1: residual MustDeopt cleared");
+        CHECK(aura_residual_remount_ok_total_v_read() > ok0, "AC1: residual ok advanced");
+        CHECK(aura_epoch_residual_merged_heal_total_v_read() > mh0, "AC1: merged heal advanced");
+    }
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #2980") != std::string::npos, "AC1: bridge cites #2980");
+    CHECK(br.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC1: event walk calls residual tick");
+    CHECK(br.find("g_epoch_residual_merged_heal_total") != std::string::npos,
+          "AC1: merged heal counter");
+    aura_aot_clear_slot_for_test(11);
+    ac2980_restore(save);
+}
+
+static void ac2980_2_quiet_zero_extra() {
+    std::println("\n--- #2980 AC2: quiet Soft / budget=0 → no residual merge ---");
+    const auto save = aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                          .production_defaults_active.load(std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_set_epoch_invariant_mode(1);
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(0);
+    const auto ev0 = aura_epoch_invariant_event_walks_total_v_read();
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    const auto mh0 = aura_epoch_residual_merged_heal_total_v_read();
+    aura_event_driven_epoch_invariant_walk_if_due();
+    if (aura_epoch_invariant_event_walks_total_v_read() == ev0)
+        std::println("  (light link: event walk stub — merge still gated on budget)");
+    CHECK(aura_residual_remount_ok_total_v_read() == ok0, "AC2: budget=0 no remount");
+    CHECK(aura_epoch_residual_merged_heal_total_v_read() == mh0, "AC2: budget=0 no merged heal");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("one relaxed load") != std::string::npos, "AC2: quiet one-load documented");
+    ac2980_restore(save);
+}
+
+static void ac2980_3_hard_no_merge() {
+    std::println("\n--- #2980 AC3: Hard / off → no residual merge ---");
+    const auto save = aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                          .production_defaults_active.load(std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_set_epoch_invariant_periodic_period_ms(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    const auto mh0 = aura_epoch_residual_merged_heal_total_v_read();
+    const auto ok0 = aura_residual_remount_ok_total_v_read();
+    const auto ev0 = aura_epoch_invariant_event_walks_total_v_read();
+    aura_set_epoch_invariant_mode(2); // Hard
+    const auto skip0 = aura_epoch_invariant_event_skipped_wrong_mode_total_v_read();
+    aura_event_driven_epoch_invariant_walk_if_due();
+    if (aura_epoch_invariant_event_skipped_wrong_mode_total_v_read() == skip0)
+        std::println("  (light link: event walk stub — Hard skip is source-gated)");
+    CHECK(aura_epoch_invariant_event_walks_total_v_read() == ev0, "AC3: Hard no event walk");
+    CHECK(aura_epoch_residual_merged_heal_total_v_read() == mh0, "AC3: Hard no merged heal");
+    CHECK(aura_residual_remount_ok_total_v_read() == ok0, "AC3: Hard no residual merge");
+    aura_set_epoch_invariant_mode(0); // Off
+    aura_event_driven_epoch_invariant_walk_if_due();
+    CHECK(aura_epoch_residual_merged_heal_total_v_read() == mh0, "AC3: Off no merged heal");
+    ac2980_restore(save);
+}
+
+static void ac2980_4_standalone_preserved() {
+    std::println("\n--- #2980 AC4: #2928 / #2668 standalone paths preserved ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(rt.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC4: #2928 residual tick still standalone");
+    CHECK(br.find("aura_periodic_epoch_invariant_walk_if_due") != std::string::npos,
+          "AC4: #2640 periodic walk preserved");
+    CHECK(br.find("aura_event_driven_epoch_invariant_walk_if_due") != std::string::npos,
+          "AC4: #2668 event walk preserved");
+    CHECK(dtor.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "AC4: BoundaryExit residual still standalone");
+    CHECK(br.find("aura_2693_soft_fuse_record") != std::string::npos,
+          "AC4: Soft fuse K path unchanged");
+}
+
+static void ac2980_5_query_keys() {
+    std::println("\n--- #2980 AC5: additive schema; #2668/#2928 preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2980") == 2980, "AC5: schema-2980");
+    CHECK(href(cs, "issue-2980") == 2980, "AC5: issue-2980");
+    CHECK(href(cs, "epoch-residual-merged-heal-wired") == 1, "AC5: merged-heal-wired");
+    CHECK(href(cs, "epoch-residual-merged-heal-total") >= 0, "AC5: merged-heal-total");
+    CHECK(href(cs, "schema-2928") == 2928, "AC5: schema-2928 preserved");
+    CHECK(href(cs, "schema-2977") == 2977, "AC5: schema-2977 preserved");
+    CHECK(href(cs, "schema-2978") == 2978, "AC5: schema-2978 preserved");
+    CHECK(href(cs, "residual-remount-wired") == 1, "AC5: residual-remount-wired preserved");
+}
+
+static void ac2980_6_source_and_linter() {
+    std::println("\n--- #2980 AC6: source-cite + linter + no docs/design ---");
+    const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
+    CHECK(t.find("ac2980_1_merged_heal_same_edge") != std::string::npos, "AC6: AC1 present");
+    CHECK(t.find("run_test_anonymous_residual_stable_id_policy") != std::string::npos,
+          "AC6: residual suite");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #2980") != std::string::npos, "AC6: bridge cites #2980");
+    const auto hh = read_file("src/compiler/aura_jit_bridge.h");
+    CHECK(hh.find("Issue #2980") != std::string::npos, "AC6: header cites #2980");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-2980") != std::string::npos, "AC6: obs_eval schema-2980");
+    const auto lint = read_file("scripts/coverage/checks/check_epoch_residual_merged_heal_2980.py");
+    CHECK(!lint.empty() && lint.find("2980") != std::string::npos, "AC6: linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_epoch_residual_merged_heal_2980") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2980-epoch-residual-merged-heal.md").empty(),
+          "AC6: no docs/design/2980-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2980.cpp").empty(),
+          "AC6: no invent test per #81967");
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
@@ -1720,10 +1877,18 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2978_4_cap_overflow_residual();
     ac2978_5_query_keys();
     ac2978_6_source_and_linter();
+    std::println("\n=== Issue #2980: event-walk + residual remount merged heal ===");
+    ac2980_1_merged_heal_same_edge();
+    ac2980_2_quiet_zero_extra();
+    ac2980_3_hard_no_merge();
+    ac2980_4_standalone_preserved();
+    ac2980_5_query_keys();
+    ac2980_6_source_and_linter();
 
-    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978: {} "
-                 "passed, {} failed ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980: {} "
+        "passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
