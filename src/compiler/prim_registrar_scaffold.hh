@@ -89,6 +89,7 @@ struct PrimSpec {
     std::uint16_t required_effects = 0; // 0 → #2152 infer
     bool effect_enforced_in_body = false;
     bool security_exempt = false;
+    bool guard_exempt = false; // #2986 metadata-only mutate:*
     std::string_view doc{};
     std::string_view category = kPrimCategoryGeneral;
     std::string_view schema{};
@@ -144,6 +145,7 @@ template <typename PrimMetaT>
     meta.required_effects = s.required_effects;
     meta.effect_enforced_in_body = s.effect_enforced_in_body;
     meta.security_exempt = s.security_exempt;
+    meta.guard_exempt = s.guard_exempt;
     meta.doc = std::string(s.doc);
     meta.category = std::string(s.category);
     meta.schema = std::string(s.schema);

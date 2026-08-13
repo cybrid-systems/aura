@@ -1306,6 +1306,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     // reflect_hygiene_macro_reject_total + reflect_dirty_macro_nodes_total
     // after bumping validate_reflected_query_total by 1.
     // SECURITY_EXEMPT: diagnostic counters only — no AST write (#2057/#2152).
+    // GUARD_EXEMPT: diagnostic counters only — no AST write (#2986). PrimMeta.guard_exempt.
     add("mutate:validate-reflected", [&ev](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         // Public accessor: register_query_primitives is not a friend of
@@ -1321,8 +1322,9 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     {
         ::aura::compiler::PrimMeta ex{};
         ex.security_exempt = true;
+        ex.guard_exempt = true;
         ex.pure = true;
-        ex.doc = "SECURITY_EXEMPT: diagnostic reflect counters only (#2152)";
+        ex.doc = "SECURITY_EXEMPT / GUARD_EXEMPT: diagnostic reflect counters only (#2152/#2986)";
         ev.primitives().set_meta_for_name("mutate:validate-reflected", std::move(ex));
     }
 
@@ -1412,6 +1414,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     // best-effort" check — full type-level validation is a
     // follow-up.
     // SECURITY_EXEMPT: read-only schema check — no AST write (#2057/#2152).
+    // GUARD_EXEMPT: read-only schema check — no AST write (#2986). PrimMeta.guard_exempt.
     // Issue #2628: private for (mutate :validate).
     ObservabilityPrims::register_stats_impl(
         "mutate:validate-against-schema",

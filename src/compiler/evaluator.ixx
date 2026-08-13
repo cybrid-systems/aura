@@ -167,6 +167,9 @@ export struct PrimMeta {
     bool effect_enforced_in_body = false;
     // Documented security-exempt (read-only admin / query of security state).
     bool security_exempt = false;
+    // Issue #2986: metadata-only / policy mutate:* may skip MutationBoundaryGuard
+    // when paired with a `// GUARD_EXEMPT: ` comment. Structural mutates stay 0.
+    bool guard_exempt = false;
     std::string doc;
     std::string category; // eda | sva | verification | general | deprecated | rendering
     std::string schema;   // e.g. "(int string) -> bool"

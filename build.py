@@ -2375,6 +2375,18 @@ def cmd_lint():
             "Issue #2985 mutation-concurrency-health admit linter failed — run python3 scripts/coverage/checks/check_mutation_concurrency_health_admit_2985.py"
         )
         return r
+    # Issue #2986: all mutate:* Guard-wrapped or GUARD_EXEMPT + production
+    # naked fail-closed. Extends test_mutation_guard_try_acquire_unit (#81967).
+    mgc_script = COVERAGE_CHECKS / "check_mutate_guard_coverage.py"
+    if not mgc_script.exists():
+        fail(f"missing {mgc_script}")
+        return 1
+    r = run([sys.executable, str(mgc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2986 mutate Guard coverage linter failed — run python3 scripts/coverage/checks/check_mutate_guard_coverage.py"
+        )
+        return r
     # Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count.
     # Extends test_type_linear_commit_health (#81967); no docs/design/.
     lcrc_script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
@@ -10103,6 +10115,21 @@ def cmd_mutation_concurrency_health_admit_2985_coverage():
     return 0
 
 
+def cmd_mutate_guard_coverage_2986_coverage():
+    """Issue #2986: every mutate:* Guard-wrapped or GUARD_EXEMPT."""
+    print(f"{B}=== mutate Guard coverage (#2986) ==={N}")
+    script = COVERAGE_CHECKS / "check_mutate_guard_coverage.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutate Guard coverage (#2986) coverage contract rows failed")
+        return 1
+    ok("mutate Guard coverage (#2986) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -14072,6 +14099,7 @@ def main():
         "composite-required-type-default-2983": cmd_composite_required_type_default_2983_coverage,
         "linear-compact-root-consistency-2984": cmd_linear_compact_root_consistency_2984_coverage,
         "mutation-concurrency-health-admit-2985": cmd_mutation_concurrency_health_admit_2985_coverage,
+        "mutate-guard-coverage-2986": cmd_mutate_guard_coverage_2986_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
