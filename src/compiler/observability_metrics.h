@@ -1529,6 +1529,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> hygiene_filter_default_skip_total{0};        // #2525
     std::atomic<std::uint64_t> hygiene_filter_include_opt_in_total{0};      // #2525
     std::atomic<std::uint64_t> tag_arity_marker_dimension_rebuild_total{0}; // #2525
+    // Issue #2989: query-side concurrent SafePCVSpan pin + epoch retry.
+    // query_safe_span_pin_count: production query prims (pattern/filter/
+    //   children/parent/by-marker) that pin via children_columnar.
+    // query_epoch_retry_total: generation snapshot mismatch → retry.
+    std::atomic<std::uint64_t> query_safe_span_pin_count{0}; // #2989
+    std::atomic<std::uint64_t> query_epoch_retry_total{0};   // #2989
     std::atomic<std::uint64_t> provenance_query_total{0};
     std::atomic<std::uint64_t> macro_introduced_in_pattern_violations{0};
     std::atomic<std::uint64_t> by_marker_where_filter_hits{0};

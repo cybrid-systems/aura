@@ -211,10 +211,10 @@ bool QueryMatcher::match_subtree(NodeId ws_id, NodeId pat_id) {
             // Composite node: recurse via match_list. Savepoint
             // ensures failed children-match rolls back any
             // captures bound during the attempt.
-            // Issue #678: pin workspace children PCV so concurrent
+            // Issue #678 / #2989: pin workspace children PCV so concurrent
             // structural mutations cannot invalidate ws_ch spans
             // held during Kleene backtracking.
-            // Issue #1918: matcher children path is columnar SafePCVSpan.
+            // Issue #1918 / #2989: matcher children path is columnar SafePCVSpan.
             auto ws_safe = ws_flat_->children_safe_view(ws_id);
             soa_view::record_edsl_matcher_soa_path();
             soa_view::record_edsl_children_soa_path();
