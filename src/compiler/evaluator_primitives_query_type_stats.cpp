@@ -2512,6 +2512,28 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("commit-readiness-force-reason-required-type", 14);
                 insert_kv("schema-2898", 2898);
                 insert_kv("issue-2898", 2898);
+                // Issue #2983: production default required TypeId auto-fill.
+                insert_kv(
+                    "composite-required-type-auto-fill-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.composite_required_type_auto_fill_total
+                            .load(std::memory_order_relaxed)));
+                insert_kv("composite-required-type-auto-fill-capped-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters
+                                  .composite_required_type_auto_fill_capped_total.load(
+                                      std::memory_order_relaxed)));
+                insert_kv("composite-required-type-reject-over-infer-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters
+                                  .composite_required_type_reject_over_infer_total.load(
+                                      std::memory_order_relaxed)));
+                insert_kv("composite-required-type-auto-fill-wired", 1);
+                insert_kv("composite-required-type-auto-fill-cap",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::kCompositeRequiredTypeAutoFillCap));
+                insert_kv("schema-2983", 2983);
+                insert_kv("issue-2983", 2983);
             }
             // Issue #2458: truncate-commit Soft observe / Hard
             // full-solve-or-reject. Additive keys on

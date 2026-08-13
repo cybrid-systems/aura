@@ -1177,12 +1177,85 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
         }
     }
 
+    // Issue #2983: production default required TypeId set when Agents
+    // under-mark (expected_partial + empty span + non-empty touched).
+    // Derive-then-check (cap 16). Soft: skip — empty span stays zero-cost.
+    // Explicit non-empty span keeps #2898 semantics. Reject-over-infer
+    // (env / test override) hard-rejects with force_reason required_type
+    // instead of inferring.
+    {
+        const bool hard_req2983 = production_defaults_active() ||
+                                  get_strategy() == AuditStrategy::Full ||
+                                  aura::core::sandbox::is_strict();
+        const auto required0 = typed_audit::composite_required_solved_pending();
+        if (hard_req2983 && expected_partial && required0.empty()) {
+            std::vector<typed_audit::CompositeRequiredTypeId> filled;
+            filled.reserve(typed_audit::kCompositeRequiredTypeAutoFillCap);
+            bool more = false;
+            auto push_tid = [&](aura::core::TypeId t) {
+                if (!t.valid())
+                    return;
+                if (filled.size() >= typed_audit::kCompositeRequiredTypeAutoFillCap) {
+                    more = true;
+                    return;
+                }
+                for (const auto& e : filled) {
+                    if (e.index == t.index)
+                        return;
+                }
+                filled.push_back({t.index, t.generation});
+            };
+            auto* tc2983 = commit_type_checker_opaque_
+                               ? static_cast<TypeChecker*>(commit_type_checker_opaque_)
+                               : nullptr;
+            if (tc2983) {
+                for (const auto& t : tc2983->last_occurrence_vars())
+                    push_tid(t);
+                for (const auto& g : tc2983->constraint_system().occurrence_goals_for_test())
+                    push_tid(g.var);
+                for (const auto idx : tc2983->constraint_system().touched_roots())
+                    push_tid(aura::core::TypeId{idx, 0});
+            }
+            if (commit_occurrence_vars_opaque_) {
+                auto* occ =
+                    static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+                for (const auto& t : *occ)
+                    push_tid(t);
+            }
+            if (!filled.empty()) {
+                if (typed_audit::composite_required_reject_over_infer()) {
+                    c.composite_required_type_reject_over_infer_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    cr.required_type_ok = false;
+                    cr.required_type_fail_count = static_cast<std::uint32_t>(filled.size());
+                    cr.solve_ok = false;
+                    cr.rejected = true;
+                    cr.committed = false;
+                    c.composite_required_type_fail_total.fetch_add(1, std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                        m->composite_required_type_fail_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    c.composite_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                    if (out_commit)
+                        *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+                    return false;
+                }
+                typed_audit::set_composite_required_solved(filled);
+                c.composite_required_type_auto_fill_total.fetch_add(1, std::memory_order_relaxed);
+                if (more)
+                    c.composite_required_type_auto_fill_capped_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+        }
+    }
+
     // Issue #2898: explicit required TypeId invariant set (anti under-mark
     // false-green). Agents stage TypeIds via set_composite_required_solved
     // that MUST be concrete after SDO (UF binding not a free var). Empty
     // span → zero cost (no walk). Production/Full/Strict: hard reject +
     // composite_required_type_fail_total. Soft: observe-only allow.
     // Does not replace empty-CS / truncate / linear / blame faces.
+    // Issue #2983 may have just staged a derived set; this check consumes it.
     {
         const auto required = typed_audit::composite_required_solved_pending();
         if (!required.empty()) {
@@ -2534,6 +2607,77 @@ void Evaluator::stage_composite_required_unbound_var_for_test() noexcept {
         typed_audit::CompositeRequiredTypeId rid{t.index, t.generation};
         typed_audit::set_composite_required_solved(
             std::span<const typed_audit::CompositeRequiredTypeId>(&rid, 1));
+        commit_cs_live_ = true;
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
+// Issue #2983: stage unbound touched TypeVar WITHOUT setting required
+// (empty-span under-mark). Production auto-fill should pick it up.
+void Evaluator::stage_composite_touched_unbound_for_test() noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto& cs = tc->constraint_system();
+        const auto t = cs.fresh_var();
+        cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
+        typed_audit::clear_composite_required_solved();
+        commit_cs_live_ = true;
+        if (!commit_occurrence_vars_opaque_)
+            commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
+        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+        occ->clear();
+        occ->push_back(t);
+    } catch (...) {
+        // [SILENCE-PRIM] test helper
+    }
+}
+
+// Issue #2983: stage N unbound touched TypeVars (cap / overflow test).
+void Evaluator::stage_composite_touched_n_for_test(std::uint32_t n) noexcept {
+    try {
+        auto* reg_raw = ensure_type_registry();
+        if (!reg_raw)
+            return;
+        auto* reg = static_cast<aura::core::TypeRegistry*>(reg_raw);
+        const auto reg_gen = type_registry_generation();
+        if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
+            destroy_commit_type_checker();
+        if (!commit_type_checker_opaque_) {
+            auto* tc = new TypeChecker(*reg);
+            if (compiler_metrics_)
+                tc->set_metrics(compiler_metrics_);
+            commit_type_checker_opaque_ = tc;
+            commit_tc_registry_gen_ = reg_gen;
+        }
+        auto* tc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+        auto& cs = tc->constraint_system();
+        typed_audit::clear_composite_required_solved();
+        if (!commit_occurrence_vars_opaque_)
+            commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
+        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
+        occ->clear();
+        const auto want = n == 0 ? 0u : n;
+        occ->reserve(want);
+        for (std::uint32_t i = 0; i < want; ++i) {
+            const auto t = cs.fresh_var();
+            cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
+            occ->push_back(t);
+        }
         commit_cs_live_ = true;
     } catch (...) {
         // [SILENCE-PRIM] test helper

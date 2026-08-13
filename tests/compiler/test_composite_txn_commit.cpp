@@ -313,7 +313,8 @@ static void ac2898_5_source_cite() {
     std::println("\n--- #2898 AC5: source-cite + no docs/design ---");
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
     const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto om = read_file("src/compiler/observability_metrics.h");
     const auto t = read_file("tests/compiler/test_composite_txn_commit.cpp");
     const auto lint = read_file("scripts/coverage/checks/check_composite_required_type_2898.py");
@@ -349,6 +350,163 @@ static void ac2898_5_source_cite() {
     CHECK(tc.find("composite_txn_commit") != std::string::npos, "2898 AC5: commit body");
 }
 
+// ── Issue #2983: production default required TypeId set ──
+
+static void ac2983_1_prod_empty_span_autofill_rejects() {
+    std::println("\n--- #2983 AC1: production + empty span + touched → auto-fill + check ---");
+    reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    seed(cs);
+    const auto fill0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_auto_fill_total);
+    const auto fail0 = load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total);
+    const auto checked0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total);
+    cs.evaluator().stage_composite_touched_unbound_for_test();
+    CHECK(aura::compiler::typed_audit::composite_required_solved_pending().empty(),
+          "2983 AC1: required span empty before commit");
+    CompositeTxnCommitResult cr{};
+    const bool committed = cs.evaluator().composite_txn_commit(
+        /*mid=*/29831, "required-autofill-ac1", 0, 0, 1, /*nested=*/true, /*batch=*/true, &cr);
+    CHECK(!committed, "2983 AC1: unbound derived required rejects");
+    CHECK(!cr.required_type_ok, "2983 AC1: required_type_ok false");
+    CHECK(cr.required_type_fail_count >= 1, "2983 AC1: fail_count >= 1");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_auto_fill_total) > fill0,
+          "2983 AC1: auto_fill_total bumps");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total) > fail0,
+          "2983 AC1: fail_total bumps (derived miss)");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total) >
+              checked0,
+          "2983 AC1: checked_total advances");
+    CHECK(aura::compiler::typed_audit::composite_required_solved_pending().empty(),
+          "2983 AC1: pending consumed");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac2983_2_soft_empty_zero_cost() {
+    std::println("\n--- #2983 AC2: Soft + empty span + touched → no auto-fill ---");
+    reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    seed(cs);
+    const auto fill0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_auto_fill_total);
+    const auto checked0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total);
+    const auto fail0 = load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total);
+    cs.evaluator().stage_composite_touched_unbound_for_test();
+    CompositeTxnCommitResult cr{};
+    (void)cs.evaluator().composite_txn_commit(/*mid=*/29832, "required-autofill-ac2", 0, 0, 1,
+                                              /*nested=*/true, /*batch=*/true, &cr);
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_auto_fill_total) ==
+              fill0,
+          "2983 AC2: auto_fill_total unchanged under Soft");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total) ==
+              checked0,
+          "2983 AC2: checked_total unchanged (zero cost)");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_fail_total) == fail0,
+          "2983 AC2: fail_total unchanged");
+    CHECK(cr.required_type_ok, "2983 AC2: required_type_ok true (no fill)");
+}
+
+static void ac2983_3_explicit_span_unchanged() {
+    std::println("\n--- #2983 AC3: explicit required span unchanged (#2898) ---");
+    reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    seed(cs);
+    const auto fill0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_auto_fill_total);
+    cs.evaluator().stage_composite_required_unbound_var_for_test();
+    CHECK(!aura::compiler::typed_audit::composite_required_solved_pending().empty(),
+          "2983 AC3: explicit span non-empty");
+    CompositeTxnCommitResult cr{};
+    const bool committed = cs.evaluator().composite_txn_commit(
+        /*mid=*/29833, "required-autofill-ac3", 0, 0, 1, /*nested=*/true, /*batch=*/true, &cr);
+    CHECK(!committed, "2983 AC3: explicit unbound still rejects");
+    CHECK(!cr.required_type_ok, "2983 AC3: required_type_ok false");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_auto_fill_total) ==
+              fill0,
+          "2983 AC3: auto_fill_total unchanged (explicit span)");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac2983_4_cap_sixteen() {
+    std::println("\n--- #2983 AC4: auto-fill cap ≤16 ---");
+    reset_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    seed(cs);
+    const auto cap0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_auto_fill_capped_total);
+    const auto checked0 =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total);
+    cs.evaluator().stage_composite_touched_n_for_test(20);
+    CompositeTxnCommitResult cr{};
+    (void)cs.evaluator().composite_txn_commit(/*mid=*/29834, "required-autofill-ac4", 0, 0, 1,
+                                              /*nested=*/true, /*batch=*/true, &cr);
+    const auto checked_delta =
+        load_u64(g_typed_mutation_audit_counters.composite_required_type_checked_total) - checked0;
+    CHECK(checked_delta <= 16, "2983 AC4: checked_total delta ≤16");
+    CHECK(checked_delta == 16, "2983 AC4: checked_total delta == cap");
+    CHECK(load_u64(g_typed_mutation_audit_counters.composite_required_type_auto_fill_capped_total) >
+              cap0,
+          "2983 AC4: capped_total bumps");
+    CHECK(aura::compiler::typed_audit::kCompositeRequiredTypeAutoFillCap == 16,
+          "2983 AC4: cap constant 16");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac2983_5_additive_query() {
+    std::println("\n--- #2983 AC5: additive query keys; #2898/#2610/#2851 preserved ---");
+    CompilerService cs;
+    CHECK(fidelity_href(cs, "schema-2983") == 2983, "2983 AC5: schema-2983");
+    CHECK(fidelity_href(cs, "issue-2983") == 2983, "2983 AC5: issue-2983");
+    CHECK(fidelity_href(cs, "composite-required-type-auto-fill-wired") == 1, "2983 AC5: wired");
+    CHECK(fidelity_href(cs, "composite-required-type-auto-fill-cap") == 16, "2983 AC5: cap 16");
+    CHECK(fidelity_href(cs, "composite-required-type-auto-fill-total") >= 0,
+          "2983 AC5: auto-fill-total");
+    CHECK(fidelity_href(cs, "schema-2898") == 2898, "2983 AC5: schema-2898 preserved");
+    CHECK(fidelity_href(cs, "schema-2610") == 2610, "2983 AC5: schema-2610 preserved");
+    CHECK(fidelity_href(cs, "commit-readiness-force-reason-required-type") == 14,
+          "2983 AC5: force reason 14");
+    CHECK(fidelity_href(cs, "commit-readiness-force-reason-auto-partial") == 6,
+          "2983 AC5: auto_partial 6");
+    CHECK(aura::compiler::typed_audit::commit_readiness_reason_code("required_type") == 14,
+          "2983 AC5: required_type → 14");
+    CHECK(aura::compiler::typed_audit::commit_readiness_reason_code("log_forces_partial") == 12,
+          "2983 AC5: log_forces_partial → 12");
+    CHECK(aura::compiler::typed_audit::kCompositeRequiredTypeDefaultIssue == 2983,
+          "2983 AC5: issue constant");
+}
+
+static void ac2983_6_source_and_linter() {
+    std::println("\n--- #2983 AC6: source-cite + linter + no docs/design ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto t = read_file("tests/compiler/test_composite_txn_commit.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_composite_required_type_default_2983.py");
+    const auto build = read_file("build.py");
+    CHECK(aud.find("Issue #2983") != std::string::npos, "2983 AC6: audit cites #2983");
+    CHECK(aud.find("kCompositeRequiredTypeAutoFillCap") != std::string::npos, "2983 AC6: cap");
+    CHECK(tc.find("Issue #2983") != std::string::npos, "2983 AC6: typecheck cites #2983");
+    CHECK(tc.find("set_composite_required_solved") != std::string::npos,
+          "2983 AC6: derive then set");
+    CHECK(tc.find("stage_composite_touched_unbound_for_test") != std::string::npos,
+          "2983 AC6: stage helper");
+    CHECK(t.find("ac2983_1_prod_empty_span_autofill_rejects") != std::string::npos,
+          "2983 AC6: AC1 test");
+    CHECK(!lint.empty() && lint.find("2983") != std::string::npos, "2983 AC6: linter present");
+    CHECK(build.find("check_composite_required_type_default_2983") != std::string::npos,
+          "2983 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2983-composite-required-type-default.md").empty(),
+          "2983 AC6: no docs/design/ per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2983.cpp").empty(),
+          "2983 AC6: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_composite_txn_commit() {
@@ -365,7 +523,15 @@ int run_test_composite_txn_commit() {
     ac2898_3_soft_observe_only();
     ac2898_4_additive_query();
     ac2898_5_source_cite();
-    std::println("\n=== #2105 + #2898 Results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2983: production default required TypeId set ===");
+    ac2983_1_prod_empty_span_autofill_rejects();
+    ac2983_2_soft_empty_zero_cost();
+    ac2983_3_explicit_span_unchanged();
+    ac2983_4_cap_sixteen();
+    ac2983_5_additive_query();
+    ac2983_6_source_and_linter();
+    std::println("\n=== #2105 + #2898 + #2983 Results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
