@@ -485,13 +485,16 @@ public:
     // AC's ≥60% reduction comes from skipping the (M-N) clean
     // constraints in the worklist scan.
     //
-    // Issue #432 / #466: after the dirty worklist pass,
-    // solve_delta re-scans clean constraints whose vars
-    // intersect touched_roots_ (Union-Find roots rebound
-    // during unify). Cross-delta conflicts return
-    // SolveResult::CONFLICT without a full solve() fallback.
-    // Bounded scan (kReverifyCleanScanLimit); metrics:
-    // delta_conflict_reverify_total / delta_conflict_detected_total.
+    // Issue #432 / #466 / #2939: after the dirty worklist pass,
+    // solve_delta re-verifies a **bounded dependency closure** of
+    // clean constraints over var_to_constraints_ (seeds =
+    // touched ∪ occurrence ∪ let-poly ∪ pending_full_solve;
+    // BFS expands UF endpoint reps). Cap = effective_reverify_limit();
+    // cap hit → remaining frontier → pending_full_solve (no silent
+    // drop). Cross-delta conflicts return SolveResult::CONFLICT
+    // without a full solve() fallback. Metrics:
+    // delta_conflict_reverify_total / delta_conflict_detected_total
+    // + delta_reverify_closure_{nodes,edges,cap_hit}_total (#2939).
     void add_delta(Constraint c);
     // Issue #118: returns SolveResult. If the result is TIMEOUT,
     // `unresolved_out` (if non-null) is filled with the constraints

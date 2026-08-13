@@ -1738,6 +1738,30 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
             insert_kv("delta_reverify_expand_total", reverify_expand);
             insert_kv("delta-reverify-expand-wired", 1);
             insert_kv("schema-2356", 2356);
+            // Issue #2939: dep-closure reverify (O(affected) vs clean scan).
+            {
+                const std::int64_t cl_nodes =
+                    m ? static_cast<std::int64_t>(
+                            m->delta_reverify_closure_nodes_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t cl_edges =
+                    m ? static_cast<std::int64_t>(
+                            m->delta_reverify_closure_edges_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t cl_cap =
+                    m ? static_cast<std::int64_t>(
+                            m->delta_reverify_closure_cap_hit_total.load(std::memory_order_relaxed))
+                      : 0;
+                insert_kv("delta-reverify-closure-nodes-total", cl_nodes);
+                insert_kv("delta_reverify_closure_nodes_total", cl_nodes);
+                insert_kv("delta-reverify-closure-edges-total", cl_edges);
+                insert_kv("delta_reverify_closure_edges_total", cl_edges);
+                insert_kv("delta-reverify-closure-cap-hit-total", cl_cap);
+                insert_kv("delta_reverify_closure_cap_hit_total", cl_cap);
+                insert_kv("delta-reverify-closure-wired", 1);
+                insert_kv("schema-2939", 2939);
+                insert_kv("issue-2939", 2939);
+            }
             insert_kv("issue-2356", 2356);
             insert_kv("solve-delta-pending-full-solve-roots", pending_full);
             insert_kv("pending-full-solve-roots", pending_full);

@@ -1756,7 +1756,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (134)
 
-- `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
+- `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
 - `tests/orch/test_agent_ask.cpp` (—) [domain_suite, theme_orch] — AC1 (#2231/#2401): Target uses agent_reply → agent_ask returns ok +
 - `tests/compiler/test_aot_stats_null_metrics.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1835/#1843 (#1978 renamed): issue# moved from filename to header.

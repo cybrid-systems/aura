@@ -818,7 +818,14 @@ void ConstraintSystem::record_truncated_partial_blame(std::size_t scanned, std::
     // Still append a dumpable partial chain so AI self-repair can see
     // what was scanned vs left unscanned.
     last_reverify_truncated_ = true;
-    last_reverify_unscanned_ = candidates > scanned ? candidates - scanned : 0;
+    // Issue #2939: dep-closure collection-cap can fill `candidates` exactly
+    // to scan_limit so candidates-scanned==0 while frontier/pending residual
+    // was already recorded in last_reverify_unscanned_. Do not clobber that.
+    const auto ordered_residual = candidates > scanned ? candidates - scanned : 0;
+    if (ordered_residual > last_reverify_unscanned_)
+        last_reverify_unscanned_ = ordered_residual;
+    if (last_reverify_unscanned_ == 0)
+        last_reverify_unscanned_ = 1; // truncated always surfaces residual signal
     last_blame_chain_ = {};
     last_blame_chain_.root_mutation_id = active_mutation_id_;
     last_blame_chain_.partial = true;
@@ -956,8 +963,9 @@ bool ConstraintSystem::constraint_references_touched(const Constraint& c) const 
 }
 
 bool ConstraintSystem::reverify_clean_constraints_for_touched() {
+    // Issue #2939: empty seeds (incl. pending) → zero cost.
     if (touched_roots_.empty() && occurrence_priority_roots_.empty() &&
-        let_poly_dirty_roots_.empty())
+        let_poly_dirty_roots_.empty() && pending_full_solve_roots_.empty())
         return true;
 
     // Issue #1873: reset truncation markers for this reverify pass.
@@ -967,49 +975,101 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
     const bool saved_record = delta_record_mode_;
     delta_record_mode_ = false;
 
-    std::unordered_set<std::size_t> to_check;
-    to_check.reserve(
-        (touched_roots_.size() + occurrence_priority_roots_.size() + let_poly_dirty_roots_.size()) *
-        2);
-    // Issue #2146: clean reverify must NOT share processed_roots_this_epoch_
-    // with the dirty worklist collector. Dirty collect already marked those
-    // roots "processed" earlier in the same solve_delta; skipping them here
-    // would silently drop clean-constraint reverify (and break truncation /
-    // pending_full_solve drain). Use a local visited set for this pass only.
-    // Epoch skip for dirty seeding remains in solve_delta_impl (#2065).
-    std::unordered_set<std::uint32_t> reverify_roots_seen;
-    auto collect_clean_for_root = [&](std::uint32_t root) {
-        if (!reverify_roots_seen.insert(root).second)
-            return;
-        auto it = var_to_constraints_.find(root);
-        if (it == var_to_constraints_.end())
-            return;
-        for (auto idx : it->second) {
-            if (idx >= constraints_.size())
-                continue;
-            if (idx < constraint_dirty_.size() && constraint_dirty_[idx])
-                continue;
-            to_check.insert(idx);
-        }
-    };
-    for (auto root : touched_roots_)
-        collect_clean_for_root(root);
-    // Issue #745: always re-verify clean constraints tied to
-    // Occurrence-narrowed roots, even when this delta's unify
-    // only touched unrelated roots.
-    for (auto root : occurrence_priority_roots_)
-        collect_clean_for_root(root);
-    // Issue #1617: Let-Poly dirty roots force re-generalize checks.
-    for (auto root : let_poly_dirty_roots_)
-        collect_clean_for_root(root);
-
     const auto scan_limit = effective_reverify_limit();
     last_reverify_limit_used_ = scan_limit; // Issue #2146 Agent surface
-    const bool truncated = to_check.size() > scan_limit;
-    // Issue #1873: surface truncation to blame dump even before conflict.
+
+    // Issue #2939: bounded dependency closure over var_to_constraints_ +
+    // UF reps — not an unbounded collect of all clean constraints on seeds
+    // that can explode under dense AI mutate and force anti-starve full solve.
+    // Seed = touched ∪ occurrence ∪ let-poly ∪ pending_full_solve.
+    // BFS expands constraint→endpoint-rep edges; hard cap = scan_limit.
+    // Cap hit → remaining frontier roots enter pending_full_solve (no silent drop).
+    std::unordered_set<std::size_t> to_check;
+    to_check.reserve(std::min(scan_limit, static_cast<std::size_t>(64)));
+    std::vector<std::uint32_t> frontier;
+    frontier.reserve(touched_roots_.size() + occurrence_priority_roots_.size() +
+                     let_poly_dirty_roots_.size() + pending_full_solve_roots_.size());
+    std::unordered_set<std::uint32_t> roots_seen;
+    auto seed_root = [&](std::uint32_t root) {
+        if (roots_seen.insert(root).second)
+            frontier.push_back(root);
+    };
+    for (auto root : touched_roots_)
+        seed_root(root);
+    // Issue #745: Occurrence-narrowed roots always seed the closure.
+    for (auto root : occurrence_priority_roots_)
+        seed_root(root);
+    // Issue #1617: Let-Poly dirty roots force re-generalize checks.
+    for (auto root : let_poly_dirty_roots_)
+        seed_root(root);
+    // Issue #2939 / #2146: pending residual must re-enter the closure seed
+    // (was previously only used for limit scaling, not collection).
+    for (auto root : pending_full_solve_roots_)
+        seed_root(root);
+
+    std::size_t closure_nodes = 0;
+    std::size_t closure_edges = 0;
+    bool closure_cap_hit = false;
+    std::size_t fi = 0;
+    auto enqueue_residual_frontier = [&](std::size_t from_i, std::uint32_t mid_root,
+                                         bool include_mid) {
+        // Residual roots must enter pending_full_solve — no silent starve (AC2).
+        if (include_mid)
+            pending_full_solve_roots_.insert(mid_root);
+        for (std::size_t j = from_i; j < frontier.size(); ++j)
+            pending_full_solve_roots_.insert(frontier[j]);
+    };
+    while (fi < frontier.size()) {
+        if (to_check.size() >= scan_limit) {
+            closure_cap_hit = true;
+            enqueue_residual_frontier(fi, /*mid=*/0, /*include_mid=*/false);
+            break;
+        }
+        const auto root = frontier[fi++];
+        ++closure_nodes;
+        auto it = var_to_constraints_.find(root);
+        if (it == var_to_constraints_.end())
+            continue;
+        bool mid_root_cap = false;
+        for (auto idx : it->second) {
+            ++closure_edges;
+            if (idx >= constraints_.size())
+                continue;
+            // Dirty constraints already solved on the worklist pass — skip.
+            if (idx < constraint_dirty_.size() && constraint_dirty_[idx])
+                continue;
+            if (!to_check.insert(idx).second)
+                continue; // already in closure
+            // Expand UF reps of constraint endpoints into the frontier.
+            auto expand_endpoint = [&](TypeId id) {
+                if (!id.valid() || !reg_.is_var(id))
+                    return;
+                const auto rep = union_find_rep_index(id);
+                if (rep != UINT32_MAX && roots_seen.insert(rep).second)
+                    frontier.push_back(rep);
+            };
+            expand_endpoint(constraints_[idx].lhs);
+            expand_endpoint(constraints_[idx].rhs);
+            if (to_check.size() >= scan_limit) {
+                closure_cap_hit = true;
+                mid_root_cap = true;
+                break;
+            }
+        }
+        if (closure_cap_hit) {
+            enqueue_residual_frontier(fi, root, mid_root_cap);
+            break;
+        }
+    }
+
+    // Issue #1873 / #2939: cap hit is truncation for blame + anti-starve.
+    const bool truncated = closure_cap_hit;
     if (truncated) {
         last_reverify_truncated_ = true;
-        last_reverify_unscanned_ = to_check.size() > scan_limit ? to_check.size() - scan_limit : 0;
+        // Unscanned: remaining frontier + at least 1 when pending residual.
+        last_reverify_unscanned_ = frontier.size() > fi ? frontier.size() - fi : 0;
+        if (last_reverify_unscanned_ == 0)
+            last_reverify_unscanned_ = std::max<std::size_t>(1, pending_full_solve_roots_.size());
     }
 
     if (metrics_) {
@@ -1018,6 +1078,12 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         // Issue #2146: last limit + lifetime truncate counters for Agents.
         m->solve_delta_reverify_limit_used.store(static_cast<std::uint64_t>(scan_limit),
                                                  std::memory_order_relaxed);
+        // Issue #2939: dep-closure observability (additive).
+        m->delta_reverify_closure_nodes_total.fetch_add(closure_nodes, std::memory_order_relaxed);
+        m->delta_reverify_closure_edges_total.fetch_add(closure_edges, std::memory_order_relaxed);
+        if (closure_cap_hit) {
+            m->delta_reverify_closure_cap_hit_total.fetch_add(1, std::memory_order_relaxed);
+        }
         // Issue #1871: count adaptive budget growth above the base
         // kReverifyCleanScanLimit (dirty/touched/pending-driven).
         if (scan_limit > kReverifyCleanScanLimit) {
@@ -1151,11 +1217,14 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
             }
             scanned_set.insert(idx); // Issue #2146: avoid double-queue as pending
         }
-        // Refresh unscanned after expand; clear truncated only if nothing left.
+        // Refresh unscanned after expand; clear truncated only if nothing
+        // left in ordered AND no pending residual (#2939 collection-cap).
         last_reverify_unscanned_ =
             ordered.size() > scanned_set.size() ? ordered.size() - scanned_set.size() : 0;
-        if (last_reverify_unscanned_ == 0)
+        if (last_reverify_unscanned_ == 0 && pending_full_solve_roots_.empty())
             last_reverify_truncated_ = false;
+        else if (last_reverify_unscanned_ == 0 && !pending_full_solve_roots_.empty())
+            last_reverify_unscanned_ = std::max<std::size_t>(1, pending_full_solve_roots_.size());
         // AC3: do not re-enter expand — single if-block, no loop.
     }
 
@@ -1182,9 +1251,17 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
             if (idx < constraints_.size())
                 note_pending_from_constraint(constraints_[idx]);
         }
-        // Refresh unscanned count after priority fallback may have scanned more.
-        last_reverify_unscanned_ =
+        // Refresh unscanned: prefer remaining ordered (scan-pass residual);
+        // Issue #2939: collection-cap can leave ordered fully scanned while
+        // frontier/pending still holds residual roots — force non-zero
+        // unscanned so Agents see the cap (#2146 AC2 unscanned > 0).
+        const auto ordered_residual =
             ordered.size() > scanned_set.size() ? ordered.size() - scanned_set.size() : 0;
+        if (ordered_residual > 0)
+            last_reverify_unscanned_ = ordered_residual;
+        if (last_reverify_unscanned_ == 0) {
+            last_reverify_unscanned_ = std::max<std::size_t>(1, pending_full_solve_roots_.size());
+        }
         if (metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(metrics_);
             m->solve_delta_pending_full_solve_roots_last.store(

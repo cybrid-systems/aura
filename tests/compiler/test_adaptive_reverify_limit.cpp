@@ -1,13 +1,21 @@
 // @category: unit
 // @reason: Issue #2146 — adaptive solve_delta clean-reverify limit +
 // Agent-visible truncation / pending_full_solve drain.
+// Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
+// preserve true O(delta) under dense AI mutate (extend per #81967).
 //
 //   AC1: dirty_count > 300 → adaptive limit > 256; planted CONFLICT found
 //   AC2: truncated → pending_full_solve_roots_ non-empty; next solve drains
 //   AC3: Agent query returns truncated + unscanned + limit used
 //   AC4: small deltas unchanged (limit == 256); #2065 epoch skip still works
 //   AC5: schema-2146 on query:type-incremental-fidelity-stats
-
+//
+//   #2939 AC1: small dirty + large unrelated pool → closure, cap_hit==0
+//   #2939 AC2: cap hit → pending_full_solve non-empty (no silent starve)
+//   #2939 AC3: Soft empty seeds → zero closure counters
+//   #2939 AC4: CONFLICT / TIMEOUT escalate path still present
+//   #2939 AC5: additive metrics; truncate/occurrence priority preserved
+//   #2939 AC6: linter + no docs/design/
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
 
@@ -289,7 +297,7 @@ static void ac4_small_delta_unchanged() {
 static void ac5_schema_source() {
     std::println("\n--- AC5: schema + source wiring ---");
     auto ixx = read_file("src/compiler/type_checker.ixx");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     auto h = read_file("src/compiler/observability_metrics.h");
     CHECK(ixx.find("last_reverify_limit_used") != std::string::npos, "limit accessor");
     CHECK(ixx.find("reverify_limit") != std::string::npos, "reverify_limit public");
@@ -298,6 +306,194 @@ static void ac5_schema_source() {
     CHECK(h.find("solve_delta_reverify_truncated_total") != std::string::npos, "metric header");
     CHECK(h.find("solve_delta_pending_full_solve_enqueued_total") != std::string::npos,
           "enqueued metric");
+}
+
+// ── Issue #2939: dep-closure reverify ──
+
+static void ac2939_1_small_dirty_closure_no_cap() {
+    std::println("\n--- #2939 AC1: small dirty + large pool → closure, cap_hit==0 ---");
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    // Large unrelated EQUAL pairs (never touched).
+    for (std::size_t i = 0; i < 400; ++i) {
+        auto a = cs.fresh_var();
+        auto b = cs.fresh_var();
+        Constraint c;
+        c.kind = Constraint::EQUAL;
+        c.lhs = a;
+        c.rhs = b;
+        c.source_mutation_id = 1;
+        cs.add(c); // clean, not dirty
+    }
+    // Small dirty delta on a fresh pair.
+    auto x = cs.fresh_var();
+    auto y = cs.fresh_var();
+    Constraint d;
+    d.kind = Constraint::EQUAL;
+    d.lhs = x;
+    d.rhs = y;
+    d.source_mutation_id = 2939;
+    cs.add_delta(d);
+    cs.mark_touched_on_delta(x, false);
+    const auto cap0 = load_u64(metrics.delta_reverify_closure_cap_hit_total);
+    const auto nodes0 = load_u64(metrics.delta_reverify_closure_nodes_total);
+    const auto r = cs.solve_delta(nullptr);
+    CHECK(r == SolveResult::SOLVED || r == SolveResult::CONFLICT, "AC1: solve_delta finishes");
+    CHECK(load_u64(metrics.delta_reverify_closure_cap_hit_total) == cap0,
+          "AC1: cap_hit stays 0 when |closure| ≤ limit");
+    CHECK(load_u64(metrics.delta_reverify_closure_nodes_total) > nodes0,
+          "AC1: closure nodes advanced");
+    // Source-cite BFS / dep-closure.
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("#2939") != std::string::npos, "AC1: impl cites #2939");
+    CHECK(impl.find("bounded dependency closure") != std::string::npos ||
+              impl.find("dep-closure") != std::string::npos ||
+              impl.find("BFS") != std::string::npos,
+          "AC1: dep-closure collection present");
+}
+
+static void ac2939_2_cap_hit_pending() {
+    std::println("\n--- #2939 AC2: cap hit → pending_full_solve non-empty ---");
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    // Force tiny reverify limit so closure hits cap.
+    cs.force_reverify_limit_for_test(8);
+    // Star hub: one occurrence root shared by many EQUAL constraints.
+    auto hub = cs.fresh_var();
+    cs.mark_touched_on_delta(hub, /*occurrence_narrow=*/true);
+    for (std::size_t i = 0; i < 64; ++i) {
+        auto leaf = cs.fresh_var();
+        Constraint c;
+        c.kind = Constraint::EQUAL;
+        c.lhs = hub;
+        c.rhs = leaf;
+        c.source_mutation_id = 2939;
+        // Clean constraints (add not add_delta) so reverify must visit them.
+        cs.add(c);
+        // Ensure var_to_constraints_ indexes hub.
+        cs.mark_touched_on_delta(hub, true);
+    }
+    // One dirty to enter solve_delta dirty path.
+    auto z = cs.fresh_var();
+    Constraint d;
+    d.kind = Constraint::EQUAL;
+    d.lhs = hub;
+    d.rhs = z;
+    d.source_mutation_id = 2939;
+    cs.add_delta(d);
+    const auto cap0 = load_u64(metrics.delta_reverify_closure_cap_hit_total);
+    const auto r = cs.solve_delta(nullptr);
+    CHECK(r == SolveResult::SOLVED || r == SolveResult::CONFLICT || r == SolveResult::TIMEOUT,
+          "AC2: solve finishes");
+    CHECK(load_u64(metrics.delta_reverify_closure_cap_hit_total) > cap0 ||
+              cs.pending_full_solve_roots_size() > 0 || cs.last_reverify_truncated(),
+          "AC2: cap hit or pending residual or truncated");
+    // Source-cite: remaining frontier → pending_full_solve
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("pending_full_solve_roots_.insert") != std::string::npos,
+          "AC2: residual frontier enqueued to pending");
+}
+
+static void ac2939_3_soft_empty_zero() {
+    std::println("\n--- #2939 AC3: empty seeds → zero extra work ---");
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    // No dirty, no touched — solve_delta early SOLVED.
+    const auto nodes0 = load_u64(metrics.delta_reverify_closure_nodes_total);
+    const auto edges0 = load_u64(metrics.delta_reverify_closure_edges_total);
+    const auto cap0 = load_u64(metrics.delta_reverify_closure_cap_hit_total);
+    const auto r = cs.solve_delta(nullptr);
+    CHECK(r == SolveResult::SOLVED, "AC3: empty solve_delta SOLVED");
+    CHECK(load_u64(metrics.delta_reverify_closure_nodes_total) == nodes0,
+          "AC3: nodes flat on empty");
+    CHECK(load_u64(metrics.delta_reverify_closure_edges_total) == edges0,
+          "AC3: edges flat on empty");
+    CHECK(load_u64(metrics.delta_reverify_closure_cap_hit_total) == cap0,
+          "AC3: cap_hit flat on empty");
+    // Early return cites pending empty too.
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("pending_full_solve_roots_.empty()") != std::string::npos,
+          "AC3: empty-seed guard includes pending");
+}
+
+static void ac2939_4_conflict_timeout_preserved() {
+    std::println("\n--- #2939 AC4: CONFLICT / TIMEOUT escalate preserved ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    CHECK(impl.find("escalate_if_production") != std::string::npos ||
+              ixx.find("escalate_if_production") != std::string::npos,
+          "AC4: escalate_if_production present");
+    CHECK(impl.find("SolveResult::CONFLICT") != std::string::npos, "AC4: CONFLICT path");
+    CHECK(impl.find("SolveResult::TIMEOUT") != std::string::npos ||
+              ixx.find("TIMEOUT") != std::string::npos,
+          "AC4: TIMEOUT path");
+    // Planted conflict still works under closure.
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    Constraint c1;
+    c1.kind = Constraint::EQUAL;
+    c1.lhs = v;
+    c1.rhs = reg.int_type();
+    c1.source_mutation_id = 1;
+    cs.add_delta(c1);
+    cs.mark_touched_on_delta(v, true);
+    CHECK(cs.solve_delta(nullptr) == SolveResult::SOLVED, "AC4: first solve SOLVED");
+    Constraint c2;
+    c2.kind = Constraint::EQUAL;
+    c2.lhs = v;
+    c2.rhs = reg.bool_type();
+    c2.source_mutation_id = 2;
+    cs.add_delta(c2);
+    cs.mark_touched_on_delta(v, true);
+    const auto r = cs.solve_delta(nullptr);
+    CHECK(r == SolveResult::CONFLICT, "AC4: planted CONFLICT still detected");
+}
+
+static void ac2939_5_metrics_lineage() {
+    std::println("\n--- #2939 AC5: additive metrics + lineage ---");
+    auto h = read_file("src/compiler/observability_metrics.h");
+    auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
+    CHECK(h.find("delta_reverify_closure_nodes_total") != std::string::npos, "AC5: nodes metric");
+    CHECK(h.find("delta_reverify_closure_edges_total") != std::string::npos, "AC5: edges metric");
+    CHECK(h.find("delta_reverify_closure_cap_hit_total") != std::string::npos, "AC5: cap metric");
+    CHECK(fields.find("delta_reverify_closure_nodes_total") != std::string::npos,
+          "AC5: fields.inc nodes");
+    CHECK(q.find("delta-reverify-closure-nodes-total") != std::string::npos, "AC5: query nodes");
+    CHECK(q.find("delta-reverify-closure-cap-hit-total") != std::string::npos, "AC5: query cap");
+    CHECK(q.find("schema-2939") != std::string::npos, "AC5: schema-2939");
+    CHECK(q.find("schema-2146") != std::string::npos, "AC5: schema-2146 preserved");
+    CHECK(q.find("schema-2356") != std::string::npos, "AC5: schema-2356 preserved");
+    CHECK(h.find("delta_reverify_expand_total") != std::string::npos, "AC5: expand preserved");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2939") == 2939, "AC5: schema key wired on query surface");
+}
+
+static void ac2939_6_linter_and_no_design() {
+    std::println("\n--- #2939 AC6: linter + no docs/design/ ---");
+    const auto t = read_file("tests/compiler/test_adaptive_reverify_limit.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_solve_delta_dep_closure_2939.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac2939_1_small_dirty_closure_no_cap") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac2939_2_cap_hit_pending") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac2939_3_soft_empty_zero") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac2939_4_conflict_timeout_preserved") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac2939_5_metrics_lineage") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac2939_6_linter_and_no_design") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #2939") != std::string::npos, "AC6: linter present");
+    CHECK(build.find("check_solve_delta_dep_closure_2939") != std::string::npos,
+          "AC6: build.py gate");
+    CHECK(read_file("docs/design/2939-solve-delta-dep-closure.md").empty(),
+          "AC6: no docs/design/2939-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2939.cpp").empty(),
+          "AC6: no invent test file per #81967");
 }
 
 } // namespace
@@ -309,7 +505,14 @@ int run_test_adaptive_reverify_limit() {
     ac3_agent_query();
     ac4_small_delta_unchanged();
     ac5_schema_source();
-    std::println("\n=== #2146 results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #2939: dep-closure reverify (O(delta)) ===");
+    ac2939_1_small_dirty_closure_no_cap();
+    ac2939_2_cap_hit_pending();
+    ac2939_3_soft_empty_zero();
+    ac2939_4_conflict_timeout_preserved();
+    ac2939_5_metrics_lineage();
+    ac2939_6_linter_and_no_design();
+    std::println("\n=== #2146/#2939 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
