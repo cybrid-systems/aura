@@ -636,16 +636,26 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
 
 // Issue #2882: explicit durable admin path for high-risk grants. Bypasses
 // the production-default single-use override (capability_high_risk_
-//
 // forced_single_use_total stays at 0) and bumps the durable override
 // counter so Agent dashboards can chart privilege-sticky admin grants
 // separately from the auto-revoke common-case. Use only when audit
 // rationale is established — long-lived Mutate / MacroSelfEvo /
 // TenantAdmin / Syscall grants remain sticky for the lifetime of the
 // grant even with epoch binding (#2074) and retain windows.
+//
+// Issue #2967: under production (Restricted/Strict) the durable surface is
+// gated at the call site — the caller principal must hold
+// Effect::TenantAdmin (or the string caps "tenant-admin" / "capability"
+// that map to it) AND pass a non-empty agent-stable audit reason.
+// Missing privilege → deny + SE reason 'durable-grant-needs-tenant-admin';
+// empty reason → deny + SE reason 'durable-grant-reason-required'. Both
+// deny paths bump capability_durable_grant_deny_total and do NOT bump the
+// allow counter (AC4: durable counter only when allow). Soft/Off path has
+// zero added cost (AC3: gate short-circuits before any privilege lookup).
 void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view name,
                                      std::uint16_t effect_bits,
-                                     std::uint64_t provenance_mutation_id) noexcept {
+                                     std::uint64_t provenance_mutation_id,
+                                     std::string_view reason) noexcept {
     using namespace ::aura::core::capability;
     const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
     const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
@@ -653,13 +663,51 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
     // Bump the durable high-risk counter when this durable override touches
     // a high-risk effect bit (Mutate / MacroSelfEvo / TenantAdmin / Syscall).
     // Non-high-risk durable grants are tracked only via capability_grant_total.
+    using aura::compiler::security::kCapCapability;
+    using aura::compiler::security::kCapTenantAdmin;
     using aura::compiler::security::kEffectMacroSelfEvo;
     using aura::compiler::security::kEffectMutate;
     using aura::compiler::security::kEffectSyscall;
     using aura::compiler::security::kEffectTenantAdmin;
     constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
         kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
-    if ((effect_bits & kHighRiskMask) != 0) {
+    const bool is_high_risk = (effect_bits & kHighRiskMask) != 0;
+    // Issue #2967: production gate — TenantAdmin + mandatory reason.
+    // AC3: Soft / Off (sandbox_mode_ == 0 && effect_sandbox_mode() == 0)
+    // short-circuits here: zero-cost legacy path, no privilege lookup.
+    if (force_bind && is_high_risk) {
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        const auto epoch = ::aura::core::current_mutation_epoch();
+        const auto mid = provenance_mutation_id != 0
+                             ? provenance_mutation_id
+                             : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+        const auto tenant =
+            tenant_id != 0 ? tenant_id : static_cast<std::uint64_t>(capability_tenant_id_);
+        const auto fid = static_cast<std::int64_t>(fiber);
+        // AC1: caller principal must hold TenantAdmin (string caps
+        // "tenant-admin" / "capability" map to the same Effect bit via
+        // effect_for_cap_name → has_effect on capability_tenant_id_).
+        const bool is_admin = has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
+        if (!is_admin) {
+            g_capability_effect_metrics().capability_durable_grant_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        effect_bits, name, "durable-grant-needs-tenant-admin",
+                                        /*denied=*/true, fid);
+            return; // deny — no grant, no allow-counter bump (AC4)
+        }
+        // AC2: mandatory agent-stable audit reason under production.
+        if (reason.empty()) {
+            g_capability_effect_metrics().capability_durable_grant_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        effect_bits, name, "durable-grant-reason-required",
+                                        /*denied=*/true, fid);
+            return; // deny — no grant, no allow-counter bump (AC4)
+        }
+    }
+    if (is_high_risk) {
         g_capability_effect_metrics().capability_durable_high_risk_grant_total.fetch_add(
             1, std::memory_order_relaxed);
     }

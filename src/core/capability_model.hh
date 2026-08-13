@@ -243,6 +243,12 @@ struct CapabilityEffectMetrics {
     std::atomic<std::uint64_t> capability_session_grant_total{0};
     std::atomic<std::uint64_t> capability_session_revoke_total{0};
     std::atomic<std::uint64_t> capability_live_session_grants{0};
+    // Issue #2967: durable high-risk grant denied at the call site — caller
+    // lacks TenantAdmin (or equivalent meta-privilege) or the mandatory
+    // agent-stable audit reason is empty. Appended at struct END (never
+    // insert mid-struct: stale module BMIs writing at wrong offsets corrupt
+    // neighboring heap — see #2906).
+    std::atomic<std::uint64_t> capability_durable_grant_deny_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -1117,6 +1123,8 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_session_grant_total.store(0, std::memory_order_relaxed);
     m.capability_session_revoke_total.store(0, std::memory_order_relaxed);
     m.capability_live_session_grants.store(0, std::memory_order_relaxed);
+    // Issue #2967: durable high-risk call-site deny counter.
+    m.capability_durable_grant_deny_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -1166,6 +1174,9 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t capability_session_grant = 0;
     std::uint64_t capability_session_revoke = 0;
     std::uint64_t capability_live_session_grants = 0;
+    // Issue #2967: durable high-risk call-site deny (missing TenantAdmin /
+    // empty audit reason under production).
+    std::uint64_t capability_durable_grant_deny = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -1230,6 +1241,9 @@ struct CapabilityEffectStatsSnapshot {
             m.capability_session_revoke_total.load(std::memory_order_acquire);
         s.capability_live_session_grants =
             m.capability_live_session_grants.load(std::memory_order_acquire);
+        // Issue #2967: durable high-risk call-site deny.
+        s.capability_durable_grant_deny =
+            m.capability_durable_grant_deny_total.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&
