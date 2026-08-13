@@ -503,6 +503,15 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       snap.occurrence_empty_after_fence_soft_total);
             insert_kv("cone-outside-goal-drop", snap.cone_outside_goal_drop_total);
             insert_kv("cone-outside-goal-drop-total", snap.cone_outside_goal_drop_total);
+            // Issue #2962: residual recover-ok / hard-reject totals (fidelity).
+            insert_kv(
+                "cone-outside-goal-drop-recover-ok-total",
+                static_cast<std::int64_t>(
+                    aura::compiler::typed_audit::cone_outside_goal_drop_recover_ok_total_v_read()));
+            insert_kv(
+                "cone-outside-goal-drop-reject-total",
+                static_cast<std::int64_t>(
+                    aura::compiler::typed_audit::cone_outside_goal_drop_reject_total_v_read()));
             insert_kv("type-linear-evolution-snapshot-wired", 1);
             // Lineage preserved (detailed queries remain authoritative)
             insert_kv("schema-2613", 2613);
@@ -514,6 +523,10 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema-2621", 2621);
             insert_kv("schema-2704", 2704);
             insert_kv("schema-2703", 2703);
+            insert_kv("schema-2962",
+                      aura::compiler::typed_audit::kConeOutsideGoalDropRecoverRejectIssue);
+            insert_kv("issue-2962",
+                      aura::compiler::typed_audit::kConeOutsideGoalDropRecoverRejectIssue);
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
