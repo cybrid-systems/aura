@@ -108,9 +108,12 @@ def main() -> int:
     must("#2759", "AC1", workspace)
 
     # Production EDSL stamp sites.
+    # Issue #2960: query / children_stable_batch may route through
+    # stamp_query_stable_ref_export (which calls stamp_stable_ref).
     must("stamp_stable_ref", "AC1", qws)
     must("stamp_stable_ref", "AC1", mutate)
-    must("stamp_stable_ref", "AC1", fiber)
+    if "stamp_stable_ref" not in fiber and "stamp_query_stable_ref_export" not in fiber:
+        fails.append("AC1: fiber must stamp via stamp_stable_ref or stamp_query_stable_ref_export")
     must("make_ref_layout", "AC1", agent)
     must("stamp_stable_ref", "AC1", agent)
 

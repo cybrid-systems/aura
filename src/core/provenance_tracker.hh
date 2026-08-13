@@ -85,6 +85,12 @@ struct ProvenanceEnforcementMetrics {
     std::atomic<std::uint64_t> stable_ref_export_refresh_total{0};
     std::atomic<std::uint64_t> stable_ref_export_valid_total{0};
     std::atomic<std::uint64_t> stable_ref_export_stale_reject_total{0};
+    // Issue #2960: query:*-stable / children_stable Agent export stamp path.
+    // stamped = every Evaluator stamp on a query stable return; unstamped_prevented
+    // = residual brace-init / layout-missing remade before stamp (target 0 under
+    // production when all primary paths use make_ref_layout + stamp).
+    std::atomic<std::uint64_t> query_stable_ref_stamped_total{0};
+    std::atomic<std::uint64_t> query_stable_ref_unstamped_prevented_total{0};
     // Issue #2026: linear ownership × provenance consistency closed-loop.
     std::atomic<std::uint64_t> linear_provenance_checks_total{0};
     std::atomic<std::uint64_t> linear_provenance_ok_total{0};
@@ -186,6 +192,22 @@ inline void record_stable_ref_export_valid(std::uint64_t n = 1) noexcept {
 inline void record_stable_ref_export_stale_reject(std::uint64_t n = 1) noexcept {
     g_provenance_enforcement().stable_ref_export_stale_reject_total.fetch_add(
         n, std::memory_order_relaxed);
+}
+// Issue #2960: query stable-return stamp accounting (Agent export paths).
+inline constexpr int kQueryStableRefStampIssue = 2960;
+inline void record_query_stable_ref_stamped(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().query_stable_ref_stamped_total.fetch_add(n,
+                                                                        std::memory_order_relaxed);
+}
+inline void record_query_stable_ref_unstamped_prevented(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().query_stable_ref_unstamped_prevented_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+inline std::atomic<std::uint64_t>& g_query_stable_ref_stamped_total_atomic() noexcept {
+    return g_provenance_enforcement().query_stable_ref_stamped_total;
+}
+inline std::atomic<std::uint64_t>& g_query_stable_ref_unstamped_prevented_total_atomic() noexcept {
+    return g_provenance_enforcement().query_stable_ref_unstamped_prevented_total;
 }
 
 // Issue #2404: production hard-reject of unrefreshable Agent exports.
@@ -820,6 +842,8 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.stable_ref_export_refresh_total.store(0, std::memory_order_relaxed);
     m.stable_ref_export_valid_total.store(0, std::memory_order_relaxed);
     m.stable_ref_export_stale_reject_total.store(0, std::memory_order_relaxed);
+    m.query_stable_ref_stamped_total.store(0, std::memory_order_relaxed);
+    m.query_stable_ref_unstamped_prevented_total.store(0, std::memory_order_relaxed);
     set_isolation_capture_tenant(0);
     m.linear_provenance_checks_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_ok_total.store(0, std::memory_order_relaxed);

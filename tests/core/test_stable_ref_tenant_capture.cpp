@@ -1,10 +1,11 @@
 // @category: unit
-// @reason: Issue #2125 — stamp isolation principal on all StableNodeRef
-// capture paths (make_ref / make_safe_ref / capture_for_fiber /
-// children_stable), not only atomic-batch pin (#2073).
+// @reason: Issue #2125 — stamp isolation principal on Soft StableNodeRef
+// capture paths (make_ref / make_safe_ref / capture_for_fiber), not only
+// atomic-batch pin (#2073). Issue #2960: children_stable / parent_stable are
+// layout-only; production Agent stamp is Evaluator::stamp_query_stable_ref_export.
 //
 //   AC1: Source cites #2125; make_ref stamps when isolation principal active
-//   AC2: make_ref / children_stable / non-batch capture have non-zero tenant
+//   AC2: make_ref Soft stamps; children_stable layout-only + Evaluator stamps
 //   AC3: Cross-tenant mutate via foreign-stamped ref denied
 //   AC4: Same-tenant isolation check still allows
 //   AC5: Off / unset tenant remains permissive (no false deny; raw make_ref 0)
@@ -42,6 +43,7 @@ using aura::core::provenance::isolation_capture_tenant;
 using aura::core::provenance::kStableRefTenantCaptureIssue;
 using aura::core::provenance::reset_provenance_enforcement_for_test;
 using aura::core::provenance::snapshot_provenance_enforcement;
+using aura::core::workspace_isolation::g_workspace_isolation;
 using aura::core::workspace_isolation::reset_tenant_isolation_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -65,6 +67,10 @@ std::int64_t href_prov(CompilerService& cs, std::string_view key) {
 void reset_all() {
     reset_tenant_isolation_for_test();
     reset_provenance_enforcement_for_test();
+    // Soft capture tests need global maybe_stamp path (#2125 AC2); hard-close
+    // may be left armed by co-batch members (#2705 / #2759).
+    aura::core::provenance::set_hard_capture_tenant(false);
+    aura::core::provenance::set_isolation_capture_tenant(0);
 }
 
 } // namespace
@@ -115,7 +121,12 @@ int run_test_stable_ref_tenant_capture() {
         const auto id = first_live(*ws);
         CHECK(id != NULL_NODE, "live");
 
-        ev.set_tenant_principal(42, "tenant-a");
+        // Soft capture principal is process-global (FlatAST make_ref family).
+        // #2659: set_tenant_principal is Evaluator-local only — Soft make_ref
+        // still needs set_isolation_capture_tenant / set_current_tenant.
+        aura::core::provenance::set_hard_capture_tenant(false);
+        g_workspace_isolation().set_current_tenant(42, "tenant-a");
+        ev.set_capability_tenant_id(42); // production Evaluator stamp path
         CHECK(isolation_capture_tenant() == 42, "isolation capture principal = 42");
 
         const auto stamps0 = snapshot_provenance_enforcement().tenant_stamps;
@@ -138,21 +149,31 @@ int run_test_stable_ref_tenant_capture() {
         auto from_gen = ws->make_ref_from_gen(id, ref.gen);
         CHECK(from_gen.tenant_id == 42, "AC2: make_ref_from_gen stamps 42");
 
-        // children_stable goes through make_ref — non-batch query path.
+        // Issue #2960: children_stable / parent_stable are layout-only (no Soft
+        // global stamp). Production stamps via Evaluator.
         auto kids = ws->children_stable(id);
         std::println("  children_stable count={}", kids.size());
         for (const auto& k : kids) {
-            CHECK(k.tenant_id == 42, "AC2: children_stable child stamped 42");
+            CHECK(k.tenant_id == 0, "AC2/#2960: children_stable layout-only (tenant 0)");
+            auto stamped_k = k;
+            ev.stamp_query_stable_ref_export(stamped_k);
+            CHECK(stamped_k.tenant_id == 42,
+                  "AC2/#2960: Evaluator stamp_query fills principal on child");
         }
-        // Even empty children list is fine; parent_stable also uses make_ref.
         auto parent = ws->parent_stable(id);
-        if (parent.id != NULL_NODE)
-            CHECK(parent.tenant_id == 42, "AC2: parent_stable stamped when live");
+        if (parent.id != NULL_NODE) {
+            CHECK(parent.tenant_id == 0, "AC2/#2960: parent_stable layout-only");
+            ev.stamp_query_stable_ref_export(parent);
+            CHECK(parent.tenant_id == 42, "AC2/#2960: Evaluator stamp on parent_stable");
+        }
 
         CHECK(snapshot_provenance_enforcement().tenant_stamps > stamps0,
               "AC1: stamp metric advanced");
         CHECK(snapshot_provenance_enforcement().tenant_stamp_capture > cap0,
               "AC1: capture-path metric advanced");
+        CHECK(aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
+                  std::memory_order_relaxed) >= 1,
+              "AC2/#2960: query_stable_ref_stamped_total advanced");
     }
 
     // ── AC3/AC4: cross-tenant deny vs same-tenant allow ──
@@ -167,13 +188,16 @@ int run_test_stable_ref_tenant_capture() {
         auto* ws = ev.workspace_flat();
         const auto id = first_live(*ws);
 
-        // Capture under tenant A via non-batch make_ref.
-        ev.set_tenant_principal(1, "alice");
+        // Capture under tenant A via Soft global capture + Evaluator principal.
+        aura::core::provenance::set_hard_capture_tenant(false);
+        g_workspace_isolation().set_current_tenant(1, "alice");
+        ev.set_capability_tenant_id(1);
         auto foreign = ws->make_ref(id);
         CHECK(foreign.tenant_id == 1, "captured as tenant 1");
 
         // Switch to tenant B — isolation must deny foreign-stamped ref.
-        ev.set_tenant_principal(2, "bob");
+        g_workspace_isolation().set_current_tenant(2, "bob");
+        ev.set_capability_tenant_id(2);
         CHECK(!ev.check_workspace_isolation(2, foreign.tenant_id, kEffectMutate, "test:ac3-x"),
               "AC3: cross-tenant ref denied");
 
@@ -195,7 +219,7 @@ int run_test_stable_ref_tenant_capture() {
         auto* ws = ev.workspace_flat();
         const auto id = first_live(*ws);
 
-        ev.set_tenant_principal(77, "batch");
+        ev.set_capability_tenant_id(77);
         auto pin_style = ev.make_stamped_safe_ref(id); // same helper as pin_node_for_atomic_batch
         CHECK(pin_style.tenant_id == 77, "AC6: make_stamped_safe_ref stamps 77");
 
@@ -217,7 +241,8 @@ int run_test_stable_ref_tenant_capture() {
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         auto* ws = ev.workspace_flat();
         const auto id = first_live(*ws);
-        ev.set_tenant_principal(9, "metrics");
+        aura::core::provenance::set_hard_capture_tenant(false);
+        g_workspace_isolation().set_current_tenant(9, "metrics");
         (void)ws->make_ref(id);
 
         CHECK(href_prov(cs, "schema-2125") == 2125, "schema-2125 present");

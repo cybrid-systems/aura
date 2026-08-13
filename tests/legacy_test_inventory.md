@@ -1361,7 +1361,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_stable_ref_pin_lifecycle.cpp` (—) [domain_suite, theme_compiler] — AC1: EDSL pin-stable-refs / unpin-stable-refs / with-pinned registered
 - `tests/compiler/test_stable_ref_provenance_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_stable_ref_provenance_batch.cpp — test_stable_ref 3-merge (R19 phase 20).
 - `tests/serve/test_stable_ref_provenance_fiber_cow.cpp` (—) [domain_suite, theme_serve] — test_stable_ref_provenance_fiber_cow.cpp — Merged #457/#497/#527/#540/#549 + #551/#552 (#1978).
-- `tests/core/test_stable_ref_tenant_capture.cpp` (—) [domain_suite, theme_core] — AC1: Source cites #2125; make_ref stamps when isolation principal active
+- `tests/core/test_stable_ref_tenant_capture.cpp` (—) [domain_suite, theme_core] — atomic-batch pin (#2073). Issue #2960: children_stable / parent_stable are
 - `tests/compiler/test_stable_ref_tenant_mandate.cpp` (—) [domain_suite, theme_compiler] — AC1: make_stamped_ref / stamp_stable_ref set tenant_id from principal
 - `tests/compiler/test_stable_ref_validate_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_stable_ref_validate_batch.cpp — thematic multi-TU batch
 - `tests/core/test_stable_ref_wire_endian.cpp` (—) [domain_suite, theme_core] — AC1: round-trip serialize → deserialize recovers full ref

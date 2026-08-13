@@ -1306,6 +1306,18 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
             insert_kv("node-gen-stale-accesses", static_cast<std::int64_t>(stale));
             insert_kv("recommendation", rec_int);
+            // Issue #2960: query:*-stable stamp counters (Agent export path).
+            insert_kv("query-stable-ref-stamped-total",
+                      static_cast<std::int64_t>(
+                          aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "query-stable-ref-unstamped-prevented-total",
+                static_cast<std::int64_t>(
+                    aura::core::provenance::g_query_stable_ref_unstamped_prevented_total_atomic()
+                        .load(std::memory_order_relaxed)));
+            insert_kv("schema-2960", 2960);
+            insert_kv("issue-2960", 2960);
             // Issue #2170: LayoutStamp keys (schema bump — fold into the
             // existing stable-ref-stats-hash per #2170 AC contract,
             // "no new public prim if constrained"). The stamp captures

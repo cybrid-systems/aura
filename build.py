@@ -2336,6 +2336,19 @@ def cmd_lint():
             "Issue #2959 topology dual restore linter failed — run python3 scripts/coverage/checks/check_topology_dual_restore_2959.py"
         )
         return r
+    # Issue #2960: query:*-stable / children_stable full provenance stamp.
+    # Extends test_tenant_isolation_enforcement + test_stable_ref_tenant_capture
+    # (#81967); no docs/design (#1655).
+    qsr_script = COVERAGE_CHECKS / "check_query_stable_ref_stamp_2960.py"
+    if not qsr_script.exists():
+        fail(f"missing {qsr_script}")
+        return 1
+    r = run([sys.executable, str(qsr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2960 query stable-ref stamp linter failed — run python3 scripts/coverage/checks/check_query_stable_ref_stamp_2960.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -10095,6 +10108,26 @@ def cmd_topology_dual_restore_2959_coverage():
     return 0
 
 
+def cmd_query_stable_ref_stamp_2960_coverage():
+    """Issue #2960: query:*-stable full StableNodeRef provenance stamp.
+
+    FlatAST children/parent/for_each layout-only; Evaluator
+    stamp_query_stable_ref_export + stamped/unstamped_prevented counters;
+    schema-2960 on stable-ref-stats-hash + children-stable-stats.
+    """
+    print(f"{B}=== query stable-ref stamp coverage (#2960) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_stable_ref_stamp_2960.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query stable-ref stamp (#2960) coverage contract rows failed")
+        return 1
+    ok("query stable-ref stamp (#2960) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -13490,6 +13523,7 @@ def main():
         "steal-lifetime-proof-residual-2957": cmd_steal_lifetime_proof_residual_2957_coverage,
         "mailbox-defer-slo-hold-cancel-2958": cmd_mailbox_defer_slo_hold_cancel_2958_coverage,
         "topology-dual-restore-2959": cmd_topology_dual_restore_2959_coverage,
+        "query-stable-ref-stamp-2960": cmd_query_stable_ref_stamp_2960_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
