@@ -36,6 +36,7 @@
 #define AURA_SERVE_MULTI_FIBER_MAILBOX_H
 
 #include "fiber.h"
+#include "steal_safety.h"                          // #2987 mailbox residual hard-AND
 #include "compiler/lock_order_audit.h"             // Issue #2316: lock-order audit
 #include "compiler/mutation_concurrency_health.hh" // #2903/#2958 wait SLO
 #include "compiler/mutation_hold_budget.h"         // #2958 live outermost holder
@@ -237,6 +238,17 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_defer_slo_breach_observe_total{0}; // #2958
     std::atomic<std::uint64_t> mailbox_defer_slo_no_holder_total{0};      // #2958
     std::atomic<std::uint32_t> mailbox_defer_slo_hold_cancel_wired{1};    // #2958
+    // Issue #2987: mailbox delivery residual hard-AND (same StealInvariant
+    // table as steal: LayoutStampMatch / TicketFresh / GcDeferClear).
+    // RejectHard → Backpressure, never enqueue. Soft: soft_observe;
+    // production/Strict: hard_total. Happy path (no inject, no target
+    // residual) is a thread_local load — no extra atomics (AC3).
+    std::atomic<std::uint64_t> mailbox_delivery_reject_layout_stamp_total{0}; // #2987
+    std::atomic<std::uint64_t> mailbox_delivery_reject_ticket_stale_total{0}; // #2987
+    std::atomic<std::uint64_t> mailbox_delivery_reject_residual_total{0};     // #2987
+    std::atomic<std::uint64_t> mailbox_delivery_reject_hard_total{0};         // #2987
+    std::atomic<std::uint64_t> mailbox_delivery_reject_soft_observe_total{0}; // #2987
+    std::atomic<std::uint32_t> mailbox_delivery_safety_wired{1};              // #2987
     // Issue #2511: outermost Guard exit forced deferred drain under budget.
     // hold_exit_drain_total: drain path entered with open depth
     // hold_exit_drain_us_total / max: elapsed under budget
@@ -823,6 +835,68 @@ note_mailbox_deferred_under_boundary(MultiFiberMailboxStats* local_stats = nullp
     return true;
 }
 
+// Issue #2987: residual hard-AND after the #2849 shared-Evaluator
+// boundary check. Steal and mailbox share StealInvariant definitions
+// (evaluate_residual_hard_and_bits / mailbox_delivery_safety_transaction).
+// RejectHard → Backpressure + counters; never enqueue. Soft still BP
+// (soft_observe); production/Strict bumps hard_total. Happy path:
+// inject==None and no target fiber → thread_local only, no extra atomics.
+// Callers MUST:
+//   if (note_mailbox_delivery_safety(...))
+//       return PushStatus::Backpressure;
+[[nodiscard]] inline bool
+note_mailbox_delivery_safety(Fiber* target, const MutationSafetySnapshot* snap, bool check_envframe,
+                             MultiFiberMailboxStats* local_stats = nullptr) noexcept {
+    using aura::serve::g_mailbox_delivery_inject;
+    using aura::serve::mailbox_delivery_safety_transaction;
+    using aura::serve::MailboxDeliveryInject;
+    using aura::serve::steal_invariant_mask;
+    using aura::serve::StealInvariant;
+    using aura::serve::StealSafetyDecision;
+    // AC3: happy path — no inject, no target. Single thread_local load.
+    if (g_mailbox_delivery_inject == MailboxDeliveryInject::None && target == nullptr)
+        return false;
+    const auto r = mailbox_delivery_safety_transaction(target, snap, check_envframe);
+    if (r.decision != StealSafetyDecision::RejectHard)
+        return false;
+    if (r.fail_bits & steal_invariant_mask(StealInvariant::LayoutStampMatch)) {
+        g_mf_mailbox_stats.mailbox_delivery_reject_layout_stamp_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (local_stats)
+            local_stats->mailbox_delivery_reject_layout_stamp_total.fetch_add(
+                1, std::memory_order_relaxed);
+    }
+    if (r.fail_bits & steal_invariant_mask(StealInvariant::TicketFresh)) {
+        g_mf_mailbox_stats.mailbox_delivery_reject_ticket_stale_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (local_stats)
+            local_stats->mailbox_delivery_reject_ticket_stale_total.fetch_add(
+                1, std::memory_order_relaxed);
+    }
+    if (r.fail_bits & (steal_invariant_mask(StealInvariant::GcDeferClear) |
+                       steal_invariant_mask(StealInvariant::EnvFrameOk) |
+                       steal_invariant_mask(StealInvariant::BoundarySafe))) {
+        g_mf_mailbox_stats.mailbox_delivery_reject_residual_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (local_stats)
+            local_stats->mailbox_delivery_reject_residual_total.fetch_add(
+                1, std::memory_order_relaxed);
+    }
+    if (is_mutate_mailbox_strict()) {
+        g_mf_mailbox_stats.mailbox_delivery_reject_hard_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        if (local_stats)
+            local_stats->mailbox_delivery_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (local_stats)
+            local_stats->mailbox_delivery_reject_soft_observe_total.fetch_add(
+                1, std::memory_order_relaxed);
+    }
+    return true;
+}
+
 // Default N=8 rejects in one Guard window → force mark-failed under Strict.
 // Override: AURA_MUTATE_MAILBOX_REJECT_THRESHOLD=<N> (0 disables threshold).
 [[nodiscard]] inline std::uint64_t mutate_mailbox_reject_threshold() noexcept {
@@ -957,10 +1031,13 @@ public:
         // Per AC3: zero cost when target is safe (one snapshot load).
         // Per AC2: deferred = not dropped; the sender retries / queues
         // and the target becomes deliverable after outermost Guard exit.
+        Fiber* target = nullptr;
+        MutationSafetySnapshot snap{};
         if (msg.to_fiber != 0) {
             for (auto* a : attachers_) {
                 if (a && a->id() == msg.to_fiber) {
-                    const auto snap = a->mutation_safety_snapshot();
+                    target = a;
+                    snap = a->mutation_safety_snapshot();
                     if (!a->is_at_mutation_boundary_safe(snap)) {
                         // Issue #2312 defer + #2378 depth/SLA (not dropped).
                         note_mailbox_mutation_hold_defer();
@@ -981,6 +1058,13 @@ public:
         // Soft soft_observe / production hard counters). Phase-5 outermost
         // Guard dtor is the sole reopen of the deliverability window.
         if (note_mailbox_deferred_under_boundary(&local_stats_))
+            return PushStatus::Backpressure;
+        // Issue #2987: residual hard-AND (LayoutStamp / Ticket / GcDefer)
+        // even when depth/held snapshot looks safe. Inject / target residual
+        // → RejectHard → Backpressure; never enqueue. Happy path (no
+        // inject, no target) is thread_local only.
+        if (note_mailbox_delivery_safety(target, target ? &snap : nullptr,
+                                         msg.held_ref_token.has_value(), &local_stats_))
             return PushStatus::Backpressure;
         if (queue_.size() >= high_water_) {
             note_backpressure(&local_stats_, /*from_fanout=*/false);
@@ -1041,6 +1125,13 @@ public:
             note_backpressure(&local_stats_, /*from_fanout=*/true);
             return PushStatus::Backpressure;
         }
+        // Issue #2987: inject residual (no target) still RejectHard the
+        // entire fanout — never silent Ok.
+        if (note_mailbox_delivery_safety(nullptr, nullptr, proto.held_ref_token.has_value(),
+                                         &local_stats_)) {
+            note_backpressure(&local_stats_, /*from_fanout=*/true);
+            return PushStatus::Backpressure;
+        }
         // Issue #2312: per-attached-fiber delivery gate. If ANY attached
         // fiber is unsafe (MutationBoundary held / depth>0), defer the
         // entire fan-out — don't partially deliver mutate-triggering
@@ -1055,6 +1146,12 @@ public:
                 note_mailbox_mutation_hold_defer();
                 local_stats_.mailbox_deferred_mutation_hold_total.fetch_add(
                     1, std::memory_order_relaxed);
+                note_backpressure(&local_stats_, /*from_fanout=*/true);
+                return PushStatus::Backpressure;
+            }
+            // Issue #2987: residual hard-AND per attacher (same table).
+            if (note_mailbox_delivery_safety(a, &snap, proto.held_ref_token.has_value(),
+                                             &local_stats_)) {
                 note_backpressure(&local_stats_, /*from_fanout=*/true);
                 return PushStatus::Backpressure;
             }

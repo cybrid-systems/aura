@@ -143,6 +143,11 @@ struct MutationSafetySnapshot {
 //     shims wired by evaluator_fiber_mutation.cpp) so the delivery gate
 //     uses the SAME authority as steal safety (per AC2).
 //
+//   - Issue #2987: after the #2849 depth||held check, mailbox delivery
+//     hard-ANDs the same residual StealInvariant table as steal
+//     (LayoutStampMatch / TicketFresh / GcDeferClear; EnvFrameOk when
+//     the payload carries a held-ref). RejectHard → Backpressure.
+//
 //   - Soft / observe-only mode keeps the same gate (no behavior change for
 //     tests) but bumps the `_soft_observe_total` counter instead of the
 //     `_hard_total` counter, so production dashboards distinguish.

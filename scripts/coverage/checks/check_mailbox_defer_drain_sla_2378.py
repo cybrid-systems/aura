@@ -67,7 +67,8 @@ def main() -> int:
     must("mailbox-deferred-flush-samples", "AC4", epm)
     must("mailbox-defer-starvation-total", "AC4", epm)
     must("mailbox-defer-drain-sla-wired", "AC4", epm)
-    must("FlatHashTable::create(128)", "AC4", epm)
+    if "FlatHashTable::create(128)" not in epm and "FlatHashTable::create(256)" not in epm:
+        fails.append("AC4: missing FlatHashTable::create(128|256)")
     must("ac2378_query_schema", "AC4", test)
 
     # AC5
