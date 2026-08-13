@@ -1593,6 +1593,7 @@ void ObservabilityPrims::mark_p1b_top_stats_deprecated(Evaluator& ev) {
         "query:fiber-boundary-violation-stats",
         "query:value-dispatch-stats",
         "query:incremental-relower-stats",
+        "query:mutate-invalidate-stats",
         "query:edsl-reflection-stats",
         "query:panic-checkpoint-lifecycle-stats",
         "query:jit-interpreter-parity-stats",

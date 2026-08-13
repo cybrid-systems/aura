@@ -1489,6 +1489,62 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                                                       escape_hits));
         });
 
+    // Issue #2988: query:mutate-invalidate-stats — mutate success →
+    // DefUse / IR / JIT close-loop (dirty_nodes, defuse_bumps, jit, binding_gen).
+    ObservabilityPrims::register_stats_impl(
+        "query:mutate-invalidate-stats",
+        [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
+            const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
+            auto load = [&](const std::atomic<std::uint64_t>& a) -> std::int64_t {
+                return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+            };
+            insert_kv("dirty-nodes", m ? load(m->mutate_invalidate_dirty_nodes_total) : 0);
+            insert_kv("defuse-bumps", m ? load(m->mutate_invalidate_defuse_bumps_total) : 0);
+            insert_kv("jit-invalidate-count", m ? load(m->mutate_invalidate_jit_total) : 0);
+            insert_kv("binding-gen-bumps",
+                      m ? load(m->mutate_invalidate_binding_gen_bumps_total) : 0);
+            insert_kv("coarse-fallback-total",
+                      m ? load(m->mutate_invalidate_coarse_fallback_total) : 0);
+            insert_kv("precise-wired",
+                      m ? static_cast<std::int64_t>(
+                              m->mutate_invalidate_precise_wired.load(std::memory_order_relaxed))
+                        : 1);
+            insert_kv("schema-2988", 2988);
+            insert_kv("issue-2988", 2988);
+            insert_kv("schema-2038", 2038);
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
+
     // Issue #610: query:linear-ownership-mutation-stats. Returns
     // the sum of 4 post-mutation linear ownership observability
     // counters:
