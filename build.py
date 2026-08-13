@@ -2195,6 +2195,19 @@ def cmd_lint():
             "Issue #2952 coverage-verify min-dirty linter failed — run python3 scripts/coverage/checks/check_coverage_verify_min_dirty_2952.py"
         )
         return r
+    # Issue #2953: Agent recovery playbook single action (refine
+    # #2367/#2302). Pure observe-only decision table; Soft idle.
+    # Extends test_reload_recovery_query (#81967); no docs/design.
+    rrp_script = COVERAGE_CHECKS / "check_reload_recovery_playbook_2953.py"
+    if not rrp_script.exists():
+        fail(f"missing {rrp_script}")
+        return 1
+    r = run([sys.executable, str(rrp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2953 reload recovery playbook linter failed — run python3 scripts/coverage/checks/check_reload_recovery_playbook_2953.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -5463,6 +5476,25 @@ def cmd_coverage_verify_min_dirty_2952_coverage():
         fail("coverage-verify min-dirty (#2952) coverage contract rows failed")
         return 1
     ok("coverage-verify min-dirty (#2952) coverage clean")
+    return 0
+
+
+def cmd_reload_recovery_playbook_2953_coverage():
+    """Issue #2953: Agent recovery playbook single action.
+
+    Pure observe-only decision table from recovery snapshot atomics.
+    Soft idle → Idle; schema-2953.
+    """
+    print(f"{B}=== reload recovery playbook coverage (#2953) ==={N}")
+    script = COVERAGE_CHECKS / "check_reload_recovery_playbook_2953.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("reload recovery playbook (#2953) coverage contract rows failed")
+        return 1
+    ok("reload recovery playbook (#2953) coverage clean")
     return 0
 
 
@@ -13203,6 +13235,7 @@ def main():
         "pure-anon-sync-remount-budget-2850": cmd_pure_anon_sync_remount_budget_2850_coverage,
         "pure-anon-adaptive-budget-2893": cmd_pure_anon_adaptive_budget_2893_coverage,
         "coverage-verify-min-dirty-2952": cmd_coverage_verify_min_dirty_2952_coverage,
+        "reload-recovery-playbook-2953": cmd_reload_recovery_playbook_2953_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
