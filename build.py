@@ -2689,7 +2689,21 @@ def cmd_lint():
             "Issue #2704 occurrence-empty-after-fence linter failed — run python3 scripts/coverage/checks/check_occurrence_empty_after_fence_2704.py"
         )
         return r
-    # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id
+    # Issue #2981: steal/densify rehydrate miss binds TypeLinearCommitProof
+    # same-txn (no green proof with empty goals). Extends
+    # test_occurrence_goal_persist_rehydrate + test_type_linear_commit_health
+    # (#81967); no docs/design/ (#1655).
+    tlef_script = COVERAGE_CHECKS / "check_type_linear_proof_empty_after_fence_2981.py"
+    if not tlef_script.exists():
+        fail(f"missing {tlef_script}")
+        return 1
+    r = run([sys.executable, str(tlef_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2981 empty-after-fence proof bind linter failed — run python3 scripts/coverage/checks/check_type_linear_proof_empty_after_fence_2981.py"
+        )
+        return r
+    # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id)
     # last-resort branch gains a fail-closed face under production+strict when
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
     # regression in the #2635 AC surface fails the same gate.

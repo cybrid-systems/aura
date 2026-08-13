@@ -404,6 +404,15 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("layered-evidence-diverge-phase5-consume-wired", 1);
             insert_kv("schema-2979", 2979);
             insert_kv("issue-2979", 2979);
+            // Issue #2981: same-txn proof bind on empty-after-fence miss.
+            insert_kv("type-linear-proof-reject-empty-after-fence-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::
+                              type_linear_proof_reject_empty_after_fence_total_v_read()));
+            insert_kv("type-linear-proof-empty-after-fence-wired", 1);
+            insert_kv("force-reason-occurrence-empty-after-fence", 11);
+            insert_kv("schema-2981", 2981);
+            insert_kv("issue-2981", 2981);
             insert_kv("commit-readiness-wired", 1); // #2553 lineage face
             insert_kv("schema-2613", kTypeLinearCommitHealthIssue);
             insert_kv("issue-2613", kTypeLinearCommitHealthIssue);
@@ -531,6 +540,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema-2621", 2621);
             insert_kv("schema-2704", 2704);
             insert_kv("schema-2703", 2703);
+            insert_kv("schema-2981", 2981);
+            insert_kv("issue-2981", 2981);
+            insert_kv("type-linear-proof-empty-after-fence-wired", 1);
             insert_kv("schema-2962",
                       aura::compiler::typed_audit::kConeOutsideGoalDropRecoverRejectIssue);
             insert_kv("issue-2962",

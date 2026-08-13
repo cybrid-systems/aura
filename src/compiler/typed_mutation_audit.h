@@ -1208,6 +1208,31 @@ inline void reset_type_linear_proof_same_transaction_counters_for_test() noexcep
 }
 inline constexpr uint8_t kTypeLinearProofOutcomeQuiet = 0;
 inline constexpr uint8_t kTypeLinearProofOutcomeStamped = 1;
+
+// Issue #2981: same-transaction TypeLinearCommitProof bind. Production/Full
+// + #2704 hard face + empty CS goals → proof must not be green (prefer
+// CS occurrence_goals_size / fingerprint over gauge). Soft: observe only.
+// occurrence_empty_after_fence_total_v_read is forward-declared above.
+inline std::atomic<std::uint64_t> g_type_linear_proof_reject_empty_after_fence_total{0};
+inline constexpr int kTypeLinearProofEmptyAfterFenceIssue = 2981;
+
+[[nodiscard]] inline bool
+occurrence_empty_after_fence_blocks_proof(std::uint64_t live_goal_count) noexcept {
+    if (live_goal_count != 0)
+        return false; // AC3: CS truth non-empty → fingerprint path
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return false; // AC2: Soft observe only
+    return occurrence_empty_after_fence_total_v_read() > 0;
+}
+
+[[nodiscard]] inline std::uint64_t
+type_linear_proof_reject_empty_after_fence_total_v_read() noexcept {
+    return g_type_linear_proof_reject_empty_after_fence_total.load(std::memory_order_relaxed);
+}
+
+inline void reset_type_linear_proof_reject_empty_after_fence_for_test() noexcept {
+    g_type_linear_proof_reject_empty_after_fence_total.store(0, std::memory_order_relaxed);
+}
 // kTypeLinearProofOutcomeReject = 2 declared below with publish helpers.
 
 [[nodiscard]] inline std::uint8_t last_proof_would_allow_commit_v_read() noexcept {
@@ -1531,10 +1556,11 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
 inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outcome(
     std::uint64_t current_epoch_or_defuse, bool explicit_would_allow_commit,
     bool explicit_linear_ok, std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto,
-    std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false) noexcept {
+    std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false,
+    std::uint32_t explicit_force_reason_code = static_cast<std::uint32_t>(-1)) noexcept {
     TypeLinearCommitProof p{};
     p.readiness_bp = 0;
-    p.force_reason_code = static_cast<std::uint32_t>(-1);
+    p.force_reason_code = explicit_force_reason_code;
     // Issue #2854: explicit outcome overrides the live-state defaults.
     // linear_root_count still comes from the post-remap collect so AC1
     // (success proof linear_root_count matches post-remap collect) holds.
@@ -1547,6 +1573,16 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     const auto truth =
         resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
     apply_proof_goal_truth(p, truth);
+    // Issue #2981: same-txn safety net — never leave a green proof when
+    // #2704 hard face is latched and CS goals are empty (prefer CS
+    // truth over gauge). Soft never enters the helper.
+    if (p.would_allow_commit && occurrence_empty_after_fence_blocks_proof(p.live_goal_count)) {
+        p.would_allow_commit = false;
+        p.linear_ok = false;
+        p.occurrence_consistent = false;
+        p.force_reason_code = 11; // occurrence_empty_after_fence
+        g_type_linear_proof_reject_empty_after_fence_total.fetch_add(1, std::memory_order_relaxed);
+    }
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (same as live path).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);

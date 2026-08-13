@@ -2208,6 +2208,20 @@ export struct TypeChecker {
                                   aura::compiler::typed_audit::get_strategy() ==
                                       aura::compiler::typed_audit::AuditStrategy::Full;
                 aura::compiler::typed_audit::note_occurrence_empty_after_fence(hard);
+                // Issue #2981: same-exit proof bind — stamp reject before
+                // trail Success so Agents cannot hold a green proof with
+                // empty goals. Later densify/steal stamps re-check CS truth.
+                if (hard) {
+                    (void)aura::compiler::typed_audit::
+                        build_type_linear_commit_proof_from_live_with_outcome(
+                            new_epoch, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                            /*live_goal_count_hint=*/0, /*goal_fingerprint=*/0,
+                            /*goal_truth_from_cs=*/true, /*force_reason=*/11);
+                    aura::compiler::typed_audit::g_type_linear_proof_reject_empty_after_fence_total
+                        .fetch_add(1, std::memory_order_relaxed);
+                    aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+                        aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+                }
             }
         }
         if (metrics_) {

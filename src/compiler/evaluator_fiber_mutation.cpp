@@ -2339,19 +2339,30 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
                 steal_goal_truth_2910.goal_fingerprint = (hmix != 0) ? hmix : 1;
             }
         }
-        if (steal_rebind_fail_2854) {
+        // Issue #2981: same-txn bind — steal rehydrate miss + empty CS
+        // goals under production/Full → would_allow_commit=false /
+        // force_reason 11. Prefer CS truth. Soft: helper false.
+        const bool empty_fence_2981 = typed_audit::occurrence_empty_after_fence_blocks_proof(
+            steal_goal_truth_2910.live_goal_count);
+        if (steal_rebind_fail_2854 || empty_fence_2981) {
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                 defuse_version_.load(std::memory_order_acquire),
                 /*would_allow_commit=*/false, /*linear_ok=*/false,
                 steal_goal_truth_2910.live_goal_count, steal_goal_truth_2910.goal_fingerprint,
-                steal_goal_truth_2910.from_cs);
-            typed_audit::g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(
-                1, std::memory_order_relaxed);
+                steal_goal_truth_2910.from_cs,
+                empty_fence_2981 ? 11u : static_cast<std::uint32_t>(-1));
+            if (empty_fence_2981)
+                typed_audit::g_type_linear_proof_reject_empty_after_fence_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            if (steal_rebind_fail_2854) {
+                typed_audit::g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (auto* sm = static_cast<CompilerMetrics*>(compiler_metrics()))
+                    sm->type_linear_proof_reject_after_rebind_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
             typed_audit::publish_type_linear_proof_outcome(
                 typed_audit::kTypeLinearProofOutcomeReject);
-            if (auto* sm = static_cast<CompilerMetrics*>(compiler_metrics()))
-                sm->type_linear_proof_reject_after_rebind_fail_total.fetch_add(
-                    1, std::memory_order_relaxed);
         } else {
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                 defuse_version_.load(std::memory_order_acquire),
