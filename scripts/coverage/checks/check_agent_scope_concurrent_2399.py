@@ -67,7 +67,11 @@ def main() -> int:
     must("issue-2399", "AC4", prim)
     must("agent-scope-concurrent-detect-wired", "AC4", prim)
     must("kAgentScopeConcurrentMisuseIssue", "AC4", spawn)
-    must_not("std::mutex", "AC4", scope)
+    # AC4: SingleOwner default is still not a lock. #2976 may add
+    # std::recursive_mutex for opt-in MutexGuarded only — do not
+    # forbid that token; still forbid a process-global registry.
+    must("SingleOwner", "AC4 default mode", scope)
+    must("zero lock", "AC4 SingleOwner zero-lock", scope)
     # No process-global registry *definition* reintro (doc comments may name them).
     must_not("class AgentRegistry", "AC4", scope)
     must_not("static AgentRegistry", "AC4", scope)
