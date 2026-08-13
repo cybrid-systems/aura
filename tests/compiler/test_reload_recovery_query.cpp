@@ -13,6 +13,7 @@
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/aot_reload_consistency_proof.h" // Issue #2753
 #include "compiler/hot_update_registry.hh"
+#include "compiler/typed_mutation_audit.h" // Issue #2982: production probe
 
 #include <atomic>
 #include <cstdint>
@@ -61,6 +62,7 @@ static void clear_recovery_idle(aura::compiler::HotUpdateRegistry& reg) {
     reg.set_shape_storm_active(false);
     reg.reset_deopt_storm_state_for_test();
     reg.reset_reemit_boundary_handshake_for_test();
+    reg.reset_ops_fail_surface_for_test();
     reg.on_reload_success();
 }
 
@@ -1000,6 +1002,148 @@ static void ac2953_playbook_query_and_source() {
     aura_test_reset_last_cross_workspace_reject_reason();
 }
 
+// ── Issue #2982: Staging/Dlopen ops recovery surface ──
+
+static void ac2982_1_staging_eligible_retry() {
+    std::println("\n--- #2982 AC1: production Staging fail → ops fields + one schedule ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    CompilerService cs;
+    clear_recovery_idle(reg);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    const auto sched0 = reg.staging_retry_scheduled_total();
+    reg.note_ops_fail_staging(0xabc);
+    reg.on_reload_rollback(AotReloadFail::Staging);
+    CHECK(reg.last_ops_fail_kind() == 1, "AC1: kind=Staging");
+    CHECK(reg.last_staging_detail() == 0xabc, "AC1: staging detail");
+    CHECK(reg.staging_retry_eligible() == 1, "AC1: retry eligible");
+    CHECK(reg.staging_retry_scheduled_total() == sched0 + 1, "AC1: scheduled +1");
+    CHECK(reg.reload_recovery_state().deferred_reemit_pending == 1, "AC1: deferred pending");
+    aura_reload_recovery_snapshot snap{};
+    aura_hot_update_reload_recovery_get_snapshot(&snap);
+    CHECK(snap.last_ops_fail_kind == 1, "AC1: snap kind Staging");
+    CHECK(snap.staging_retry_eligible == 1, "AC1: snap eligible");
+    CHECK(snap.schema_2982 == 2982, "AC1: schema-2982");
+    // Once per window — second Staging fail does not schedule again.
+    // Eligible stays 1 while the window is armed (retry still outstanding).
+    reg.on_reload_rollback(AotReloadFail::Staging);
+    CHECK(reg.staging_retry_scheduled_total() == sched0 + 1, "AC1: second fail no extra schedule");
+    CHECK(reg.staging_retry_eligible() == 1, "AC1: eligible sticky in window");
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2982") == 2982, "AC1: query schema-2982");
+    CHECK(href(cs, "query:reload-recovery-state", "last-ops-fail-kind") == 1,
+          "AC1: query kind Staging");
+    CHECK(href(cs, "query:reload-recovery-state", "staging-retry-eligible") == 1,
+          "AC1: query eligible");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    clear_recovery_idle(reg);
+}
+
+static void ac2982_2_dlopen_no_auto_retry() {
+    std::println("\n--- #2982 AC2: Dlopen fail → path/errno; no auto retry ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    CompilerService cs;
+    clear_recovery_idle(reg);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    const auto sched0 = reg.staging_retry_scheduled_total();
+    const auto p_dl = ::policy_for(AotReloadFail::Dlopen);
+    CHECK(p_dl.max_reemit == 0, "AC2: policy max_reemit=0 (no auto dlopen)");
+    reg.note_ops_fail_dlopen(0xdeadbeefull, 2); // ENOENT-class
+    reg.on_reload_rollback(AotReloadFail::Dlopen);
+    CHECK(reg.last_ops_fail_kind() == 2, "AC2: kind=Dlopen");
+    CHECK(reg.last_dlopen_path_hash() == 0xdeadbeefull, "AC2: path hash visible");
+    CHECK(reg.last_dlopen_errno_class() == 2, "AC2: errno class visible");
+    CHECK(reg.staging_retry_eligible() == 0, "AC2: not staging-eligible");
+    CHECK(reg.staging_retry_scheduled_total() == sched0, "AC2: no staging schedule");
+    CHECK(href(cs, "query:reload-recovery-state", "last-ops-fail-kind") == 2,
+          "AC2: query kind Dlopen");
+    CHECK(href(cs, "query:reload-recovery-state", "last-dlopen-path-hash") ==
+              static_cast<std::int64_t>(0xdeadbeefull),
+          "AC2: query path hash");
+    CHECK(href(cs, "query:reload-recovery-state", "last-dlopen-errno-class") == 2,
+          "AC2: query errno");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("note_ops_fail_dlopen") != std::string::npos, "AC2: bridge notes path/errno");
+    CHECK(br.find("AotReloadFail::Dlopen") != std::string::npos, "AC2: dlopen rollback");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    clear_recovery_idle(reg);
+}
+
+static void ac2982_3_version_env_unchanged() {
+    std::println("\n--- #2982 AC3: Version/Env/Linear + #2927 bit map unchanged ---");
+    CHECK(aot_reload_fail_to_force_jit_bit_index(AotReloadFail::Env) == 1, "AC3: Env bit 1");
+    CHECK(aot_reload_fail_to_force_jit_bit_index(AotReloadFail::Linear) == 2, "AC3: Linear bit 2");
+    CHECK(aot_reload_fail_to_force_jit_bit_index(AotReloadFail::Version) == 0,
+          "AC3: Version bit 0");
+    CHECK(aot_reload_fail_to_force_jit_bit_index(AotReloadFail::Staging) == 3,
+          "AC3: Staging still bit 3");
+    CHECK(aot_reload_fail_to_force_jit_bit_index(AotReloadFail::Dlopen) == 4,
+          "AC3: Dlopen still bit 4");
+    const auto p_env = ::policy_for(AotReloadFail::Env);
+    CHECK(p_env.max_reemit == 2, "AC3: Env max_reemit unchanged");
+    const auto p_st = ::policy_for(AotReloadFail::Staging);
+    CHECK(p_st.max_reemit == 2, "AC3: Staging max_reemit still #2249 (2)");
+    const auto br = read_file("src/compiler/aura_jit_bridge.h");
+    CHECK(br.find("aot_reload_fail_to_force_jit_mask") != std::string::npos, "AC3: #2927 map");
+}
+
+static void ac2982_4_soft_zero_extra() {
+    std::println("\n--- #2982 AC4: Soft / no fail → no ops path stores ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_recovery_idle(reg);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    const auto sched0 = reg.staging_retry_scheduled_total();
+    const auto hash0 = reg.last_dlopen_path_hash();
+    reg.on_reload_rollback(AotReloadFail::Staging);
+    CHECK(reg.last_ops_fail_kind() == 0, "AC4: Soft Staging no ops kind");
+    CHECK(reg.staging_retry_eligible() == 0, "AC4: Soft no eligible");
+    CHECK(reg.staging_retry_scheduled_total() == sched0, "AC4: Soft no schedule");
+    CHECK(reg.last_dlopen_path_hash() == hash0, "AC4: Soft no path store");
+    const auto hh = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(hh.find("zero extra stores") != std::string::npos, "AC4: quiet extra-store documented");
+    clear_recovery_idle(reg);
+}
+
+static void ac2982_5_query_keys() {
+    std::println("\n--- #2982 AC5: additive schema; #2093/#2249/#2927 preserved ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    CompilerService cs;
+    clear_recovery_idle(reg);
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2982") == 2982, "AC5: schema-2982");
+    CHECK(href(cs, "query:reload-recovery-state", "issue-2982") == 2982, "AC5: issue-2982");
+    CHECK(href(cs, "query:reload-recovery-state", "ops-fail-wired") == 1, "AC5: ops-fail-wired");
+    CHECK(href(cs, "query:reload-recovery-state", "ops-fail-kind-staging") == 1,
+          "AC5: kind sentinel");
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2927") == 2927, "AC5: schema-2927");
+    CHECK(href(cs, "query:reload-recovery-state", "schema-2367") == 2367, "AC5: schema-2367");
+    CHECK(href(cs, "query:hot-update-registry-stats", "schema-2982") == 2982,
+          "AC5: schema-2982 on hot-update");
+    CHECK(href(cs, "query:hot-update-registry-stats", "schema-2927") == 2927,
+          "AC5: schema-2927 on hot-update");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-2249") != std::string::npos, "AC5: schema-2249 preserved");
+    const auto br = read_file("src/compiler/aura_jit_bridge.h");
+    CHECK(br.find("AotReloadFail::Staging") != std::string::npos, "AC5: #2249 Staging policy");
+}
+
+static void ac2982_6_source_and_linter() {
+    std::println("\n--- #2982 AC6: source-cite + linter + no docs/design ---");
+    const auto t = read_file("tests/compiler/test_reload_recovery_query.cpp");
+    CHECK(t.find("ac2982_1_staging_eligible_retry") != std::string::npos, "AC6: AC1 present");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(hh.find("Issue #2982") != std::string::npos, "AC6: header cites #2982");
+    CHECK(cpp.find("Issue #2982") != std::string::npos, "AC6: cpp cites #2982");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_staging_dlopen_ops_recovery_2982.py");
+    CHECK(!lint.empty() && lint.find("2982") != std::string::npos, "AC6: linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_staging_dlopen_ops_recovery_2982") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2982-staging-dlopen-ops.md").empty(),
+          "AC6: no docs/design/2982-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2982.cpp").empty(),
+          "AC6: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_reload_recovery_query() {
@@ -1034,10 +1178,18 @@ int run_test_reload_recovery_query() {
     std::println("\n=== Issue #2953: recovery playbook single action ===");
     ac2953_playbook_decision_table();
     ac2953_playbook_query_and_source();
+    std::println("\n=== Issue #2982: Staging/Dlopen ops recovery surface ===");
+    ac2982_1_staging_eligible_retry();
+    ac2982_2_dlopen_no_auto_retry();
+    ac2982_3_version_env_unchanged();
+    ac2982_4_soft_zero_extra();
+    ac2982_5_query_keys();
+    ac2982_6_source_and_linter();
     if (g_failed)
         return 1;
     std::println(
-        "reload recovery query #2367 + #2753 + #2776 + #2845 + #2927 + #2953: OK ({} passed)",
+        "reload recovery query #2367 + #2753 + #2776 + #2845 + #2927 + #2953 + #2982: OK ({} "
+        "passed)",
         g_passed);
     return 0;
 }

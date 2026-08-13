@@ -378,6 +378,10 @@ void HotUpdateRegistry::on_reload_success() noexcept {
     exhausted_min_dirty_retry_attempts_left_.store(0, std::memory_order_relaxed);
     exhausted_min_dirty_retry_last_at_ms_.store(0, std::memory_order_relaxed);
     exhausted_min_dirty_retry_last_reason_.store(0, std::memory_order_relaxed);
+    // Issue #2982: success closes the Staging retry window + ops kind.
+    last_ops_fail_kind_.store(0, std::memory_order_relaxed);
+    staging_retry_eligible_.store(0, std::memory_order_relaxed);
+    staging_retry_window_armed_.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2502: auto re-promote force-JIT regions after a stable window of
@@ -734,6 +738,35 @@ void HotUpdateRegistry::on_reload_rollback(AotReloadFail reason) noexcept {
             // a no-op (no counter to bump).
             break;
     }
+    // Issue #2982: Staging/Dlopen ops surface. Soft: last_reason only
+    // (zero extra stores). Production: kind + optional one deferred
+    // Staging retry. Dlopen never auto-retries (path/errno only).
+    if (aura_production_defaults_active_probe() == 0)
+        return;
+    if (reason == AotReloadFail::Staging) {
+        last_ops_fail_kind_.store(1, std::memory_order_relaxed);
+        if (last_staging_detail_.load(std::memory_order_relaxed) == 0)
+            last_staging_detail_.store(1, std::memory_order_relaxed); // handshake default
+        // One boundary-tick deferred retry per policy window (#2249
+        // max_reemit stays 2; this is eligibility + schedule, not a
+        // second dlopen). Storm ≥ Global skips schedule.
+        const auto storm = static_cast<std::uint64_t>(current_storm_level());
+        if (storm >= 2) {
+            staging_retry_eligible_.store(0, std::memory_order_relaxed);
+        } else if (staging_retry_window_armed_.load(std::memory_order_relaxed) == 0) {
+            staging_retry_eligible_.store(1, std::memory_order_relaxed);
+            deferred_reemit_pending_v2_.store(1, std::memory_order_relaxed);
+            staging_retry_scheduled_total_.fetch_add(1, std::memory_order_relaxed);
+            staging_retry_window_armed_.store(1, std::memory_order_relaxed);
+        }
+        // Window already armed: keep eligible=1, do not schedule again.
+    } else if (reason == AotReloadFail::Dlopen) {
+        last_ops_fail_kind_.store(2, std::memory_order_relaxed);
+        staging_retry_eligible_.store(0, std::memory_order_relaxed);
+    } else {
+        last_ops_fail_kind_.store(0, std::memory_order_relaxed);
+        staging_retry_eligible_.store(0, std::memory_order_relaxed);
+    }
 }
 
 void HotUpdateRegistry::on_reload_rollback() noexcept {
@@ -743,6 +776,47 @@ void HotUpdateRegistry::on_reload_rollback() noexcept {
     last_aot_reload_fail_reason_.store(static_cast<std::uint8_t>(AotReloadFail::Other),
                                        std::memory_order_release);
     aot_reload_fail_other_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::note_ops_fail_dlopen(std::uint64_t path_hash,
+                                             std::int32_t errno_class) noexcept {
+    // Soft: caller must not invoke (bridge gates). Store is production-only
+    // extra path surface — still a relaxed write when called.
+    last_dlopen_path_hash_.store(path_hash, std::memory_order_relaxed);
+    last_dlopen_errno_class_.store(errno_class, std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::note_ops_fail_staging(std::uint64_t detail_hash) noexcept {
+    last_staging_detail_.store(detail_hash == 0 ? 1 : detail_hash, std::memory_order_relaxed);
+}
+
+std::uint8_t HotUpdateRegistry::last_ops_fail_kind() const noexcept {
+    return last_ops_fail_kind_.load(std::memory_order_relaxed);
+}
+std::uint64_t HotUpdateRegistry::last_dlopen_path_hash() const noexcept {
+    return last_dlopen_path_hash_.load(std::memory_order_relaxed);
+}
+std::int32_t HotUpdateRegistry::last_dlopen_errno_class() const noexcept {
+    return last_dlopen_errno_class_.load(std::memory_order_relaxed);
+}
+std::uint64_t HotUpdateRegistry::last_staging_detail() const noexcept {
+    return last_staging_detail_.load(std::memory_order_relaxed);
+}
+std::uint8_t HotUpdateRegistry::staging_retry_eligible() const noexcept {
+    return staging_retry_eligible_.load(std::memory_order_relaxed);
+}
+std::uint64_t HotUpdateRegistry::staging_retry_scheduled_total() const noexcept {
+    return staging_retry_scheduled_total_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::reset_ops_fail_surface_for_test() noexcept {
+    last_ops_fail_kind_.store(0, std::memory_order_relaxed);
+    last_dlopen_path_hash_.store(0, std::memory_order_relaxed);
+    last_dlopen_errno_class_.store(0, std::memory_order_relaxed);
+    last_staging_detail_.store(0, std::memory_order_relaxed);
+    staging_retry_eligible_.store(0, std::memory_order_relaxed);
+    staging_retry_window_armed_.store(0, std::memory_order_relaxed);
+    staging_retry_scheduled_total_.store(0, std::memory_order_relaxed);
 }
 
 void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
@@ -1252,6 +1326,17 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
         out->schema_2927 = 2927;
         out->issue_2927 = 2927;
     }
+    // Issue #2982: Staging/Dlopen ops surface (additive; idle zeros).
+    out->last_ops_fail_kind = static_cast<std::int64_t>(reg.last_ops_fail_kind());
+    out->last_dlopen_path_hash = static_cast<std::int64_t>(reg.last_dlopen_path_hash());
+    out->last_dlopen_errno_class = static_cast<std::int64_t>(reg.last_dlopen_errno_class());
+    out->last_staging_detail = static_cast<std::int64_t>(reg.last_staging_detail());
+    out->staging_retry_eligible = static_cast<std::int64_t>(reg.staging_retry_eligible());
+    out->staging_retry_scheduled_total =
+        static_cast<std::int64_t>(reg.staging_retry_scheduled_total());
+    out->ops_fail_wired = 1;
+    out->schema_2982 = 2982;
+    out->issue_2982 = 2982;
     const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
                         rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
                         snap.storm_level != 0 || snap.reemit_deferred_pending != 0 ||

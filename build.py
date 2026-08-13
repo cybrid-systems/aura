@@ -2363,6 +2363,18 @@ def cmd_lint():
             "Issue #2953 reload recovery playbook linter failed — run python3 scripts/coverage/checks/check_reload_recovery_playbook_2953.py"
         )
         return r
+    # Issue #2982: Staging/Dlopen ops recovery surface. Extends
+    # test_reload_recovery_query (#81967); no docs/design/ (#1655).
+    sdor_script = COVERAGE_CHECKS / "check_staging_dlopen_ops_recovery_2982.py"
+    if not sdor_script.exists():
+        fail(f"missing {sdor_script}")
+        return 1
+    r = run([sys.executable, str(sdor_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2982 Staging/Dlopen ops recovery linter failed — run python3 scripts/coverage/checks/check_staging_dlopen_ops_recovery_2982.py"
+        )
+        return r
     # Issue #2954: per-Fiber steal decision (replace global mu; keep
     # #2901 re-arm close). Extends test_steal_complete_restamp_txn
     # (#81967); no docs/design.
@@ -10401,6 +10413,21 @@ def cmd_force_jit_reason_bit_map_2927_coverage():
     return 0
 
 
+def cmd_staging_dlopen_ops_recovery_2982_coverage():
+    """Issue #2982: Staging/Dlopen ops recovery surface."""
+    print(f"{B}=== Staging/Dlopen ops recovery coverage (#2982) ==={N}")
+    script = COVERAGE_CHECKS / "check_staging_dlopen_ops_recovery_2982.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("Staging/Dlopen ops recovery (#2982) coverage contract rows failed")
+        return 1
+    ok("Staging/Dlopen ops recovery (#2982) coverage clean")
+    return 0
+
+
 def cmd_steal_decision_per_fiber_2954_coverage():
     """Issue #2954: per-Fiber steal decision protocol.
 
@@ -13959,6 +13986,7 @@ def main():
         "pure-anon-adaptive-budget-2893": cmd_pure_anon_adaptive_budget_2893_coverage,
         "coverage-verify-min-dirty-2952": cmd_coverage_verify_min_dirty_2952_coverage,
         "reload-recovery-playbook-2953": cmd_reload_recovery_playbook_2953_coverage,
+        "staging-dlopen-ops-recovery-2982": cmd_staging_dlopen_ops_recovery_2982_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,

@@ -185,6 +185,18 @@ public:
     // for callers that don't have a reason.
     void on_reload_rollback(AotReloadFail reason) noexcept;
     void on_reload_rollback() noexcept;
+    // Issue #2982: Staging/Dlopen ops recovery surface. Production only
+    // extra stores (Soft keeps last_reason only). detail_hash / path_hash
+    // are FNV-1a stable ids (no path string in the snapshot).
+    void note_ops_fail_dlopen(std::uint64_t path_hash, std::int32_t errno_class) noexcept;
+    void note_ops_fail_staging(std::uint64_t detail_hash) noexcept;
+    [[nodiscard]] std::uint8_t last_ops_fail_kind() const noexcept;
+    [[nodiscard]] std::uint64_t last_dlopen_path_hash() const noexcept;
+    [[nodiscard]] std::int32_t last_dlopen_errno_class() const noexcept;
+    [[nodiscard]] std::uint64_t last_staging_detail() const noexcept;
+    [[nodiscard]] std::uint8_t staging_retry_eligible() const noexcept;
+    [[nodiscard]] std::uint64_t staging_retry_scheduled_total() const noexcept;
+    void reset_ops_fail_surface_for_test() noexcept;
     // Issue #2232: policy fall_back_jit_only after multi-round reload
     //    exhausted. The actual slot-level physical invalidate is wired in
     //    aura_jit_bridge.cpp::aura_aot_invalidate_all_stale_slots_for_eval
@@ -630,6 +642,15 @@ private:
     std::atomic<std::uint64_t> aot_reload_fail_staging_{0};    // #2093
     std::atomic<std::uint64_t> aot_reload_fail_other_{0};      // #2093
     std::atomic<std::uint8_t> last_aot_reload_fail_reason_{0}; // #2093 (AotReloadFail enum)
+    // Issue #2982: Staging/Dlopen ops surface (production extra stores).
+    // kind: 0=None 1=Staging 2=Dlopen. Soft / Ok never write these.
+    std::atomic<std::uint8_t> last_ops_fail_kind_{0};
+    std::atomic<std::uint64_t> last_dlopen_path_hash_{0};
+    std::atomic<std::int32_t> last_dlopen_errno_class_{0};
+    std::atomic<std::uint64_t> last_staging_detail_{0};
+    std::atomic<std::uint8_t> staging_retry_eligible_{0};
+    std::atomic<std::uint8_t> staging_retry_window_armed_{0};
+    std::atomic<std::uint64_t> staging_retry_scheduled_total_{0};
     // Issue #2232: multi-round reload exhausted → fall_back_jit_only.
     //   Issue #2271: companion physical invalidate of generation-behind
     //   AOT slots happens in aura_jit_bridge.cpp BEFORE this callback so
@@ -1250,6 +1271,17 @@ struct aura_reload_recovery_snapshot {
     std::int64_t force_jit_reason_bit_map_wired;
     std::int64_t schema_2927; // 2927 when wired
     std::int64_t issue_2927;  // 2927
+    // Issue #2982: Staging/Dlopen ops recovery surface (additive).
+    // last_ops_fail_kind: 0=None 1=Staging 2=Dlopen.
+    std::int64_t last_ops_fail_kind;
+    std::int64_t last_dlopen_path_hash;
+    std::int64_t last_dlopen_errno_class;
+    std::int64_t last_staging_detail;
+    std::int64_t staging_retry_eligible;
+    std::int64_t staging_retry_scheduled_total;
+    std::int64_t ops_fail_wired; // 1 when #2982 linked
+    std::int64_t schema_2982;    // 2982 when wired
+    std::int64_t issue_2982;     // 2982
     // recovery-active: 1 when any non-idle recovery signal is set
     // (force-jit mask, attempts_left, pending dirty, deferred reemit,
     // storm_level != None). Soft empty path → 0.

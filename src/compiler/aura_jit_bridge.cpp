@@ -21,6 +21,7 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <cerrno>  // Issue #2982: dlopen errno class
 #include <cstdlib> // Issue #2165: getenv AURA_AOT_RELOAD_AUTO_RETRY
 #include <cstring>
 #include <format>
@@ -34,6 +35,8 @@
 
 // Defined in aura_jit_runtime.cpp (lock-hooks path for defuse version).
 extern "C" std::uint64_t aura_get_defuse_version(void);
+// Issue #2982: production probe (strong in typed_mutation_audit_hooks).
+extern "C" int aura_production_defaults_active_probe() noexcept;
 // Defined in aura_jit_runtime.cpp (workspace deopt counter).
 extern "C" void aura_deopt_inc(void);
 
@@ -2964,9 +2967,24 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
 
     void* handle = ::dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
+        const int dl_errno = errno;
         g_aot_staging_active.store(false, std::memory_order_release);
         clear_aot_staging();
         aot_log("aura_reload_aot_module: dlopen failed for %s: %s\n", path, ::dlerror());
+        // Issue #2982: production Dlopen path/errno surface (no auto-retry).
+        if (aura_production_defaults_active_probe() != 0) {
+            std::uint64_t h = 0xcbf29ce484222325ULL;
+            if (path) {
+                for (const unsigned char* p = reinterpret_cast<const unsigned char*>(path); *p; ++p)
+                    h = (h ^ *p) * 0x100000001b3ULL;
+                if (h == 0)
+                    h = 1;
+            } else {
+                h = 0;
+            }
+            aura::compiler::hot_update_registry().note_ops_fail_dlopen(
+                h, static_cast<std::int32_t>(dl_errno));
+        }
         // Issue #2093: per-reason rollback.
         note_reload_rollback(AotReloadFail::Dlopen);
         audit_fail("aot-hotupdate-dlopen-fail");
