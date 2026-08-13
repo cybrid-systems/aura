@@ -2828,6 +2828,8 @@ struct CompilerMetrics {
     // is non-zero (a non-zero provenance was preserved).
     std::atomic<std::uint64_t> coercion_blame_missing_total{0};
     std::atomic<std::uint64_t> dynamic_degrade_with_blame_total{0};
+    // Issue #2991: high-frequency mutate session completeness (additive).
+    std::atomic<std::uint64_t> coercion_blame_chain_complete_total{0};
 
     // Issue #2129: Closure/IRClosure/JIT linear_state stamp + apply dual-check.
     std::atomic<std::uint64_t> linear_closure_state_stamp_total{0};

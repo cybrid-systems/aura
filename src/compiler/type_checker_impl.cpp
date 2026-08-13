@@ -3939,46 +3939,67 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
 void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
                                             std::uint32_t child_index, NodeId original_child,
                                             std::uint32_t type_tag, std::uint32_t type_id,
-                                            std::uint32_t src_line, std::uint32_t src_col) {
-    // Issue #1924 / #2512: prefer active CS mutation/blame context (typed_mutate
-    // path) over only the flat mutation log — prevents blame 断裂 when
-    // deferral happens mid-infer_flat_partial with empty log race.
-    // Issue #2512: always stamp mid/pred into CoercionEntry at deferred-add
-    // (not only at apply-time TLS fill) so production reject-on-miss does not
-    // thrash when TLS was cleared between collect and apply.
-    std::uint32_t cond_node = last_predicate_cond_id_;
-    if (cond_node == 0)
-        cond_node = cs_.active_predicate_cond_node();
-    // Issue #2512: also consult TLS (kept in sync by set_active_mutation_id).
-    if (cond_node == 0)
-        cond_node = aura::compiler::coercion_active_predicate();
-    std::uint64_t mutation_id = cs_.active_mutation_id();
-    if (mutation_id == 0)
-        mutation_id = aura::compiler::coercion_active_mutation_id();
-    std::uint32_t narrow_ev = last_if_narrowing_;
-    if (mutation_id == 0 && !flat.all_mutations().empty())
-        mutation_id = flat.all_mutations().back().mutation_id;
+                                            std::uint32_t src_line, std::uint32_t src_col,
+                                            std::uint64_t explicit_source_mutation_id,
+                                            std::uint32_t explicit_predicate_cond_node,
+                                            std::uint32_t explicit_narrow_evidence) {
+    // Issue #1924 / #2512 / #2991: first-class session provenance. Explicit
+    // check_flat / synthesize_flat_call args + engine active mid beat TLS
+    // and must never be overwritten by log.back() or leftover NarrowingRecords
+    // from a later mutate (high-frequency blame epoch bug).
+    aura::compiler::DeferredCoercionProvenanceIn pin;
+    pin.explicit_mid = explicit_source_mutation_id;
+    pin.explicit_pred = explicit_predicate_cond_node;
+    pin.explicit_narrow = explicit_narrow_evidence;
+    pin.engine_active_mid = cs_.active_mutation_id();
+    pin.engine_active_pred =
+        last_predicate_cond_id_ != 0 ? last_predicate_cond_id_ : cs_.active_predicate_cond_node();
+    pin.engine_last_narrow = last_if_narrowing_;
+    if (!flat.all_mutations().empty())
+        pin.log_back_mid = flat.all_mutations().back().mutation_id;
+    const auto session = aura::compiler::deferred_coercion_session_mid(pin);
+    const auto want_pred = pin.explicit_pred != 0 ? pin.explicit_pred : pin.engine_active_pred;
     for (const auto& nr : flat.all_narrowings()) {
-        if (cond_node != 0 && nr.cond_node != cond_node)
+        if (want_pred != 0 && nr.cond_node != want_pred)
             continue;
-        if (nr.source_mutation_id != 0)
-            mutation_id = nr.source_mutation_id;
-        if (nr.narrow_evidence != 0)
-            narrow_ev = nr.narrow_evidence;
-        if (cond_node != 0)
+        if (session != 0 && nr.source_mutation_id != 0 && nr.source_mutation_id != session)
+            continue; // leftover from an earlier/later mutate
+        if (nr.source_mutation_id != 0 && pin.narrowing_mid == 0)
+            pin.narrowing_mid = nr.source_mutation_id;
+        if (nr.cond_node != 0 && pin.narrowing_pred == 0)
+            pin.narrowing_pred = static_cast<std::uint32_t>(nr.cond_node);
+        if (nr.narrow_evidence != 0 && pin.narrowing_evidence == 0)
+            pin.narrowing_evidence = nr.narrow_evidence;
+        if (pin.narrowing_pred != 0 && (session == 0 || pin.narrowing_mid == session))
             break;
     }
-    // Push coerced node into DeltaBlameChain affected sequence.
+
+    aura::compiler::CoercionEntry draft{};
+    draft.parent_id = static_cast<std::uint32_t>(parent);
+    draft.original_child = static_cast<std::uint32_t>(original_child);
+    aura::compiler::resolve_deferred_coercion_provenance(draft, pin);
+    const auto cond_node = draft.predicate_cond_node;
+    const auto mutation_id = draft.source_mutation_id;
+    const auto narrow_ev = draft.narrow_evidence;
+
+    // Issue #2991 post-condition: under a non-zero session, mid is non-zero.
+    if (session != 0 && mutation_id == 0) {
+        if (cs_.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+            m->coercion_blame_missing_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    } else if (session != 0 && mutation_id != 0 && cs_.metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+        m->coercion_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     if (original_child != aura::ast::NULL_NODE)
         cs_.push_blame_affected_node(static_cast<std::uint32_t>(original_child));
     if (parent != aura::ast::NULL_NODE)
         cs_.push_blame_affected_node(static_cast<std::uint32_t>(parent));
-    // Keep active affected on the coerced child when unset.
     if (cs_.active_affected_node() == 0 && original_child != aura::ast::NULL_NODE)
         cs_.set_active_blame_context(cond_node, static_cast<std::uint32_t>(original_child));
 
-    // Always use provenance overload so CoercionMap::add can fill residual
-    // zeros from TLS (#2512). Explicit non-zero stamps are never overwritten.
     coercions_.add(parent, child_index, original_child, type_tag, type_id, src_line, src_col,
                    cond_node, mutation_id, narrow_ev);
     if (cs_.metrics_) {
@@ -3988,7 +4009,6 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
                                                                        std::memory_order_relaxed);
             if (cond_node != 0 && mutation_id != 0)
                 m->coercion_narrow_blame_chain_hits_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #1924: coercion path propagation metrics.
             const bool stamped =
                 mutation_id != 0 && (cond_node != 0 || original_child != aura::ast::NULL_NODE);
             if (stamped) {
@@ -3998,8 +4018,8 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
                 m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
             }
         } else if (!flat.all_mutations().empty() || cs_.active_mutation_id() != 0) {
-            // Mutation context expected but no stamp → miss (AI audit signal).
             m->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
+            m->coercion_blame_missing_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }
@@ -4904,7 +4924,9 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     // FlatAST's structural links.
                     auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
                     add_deferred_coercion(flat, v.id, static_cast<std::uint32_t>(i + 1), arg_id,
-                                          type_tag, ft.args[i].index, v.line, v.col);
+                                          type_tag, ft.args[i].index, v.line, v.col,
+                                          cs_.active_mutation_id(), last_predicate_cond_id_,
+                                          last_if_narrowing_);
                 } else {
                     auto msg = std::string("argument ") + std::to_string(i) + ": expected " +
                                std::string(reg_.format_type(ft.args[i])) + ", got " +
@@ -4916,7 +4938,9 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                 // Dynamic → Static: deferred CoercionNode (Issue #116)
                 auto type_tag = type_tag_for_coercion(ft.args[i], &reg_);
                 add_deferred_coercion(flat, v.id, static_cast<std::uint32_t>(i + 1), arg_id,
-                                      type_tag, ft.args[i].index, v.line, v.col);
+                                      type_tag, ft.args[i].index, v.line, v.col,
+                                      cs_.active_mutation_id(), last_predicate_cond_id_,
+                                      last_if_narrowing_);
             }
         }
         std::size_t num_args = v.children.size() > 1 ? v.children.size() - 1 : 0;
@@ -6955,7 +6979,8 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                         if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
                             add_deferred_coercion(flat, parent_id, static_cast<std::uint32_t>(ci),
                                                   id, type_tag, expected.index, src_v.line,
-                                                  src_v.col);
+                                                  src_v.col, cs_.active_mutation_id(),
+                                                  last_predicate_cond_id_, last_if_narrowing_);
                             break;
                         }
                     }
@@ -6965,7 +6990,9 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                     // create the CoercionNode but won't rewrite
                     // any parent slot.
                     add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, id, type_tag,
-                                          expected.index, src_v.line, src_v.col);
+                                          expected.index, src_v.line, src_v.col,
+                                          cs_.active_mutation_id(), last_predicate_cond_id_,
+                                          last_if_narrowing_);
                 }
             } else {
                 auto msg = "type mismatch: expected " + std::string(reg_.format_type(expected)) +
@@ -7013,13 +7040,16 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
                         if (parent_v.child(static_cast<std::uint32_t>(ci)) == id) {
                             add_deferred_coercion(flat, parent_id, static_cast<std::uint32_t>(ci),
                                                   id, type_tag, expected.index, src_v.line,
-                                                  src_v.col);
+                                                  src_v.col, cs_.active_mutation_id(),
+                                                  last_predicate_cond_id_, last_if_narrowing_);
                             break;
                         }
                     }
                 } else {
                     add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, id, type_tag,
-                                          expected.index, src_v.line, src_v.col);
+                                          expected.index, src_v.line, src_v.col,
+                                          cs_.active_mutation_id(), last_predicate_cond_id_,
+                                          last_if_narrowing_);
                 }
             }
         }
@@ -7392,13 +7422,16 @@ void InferenceEngine::check_flat_call(FlatAST& flat, StringPool& pool, NodeView 
                 for (std::size_t ci = 0; ci < parent_v.children.size(); ++ci) {
                     if (parent_v.child(static_cast<std::uint32_t>(ci)) == v.id) {
                         add_deferred_coercion(flat, parent_id, static_cast<std::uint32_t>(ci), v.id,
-                                              type_tag, expected.index, v.line, v.col);
+                                              type_tag, expected.index, v.line, v.col,
+                                              cs_.active_mutation_id(), last_predicate_cond_id_,
+                                              last_if_narrowing_);
                         break;
                     }
                 }
             } else {
                 add_deferred_coercion(flat, aura::ast::NULL_NODE, 0, v.id, type_tag, expected.index,
-                                      v.line, v.col);
+                                      v.line, v.col, cs_.active_mutation_id(),
+                                      last_predicate_cond_id_, last_if_narrowing_);
             }
         } else {
             if (metrics_) {
