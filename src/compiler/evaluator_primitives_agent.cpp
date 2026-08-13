@@ -4820,6 +4820,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("issue-2399", aura::orch::kAgentScopeConcurrentMisuseIssue);
             insert_kv("agent-scope-concurrent-detect-wired", 1);
+            // Issue #2946: production concurrent hard deny face.
+            insert_kv("agent-scope-concurrent-hard-deny-total",
+                      static_cast<std::int64_t>(os.agent_scope_concurrent_hard_deny_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("schema-2946", aura::orch::kAgentScopeConcurrentHardDenyIssue);
+            insert_kv("issue-2946", aura::orch::kAgentScopeConcurrentHardDenyIssue);
+            insert_kv("agent-scope-concurrent-hard-deny-wired", 1);
             // Issue #2777: directory_snapshot concurrent enter (read-path
             // residual of #2399). Additive; distinct from misuse_total.
             insert_kv("directory-snapshot-concurrent-total",
