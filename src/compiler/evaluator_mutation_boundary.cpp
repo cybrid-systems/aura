@@ -578,16 +578,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool evidence_loss_pressure =
         aura::compiler::coercion_evidence_loss_pressure(evidence_loss_bp);
     const bool slo_force = aura::compiler::consume_coercion_prov_slo_force_full();
-    // Issue #2912: consume layered-evidence-diverge force-Full pending armed
-    // under production/Full at prior outermost exit (#2719 arm). One-shot:
-    // OR into provenance_miss so do_audit forces Full-path recovery (dual-
-    // complete + provenance chain fill). Soft never arms pending → consume
-    // no-ops (quiet). Hard-reject pending (opt-in HARD env) is consumed
-    // below for force_reason stamping / Agent-visible reject path.
+    // Issue #2912 / #2979: peek layered-evidence-diverge force-Full pending
+    // on *outermost* only (nested must not steal). Consume + Full sample
+    // run in Phase-5 (#2979) so success and non-intentional-failure both
+    // hit one exchange. Peek is a relaxed load → OR into provenance_miss
+    // so do_audit still sees the pending. Soft never arms → load is 0.
     const bool layered_diverge_force =
-        aura::compiler::consume_layered_evidence_diverge_force_full();
+        !nested_boundary && aura::compiler::layered_evidence_diverge_force_full_pending();
     const bool layered_diverge_hard =
-        aura::compiler::consume_layered_evidence_diverge_hard_reject();
+        !nested_boundary && aura::compiler::layered_evidence_diverge_hard_reject_pending();
     bool provenance_miss = aura::compiler::consume_provenance_miss_for_boundary() || slo_force ||
                            layered_diverge_force;
     // Capture whether this exit Full-samples under #2648 evidence-loss pressure
@@ -636,6 +635,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool soft_escalate = aura::compiler::consume_blame_soft_escalate_for_boundary();
     if (soft_escalate)
         provenance_miss = true; // one-shot Full/contextual sample (not hard reject)
+    // Issue #2979: Sampled soft recover must not drop production/Full
+    // layered-diverge force-Full. Pin provenance_miss so do_audit still
+    // runs; Phase-5 consume then takes the one-shot Full sample.
+    if (layered_diverge_force &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        provenance_miss = true;
+    }
     if (provenance_miss) {
         aura::compiler::g_coercion_provenance_miss_force_audit_total.fetch_add(
             1, std::memory_order_relaxed);
@@ -3210,6 +3217,31 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 }
             }
         }
+        // Issue #2979: outermost Phase-5 consume of layered-evidence
+        // force-Full pending. Success *and* non-intentional-failure
+        // (skip intentional partial recovery — residual stays armed).
+        // Quiet (pending==0): one exchange, no extra audit. If consumed
+        // → one-shot Full invariant sample before allow-commit / trail.
+        // HARD env consume stamps force_reason; default is sample.
+        // not hard-reject of the current commit
+        {
+            const bool partial_recovery_2979 = !success && had_panic_checkpoint_ && !panic_handled;
+            if (!partial_recovery_2979) {
+                const bool layered_diverge_force =
+                    aura::compiler::consume_layered_evidence_diverge_force_full();
+                const bool layered_diverge_hard =
+                    aura::compiler::consume_layered_evidence_diverge_hard_reject();
+                if (layered_diverge_force) {
+                    aura::compiler::note_layered_evidence_diverge_force_full_sample();
+                    ev_->ensure_mutation_invariants();
+                }
+                if (layered_diverge_hard &&
+                    (typed_audit::production_defaults_active() ||
+                     typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+                    ev_->last_mutate_error_ = "layered-evidence-diverge";
+                }
+            }
+        }
         // Issue #2682: single unified Moving success predicate — folds all
         // 5 conditions (moving_blocked_precondition / pin_contract_held /
         // root_remap fails / untracked_kept_count > 0 when objects_moved > 0)
@@ -3552,12 +3584,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             std::memory_order_relaxed);
     const auto layered_diverge_delta =
         aura::compiler::check_layered_evidence_coherence(ir_narrow_evidence_hits_snapshot);
-    // Issue #2719 / #2912: Full/production hard gate on layered evidence
-    // diverge (#2674 residual). Default production arm: set force-full-
-    // pending so the *next* outermost boundary *consumes* it via
-    // consume_layered_evidence_diverge_force_full() (#2912) and forces a
-    // Full invariant sample (dual-complete + provenance recover). Opt-in
-    // HARD env: also arm hard-reject-pending (consume stamps force_reason
+    // Issue #2719 / #2912 / #2979: Full/production hard gate on layered
+    // evidence diverge (#2674 residual). Default production arm: set
+    // force-full-pending so the *next* outermost Phase-5 exit consumes
+    // it (#2979) and forces a Full invariant sample. Opt-in HARD env:
+    // also arm hard-reject-pending (Phase-5 consume stamps force_reason
     // "layered-evidence-diverge"). Soft/Sampled: observe-only — #2674
     // (no force-armed bump, no flag). Zero cost when diverge_delta == 0.
     // Destructor-safe: atomics only (#1766).

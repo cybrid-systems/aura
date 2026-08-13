@@ -396,6 +396,14 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("force-reason-coercion-evidence-loss", 9);
             insert_kv("force-reason-refined-drift", 15); // #2911
             insert_kv("type-linear-commit-health-wired", 1);
+            // Issue #2979: layered-evidence Phase-5 consume face (additive).
+            insert_kv("layered-evidence-diverge-force-full-sample-total",
+                      static_cast<std::int64_t>(
+                          ::aura::compiler::g_layered_evidence_diverge_force_full_sample_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("layered-evidence-diverge-phase5-consume-wired", 1);
+            insert_kv("schema-2979", 2979);
+            insert_kv("issue-2979", 2979);
             insert_kv("commit-readiness-wired", 1); // #2553 lineage face
             insert_kv("schema-2613", kTypeLinearCommitHealthIssue);
             insert_kv("issue-2613", kTypeLinearCommitHealthIssue);

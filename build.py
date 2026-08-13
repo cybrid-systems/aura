@@ -2754,7 +2754,19 @@ def cmd_lint():
             "layered evidence force-Full consume (#2912) coverage linter failed — run python3 scripts/coverage/checks/check_layered_evidence_force_full_2912.py"
         )
         return r
-    # Issue #2675: linear-enforce-effective single pure API (replaces #2222
+    # Issue #2979: outermost Phase-5 consume + Full sample (#2912 residual).
+    # Extends test_dead_coercion_layered (#81967); no docs/design/ (#1655).
+    lep5_script = COVERAGE_CHECKS / "check_layered_evidence_phase5_consume_2979.py"
+    if not lep5_script.exists():
+        fail(f"missing {lep5_script}")
+        return 1
+    r = run([sys.executable, str(lep5_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2979 Phase-5 layered-evidence consume linter failed — run python3 scripts/coverage/checks/check_layered_evidence_phase5_consume_2979.py"
+        )
+        return r
+    # Issue #2675: linear-enforce-effective single pure API (replaces #2222)
     # split logic). Single source of truth shared by AST audit, IR executor,
     # MutationBoundary force classification. Soft Warning synth never maps to
     # SynthHardFail (#2514 retained). Zero behavior change when env unset
