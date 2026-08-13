@@ -516,6 +516,43 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_bool(true);
     });
 
+    // Issue #2990: ConcurrentMutationPolicy EDSL surface.
+    // (workspace:set-concurrent-mutation-policy 0|1|"single-writer"|"scoped-parallel")
+    // Production default is SingleWriter (0). Returns #t on success.
+    add("workspace:set-concurrent-mutation-policy",
+        [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return make_bool(false);
+            auto apply = [&](Evaluator::ConcurrentMutationPolicy p) {
+                ev.set_concurrent_mutation_policy(p);
+                return make_bool(true);
+            };
+            if (is_int(a[0])) {
+                const auto v = as_int(a[0]);
+                if (v == 0)
+                    return apply(Evaluator::ConcurrentMutationPolicy::SingleWriter);
+                if (v == 1)
+                    return apply(Evaluator::ConcurrentMutationPolicy::ScopedParallel);
+                return make_bool(false);
+            }
+            if (is_string(a[0])) {
+                auto idx = as_string_idx(a[0]);
+                if (idx >= ev.string_heap_.size())
+                    return make_bool(false);
+                const auto& s = ev.string_heap_[idx];
+                if (s == "single-writer" || s == "SingleWriter")
+                    return apply(Evaluator::ConcurrentMutationPolicy::SingleWriter);
+                if (s == "scoped-parallel" || s == "ScopedParallel")
+                    return apply(Evaluator::ConcurrentMutationPolicy::ScopedParallel);
+                return make_bool(false);
+            }
+            return make_bool(false);
+        });
+    add("workspace:concurrent-mutation-policy", [&ev](const auto&) -> EvalValue {
+        return make_int(
+            static_cast<std::int64_t>(static_cast<std::uint8_t>(ev.concurrent_mutation_policy())));
+    });
+
     // (workspace:cow-refused-count) → COW refusals for this workspace
     ObservabilityPrims::register_stats_impl(
         "workspace:cow-refused-count", [&ev](const auto&) -> EvalValue {

@@ -6056,6 +6056,9 @@ private:
     mutable std::array<std::atomic<std::uint32_t>, kWorkspaceRegionShardsPrivate>
         workspace_region_holders_{};
     std::atomic<bool> workspace_region_concurrency_enabled_{true};
+    // Issue #2990: ConcurrentMutationPolicy (0=SingleWriter default).
+    std::atomic<std::uint8_t> concurrent_mutation_policy_{0};
+    std::atomic<std::uint8_t> concurrent_mutation_policy_explicit_{0};
     bool force_lightweight_checkpoint_for_next_boundary_ = false;
     // Issue #2215: set by outermost Guard dtor before exit_mutation_boundary
     // when RenderFastExit applies — skip Full TypedMutationAudit / composite
@@ -6070,6 +6073,63 @@ public:
     }
     [[nodiscard]] bool workspace_region_concurrency_enabled() const noexcept {
         return workspace_region_concurrency_enabled_.load(std::memory_order_acquire);
+    }
+    // Issue #2990: EDSL Workspace ConcurrentMutationPolicy.
+    // Production default SingleWriter (no try_acquire → region redirect).
+    // ScopedParallel opt-in: disjoint TLS region_key may take RegionExclusive.
+    enum class ConcurrentMutationPolicy : std::uint8_t {
+        SingleWriter = 0,
+        ScopedParallel = 1,
+    };
+    void set_concurrent_mutation_policy(ConcurrentMutationPolicy p) noexcept {
+        concurrent_mutation_policy_.store(static_cast<std::uint8_t>(p), std::memory_order_release);
+        concurrent_mutation_policy_explicit_.store(1, std::memory_order_release);
+        if (p == ConcurrentMutationPolicy::ScopedParallel) {
+            if (compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+                m->scoped_parallel_opt_in_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    [[nodiscard]] ConcurrentMutationPolicy concurrent_mutation_policy() const noexcept {
+        if (concurrent_mutation_policy_explicit_.load(std::memory_order_acquire) == 0) {
+            const char* e = std::getenv("AURA_WORKSPACE_CONCURRENT_MUTATION_POLICY");
+            if (e != nullptr && e[0] != '\0') {
+                const std::string_view v{e};
+                if (v == "scoped-parallel" || v == "ScopedParallel" || v == "1")
+                    return ConcurrentMutationPolicy::ScopedParallel;
+            }
+            return ConcurrentMutationPolicy::SingleWriter;
+        }
+        return static_cast<ConcurrentMutationPolicy>(
+            concurrent_mutation_policy_.load(std::memory_order_acquire));
+    }
+    [[nodiscard]] bool scoped_parallel_enabled() const noexcept {
+        return concurrent_mutation_policy() == ConcurrentMutationPolicy::ScopedParallel;
+    }
+    void bump_scoped_parallel_redirect(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->scoped_parallel_redirect_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_scoped_parallel_conflict_fallback(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->scoped_parallel_conflict_fallback_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_single_writer_serialize(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->single_writer_serialize_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_scoped_parallel_admit(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->scoped_parallel_admit_total.fetch_add(n, std::memory_order_relaxed);
+        }
     }
     [[nodiscard]] static std::uint32_t workspace_region_shard(std::uint64_t region_key) noexcept {
         return static_cast<std::uint32_t>(region_key % kWorkspaceRegionShards);
