@@ -70,6 +70,11 @@ extern "C" __attribute__((weak)) void aura_evaluator_mark_outermost_mutation_fai
 extern "C" __attribute__((weak)) void
 aura_evaluator_force_degrade_outermost_holder(std::uint64_t) noexcept {}
 
+// Issue #2726 / #2958: hold-budget cancel weak no-op (strong in fiber.cpp).
+extern "C" __attribute__((weak)) int aura_fiber_request_hold_budget_cancel(std::uint64_t) noexcept {
+    return 0;
+}
+
 // Issue #2932: hold-budget forced fail-closed at safepoint weak no-op
 // (strong def in evaluator_fiber_mutation.cpp).
 extern "C" __attribute__((weak)) int

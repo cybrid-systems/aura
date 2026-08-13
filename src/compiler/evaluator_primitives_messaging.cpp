@@ -523,6 +523,29 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mailbox-under-boundary-wait-wired", 1);
             insert_kv("schema-2903", 2903);
             insert_kv("issue-2903", 2903);
+            // Issue #2958: production hold-budget cancel on wait SLO breach.
+            insert_kv("mailbox-defer-slo-hold-cancel-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-defer-slo-soft-observe-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-defer-slo-breach-observe-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_defer_slo_breach_observe_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-defer-slo-no-holder-total",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("mailbox-defer-slo-hold-cancel-wired",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-2958", 2958);
+            insert_kv("issue-2958", 2958);
             // Issue #2587: mutate admission gate counter (hard reject
             // vs metric-only soft path; AC1 / AC2). Zero cost when
             // agent-throttle flag == 0 — single relaxed load at every

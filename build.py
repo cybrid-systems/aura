@@ -2293,6 +2293,18 @@ def cmd_lint():
             "Issue #2957 steal lifetime-proof residual linter failed — run python3 scripts/coverage/checks/check_steal_lifetime_proof_residual_2957.py"
         )
         return r
+    # Issue #2958: mailbox defer-wait SLO → hold-budget cancel on holder.
+    # Extends test_mailbox_recv_mutation_boundary (#81967); no docs/design.
+    mdsc_script = COVERAGE_CHECKS / "check_mailbox_defer_slo_hold_cancel_2958.py"
+    if not mdsc_script.exists():
+        fail(f"missing {mdsc_script}")
+        return 1
+    r = run([sys.executable, str(mdsc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2958 mailbox defer-SLO hold-cancel linter failed — run python3 scripts/coverage/checks/check_mailbox_defer_slo_hold_cancel_2958.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -10014,6 +10026,25 @@ def cmd_steal_lifetime_proof_residual_2957_coverage():
     return 0
 
 
+def cmd_mailbox_defer_slo_hold_cancel_2958_coverage():
+    """Issue #2958: mailbox defer-wait SLO → hold-budget cancel.
+
+    Production + wait/open-age ≥ SLO requests hold-budget cancel on the
+    live outermost holder. Soft observe-only; one-shot arm; #2903 hist retained.
+    """
+    print(f"{B}=== mailbox defer-SLO hold-cancel coverage (#2958) ==={N}")
+    script = COVERAGE_CHECKS / "check_mailbox_defer_slo_hold_cancel_2958.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox defer-SLO hold-cancel (#2958) coverage contract rows failed")
+        return 1
+    ok("mailbox defer-SLO hold-cancel (#2958) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -13402,6 +13433,7 @@ def main():
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
         "steal-lifetime-proof-residual-2957": cmd_steal_lifetime_proof_residual_2957_coverage,
+        "mailbox-defer-slo-hold-cancel-2958": cmd_mailbox_defer_slo_hold_cancel_2958_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
