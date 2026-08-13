@@ -87,6 +87,10 @@ static std::string read_file(const char* path) {
 
 void reset_all() {
     reset_tenant_isolation_for_test();
+    // #2968: AC2 grants TenantAdmin into the process-global capability
+    // registry; reset_all() must also clear it or later blocks reusing the
+    // same tenant id see a leaked admin and the gate never denies.
+    aura::core::capability::reset_capability_effects_for_test();
     set_mode(SandboxMode::Off);
     // Soft / unit path: hard-close off so Soft global-fallback tests stay green.
     aura::core::provenance::set_hard_capture_tenant(false);
@@ -857,6 +861,159 @@ int main() {
                               "docs/evaluator_stamp_sole_authority_2759.md", "design/2759.md"}) {
             std::ifstream f(p);
             CHECK(!f.good(), "AC6: no design doc at " + std::string(p));
+        }
+    }
+
+    // ── #2968: cross-tenant grant write path requires TenantAdmin ──
+    {
+        std::println("\n--- #2968 AC1: cross-tenant grant without TenantAdmin → deny ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        ev.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before + 1,
+              "AC1: cross_tenant_grant_deny_total bumps when caller lacks TenantAdmin");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC1: no cross grant written on deny");
+        // SE reason present in ring.
+        const auto& ring = g_security_event_ring();
+        bool found = false;
+        const auto cur = ring.seq.load(std::memory_order_acquire);
+        for (auto s = cur; s > 0 && s + 16 > cur; --s) {
+            const auto& e = ring.ring[(s - 1) % ring.ring.size()];
+            if (std::string_view(e.reason) == "cross-tenant-grant-needs-tenant-admin") {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found, "AC1: SE reason 'cross-tenant-grant-needs-tenant-admin' recorded");
+    }
+
+    // ── #2968 AC2: TenantAdmin allows cross-tenant grant ──
+    {
+        std::println("\n--- #2968 AC2: TenantAdmin allows cross-tenant grant ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+
+        const auto allow_before =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        ev.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto allow_after =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        CHECK(allow_after == allow_before + 1,
+              "AC2: allow bumps cross_tenant_capability_grant_total");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "AC2: cross grant installed with TenantAdmin");
+    }
+
+    // ── #2968 AC2b: foreign-tenant grant_effect_capability gate ──
+    {
+        std::println("\n--- #2968 AC2b: foreign-tenant grant_effect_capability gate ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+
+        // No TenantAdmin → foreign-tenant grant denied.
+        ev.grant_effect_capability(/*tenant=*/42, "mut-2968-foreign", kEffectMutate,
+                                   /*mid=*/5);
+        aura::core::capability::CapabilityGrant g{};
+        CHECK(
+            !aura::core::capability::g_capability_registry().find_grant(42, "mut-2968-foreign", g),
+            "AC2b: foreign grant denied without TenantAdmin");
+        // Same-tenant self-grant stays allowed (existing policy).
+        ev.grant_effect_capability(/*tenant=*/7, "mut-2968-self", kEffectMutate, /*mid=*/6);
+        CHECK(aura::core::capability::g_capability_registry().find_grant(7, "mut-2968-self", g),
+              "AC2b: same-tenant self-grant stays allowed");
+        // With TenantAdmin → foreign grant allowed.
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        ev.grant_effect_capability(/*tenant=*/42, "mut-2968-admin", kEffectMutate, /*mid=*/7);
+        CHECK(aura::core::capability::g_capability_registry().find_grant(42, "mut-2968-admin", g),
+              "AC2b: foreign grant allowed with TenantAdmin");
+    }
+
+    // ── #2968 AC3: Off path no hard gate ──
+    {
+        std::println("\n--- #2968 AC3: Off path no hard gate ---");
+        reset_all(); // Off
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        ev.grant_cross_tenant_access(/*from=*/1, /*to=*/2, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC3: Off path does not deny (no hard gate)");
+        CHECK(g_workspace_isolation().cross_grant_bits(1, 2) != 0,
+              "AC3: Off path cross-tenant grant proceeds");
+    }
+
+    // ── #2968 AC5: snapshot + posture additive keys ──
+    {
+        std::println("\n--- #2968 AC5: snapshot + posture additive keys ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.grant_cross_tenant_access(7, 42, kEffectMutate); // deny (no admin)
+        const auto snap = snapshot_tenant_isolation_stats();
+        CHECK(snap.cross_tenant_grant_deny >= 1, "AC5: snapshot exposes cross_tenant_grant_deny");
+        // Posture prim cites schema-2968 + additive keys.
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(posture.find("schema-2968") != std::string::npos, "AC5: posture cites schema-2968");
+        CHECK(posture.find("cross-tenant-grant-tenant-admin-wired") != std::string::npos,
+              "AC5: posture exposes cross-tenant-grant-tenant-admin-wired");
+        CHECK(posture.find("cross-tenant-grant-deny-total") != std::string::npos,
+              "AC5: posture exposes cross-tenant-grant-deny-total");
+    }
+
+    // ── #2968 AC6: source-cite + no invent + no docs/design/ ──
+    {
+        std::println("\n--- #2968 AC6: source-cite + no invent + no docs/design/ ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        const auto build = read_file("build.py");
+        CHECK(iso.find("#2968") != std::string::npos, "AC6: workspace_isolation.hh cites #2968");
+        CHECK(sec.find("#2968") != std::string::npos, "AC6: evaluator_security.cpp cites #2968");
+        CHECK(posture.find("schema-2968") != std::string::npos,
+              "AC6: evaluator_primitives_security.cpp cites schema-2968");
+        CHECK(test_self.find("#2968") != std::string::npos, "AC6: test file cites #2968");
+        CHECK(build.find("check_cross_tenant_grant_gate_2968") != std::string::npos,
+              "AC6: build.py wires #2968 linter");
+        std::ifstream invent("tests/core/test_issue_2968.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_2968.cpp");
+        CHECK(!invent.good(), "AC6: no tests/core/test_issue_2968.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("2968-") == std::string::npos,
+                      std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
         }
     }
 
