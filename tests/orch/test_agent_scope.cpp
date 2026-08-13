@@ -26,6 +26,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -35,6 +36,7 @@
 #include <thread>
 #include <vector>
 
+#include "compiler/typed_mutation_audit.h"
 #include "core/resource_quota.hh"
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
@@ -553,6 +555,202 @@ static void ac2399_concurrent_detect() {
     }
 }
 
+// ── Issue #2946: production concurrent hard deny default ─────────────
+// AC1: production_defaults + concurrent → hard_deny total bumps; spawn
+//      under hard deny does not grow handles_.
+// AC2: Soft / sandbox=off → SoftMetric (no hard deny unless env=1).
+// AC3: single-thread zero hard deny.
+// AC4: hierarchy cancel still uses unlocked walk (#2781) — no hard deny.
+// AC5: schema-2946 + hard-deny total query key.
+// AC6: source-cite + no invent/design.
+static void ac2946_production_hard_deny() {
+    std::println("\n--- #2946 AC1–AC6: production concurrent hard deny ---");
+    CHECK(aura::orch::kAgentScopeConcurrentHardDenyIssue == 2946, "issue stamp #2946");
+
+    auto set_prod = [](bool on) {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(on ? 1u : 0u, std::memory_order_relaxed);
+    };
+
+    // AC2: Soft / no production → SoftMetric
+    {
+        set_prod(false);
+        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        unsetenv("AURA_SANDBOX");
+        CHECK(!aura::orch::agent_scope_concurrent_hard_deny_enabled(),
+              "2946 AC2: Soft → hard deny OFF");
+        CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
+                  aura::orch::AgentScopeConcurrentPolicy::SoftMetric,
+              "2946 AC2: SoftMetric policy");
+    }
+
+    // AC2b: sandbox=off → SoftMetric even with production flag
+    {
+        set_prod(true);
+        setenv("AURA_SANDBOX", "off", 1);
+        CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
+                  aura::orch::AgentScopeConcurrentPolicy::SoftMetric,
+              "2946 AC2: sandbox=off → SoftMetric");
+        unsetenv("AURA_SANDBOX");
+    }
+
+    // AC1: production → HardDeny; concurrent spawn does not mutate handles_
+    {
+        set_prod(true);
+        unsetenv("AURA_SANDBOX");
+        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
+                  aura::orch::AgentScopeConcurrentPolicy::HardDeny,
+              "2946 AC1: production → HardDeny");
+        CHECK(aura::orch::agent_scope_concurrent_hard_deny_enabled(),
+              "2946 AC1: hard_deny_enabled true");
+        CHECK(!aura::orch::agent_scope_concurrent_abort_enabled(),
+              "2946 AC1: HardDeny is not HardAbort (env=1 only)");
+
+        const auto mis0 =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        const auto hd0 = g_orch_module_stats.agent_scope_concurrent_hard_deny_total.load(
+            std::memory_order_relaxed);
+
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+
+        std::atomic<bool> stop_body{false};
+        AgentSpec hang;
+        hang.name = "2946-hang";
+        hang.body = [&] {
+            while (!stop_body.load(std::memory_order_acquire)) {
+                if (aura::serve::g_current_fiber &&
+                    aura::serve::g_current_fiber->is_cancel_requested())
+                    return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        };
+        hang.attach_mailbox = false;
+        hang.keepalive_interval_ms = 0;
+        (void)scope.spawn(std::move(hang));
+        const auto size_before = scope.size();
+
+        std::atomic<int> ready{0};
+        std::atomic<bool> go{false};
+        std::atomic<bool> join_entered{false};
+        std::atomic<bool> spawn_ok{true};
+
+        std::thread t_join([&] {
+            ready.fetch_add(1, std::memory_order_acq_rel);
+            while (!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            join_entered.store(true, std::memory_order_release);
+            (void)scope.join_all(std::optional<std::uint64_t>{800});
+        });
+        std::thread t_spawn([&] {
+            ready.fetch_add(1, std::memory_order_acq_rel);
+            while (!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            while (!join_entered.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            AgentSpec spec;
+            spec.name = "2946-ct-spawn";
+            spec.body = [] {};
+            spec.attach_mailbox = false;
+            spec.keepalive_interval_ms = 0;
+            auto& h = scope.spawn(std::move(spec));
+            // Hard deny: failed handle, not ok; handles_ size unchanged.
+            spawn_ok.store(h.ok, std::memory_order_release);
+        });
+
+        while (ready.load(std::memory_order_acquire) < 2)
+            std::this_thread::yield();
+        go.store(true, std::memory_order_release);
+        t_spawn.join();
+        stop_body.store(true, std::memory_order_release);
+        scope.cancel_all();
+        t_join.join();
+
+        const auto mis1 =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        const auto hd1 = g_orch_module_stats.agent_scope_concurrent_hard_deny_total.load(
+            std::memory_order_relaxed);
+        CHECK(mis1 > mis0, "2946 AC1: misuse counter bumps");
+        CHECK(hd1 > hd0, "2946 AC1: hard_deny_total bumps under production");
+        CHECK(!spawn_ok.load(std::memory_order_relaxed),
+              "2946 AC1: concurrent spawn returns ok=false under hard deny");
+        CHECK(scope.size() == size_before,
+              "2946 AC1: handles_ size unchanged (no mutate under hard deny)");
+        set_prod(false);
+    }
+
+    // AC: env=0 opt-out under production → SoftMetric
+    {
+        set_prod(true);
+        unsetenv("AURA_SANDBOX");
+        setenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT", "0", 1);
+        CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
+                  aura::orch::AgentScopeConcurrentPolicy::SoftMetric,
+              "2946 AC2: env=0 forces SoftMetric under production");
+        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        set_prod(false);
+    }
+
+    // AC3: single-thread under production → hard deny stays 0
+    {
+        set_prod(true);
+        unsetenv("AURA_SANDBOX");
+        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        const auto hd0 = g_orch_module_stats.agent_scope_concurrent_hard_deny_total.load(
+            std::memory_order_relaxed);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+        for (int i = 0; i < 3; ++i) {
+            AgentSpec spec;
+            spec.name = std::format("2946-st-{}", i);
+            spec.body = [] {};
+            spec.attach_mailbox = false;
+            (void)scope.spawn(std::move(spec));
+        }
+        scope.cancel_all();
+        (void)scope.join_all(std::optional<std::uint64_t>{500});
+        const auto hd1 = g_orch_module_stats.agent_scope_concurrent_hard_deny_total.load(
+            std::memory_order_relaxed);
+        CHECK(hd1 == hd0, "2946 AC3: single-thread hard_deny stays 0");
+        set_prod(false);
+    }
+
+    // AC4 / AC5 / AC6: source-cite
+    {
+        auto scope_src = read_file("src/orch/agent_scope.h");
+        auto spawn_src = read_file("src/orch/agent_spawn.h");
+        auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        auto build = read_file("build.py");
+        CHECK(scope_src.find("Issue #2946") != std::string::npos ||
+                  scope_src.find("#2946") != std::string::npos,
+              "2946 AC6: agent_scope.h cites #2946");
+        CHECK(scope_src.find("HardDeny") != std::string::npos, "2946 AC6: HardDeny policy");
+        CHECK(scope_src.find("denied_hard") != std::string::npos, "2946 AC6: denied_hard");
+        CHECK(scope_src.find("cancel_all_unlocked_") != std::string::npos,
+              "2946 AC4: hierarchy unlocked cancel preserved");
+        CHECK(spawn_src.find("agent_scope_concurrent_hard_deny_total") != std::string::npos,
+              "2946 AC5: hard_deny counter field");
+        CHECK(spawn_src.find("kAgentScopeConcurrentHardDenyIssue") != std::string::npos,
+              "2946 AC5: issue constant");
+        CHECK(prim_src.find("schema-2946") != std::string::npos, "2946 AC5: schema-2946");
+        CHECK(prim_src.find("agent-scope-concurrent-hard-deny-total") != std::string::npos,
+              "2946 AC5: query key");
+        CHECK(prim_src.find("agent-scope-concurrent-hard-deny-wired") != std::string::npos,
+              "2946 AC5: wired sentinel");
+        CHECK(prim_src.find("schema-2399") != std::string::npos, "2946 AC5: schema-2399 preserved");
+        CHECK(build.find("check_agent_scope_concurrent_hard_deny_2946") != std::string::npos,
+              "2946 AC6: build.py wires linter");
+        std::ifstream invent("tests/orch/test_issue_2946.cpp");
+        if (!invent.good())
+            invent.open("../tests/orch/test_issue_2946.cpp");
+        CHECK(!invent.good(), "2946 AC6: no test_issue_2946.cpp");
+    }
+}
+
 // ── Issue #2777: read APIs take ScopeEnterGuard (#2399 residual) ─────
 static void ac2777_read_apis_guarded() {
     std::println("\n--- #2777 AC1–AC5: directory_snapshot / handles ScopeEnterGuard ---");
@@ -784,11 +982,12 @@ int run_test_agent_scope() {
     ac6_readme_section();
     ac2161_watch_all_batch();
     ac2399_concurrent_detect();
+    ac2946_production_hard_deny();
     ac2777_read_apis_guarded();
     std::println("\n=== Issue #2782: AgentScope Scheduler lifetime ===");
     ac2782_scheduler_destroyed_before_scope();
     ac2782_source_and_query();
-    std::println("\n=== #2083/#2161/#2399/#2777/#2782: passed={} failed={} ===", g_passed,
+    std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782: passed={} failed={} ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }

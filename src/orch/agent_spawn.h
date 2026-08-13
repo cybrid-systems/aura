@@ -117,6 +117,8 @@ inline constexpr int kMailboxBpRecentWindowIssue = 2398;
 inline constexpr int kMailboxBpAdmitDefaultOnIssue = 2535;
 // Issue #2399: AgentScope concurrent access detection (metric + optional abort).
 inline constexpr int kAgentScopeConcurrentMisuseIssue = 2399;
+// Issue #2946: production default concurrent hard deny (structured fail).
+inline constexpr int kAgentScopeConcurrentHardDenyIssue = 2946;
 // Issue #2633: scope-local mailbox BP recent gauge. Cap on the bounded
 // map of per-scope gauges; overflow falls back to process bucket +
 // spawn_bp_scope_overflow_total metric. 256 covers typical multi-tenant
@@ -514,9 +516,13 @@ struct OrchModuleStats {
     // Issue #2399: AgentScope concurrent misuse detection (metric path).
     // Bumped when a second thread enters spawn/join_all/watch_all/cancel_all
     // (and read APIs after #2777) while another thread already holds the scope.
-    // Default metric-only; AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard-aborts.
+    // Default metric-only under Soft; production hard-deny under #2946.
+    // AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 hard-aborts; =0 forces metric-only.
     // Not a lock — ownership model stays single-owner serialize (no mutex).
     std::atomic<std::uint64_t> agent_scope_concurrent_misuse_total{0};
+    // Issue #2946: production hard-deny face of concurrent enter (structured
+    // fail — second enter does not mutate handles_). Subset of misuse_total.
+    std::atomic<std::uint64_t> agent_scope_concurrent_hard_deny_total{0};
     // Issue #2777: concurrent enter specifically on directory_snapshot /
     // orch:agent-directory read path (subset of misuse_total). Agents can
     // alert on multi-tenant directory races without joining all sites.

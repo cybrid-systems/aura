@@ -2079,6 +2079,21 @@ def cmd_lint():
             "Issue #2945 join held-flags linter failed — run python3 scripts/coverage/checks/check_join_held_flags_2945.py"
         )
         return r
+    # Issue #2946: production AgentScope concurrent hard deny (refine
+    # #2399). production_defaults_active → HardDeny (structured fail, no
+    # handles_ mutation); Soft / AURA_SANDBOX=off metric-only; env=0
+    # opt-out; env=1 HardAbort. Extends test_agent_scope (#81967);
+    # no docs/design/ (#1655).
+    aschd_script = COVERAGE_CHECKS / "check_agent_scope_concurrent_hard_deny_2946.py"
+    if not aschd_script.exists():
+        fail(f"missing {aschd_script}")
+        return 1
+    r = run([sys.executable, str(aschd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2946 AgentScope concurrent hard deny linter failed — run python3 scripts/coverage/checks/check_agent_scope_concurrent_hard_deny_2946.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -5231,6 +5246,26 @@ def cmd_agent_scope_concurrent_coverage():
         fail("AgentScope concurrent detect (#2399) coverage contract rows failed")
         return 1
     ok("AgentScope concurrent detect (#2399) coverage clean")
+    return 0
+
+
+def cmd_agent_scope_concurrent_hard_deny_2946_coverage():
+    """Issue #2946: production AgentScope concurrent hard deny default.
+
+    Refine #2399: production_defaults_active → HardDeny (structured fail,
+    no handle mutation); Soft / sandbox=off metric-only; env ABORT=0
+    opt-out / =1 HardAbort; hard_deny counter + schema-2946.
+    """
+    print(f"{B}=== AgentScope concurrent hard deny coverage (#2946) ==={N}")
+    script = COVERAGE_CHECKS / "check_agent_scope_concurrent_hard_deny_2946.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("AgentScope concurrent hard deny (#2946) coverage contract rows failed")
+        return 1
+    ok("AgentScope concurrent hard deny (#2946) coverage clean")
     return 0
 
 

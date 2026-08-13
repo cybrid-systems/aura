@@ -42,12 +42,15 @@
 
 #include "orch/agent_spawn.h"
 
+#include "compiler/typed_mutation_audit.h" // #2946 production_defaults_active
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 #include <memory>
 #include <optional>
 #include <span>
@@ -97,11 +100,48 @@ struct AgentDirectorySnapshot {
     int schema = kAgentDirectoryIssue;
 };
 
-// Issue #2399: optional hard abort on concurrent AgentScope enter.
-// Default OFF (metric-only). Env AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 enables.
-[[nodiscard]] inline bool agent_scope_concurrent_abort_enabled() noexcept {
+// Issue #2399 / #2946: concurrent AgentScope enter policy.
+// Priority (mirrors #2838 production-default inject):
+//   1. AURA_AGENT_SCOPE_CONCURRENT_ABORT=0 → SoftMetric (opt-out even prod)
+//   2. AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 → HardAbort (force even Soft)
+//   3. Soft / AURA_SANDBOX=off → SoftMetric
+//   4. production_defaults_active → HardDeny (structured fail, #2946)
+//   5. else SoftMetric
+// HardDeny: second enter does not take ownership and mutators must not
+// mutate handles_ (spawn returns a failed handle without push).
+// HardAbort: fprintf + std::abort (existing #2399 env path).
+enum class AgentScopeConcurrentPolicy : std::uint8_t {
+    SoftMetric = 0,
+    HardDeny = 1,
+    HardAbort = 2,
+};
+
+[[nodiscard]] inline AgentScopeConcurrentPolicy resolve_agent_scope_concurrent_policy() noexcept {
     const char* e = std::getenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
-    return e != nullptr && e[0] == '1' && e[1] == '\0';
+    if (e != nullptr && e[0] == '0' && e[1] == '\0')
+        return AgentScopeConcurrentPolicy::SoftMetric; // operator opt-out
+    if (e != nullptr && e[0] == '1' && e[1] == '\0')
+        return AgentScopeConcurrentPolicy::HardAbort; // force abort
+    const char* sb = std::getenv("AURA_SANDBOX");
+    const bool dev_off = (sb != nullptr && sb[0] != '\0' && std::string_view(sb) == "off");
+    if (dev_off)
+        return AgentScopeConcurrentPolicy::SoftMetric;
+    if (aura::compiler::typed_audit::production_defaults_active())
+        return AgentScopeConcurrentPolicy::HardDeny; // #2946 production default
+    return AgentScopeConcurrentPolicy::SoftMetric;
+}
+
+// Issue #2399: true when concurrent enter hard-aborts (env=1 only).
+// Production hard-deny (#2946) is structured fail, not abort — use
+// resolve_agent_scope_concurrent_policy() for the full matrix.
+[[nodiscard]] inline bool agent_scope_concurrent_abort_enabled() noexcept {
+    return resolve_agent_scope_concurrent_policy() == AgentScopeConcurrentPolicy::HardAbort;
+}
+
+// Issue #2946: true when concurrent enter is hard-denied (abort or structured).
+[[nodiscard]] inline bool agent_scope_concurrent_hard_deny_enabled() noexcept {
+    const auto p = resolve_agent_scope_concurrent_policy();
+    return p == AgentScopeConcurrentPolicy::HardDeny || p == AgentScopeConcurrentPolicy::HardAbort;
 }
 
 // Issue #2161: stall response for scope-level watch_all.
@@ -147,8 +187,11 @@ struct ScopeWatchResult {
 // (matches the underlying Scheduler single-owner model). Child scopes
 // inherit the same serial model (#2399 / #2777).
 //
-// Issue #2399 / #2777: concurrent enter is *detected* (metric + optional
-// hard abort) but not locked — no internal mutex, no global registry.
+// Issue #2399 / #2777 / #2946: concurrent enter is *detected* (metric
+// + production hard deny / optional abort) but not locked — no internal
+// mutex, no global registry. Soft: metric-only (body may still run).
+// Production (#2946): HardDeny — mutators skip handle mutation.
+// Env AURA_AGENT_SCOPE_CONCURRENT_ABORT=1 HardAbort; =0 Soft opt-out.
 // Same-thread re-entry (e.g. ~AgentScope → cancel_all → join_all) is
 // allowed via depth. Read APIs (#2777) also take ScopeEnterGuard so
 // directory_snapshot / handles / child_at concurrent with ~AgentScope
@@ -184,6 +227,16 @@ public:
     // (ok=false, error set) and bumps agent_scope_scheduler_dangling_total.
     AgentHandle& spawn(AgentSpec spec) {
         ScopeEnterGuard g(this, "spawn");
+        // Issue #2946: production concurrent hard deny — do not mutate
+        // handles_ (return thread-local failed handle).
+        if (g.denied_hard()) {
+            thread_local AgentHandle failed;
+            failed = AgentHandle{};
+            failed.ok = false;
+            failed.error = "AgentScope concurrent hard deny (#2946)";
+            failed.name = spec.name;
+            return failed;
+        }
         if (!sched_) {
             g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
                 1, std::memory_order_relaxed);
@@ -217,6 +270,10 @@ public:
     // bound to a null scheduler (fail-closed ops); bumps dangling total.
     AgentScope& spawn_child() {
         ScopeEnterGuard g(this, "spawn_child");
+        // Issue #2946: concurrent hard deny — do not push children_.
+        // Return *this as fail-closed stub (caller must not treat as child).
+        if (g.denied_hard())
+            return *this;
         if (!sched_) {
             g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
                 1, std::memory_order_relaxed);
@@ -699,12 +756,14 @@ private:
         }
     }
 
-    // Issue #2399 / #2777: RAII enter/leave for concurrent misuse detection.
+    // Issue #2399 / #2777 / #2946: RAII enter/leave for concurrent misuse.
     // Same-thread re-entry increments depth (no metric). Concurrent enter
-    // from another thread bumps agent_scope_concurrent_misuse_total and
-    // optionally aborts. Metric path still runs the method body (detect,
-    // don't invent locks). Zero cost beyond one atomic CAS when free.
-    // const-friendly: owner_tid_/enter_depth_ are mutable (#2777 reads).
+    // from another thread bumps agent_scope_concurrent_misuse_total;
+    // production HardDeny (#2946) also bumps hard_deny_total and sets
+    // denied_hard so mutators skip handle mutation; Soft continues the
+    // method body (metric-only detect, no lock). Env=1 HardAbort aborts.
+    // Zero cost beyond one atomic CAS when free. const-friendly:
+    // owner_tid_/enter_depth_ are mutable (#2777 reads).
     //
     // Issue #2781: hierarchy cancel does NOT use this guard on children
     // (see cancel_all_unlocked_). Direct cancel_all / ~AgentScope still
@@ -712,24 +771,30 @@ private:
     struct ScopeEnterGuard {
         const AgentScope* self = nullptr;
         bool holds = false;
+        bool hard_denied = false; // #2946 production concurrent hard deny
         ScopeEnterGuard(const AgentScope* s, const char* site) noexcept
             : self(s) {
             if (!self)
                 return;
-            holds = self->try_enter(site);
+            holds = self->try_enter(site, &hard_denied);
         }
         ~ScopeEnterGuard() noexcept {
             if (holds && self)
                 self->leave();
         }
+        [[nodiscard]] bool denied_hard() const noexcept { return hard_denied; }
         ScopeEnterGuard(const ScopeEnterGuard&) = delete;
         ScopeEnterGuard& operator=(const ScopeEnterGuard&) = delete;
     };
 
     // Returns true if this thread holds ownership (caller must leave).
-    // Returns false on concurrent misuse after metric/abort path (caller
-    // still runs the method body without tracking ownership).
-    bool try_enter(const char* site) const noexcept {
+    // Returns false on concurrent misuse. When out_hard_denied is set
+    // and policy is HardDeny, *out_hard_denied=true (mutators must not
+    // mutate). Soft concurrent: false + hard_denied=false (legacy body
+    // may still run). HardAbort: does not return.
+    bool try_enter(const char* site, bool* out_hard_denied = nullptr) const noexcept {
+        if (out_hard_denied)
+            *out_hard_denied = false;
         const auto tid = std::this_thread::get_id();
         std::thread::id expected{}; // default-constructed = unowned
         if (owner_tid_.compare_exchange_strong(expected, tid, std::memory_order_acq_rel,
@@ -750,13 +815,23 @@ private:
             g_orch_module_stats.directory_snapshot_concurrent_total.fetch_add(
                 1, std::memory_order_relaxed);
         }
-        if (agent_scope_concurrent_abort_enabled()) {
+        const auto pol = resolve_agent_scope_concurrent_policy();
+        if (pol == AgentScopeConcurrentPolicy::HardAbort) {
             std::fprintf(stderr,
                          "FATAL: AgentScope concurrent misuse at %s "
-                         "(AURA_AGENT_SCOPE_CONCURRENT_ABORT=1, #2399/#2777)\n",
+                         "(AURA_AGENT_SCOPE_CONCURRENT_ABORT=1, #2399/#2777/#2946)\n",
                          site ? site : "?");
             std::abort();
         }
+        if (pol == AgentScopeConcurrentPolicy::HardDeny) {
+            // Issue #2946: production hard deny — structured fail.
+            g_orch_module_stats.agent_scope_concurrent_hard_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (out_hard_denied)
+                *out_hard_denied = true;
+            return false;
+        }
+        // SoftMetric: detect only; caller may still run method body.
         return false;
     }
 
