@@ -4992,9 +4992,15 @@ public:
         }
     }
 
-    // Issue #2058: move children_[id] out so the PCV is typically unique
-    // (no snapshot/SafePCVSpan hold) → cow_set writes in place (zero alloc).
-    // When a snapshot still aliases storage, cow_* falls back to with_* COW.
+    // Issue #2058 / #2906: move children_[id] out so the PCV is typically
+    // unique (no snapshot/SafePCVSpan hold) → cow_set writes in place
+    // (zero alloc). Canonical pattern (never mutate while the slot holds a
+    // shared view):
+    //   auto kids = std::move(children_[id]);
+    //   kids.cow_set(i, new_child);
+    //   children_[id] = std::move(kids);
+    // When a snapshot still aliases storage, cow_* falls back to with_* COW
+    // and flatast_locked_move_out_cow_total bumps (#2906 AC3 correctness).
     void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
         contract_assert(id < children_.size());
         auto list = std::move(children_[id]);
@@ -5006,7 +5012,14 @@ public:
         auto old_cid = list[idx];
         if (old_cid != NULL_NODE && old_cid < parent_.size())
             parent_[old_cid] = NULL_NODE;
+        const bool exclusive_before = list.is_unique();
         list.cow_set(idx, child);
+        if (exclusive_before)
+            g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.fetch_add(
+                1, std::memory_order_relaxed);
+        else
+            g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.fetch_add(
+                1, std::memory_order_relaxed);
         contract_assert(list.size() == old_size);
         children_[id] = std::move(list);
         if (child != NULL_NODE && child < parent_.size())
@@ -5029,9 +5042,17 @@ public:
         if (!incoming_parent_index_dirty_.load(std::memory_order_acquire) &&
             pos < children_[id].size())
             incoming_index_shift_parent_indices(id, pos, /*delta=*/+1);
-        // Issue #2058: move-out for unique-ish path (insert still allocates).
+        // Issue #2058 / #2906: move-out for exclusive ownership (insert still
+        // size-changes → allocates, but avoids shared-view mutation).
         auto list = std::move(children_[id]);
+        const bool exclusive_before = list.is_unique();
         list.cow_insert(pos, child);
+        if (exclusive_before)
+            g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.fetch_add(
+                1, std::memory_order_relaxed);
+        else
+            g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.fetch_add(
+                1, std::memory_order_relaxed);
         children_[id] = std::move(list);
         if (child != NULL_NODE && child < parent_.size())
             parent_[child] = id;
@@ -5055,9 +5076,17 @@ public:
         }
         if (cid != NULL_NODE && cid < parent_.size())
             parent_[cid] = NULL_NODE;
-        // Issue #2058: move-out + cow_erase (size-change always allocates).
+        // Issue #2058 / #2906: move-out + cow_erase (size-change always
+        // allocates; exclusive move still avoids shared-view mutation).
         auto list = std::move(children_[id]);
+        const bool exclusive_before = list.is_unique();
         list.cow_erase(idx);
+        if (exclusive_before)
+            g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.fetch_add(
+                1, std::memory_order_relaxed);
+        else
+            g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.fetch_add(
+                1, std::memory_order_relaxed);
         children_[id] = std::move(list);
         add_mutation_child_op(id, idx, cid, NULL_NODE, "structural-remove-child");
         structural_mutate_erase_total_.fetch_add(1, std::memory_order_relaxed);
