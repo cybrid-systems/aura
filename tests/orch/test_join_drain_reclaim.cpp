@@ -1112,6 +1112,171 @@ int run_test_join_drain_reclaim() {
         }
     }
 
+    // ── #2970: JoinPolicy optional wait_reclaimed_ms — auto-wait after
+    // Reclaimed (hosts must not have to remember a second prim call) ──
+    {
+        using aura::orch::AgentHandle;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::orch::wait_reclaimed_body;
+        using aura::serve::Fiber;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        std::println("\n--- #2970 AC1: wait_reclaimed_ms unset → zero cost ---");
+        {
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 4096;
+            const auto wait_before =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            JoinPolicy policy{};
+            policy.primary_ms = 1; // fast join; unset wait_reclaimed_ms
+            policy.drain_ms = 0;
+            const auto jr = join_agent(h, policy);
+            CHECK(jr.status == JoinStatus::Reclaimed, "2970 AC1: join returns Reclaimed");
+            CHECK(!h.wait_reclaimed_used, "2970 AC1: no auto-wait when unset");
+            CHECK(!h.wait_reclaimed_timeout, "2970 AC1: no timeout flag when unset");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) ==
+                      wait_before,
+                  "2970 AC1: wait_reclaimed_total NOT bumped (zero cost)");
+            CHECK(h.reserved_memory_bytes == 4096,
+                  "2970 AC1: #2661 deferral unchanged (no release)");
+            // Cleanup for dtor accounting.
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            (void)wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+        }
+
+        std::println("\n--- #2970 AC2: Reclaimed + wait + body exit → Done cleanup once ---");
+        {
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 4096;
+            // Body exits cooperatively after ~30ms (within the wait window).
+            std::thread body_exit([&] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                fiber_owned->set_state(FiberState::Done);
+                fiber_owned->note_body_exit_if_reclaimed();
+            });
+            JoinPolicy policy{};
+            policy.primary_ms = 1;           // Fiber::join returns Reclaimed fast
+            policy.drain_ms = 0;             // cancel-only drain (no residual side-effects)
+            policy.wait_reclaimed_ms = 1000; // auto-wait deadline
+            const auto clean_before =
+                g_orch_module_stats.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed);
+            const auto jr = join_agent(h, policy);
+            body_exit.join();
+            CHECK(jr.status == JoinStatus::Reclaimed, "2970 AC2: join status still Reclaimed");
+            CHECK(h.wait_reclaimed_used, "2970 AC2: auto-wait ran");
+            CHECK(!h.wait_reclaimed_timeout, "2970 AC2: no timeout (body exited in window)");
+            CHECK(h.reserved_memory_bytes == 0, "2970 AC2: reservation released after body exit");
+            CHECK(!h.reclaimed_deferred_cleanup, "2970 AC2: deferred cleanup cleared");
+            CHECK(g_orch_module_stats.wait_reclaimed_cleanup_total.load(
+                      std::memory_order_relaxed) >= clean_before + 1,
+                  "2970 AC2: wait_reclaimed_cleanup_total bumps");
+        }
+
+        std::println("\n--- #2970 AC3: Reclaimed + wait timeout → Reclaimed kept, no release ---");
+        {
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            policy.wait_reclaimed_ms = 1; // 1ms deadline — body never exits
+            const auto jr = join_agent(h, policy);
+            CHECK(jr.status == JoinStatus::Reclaimed, "2970 AC3: join status stays Reclaimed");
+            CHECK(h.wait_reclaimed_used, "2970 AC3: auto-wait ran");
+            CHECK(h.wait_reclaimed_timeout, "2970 AC3: wait timeout surfaced");
+            CHECK(h.reserved_memory_bytes == 2048,
+                  "2970 AC3: no reservation release on timeout (#2661 preserved)");
+            CHECK(h.reclaimed_deferred_cleanup, "2970 AC3: deferred cleanup still set");
+            // Cleanup so dtor does not leak reservation accounting.
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            (void)wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+        }
+
+        std::println("\n--- #2970 AC4: Aura hash wait keys only on Reclaimed path ---");
+        {
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            // wait-reclaimed-ms kwarg parsed on orch:agent-join.
+            CHECK(agent.find("wait-reclaimed-ms") != std::string::npos ||
+                      agent.find("wait_reclaimed_ms") != std::string::npos,
+                  "2970 AC4: orch:agent-join parses wait-reclaimed-ms");
+            // wait-reclaimed / wait-timeout keys inside Reclaimed guard.
+            // Match the hash-key emplace (not the kwarg "wait-reclaimed-ms"
+            // which appears earlier in the prim arg parser).
+            const auto rec_if = agent.find("if (jr.status == aura::serve::JoinStatus::Reclaimed)");
+            const auto wr_key = agent.find("kv.emplace_back(\"wait-reclaimed\"");
+            CHECK(rec_if != std::string::npos && wr_key != std::string::npos && rec_if < wr_key,
+                  "2970 AC4: wait-reclaimed key after Reclaimed guard");
+            CHECK(agent.find("kv.emplace_back(\"wait-timeout\"") != std::string::npos,
+                  "2970 AC4: wait-timeout key present");
+            CHECK(agent.find("schema-2970") != std::string::npos, "2970 AC4: schema-2970");
+            CHECK(agent.find("join-wait-reclaimed-wired") != std::string::npos,
+                  "2970 AC4: join-wait-reclaimed-wired");
+            // join_agent folds wait_us into jr.wait_us (wait-us parity #2885).
+            CHECK(spawn.find("jr.wait_us += wr.wait_us") != std::string::npos,
+                  "2970 AC4: join_agent folds auto-wait into wait-us");
+            // scope-join-all batch policy kwarg.
+            CHECK(agent.find("orch:scope-join-all") != std::string::npos,
+                  "2970 AC4: scope-join-all prim present");
+        }
+
+        std::println("\n--- #2970 AC5: metrics reuse + additive schema ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(spawn.find("wait_reclaimed_total") != std::string::npos,
+                  "2970 AC5: reuse wait_reclaimed_total (#2924)");
+            CHECK(spawn.find("wait_reclaimed_timeout_total") != std::string::npos,
+                  "2970 AC5: reuse wait_reclaimed_timeout_total");
+            CHECK(spawn.find("wait_reclaimed_cleanup_total") != std::string::npos,
+                  "2970 AC5: reuse wait_reclaimed_cleanup_total");
+            CHECK(spawn.find("wait_reclaimed_used") != std::string::npos,
+                  "2970 AC5: AgentHandle wait_reclaimed_used flag");
+            CHECK(spawn.find("wait_reclaimed_timeout") != std::string::npos,
+                  "2970 AC5: AgentHandle wait_reclaimed_timeout flag");
+            CHECK(agent.find("join-wait-reclaimed-wired") != std::string::npos,
+                  "2970 AC5: join-wait-reclaimed-wired additive");
+        }
+
+        std::println("\n--- #2970 AC6: extend suite + no invent + no docs/design/ ---");
+        {
+            const auto t = read_file("tests/orch/test_join_drain_reclaim.cpp");
+            CHECK(t.find("#2970 AC1") != std::string::npos, "2970 AC6: this suite cites #2970");
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(spawn.find("Issue #2970") != std::string::npos,
+                  "2970 AC6: agent_spawn.h cites #2970");
+            CHECK(agent.find("#2970") != std::string::npos,
+                  "2970 AC6: evaluator_primitives_agent.cpp cites #2970");
+            CHECK(read_file("docs/design/2970-join-wait-reclaimed.md").empty(),
+                  "2970 AC6: no docs/design/2970-* per #1655");
+            std::ifstream invent("tests/orch/test_issue_2970.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_2970.cpp");
+            CHECK(!invent.good(), "2970 AC6: no test_issue_2970.cpp per #81967");
+            const auto build = read_file("build.py");
+            CHECK(build.find("check_join_wait_reclaimed_2970") != std::string::npos,
+                  "2970 AC6: build.py wires #2970 linter");
+        }
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

@@ -3242,6 +3242,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(a[i + 1]))
                     policy.drain_ms = static_cast<std::uint64_t>(
                         std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                else if ((k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") &&
+                         types::is_int(a[i + 1]))
+                    policy.wait_reclaimed_ms = static_cast<std::uint64_t>(
+                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
             }
 
             aura::orch::AgentHandle* hp = nullptr;
@@ -3353,6 +3357,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.emplace_back("schema-2945", make_int(2945));
                 kv.emplace_back("issue-2945", make_int(2945));
                 kv.emplace_back("agent-join-held-flags-wired", make_int(1));
+                // Issue #2970: optional auto-wait surface — wait-reclaimed /
+                // wait-timeout keys only on the Reclaimed path (parity #2885:
+                // Ok / Timeout / Cancelled pay zero extra keys). hp flags are
+                // set by join_agent / join_agents when wait_reclaimed_ms was
+                // configured and wait_reclaimed_body ran once after Reclaimed.
+                kv.emplace_back("wait-reclaimed", make_bool(hp->wait_reclaimed_used));
+                kv.emplace_back("wait-timeout", make_bool(hp->wait_reclaimed_timeout));
+                kv.emplace_back("schema-2970", make_int(2970));
+                kv.emplace_back("issue-2970", make_int(2970));
+                kv.emplace_back("join-wait-reclaimed-wired", make_int(1));
             }
             return build_orch_hash(kv);
         });
@@ -3792,6 +3806,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(val)) {
                     policy.drain_ms =
+                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") &&
+                           types::is_int(val)) {
+                    policy.wait_reclaimed_ms =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 }
             }
