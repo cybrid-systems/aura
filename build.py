@@ -2349,6 +2349,18 @@ def cmd_lint():
             "Issue #2960 query stable-ref stamp linter failed — run python3 scripts/coverage/checks/check_query_stable_ref_stamp_2960.py"
         )
         return r
+    # Issue #2961: rename-symbol / replace-pattern Guard + hygiene + restamp.
+    # Extends test_hygiene_mutate_closed_loop (#81967); no docs/design (#1655).
+    rrh_script = COVERAGE_CHECKS / "check_rename_replace_hygiene_restamp_2961.py"
+    if not rrh_script.exists():
+        fail(f"missing {rrh_script}")
+        return 1
+    r = run([sys.executable, str(rrh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2961 rename/replace hygiene restamp linter failed — run python3 scripts/coverage/checks/check_rename_replace_hygiene_restamp_2961.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -10128,6 +10140,25 @@ def cmd_query_stable_ref_stamp_2960_coverage():
     return 0
 
 
+def cmd_rename_replace_hygiene_restamp_2961_coverage():
+    """Issue #2961: rename-symbol / replace-pattern Guard + hygiene + restamp.
+
+    MacroIntroduced default reject with dedicated counters; success path
+    restamp_all_node_generations + dirty cascade; lockless parity.
+    """
+    print(f"{B}=== rename/replace hygiene restamp coverage (#2961) ==={N}")
+    script = COVERAGE_CHECKS / "check_rename_replace_hygiene_restamp_2961.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("rename/replace hygiene restamp (#2961) coverage contract rows failed")
+        return 1
+    ok("rename/replace hygiene restamp (#2961) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -13524,6 +13555,7 @@ def main():
         "mailbox-defer-slo-hold-cancel-2958": cmd_mailbox_defer_slo_hold_cancel_2958_coverage,
         "topology-dual-restore-2959": cmd_topology_dual_restore_2959_coverage,
         "query-stable-ref-stamp-2960": cmd_query_stable_ref_stamp_2960_coverage,
+        "rename-replace-hygiene-restamp-2961": cmd_rename_replace_hygiene_restamp_2961_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

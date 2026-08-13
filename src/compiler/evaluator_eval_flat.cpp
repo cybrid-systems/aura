@@ -2450,6 +2450,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
             flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
             continue;
+        // Issue #2961: default skip MacroIntroduced (parity with public
+        // matcher :include-macro-introduced #f). Batch has no :allow-macro?
+        // so never mutate macro sites on the lockless path.
+        if (flat.is_macro_introduced(id)) {
+            if (match_sub(id, pat_pr.root))
+                flat.note_replace_pattern_hygiene_reject();
+            continue;
+        }
         if (!match_sub(id, pat_pr.root))
             continue;
         // Issue #2759 / #2800: layout + Evaluator stamp (parity with public).
@@ -2486,6 +2494,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     // metadata snapshot and bump generation mid-batch, breaking sibling
     // sub-ops (second replace-pattern then fails closed).
     int replaced_count = 0;
+    std::vector<aura::ast::NodeId> dirty_parents;
+    dirty_parents.reserve(matches.size());
     const bool nested_outer_batch = flat.atomic_batch_active();
     if (!nested_outer_batch)
         flat.begin_atomic_batch();
@@ -2552,6 +2562,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
             }
         }
         flat.set_child(parent_id, *child_idx_opt, repl_pr.root);
+        dirty_parents.push_back(parent_id);
         ++replaced_count;
     }
     if (replaced_count == 0) {
@@ -2569,6 +2580,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     }
     if (!nested_outer_batch)
         flat.commit_atomic_batch();
+    // Issue #2961: dirty cascade + restamp (parity with public replace-pattern).
+    for (auto pid : dirty_parents) {
+        if (pid != aura::ast::NULL_NODE && flat.is_live_node(pid))
+            flat.mark_dirty_upward(pid);
+    }
+    flat.restamp_all_node_generations();
     invalidate_tag_arity_index();
     // Issue #1696: multi-node op — NULL_NODE sentinel, not NodeId 0.
     flat.add_mutation(aura::ast::NULL_NODE, "replace-pattern", pattern_str, repl_template, summary);
@@ -2874,6 +2891,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
 }
 
 // Issue #1900: lockless variant of (mutate:rename-symbol).
+// Issue #2961: MacroIntroduced / MacroDef sites default-reject (no
+// :allow-macro? on batch path); mark_dirty_upward + restamp after success.
 EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types::EvalValue> a) {
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
         !workspace_pool_)
@@ -2894,6 +2913,32 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
     std::string summary = (a.size() > 2 && is_string(a[2]))
                               ? string_heap_[as_string_idx(a[2])]
                               : "rename " + old_name + " -> " + new_name;
+    // Issue #2961: batch path has no :allow-macro? — reject if any
+    // MacroIntroduced / MacroDef would be renamed.
+    for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+        if (!flat.is_live_node(id))
+            continue;
+        bool hit = (flat.sym_id(id) == old_sym);
+        if (!hit && flat.tag(id) == aura::ast::NodeTag::Lambda) {
+            auto v = flat.get(id);
+            for (std::size_t pi = 0; pi < v.params.size(); ++pi) {
+                if (v.params[pi] == old_sym) {
+                    hit = true;
+                    break;
+                }
+            }
+        }
+        if (!hit)
+            continue;
+        if (flat.is_macro_introduced(id) || flat.tag(id) == aura::ast::NodeTag::MacroDef) {
+            flat.note_rename_symbol_hygiene_reject();
+            record_hygiene_violation_attempt();
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError,
+                "batch :rename-symbol: MacroIntroduced / MacroDef site requires "
+                "public mutate:rename-symbol with :allow-macro? #t"});
+        }
+    }
     int count = 0;
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
         if (flat.sym_id(id) == old_sym) {
@@ -2903,19 +2948,26 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
                 tag == aura::ast::NodeTag::Let || tag == aura::ast::NodeTag::LetRec ||
                 tag == aura::ast::NodeTag::Set || tag == aura::ast::NodeTag::MacroDef) {
                 flat.sym_id(id) = new_sym;
+                flat.mark_dirty_upward(id);
                 ++count;
             }
         }
     }
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
         if (flat.tag(id) == aura::ast::NodeTag::Lambda) {
-            count += flat.rename_param(id, old_sym, new_sym, nullptr);
+            const int n = flat.rename_param(id, old_sym, new_sym, nullptr);
+            if (n > 0) {
+                flat.mark_dirty_upward(id);
+                count += n;
+            }
         }
     }
     if (count == 0)
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :rename-symbol: symbol \"" + old_name +
                                                           "\" not found in AST"});
+    // Issue #2961: restamp so StableNodeRef gens invalidate after multi-site rename.
+    flat.restamp_all_node_generations();
     // Issue #1696: multi-node rename — NULL_NODE sentinel, not NodeId 0.
     flat.add_mutation(aura::ast::NULL_NODE, "rename-symbol", old_name, new_name, summary);
     return make_bool(true);

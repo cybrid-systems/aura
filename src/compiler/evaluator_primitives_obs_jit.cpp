@@ -3364,6 +3364,7 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
+            auto* ws = ev.workspace_flat();
             const std::int64_t provenance_captured =
                 m ? static_cast<std::int64_t>(
                         m->macro_hygiene_provenance_captured_total.load(std::memory_order_relaxed))
@@ -3412,6 +3413,17 @@ void ObservabilityPrims::register_jit_p17(PrimRegistrar add, Evaluator& ev) {
                 {"mutate-hotpath-hygiene-wired", make_int(1)},
                 {"schema-2037", make_int(2037)},
                 {"issue-2037", make_int(2037)},
+                // Issue #2961: rename-symbol / replace-pattern MacroIntroduced
+                // hygiene reject + Guard restamp contract (FlatAST counters).
+                {"rename-symbol-hygiene-reject-total",
+                 make_int(
+                     static_cast<std::int64_t>(ws ? ws->rename_symbol_hygiene_reject_total() : 0))},
+                {"replace-pattern-hygiene-reject-total",
+                 make_int(static_cast<std::int64_t>(ws ? ws->replace_pattern_hygiene_reject_total()
+                                                       : 0))},
+                {"rename-replace-hygiene-restamp-wired", make_int(1)},
+                {"schema-2961", make_int(2961)},
+                {"issue-2961", make_int(2961)},
                 // Issue #2762: post-mutate macro re-expand under Guard cascade
                 // (Agent closed-loop fidelity). Additive to #2037 surface.
                 {"post-mutate-macro-reexpand-total",

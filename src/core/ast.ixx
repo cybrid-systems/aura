@@ -2279,6 +2279,14 @@ public:
     // Issue #2801: move-node refused MacroIntroduced target (#142 hygiene;
     // parity with replace-subtree). Healthy non-macro moves stay 0.
     mutable std::atomic<std::uint64_t> move_node_hygiene_reject_total_{0};
+    // Issue #2961: rename-symbol refused MacroIntroduced / MacroDef site without
+    // :allow-macro? (parity with move-node / replace-subtree). Healthy
+    // User-only renames stay 0.
+    mutable std::atomic<std::uint64_t> rename_symbol_hygiene_reject_total_{0};
+    // Issue #2961: replace-pattern refused MacroIntroduced match without
+    // :allow-macro? (matcher may include macros; mutate still fail-closed).
+    // Healthy User-only multi-match stays 0.
+    mutable std::atomic<std::uint64_t> replace_pattern_hygiene_reject_total_{0};
     // Issue #2802: replace-pattern used a per-call local ASTArena for
     // pattern flat/pool instead of shared Evaluator::temp_arena_
     // (sibling sub-op isolation). Bumped once per successful isolate.
@@ -8732,6 +8740,20 @@ public:
     }
     void note_move_node_hygiene_reject() noexcept {
         move_node_hygiene_reject_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2961: rename-symbol MacroIntroduced hygiene reject.
+    [[nodiscard]] std::uint64_t rename_symbol_hygiene_reject_total() const noexcept {
+        return rename_symbol_hygiene_reject_total_.load(std::memory_order_relaxed);
+    }
+    void note_rename_symbol_hygiene_reject() noexcept {
+        rename_symbol_hygiene_reject_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2961: replace-pattern MacroIntroduced hygiene reject.
+    [[nodiscard]] std::uint64_t replace_pattern_hygiene_reject_total() const noexcept {
+        return replace_pattern_hygiene_reject_total_.load(std::memory_order_relaxed);
+    }
+    void note_replace_pattern_hygiene_reject() noexcept {
+        replace_pattern_hygiene_reject_total_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #2802: replace-pattern pattern flat/pool isolated from temp_arena_.
     [[nodiscard]] std::uint64_t
