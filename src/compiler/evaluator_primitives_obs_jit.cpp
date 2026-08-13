@@ -1077,10 +1077,11 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"sole-require-effect-gate-armed", make_int(1)},
                 {"schema-2706", make_int(2706)},
                 {"issue-2706", make_int(2706)},
-                // Issue #2688 / #2835: production-default hard_fiber_isolation +
-                // grant epoch retain window. Multi-tenant → hard=true + K=64
-                // (sandbox may stay Restricted #2835); pure Restricted → K=16
-                // hard=false; Soft → K=0 hard=false. Env overrides win.
+                // Issue #2688 / #2835 / #2943: production-default
+                // hard_fiber_isolation + grant epoch retain window.
+                // Multi-tenant OR Strict → hard=true + K=64 (#2943 Strict
+                // alone); pure Restricted → K=16 hard=false; Soft → K=0
+                // hard=false. Env overrides win.
                 {"capability-hard-fiber-isolation",
                  make_int(aura::core::capability::g_capability_registry().hard_fiber_isolation()
                               ? 1
@@ -1107,6 +1108,10 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 // Issue #2835: Restricted multi-tenant hard-fiber escalate.
                 {"schema-2835", make_int(2835)},
                 {"issue-2835", make_int(2835)},
+                // Issue #2943: Strict alone also arms hard fiber default.
+                {"schema-2943", make_int(2943)},
+                {"issue-2943", make_int(2943)},
+                {"production-hard-fiber-default-wired", make_int(1)},
                 {"restricted-multi-tenant-hard-fiber-wired", make_int(1)},
                 // Issue #2690: unified PendingRecovery drain. Both
                 // maybe_storm_clear_health_pass (StormClear) and

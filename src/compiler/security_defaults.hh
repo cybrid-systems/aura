@@ -118,9 +118,9 @@ inline void grant_render_kernel_principal() noexcept {
 //        - else force default dir under multi-tenant OR Strict
 //        - skipped entirely when AURA_SANDBOX=off (tests / local)
 //   5. Kernel principal (tenant 0) holds permanent Render (#2136)
-//   6. Hard fiber isolation (#2151):
-//        - default soft (false) preserves #2055 same-tenant multi-fiber share
-//        - multi-tenant + Strict enables hard-deny on grant_fiber_id mismatch
+//   6. Hard fiber isolation (#2151 / #2835 / #2943):
+//        - default soft under pure Restricted preserves #2055/#2536 share
+//        - multi-tenant OR Strict → hard-deny on grant_fiber_id mismatch
 //        - AURA_HARD_FIBER_ISOLATION=0|1|true|false|on|off overrides
 //   7. Grant epoch retain window (#2154):
 //        - multi-tenant / Strict default K=64 (last 64 Mutation epochs)
@@ -316,7 +316,7 @@ inline void apply_production_security_defaults() noexcept {
     if (!dev_off)
         ::aura_set_remap_name_fallback_enabled(0);
 
-    // 6) Issue #2151 / #2536 / #2584 / #2835: hard fiber isolation policy.
+    // 6) Issue #2151 / #2536 / #2584 / #2835 / #2943: hard fiber isolation.
     //
     //    Contract:
     //      - TenantScope (#2491) is the principal boundary.
@@ -327,16 +327,17 @@ inline void apply_production_security_defaults() noexcept {
     //        Restricted for latency (no forced Strict).
     //      - Commercial profile (AURA_COMMERCIAL_TENANT): hard under
     //        Restricted (#2584).
-    //      - multi_tenant + Strict (AURA_SANDBOX=strict): hard (#2151).
+    //      - Strict sandbox (AURA_SANDBOX=strict), alone or with multi:
+    //        hard (#2943 closes residual soft-share under pure Strict).
     //
     //    Defaults when AURA_HARD_FIBER_ISOLATION unset:
     //      multi_tenant            → hard=true  (#2835 / #2151)
+    //      Strict alone            → hard=true  (#2943)
     //      commercial_tenant       → hard=true  (#2584)
     //      Restricted alone        → hard=false (#2536 soft share)
-    //      Strict alone (no multi) → hard=false (unchanged)
     //    Env always wins when set:
     //      AURA_HARD_FIBER_ISOLATION=1|true|yes|on  → hard
-    //      AURA_HARD_FIBER_ISOLATION=0|false|off|… → soft (AC3)
+    //      AURA_HARD_FIBER_ISOLATION=0|false|off|… → soft (AC2 / AC3)
     //    AURA_SANDBOX=off forces soft (unit tests).
     if (dev_off) {
         commercial_tenant_profile_flag().store(false, std::memory_order_release);
@@ -348,7 +349,7 @@ inline void apply_production_security_defaults() noexcept {
             std::string_view cv(ct);
             commercial_active = (cv == "1" || cv == "true" || cv == "yes" || cv == "on");
         }
-        // Explicit off from AURA_HARD_FIBER_ISOLATION wins (AC3).
+        // Explicit off from AURA_HARD_FIBER_ISOLATION wins (AC2/AC3).
         const char* hfi = std::getenv("AURA_HARD_FIBER_ISOLATION");
         bool hfi_explicit_off = false;
         if (hfi && *hfi) {
@@ -366,13 +367,16 @@ inline void apply_production_security_defaults() noexcept {
             const bool on = (hv == "1" || hv == "true" || hv == "yes" || hv == "on");
             g_capability_registry().set_hard_fiber_isolation(on);
         } else {
-            // Issue #2835: multi-tenant → hard under Restricted or Strict
-            // (fiber grant isolation without requiring full Strict sandbox).
+            // Issue #2835: multi-tenant → hard (Restricted or Strict).
+            // Issue #2943: Strict alone → hard (closes residual soft
+            // grant-fiber share under pure Strict production defaults).
             // Pure Restricted single-tenant → soft (#2536).
-            // Lineage: #2688 used multi_tenant && strict when multi forced
-            // Strict; after #2835 multi alone is sufficient (covers both
-            // Restricted multi-tenant AC1 and multi_tenant && strict Strict).
-            const bool hard_default = multi_tenant; // was: multi_tenant && strict
+            // Lineage: #2688 multi_tenant && strict → #2835 multi alone
+            // → #2943 multi || strict.
+            const bool strict_sandbox =
+                g_sandbox_state().mode == SandboxMode::Strict ||
+                g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
+            const bool hard_default = multi_tenant || strict_sandbox;
             g_capability_registry().set_hard_fiber_isolation(hard_default);
         }
     }

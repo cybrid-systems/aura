@@ -42,7 +42,10 @@ def main() -> int:
 
     # AC1 — multi_tenant arms hard; no force Strict for multi alone
     must("Issue #2835", "AC1", sec)
-    must("hard_default = multi_tenant", "AC1", sec)
+    # #2943 may use hard_default = multi_tenant || strict_sandbox; multi
+    # still present as hard arming input.
+    if "hard_default = multi_tenant" not in sec and "multi_tenant || strict" not in sec:
+        fails.append("AC1: hard_default multi_tenant arming missing")
     # Must not force set_mode(Strict) solely for multi_tenant arming.
     # Allow historical comments; ban live assignment after multi_tenant = true
     # without Restricted latency note.

@@ -1896,6 +1896,19 @@ def cmd_lint():
             "Issue #2835 Restricted multi-tenant hard fiber linter failed — run python3 scripts/coverage/checks/check_restricted_multi_tenant_hard_fiber_2835.py"
         )
         return r
+    # Issue #2943: production multi-tenant OR Strict → hard_fiber_isolation.
+    # Closes residual soft grant-fiber share under pure Strict. Extends
+    # test_hard_fiber_restricted (#81967); no docs/design/ (#1655).
+    phfd_script = COVERAGE_CHECKS / "check_production_hard_fiber_default_2943.py"
+    if not phfd_script.exists():
+        fail(f"missing {phfd_script}")
+        return 1
+    r = run([sys.executable, str(phfd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2943 production hard fiber default linter failed — run python3 scripts/coverage/checks/check_production_hard_fiber_default_2943.py"
+        )
+        return r
     # Issue #2836: production mid-fallback absolute zero-tolerance.
     # resolve_audit_mutation_id refuses process-origin stamps under
     # production_defaults || Full; Soft/Sampled keep last-resort gen.
