@@ -404,38 +404,32 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             defuse_index_ = nullptr;
         }
     } else if (!success && workspace_flat_) {
-        // Roll back the mutations that were appended between
-        // enter and exit. The log size captured at entry
-        // tells us how far to undo.
+        // Issue #2959: dual topology abort under ONE structural exclusive —
+        // mutation-log rollback + children_ snapshot + parent_ rebuild +
+        // dual canary. Closes densify×steal mid-window tears between
+        // partial structural inverse and full restore.
+        // Issue #549: bump mutation_log_rollback_count_ when records
+        // were actually rolled (stricter subset of failed boundaries).
         BoundaryRollbackStats stats;
-        stats.field_records_rolled = workspace_flat_->rollback_to_size(cp.mutation_log_size);
-        // Issue #549: bump mutation_log_rollback_count_ so
-        // (query:self-evolution-stability-stats) can report
-        // the lifetime # of times the log was actually
-        // rolled back (a stricter subset of the lifetime #
-        // of failed boundaries; bumps only when there were
-        // mutations to undo).
+        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+            cp.mutation_log_size, std::move(cp.children_snapshot));
         if (stats.field_records_rolled > 0) {
             bump_mutation_log_rollback_count();
             if (nested_boundary)
                 bump_edsl_nested_atomic_rollback();
         }
-        // Issue #221: restore the per-node children_ from the
-        // pre-mutation snapshot. The checkpoint's children_snapshot
-        // holds shared_ptrs to the pre-mutation PCs (PCV COW),
-        // so the restoration is O(1) per node.
-        // Issue #1281: PCV topology fidelity is mandatory on
-        // every failed boundary — restore_children always runs.
-        // Issue #1502: restore_children also rebuilds parent_
-        // from the restored child lists (full children_/parent_
-        // topology), so partial MutationRecord inverse failures
-        // cannot leave parent_of() inconsistent with children().
-        workspace_flat_->restore_children(std::move(cp.children_snapshot));
+        // Issue #1281 / #1502: dual restore sealed inside abort_restore_dual_topology.
         stats.children_column_restored = true;
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->children_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
-            // Issue #1502: parent topology restored with children.
             m->parent_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2959: dual restore seal counters (Agent canary).
+            m->topology_dual_restore_total.fetch_add(1, std::memory_order_relaxed);
+            const auto inc = workspace_flat_->topology_dual_restore_inconsistency_total();
+            // Mirror process flat inconsistency into per-eval metrics once
+            // per abort (delta not available; Agents poll flat absolute).
+            if (inc > 0)
+                m->topology_dual_restore_inconsistency_total.store(inc, std::memory_order_relaxed);
         }
         // Issue #266: restore sym_id_ / param columns for bulk
         // rename operations when fine rollback was requested.
@@ -1038,16 +1032,16 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             strict_mutate_hold_.store(1, std::memory_order_relaxed);
                             ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
                         }
-                        // Structural undo (same as failure path; preserves fine_rollback).
+                        // Issue #2959: dual topology structural undo (same as
+                        // failure path) under one structural exclusive.
                         BoundaryRollbackStats stats;
-                        stats.field_records_rolled =
-                            workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                            cp.mutation_log_size, std::move(cp.children_snapshot));
                         if (stats.field_records_rolled > 0) {
                             bump_mutation_log_rollback_count();
                             if (nested_boundary)
                                 bump_edsl_nested_atomic_rollback();
                         }
-                        workspace_flat_->restore_children(std::move(cp.children_snapshot));
                         stats.children_column_restored = true;
                         if (cp.fine_rollback) {
                             workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
@@ -1125,15 +1119,15 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // #2765 AC1 Strict: schema/hygiene fail → force structural undo
                     // (mirrors invariant hard-gate force-rollback shape).
                     bump_guard_reflect_validate_strict_rollback();
+                    // Issue #2959: dual topology undo under one structural exclusive.
                     BoundaryRollbackStats stats;
-                    stats.field_records_rolled =
-                        workspace_flat_->rollback_to_size(cp.mutation_log_size);
+                    stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
+                        cp.mutation_log_size, std::move(cp.children_snapshot));
                     if (stats.field_records_rolled > 0) {
                         bump_mutation_log_rollback_count();
                         if (nested_boundary)
                             bump_edsl_nested_atomic_rollback();
                     }
-                    workspace_flat_->restore_children(std::move(cp.children_snapshot));
                     stats.children_column_restored = true;
                     if (cp.fine_rollback) {
                         workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));

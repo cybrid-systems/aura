@@ -8554,7 +8554,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> children_topology_rollback_count{0};    // #1281
     // Issue #1502: parent_ topology restores (with children_ on failed boundary).
     std::atomic<std::uint64_t> parent_topology_rollback_count{0};
-    std::atomic<std::uint64_t> generation_auto_restamp_on_wrap{0};   // #1282
+    // Issue #2959: dual topology restore seal (children_+parent_ under structural exclusive).
+    std::atomic<std::uint64_t> topology_dual_restore_total{0};               // #2959
+    std::atomic<std::uint64_t> topology_dual_restore_inconsistency_total{0}; // #2959 canary
+    std::atomic<std::uint64_t> generation_auto_restamp_on_wrap{0};           // #1282
     std::atomic<std::uint64_t> generation_wrap_restamp_policy{1};    // #1282 auto-restamp on
     std::atomic<std::uint64_t> provenance_boundary_hooks_active{1};  // #1283
     std::atomic<std::uint64_t> provenance_boundary_capture_count{0}; // #1283

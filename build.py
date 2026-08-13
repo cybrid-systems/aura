@@ -2324,6 +2324,18 @@ def cmd_lint():
             "Issue #2958 mailbox defer-SLO hold-cancel linter failed — run python3 scripts/coverage/checks/check_mailbox_defer_slo_hold_cancel_2958.py"
         )
         return r
+    # Issue #2959: Guard abort dual topology restore (children_+parent_).
+    # Extends test_restore_children_structural_lock (#81967); no docs/design.
+    tdr_script = COVERAGE_CHECKS / "check_topology_dual_restore_2959.py"
+    if not tdr_script.exists():
+        fail(f"missing {tdr_script}")
+        return 1
+    r = run([sys.executable, str(tdr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2959 topology dual restore linter failed — run python3 scripts/coverage/checks/check_topology_dual_restore_2959.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -10064,6 +10076,25 @@ def cmd_mailbox_defer_slo_hold_cancel_2958_coverage():
     return 0
 
 
+def cmd_topology_dual_restore_2959_coverage():
+    """Issue #2959: Guard abort dual topology restore (children_+parent_).
+
+    Structural exclusive dual restore + canary; densify×steal must not
+    observe half-restored topology on abort.
+    """
+    print(f"{B}=== topology dual restore coverage (#2959) ==={N}")
+    script = COVERAGE_CHECKS / "check_topology_dual_restore_2959.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("topology dual restore (#2959) coverage contract rows failed")
+        return 1
+    ok("topology dual restore (#2959) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -13453,6 +13484,7 @@ def main():
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
         "steal-lifetime-proof-residual-2957": cmd_steal_lifetime_proof_residual_2957_coverage,
         "mailbox-defer-slo-hold-cancel-2958": cmd_mailbox_defer_slo_hold_cancel_2958_coverage,
+        "topology-dual-restore-2959": cmd_topology_dual_restore_2959_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

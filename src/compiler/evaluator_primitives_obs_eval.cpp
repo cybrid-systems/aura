@@ -16859,6 +16859,18 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(
                  ev.workspace_flat_ ? ev.workspace_flat_->parent_topology_restore_count() : 0))},
             {"schema", make_int(1502)},
+            // Issue #2959: dual topology restore seal + inconsistency canary.
+            {"topology-dual-restore-total",
+             make_int(static_cast<std::int64_t>(
+                 ev.workspace_flat_ ? ev.workspace_flat_->topology_dual_restore_total() : 0))},
+            {"topology-dual-restore-inconsistency-total",
+             make_int(static_cast<std::int64_t>(
+                 ev.workspace_flat_
+                     ? ev.workspace_flat_->topology_dual_restore_inconsistency_total()
+                     : 0))},
+            {"topology-dual-restore-wired", make_int(1)},
+            {"schema-2959", make_int(2959)},
+            {"issue-2959", make_int(2959)},
             // Issue #1900 AC3: dispatch-coverage + interleaving-prevention
             // telemetry. unsupported-op-total bumps when a future mutate
             // primitive lands before its lockless helper ships (the 14-op
