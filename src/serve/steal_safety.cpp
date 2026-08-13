@@ -35,7 +35,7 @@
 #include "core/densify_consistency_report.h" // #2745 last densify envframe/dual_epoch residual
 #include "core/gc_hooks.h" // aura::gc_hooks::force_clear_residual_defer_for_evaluator
 
-#include <mutex>
+#include <thread> // std::this_thread::yield for rare same-fiber decision spin
 
 // Forward declaration: aura_evaluator_on_steal_complete is declared
 // weak in worker.cpp (worker.cpp:41). We forward-declare strong here
@@ -61,13 +61,31 @@ namespace aura::serve {
 
 namespace {
 
-    // Issue #2901: short exclusive recovery lock for residual hard-AND +
-    // ticket stamp. Held only for the decision window after the primary
-    // on_steal_complete clear — not across the whole transaction sample.
-    // Serializes concurrent re-arm observation vs stamp so a residual-armed
-    // fiber cannot reach Ok after RejectHard. Happy path: one complete +
-    // hard-AND + quiet re-sample under lock (no extra atomics when clean).
-    std::mutex g_steal_safety_decision_mu;
+    // Issue #2954 / #2901: per-Fiber exclusive decision window for residual
+    // hard-AND + ticket stamp. Replaces process-wide g_steal_safety_decision_mu
+    // so concurrent steals of *different* victims do not serialize.
+    // try_begin CAS-spins on rare same-fiber contention (bumps contention_total).
+    // RAII end_steal_decision on all exit paths (Ok + RejectHard).
+    struct StealDecisionGuard {
+        Fiber* fiber = nullptr;
+        explicit StealDecisionGuard(Fiber* f) noexcept
+            : fiber(f) {
+            if (!fiber)
+                return;
+            // Uncontended path: single CAS. Contended (same victim): yield +
+            // contention counter; spin until free (same-fiber exclusive).
+            while (!fiber->try_begin_steal_decision()) {
+                g_steal_decision_contention_total.fetch_add(1, std::memory_order_relaxed);
+                std::this_thread::yield();
+            }
+        }
+        ~StealDecisionGuard() noexcept {
+            if (fiber)
+                fiber->end_steal_decision();
+        }
+        StealDecisionGuard(const StealDecisionGuard&) = delete;
+        StealDecisionGuard& operator=(const StealDecisionGuard&) = delete;
+    };
 
     // Issue #2929: bump dedicated StealInvariant failure counter.
     // Residual arms re-use residual_* totals so #2721/#2745 surfaces stay valid.
@@ -215,22 +233,25 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
     // fiber id — the earlier fiber_id() form was a type error).
     // Single-transaction contract: one call covers AC1 steps 3-6
     // (AC5 coverage linter asserts the call graph).
-    // Issue #2901: primary residual clear remains a single
+    // Issue #2901 / #2954: primary residual clear remains a single
     // on_steal_complete on the happy path (AC2). Hard-AND + quiet
-    // re-sample + ticket stamp run under g_steal_safety_decision_mu so
-    // concurrent densify / Guard re-enter cannot re-arm residual between
-    // observation and stamp without being observed.
+    // re-sample + ticket stamp run under the *per-Fiber* decision window
+    // so concurrent densify / Guard re-enter cannot re-arm residual between
+    // observation and stamp without being observed — without process-wide
+    // mutex serialization across unrelated victims (#2954).
     aura_evaluator_on_steal_complete(stolen);
 
-    // AC1 #2721 + #2901 — residual hard-AND + stamp under exclusive
-    // decision lock. #2721 hard-ANDs residual predicates BEFORE ticket
-    // stamp. #2901 closes the re-arm window between clear and stamp:
-    //   - hard-AND under lock (with optional test inject hook)
-    //   - quiet re-sample under same lock (zero atomics when clean)
+    // AC1 #2721 + #2901 + #2954 — residual hard-AND + stamp under exclusive
+    // *per-Fiber* decision window. #2721 hard-ANDs residual predicates BEFORE
+    // ticket stamp. #2901 closes the re-arm window between clear and stamp:
+    //   - hard-AND under decision window (with optional test inject hook)
+    //   - quiet re-sample under same window (zero counter atomics when clean)
     //   - on any residual fail: force second residual clear + rearm_race
     //     counter + RejectHard WITHOUT stamping the ticket
+    // #2954: decision window is Fiber::try_begin_steal_decision (CAS), not
+    // a process-wide mutex.
     {
-        std::lock_guard<std::mutex> decision_lock(g_steal_safety_decision_mu);
+        StealDecisionGuard decision_guard(stolen);
 
         // Test seam: inject residual re-arm between clear and hard-AND.
         if (g_steal_safety_between_clear_and_hard_and_hook != nullptr) {
@@ -241,7 +262,7 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
             evaluate_residual_hard_and_bits(stolen, snap, /*bump_counters=*/true);
         bool residual_ok = (fail_bits == 0);
 
-        // Quiet re-sample under the same lock — catches re-arm that
+        // Quiet re-sample under the same decision window — catches re-arm that
         // landed after the first sample but before stamp. Clean path:
         // no counter bumps (AC2 zero extra atomics).
         if (residual_ok) {
@@ -269,7 +290,7 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
         }
 
         // AC1 step 7 — stamp resume_safety_ticket only on Ok path
-        // (after hard-AND + quiet re-sample passed under the same lock).
+        // (after hard-AND + quiet re-sample passed under the same window).
         // Issue #2844 sole-enqueue: ticket stamp ONLY here (all invariants Ok).
         stolen->set_resume_safety_ticket(snap.ticket);
     }

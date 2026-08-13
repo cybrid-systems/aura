@@ -2208,6 +2208,19 @@ def cmd_lint():
             "Issue #2953 reload recovery playbook linter failed — run python3 scripts/coverage/checks/check_reload_recovery_playbook_2953.py"
         )
         return r
+    # Issue #2954: per-Fiber steal decision (replace global mu; keep
+    # #2901 re-arm close). Extends test_steal_complete_restamp_txn
+    # (#81967); no docs/design.
+    sdpf_script = COVERAGE_CHECKS / "check_steal_decision_per_fiber_2954.py"
+    if not sdpf_script.exists():
+        fail(f"missing {sdpf_script}")
+        return 1
+    r = run([sys.executable, str(sdpf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2954 steal decision per-fiber linter failed — run python3 scripts/coverage/checks/check_steal_decision_per_fiber_2954.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -9852,6 +9865,25 @@ def cmd_force_jit_reason_bit_map_2927_coverage():
     return 0
 
 
+def cmd_steal_decision_per_fiber_2954_coverage():
+    """Issue #2954: per-Fiber steal decision protocol.
+
+    Replace process-wide g_steal_safety_decision_mu with Fiber CAS
+    decision window; preserve #2901 residual re-arm RejectHard.
+    """
+    print(f"{B}=== steal decision per-fiber coverage (#2954) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_decision_per_fiber_2954.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal decision per-fiber (#2954) coverage contract rows failed")
+        return 1
+    ok("steal decision per-fiber (#2954) coverage clean")
+    return 0
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -13236,6 +13268,7 @@ def main():
         "pure-anon-adaptive-budget-2893": cmd_pure_anon_adaptive_budget_2893_coverage,
         "coverage-verify-min-dirty-2952": cmd_coverage_verify_min_dirty_2952_coverage,
         "reload-recovery-playbook-2953": cmd_reload_recovery_playbook_2953_coverage,
+        "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

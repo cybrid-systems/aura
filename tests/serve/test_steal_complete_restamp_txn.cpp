@@ -18,9 +18,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <vector>
 
 import std;
 import aura.compiler.evaluator;
@@ -963,8 +966,13 @@ static void ac2901_2_happy_path_single_complete() {
     const auto cpp = read_file("src/serve/steal_safety.cpp");
     CHECK(cpp.find("aura_evaluator_on_steal_complete(stolen)") != std::string::npos,
           "2901 AC2: on_steal_complete present");
-    CHECK(cpp.find("g_steal_safety_decision_mu") != std::string::npos,
-          "2901 AC2: decision lock present");
+    // Issue #2954: decision window is per-Fiber CAS (not process-wide mutex).
+    CHECK(cpp.find("try_begin_steal_decision") != std::string::npos ||
+              cpp.find("StealDecisionGuard") != std::string::npos,
+          "2901 AC2: per-Fiber decision window present (#2954)");
+    CHECK(cpp.find("std::mutex g_steal_safety_decision_mu") == std::string::npos &&
+              cpp.find("lock_guard") == std::string::npos,
+          "2901 AC2: no process-wide decision mutex (#2954)");
     CHECK(cpp.find("evaluate_residual_hard_and") != std::string::npos, "2901 AC2: hard-AND helper");
     clear_steal_safety_transaction_for_test();
 }
@@ -1027,7 +1035,13 @@ static void ac2901_5_source_cite() {
     CHECK(hdr.find("g_steal_safety_between_clear_and_hard_and_hook") != std::string::npos,
           "2901 AC5: inject hook");
     CHECK(cpp.find("Issue #2901") != std::string::npos, "2901 AC5: cpp cites #2901");
-    CHECK(cpp.find("g_steal_safety_decision_mu") != std::string::npos, "2901 AC5: decision lock");
+    // Issue #2954: per-Fiber decision replaces g_steal_safety_decision_mu.
+    CHECK(cpp.find("StealDecisionGuard") != std::string::npos ||
+              cpp.find("try_begin_steal_decision") != std::string::npos,
+          "2901 AC5: per-Fiber decision window (#2954)");
+    CHECK(cpp.find("std::mutex g_steal_safety_decision_mu") == std::string::npos &&
+              cpp.find("lock_guard") == std::string::npos,
+          "2901 AC5: no process-wide decision mutex (#2954)");
     CHECK(cpp.find("evaluate_residual_hard_and") != std::string::npos, "2901 AC5: sample helper");
     CHECK(cpp.find("aura_evaluator_on_steal_complete(stolen)") != std::string::npos,
           "2901 AC5: second clear on fail");
@@ -1210,6 +1224,153 @@ static void ac2929_5_source_and_linter() {
     CHECK(read_file("tests/serve/test_issue_2929.cpp").empty(), "AC6: no invent test per #81967");
 }
 
+// ── Issue #2954: per-Fiber steal decision (replace global decision mu) ──
+// AC1: no process-wide mutex on Ok path; concurrent multi-victim ok
+// AC2: #2901 re-arm inject still RejectHard + race counter
+// AC3: Soft/production contract unchanged (decision window always per-fiber)
+// AC4: additive counters; #2699/#2721/#2901 preserved
+// AC5: source-cite + linter
+// AC6: no docs/design
+
+static void ac2954_1_no_process_wide_mutex() {
+    std::println("\n--- #2954 AC1: Ok path has no process-wide decision mutex ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    CHECK(cpp.find("std::mutex g_steal_safety_decision_mu") == std::string::npos &&
+              cpp.find("lock_guard") == std::string::npos,
+          "2954 AC1: process-wide decision mutex removed");
+    CHECK(cpp.find("#include <mutex>") == std::string::npos,
+          "2954 AC1: no mutex include in steal_safety.cpp");
+    CHECK(cpp.find("StealDecisionGuard") != std::string::npos, "2954 AC1: StealDecisionGuard");
+    CHECK(fh.find("try_begin_steal_decision") != std::string::npos,
+          "2954 AC1: Fiber try_begin_steal_decision");
+    CHECK(fh.find("steal_decision_busy_") != std::string::npos, "2954 AC1: per-Fiber busy flag");
+}
+
+static void ac2954_2_concurrent_multi_victim() {
+    std::println("\n--- #2954 AC2: concurrent steals of distinct fibers ---");
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_decision_contention_total;
+    using aura::serve::g_steal_safety_transaction_calls_total;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    constexpr int kN = 8;
+    // Fiber is non-copyable/non-movable — heap slots for concurrent victims.
+    std::vector<std::unique_ptr<Fiber>> fibers;
+    fibers.reserve(kN);
+    for (int i = 0; i < kN; ++i)
+        fibers.push_back(std::make_unique<Fiber>([] {}));
+    std::atomic<int> done{0};
+    std::atomic<int> started{0};
+    std::vector<std::thread> threads;
+    threads.reserve(kN);
+    for (int i = 0; i < kN; ++i) {
+        threads.emplace_back([&, i] {
+            started.fetch_add(1, std::memory_order_relaxed);
+            while (started.load(std::memory_order_relaxed) < kN)
+                std::this_thread::yield();
+            (void)steal_safety_transaction(fibers[static_cast<std::size_t>(i)].get());
+            done.fetch_add(1, std::memory_order_relaxed);
+        });
+    }
+    for (auto& t : threads)
+        t.join();
+    CHECK(done.load() == kN, "2954 AC2: all multi-victim transactions complete");
+    CHECK(g_steal_safety_transaction_calls_total.load(std::memory_order_relaxed) >=
+              static_cast<std::uint64_t>(kN),
+          "2954 AC2: calls_total >= N");
+    // Distinct fibers: contention should stay low (ideally 0); allow small noise.
+    const auto cont = g_steal_decision_contention_total.load(std::memory_order_relaxed);
+    CHECK(cont < static_cast<std::uint64_t>(kN * 4),
+          "2954 AC2: multi-victim does not thrash contention");
+    // Each fiber decision flag released.
+    for (int i = 0; i < kN; ++i)
+        CHECK(!fibers[static_cast<std::size_t>(i)]->steal_decision_busy(),
+              "2954 AC2: decision flag released after txn");
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac2954_3_rearm_still_reject_hard() {
+    std::println("\n--- #2954 AC3: #2901 re-arm inject still RejectHard under per-Fiber ---");
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_residual_rearm_race_total;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::g_steal_safety_transaction_reject_hard_total;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    Fiber f([] {});
+    constexpr std::uint64_t kPoisonTicket = 0xBEEFCAFEULL;
+    static thread_local Fiber* s_inject = nullptr;
+    s_inject = &f;
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        if (s_inject)
+            s_inject->set_resume_safety_ticket(kPoisonTicket);
+    };
+    const auto race0 = g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+    const auto d = steal_safety_transaction(&f);
+    CHECK(d == StealSafetyDecision::RejectHard, "2954 AC3: RejectHard on re-arm inject");
+    CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+          "2954 AC3: ok_total unchanged");
+    CHECK(g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) > race0,
+          "2954 AC3: residual_rearm_race_total bumps");
+    CHECK(f.resume_safety_ticket() == kPoisonTicket, "2954 AC3: no Ok stamp over poison");
+    CHECK(!f.steal_decision_busy(), "2954 AC3: decision flag released on RejectHard");
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+    s_inject = nullptr;
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac2954_4_counters_additive() {
+    std::println("\n--- #2954 AC4: additive counters + prior surfaces ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(hdr.find("g_steal_decision_contention_total") != std::string::npos,
+          "2954 AC4: contention counter");
+    CHECK(hdr.find("g_steal_decision_per_fiber_wired") != std::string::npos,
+          "2954 AC4: per-fiber wired");
+    CHECK(hdr.find("kStealDecisionPerFiberIssue = 2954") != std::string::npos,
+          "2954 AC4: issue stamp");
+    CHECK(hdr.find("g_steal_safety_residual_rearm_race_total") != std::string::npos,
+          "2954 AC4: #2901 rearm preserved");
+    CHECK(hdr.find("g_steal_safety_transaction_ok_total") != std::string::npos,
+          "2954 AC4: #2699 ok preserved");
+    CHECK(hdr.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "2954 AC4: #2721 residual preserved");
+}
+
+static void ac2954_5_source_and_linter() {
+    std::println("\n--- #2954 AC5/AC6: source-cite + linter ---");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto mut = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_decision_per_fiber_2954.py");
+    CHECK(fh.find("Issue #2954") != std::string::npos, "2954 AC5: fiber.h cites #2954");
+    CHECK(cpp.find("Issue #2954") != std::string::npos, "2954 AC5: cpp cites #2954");
+    CHECK(hdr.find("2954") != std::string::npos, "2954 AC5: hdr cites #2954");
+    CHECK(mut.find("steal-decision-contention-total") != std::string::npos,
+          "2954 AC5: query contention key");
+    CHECK(mut.find("steal-decision-per-fiber-wired") != std::string::npos,
+          "2954 AC5: query wired key");
+    CHECK(mut.find("schema-2954") != std::string::npos, "2954 AC5: schema-2954");
+    CHECK(t.find("ac2954_1_no_process_wide_mutex") != std::string::npos, "2954 AC5: AC1 test");
+    CHECK(t.find("ac2954_2_concurrent_multi_victim") != std::string::npos, "2954 AC5: AC2 test");
+    CHECK(t.find("ac2954_3_rearm_still_reject_hard") != std::string::npos, "2954 AC5: AC3 test");
+    CHECK(!lint.empty(), "2954 AC5: linter present");
+    CHECK(build.find("check_steal_decision_per_fiber_2954") != std::string::npos,
+          "2954 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/2954-steal-decision-per-fiber.md").empty(),
+          "2954 AC6: no docs/design/");
+    CHECK(read_file("tests/serve/test_issue_2954.cpp").empty(), "2954 AC6: no invent test");
+}
+
 } // namespace
 
 int run_test_steal_complete_restamp_txn() {
@@ -1265,6 +1426,12 @@ int run_test_steal_complete_restamp_txn() {
     ac2929_3_soft_metric_only_production_fail_closed();
     ac2929_4_query_additive();
     ac2929_5_source_and_linter();
+    std::println("\n=== Issue #2954: per-Fiber steal decision (no global mu) ===");
+    ac2954_1_no_process_wide_mutex();
+    ac2954_2_concurrent_multi_victim();
+    ac2954_3_rearm_still_reject_hard();
+    ac2954_4_counters_additive();
+    ac2954_5_source_and_linter();
     if (g_failed)
         return 1;
     std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
