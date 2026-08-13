@@ -1192,6 +1192,209 @@ static void ac2903_5_source_cite_no_docs_design() {
     CHECK(read_file("tests/serve/test_issue_2903.cpp").empty(), "AC5: no new test file per #81967");
 }
 
+// ── Issue #2958: hold-budget cancel when under-boundary wait ≥ SLO ──
+// AC1 production + wait ≥ SLO → request_hold_budget_cancel on live holder
+// AC2 Soft / under-SLO → no cancel; #2903 hist still updates
+// AC3 one-shot arm (no cancel storms)
+// AC4 additive metrics; #2903/#2726/#2947 lineage
+// AC5 source-cite + linter; no invent / no design
+
+static void ac2958_1_production_wait_slo_cancels_holder() {
+    std::println("\n--- #2958 AC1: production + wait SLO → hold-budget cancel ---");
+    using aura::compiler::mutation_hold_live_note_enter;
+    using aura::compiler::mutation_hold_live_note_exit;
+    using aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed;
+    using aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel;
+    using aura::serve::mf_mailbox::note_mailbox_under_boundary_wait_sample;
+
+    // Drain + reset arm.
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+
+    // Production defaults active for cancel path.
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1); // 1 ms SLO
+
+    const auto cancel0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto soft0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+
+    // Install live outermost holder fiber id (simulate Guard enter).
+    constexpr std::uint64_t kHolder = 4242;
+    mutation_hold_live_note_enter(kHolder, /*start_ns=*/1, /*depth=*/1);
+
+    // Inject wait sample above SLO → production cancel path.
+    note_mailbox_under_boundary_wait_sample(/*us=*/50'000, /*dropped=*/false);
+
+    const auto cancel1 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto soft1 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+    // Holder may not be in Fiber registry (synthetic id) → cancel_total or no_holder.
+    const auto no_holder =
+        g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(std::memory_order_relaxed);
+    const auto breach =
+        g_mf_mailbox_stats.mailbox_defer_slo_breach_observe_total.load(std::memory_order_relaxed);
+    CHECK(breach >= 1, "2958 AC1: breach observed under production");
+    CHECK(soft1 == soft0, "2958 AC1: soft_observe unchanged under production");
+    CHECK(cancel1 > cancel0 || no_holder >= 1,
+          "2958 AC1: hold-cancel requested or no-holder noted");
+    // #2903 hist still updated.
+    CHECK(g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed) >=
+              1,
+          "2958 AC1: #2903 hist sample still recorded");
+
+    mutation_hold_live_note_exit(kHolder);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+}
+
+static void ac2958_2_soft_and_under_slo() {
+    std::println("\n--- #2958 AC2: Soft / under-SLO → no cancel ---");
+    using aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed;
+    using aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel;
+    using aura::serve::mf_mailbox::note_mailbox_under_boundary_wait_sample;
+
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+
+    const auto cancel0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto soft0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+    const auto samples0 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed);
+
+    // Soft: production probe off → soft observe, no cancel.
+    note_mailbox_under_boundary_wait_sample(/*us=*/50'000, /*dropped=*/false);
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed) >
+              soft0,
+          "2958 AC2: Soft observes breach");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) ==
+              cancel0,
+          "2958 AC2: Soft does not cancel");
+    CHECK(g_mf_mailbox_stats.mailbox_under_boundary_wait_samples.load(std::memory_order_relaxed) >
+              samples0,
+          "2958 AC2: #2903 hist still updates under Soft");
+
+    // Under-SLO: tiny sample with high SLO → no cancel, no soft breach from this call
+    // (may still hot if max stays high from prior samples — reset max not available;
+    // use slo=0 disable or huge SLO).
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "0", 1); // disable latency arm
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    const auto soft1 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+    const auto cancel1 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    note_mailbox_under_boundary_wait_sample(/*us=*/10, /*dropped=*/false);
+    // slo=0 + no throttle + first==0 → early return, soft unchanged.
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed) ==
+              soft1,
+          "2958 AC2: under-SLO (slo=0) no soft observe");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) ==
+              cancel1,
+          "2958 AC2: under-SLO no cancel");
+
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+}
+
+static void ac2958_3_one_shot_no_storm() {
+    std::println("\n--- #2958 AC3: one-shot arm prevents cancel storms ---");
+    using aura::compiler::mutation_hold_live_note_enter;
+    using aura::compiler::mutation_hold_live_note_exit;
+    using aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed;
+    using aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel;
+
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1", 1);
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    mutation_hold_live_note_enter(/*fiber_id=*/7, /*start_ns=*/1, /*depth=*/1);
+
+    // Force hot max/p99 via sample, then re-enter maybe many times.
+    aura::serve::mf_mailbox::note_mailbox_under_boundary_wait_sample(1'000'000, false);
+    const auto cancel_after_first =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto no_holder_after_first =
+        g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(std::memory_order_relaxed);
+    for (int i = 0; i < 20; ++i)
+        maybe_mailbox_defer_slo_hold_cancel();
+    const auto cancel_after_storm =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto no_holder_after_storm =
+        g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(std::memory_order_relaxed);
+    // Armed path: cancel/no_holder should not grow unboundedly (at most +1 from first).
+    CHECK(cancel_after_storm - cancel_after_first <= 1, "2958 AC3: cancel not stormed");
+    CHECK(no_holder_after_storm - no_holder_after_first <= 1,
+          "2958 AC3: no_holder not stormed when armed");
+    CHECK(g_mailbox_defer_slo_hold_cancel_armed.load(std::memory_order_relaxed) == 1 ||
+              g_mailbox_defer_slo_hold_cancel_armed.load(std::memory_order_relaxed) == 0,
+          "2958 AC3: arm is 0 or 1");
+
+    mutation_hold_live_note_exit(7);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+}
+
+static void ac2958_4_query_additive() {
+    std::println("\n--- #2958 AC4: additive query keys; lineage preserved ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-2958") == 2958, "AC4: schema-2958");
+    CHECK(href(cs, "issue-2958") == 2958, "AC4: issue-2958");
+    CHECK(href(cs, "mailbox-defer-slo-hold-cancel-wired") == 1, "AC4: cancel wired");
+    CHECK(href(cs, "mailbox-defer-slo-hold-cancel-total") >= 0, "AC4: cancel total");
+    CHECK(href(cs, "mailbox-defer-slo-soft-observe-total") >= 0, "AC4: soft observe");
+    CHECK(href(cs, "mailbox-defer-slo-breach-observe-total") >= 0, "AC4: breach observe");
+    CHECK(href(cs, "schema-2903") == 2903, "AC4: schema-2903 preserved");
+    CHECK(href(cs, "mailbox-under-boundary-wait-us-p99") >= 0, "AC4: #2903 p99 preserved");
+    // #2947 lineage (schedule gate schema on other query — source cite).
+    const auto gate = read_file("src/orch/security_schedule_gate.h");
+    CHECK(gate.find("schema-2947") != std::string::npos ||
+              gate.find("kSecurityScheduleMailboxHoldSloIssue = 2947") != std::string::npos,
+          "AC4: #2947 gate lineage present");
+    const auto hold = read_file("src/serve/fiber.h");
+    CHECK(hold.find("request_hold_budget_cancel") != std::string::npos,
+          "AC4: #2726 hold-budget cancel API preserved");
+}
+
+static void ac2958_5_source_and_linter() {
+    std::println("\n--- #2958 AC5: source-cite + linter; no invent / no design ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto msg = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mailbox_defer_slo_hold_cancel_2958.py");
+    CHECK(mb.find("Issue #2958") != std::string::npos || mb.find("#2958") != std::string::npos,
+          "AC5: mailbox cites #2958");
+    CHECK(mb.find("maybe_mailbox_defer_slo_hold_cancel") != std::string::npos,
+          "AC5: cancel helper");
+    CHECK(mb.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+          "AC5: uses hold-budget cancel");
+    CHECK(mb.find("g_mailbox_defer_slo_hold_cancel_armed") != std::string::npos,
+          "AC5: one-shot arm");
+    CHECK(msg.find("schema-2958") != std::string::npos, "AC5: query schema-2958");
+    CHECK(msg.find("mailbox-defer-slo-hold-cancel-total") != std::string::npos, "AC5: cancel key");
+    CHECK(t.find("ac2958_1_production_wait_slo_cancels_holder") != std::string::npos, "AC5: AC1");
+    CHECK(t.find("ac2958_2_soft_and_under_slo") != std::string::npos, "AC5: AC2");
+    CHECK(t.find("ac2958_3_one_shot_no_storm") != std::string::npos, "AC5: AC3");
+    CHECK(t.find("ac2958_4_query_additive") != std::string::npos, "AC5: AC4");
+    CHECK(!lint.empty() && lint.find("2958") != std::string::npos, "AC5: linter present");
+    CHECK(build.find("check_mailbox_defer_slo_hold_cancel_2958") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/2958-mailbox-defer-slo-hold-cancel.md").empty(),
+          "AC5: no docs/design/2958-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_2958.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_mailbox_recv_mutation_boundary() {
@@ -1242,6 +1445,12 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac2903_3_schema_query_additive();
     ac2903_4_chaos_lite_long_vs_short_hold();
     ac2903_5_source_cite_no_docs_design();
+    std::println("\n=== Issue #2958: mailbox defer-SLO → hold-budget cancel ===");
+    ac2958_1_production_wait_slo_cancels_holder();
+    ac2958_2_soft_and_under_slo();
+    ac2958_3_one_shot_no_storm();
+    ac2958_4_query_additive();
+    ac2958_5_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

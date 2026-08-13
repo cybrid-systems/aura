@@ -20,6 +20,10 @@
 //        wait-us from first defer decision to deliver (or budget drop).
 //        Closes silent starvation observability under long holds; Soft /
 //        zero-defer path stays single relaxed load (no hist noise).
+// #2958: production hold-budget cancel when under-boundary wait ≥ SLO
+//        (or open-window age / throttle). Complements #2947 schedule gate
+//        (deny new admits) by force-degrading the live outermost holder.
+//        Soft: observe-only. Under-SLO / no open defer: early return.
 // #2511: outermost Guard exit forces deferred drain under budget
 //        (AURA_MAILBOX_HOLD_DRAIN_BUDGET_US, default 1000 µs). Soft: retain
 //        + starvation. Strict: force-resolve remaining depth + audit.
@@ -32,7 +36,9 @@
 #define AURA_SERVE_MULTI_FIBER_MAILBOX_H
 
 #include "fiber.h"
-#include "compiler/lock_order_audit.h" // Issue #2316: lock-order audit
+#include "compiler/lock_order_audit.h"             // Issue #2316: lock-order audit
+#include "compiler/mutation_concurrency_health.hh" // #2903/#2958 wait SLO
+#include "compiler/mutation_hold_budget.h"         // #2958 live outermost holder
 
 #include <algorithm>
 #include <atomic>
@@ -66,6 +72,8 @@ extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept;
 extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fiber_id) noexcept;
 // Issue #2346 / #2347: production canary probe (strong in audit hooks).
 extern "C" int aura_production_defaults_active_probe() noexcept;
+// Issue #2726 / #2958: set Fiber pending hold-budget cancel (strong in fiber.cpp).
+extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noexcept;
 
 namespace aura::serve::mf_mailbox {
 
@@ -219,6 +227,16 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_under_boundary_wait_drop_total{0}; // #2903 budget drop
     std::atomic<std::uint64_t>
         mailbox_under_boundary_wait_hist[kUnderBoundaryWaitHistBuckets]{}; // #2903
+    // Issue #2958: production hold-budget cancel when wait/open-age ≥ SLO.
+    // cancel_total: successful request_hold_budget_cancel on live holder
+    // soft_observe_total: SLO hot under Soft / non-production
+    // breach_observe_total: every hot evaluation (prod + soft)
+    // no_holder_total: hot but no live outermost holder fiber
+    std::atomic<std::uint64_t> mailbox_defer_slo_hold_cancel_total{0};    // #2958
+    std::atomic<std::uint64_t> mailbox_defer_slo_soft_observe_total{0};   // #2958
+    std::atomic<std::uint64_t> mailbox_defer_slo_breach_observe_total{0}; // #2958
+    std::atomic<std::uint64_t> mailbox_defer_slo_no_holder_total{0};      // #2958
+    std::atomic<std::uint32_t> mailbox_defer_slo_hold_cancel_wired{1};    // #2958
     // Issue #2511: outermost Guard exit forced deferred drain under budget.
     // hold_exit_drain_total: drain path entered with open depth
     // hold_exit_drain_us_total / max: elapsed under budget
@@ -260,6 +278,10 @@ inline std::atomic<std::uint64_t> g_mailbox_last_outermost_exit_ns{0};
 // this, a mailbox that stays deferred >100ms bumps on every outermost exit
 // drain → 100000-level counter storm → chaos PR gate (ceiling 0) flakes.
 inline std::atomic<bool> g_mailbox_defer_starve_reported{false};
+// Issue #2958: one-shot arm for SLO→hold-cancel (cleared when defer window
+// closes). Prevents cancel storms while Fiber CAS consume stays one-shot.
+inline std::atomic<std::uint8_t> g_mailbox_defer_slo_hold_cancel_armed{0};
+inline constexpr int kMailboxDeferSloHoldCancelIssue = 2958;
 
 // Default starvation: deferred_depth > 0 for ≥100ms after first open defer
 // and at least one outermost exit was observed. Override ms via
@@ -329,6 +351,9 @@ inline void clear_agent_throttle_for_mailbox_starvation() noexcept {
         1, std::memory_order_relaxed);
 }
 
+// Issue #2958: forward decl — defined after wait sample (hist p99 refresh).
+inline void maybe_mailbox_defer_slo_hold_cancel() noexcept;
+
 // Issue #2903: record one under-boundary wait sample (µs).
 // Called only from deferred reopen paths (window close Ok deliver, or
 // hold-exit budget force-drop) — never from the happy Ok path.
@@ -391,6 +416,70 @@ inline void note_mailbox_under_boundary_wait_sample(std::uint64_t us, bool dropp
         p99 = p50;
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p50.store(p50, std::memory_order_relaxed);
     g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(p99, std::memory_order_relaxed);
+    // Issue #2958: after hist refresh, production may cancel live holder.
+    maybe_mailbox_defer_slo_hold_cancel();
+}
+
+// Issue #2958: under-boundary wait / open-window age ≥ SLO → request
+// hold-budget cancel on the live outermost holder (production defaults).
+// Soft: breach_observe + soft_observe only. Under-SLO / no open window:
+// early return after a few relaxed loads (zero cancel work).
+// One-shot armed flag (cleared on defer window close) avoids cancel storms;
+// Fiber::consume_hold_budget_cancel remains the one-shot CAS on the holder.
+inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {
+    const auto slo = aura::compiler::mailbox_under_boundary_wait_slo_us();
+    const bool throttled = aura_orch_mailbox_starvation_throttled();
+    const auto p99 =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed);
+    const auto mx =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    bool wait_hot = slo != 0 && ((p99 >= slo) || (mx >= slo));
+    if (!wait_hot && !throttled) {
+        // Mid-hold path: open defer window age may already exceed SLO
+        // before any deliver sample (long Guard still live).
+        if (slo == 0)
+            return;
+        const auto first = g_mailbox_first_open_defer_ns.load(std::memory_order_relaxed);
+        if (first == 0)
+            return; // no open defer — zero cancel work
+        const auto now = mailbox_steady_ns();
+        if (now < first)
+            return;
+        const auto age_us = (now - first) / 1000ull;
+        if (age_us < slo)
+            return;
+        wait_hot = true;
+    }
+    (void)wait_hot;
+    g_mf_mailbox_stats.mailbox_defer_slo_breach_observe_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    // Soft / non-production: observe only (AC2).
+    if (aura_production_defaults_active_probe() == 0) {
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    // One-shot arm for this open-defer window (AC3).
+    std::uint8_t expected = 0;
+    if (!g_mailbox_defer_slo_hold_cancel_armed.compare_exchange_strong(
+            expected, 1, std::memory_order_acq_rel, std::memory_order_relaxed))
+        return;
+    const auto holder = aura::compiler::mutation_hold_live_snapshot();
+    if (holder.fiber_id == 0) {
+        g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        // Leave armed for this open-defer window (AC3: no counter storm).
+        // Cleared when window closes (1→0).
+        return;
+    }
+    if (aura_fiber_request_hold_budget_cancel(holder.fiber_id) != 0) {
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    } else {
+        // Registry miss — one no_holder note; stay armed until window close.
+        g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    }
 }
 
 // Issue #2378: successful enqueue after possible open defer window.
@@ -413,6 +502,8 @@ inline void note_mailbox_push_ok_drain_progress() noexcept {
         // Issue #2554: window closed — clear starvation canary so the next
         // open-defer window can report once again.
         g_mailbox_defer_starve_reported.store(false, std::memory_order_relaxed);
+        // Issue #2958: clear SLO hold-cancel arm for the next open window.
+        g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
         const auto now = mailbox_steady_ns();
         const auto first = g_mailbox_first_open_defer_ns.exchange(0, std::memory_order_relaxed);
         const auto exit_ns = g_mailbox_last_outermost_exit_ns.load(std::memory_order_relaxed);
@@ -472,6 +563,9 @@ inline void note_mailbox_outermost_exit_drain() noexcept {
         // Issue #2554: dedupe — bump once per open-defer window (not per drain).
         g_mf_mailbox_stats.mailbox_defer_starvation_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #2958: long open defer at outermost exit → holder cancel probe
+    // (complements #2947 gate deny while Guard is still unwinding).
+    maybe_mailbox_defer_slo_hold_cancel();
 }
 
 // Issue #2511: hold-exit drain budget (µs). Default 1000 µs.
@@ -723,6 +817,9 @@ note_mailbox_deferred_under_boundary(MultiFiberMailboxStats* local_stats = nullp
         }
     }
     note_mailbox_mutation_hold_defer();
+    // Issue #2958: concurrent push under long hold may already exceed wait
+    // SLO by open-window age — request holder cancel under production.
+    maybe_mailbox_defer_slo_hold_cancel();
     return true;
 }
 
