@@ -503,6 +503,11 @@ struct OrchModuleStats {
     // Lets Agents observe supervise-batch adoption without changing the
     // underlying batch / residual metrics surfaces (#2539/#2756).
     std::atomic<std::uint64_t> workflow_apply_total{0}; // #2852
+    // Issue #2974: multi-stage workflow run (ordered DAG stages over
+    // parallel_intend + optional scope watch). Additive — compose / apply
+    // counters above are unchanged for callers that never use run_workflow.
+    std::atomic<std::uint64_t> workflow_run_total{0};        // #2974
+    std::atomic<std::uint64_t> workflow_stage_fail_total{0}; // #2974
     std::atomic<std::uint32_t> workflow_failure_policy_wired{1};
     // Issue #2588: Aura language surface for AgentScope supervision
     // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
@@ -2899,6 +2904,9 @@ inline constexpr int kWorkflowFailurePolicyIssue = 2756;
 inline constexpr int kWorkflowApplySugarIssue = 2852; // #2852 supervised-batch / apply_workflow
 // Issue #2843: Aura language surface for WorkflowFailurePolicy (compose prim).
 inline constexpr int kWorkflowComposeAuraIssue = 2843;
+// Issue #2974: multi-stage workflow primitive (ordered stages over
+// parallel_intend + optional scope watch + residual observe-only).
+inline constexpr int kWorkflowRunIssue = 2974;
 
 // Compose from batch FailurePolicy (+ residual preference). Maps agent
 // via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.
@@ -3067,6 +3075,60 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
                std::span<const serve::parallel_orch::TaskSpec> tasks,
                const WorkflowFailurePolicy& w, std::uint32_t stall_timeout_ms = 0,
                bool watch_scope = true) noexcept;
+
+// Issue #2974: ordered multi-stage workflow over apply_workflow surfaces.
+// Each stage runs parallel_intend(tasks, batch) then optional
+// AgentScope::watch_all(watch). FailFast/Timeout/Quota/Invalid (or any
+// non-Ok when stop_on_batch_fail) skip remaining stages. Residual is
+// observe-only via note_workflow_residual_reclaim_under_policy — no
+// #2661 reclaim change. No AgentRegistry / saga / WAL.
+//
+// Unused callers: #2007 / #2229 / #2852 defaults unchanged (AC4).
+struct WorkflowStage {
+    std::span<const serve::parallel_orch::TaskSpec> tasks{};
+    serve::parallel_orch::ParallelPolicy batch{};
+    AgentFailurePolicy watch{};
+    bool watch_scope = false;
+    std::uint32_t stall_timeout_ms = 0;
+    bool stop_on_batch_fail = true; // non-Ok batch → stop remaining stages
+};
+
+struct WorkflowRunResult {
+    std::vector<ApplyWorkflowResult> stages;
+    std::uint32_t stages_ok = 0;
+    std::uint32_t stages_failed = 0;
+    bool residual_observed = false;
+    std::uint32_t stopped_at = 0; // 0 = completed all; 1-based stop index
+};
+
+// True when a batch status counts as a stage failure (any non-Ok).
+[[nodiscard]] inline bool workflow_stage_failed(serve::parallel_orch::BatchStatus status) noexcept {
+    return status != serve::parallel_orch::BatchStatus::Ok;
+}
+
+// Project a batch FailurePolicy name onto ParallelPolicy + AgentFailurePolicy
+// via compose_workflow_policy (#2539 / #2756 tables). Used when a stage
+// only supplies a batch policy (Aura :failure-policy).
+[[nodiscard]] inline WorkflowStage
+make_workflow_stage(std::span<const serve::parallel_orch::TaskSpec> tasks,
+                    serve::parallel_orch::FailurePolicy batch,
+                    ResidualReclaimPreference residual = ResidualReclaimPreference::Report,
+                    std::uint32_t max_retries = 0, std::uint32_t consecutive_fail_limit = 3,
+                    std::uint32_t retry_backoff_ms = 0) noexcept {
+    const auto w = compose_workflow_policy(batch, residual, max_retries, consecutive_fail_limit,
+                                           retry_backoff_ms);
+    WorkflowStage s;
+    s.tasks = tasks;
+    s.batch = to_parallel_policy(w);
+    s.watch = to_agent_policy(w);
+    return s;
+}
+
+// Issue #2974: run_workflow body is in agent_scope.h (after AgentScope)
+// so it can call scope.watch_all. Forward declared here.
+[[nodiscard]] WorkflowRunResult
+run_workflow(serve::Scheduler& sched, AgentScope& scope, std::span<const WorkflowStage> stages,
+             ResidualReclaimPreference residual = ResidualReclaimPreference::Report) noexcept;
 
 // Wait up to stall_timeout_ms (default 2× keepalive_interval_ms) for a
 // keepalive. Prefers the shared last_keepalive clock (set by the helper

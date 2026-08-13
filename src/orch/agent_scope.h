@@ -1072,6 +1072,57 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
     return out;
 }
 
+// Issue #2974: multi-stage workflow — ordered stages over parallel_intend
+// + optional scope.watch_all + residual observe-only (#2661 unchanged).
+//   Stage[i]: parallel_intend(tasks_i, batch_i)
+//          → optional watch_all(watch_i)
+//          → on non-Ok + stop_on_batch_fail: skip remaining stages
+// Additive: workflow_run_total once per call; workflow_stage_fail_total
+// per failed stage. No AgentRegistry / saga / WAL.
+[[nodiscard]] inline WorkflowRunResult run_workflow(serve::Scheduler& sched, AgentScope& scope,
+                                                    std::span<const WorkflowStage> stages,
+                                                    ResidualReclaimPreference residual) noexcept {
+    WorkflowRunResult out;
+    g_orch_module_stats.workflow_run_total.fetch_add(1, std::memory_order_relaxed);
+    WorkflowFailurePolicy observe{};
+    observe.residual = residual;
+    for (std::size_t i = 0; i < stages.size(); ++i) {
+        const auto& st = stages[i];
+        ApplyWorkflowResult stage;
+        // Phase A — batch under the stage ParallelPolicy (preserves
+        // max_concurrency / timeout_ms / FailurePolicy fields).
+        stage.batch = serve::parallel_orch::parallel_intend(sched, st.tasks, st.batch);
+        // Phase B — optional scope watch under the stage AgentFailurePolicy.
+        if (st.watch_scope) {
+            stage.scope_watch_called = true;
+            auto wres = scope.watch_all(st.stall_timeout_ms, st.watch);
+            stage.scope_stalled = static_cast<int>(wres.stalled);
+            stage.scope_alive = static_cast<int>(wres.alive);
+            stage.scope_done = static_cast<int>(wres.done);
+        }
+        // Phase C — residual observe only (AC3). Does not reclaim.
+        const bool batch_fail = workflow_stage_failed(stage.batch.status);
+        const bool scope_residual = stage.scope_stalled > 0;
+        if (batch_fail || scope_residual) {
+            note_workflow_residual_reclaim_under_policy(observe);
+            stage.residual_observed = true;
+            out.residual_observed = true;
+        }
+        if (batch_fail) {
+            ++out.stages_failed;
+            g_orch_module_stats.workflow_stage_fail_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            ++out.stages_ok;
+        }
+        out.stages.push_back(std::move(stage));
+        if (batch_fail && st.stop_on_batch_fail) {
+            out.stopped_at = static_cast<std::uint32_t>(i + 1);
+            break;
+        }
+    }
+    return out;
+}
+
 } // namespace aura::orch
 
 #endif // AURA_ORCH_AGENT_SCOPE_H

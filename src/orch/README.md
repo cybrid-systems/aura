@@ -489,6 +489,46 @@ MVP scope linter remains green (no `AgentRegistry` / `conduct_parallel`).
 
 Regression: `tests/orch/test_failure_policy_bridge` (`ac2843_*`).
 
+### Multi-stage workflow (Issue #2974)
+
+Ordered **DAG stages** over `parallel_intend` + optional `AgentScope::watch_all`
++ residual observe-only. Elevates one-shot `apply_workflow` / `orch:supervise-batch`
+into plan → fan-out → reduce → verify without a global registry or saga log.
+
+```cpp
+#include "orch/orch.h"
+
+aura::serve::Scheduler sched;
+aura::orch::AgentScope scope(sched);
+
+auto s1 = aura::orch::make_workflow_stage({}, aura::orch::FailurePolicy::CollectAll);
+auto s2 = aura::orch::make_workflow_stage({}, aura::orch::FailurePolicy::FailFast);
+s2.stop_on_batch_fail = true;
+aura::orch::WorkflowStage stages[] = {s1, s2};
+auto r = aura::orch::run_workflow(sched, scope, stages);
+// r.stages_ok / r.stages_failed / r.stopped_at (0 = completed all)
+// Residual: note_workflow_residual_reclaim_under_policy only (#2661 unchanged).
+```
+
+Aura:
+
+```text
+(orch:run-workflow stages
+   [:residual 'report|'cancel|'defer])
+  → hash {ok, stages, stages-ok, stages-failed, stopped-at,
+          residual-observed, schema-2974}
+```
+
+Each stage hash: `tasks` + optional `:failure-policy` / `:max-concurrency` /
+`:timeout-ms` / `:watch-scope` / `:stop-on-fail`. Per-stage policy projection
+reuses `compose_workflow_policy` (#2539 / #2756). Unused callers keep
+`#2007` / `#2229` / `#2852` defaults.
+
+Counters on `query:orch-module-stats`: `workflow-run-total`,
+`workflow-stage-fail-total`, `schema-2974` (compose / apply counters preserved).
+
+Regression: `tests/orch/test_failure_policy_bridge` (`ac2974_*`).
+
 ### `agent-ask` / `agent-reply` (Issue #2231 / #2401 / #2538, cross-agent request/response)
 
 Standardized request/response channel between agents without a process-global

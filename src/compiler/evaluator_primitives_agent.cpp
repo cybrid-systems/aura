@@ -4585,6 +4585,248 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return build_orch_hash(kv);
     });
 
+    // Issue #2974: multi-stage workflow primitive. Ordered stages over
+    // parallel_intend + optional scope watch + residual observe-only.
+    //   (orch:run-workflow stages
+    //      [:residual 'report|'cancel|'defer])
+    //     → hash {ok, stages, stages-ok, stages-failed, stopped-at,
+    //             residual-observed, schema-2974}
+    // Each stage entry is a hash: tasks + optional :failure-policy /
+    // :max-concurrency / :timeout-ms / :watch-scope / :stop-on-fail.
+    // Soft never hard-denies empty stages. No AgentRegistry / saga / WAL.
+    add("orch:run-workflow",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() ||
+                (!types::is_vector(a[0]) && !types::is_pair(a[0]) && !types::is_void(a[0]))) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:run-workflow: usage "
+                                            "(orch:run-workflow stages [:residual r])",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto residual = aura::orch::ResidualReclaimPreference::Report;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                auto& val = a[i + 1];
+                if (k == "residual" && (types::is_string(val) || types::is_keyword(val))) {
+                    std::string rv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
+                                                           : orch_keyword_key(val);
+                    while (!rv.empty() && rv[0] == ':')
+                        rv = rv.substr(1);
+                    if (rv == "cancel")
+                        residual = aura::orch::ResidualReclaimPreference::Cancel;
+                    else if (rv == "defer")
+                        residual = aura::orch::ResidualReclaimPreference::Defer;
+                    else
+                        residual = aura::orch::ResidualReclaimPreference::Report;
+                }
+            }
+            std::vector<EvalValue> stage_hashes;
+            if (types::is_vector(a[0])) {
+                auto vidx = types::as_vector_idx(a[0]);
+                if (vidx < ev.vector_heap_.size()) {
+                    for (auto& e : ev.vector_heap_[vidx])
+                        stage_hashes.push_back(e);
+                }
+            } else if (types::is_pair(a[0])) {
+                EvalValue cur = a[0];
+                while (types::is_pair(cur)) {
+                    auto pidx = types::as_pair_idx(cur);
+                    if (pidx >= ev.pairs_.size())
+                        break;
+                    stage_hashes.push_back(ev.pairs_[pidx].car);
+                    cur = ev.pairs_[pidx].cdr;
+                }
+            }
+
+            auto hash_lookup = [&ev](const EvalValue& h, std::string_view key) -> EvalValue {
+                if (!types::is_hash(h))
+                    return {};
+                auto hidx = types::as_hash_idx(h);
+                if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                    return {};
+                auto* ht = g_hash_tables[hidx];
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (std::size_t si = 0; si < hcap; ++si) {
+                    if (meta[si] == 0xFF)
+                        continue;
+                    EvalValue ke{};
+                    ke.val = keys[si];
+                    if (!types::is_string(ke))
+                        continue;
+                    if (heap_str_from(ev.string_heap_, ke) != key)
+                        continue;
+                    EvalValue ve{};
+                    ve.val = vals[si];
+                    return ve;
+                }
+                return {};
+            };
+
+            using FP = aura::serve::parallel_orch::FailurePolicy;
+            auto parse_batch = [](std::string_view v) -> FP {
+                while (!v.empty() && v[0] == ':')
+                    v = v.substr(1);
+                if (v == "fail-fast" || v == "fail_fast")
+                    return FP::FailFast;
+                if (v == "collect-all" || v == "collect_all")
+                    return FP::CollectAll;
+                if (v == "retry-n" || v == "retry_n" || v == "retry")
+                    return FP::RetryN;
+                if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
+                    return FP::CircuitBreaker;
+                return FP::CollectAll;
+            };
+
+            auto intend = ev.primitives_.lookup("parallel-intend");
+            aura::orch::g_orch_module_stats.workflow_run_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+
+            std::uint32_t stages_ok = 0;
+            std::uint32_t stages_failed = 0;
+            std::uint32_t stopped_at = 0;
+            bool residual_observed = false;
+            std::vector<EvalValue> stage_out;
+            stage_out.reserve(stage_hashes.size());
+
+            auto push_str = [&ev](const char* s) -> EvalValue {
+                auto idx = ev.string_heap_.size();
+                ev.string_heap_.push_back(s);
+                return make_string(idx);
+            };
+
+            for (std::size_t i = 0; i < stage_hashes.size(); ++i) {
+                const auto& sh = stage_hashes[i];
+                FP batch = FP::CollectAll;
+                std::uint32_t max_retries = 0;
+                std::uint32_t consecutive_fail_limit = 3;
+                std::uint32_t retry_backoff_ms = 0;
+                std::uint32_t max_concurrency = 8;
+                std::uint32_t timeout_ms = 0;
+                bool watch_scope = false;
+                bool stop_on_fail = true;
+                EvalValue tasks_ev{};
+                if (types::is_hash(sh)) {
+                    auto try_fp = hash_lookup(sh, "failure-policy");
+                    if (!types::is_string(try_fp) && !types::is_keyword(try_fp))
+                        try_fp = hash_lookup(sh, "batch-policy");
+                    if (types::is_string(try_fp) || types::is_keyword(try_fp)) {
+                        std::string bv = types::is_string(try_fp)
+                                             ? heap_str_from(ev.string_heap_, try_fp)
+                                             : orch_keyword_key(try_fp);
+                        batch = parse_batch(bv);
+                    }
+                    auto iv = hash_lookup(sh, "max-retries");
+                    if (types::is_int(iv))
+                        max_retries = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(iv)));
+                    iv = hash_lookup(sh, "consecutive-fail-limit");
+                    if (types::is_int(iv))
+                        consecutive_fail_limit = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(1, types::as_int(iv)));
+                    iv = hash_lookup(sh, "retry-backoff-ms");
+                    if (types::is_int(iv))
+                        retry_backoff_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(iv)));
+                    iv = hash_lookup(sh, "max-concurrency");
+                    if (types::is_int(iv))
+                        max_concurrency = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(1, types::as_int(iv)));
+                    iv = hash_lookup(sh, "timeout-ms");
+                    if (types::is_int(iv))
+                        timeout_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(iv)));
+                    auto bv = hash_lookup(sh, "watch-scope");
+                    if (types::is_bool(bv))
+                        watch_scope = types::as_bool(bv);
+                    bv = hash_lookup(sh, "stop-on-fail");
+                    if (types::is_bool(bv))
+                        stop_on_fail = types::as_bool(bv);
+                    bv = hash_lookup(sh, "stop-on-batch-fail");
+                    if (types::is_bool(bv))
+                        stop_on_fail = types::as_bool(bv);
+                    tasks_ev = hash_lookup(sh, "tasks");
+                }
+
+                // AC2: project via compose_workflow_policy (#2539/#2756).
+                const auto w = aura::orch::compose_workflow_policy(
+                    batch, residual, max_retries, consecutive_fail_limit, retry_backoff_ms);
+                (void)aura::orch::to_agent_policy(w);
+                (void)aura::orch::to_parallel_policy(w);
+
+                std::string status = "ok";
+                bool stage_fail = false;
+                bool stage_residual = false;
+                if ((types::is_vector(tasks_ev) || types::is_pair(tasks_ev)) && intend) {
+                    std::vector<EvalValue> pargs;
+                    pargs.push_back(tasks_ev);
+                    pargs.push_back(push_str("failure-policy"));
+                    pargs.push_back(push_str(aura::orch::failure_policy_name(w.batch_policy)));
+                    pargs.push_back(push_str("max-concurrency"));
+                    pargs.push_back(make_int(static_cast<std::int64_t>(max_concurrency)));
+                    pargs.push_back(push_str("timeout-ms"));
+                    pargs.push_back(make_int(static_cast<std::int64_t>(timeout_ms)));
+                    pargs.push_back(push_str("max-retries"));
+                    pargs.push_back(make_int(static_cast<std::int64_t>(w.max_retries)));
+                    auto par = (*intend)(std::span<const EvalValue>(pargs));
+                    auto stv = hash_lookup(par, "status");
+                    if (types::is_string(stv))
+                        status = heap_str_from(ev.string_heap_, stv);
+                }
+                if (status != "ok")
+                    stage_fail = true;
+
+                if (stage_fail) {
+                    aura::orch::note_workflow_residual_reclaim_under_policy(w);
+                    stage_residual = true;
+                    residual_observed = true;
+                    ++stages_failed;
+                    aura::orch::g_orch_module_stats.workflow_stage_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                } else {
+                    ++stages_ok;
+                }
+
+                std::vector<std::pair<std::string, EvalValue>> skv = {
+                    {"index", make_int(static_cast<std::int64_t>(i))},
+                    {"ok", make_bool(!stage_fail)},
+                    {"status", push_str(status.c_str())},
+                    {"failure-policy", push_str(aura::orch::failure_policy_name(w.batch_policy))},
+                    {"watch-scope", make_bool(watch_scope)},
+                    {"stop-on-fail", make_bool(stop_on_fail)},
+                    {"residual-observed", make_bool(stage_residual)},
+                    {"schema-2974", make_int(aura::orch::kWorkflowRunIssue)},
+                };
+                stage_out.push_back(build_orch_hash(skv));
+
+                if (stage_fail && stop_on_fail) {
+                    stopped_at = static_cast<std::uint32_t>(i + 1);
+                    break;
+                }
+            }
+
+            auto svidx = ev.vector_heap_.size();
+            ev.vector_heap_.push_back(std::move(stage_out));
+            auto residual_ev = push_str(aura::orch::residual_preference_name(residual));
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},
+                {"stages", make_vector(svidx)},
+                {"stages-ok", make_int(static_cast<std::int64_t>(stages_ok))},
+                {"stages-failed", make_int(static_cast<std::int64_t>(stages_failed))},
+                {"stopped-at", make_int(static_cast<std::int64_t>(stopped_at))},
+                {"residual-observed", make_bool(residual_observed)},
+                {"residual", residual_ev},
+                {"schema", make_int(aura::orch::kWorkflowRunIssue)},
+                {"schema-2974", make_int(aura::orch::kWorkflowRunIssue)},
+                {"issue-2974", make_int(aura::orch::kWorkflowRunIssue)},
+                {"schema-2852", make_int(aura::orch::kWorkflowApplySugarIssue)},
+                {"schema-2756", make_int(aura::orch::kWorkflowFailurePolicyIssue)},
+            };
+            return build_orch_hash(kv);
+        });
+
     ObservabilityPrims::register_stats_impl(
         "query:orch-module-stats", [&ev](const auto&) -> EvalValue {
             std::uint64_t spawned = 0, joined = 0, sends = 0, recvs = 0, failures = 0, batches = 0;
@@ -5111,6 +5353,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("workflow-compose-aura-wired", 1);
             insert_kv("schema-2843", 2843);
             insert_kv("issue-2843", 2843);
+            // Issue #2974: multi-stage workflow run (ordered stages).
+            // Additive — compose / apply / compose-aura counters above
+            // stay authoritative for unused callers (AC4 / AC5).
+            insert_kv("workflow-run-total", static_cast<std::int64_t>(os.workflow_run_total.load(
+                                                std::memory_order_relaxed)));
+            insert_kv("workflow-stage-fail-total",
+                      static_cast<std::int64_t>(
+                          os.workflow_stage_fail_total.load(std::memory_order_relaxed)));
+            insert_kv("workflow-run-wired", 1);
+            insert_kv("schema-2974", aura::orch::kWorkflowRunIssue);
+            insert_kv("issue-2974", aura::orch::kWorkflowRunIssue);
             // Issue #2588: Aura language surface for AgentScope supervision
             // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
             // orch:scope-cancel-all). Per-Evaluator scope map
