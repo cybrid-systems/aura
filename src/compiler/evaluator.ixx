@@ -6181,9 +6181,15 @@ public:
     // MacroSelfEvo / TenantAdmin / Syscall) and bumps the durable override
     // counter (capability_durable_high_risk_grant_total) for audit. Use
     // only when a privilege-sticky long-lived grant is intentional.
+    // Issue #2967: under production (Restricted/Strict) high-risk durable
+    // grants additionally require the caller to hold Effect::TenantAdmin
+    // (or string "tenant-admin" / "capability") AND a non-empty
+    // agent-stable audit reason; otherwise the call is denied with SE
+    // reason 'durable-grant-needs-tenant-admin' /
+    // 'durable-grant-reason-required'.
     void grant_effect_durable(std::uint64_t tenant_id, std::string_view name,
-                              std::uint16_t effect_bits,
-                              std::uint64_t provenance_mutation_id = 0) noexcept;
+                              std::uint16_t effect_bits, std::uint64_t provenance_mutation_id = 0,
+                              std::string_view reason = {}) noexcept;
     // Issue #2944: mutation-session grant — mid-bound + session_bound=true.
     // Auto-revoked on outermost MutationBoundary exit for that mid
     // (success or fail). High-risk production force still applies

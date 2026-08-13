@@ -2034,6 +2034,23 @@ def cmd_lint():
             "Issue #2944 mutation-session grant linter failed — run python3 scripts/coverage/checks/check_mutation_session_grant_2944.py"
         )
         return r
+    # Issue #2967: durable high-risk grant call-site gate — caller must
+    # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
+    # to TenantAdmin) AND pass a non-empty audit reason under production.
+    # Deny → SE reason durable-grant-needs-tenant-admin /
+    # durable-grant-reason-required + capability_durable_grant_deny_total.
+    # Extends test_capability_single_use_consume.cpp (#81967); no
+    # docs/design/ (#1655).
+    cdg_script = COVERAGE_CHECKS / "check_capability_durable_gate_2967.py"
+    if not cdg_script.exists():
+        fail(f"missing {cdg_script}")
+        return 1
+    r = run([sys.executable, str(cdg_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2967 durable grant gate linter failed — run python3 scripts/coverage/checks/check_capability_durable_gate_2967.py"
+        )
+        return r
     # Issue #2884: agent_send_safe — unify C++/language handoff_ref path for
     # StableNodeRef payloads (close #2663 / #2848 contract split). Closes
     # the largest orch-layer contract split for StableNodeRef cross-fiber

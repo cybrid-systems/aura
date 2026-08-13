@@ -733,6 +733,19 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("capability-durable-high-risk-grant-total",
                           static_cast<std::int64_t>(snap.capability_durable_high_risk_grant));
             }
+            // Issue #2967: durable high-risk grant call-site gate — caller
+            // must hold TenantAdmin (or "tenant-admin" / "capability" string
+            // caps mapped to TenantAdmin) AND pass a non-empty audit reason
+            // under production. Deny → SE reason durable-grant-needs-
+            // tenant-admin / durable-grant-reason-required + deny counter.
+            {
+                insert_kv("schema-2967", 2967);
+                insert_kv("issue-2967", 2967);
+                insert_kv("durable-grant-tenant-admin-wired", 1);
+                insert_kv("durable-grant-reason-wired", 1);
+                insert_kv("capability-durable-grant-deny-total",
+                          static_cast<std::int64_t>(snap.capability_durable_grant_deny));
+            }
             // Issue #2883: production hard principal check on fiber
             // resume/steal handoff. Under production/Restricted, if the
             // current fiber resume had a hard principal mismatch (ambient
