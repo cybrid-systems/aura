@@ -532,6 +532,29 @@ extern "C" __attribute__((weak)) void
 aura_test_set_residual_remount_cursor(std::uint64_t /*cursor*/) {}
 extern "C" __attribute__((weak)) void
 aura_test_set_closure_stable_func_id(std::int64_t /*closure_id*/, std::uint32_t /*sid*/) {}
+// Issue #2978: reemit-success sync covered-named remount weak stubs.
+extern "C" __attribute__((weak)) std::uint64_t aura_reemit_success_sync_covered_cap_default() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_reemit_success_sync_covered_ok_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_reemit_success_sync_covered_fail_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_reemit_success_sync_covered_cap_hit_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_sync_remount_covered_named_live_closures(std::uint64_t /*mask*/, std::uint64_t /*cap*/) {}
+extern "C" __attribute__((weak)) void
+aura_test_set_reemit_success_sync_covered_cap(std::uint64_t /*cap*/) {}
+extern "C" __attribute__((weak)) void aura_test_reset_reemit_success_sync_covered_state() {}
+extern "C" __attribute__((weak)) void
+aura_bump_reemit_success_sync_covered_remount_totals(std::uint64_t /*ok*/, std::uint64_t /*fail*/,
+                                                     std::uint64_t /*cap_hit*/) {}
 extern "C" __attribute__((weak)) void aura_test_set_residual_remount_force_skip(int /*v*/) {}
 extern "C" __attribute__((weak)) void aura_test_reset_residual_remount_state() {}
 extern "C" __attribute__((weak)) void

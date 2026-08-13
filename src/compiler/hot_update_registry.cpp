@@ -18,6 +18,10 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" int aura_evaluator_mutation_boundary_held();
 // Issue #2928: residual remount tick (production in aura_jit_runtime.cpp).
 extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
+// Issue #2978: reemit-success sync covered-named remount.
+extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask,
+                                                              std::uint64_t cap);
+extern "C" std::uint64_t aura_reemit_success_sync_covered_cap_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 // Issue #2950: pure-anon bg remount drain (never steal-complete #2715).
 extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
@@ -96,6 +100,18 @@ void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
             last_reemit_success_region_mask_.store(covered, std::memory_order_relaxed);
         }
         maybe_force_jit_repromote_on_clean_success();
+        // Issue #2978: production + non-zero coverage → sync remount
+        // named closures in the just-covered region bits (budget-exempt
+        // vs residual). Soft / mask idle / cap=0 → zero extra work.
+        // Runs after coverage stamp so last_success is visible.
+        if (aura_production_defaults_active_probe() != 0) {
+            const auto cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
+            if (cov != 0) {
+                const auto cap = aura_reemit_success_sync_covered_cap_default();
+                if (cap > 0)
+                    aura_sync_remount_covered_named_live_closures(cov, cap);
+            }
+        }
     } else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0)
         force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     // Issue #2855: amortized force-drain check. Invoked from

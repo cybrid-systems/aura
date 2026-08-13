@@ -290,6 +290,19 @@ extern "C" void aura_bump_residual_remount_prefer_totals(std::uint64_t enter, st
     }
 }
 
+// Issue #2978: reemit-success sync covered-named remount counters.
+extern "C" void aura_bump_reemit_success_sync_covered_remount_totals(std::uint64_t ok,
+                                                                     std::uint64_t fail,
+                                                                     std::uint64_t cap_hit) {
+    if (auto* m = aot_metrics()) {
+        m->reemit_success_sync_covered_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
+        m->reemit_success_sync_covered_remount_fail_total.fetch_add(fail,
+                                                                    std::memory_order_relaxed);
+        m->reemit_success_sync_covered_remount_cap_hit_total.fetch_add(cap_hit,
+                                                                       std::memory_order_relaxed);
+    }
+}
+
 // Issue #2638: residual sid=0 cap-hit counter bumper. Bumped when
 // the residual backfill branch in aura_remap_live_closures_after_reemit
 // sees cur_backfill >= cap (or 0 cap = unlimited → never). Distinct
