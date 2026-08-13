@@ -83,6 +83,9 @@ namespace aura::serve::mf_mailbox {
 
 inline constexpr int kMultiFiberMailboxPhase = 3; // #1881 observability
 inline constexpr int kMultiFiberMailboxIssue = 1881;
+// Issue #2972: per-mailbox inflight credit (complement storm-oriented
+// BP-recent admit #2228/#2535). 0 credit_limit → use high_water.
+inline constexpr int kMailboxCreditInflightIssue = 2972;
 
 // Issue #1595 / #2010: provenance-safety prefix (fiber-stack safe, pure string).
 inline constexpr std::string_view kLinearViolPrefix = "linear-viol:";
@@ -217,6 +220,11 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_under_boundary_deferred_total{0};              // #2849
     std::atomic<std::uint64_t> mailbox_under_boundary_deferred_hard_total{0};         // #2849
     std::atomic<std::uint64_t> mailbox_under_boundary_deferred_soft_observe_total{0}; // #2849
+    // Issue #2972: per-mailbox inflight credit backpressure. Distinct from
+    // queue high_water (memory bound) and from process/scope recent gauges
+    // (storm admit). Bumped when push sees inflight >= credit_limit.
+    std::atomic<std::uint64_t> mailbox_credit_bp_total{0}; // #2972
+    std::atomic<std::uint64_t> mailbox_inflight_hwm{0};    // #2972
     // Issue #2903: deferred-under-boundary wait latency (defer decision →
     // first successful reopen deliver, or force-drop under hold-exit budget).
     // Coarse 5-bucket histogram (µs edges: <100, <1k, <10k, <100k, ≥100k)
@@ -962,19 +970,64 @@ inline void note_backpressure(MultiFiberMailboxStats* local = nullptr,
     aura_orch_note_mailbox_backpressure();
 }
 
+// Issue #2972: credit-BP metric (process + local). Caller still invokes
+// note_backpressure so recent-admit + producer throttle see one real BP.
+inline void note_credit_backpressure(MultiFiberMailboxStats* local = nullptr) noexcept {
+    g_mf_mailbox_stats.mailbox_credit_bp_total.fetch_add(1, std::memory_order_relaxed);
+    if (local)
+        local->mailbox_credit_bp_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void note_inflight_hwm(std::uint64_t v, MultiFiberMailboxStats* local = nullptr) noexcept {
+    auto hwm = g_mf_mailbox_stats.mailbox_inflight_hwm.load(std::memory_order_relaxed);
+    while (v > hwm && !g_mf_mailbox_stats.mailbox_inflight_hwm.compare_exchange_weak(
+                          hwm, v, std::memory_order_relaxed)) {
+    }
+    if (local) {
+        auto lhwm = local->mailbox_inflight_hwm.load(std::memory_order_relaxed);
+        while (v > lhwm && !local->mailbox_inflight_hwm.compare_exchange_weak(
+                               lhwm, v, std::memory_order_relaxed)) {
+        }
+    }
+}
+
 // Multi-fiber mailbox: many attachers, priority queue, broadcast wake,
 // high-water backpressure.
 class MultiFiberMailbox {
 public:
-    explicit MultiFiberMailbox(std::size_t high_water = 1024) noexcept
-        : high_water_(high_water == 0 ? 1 : high_water) {}
+    explicit MultiFiberMailbox(std::size_t high_water = 1024,
+                               std::uint32_t credit_limit = 0) noexcept
+        : high_water_(high_water == 0 ? 1 : high_water)
+        , credit_limit_(credit_limit) {}
+
+    ~MultiFiberMailbox() { close(); }
 
     void set_high_water(std::size_t n) noexcept { high_water_ = n == 0 ? 1 : n; }
     [[nodiscard]] std::size_t high_water() const noexcept { return high_water_; }
+    // Issue #2972: 0 = use high_water (default). Hosts set a tighter
+    // credit so a slow consumer stops producers before the memory bound.
+    void set_credit_limit(std::uint32_t n) noexcept { credit_limit_ = n; }
+    [[nodiscard]] std::uint32_t credit_limit() const noexcept { return credit_limit_; }
+    [[nodiscard]] std::size_t effective_credit() const noexcept {
+        return credit_limit_ == 0 ? high_water_ : static_cast<std::size_t>(credit_limit_);
+    }
+    [[nodiscard]] std::uint64_t inflight() const noexcept {
+        return inflight_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] bool closed() const noexcept { return closed_.load(std::memory_order_acquire); }
     void close() noexcept {
-        closed_.store(true, std::memory_order_release);
-        notify_all_locked();
+        // Issue #2972 AC2: drop queued messages and zero inflight so
+        // close cannot leave a permanent credit-full mailbox.
+        bool expected = false;
+        if (!closed_.compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+                                             std::memory_order_acquire)) {
+            return;
+        }
+        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
+                                                       __builtin_FILE(), __builtin_LINE());
+        std::lock_guard lock(mu_);
+        drop_queued_unlocked_();
+        notify_all_unlocked();
     }
 
     // Multi-attach: multiple fibers may wait on this mailbox.
@@ -1089,6 +1142,14 @@ public:
         if (note_mailbox_delivery_safety(target, target ? &snap : nullptr,
                                          msg.held_ref_token.has_value(), &local_stats_))
             return PushStatus::Backpressure;
+        // Issue #2972: inflight credit gate (complement high_water memory
+        // bound + process/scope recent admit). Same note_backpressure so
+        // #2535 admit + #2925 consecutive throttle see one real BP.
+        if (inflight_.load(std::memory_order_relaxed) >= effective_credit()) {
+            note_credit_backpressure(&local_stats_);
+            note_backpressure(&local_stats_, /*from_fanout=*/false);
+            return PushStatus::Backpressure;
+        }
         if (queue_.size() >= high_water_) {
             note_backpressure(&local_stats_, /*from_fanout=*/false);
             return PushStatus::Backpressure;
@@ -1104,6 +1165,7 @@ public:
             queue_.push_front(std::move(msg));
         else
             queue_.push_back(std::move(msg));
+        add_inflight_(1);
         // Issue #2378: successful enqueue may close an open defer window
         // (AC3: free when deferred_depth==0 — single relaxed load).
         note_mailbox_push_ok_drain_progress();
@@ -1180,6 +1242,12 @@ public:
             }
         }
         const auto need = attachers_.empty() ? std::size_t{1} : attachers_.size();
+        // Issue #2972: reserve `need` credits before any enqueue (all-or-nothing).
+        if (inflight_.load(std::memory_order_relaxed) + need > effective_credit()) {
+            note_credit_backpressure(&local_stats_);
+            note_backpressure(&local_stats_, /*from_fanout=*/true);
+            return PushStatus::Backpressure;
+        }
         if (queue_.size() + need > high_water_) {
             note_backpressure(&local_stats_, /*from_fanout=*/true);
             return PushStatus::Backpressure;
@@ -1207,6 +1275,7 @@ public:
                     queue_.push_back(std::move(m));
             }
         }
+        add_inflight_(need);
         // Issue #2378: fan-out success may close open defer window.
         note_mailbox_push_ok_drain_progress();
         notify_all_unlocked();
@@ -1397,6 +1466,7 @@ private:
             queue_.pop_front();
             g_mf_mailbox_stats.pops.fetch_add(1, std::memory_order_relaxed);
             local_stats_.pops.fetch_add(1, std::memory_order_relaxed);
+            dec_inflight_(1);
             return true;
         }
         // Prefer exact match, then broadcast (to_fiber==0).
@@ -1406,6 +1476,7 @@ private:
                 queue_.erase(it);
                 g_mf_mailbox_stats.pops.fetch_add(1, std::memory_order_relaxed);
                 local_stats_.pops.fetch_add(1, std::memory_order_relaxed);
+                dec_inflight_(1);
                 return true;
             }
         }
@@ -1432,10 +1503,36 @@ private:
         notify_all_unlocked();
     }
 
+    void add_inflight_(std::size_t n) noexcept {
+        const auto v =
+            inflight_.fetch_add(static_cast<std::uint64_t>(n), std::memory_order_relaxed) +
+            static_cast<std::uint64_t>(n);
+        note_inflight_hwm(v, &local_stats_);
+    }
+
+    void dec_inflight_(std::size_t n) noexcept {
+        auto cur = inflight_.load(std::memory_order_relaxed);
+        while (cur > 0) {
+            const auto next = cur > n ? cur - n : 0;
+            if (inflight_.compare_exchange_weak(cur, next, std::memory_order_relaxed))
+                return;
+        }
+    }
+
+    void drop_queued_unlocked_() noexcept {
+        const auto n = queue_.size();
+        if (n == 0)
+            return;
+        queue_.clear();
+        dec_inflight_(n);
+    }
+
     mutable std::mutex mu_;
     std::deque<MailMessage> queue_;
     std::vector<Fiber*> attachers_;
     std::size_t high_water_ = 1024;
+    std::uint32_t credit_limit_ = 0; // 0 → high_water (#2972)
+    std::atomic<std::uint64_t> inflight_{0};
     std::atomic<bool> closed_{false};
     MultiFiberMailboxStats local_stats_{};
 };

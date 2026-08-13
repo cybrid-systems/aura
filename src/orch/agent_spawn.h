@@ -1184,6 +1184,9 @@ struct AgentSpec {
     std::function<void()> body; // required for spawn
     bool attach_mailbox = true;
     std::size_t mailbox_high_water = 256;
+    // Issue #2972: per-mailbox inflight credit (0 = use high_water).
+    // Aura kwarg :mailbox-credit n on (orch:spawn-agent).
+    std::uint32_t mailbox_credit = 0;
     // Issue #2008 / #2159: 0 = disabled (default, zero-cost). When > 0 and
     // mailbox attached, a Scheduler-owned helper fiber emits keepalive
     // pulses at this cadence (no detached host thread).
@@ -1561,9 +1564,9 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         }
     }
 
-    auto mb = spec.attach_mailbox
-                  ? std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(spec.mailbox_high_water)
-                  : nullptr;
+    auto mb = spec.attach_mailbox ? std::make_shared<serve::mf_mailbox::MultiFiberMailbox>(
+                                        spec.mailbox_high_water, spec.mailbox_credit)
+                                  : nullptr;
     auto body = std::move(spec.body);
     auto attach = spec.attach_mailbox;
     // Issue #2080: ProgressClock mode shares the same liveness struct + clock
