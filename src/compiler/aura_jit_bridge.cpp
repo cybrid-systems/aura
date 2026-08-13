@@ -1840,14 +1840,24 @@ static std::atomic<void*> g_last_cross_eval_epoch_bump_owner{nullptr};
 // throttled (skipped process-global table epoch) under production or
 // AURA_CROSS_EVAL_EPOCH_THROTTLE=1. Issue #2841 makes production multi-eval
 // cascade the default owner-scoped path (soft mark_define_dirty stamps
-// reemit/register owner TLS in atomic_bump_epochs_and_stamp_bridge;
-// hard invalidate notes force-bump first). Additive — #2713 counters
-// preserved.
+// reemit/register owner TLS in atomic_bump_epochs_and_stamp_bridge).
+// Issue #2951: hard invalidate_function may also prefer owner-scoped
+// under production multi-eval (no peer force-stale); true process-wide
+// recovery still notes force-bump. Additive — #2713 counters preserved.
 static std::atomic<std::uint64_t> g_cross_eval_epoch_action_throttled_total{0};
+// Issue #2951: hard invalidate chose owner-scoped (no global epoch advance).
+static std::atomic<std::uint64_t> g_cross_eval_hard_owner_scoped_total{0};
+// Issue #2951: hard / force path advanced process-global table epoch under multi.
+static std::atomic<std::uint64_t> g_cross_eval_hard_global_bump_total{0};
 // Force flag: hard invalidate / Agent fence paths set this TLS so the
 // next bump always advances the process-global epoch (AC hard path).
-// Issue #2841: invalidate_function notes force-bump before the unified bump.
+// Issue #2841: invalidate_function notes force-bump before the unified bump
+// unless #2951 hard owner-scoped is armed (production multi-eval default).
 static thread_local int g_cross_eval_epoch_force_bump = 0;
+// Issue #2951: 1 = next bump is from hard invalidate preferring owner-scoped
+// (when multi + throttle + owner). Cleared on consume. Distinguishes soft
+// cascade throttle from hard owner-scoped in counters.
+static thread_local int g_cross_eval_hard_owner_scoped_pref = 0;
 // Read accessors (mirror the #2693 / #2668 / #2640 file-scope counter
 // style — queryable in light-link test bundles without the production
 // CompilerMetrics TU).
@@ -1863,8 +1873,22 @@ extern "C" std::uint32_t cross_eval_epoch_bump_wired_v_read(void) {
 extern "C" std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void) {
     return g_cross_eval_epoch_action_throttled_total.load(std::memory_order_relaxed);
 }
+extern "C" std::uint64_t cross_eval_hard_owner_scoped_total_v_read(void) {
+    return g_cross_eval_hard_owner_scoped_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t cross_eval_hard_global_bump_total_v_read(void) {
+    return g_cross_eval_hard_global_bump_total.load(std::memory_order_relaxed);
+}
 extern "C" void aura_aot_note_cross_eval_epoch_force_bump(void) {
     g_cross_eval_epoch_force_bump = 1;
+    g_cross_eval_hard_owner_scoped_pref = 0;
+}
+// Issue #2951: hard invalidate prefers owner-scoped under multi-eval
+// production (do not force global epoch). Soft / single-eval hosts still
+// use note_force_bump for joint advance.
+extern "C" void aura_aot_note_cross_eval_hard_owner_scoped(void) {
+    g_cross_eval_epoch_force_bump = 0;
+    g_cross_eval_hard_owner_scoped_pref = 1;
 }
 
 namespace {
@@ -1880,23 +1904,46 @@ namespace {
     }
     return aura::compiler::typed_audit::production_defaults_active();
 }
+
+// Issue #2951: hard invalidate owner-scoped preference under production
+// multi-eval. Soft / sandbox=off → false (hard path still force-bumps,
+// #2841 Soft ergonomics). Env AURA_CROSS_EVAL_HARD_OWNER_SCOPED=0/1
+// overrides. When true, invalidate_function does not note force-bump.
+[[nodiscard]] bool cross_eval_hard_owner_scoped_armed() noexcept {
+    if (const char* e = std::getenv("AURA_CROSS_EVAL_HARD_OWNER_SCOPED"); e && *e) {
+        if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
+            return true;
+        if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
+            return false;
+    }
+    const char* sb = std::getenv("AURA_SANDBOX");
+    if (sb != nullptr && sb[0] != '\0' && std::strcmp(sb, "off") == 0)
+        return false;
+    return aura::compiler::typed_audit::production_defaults_active();
+}
 } // namespace
 
+extern "C" int aura_aot_cross_eval_hard_owner_scoped_armed(void) {
+    return cross_eval_hard_owner_scoped_armed() ? 1 : 0;
+}
+
 extern "C" void aura_aot_bump_func_table_epoch(void) {
-    // Issue #2841 / #2744: multi-eval cascade tax action. When >1 live
-    // AotState and throttle is armed (production default, or env), prefer
-    // owner-scoped stale-slot invalidate over a process-global table epoch
-    // advance so foreign evals are not force-staled by peer cascade.
-    // Soft mark_define_dirty stamps reemit/register owner TLS via
-    // atomic_bump_epochs_and_stamp_bridge (Issue #2841). Hard invalidate /
-    // reload fall-back / explicit fence paths call
-    // aura_aot_note_cross_eval_epoch_force_bump() first.
-    // Per-eval epoch domain split is a follow-up (non-goal for
-    // #2713/#2744/#2841); joint table epoch writers stay
-    // aura_aot_bump_func_table_epoch.
+    // Issue #2841 / #2744 / #2951: multi-eval cascade tax action. When >1
+    // live AotState and throttle is armed (production default, or env),
+    // prefer owner-scoped stale-slot invalidate over a process-global
+    // table epoch advance so foreign evals are not force-staled by peer
+    // cascade. Soft mark_define_dirty stamps reemit/register owner TLS
+    // via atomic_bump_epochs_and_stamp_bridge. Hard invalidate under
+    // #2951 production multi-eval notes hard_owner_scoped (no force);
+    // true process-wide recovery (reload fall_back_jit_only / env opt-
+    // out) still notes force-bump first.
+    // Per-eval epoch domain split is a follow-up; joint table epoch
+    // writers stay aura_aot_bump_func_table_epoch for same-eval #2046.
     const bool multi = aura_aot_state_map_size() > 1;
     const bool force = g_cross_eval_epoch_force_bump != 0;
+    const bool hard_os_pref = g_cross_eval_hard_owner_scoped_pref != 0;
     g_cross_eval_epoch_force_bump = 0;
+    g_cross_eval_hard_owner_scoped_pref = 0;
     if (multi && !force && cross_eval_epoch_throttle_armed()) {
         // Prefer reemit-owner TLS; fall back to register-owner (AC1).
         void* owner = aura_aot_get_reemit_owner_eval();
@@ -1907,10 +1954,13 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
             // slots without advancing g_aot_table_epoch (foreign slots
             // stay generation-current). #2713 observability still stamps
             // the tax; #2744 throttled counter advances so Agents see the
-            // choice (AC1 / AC5).
+            // choice (AC1 / AC5). #2951: hard_os_pref distinguishes hard
+            // invalidate owner-scoped from soft cascade throttle.
             g_cross_eval_epoch_bump_total.fetch_add(1, std::memory_order_relaxed);
             g_last_cross_eval_epoch_bump_owner.store(owner, std::memory_order_relaxed);
             g_cross_eval_epoch_action_throttled_total.fetch_add(1, std::memory_order_relaxed);
+            if (hard_os_pref)
+                g_cross_eval_hard_owner_scoped_total.fetch_add(1, std::memory_order_relaxed);
             (void)aura_aot_invalidate_all_stale_slots_for_eval(owner);
             // Do not notify_epoch_bump / event walk — no global epoch change.
             return;
@@ -1942,10 +1992,13 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
     // default short-circuits to zero work beyond the relaxed load).
     // Current owner sourced from the per-eval reemit register
     // (per #2606 lineage). Stamp owner for dashboard attribution.
+    // Issue #2951: force path under multi counts as hard global bump.
     if (multi) {
         g_cross_eval_epoch_bump_total.fetch_add(1, std::memory_order_relaxed);
         g_last_cross_eval_epoch_bump_owner.store(aura_aot_get_register_owner_eval(),
                                                  std::memory_order_relaxed);
+        if (force)
+            g_cross_eval_hard_global_bump_total.fetch_add(1, std::memory_order_relaxed);
     }
     // Fan-out: same path as commit_func_table_swap so invalidate and
     // successful reload share one epoch-listener contract.

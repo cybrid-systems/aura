@@ -2150,6 +2150,20 @@ def cmd_lint():
             "Issue #2950 pure-anon bg remount linter failed — run python3 scripts/coverage/checks/check_pure_anon_bg_remount_2950.py"
         )
         return r
+    # Issue #2951: multi-eval hard invalidate owner-scoped (refine
+    # #2841/#2744/#2713). Production multi-eval hard prefers owner-
+    # scoped; Soft/force keeps joint epoch. Extends
+    # test_named_closure_stable_id_at_create (#81967); no docs/design.
+    cehos_script = COVERAGE_CHECKS / "check_cross_eval_hard_owner_scoped_2951.py"
+    if not cehos_script.exists():
+        fail(f"missing {cehos_script}")
+        return 1
+    r = run([sys.executable, str(cehos_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2951 cross-eval hard owner-scoped linter failed — run python3 scripts/coverage/checks/check_cross_eval_hard_owner_scoped_2951.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are

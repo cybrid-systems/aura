@@ -102,6 +102,10 @@ extern "C" std::uint64_t cross_eval_epoch_bump_total_v_read(void);
 extern "C" void* last_cross_eval_epoch_bump_owner_v_read(void);
 extern "C" std::uint32_t cross_eval_epoch_bump_wired_v_read(void);
 extern "C" std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void);
+// Issue #2951: hard invalidate owner-scoped / global multi bump.
+extern "C" std::uint64_t cross_eval_hard_owner_scoped_total_v_read(void);
+extern "C" std::uint64_t cross_eval_hard_global_bump_total_v_read(void);
+extern "C" int aura_aot_cross_eval_hard_owner_scoped_armed(void);
 // Issue #2712: Soft fuse heal total (defs in aura_jit_bridge.cpp).
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void);
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read(void);
@@ -15305,6 +15309,17 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"cross-eval-epoch-cascade-owner-scoped-default-wired", make_int(1)},
                 {"schema-2841", make_int(2841)},
                 {"issue-2841", make_int(2841)},
+                // Issue #2951: hard invalidate owner-scoped under production multi-eval.
+                {"cross-eval-hard-owner-scoped-total",
+                 make_int(static_cast<std::int64_t>(cross_eval_hard_owner_scoped_total_v_read()))},
+                {"cross-eval-hard-global-bump-total",
+                 make_int(static_cast<std::int64_t>(cross_eval_hard_global_bump_total_v_read()))},
+                {"cross-eval-hard-owner-scoped-armed",
+                 make_int(
+                     static_cast<std::int64_t>(aura_aot_cross_eval_hard_owner_scoped_armed()))},
+                {"cross-eval-hard-owner-scoped-wired", make_int(1)},
+                {"schema-2951", make_int(2951)},
+                {"issue-2951", make_int(2951)},
                 // Issue #2602: synchronous remount walk on reemit success
                 // (named closures with stable_func_id != 0). Distinct
                 // from call-time closure_capture_remount_ok / _fail.
