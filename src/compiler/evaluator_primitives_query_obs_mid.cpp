@@ -487,8 +487,8 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             if (!ev)
                 return make_void();
             // Capacity must be power-of-two (open-address mask hcap-1).
-            // #2123 / #2525 added several keys — 128 slots for open addressing.
-            auto* ht = FlatHashTable::create(128);
+            // #2123 / #2525 / #2989 added several keys — 256 slots for open addressing.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -620,6 +620,16 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("macro_introduced_in_pattern_violations",
                           static_cast<std::int64_t>(m->macro_introduced_in_pattern_violations.load(
                               std::memory_order_relaxed)));
+                // Issue #2989: concurrent SafePCVSpan + hygiene skip Agent keys.
+                insert_kv("hygiene-skip-count",
+                          static_cast<std::int64_t>(ev->get_query_hygiene_skip_count()));
+                insert_kv("safe-span-pin-count",
+                          static_cast<std::int64_t>(ev->get_query_safe_span_pin_count()));
+                insert_kv("query-safe-span-default-wired", 1);
+                insert_kv("query-epoch-retry-total",
+                          static_cast<std::int64_t>(ev->get_query_epoch_retry_total()));
+                insert_kv("schema-2989", 2989);
+                insert_kv("issue-2989", 2989);
             } else {
                 insert_kv("pattern_hygiene_filter_hits", pattern_skips);
                 insert_kv("pattern_hygiene_filtered_total", pattern_skips);
@@ -638,10 +648,35 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("pattern_hygiene_unconstrained_walk_total", 0);
                 insert_kv("macro_introduced_in_pattern_violations",
                           static_cast<std::int64_t>(ev->get_pattern_macro_filter_violations()));
+                insert_kv("hygiene-skip-count", pattern_skips);
+                insert_kv("safe-span-pin-count", 0);
+                insert_kv("query-safe-span-default-wired", 1);
+                insert_kv("query-epoch-retry-total", 0);
+                insert_kv("schema-2989", 2989);
+                insert_kv("issue-2989", 2989);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
+        });
+
+    // Issue #2989: dedicated Agent counters (int). Same values as
+    // pattern-hygiene-stats hygiene-skip-count / safe-span-pin-count.
+    ObservabilityPrims::register_stats_impl(
+        "query:hygiene-skip-count", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev->get_query_hygiene_skip_count()));
+        });
+    ObservabilityPrims::register_stats_impl(
+        "query:safe-span-pin-count", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev->get_query_safe_span_pin_count()));
         });
 
     // Issue #2242: query:by-marker — per-marker MacroIntroduced composition

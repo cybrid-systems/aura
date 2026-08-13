@@ -122,6 +122,14 @@ void register_workspace_query_primitives(
         return ok;
     };
 
+    // Issue #2989: production query children default is SafePCVSpan
+    // (children_columnar). Bans raw children() / NodeView.children on the
+    // hot path so a concurrent mutate COW cannot UAF a long-running reader.
+    auto pin_query_children = [&ev](aura::ast::FlatAST& flat, aura::ast::NodeId id) {
+        ev.bump_query_safe_span_pin();
+        return flat.children_columnar(id);
+    };
+
     // Issue #2933: wrap a bare match list into a first-class QueryResult
     // hash (schema-2933). Opt-in via :as-query-result / :query-result #t.
     // Default (no keyword) remains the bare list (AC2 Soft regression).
@@ -328,27 +336,29 @@ void register_workspace_query_primitives(
 
     // (query :children node-id|stable-ref) — Get children node IDs
     // Issue #2186: resolve via ensure_valid_or_refresh (no bare get).
-    (*q_impls)["query:children"] = PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch,
-                                           end_query_epoch](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty() || !ws.workspace_flat)
-            return mev("bad-arg", "usage: (query :children node-id|stable-ref)");
-        bool ok = true;
-        aura::ast::NodeId node = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:children", &ok, node);
-        if (!ok)
-            return err;
-        auto& flat = *ws.workspace_flat;
-        const auto qe = begin_query_epoch(&flat); // Issue #2192
-        auto v = flat.get(node);
-        EvalValue result = make_void();
-        for (std::size_t i = v.children.size(); i > 0; --i) {
-            auto pid = ws.pairs.size();
-            ws.pairs.push_back({make_int(static_cast<std::int64_t>(v.child(i - 1))), result});
-            result = make_pair(pid);
-        }
-        return end_query_epoch(qe, &flat, result);
-    }};
+    (*q_impls)["query:children"] =
+        PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch, end_query_epoch,
+                pin_query_children](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty() || !ws.workspace_flat)
+                return mev("bad-arg", "usage: (query :children node-id|stable-ref)");
+            bool ok = true;
+            aura::ast::NodeId node = aura::ast::NULL_NODE;
+            auto err = resolve_query_node_arg(a[0], "query:children", &ok, node);
+            if (!ok)
+                return err;
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192
+            // Issue #2989: SafePCVSpan pin (children_columnar), not raw NodeView.children.
+            auto kids = pin_query_children(flat, node);
+            EvalValue result = make_void();
+            for (std::size_t i = kids.size(); i > 0; --i) {
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(kids[i - 1])), result});
+                result = make_pair(pid);
+            }
+            return end_query_epoch(qe, &flat, result);
+        }};
 
     // Issue #249: (query :children-stable node-id|stable-ref) — Get children
     // as a list of (node-id . generation) stable-ref pairs. Use
@@ -492,6 +502,15 @@ void register_workspace_query_primitives(
         return end_query_epoch(qe, ws.workspace_flat, out);
     });
 
+    // Issue #2989: Agent-facing hygiene skip + SafePCVSpan pin counters.
+    // Combined skip = root pattern skips + hygiene_skip_total (filter/recursive).
+    // Pin count = explicit query-prim pins + FlatAST children_safe_view_count.
+    add("query:hygiene-skip-count", [&ev](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(ev.get_query_hygiene_skip_count()));
+    });
+    add("query:safe-span-pin-count", [&ev](const auto&) -> EvalValue {
+        return make_int(static_cast<std::int64_t>(ev.get_query_safe_span_pin_count()));
+    });
 
     // (query :node node-id|stable-ref) — Get node details as list (tag value type sym-id)
     // Issue #2186: resolve via ensure_valid_or_refresh before flat.get.
@@ -834,34 +853,36 @@ void register_workspace_query_primitives(
 
     // (query :parent node-id|stable-ref) — Find parent node IDs (nodes whose children include this
     // ID) Issue #2186: resolve target via ensure_valid_or_refresh.
-    (*q_impls)["query:parent"] = PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch,
-                                         end_query_epoch](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty())
-            return mev("bad-arg", "usage: (query :parent node-id|stable-ref)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        bool ok = true;
-        aura::ast::NodeId target = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a[0], "query:parent", &ok, target);
-        if (!ok)
-            return err;
-        auto& flat = *ws.workspace_flat;
-        const auto qe = begin_query_epoch(&flat); // Issue #2192
-        EvalValue result = make_void();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
-            for (std::size_t ci = 0; ci < v.children.size(); ++ci) {
-                if (v.child(ci) == target) {
-                    auto pid = ws.pairs.size();
-                    ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                    result = make_pair(pid);
-                    break;
+    (*q_impls)["query:parent"] =
+        PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch, end_query_epoch,
+                pin_query_children](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty())
+                return mev("bad-arg", "usage: (query :parent node-id|stable-ref)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            bool ok = true;
+            aura::ast::NodeId target = aura::ast::NULL_NODE;
+            auto err = resolve_query_node_arg(a[0], "query:parent", &ok, target);
+            if (!ok)
+                return err;
+            auto& flat = *ws.workspace_flat;
+            const auto qe = begin_query_epoch(&flat); // Issue #2192
+            EvalValue result = make_void();
+            for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                // Issue #2989: SafePCVSpan pin, not raw NodeView.children.
+                auto kids = pin_query_children(flat, id);
+                for (std::size_t ci = 0; ci < kids.size(); ++ci) {
+                    if (kids[ci] == target) {
+                        auto pid = ws.pairs.size();
+                        ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                        result = make_pair(pid);
+                        break;
+                    }
                 }
             }
-        }
-        return end_query_epoch(qe, &flat, result);
-    }};
+            return end_query_epoch(qe, &flat, result);
+        }};
 
     // Issue #1449 / Tier-1 demotion: (query:siblings) removed from the public
     // engine registry. Use lib/std/compat.aura shim or:
@@ -926,297 +947,329 @@ void register_workspace_query_primitives(
     //
     //   (query:filter (where :defined-by "fib") (where :node-type "Lambda"))
     //   → the body Lambda of (define fib ...)
-    add("query:filter", [ws, mev, &ev](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty())
-            return mev("bad-arg", "usage: (query:filter predicate ... "
-                                  "[:hygiene #t|#f] [:include-macro-introduced #t] "
-                                  "[:exclude-macro-introduced #t|#f])");
-        if (!ws.workspace_flat || !ws.workspace_pool)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto& flat = *ws.workspace_flat;
-        auto& pool = *ws.workspace_pool;
+    add("query:filter",
+        [ws, mev, &ev, begin_query_epoch, pin_query_children](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty())
+                return mev("bad-arg", "usage: (query:filter predicate ... "
+                                      "[:hygiene #t|#f] [:include-macro-introduced #t] "
+                                      "[:exclude-macro-introduced #t|#f])");
+            if (!ws.workspace_flat || !ws.workspace_pool)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto& flat = *ws.workspace_flat;
+            auto& pool = *ws.workspace_pool;
 
-        // Issue #425 / #2525: top-level hygiene gate for query:filter.
-        // Production default (#2525 residual after #2123 pattern default):
-        //   skip MacroIntroduced BEFORE predicate evaluation unless
-        //   explicit :include-macro-introduced / :allow-macro-introduced #t
-        //   (or :hygiene #f / :skip-macro-introduced #f / :exclude-macro-introduced #f).
-        // Agent contract: default filter results never contain MacroIntroduced.
-        //
-        // Keywords:
-        //   :hygiene / :skip-macro-introduced  — bool (default #t under #2525)
-        //   :include-macro-introduced / :allow-macro-introduced — opt-in include
-        //   :exclude-macro-introduced #t|#f — explicit exclude (default true)
-        //
-        // The gate runs BEFORE the predicate loop, so any (where ...)
-        // predicates still apply on top of the hygiene filter.
-        bool hygiene_skip_macro = true; // Issue #2525 production default ON
-        // Issue #425: track which arg indices are consumed by
-        // top-level keyword parsing so the predicate parser can
-        // skip them. Without this, the predicate loop would
-        // re-encounter :hygiene / #f and reject them as
-        // "malformed predicate" (not a (where ...) pair).
-        std::vector<bool> arg_consumed(a.size(), false);
-        for (std::size_t ai = 0; ai < a.size(); ++ai) {
-            if (is_keyword(a[ai])) {
-                auto kidx = as_keyword_idx(a[ai]);
-                if (kidx >= ws.keyword_table.size())
-                    return mev("bad-arg", "unknown keyword");
-                auto kw = ws.keyword_table[kidx];
-                auto consume_bool_kw = [&](bool default_v) -> bool {
-                    bool v = default_v;
-                    arg_consumed[ai] = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            v = as_bool(a[ai + 1]);
-                        else
-                            v = (as_int(a[ai + 1]) != 0);
-                        arg_consumed[ai + 1] = true;
-                        ++ai;
+            // Issue #425 / #2525: top-level hygiene gate for query:filter.
+            // Production default (#2525 residual after #2123 pattern default):
+            //   skip MacroIntroduced BEFORE predicate evaluation unless
+            //   explicit :include-macro-introduced / :allow-macro-introduced #t
+            //   (or :hygiene #f / :skip-macro-introduced #f / :exclude-macro-introduced #f).
+            // Agent contract: default filter results never contain MacroIntroduced.
+            //
+            // Keywords:
+            //   :hygiene / :skip-macro-introduced  — bool (default #t under #2525)
+            //   :include-macro-introduced / :allow-macro-introduced — opt-in include
+            //   :exclude-macro-introduced #t|#f — explicit exclude (default true)
+            //
+            // The gate runs BEFORE the predicate loop, so any (where ...)
+            // predicates still apply on top of the hygiene filter.
+            bool hygiene_skip_macro = true; // Issue #2525 production default ON
+            // Issue #425: track which arg indices are consumed by
+            // top-level keyword parsing so the predicate parser can
+            // skip them. Without this, the predicate loop would
+            // re-encounter :hygiene / #f and reject them as
+            // "malformed predicate" (not a (where ...) pair).
+            std::vector<bool> arg_consumed(a.size(), false);
+            for (std::size_t ai = 0; ai < a.size(); ++ai) {
+                if (is_keyword(a[ai])) {
+                    auto kidx = as_keyword_idx(a[ai]);
+                    if (kidx >= ws.keyword_table.size())
+                        return mev("bad-arg", "unknown keyword");
+                    auto kw = ws.keyword_table[kidx];
+                    auto consume_bool_kw = [&](bool default_v) -> bool {
+                        bool v = default_v;
+                        arg_consumed[ai] = true;
+                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                            if (is_bool(a[ai + 1]))
+                                v = as_bool(a[ai + 1]);
+                            else
+                                v = (as_int(a[ai + 1]) != 0);
+                            arg_consumed[ai + 1] = true;
+                            ++ai;
+                        }
+                        return v;
+                    };
+                    if (kw == ":hygiene" || kw == ":skip-macro-introduced") {
+                        hygiene_skip_macro = consume_bool_kw(true);
+                    } else if (kw == ":include-macro-introduced" ||
+                               kw == ":allow-macro-introduced") {
+                        // Issue #2525: opt-in restore previous "include macro" behaviour.
+                        hygiene_skip_macro = !consume_bool_kw(true);
+                    } else if (kw == ":exclude-macro-introduced") {
+                        hygiene_skip_macro = consume_bool_kw(true);
+                    } else {
+                        // Re-emit a bad-arg for unknown top-level
+                        // keyword (we already validated that each
+                        // non-keyword arg is a (where ...) pair
+                        // below). The predicate parser would have
+                        // already produced a "malformed predicate"
+                        // for a stray keyword at this point, but we
+                        // surface it earlier with a clearer message.
+                        return mev("bad-arg", std::string("unknown top-level keyword: ") + kw);
                     }
-                    return v;
-                };
-                if (kw == ":hygiene" || kw == ":skip-macro-introduced") {
-                    hygiene_skip_macro = consume_bool_kw(true);
-                } else if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
-                    // Issue #2525: opt-in restore previous "include macro" behaviour.
-                    hygiene_skip_macro = !consume_bool_kw(true);
-                } else if (kw == ":exclude-macro-introduced") {
-                    hygiene_skip_macro = consume_bool_kw(true);
-                } else {
-                    // Re-emit a bad-arg for unknown top-level
-                    // keyword (we already validated that each
-                    // non-keyword arg is a (where ...) pair
-                    // below). The predicate parser would have
-                    // already produced a "malformed predicate"
-                    // for a stray keyword at this point, but we
-                    // surface it earlier with a clearer message.
-                    return mev("bad-arg", std::string("unknown top-level keyword: ") + kw);
                 }
             }
-        }
 
-        // Collect predicates from arguments (each is a (where ...) pair)
-        struct Predicate {
-            std::string field;
-            std::string value;
-        };
-        std::vector<Predicate> predicates;
+            // Collect predicates from arguments (each is a (where ...) pair)
+            struct Predicate {
+                std::string field;
+                std::string value;
+            };
+            std::vector<Predicate> predicates;
 
-        for (std::size_t ai = 0; ai < a.size(); ++ai) {
-            // Issue #425: skip args consumed by the top-level
-            // keyword parser (e.g. :hygiene + its bool value).
-            if (arg_consumed[ai])
-                continue;
-            if (!is_pair(a[ai]))
-                return mev("bad-arg", "each predicate must be a (where ...) pair");
-            auto pair_idx = as_pair_idx(a[ai]);
-            auto car = ws.pairs[pair_idx].car;
-            auto cdr = ws.pairs[pair_idx].cdr;
-            if (!is_keyword(car) || !is_string(cdr))
-                return mev("bad-arg", "malformed predicate");
-            auto kidx = as_keyword_idx(car);
-            auto sidx = as_string_idx(cdr);
-            if (kidx >= ws.keyword_table.size() || sidx >= ws.string_heap.size())
-                return mev("bad-arg", "predicate field/value out of range");
-            predicates.push_back({ws.keyword_table[kidx], ws.string_heap[sidx]});
-        }
-
-        if (predicates.empty() && !hygiene_skip_macro)
-            return mev("bad-arg", "at least one predicate required");
-
-        // Issue #2525: count filter hygiene skips for Agent dashboards
-        // (hygiene_skip_total / hygiene_include_total on pattern-hygiene-stats).
-        std::uint64_t filter_hygiene_skips = 0;
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            if (hygiene_skip_macro)
-                m->hygiene_filter_default_skip_total.fetch_add(1, std::memory_order_relaxed);
-            else
-                m->hygiene_filter_include_opt_in_total.fetch_add(1, std::memory_order_relaxed);
-        }
-
-        // Iterate all workspace nodes, applying all predicates
-        EvalValue result = make_void();
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            // Issue #425 / #2525: hygiene gate (production default ON).
-            // Drop MacroIntroduced nodes BEFORE predicate evaluation so
-            // the predicate list doesn't have to repeat (:marker "User").
-            if (hygiene_skip_macro && flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
-                ++filter_hygiene_skips;
-                continue;
+            for (std::size_t ai = 0; ai < a.size(); ++ai) {
+                // Issue #425: skip args consumed by the top-level
+                // keyword parser (e.g. :hygiene + its bool value).
+                if (arg_consumed[ai])
+                    continue;
+                if (!is_pair(a[ai]))
+                    return mev("bad-arg", "each predicate must be a (where ...) pair");
+                auto pair_idx = as_pair_idx(a[ai]);
+                auto car = ws.pairs[pair_idx].car;
+                auto cdr = ws.pairs[pair_idx].cdr;
+                if (!is_keyword(car) || !is_string(cdr))
+                    return mev("bad-arg", "malformed predicate");
+                auto kidx = as_keyword_idx(car);
+                auto sidx = as_string_idx(cdr);
+                if (kidx >= ws.keyword_table.size() || sidx >= ws.string_heap.size())
+                    return mev("bad-arg", "predicate field/value out of range");
+                predicates.push_back({ws.keyword_table[kidx], ws.string_heap[sidx]});
             }
-            auto v = flat.get(id);
-            bool match = true;
 
-            for (auto& p : predicates) {
-                if (p.field == ":node-type" || p.field == ":tag") {
-                    // Match NodeTag name
-                    bool found = false;
-                    for (auto& m : aura::ast::kNodeMeta) {
-                        if (m.name == p.value && m.name != "<gap>") {
-                            if (v.tag == m.tag)
-                                found = true;
-                            break;
-                        }
+            if (predicates.empty() && !hygiene_skip_macro)
+                return mev("bad-arg", "at least one predicate required");
+
+            // Issue #2525: count filter hygiene skips for Agent dashboards
+            // (hygiene_skip_total / hygiene_include_total on pattern-hygiene-stats).
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                if (hygiene_skip_macro)
+                    m->hygiene_filter_default_skip_total.fetch_add(1, std::memory_order_relaxed);
+                else
+                    m->hygiene_filter_include_opt_in_total.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            // Issue #2989: complete the match under shared_lock (held above).
+            // Generation snapshot + retry if a writer advanced the workspace
+            // (strict QueryEpoch). Children walks use SafePCVSpan, not raw span.
+            constexpr int kQueryEpochAttempts = 3;
+            EvalValue result = make_void();
+            std::uint64_t filter_hygiene_skips = 0;
+            for (int attempt = 0; attempt < kQueryEpochAttempts; ++attempt) {
+                const auto qe = begin_query_epoch(&flat);
+                result = make_void();
+                filter_hygiene_skips = 0;
+                for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+                    // Issue #425 / #2525: hygiene gate (production default ON).
+                    // Drop MacroIntroduced nodes BEFORE predicate evaluation so
+                    // the predicate list doesn't have to repeat (:marker "User").
+                    if (hygiene_skip_macro &&
+                        flat.marker(id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                        ++filter_hygiene_skips;
+                        continue;
                     }
-                    if (!found) {
-                        match = false;
-                        break;
-                    }
-                } else if (p.field == ":callee") {
-                    // For Call nodes, match callee Variable name
-                    if (v.tag == aura::ast::NodeTag::Call && !v.children.empty()) {
-                        auto callee = flat.get(v.child(0));
-                        if (callee.tag != aura::ast::NodeTag::Variable ||
-                            pool.resolve(callee.sym_id) != p.value) {
-                            match = false;
-                            break;
-                        }
-                    } else {
-                        match = false;
-                        break;
-                    }
-                } else if (p.field == ":defined-by" || p.field == ":defines") {
-                    // Match Define nodes by name
-                    if (v.tag == aura::ast::NodeTag::Define) {
-                        auto name = pool.resolve(v.sym_id);
-                        if (name != p.value) {
-                            match = false;
-                            break;
-                        }
-                    } else {
-                        match = false;
-                        break;
-                    }
-                } else if (p.field == ":has-param") {
-                    // Check if node has a parameter with the given name
-                    bool found_param = false;
-                    for (auto pid : v.params) {
-                        if (pool.resolve(pid) == p.value) {
-                            found_param = true;
-                            break;
-                        }
-                    }
-                    if (!found_param) {
-                        match = false;
-                        break;
-                    }
-                } else if (p.field == ":has-child") {
-                    // Check if node has at least one child with the given NodeTag name
-                    aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
-                    bool found_tag = false;
-                    for (auto& m : aura::ast::kNodeMeta) {
-                        if (m.name == p.value && m.name != "<gap>") {
-                            child_tag = m.tag;
-                            found_tag = true;
-                            break;
-                        }
-                    }
-                    if (!found_tag) {
-                        match = false;
-                        break;
-                    }
-                    bool has_child = false;
-                    for (auto cid : v.children) {
-                        if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
-                            has_child = true;
-                            break;
-                        }
-                    }
-                    if (!has_child) {
-                        match = false;
-                        break;
-                    }
-                } else if (p.field == ":depth") {
-                    // Check if node is at the given depth from root
-                    int target_depth = 0;
-                    try {
-                        target_depth = std::stoi(p.value);
-                    } catch (...) {
-                        // [SILENCE-PRIM-#615] Non-numeric :depth
-                        // predicate silently de-selects the node rather
-                        // than raising — documented parse-tolerant
-                        // filter behavior across all ws predicates.
-                        match = false;
-                        break;
-                    }
-                    if (target_depth < 0) {
-                        match = false;
-                        break;
-                    }
-                    // Starting from this node, walk up via children_of to count depth
-                    int actual_depth = 0;
-                    aura::ast::NodeId cur = id;
-                    while (cur != 0) { // root is always NodeId 0
-                        // Find parent by scanning all nodes for one that has cur as child
-                        aura::ast::NodeId parent = aura::ast::NULL_NODE;
-                        for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
-                            auto pv = flat.get(pid);
-                            for (auto cid : pv.children) {
-                                if (cid == cur) {
-                                    parent = pid;
+                    auto v = flat.get(id);
+                    bool match = true;
+
+                    for (auto& p : predicates) {
+                        if (p.field == ":node-type" || p.field == ":tag") {
+                            // Match NodeTag name
+                            bool found = false;
+                            for (auto& m : aura::ast::kNodeMeta) {
+                                if (m.name == p.value && m.name != "<gap>") {
+                                    if (v.tag == m.tag)
+                                        found = true;
                                     break;
                                 }
                             }
-                            if (parent != aura::ast::NULL_NODE)
+                            if (!found) {
+                                match = false;
                                 break;
+                            }
+                        } else if (p.field == ":callee") {
+                            // For Call nodes, match callee Variable name
+                            // Issue #2989: pin children via SafePCVSpan.
+                            if (v.tag == aura::ast::NodeTag::Call) {
+                                auto kids = pin_query_children(flat, id);
+                                if (kids.empty()) {
+                                    match = false;
+                                    break;
+                                }
+                                auto callee = flat.get(kids[0]);
+                                if (callee.tag != aura::ast::NodeTag::Variable ||
+                                    pool.resolve(callee.sym_id) != p.value) {
+                                    match = false;
+                                    break;
+                                }
+                            } else {
+                                match = false;
+                                break;
+                            }
+                        } else if (p.field == ":defined-by" || p.field == ":defines") {
+                            // Match Define nodes by name
+                            if (v.tag == aura::ast::NodeTag::Define) {
+                                auto name = pool.resolve(v.sym_id);
+                                if (name != p.value) {
+                                    match = false;
+                                    break;
+                                }
+                            } else {
+                                match = false;
+                                break;
+                            }
+                        } else if (p.field == ":has-param") {
+                            // Check if node has a parameter with the given name
+                            bool found_param = false;
+                            for (auto pid : v.params) {
+                                if (pool.resolve(pid) == p.value) {
+                                    found_param = true;
+                                    break;
+                                }
+                            }
+                            if (!found_param) {
+                                match = false;
+                                break;
+                            }
+                        } else if (p.field == ":has-child") {
+                            // Check if node has at least one child with the given NodeTag name
+                            aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
+                            bool found_tag = false;
+                            for (auto& m : aura::ast::kNodeMeta) {
+                                if (m.name == p.value && m.name != "<gap>") {
+                                    child_tag = m.tag;
+                                    found_tag = true;
+                                    break;
+                                }
+                            }
+                            if (!found_tag) {
+                                match = false;
+                                break;
+                            }
+                            bool has_child = false;
+                            // Issue #2989: SafePCVSpan, not raw NodeView.children.
+                            auto kids = pin_query_children(flat, id);
+                            for (auto cid : kids) {
+                                if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
+                                    has_child = true;
+                                    break;
+                                }
+                            }
+                            if (!has_child) {
+                                match = false;
+                                break;
+                            }
+                        } else if (p.field == ":depth") {
+                            // Check if node is at the given depth from root
+                            int target_depth = 0;
+                            try {
+                                target_depth = std::stoi(p.value);
+                            } catch (...) {
+                                // [SILENCE-PRIM-#615] Non-numeric :depth
+                                // predicate silently de-selects the node rather
+                                // than raising — documented parse-tolerant
+                                // filter behavior across all ws predicates.
+                                match = false;
+                                break;
+                            }
+                            if (target_depth < 0) {
+                                match = false;
+                                break;
+                            }
+                            // Starting from this node, walk up via children_of to count depth
+                            int actual_depth = 0;
+                            aura::ast::NodeId cur = id;
+                            while (cur != 0) { // root is always NodeId 0
+                                // Find parent by scanning all nodes for one that has cur as child
+                                aura::ast::NodeId parent = aura::ast::NULL_NODE;
+                                for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
+                                    // Issue #2989: SafePCVSpan, not raw NodeView.children.
+                                    auto kids = pin_query_children(flat, pid);
+                                    for (auto cid : kids) {
+                                        if (cid == cur) {
+                                            parent = pid;
+                                            break;
+                                        }
+                                    }
+                                    if (parent != aura::ast::NULL_NODE)
+                                        break;
+                                }
+                                if (parent == aura::ast::NULL_NODE)
+                                    break;
+                                cur = parent;
+                                ++actual_depth;
+                            }
+                            if (actual_depth != target_depth) {
+                                match = false;
+                                break;
+                            }
+                        } else if (p.field == ":marker" || p.field == ":syntax-marker") {
+                            // Issue #244 / #267: match SyntaxMarker by name.
+                            // The marker column is populated by clone_macro_body
+                            // (Issue #190) and persists in ws.workspace_flat across
+                            // mutations. Marker names (case-sensitive):
+                            //   "User"           — code the user wrote directly
+                            //   "MacroIntroduced" — code inserted by a hygienic macro
+                            //   "BoolLiteral"    — auto-generated #t / #f nodes
+                            auto m = flat.marker(id);
+                            const char* mname = nullptr;
+                            switch (m) {
+                                case aura::ast::SyntaxMarker::User:
+                                    mname = "User";
+                                    break;
+                                case aura::ast::SyntaxMarker::MacroIntroduced:
+                                    mname = "MacroIntroduced";
+                                    break;
+                                case aura::ast::SyntaxMarker::BoolLiteral:
+                                    mname = "BoolLiteral";
+                                    break;
+                            }
+                            if (!mname || p.value != mname) {
+                                match = false;
+                                break;
+                            }
+                        } else {
+                            return mev("unknown-field",
+                                       std::string("unknown where field: \"") + p.field + "\"");
                         }
-                        if (parent == aura::ast::NULL_NODE)
-                            break;
-                        cur = parent;
-                        ++actual_depth;
                     }
-                    if (actual_depth != target_depth) {
-                        match = false;
-                        break;
+
+                    if (match) {
+                        auto pid = ws.pairs.size();
+                        ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+                        result = make_pair(pid);
                     }
-                } else if (p.field == ":marker" || p.field == ":syntax-marker") {
-                    // Issue #244 / #267: match SyntaxMarker by name.
-                    // The marker column is populated by clone_macro_body
-                    // (Issue #190) and persists in ws.workspace_flat across
-                    // mutations. Marker names (case-sensitive):
-                    //   "User"           — code the user wrote directly
-                    //   "MacroIntroduced" — code inserted by a hygienic macro
-                    //   "BoolLiteral"    — auto-generated #t / #f nodes
-                    auto m = flat.marker(id);
-                    const char* mname = nullptr;
-                    switch (m) {
-                        case aura::ast::SyntaxMarker::User:
-                            mname = "User";
-                            break;
-                        case aura::ast::SyntaxMarker::MacroIntroduced:
-                            mname = "MacroIntroduced";
-                            break;
-                        case aura::ast::SyntaxMarker::BoolLiteral:
-                            mname = "BoolLiteral";
-                            break;
-                    }
-                    if (!mname || p.value != mname) {
-                        match = false;
-                        break;
-                    }
-                } else {
-                    return mev("unknown-field",
-                               std::string("unknown where field: \"") + p.field + "\"");
+                }
+                const auto gen = static_cast<std::uint64_t>(flat.generation());
+                if (aura::core::finish_query_epoch(qe, gen)) {
+                    if (attempt > 0)
+                        ev.bump_query_epoch_retry(static_cast<std::uint64_t>(attempt));
+                    break;
+                }
+                ev.bump_query_epoch_retry();
+                if (attempt + 1 == kQueryEpochAttempts)
+                    return mev("query-epoch-stale",
+                               "workspace advanced during query:filter "
+                               "(QueryEpoch retry exhausted; see query:query-epoch-stats)");
+            }
+            if (filter_hygiene_skips > 0) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                    m->hygiene_skip_total.fetch_add(filter_hygiene_skips,
+                                                    std::memory_order_relaxed);
+                    m->pattern_hygiene_filtered_total.fetch_add(filter_hygiene_skips,
+                                                                std::memory_order_relaxed);
                 }
             }
-
-            if (match) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
-            }
-        }
-        if (filter_hygiene_skips > 0) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->hygiene_skip_total.fetch_add(filter_hygiene_skips, std::memory_order_relaxed);
-                m->pattern_hygiene_filtered_total.fetch_add(filter_hygiene_skips,
-                                                            std::memory_order_relaxed);
-            }
-        }
-        return result;
-    });
+            return result;
+        });
 
     // (query:node-type tag-name) — Find all nodes with a given NodeTag name
     // Tag names: LiteralInt, Variable, Call, IfExpr, Lambda, Let, LetRec,
@@ -1507,8 +1560,8 @@ void register_workspace_query_primitives(
     //   :limit N — keyword form of limit
     //   :as-query-result / :query-result — Issue #2933 QueryResult binding
     add("query:by-marker",
-        [ws, mev, &ev, begin_query_epoch,
-         end_query_epoch_maybe_result](const auto& a) -> EvalValue {
+        [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
+         pin_query_children](const auto& a) -> EvalValue {
             // Issue #2403: time shared_lock hold; composite index when :where tag set.
             const auto lock_t0 = std::chrono::steady_clock::now();
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
@@ -1639,6 +1692,12 @@ void register_workspace_query_primitives(
 
             auto& flat = *ws.workspace_flat;
             const auto qe = begin_query_epoch(&flat); // Issue #2192 / #2933
+            // Issue #2989: pin root children so a concurrent mutate COW
+            // cannot invalidate marker walks under this shared_lock.
+            const auto pin_root =
+                (flat.root != aura::ast::NULL_NODE) ? flat.root : aura::ast::NodeId{0};
+            auto match_pin = pin_query_children(flat, pin_root);
+            (void)match_pin;
             EvalValue result = make_void();
             std::int64_t emitted = 0;
             std::int64_t where_hits = 0;
@@ -2128,12 +2187,19 @@ void register_workspace_query_primitives(
     //   Metrics: pattern_hygiene_filtered_total +
     //   query-pattern-delta-rebuild-total (query:pattern-hygiene-stats /
     //   query:pattern-index-rebuild-stats).
+    //
+    // Issue #2989: production default is SafePCVSpan (children_columnar)
+    // on every children walk + default hygiene skip MacroIntroduced
+    // (user-only tag_arity index). :respect-hygiene remains the
+    // historical alias for :include-macro-introduced (AC-compatible);
+    // default include_macro=false is the "respect hygiene ON" contract.
+    // Agents observe query:hygiene-skip-count + query:safe-span-pin-count.
     add("query:pattern",
-        [ws, mev, &ev, begin_query_epoch,
-         end_query_epoch_maybe_result](const auto& a) -> EvalValue {
-            // Issue #2403: shared_lock spans QueryEpoch capture + match.
-            // Topology is not COW-fenced for free concurrent match outside
-            // the lock (mid-match node rewrites would be UB); index path
+        [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
+         pin_query_children](const auto& a) -> EvalValue {
+            // Issue #2403 / #2989: shared_lock spans QueryEpoch capture + match.
+            // Entire match completes under the lock; SafePCVSpan pins PCV
+            // storage so a writer COW cannot UAF the reader. Index path
             // keeps hold O(candidates) via composite (tag,arity±marker)
             // bucket, not O(N). Lock hold is timed for Agent SLO (RAII).
             const auto lock_t0 = std::chrono::steady_clock::now();
@@ -2336,6 +2402,14 @@ void register_workspace_query_primitives(
 
             auto& flat = *ws.workspace_flat;
             EvalValue result = make_void();
+            // Issue #2989: pin root children for the duration of match so a
+            // concurrent mutate COW cannot UAF the reader. Matcher also
+            // pins per-node via children_safe_view (query_matcher.cpp).
+            const auto pin_root =
+                (flat.root != aura::ast::NULL_NODE) ? flat.root : aura::ast::NodeId{0};
+            auto match_pin = pin_query_children(flat, pin_root);
+            (void)match_pin;
+            ev.bump_pattern_hygiene_safe_span_enforced();
 
             // Issue #292: guard predicate support. After
             // match_subtree returns true, check pending_guards_ on

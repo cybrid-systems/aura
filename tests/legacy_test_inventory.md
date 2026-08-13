@@ -1576,7 +1576,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_qq_unwrap_targeted_restamp.cpp` (—) [domain_suite, theme_compiler] — AC1: expand_inner_macros cites #2809; restamp_after_qq_unwrap; no full
 - `tests/compiler/test_query_hygiene_default.cpp` (—) [domain_suite, theme_compiler] — AC1: Default query:pattern / query:filter skip MacroIntroduced; include
 - `tests/compiler/test_query_pattern_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_query_pattern_batch.cpp — query_pattern pair dup-merge (R19 phase 13).
-- `tests/compiler/test_query_pattern_default_hygiene.cpp` (—) [domain_suite, theme_compiler] — MacroIntroduced linkage (production "code as memory" contract).
+- `tests/compiler/test_query_pattern_default_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — MacroIntroduced linkage (production "code as memory" contract).
 - `tests/compiler/test_query_pattern_hygiene_macrointroduced.cpp` (—) [domain_suite, theme_compiler] — test_query_pattern_hygiene_macrointroduced.cpp — Issue #593:
 - `tests/compiler/test_rebind_new_body_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: rebind source cites #2792; walk_subtree(new_value) + is_macro_introduced
 - `tests/compiler/test_reflect_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_reflect_batch.cpp

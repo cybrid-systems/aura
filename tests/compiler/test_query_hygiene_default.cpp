@@ -188,6 +188,40 @@ static void ac4_concurrent() {
     CHECK(ok.load() >= 100, "AC4: most concurrent queries succeeded");
 }
 
+// Issue #2989: extend #2525 AC4 with concurrent mutate + SafePCVSpan children.
+static void ac2989_concurrent_mutate() {
+    std::println("\n--- #2989: concurrent query + mutate (SafePCVSpan) ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC2989: macro workspace");
+    const auto pin0 = cs.evaluator().get_query_safe_span_pin_count();
+    std::atomic<int> done{0};
+    std::atomic<int> ok{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 3; ++i) {
+        threads.emplace_back([&]() {
+            for (int j = 0; j < 15; ++j) {
+                if (cs.eval("(query:pattern \"*\")"))
+                    ok.fetch_add(1);
+                if (cs.eval("(query :children 0)"))
+                    ok.fetch_add(1);
+            }
+            done.fetch_add(1);
+        });
+    }
+    threads.emplace_back([&]() {
+        for (int j = 0; j < 15; ++j) {
+            if (cs.eval("(mutate:rebind \"base\" \"12\")"))
+                ok.fetch_add(1);
+        }
+        done.fetch_add(1);
+    });
+    for (auto& t : threads)
+        t.join();
+    CHECK(done.load() == 4, "AC2989: all threads finished");
+    CHECK(ok.load() >= 40, "AC2989: concurrent query+mutate progressed");
+    CHECK(cs.evaluator().get_query_safe_span_pin_count() > pin0, "AC2989: pins increased");
+}
+
 // ── AC5 / AC6 ──
 static void ac5_ac6_lineage_and_contract() {
     std::println("\n--- AC5/AC6: lineage suite + Agent contract ---");
@@ -198,7 +232,8 @@ static void ac5_ac6_lineage_and_contract() {
               qws.find("never contain MacroIntroduced") != std::string::npos ||
               qws.find("production default") != std::string::npos,
           "AC6: Agent contract documented");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
     CHECK(q.find("schema-2525") != std::string::npos, "AC6: schema-2525 on stats");
     CHECK(q.find("schema-2123") != std::string::npos, "AC6: schema-2123 retained");
 }
@@ -211,6 +246,7 @@ int run_test_query_hygiene_default() {
     ac2_index_marker_dimension();
     ac3_stats_surface();
     ac4_concurrent();
+    ac2989_concurrent_mutate();
     ac5_ac6_lineage_and_contract();
     std::println("\n=== #2525: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

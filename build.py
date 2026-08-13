@@ -2411,6 +2411,18 @@ def cmd_lint():
             "Issue #2988 mutate invalidate incremental linter failed — run python3 scripts/coverage/checks/check_mutate_invalidate_incremental_2988.py"
         )
         return r
+    # Issue #2989: query concurrent SafePCVSpan + hygiene default.
+    # Extends test_query_pattern_default_hygiene (#81967); no docs/design/.
+    qchs_script = COVERAGE_CHECKS / "check_query_concurrent_hygiene_safe_span_2989.py"
+    if not qchs_script.exists():
+        fail(f"missing {qchs_script}")
+        return 1
+    r = run([sys.executable, str(qchs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2989 query concurrent hygiene SafePCVSpan linter failed — run python3 scripts/coverage/checks/check_query_concurrent_hygiene_safe_span_2989.py"
+        )
+        return r
     # Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count.
     # Extends test_type_linear_commit_health (#81967); no docs/design/.
     lcrc_script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
@@ -10184,6 +10196,21 @@ def cmd_mutate_invalidate_incremental_2988_coverage():
     return 0
 
 
+def cmd_query_concurrent_hygiene_safe_span_2989_coverage():
+    """Issue #2989: query concurrent SafePCVSpan + hygiene default."""
+    print(f"{B}=== query concurrent hygiene SafePCVSpan coverage (#2989) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_concurrent_hygiene_safe_span_2989.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query concurrent hygiene SafePCVSpan (#2989) coverage contract rows failed")
+        return 1
+    ok("query concurrent hygiene SafePCVSpan (#2989) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -14156,6 +14183,7 @@ def main():
         "mutate-guard-coverage-2986": cmd_mutate_guard_coverage_2986_coverage,
         "mailbox-delivery-safety-2987": cmd_mailbox_delivery_safety_2987_coverage,
         "mutate-invalidate-incremental-2988": cmd_mutate_invalidate_incremental_2988_coverage,
+        "query-concurrent-hygiene-safe-span-2989": cmd_query_concurrent_hygiene_safe_span_2989_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,

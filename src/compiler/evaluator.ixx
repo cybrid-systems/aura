@@ -7676,6 +7676,43 @@ public:
             m->query_pattern_full_rebuild_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #2989: production query SafePCVSpan pin + QueryEpoch retry.
+    void bump_query_safe_span_pin(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->query_safe_span_pin_count.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    void bump_query_epoch_retry(std::uint64_t n = 1) const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->query_epoch_retry_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+    [[nodiscard]] std::uint64_t get_query_safe_span_pin_count() const noexcept {
+        std::uint64_t n = 0;
+        if (compiler_metrics_) {
+            auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_);
+            n += m->query_safe_span_pin_count.load(std::memory_order_relaxed);
+        }
+        if (workspace_flat_)
+            n += workspace_flat_->children_safe_view_count();
+        return n;
+    }
+    [[nodiscard]] std::uint64_t get_query_hygiene_skip_count() const noexcept {
+        std::uint64_t n = get_macro_introduced_skipped_in_query();
+        if (compiler_metrics_) {
+            auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_);
+            n += m->hygiene_skip_total.load(std::memory_order_relaxed);
+        }
+        return n;
+    }
+    [[nodiscard]] std::uint64_t get_query_epoch_retry_total() const noexcept {
+        if (!compiler_metrics_)
+            return 0;
+        auto* m = static_cast<const CompilerMetrics*>(compiler_metrics_);
+        return m->query_epoch_retry_total.load(std::memory_order_relaxed);
+    }
     // Issue #596: Guard + panic checkpoint + reflect closed-loop observability.
     void bump_guard_panic_reflect_restores_on_resume() noexcept {
         if (compiler_metrics_) {

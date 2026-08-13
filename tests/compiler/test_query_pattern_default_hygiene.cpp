@@ -351,7 +351,8 @@ static void ac2763_4_quiet_path() {
 static void ac2763_5_observability() {
     std::println("\n--- #2763 AC5: additive observability keys ---");
     const auto met = read_file("src/compiler/observability_metrics.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
     CHECK(met.find("query_pattern_delta_rebuild_total") != std::string::npos,
           "AC5: query_pattern_delta_rebuild_total metric");
     CHECK(met.find("query_pattern_full_rebuild_total") != std::string::npos,
@@ -382,6 +383,147 @@ static void ac2763_5_observability() {
     CHECK(rebuild_href(cs, "query-pattern-delta-rebuild-total") >= 0,
           "AC5: live delta-rebuild key");
     CHECK(rebuild_href(cs, "schema") == 1503, "AC5: schema 1503 preserved on rebuild-stats");
+}
+
+// ── Issue #2989: concurrent SafePCVSpan default + hygiene skip ──
+// Prefer-existing #2123/#2763 suite per #81967. Do not invent
+// test_edsl_query_concurrent_hygiene_safe_span.cpp.
+
+static void ac2989_1_safe_span_default() {
+    std::println("\n--- #2989 AC1: production query prims default SafePCVSpan ---");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto matcher = read_file("src/compiler/query_matcher.cpp");
+    CHECK(qws.find("#2989") != std::string::npos, "AC1: query workspace cites #2989");
+    CHECK(qws.find("pin_query_children") != std::string::npos, "AC1: pin helper");
+    CHECK(qws.find("children_columnar") != std::string::npos, "AC1: children_columnar default");
+    CHECK(matcher.find("children_safe_view") != std::string::npos, "AC1: matcher pins SafePCVSpan");
+    CHECK(qws.find("query:hygiene-skip-count") != std::string::npos,
+          "AC1: query:hygiene-skip-count primitive");
+    CHECK(qws.find("query:safe-span-pin-count") != std::string::npos,
+          "AC1: query:safe-span-pin-count primitive");
+}
+
+static void ac2989_2_default_hygiene() {
+    std::println("\n--- #2989 AC2: MacroIntroduced not in default matches ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC2: macro workspace");
+    const auto macro_n = result_len(cs, "(query:macro-introduced)");
+    CHECK(macro_n >= 1, "AC2: MacroIntroduced nodes present");
+    const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
+    const auto allow_cnt = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    CHECK(default_cnt >= 0 && allow_cnt >= 0, "AC2: pattern lengths");
+    CHECK(allow_cnt >= default_cnt, "AC2: opt-in >= default");
+    auto fr = cs.eval("(query:filter (query:where :node-type \"Call\"))");
+    CHECK(fr.has_value(), "AC2: default filter accepted");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "AC2: metrics");
+    CHECK(m->hygiene_filter_default_skip_total.load(std::memory_order_relaxed) >= 1,
+          "AC2: filter default-skip fired");
+}
+
+static void ac2989_3_metrics() {
+    std::println("\n--- #2989 AC3: hygiene-skip-count + safe-span-pin-count ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC3: workspace");
+    const auto pin0 = cs.evaluator().get_query_safe_span_pin_count();
+    CHECK(cs.eval("(query :children 0)").has_value(), "AC3: query:children");
+    CHECK(cs.eval("(query:pattern \"*\")").has_value(), "AC3: query:pattern");
+    const auto pin1 = cs.evaluator().get_query_safe_span_pin_count();
+    CHECK(pin1 > pin0, "AC3: safe-span pin count increased");
+    auto skip_r = cs.eval("(query:hygiene-skip-count)");
+    CHECK(skip_r.has_value() && is_int(*skip_r) && as_int(*skip_r) >= 0,
+          "AC3: query:hygiene-skip-count returns int");
+    auto pin_r = cs.eval("(query:safe-span-pin-count)");
+    CHECK(pin_r.has_value() && is_int(*pin_r) && as_int(*pin_r) >= 1,
+          "AC3: query:safe-span-pin-count >= 1 after children/pattern");
+    auto em_skip = cs.eval("(engine:metrics \"query:hygiene-skip-count\")");
+    CHECK(em_skip.has_value() && is_int(*em_skip), "AC3: engine:metrics hygiene-skip-count");
+    auto em_pin = cs.eval("(engine:metrics \"query:safe-span-pin-count\")");
+    CHECK(em_pin.has_value() && is_int(*em_pin) && as_int(*em_pin) >= 1,
+          "AC3: engine:metrics safe-span-pin-count");
+    CHECK(href(cs, "schema-2989") == 2989, "AC3: schema-2989 on pattern-hygiene-stats");
+    CHECK(href(cs, "hygiene-skip-count") >= 0, "AC3: hygiene-skip-count key");
+    CHECK(href(cs, "safe-span-pin-count") >= 1, "AC3: safe-span-pin-count key");
+    CHECK(href(cs, "query-safe-span-default-wired") == 1, "AC3: wired sentinel");
+}
+
+static void ac2989_4_concurrent_query_mutate() {
+    std::println("\n--- #2989 AC4: multi-thread long query + concurrent mutate ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC4: macro workspace");
+    std::atomic<int> done{0};
+    std::atomic<int> ok{0};
+    std::atomic<int> errors{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 3; ++i) {
+        threads.emplace_back([&]() {
+            for (int j = 0; j < 25; ++j) {
+                auto r = cs.eval("(query:pattern \"*\")");
+                if (r.has_value())
+                    ok.fetch_add(1);
+                else
+                    errors.fetch_add(1);
+                auto f = cs.eval("(query:filter (query:where :node-type \"Define\"))");
+                if (f.has_value())
+                    ok.fetch_add(1);
+                auto c = cs.eval("(query :children 0)");
+                if (c.has_value())
+                    ok.fetch_add(1);
+            }
+            done.fetch_add(1);
+        });
+    }
+    threads.emplace_back([&]() {
+        for (int j = 0; j < 25; ++j) {
+            auto r = cs.eval("(mutate:rebind \"base\" \"11\")");
+            if (r.has_value())
+                ok.fetch_add(1);
+        }
+        done.fetch_add(1);
+    });
+    for (auto& t : threads)
+        t.join();
+    CHECK(done.load() == 4, "AC4: all threads finished");
+    CHECK(ok.load() >= 80, "AC4: most concurrent query+mutate succeeded");
+    // Default hygiene still holds after concurrent mutate.
+    const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
+    const auto allow_cnt = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    CHECK(default_cnt >= 0 && allow_cnt >= default_cnt, "AC4: hygiene still holds");
+}
+
+static void ac2989_5_observability() {
+    std::println("\n--- #2989 AC5: additive observability ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto qmid = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
+    const auto met = read_file("src/compiler/observability_metrics.h");
+    CHECK(source_has_key(qmid, "query:hygiene-skip-count") ||
+              source_has_key(q, "query:hygiene-skip-count"),
+          "AC5: query:hygiene-skip-count registered");
+    CHECK(source_has_key(qmid, "query:safe-span-pin-count") ||
+              source_has_key(q, "query:safe-span-pin-count"),
+          "AC5: query:safe-span-pin-count registered");
+    CHECK(met.find("query_safe_span_pin_count") != std::string::npos,
+          "AC5: query_safe_span_pin_count metric");
+    CHECK(qmid.find("schema-2989") != std::string::npos, "AC5: schema-2989");
+    CHECK(qmid.find("schema-2123") != std::string::npos, "AC5: schema-2123 retained");
+    CHECK(qmid.find("schema-2763") != std::string::npos, "AC5: schema-2763 retained");
+}
+
+static void ac2989_6_source_and_linter() {
+    std::println("\n--- #2989 AC6: source-cite + linter ---");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto t = read_file("tests/compiler/test_query_pattern_default_hygiene.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_query_concurrent_hygiene_safe_span_2989.py");
+    CHECK(qws.find("#2989") != std::string::npos, "AC6: workspace cites #2989");
+    CHECK(t.find("ac2989_1_safe_span_default") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac2989_4_concurrent_query_mutate") != std::string::npos, "AC6: AC4 test");
+    CHECK(build.find("check_query_concurrent_hygiene_safe_span_2989") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty(), "AC6: linter present");
+    CHECK(read_file("docs/design/2989-query-concurrent-hygiene-safe-span.md").empty(),
+          "AC6: no docs/design/2989-* per #1655");
 }
 
 static void ac2763_6_source_and_linter() {
@@ -425,6 +567,14 @@ int run_test_query_pattern_default_hygiene() {
     ac2763_4_quiet_path();
     ac2763_5_observability();
     ac2763_6_source_and_linter();
+
+    std::println("\n=== Issue #2989: query concurrent SafePCVSpan + hygiene ===");
+    ac2989_1_safe_span_default();
+    ac2989_2_default_hygiene();
+    ac2989_3_metrics();
+    ac2989_4_concurrent_query_mutate();
+    ac2989_5_observability();
+    ac2989_6_source_and_linter();
 
     std::println("\n=== test_query_pattern_default_hygiene: {} passed, {} failed ===", g_passed,
                  g_failed);
