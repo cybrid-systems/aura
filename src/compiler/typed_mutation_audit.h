@@ -216,6 +216,15 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> solver_budget_full_escalate_total{0};
     std::atomic<std::uint64_t> solver_budget_instance_repair_prefer_total{0};
     std::atomic<std::uint32_t> solver_budget_wired{1};
+    // Issue #2963: production prefer instance-repair before full-solve.
+    // delta_instance_repair_total: repair walk attempted (had dirty/roots).
+    // delta_instance_repair_resolved_total: local repair reached SOLVED.
+    // delta_timeout_full_after_repair_total: repair residual → full escalate.
+    // Quiet / Soft / no dirty: zero cost (no bump).
+    std::atomic<std::uint64_t> delta_instance_repair_total{0};
+    std::atomic<std::uint64_t> delta_instance_repair_resolved_total{0};
+    std::atomic<std::uint64_t> delta_timeout_full_after_repair_total{0};
+    std::atomic<std::uint32_t> delta_instance_repair_wired{1};
     // Issue #2642: Phase 5 densify post-compact linear-root scan counters.
     // linear_densify_scan_mismatch_observe_total: Soft path bumps this
     //     counter (no force-rollback); Agents can watch the scan fire.

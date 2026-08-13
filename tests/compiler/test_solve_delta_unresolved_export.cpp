@@ -789,6 +789,262 @@ static void ac2900_5_source_cite() {
           "2900 AC5: no new test file per #81967");
 }
 
+// ── Issue #2963: production prefer instance-repair before full-solve ──
+// Residual of #2900: production defaults prefer_instance_repair_before_full
+// = true. On delta TIMEOUT, repair local dirty + pending roots first;
+// only residual → full-solve escalate. Soft quiet zero cost. Never ship
+// TIMEOUT / half-solved under production.
+
+static void ac2963_1_production_repair_resolves() {
+    std::println("\n--- #2963 AC1: production + dirty TIMEOUT → repair SOLVED ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    // Default budget: prefer_instance_repair_before_full == true (#2963).
+    CHECK(cs.solver_budget().prefer_instance_repair_before_full,
+          "2963 AC1: production default prefer true");
+    CHECK(cs.solver_budget().is_default(), "2963 AC1: default budget is_default");
+
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_next_delta_timeout_for_test(true);
+
+    const auto repair0 =
+        g_typed_mutation_audit_counters.delta_instance_repair_total.load(std::memory_order_relaxed);
+    const auto resolved0 =
+        g_typed_mutation_audit_counters.delta_instance_repair_resolved_total.load(
+            std::memory_order_relaxed);
+    const auto full0 = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+        std::memory_order_relaxed);
+
+    std::vector<Constraint> unresolved;
+    auto status = cs.solve_delta(&unresolved);
+    CHECK(status == SolveResult::TIMEOUT, "2963 AC1: synthetic TIMEOUT");
+    CHECK(cs.is_dirty(), "2963 AC1: dirty remains for repair");
+    auto post = cs.escalate_if_production(status, &unresolved);
+    CHECK(post == SolveResult::SOLVED, "2963 AC1: repair reaches SOLVED");
+    CHECK(post != SolveResult::TIMEOUT, "2963 AC1: never ship TIMEOUT under production");
+    CHECK(g_typed_mutation_audit_counters.delta_instance_repair_total.load(
+              std::memory_order_relaxed) > repair0,
+          "2963 AC1: repair total bumps");
+    CHECK(g_typed_mutation_audit_counters.delta_instance_repair_resolved_total.load(
+              std::memory_order_relaxed) > resolved0,
+          "2963 AC1: repair resolved bumps");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+              std::memory_order_relaxed) == full0,
+          "2963 AC1: no full-solve when repair SOLVED");
+    CHECK(!cs.is_dirty(), "2963 AC1: dirty cleared after repair");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2963_2_soft_quiet_zero_cost() {
+    std::println("\n--- #2963 AC2: Soft quiet — no forced repair ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_next_delta_timeout_for_test(true);
+
+    const auto repair0 =
+        g_typed_mutation_audit_counters.delta_instance_repair_total.load(std::memory_order_relaxed);
+    const auto full0 = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+        std::memory_order_relaxed);
+
+    std::vector<Constraint> unresolved;
+    auto status = cs.solve_delta(&unresolved);
+    CHECK(status == SolveResult::TIMEOUT, "2963 AC2: Soft TIMEOUT");
+    auto post = cs.escalate_if_production(status, &unresolved);
+    CHECK(post == SolveResult::TIMEOUT, "2963 AC2: Soft pass-through TIMEOUT");
+    CHECK(g_typed_mutation_audit_counters.delta_instance_repair_total.load(
+              std::memory_order_relaxed) == repair0,
+          "2963 AC2: no repair walk under Soft");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+              std::memory_order_relaxed) == full0,
+          "2963 AC2: no full escalate under Soft");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2963_3_quiet_no_timeout_zero() {
+    std::println("\n--- #2963 AC3/AC4: quiet SOLVED — zero repair cost ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+
+    const auto repair0 =
+        g_typed_mutation_audit_counters.delta_instance_repair_total.load(std::memory_order_relaxed);
+    const auto full0 = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+        std::memory_order_relaxed);
+
+    auto status = cs.solve_delta();
+    CHECK(status == SolveResult::SOLVED, "2963 AC3: clean delta SOLVED");
+    auto post = cs.escalate_if_production(status);
+    CHECK(post == SolveResult::SOLVED, "2963 AC3: escalate no-op on SOLVED");
+    CHECK(g_typed_mutation_audit_counters.delta_instance_repair_total.load(
+              std::memory_order_relaxed) == repair0,
+          "2963 AC4: zero repair when no TIMEOUT");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+              std::memory_order_relaxed) == full0,
+          "2963 AC4: zero full-solve when no TIMEOUT");
+
+    // Empty escalate TIMEOUT (no dirty) → no repair walk, full may run.
+    const auto repair1 =
+        g_typed_mutation_audit_counters.delta_instance_repair_total.load(std::memory_order_relaxed);
+    auto empty_post = cs.escalate_if_production(SolveResult::TIMEOUT);
+    CHECK(empty_post == SolveResult::SOLVED, "2963 AC4: empty CS full escalate SOLVED");
+    CHECK(g_typed_mutation_audit_counters.delta_instance_repair_total.load(
+              std::memory_order_relaxed) == repair1,
+          "2963 AC4: no repair walk when no dirty/roots");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2963_4_additive_schema() {
+    std::println("\n--- #2963 AC3: additive schema + #2900/#2277 preserved ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "2963 AC3: warm");
+    CHECK(href(svc, "schema-2963") == 2963, "2963 AC3: schema-2963");
+    CHECK(href(svc, "issue-2963") == 2963, "2963 AC3: issue-2963");
+    CHECK(href(svc, "delta-instance-repair-total") >= 0, "2963 AC3: repair-total key");
+    CHECK(href(svc, "delta-instance-repair-resolved-total") >= 0, "2963 AC3: repair-resolved key");
+    CHECK(href(svc, "delta-timeout-full-after-repair-total") >= 0,
+          "2963 AC3: full-after-repair key");
+    CHECK(href(svc, "delta-instance-repair-wired") == 1, "2963 AC3: wired");
+    CHECK(href(svc, "schema-2900") == 2900, "2963 AC3: schema-2900 preserved");
+    CHECK(href(svc, "schema-2277") == 2277, "2963 AC3: schema-2277 preserved");
+    CHECK(aura::compiler::kSolverBudgetInstanceRepairIssue == 2963, "2963 AC3: issue constant");
+}
+
+static void ac2963_5_source_cite() {
+    std::println("\n--- #2963 AC5: source-cite + no docs/design ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_instance_repair_before_full_2963.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("try_instance_repair_before_full") != std::string::npos,
+          "2963 AC5: try_instance_repair API");
+    CHECK(ixx.find("2963") != std::string::npos, "2963 AC5: ixx cites #2963");
+    CHECK(ixx.find("prefer_instance_repair_before_full = true") != std::string::npos ||
+              ixx.find("prefer_instance_repair_before_full = true;") != std::string::npos,
+          "2963 AC5: default prefer true");
+    CHECK(impl.find("try_instance_repair_before_full") != std::string::npos,
+          "2963 AC5: impl repair");
+    CHECK(impl.find("delta_instance_repair_total") != std::string::npos,
+          "2963 AC5: repair counter");
+    CHECK(impl.find("delta_timeout_full_after_repair_total") != std::string::npos,
+          "2963 AC5: full-after-repair counter");
+    CHECK(aud.find("delta_instance_repair_total") != std::string::npos, "2963 AC5: audit counters");
+    CHECK(q.find("schema-2963") != std::string::npos, "2963 AC5: query schema-2963");
+    CHECK(q.find("delta-instance-repair-total") != std::string::npos, "2963 AC5: query keys");
+    CHECK(t.find("ac2963_1_production_repair_resolves") != std::string::npos, "2963 AC5: AC1 test");
+    CHECK(!lint.empty() && lint.find("2963") != std::string::npos, "2963 AC5: linter");
+    CHECK(build.find("check_instance_repair_before_full_2963") != std::string::npos,
+          "2963 AC5: build.py gate");
+    CHECK(read_file("docs/design/2963-instance-repair.md").empty(),
+          "2963 AC5: no docs/design/2963-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2963.cpp").empty(),
+          "2963 AC5: no new test file per #81967");
+}
+
+static void ac2963_6_large_cs_small_dirty_repair_hit() {
+    std::println("\n--- #2963 AC6: large CS + small dirty → repair hit, no full regress ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+
+    // Seed a large clean cone (already SOLVED constraints).
+    for (int i = 0; i < 64; ++i) {
+        auto a = cs.fresh_var();
+        Constraint eq;
+        eq.kind = Constraint::EQUAL;
+        eq.lhs = a;
+        eq.rhs = reg.int_type();
+        cs.add_delta(std::move(eq));
+    }
+    CHECK(cs.solve_delta() == SolveResult::SOLVED, "2963 AC6: seed cone SOLVED");
+
+    // Small dirty cone + synthetic TIMEOUT.
+    auto v = cs.fresh_var();
+    Constraint dirty;
+    dirty.kind = Constraint::EQUAL;
+    dirty.lhs = v;
+    dirty.rhs = reg.int_type();
+    cs.add_delta(std::move(dirty));
+    cs.force_next_delta_timeout_for_test(true);
+
+    const auto repair0 =
+        g_typed_mutation_audit_counters.delta_instance_repair_total.load(std::memory_order_relaxed);
+    const auto resolved0 =
+        g_typed_mutation_audit_counters.delta_instance_repair_resolved_total.load(
+            std::memory_order_relaxed);
+    const auto full0 = g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+        std::memory_order_relaxed);
+
+    std::vector<Constraint> unresolved;
+    auto status = cs.solve_delta(&unresolved);
+    CHECK(status == SolveResult::TIMEOUT, "2963 AC6: TIMEOUT on small dirty");
+    auto post = cs.escalate_if_production(status, &unresolved);
+    CHECK(post == SolveResult::SOLVED, "2963 AC6: repair SOLVED small dirty");
+    CHECK(g_typed_mutation_audit_counters.delta_instance_repair_total.load(
+              std::memory_order_relaxed) > repair0,
+          "2963 AC6: repair hit rate > 0");
+    CHECK(g_typed_mutation_audit_counters.delta_instance_repair_resolved_total.load(
+              std::memory_order_relaxed) > resolved0,
+          "2963 AC6: repair resolved");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_full_solve_total.load(
+              std::memory_order_relaxed) == full0,
+          "2963 AC6: full-solve does not regress (stays flat when repair wins)");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
 // ── Issue #2913: solve_delta locality SLO + escalate_if_production residual ──
 // Soft + residual → observe + allow. production / Full + residual → escalate
 // full (or reject). Quiet local SOLVED → zero cost. Additive schema-2913.
@@ -995,6 +1251,13 @@ int run_test_solve_delta_unresolved_export() {
     ac2900_3_default_budget_unchanged();
     ac2900_4_additive_query();
     ac2900_5_source_cite();
+    std::println("\n=== Issue #2963: instance-repair before full-solve ===");
+    ac2963_1_production_repair_resolves();
+    ac2963_2_soft_quiet_zero_cost();
+    ac2963_3_quiet_no_timeout_zero();
+    ac2963_4_additive_schema();
+    ac2963_5_source_cite();
+    ac2963_6_large_cs_small_dirty_repair_hit();
     std::println("\n=== Issue #2913: solve_delta locality SLO ===");
     ac2913_1_production_escalate();
     ac2913_2_soft_observe_and_quiet();
