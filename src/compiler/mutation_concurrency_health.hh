@@ -37,7 +37,10 @@
 #ifndef AURA_COMPILER_MUTATION_CONCURRENCY_HEALTH_HH
 #define AURA_COMPILER_MUTATION_CONCURRENCY_HEALTH_HH
 
+#include "typed_mutation_audit.h" // production_defaults_active (#2985 admit)
+
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <string_view>
@@ -190,6 +193,99 @@ compute_mutation_concurrency_health(const MutationConcurrencyHealthSnapshot& s) 
         r.force_reason_code = 0;
     }
     return r;
+}
+
+// Issue #2985: production admit close-loop on concurrency health.
+// Soft / sandbox=off / test override → observe only. Production +
+// (hard force_reason 1–3 OR health_bp < budget) → reject GlobalExclusive.
+// Happy path (health_bp==10000 && force_reason_code==0): no extra stores.
+inline constexpr int kMutationConcurrencyHealthAdmitIssue = 2985;
+inline std::atomic<std::uint64_t> g_mutation_concurrency_health_reject_total{0};
+inline std::atomic<std::uint64_t> g_mutation_concurrency_health_soft_observe_total{0};
+inline std::atomic<std::uint32_t> g_mutation_concurrency_health_admit_wired{1};
+// -1 = use env/production; 0 = force hard; 1 = force Soft (test).
+inline std::atomic<std::int32_t> g_mutation_concurrency_health_soft_for_test{-1};
+
+inline void set_mutation_concurrency_health_soft_for_test(bool soft) noexcept {
+    g_mutation_concurrency_health_soft_for_test.store(soft ? 1 : 0, std::memory_order_relaxed);
+}
+inline void reset_mutation_concurrency_health_soft_for_test() noexcept {
+    g_mutation_concurrency_health_soft_for_test.store(-1, std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool is_mutation_concurrency_health_soft_for_test() noexcept {
+    return g_mutation_concurrency_health_soft_for_test.load(std::memory_order_relaxed) == 1;
+}
+
+[[nodiscard]] inline bool mutation_concurrency_health_soft_mode() noexcept {
+    if (is_mutation_concurrency_health_soft_for_test())
+        return true;
+    const char* sandbox = std::getenv("AURA_SANDBOX");
+    if (sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off")
+        return true;
+    if (typed_audit::production_defaults_active())
+        return false;
+    return true; // Soft default when production flag is off
+}
+
+// Thread-local admit snapshot override (AC5 inject / clear). Unset → live.
+inline thread_local MutationConcurrencyHealthSnapshot g_health_admit_override_storage{};
+inline thread_local bool g_health_admit_override_armed = false;
+
+inline void set_mutation_concurrency_health_admit_snapshot_for_test(
+    const MutationConcurrencyHealthSnapshot& s) noexcept {
+    g_health_admit_override_storage = s;
+    g_health_admit_override_armed = true;
+}
+inline void clear_mutation_concurrency_health_admit_snapshot_for_test() noexcept {
+    g_health_admit_override_armed = false;
+    g_health_admit_override_storage = MutationConcurrencyHealthSnapshot{};
+}
+
+[[nodiscard]] inline bool mutation_concurrency_health_admit_override_armed() noexcept {
+    return g_health_admit_override_armed;
+}
+[[nodiscard]] inline const MutationConcurrencyHealthSnapshot&
+mutation_concurrency_health_admit_override_snapshot() noexcept {
+    return g_health_admit_override_storage;
+}
+
+enum class MutationConcurrencyHealthAdmitAction : std::uint8_t {
+    Allow = 0,
+    SoftObserve = 1,
+    Reject = 2,
+};
+
+// Hard force_reason: steal-mismatch / residual-defer / densify-fail.
+// region_concurrent: only hard reasons reject (budget-only still admits).
+[[nodiscard]] inline MutationConcurrencyHealthAdmitAction
+mutation_concurrency_health_admit_action(const MutationConcurrencyHealthResult& h,
+                                         bool region_concurrent = false) noexcept {
+    const bool hard_reason = h.force_reason_code >= 1 && h.force_reason_code <= 3;
+    const bool under_budget = h.health_bp < h.health_budget_bp;
+    const bool degraded = hard_reason || (!region_concurrent && under_budget);
+    if (!degraded)
+        return MutationConcurrencyHealthAdmitAction::Allow;
+    if (mutation_concurrency_health_soft_mode())
+        return MutationConcurrencyHealthAdmitAction::SoftObserve;
+    return MutationConcurrencyHealthAdmitAction::Reject;
+}
+
+// Happy path: Allow → no extra atomics (AC3).
+inline void
+note_mutation_concurrency_health_admit(MutationConcurrencyHealthAdmitAction a) noexcept {
+    if (a == MutationConcurrencyHealthAdmitAction::Allow)
+        return;
+    if (a == MutationConcurrencyHealthAdmitAction::Reject)
+        g_mutation_concurrency_health_reject_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_mutation_concurrency_health_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void reset_mutation_concurrency_health_admit_for_test() noexcept {
+    g_mutation_concurrency_health_reject_total.store(0, std::memory_order_relaxed);
+    g_mutation_concurrency_health_soft_observe_total.store(0, std::memory_order_relaxed);
+    reset_mutation_concurrency_health_soft_for_test();
+    clear_mutation_concurrency_health_admit_snapshot_for_test();
 }
 
 } // namespace aura::compiler

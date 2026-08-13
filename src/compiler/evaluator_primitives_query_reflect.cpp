@@ -964,6 +964,17 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("mutation-concurrency-health-wired", 1);
             insert_kv("schema-2379", 2379);
             insert_kv("issue-2379", 2379);
+            // Issue #2985: production admit close-loop (additive).
+            insert_kv("mutation-concurrency-health-reject-total",
+                      static_cast<std::int64_t>(g_mutation_concurrency_health_reject_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv(
+                "mutation-concurrency-health-soft-observe-total",
+                static_cast<std::int64_t>(g_mutation_concurrency_health_soft_observe_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("mutation-concurrency-health-admit-wired", 1);
+            insert_kv("schema-2985", 2985);
+            insert_kv("issue-2985", 2985);
             // Lineage sentinels (existing queries remain authoritative).
             insert_kv("schema-2310", 2310);
             insert_kv("schema-2341", 2341);
