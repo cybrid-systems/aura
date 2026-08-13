@@ -1477,6 +1477,16 @@ public:
         return gradual_permissiveness_;
     }
 
+    // Issue #2993: AURA_TYPECHECK_METRICS=minimal|full (default minimal).
+    void set_typecheck_metrics_tier(TypecheckMetricsTier t) {
+        aura::compiler::set_typecheck_metrics_tier(t);
+        metrics_.typecheck_metrics_tier.store(static_cast<std::uint64_t>(t),
+                                              std::memory_order_relaxed);
+    }
+    [[nodiscard]] TypecheckMetricsTier typecheck_metrics_tier() const noexcept {
+        return aura::compiler::typecheck_metrics_tier();
+    }
+
     // ---- Unified evaluation (IR-first with fallback) -----------------
 
     // Issue #2213: production gate on silent tree-walker fallback.

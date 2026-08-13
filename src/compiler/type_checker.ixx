@@ -128,6 +128,70 @@ export inline GradualPermissiveness gradual_permissiveness_from_env() noexcept {
     return parse_gradual_permissiveness(e);
 }
 
+// Issue #2993: type-checker metrics tier. Performance notes:
+//
+// Production Agent mutate+re-typecheck loops default to Minimal:
+// only conflict, timeout, blame-missing, and dynamic-degrade
+// counters increment. Full restores every fetch_add (debug /
+// audit / benchmark).
+//
+// Hot paths gated in Minimal: consistent_unify_total,
+// consistent_subtype_total, instance_unify_total, worklist
+// restart, solve_delta timer + locality/processed counters.
+//
+// Env: AURA_TYPECHECK_METRICS=minimal|full
+// EDSL: (type:set-typecheck-metrics-tier ...) + schema-2993
+export enum class TypecheckMetricsTier : std::uint8_t {
+    Minimal = 0,
+    Full = 1,
+};
+
+export constexpr std::string_view typecheck_metrics_tier_name(TypecheckMetricsTier t) noexcept {
+    return t == TypecheckMetricsTier::Full ? "full" : "minimal";
+}
+
+export inline TypecheckMetricsTier parse_typecheck_metrics_tier(std::string_view s) noexcept {
+    char buf[16];
+    std::size_t n = s.size() < 15 ? s.size() : 15;
+    for (std::size_t i = 0; i < n; ++i) {
+        char c = s[i];
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+        buf[i] = c;
+    }
+    buf[n] = '\0';
+    std::string_view v{buf, n};
+    if (v == "full" || v == "1")
+        return TypecheckMetricsTier::Full;
+    return TypecheckMetricsTier::Minimal;
+}
+
+export inline TypecheckMetricsTier typecheck_metrics_tier_from_env() noexcept {
+    const char* e = std::getenv("AURA_TYPECHECK_METRICS");
+    if (e == nullptr || e[0] == '\0')
+        return TypecheckMetricsTier::Minimal;
+    return parse_typecheck_metrics_tier(e);
+}
+
+export inline std::atomic<std::uint8_t>& typecheck_metrics_tier_slot() noexcept {
+    static std::atomic<std::uint8_t> slot{
+        static_cast<std::uint8_t>(typecheck_metrics_tier_from_env())};
+    return slot;
+}
+
+export inline TypecheckMetricsTier typecheck_metrics_tier() noexcept {
+    return static_cast<TypecheckMetricsTier>(
+        typecheck_metrics_tier_slot().load(std::memory_order_relaxed));
+}
+
+export inline void set_typecheck_metrics_tier(TypecheckMetricsTier t) noexcept {
+    typecheck_metrics_tier_slot().store(static_cast<std::uint8_t>(t), std::memory_order_relaxed);
+}
+
+export inline bool typecheck_metrics_full() noexcept {
+    return typecheck_metrics_tier() == TypecheckMetricsTier::Full;
+}
+
 // ── Type Environment ─────────────────────────────────────
 export class TypeEnv {
     aura::core::TypeRegistry& reg_;
@@ -587,6 +651,11 @@ public:
     void* metrics_ = nullptr;
 
     void set_metrics(void* m) { metrics_ = m; }
+    // Issue #2993: Full-tier only. Conflict/timeout/blame/degrade
+    // still use metrics_ != nullptr.
+    [[nodiscard]] bool metrics_full() const noexcept {
+        return metrics_ != nullptr && typecheck_metrics_full();
+    }
     // Issue #2277: production-default TIMEOUT escalation (Option A — Issue body).
     // If `prior` is SolveResult::TIMEOUT AND production_defaults_active(),
     // attempt one-shot full fixpoint (this->solve(unresolved_out)); if still

@@ -383,6 +383,19 @@ static void ac1923_8_no_crash() {
     CHECK(href(cs, "query:type-incremental-fidelity-stats", "schema-1923") == 1923, "schema ok");
 }
 
+static void ac2993_metrics_tier() {
+    std::println("\n--- #2993: typecheck metrics tier ---");
+    CompilerService cs;
+    CHECK(href(cs, "query:type-incremental-fidelity-stats", "schema-2993") == 2993,
+          "ac2993_schema");
+    CHECK(href(cs, "query:type-incremental-fidelity-stats", "typecheck-metrics-wired") == 1,
+          "wired");
+    auto set_r = cs.eval("(type:set-typecheck-metrics-tier \"minimal\")");
+    CHECK(set_r.has_value(), "ac2993_setter");
+    CHECK(href(cs, "query:type-incremental-fidelity-stats", "typecheck-metrics-tier") == 0,
+          "minimal");
+}
+
 } // namespace
 
 // Issue bundle guard: skip standalone main() when compiled as a bundle member.
@@ -408,6 +421,7 @@ int main() {
     ac1923_6_solve_delta();
     ac1923_7_lineage();
     ac1923_8_no_crash();
+    ac2993_metrics_tier();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

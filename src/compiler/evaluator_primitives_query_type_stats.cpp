@@ -2051,6 +2051,18 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
             // Issue #2992: non-strict ground-type Agent feedback.
             insert_kv("schema-2992", 2992);
             insert_kv("issue-2992", 2992);
+            // Issue #2993: type-check metrics tier (minimal default).
+            insert_kv("schema-2993", 2993);
+            insert_kv("issue-2993", 2993);
+            insert_kv("typecheck-metrics-wired", 1);
+            insert_kv("typecheck-metrics-hot-path-gated", 1);
+            {
+                const auto tier =
+                    static_cast<std::int64_t>(aura::compiler::typecheck_metrics_tier());
+                insert_kv("typecheck-metrics-tier", tier);
+                insert_kv("typecheck-metrics-full",
+                          aura::compiler::typecheck_metrics_full() ? 1 : 0);
+            }
             insert_kv("gradual-permissiveness-wired", 1);
             {
                 const std::int64_t gw =

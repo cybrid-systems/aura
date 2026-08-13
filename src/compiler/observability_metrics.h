@@ -6709,6 +6709,10 @@ struct CompilerMetrics {
     //     a workload that benefits from finer-
     //     grained worklist scheduling.
     std::atomic<std::uint64_t> consistent_unify_total{0};
+    // Issue #2993: 0=minimal (default), 1=full. Hot-path fetch_add
+    // gated when 0. Wired sentinel for schema-2993.
+    std::atomic<std::uint64_t> typecheck_metrics_tier{0};
+    std::atomic<std::uint64_t> typecheck_metrics_hot_path_gated{1};
     std::atomic<std::uint64_t> consistent_subtype_total{0};
     std::atomic<std::uint64_t> worklist_restart_total{0};
     // Issue #385: mutation-aware Let-Poly caching

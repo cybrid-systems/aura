@@ -1,3 +1,4 @@
+#include "compiler/observability_metrics.h"
 
 import std;
 import aura.core;
@@ -1856,6 +1857,38 @@ int main() {
                     std::println(std::cerr, "TS FAIL: #2992 schema-2992");
                 }
             }
+        }
+
+        // ── Issue #2993: type-check metrics tier ──
+        {
+            const auto prev = aura::compiler::typecheck_metrics_tier();
+            aura::compiler::set_typecheck_metrics_tier(
+                aura::compiler::TypecheckMetricsTier::Minimal);
+            aura::core::TypeRegistry treg;
+            aura::compiler::CompilerMetrics met;
+            aura::compiler::ConstraintSystem cs(treg);
+            cs.set_metrics(&met);
+            for (int i = 0; i < 1000; ++i)
+                (void)cs.consistent_unify(treg.int_type(), treg.string_type());
+            if (met.consistent_unify_total.load() == 0) {
+                ++ts_passed;
+                std::println("TS OK: #2993 Minimal skips unify_total");
+            } else {
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: #2993 Minimal should skip unify_total");
+            }
+            aura::compiler::set_typecheck_metrics_tier(aura::compiler::TypecheckMetricsTier::Full);
+            for (int i = 0; i < 1000; ++i)
+                (void)cs.consistent_unify(treg.int_type(), treg.string_type());
+            if (met.consistent_unify_total.load() == 1000) {
+                ++ts_passed;
+                std::println("TS OK: #2993 Full restores unify_total");
+            } else {
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: #2993 Full unify_total got {}",
+                             met.consistent_unify_total.load());
+            }
+            aura::compiler::set_typecheck_metrics_tier(prev);
         }
 
         // ── 2c. Issue #100: is_coercible structural coercion ──────

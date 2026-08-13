@@ -5812,6 +5812,34 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
         svc->set_gradual_permissiveness(p);
         return make_bool(true);
     });
+
+    // Issue #2993: (type:set-typecheck-metrics-tier 0|1|"minimal"|"full")
+    // Default Minimal. Returns #t. AURA_TYPECHECK_METRICS env is process
+    // default; this setter is the Agent / serve override.
+    add("type:set-typecheck-metrics-tier", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        auto* svc = static_cast<CompilerService*>(ev.compiler_service());
+        if (!svc || a.empty())
+            return make_bool(false);
+        TypecheckMetricsTier t = TypecheckMetricsTier::Minimal;
+        if (is_int(a[0])) {
+            const auto v = as_int(a[0]);
+            if (v == 0)
+                t = TypecheckMetricsTier::Minimal;
+            else if (v == 1)
+                t = TypecheckMetricsTier::Full;
+            else
+                return make_bool(false);
+        } else if (is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_bool(false);
+            t = parse_typecheck_metrics_tier(ev.string_heap_[idx]);
+        } else {
+            return make_bool(false);
+        }
+        svc->set_typecheck_metrics_tier(t);
+        return make_bool(true);
+    });
 }
 aura::ast::FlatAST* CompilePrims::pick_macro_flat(Evaluator& ev) {
     return ev.current_flat() ? ev.current_flat() : ev.workspace_flat();
