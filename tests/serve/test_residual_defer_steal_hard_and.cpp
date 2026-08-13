@@ -63,6 +63,18 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
     return as_int(*r);
 }
 
+// #2853 AC5: schema-2853 / production-residual-policy-lock-* /
+// hold-slo-effective / residual-defer-soft-for-test / hold-slo-soft-for-test
+// are registered on query:mutation-boundary-hold-stats (obs_eval.cpp), not
+// gc-defer-reason-stats. Separate helper for that surface.
+static std::int64_t href_mbhs(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:mutation-boundary-hold-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
 static void spin_us(std::int64_t min_us) {
     auto t0 = std::chrono::steady_clock::now();
     while (
@@ -271,7 +283,12 @@ static void ac5_soak_lineage() {
     std::println("\n--- #2546 AC5: soak lineage counters present ---");
     const auto soak = read_file("tests/compiler/test_production_concurrency_soak_2513.cpp");
     const auto health = read_file("src/compiler/mutation_concurrency_health.hh");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    // residual_defer_steal_hard_fail_total is surfaced from
+    // query_reflect.cpp / query_lifecycle.cpp metric reads (not
+    // primitives_query.cpp), so concatenate all three query sources.
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_reflect.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_lifecycle.cpp");
 
     CHECK(health.find("residual_hard_fail_total") != std::string::npos,
           "AC5: health residual_hard_fail axis");
@@ -503,19 +520,20 @@ static void ac2853_5_phase5_dtor_gauge_and_query_surface() {
 
     // Warm eval for metrics registration.
     CHECK(cs.eval("(+ 1 1)").has_value(), "AC5: warm eval");
-    CHECK(href(cs, "schema-2853") == 2853, "AC5: schema-2853 live");
-    CHECK(href(cs, "issue-2853") == 2853, "AC5: issue-2853 live");
-    CHECK(href(cs, "production-residual-policy-lock-wired") == 1, "AC5: wired sentinel live");
-    CHECK(href(cs, "production_residual_policy_lock_wired") == 1, "AC5: wired camelCase live");
-    CHECK(href(cs, "production-residual-policy-lock-active") == 1,
+    CHECK(href_mbhs(cs, "schema-2853") == 2853, "AC5: schema-2853 live");
+    CHECK(href_mbhs(cs, "issue-2853") == 2853, "AC5: issue-2853 live");
+    CHECK(href_mbhs(cs, "production-residual-policy-lock-wired") == 1, "AC5: wired sentinel live");
+    CHECK(href_mbhs(cs, "production_residual_policy_lock_wired") == 1, "AC5: wired camelCase live");
+    CHECK(href_mbhs(cs, "production-residual-policy-lock-active") == 1,
           "AC5: lock-active-now live (prod + sandbox unset)");
-    CHECK(href(cs, "production_residual_policy_lock_active") == 1,
+    CHECK(href_mbhs(cs, "production_residual_policy_lock_active") == 1,
           "AC5: lock-active-now camelCase live");
-    CHECK(href(cs, "hold-slo-effective-soft-mode") == 0,
+    CHECK(href_mbhs(cs, "hold-slo-effective-soft-mode") == 0,
           "AC5: hold-SLO effective mode = Production (force-fail) under lock");
-    CHECK(href(cs, "hold_slo_effective_soft_mode") == 0, "AC5: hold-SLO effective mode camelCase");
-    CHECK(href(cs, "residual-defer-soft-for-test") == 0, "AC5: residual test override = off");
-    CHECK(href(cs, "hold-slo-soft-for-test") == 0, "AC5: hold-SLO test override = off");
+    CHECK(href_mbhs(cs, "hold_slo_effective_soft_mode") == 0,
+          "AC5: hold-SLO effective mode camelCase");
+    CHECK(href_mbhs(cs, "residual-defer-soft-for-test") == 0, "AC5: residual test override = off");
+    CHECK(href_mbhs(cs, "hold-slo-soft-for-test") == 0, "AC5: hold-SLO test override = off");
 
     // Source-cite: schema-2853 keys present in obs_eval.cpp + Phase-5 policy
     // decision + gauge atomic wired in fiber.h.

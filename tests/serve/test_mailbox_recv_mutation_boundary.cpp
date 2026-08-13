@@ -82,6 +82,16 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// Query-key source checks span evaluator_primitives_query.cpp AND the
+// reflect/type-stats surfaces (component-mailbox-under-boundary-wait-us-max
+// lives in query_reflect.cpp; #2903 p50/p99 live in messaging.cpp).
+static std::string read_query_srcs() {
+    return read_file("src/compiler/evaluator_primitives_query.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_reflect.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_type_stats.cpp") +
+           read_file("src/compiler/evaluator_primitives_messaging.cpp");
+}
+
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r =
         cs.eval(std::format("(hash-ref (engine:metrics \"query:mf-mailbox-stats\") \"{}\")", key));
@@ -937,7 +947,7 @@ static void ac2849_6_soft_never_weakens() {
 static void ac2700_1_push_under_guard_rejects() {
     std::println("\n--- #2700 AC1+AC2+AC3: push under guard rejects unexported ref ---");
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
 
     CHECK(mb.find("Issue #2700") != std::string::npos, "AC1: mb cites #2700");
@@ -981,7 +991,7 @@ static void ac2700_4_zero_cost_on_string_payload() {
 static void ac2700_5_query_keys_and_source_cite() {
     std::println("\n--- #2700 AC5: query keys + source-cite ---");
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
     const auto build = read_file("build.py");
     const auto lint = read_file("scripts/coverage/checks/check_handoff_ref_mailbox_gate_2700.py");
@@ -1160,7 +1170,7 @@ static void ac2903_5_source_cite_no_docs_design() {
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
     const auto msg = read_file("src/compiler/evaluator_primitives_messaging.cpp");
     const auto health = read_file("src/compiler/mutation_concurrency_health.hh");
-    const auto query = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto query = read_query_srcs();
     const auto build = read_file("build.py");
     const auto lint =
         read_file("scripts/coverage/checks/check_mailbox_under_boundary_wait_2903.py");

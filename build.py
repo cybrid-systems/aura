@@ -12558,6 +12558,11 @@ def cmd_gate():
         or cmd_aot_env_linear_stamp()
         or cmd_legacy_test_inventory()
         or cmd_source_to_ir_strict()
+        # Chaos SOAK coverage-only gates wired into the main pre-push chain
+        # (fast static checks; full SOAK runtime stays release.yml / command
+        # table per #2722 AC4).
+        or cmd_chaos_soak_hard_gate_2722_coverage()
+        or cmd_chaos_soak_residual_zero_2755_coverage()
     )
     if rc:
         return rc

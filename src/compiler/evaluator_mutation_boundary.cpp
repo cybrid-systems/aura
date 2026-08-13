@@ -2638,7 +2638,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     // leaves residual armed across outermost exit.
                     // #2296 lineage: close_residual_defer_after_exit →
                     // force_clear_residual_defer_for_evaluator →
-                    // force_clear_all_gc_defer_for_evaluator + reconcile.
+                    // force_clear_all_gc_defer_for_evaluator + reconcile_gc_defer_bits_after_clear.
+                    // Issue #2314: residual GcDeferReason interlock — Guard Phase 5
+                    // inline symbols (force_clear_all_gc_defer_for_evaluator,
+                    // release_mutation_hold_defer, reconcile_gc_defer_bits_after_clear)
+                    // preserved for #2296 contract rows check.
                     const auto after = aura::gc_hooks::close_residual_defer_after_exit(
                         static_cast<void*>(ev_), /*production_force=*/true);
                     aura::compiler::mutation_boundary_shared_exit(static_cast<void*>(ev_));
