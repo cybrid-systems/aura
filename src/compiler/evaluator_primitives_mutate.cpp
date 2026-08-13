@@ -252,6 +252,16 @@ struct aura_reload_recovery_snapshot {
     std::int64_t force_jit_reason_bit_map_wired;
     std::int64_t schema_2927;
     std::int64_t issue_2927;
+    // Issue #2982: Staging/Dlopen ops surface (lockstep with header)
+    std::int64_t last_ops_fail_kind;
+    std::int64_t last_dlopen_path_hash;
+    std::int64_t last_dlopen_errno_class;
+    std::int64_t last_staging_detail;
+    std::int64_t staging_retry_eligible;
+    std::int64_t staging_retry_scheduled_total;
+    std::int64_t ops_fail_wired;
+    std::int64_t schema_2982;
+    std::int64_t issue_2982;
     std::int64_t recovery_active;
     std::int64_t reload_recovery_wired;
 };
@@ -8162,6 +8172,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("force-jit-reason-bit-map-wired", rs.force_jit_reason_bit_map_wired);
                 insert_kv("schema-2927", rs.schema_2927);
                 insert_kv("issue-2927", rs.issue_2927);
+                // Issue #2982: Staging/Dlopen ops surface (cross-link).
+                insert_kv("last-ops-fail-kind", rs.last_ops_fail_kind);
+                insert_kv("last-dlopen-path-hash", rs.last_dlopen_path_hash);
+                insert_kv("last-dlopen-errno-class", rs.last_dlopen_errno_class);
+                insert_kv("last-staging-detail", rs.last_staging_detail);
+                insert_kv("staging-retry-eligible", rs.staging_retry_eligible);
+                insert_kv("staging-retry-scheduled-total", rs.staging_retry_scheduled_total);
+                insert_kv("ops-fail-wired", rs.ops_fail_wired);
+                insert_kv("schema-2982", rs.schema_2982);
+                insert_kv("issue-2982", rs.issue_2982);
                 insert_kv("recovery-active", rs.recovery_active);
                 insert_kv("reload-recovery-wired", rs.reload_recovery_wired);
                 insert_kv("schema-2367", 2367);
@@ -8300,6 +8320,19 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("force-jit-reason-bit-map-wired", rs.force_jit_reason_bit_map_wired);
             insert_kv("schema-2927", rs.schema_2927);
             insert_kv("issue-2927", rs.issue_2927);
+            // Issue #2982: Staging/Dlopen ops recovery surface.
+            insert_kv("last-ops-fail-kind", rs.last_ops_fail_kind);
+            insert_kv("last-dlopen-path-hash", rs.last_dlopen_path_hash);
+            insert_kv("last-dlopen-errno-class", rs.last_dlopen_errno_class);
+            insert_kv("last-staging-detail", rs.last_staging_detail);
+            insert_kv("staging-retry-eligible", rs.staging_retry_eligible);
+            insert_kv("staging-retry-scheduled-total", rs.staging_retry_scheduled_total);
+            insert_kv("ops-fail-wired", rs.ops_fail_wired);
+            insert_kv("schema-2982", rs.schema_2982);
+            insert_kv("issue-2982", rs.issue_2982);
+            insert_kv("ops-fail-kind-none", 0);
+            insert_kv("ops-fail-kind-staging", 1);
+            insert_kv("ops-fail-kind-dlopen", 2);
             // Bit-group sentinels for Agents (stable #2927 ABI).
             insert_kv("force-jit-bit-version-defuse", 0);
             insert_kv("force-jit-bit-env", 1);
