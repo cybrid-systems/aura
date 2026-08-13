@@ -33,8 +33,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 239 | 239 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 240 | 240 | P0 — high volume; strong domain suite foothold |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 53 | 53 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 82 | 82 | P2 — link-profile heavy; migrate AC smoke first |
@@ -1142,13 +1142,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (239)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (240)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (239)
+#### domain/ (240)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1296,6 +1296,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutation_occurrence_dirty_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_occurrence_dirty_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutation_provenance.cpp` (—) [domain_suite, theme_compiler] — tests/test_mutation_provenance.cpp — Issue #1412: Compound
 - `tests/compiler/test_mutation_rollback_coverage.cpp` (—) [domain_suite, theme_compiler] — Issue #213/#266/#369/#400/#553 (#1978 renamed): issue# moved from filename to header.
+- `tests/serve/test_mutation_safety_snapshot_steal.cpp` (—) [large, domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +
 - `tests/compiler/test_mutation_systemic_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1818/#1897 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_mutation_typed_audit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_typed_audit_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutator_dispatch_stats_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1849 (#1978 renamed): issue# moved from filename to header.
@@ -1390,13 +1391,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (102)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (101)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (102)
+#### domain/ (101)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1449,7 +1450,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_mailbox_hold_starvation_hard.cpp` (—) [large, domain_suite, theme_serve] — AC1: Production/Strict + residual after budget → hard counter + flag
 - `tests/serve/test_mailbox_recv_mutation_boundary.cpp` (—) [large, domain_suite, theme_serve] — Issue #2347 — Strict/hard audit + optional Guard-window threshold
 - `tests/serve/test_mailbox_tenant_principal.cpp` (—) [domain_suite, theme_serve] — tests/serve/test_mailbox_tenant_principal.cpp
-- `tests/serve/test_mutation_safety_snapshot_steal.cpp` (—) [large, domain_suite, theme_serve] — AC1: mutation_safety_snapshot used by is_at_mutation_boundary_safe +
 - `tests/compiler/test_occurrence_goal_persist_rehydrate.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2896 / #2910 — production-default outermost success persist +
 - `tests/orch/test_orch_admission_decay.cpp` (—) [domain_suite, theme_orch] — AC1: decay window — BP event → counter > 0 → spawn denied
 - `tests/orch/test_orch_agent_batch.cpp` (—) [batch_driver, domain_suite, theme_orch] — test_orch_agent_batch.cpp — thematic multi-TU batch

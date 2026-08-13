@@ -35,6 +35,12 @@ extern "C" std::uint64_t aura_fiber_static_steal_inner_mutation_boundary_deferre
 extern "C" std::uint64_t aura_fiber_static_mutation_steal_snapshot_mismatch_total();
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_hard_fail_total();
 extern "C" std::uint64_t aura_fiber_static_steal_snapshot_mismatch_force_deopt_total();
+// Issue #2956: post-publish mirror canary
+extern "C" int aura_mutation_boundary_assert_mirrors_consistent(int is_active, int expect_held,
+                                                                int check_process) noexcept;
+extern "C" std::uint64_t aura_mutation_mirror_inconsistency_hard_total() noexcept;
+extern "C" std::uint64_t aura_mutation_mirror_inconsistency_soft_total() noexcept;
+extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
 
 namespace {
 
@@ -509,7 +515,163 @@ int run_test_mutation_safety_snapshot_steal() {
         CHECK(q.find("steal-snapshot-hard-fail-total") != std::string::npos, "query hard-fail key");
     }
 
-    std::println("\n=== #2184/#2310/#2346 MutationSafetySnapshot: {} passed, {} failed ===",
+    // ── Issue #2956: outermost Guard / soft enter-exit mirror canary ──
+    {
+        std::println("\n--- #2956 AC1: Soft injected tear → soft_total (metric-only) ---");
+        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+        aura::serve::set_steal_snapshot_soft_for_test(true);
+        CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "2956 AC1: Soft mode");
+        const auto soft0 = aura_mutation_mirror_inconsistency_soft_total();
+        const auto hard0 = aura_mutation_mirror_inconsistency_hard_total();
+        Scheduler sched(2);
+        std::atomic<bool> done{false};
+        sched.spawn([&]() {
+            auto* fb = aura::serve::g_current_fiber;
+            // Inject tear: expect held after publish, but leave held=false.
+            fb->publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/false, /*defuse=*/0);
+            const int ok =
+                aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1, /*expect_held=*/1,
+                                                                 /*check_process=*/0);
+            CHECK(ok == 0, "2956 AC1: canary detects tear");
+            done.store(true);
+        });
+        std::thread io([&sched]() { sched.run(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        while (!done.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(done.load(), "2956 AC1: fiber ran");
+        CHECK(aura_mutation_mirror_inconsistency_soft_total() > soft0, "2956 AC1: soft_total +1");
+        CHECK(aura_mutation_mirror_inconsistency_hard_total() == hard0,
+              "2956 AC1: hard_total unchanged under Soft");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    }
+
+    {
+        std::println("\n--- #2956 AC1b: Hard injected tear → hard_total ---");
+        ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+        aura::serve::set_steal_snapshot_soft_for_test(false);
+        CHECK(aura::serve::is_steal_snapshot_hard_mode(), "2956 AC1b: Hard mode");
+        const auto soft0 = aura_mutation_mirror_inconsistency_soft_total();
+        const auto hard0 = aura_mutation_mirror_inconsistency_hard_total();
+        Scheduler sched(2);
+        std::atomic<bool> done{false};
+        sched.spawn([&]() {
+            auto* fb = aura::serve::g_current_fiber;
+            // Residual depth with expect_held=0 (exit-path tear).
+            aura_evaluator_test_push_mutation_checkpoint();
+            fb->publish_mutation_safety_mirrors(/*depth=*/1, /*held=*/false, /*defuse=*/0);
+            const int ok =
+                aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1, /*expect_held=*/0,
+                                                                 /*check_process=*/0);
+            CHECK(ok == 0, "2956 AC1b: canary detects exit tear");
+            aura_evaluator_test_pop_mutation_checkpoint();
+            done.store(true);
+        });
+        std::thread io([&sched]() { sched.run(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        while (!done.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(done.load(), "2956 AC1b: fiber ran");
+        CHECK(aura_mutation_mirror_inconsistency_hard_total() > hard0, "2956 AC1b: hard_total +1");
+        CHECK(aura_mutation_mirror_inconsistency_soft_total() == soft0,
+              "2956 AC1b: soft_total unchanged under Hard");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    }
+
+    {
+        std::println("\n--- #2956 AC2: nested (is_active=0) no canary cost ---");
+        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        aura::serve::set_steal_snapshot_soft_for_test(true);
+        const auto soft0 = aura_mutation_mirror_inconsistency_soft_total();
+        const auto hard0 = aura_mutation_mirror_inconsistency_hard_total();
+        // Nested no-op even with a torn mirror expectation.
+        const int ok =
+            aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/0, /*expect_held=*/1,
+                                                             /*check_process=*/1);
+        CHECK(ok == 1, "2956 AC2: nested returns consistent");
+        CHECK(aura_mutation_mirror_inconsistency_soft_total() == soft0, "2956 AC2: soft unchanged");
+        CHECK(aura_mutation_mirror_inconsistency_hard_total() == hard0, "2956 AC2: hard unchanged");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    }
+
+    {
+        std::println("\n--- #2956 AC3/AC5: query schema + source-cite ---");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+        CHECK(href(cs, "schema-2956") == 2956, "2956 AC3: schema-2956");
+        CHECK(href(cs, "issue-2956") == 2956, "2956 AC3: issue-2956");
+        CHECK(href(cs, "mutation-mirror-canary-wired") == 1, "2956 AC3: canary wired");
+        CHECK(href(cs, "mutation-mirror-inconsistency-hard-total") >= 0, "2956 AC3: hard key");
+        CHECK(href(cs, "mutation-mirror-inconsistency-soft-total") >= 0, "2956 AC3: soft key");
+        CHECK(href(cs, "schema-2184") == 2184, "2956 AC4: steal snapshot schema retained");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto fh = read_file("src/serve/fiber.h");
+        const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(emb.find("aura_mutation_boundary_assert_mirrors_consistent") != std::string::npos,
+              "2956 AC5: Guard TU calls canary");
+        CHECK(efm.find("aura_mutation_boundary_assert_mirrors_consistent") != std::string::npos,
+              "2956 AC5: soft/helper TU cites canary");
+        CHECK(efm.find("Issue #2956") != std::string::npos,
+              "2956 AC5: #2956 cite in fiber_mutation");
+        CHECK(fh.find("aura_mutation_boundary_assert_mirrors_consistent") != std::string::npos,
+              "2956 AC5: fiber.h declares canary");
+        CHECK(q.find("schema-2956") != std::string::npos, "2956 AC5: query schema-2956");
+        // AC4: steal path still has independent snapshot check.
+        const auto wc = read_file("src/serve/worker.cpp");
+        CHECK(wc.find("mutation_safety_snapshot_inconsistent") != std::string::npos,
+              "2956 AC4: steal still independent check");
+        const auto lint = read_file("scripts/coverage/checks/check_mutation_mirror_canary_2956.py");
+        CHECK(!lint.empty(), "2956 AC5: linter present");
+    }
+
+    {
+        std::println("\n--- #2956 AC3: happy path post-publish (no counter bump) ---");
+        ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+        aura::serve::set_steal_snapshot_soft_for_test(true);
+        const auto soft0 = aura_mutation_mirror_inconsistency_soft_total();
+        const auto hard0 = aura_mutation_mirror_inconsistency_hard_total();
+        Scheduler sched(2);
+        std::atomic<bool> done{false};
+        sched.spawn([&]() {
+            auto* fb = aura::serve::g_current_fiber;
+            fb->set_yield_reason(YieldReason::MutationBoundary);
+            fb->publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/true, /*defuse=*/7);
+            // expect_held=1, no process check (simulates soft enter happy).
+            CHECK(aura_mutation_boundary_assert_mirrors_consistent(1, 1, 0) == 1,
+                  "2956 happy: enter consistent");
+            fb->publish_mutation_safety_mirrors(/*depth=*/0, /*held=*/false, /*defuse=*/7);
+            CHECK(aura_mutation_boundary_assert_mirrors_consistent(1, 0, 0) == 1,
+                  "2956 happy: exit consistent");
+            done.store(true);
+        });
+        std::thread io([&sched]() { sched.run(); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        while (!done.load() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(done.load(), "2956 happy: ran");
+        CHECK(aura_mutation_mirror_inconsistency_soft_total() == soft0,
+              "2956 happy: soft unchanged");
+        CHECK(aura_mutation_mirror_inconsistency_hard_total() == hard0,
+              "2956 happy: hard unchanged");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    }
+
+    std::println("\n=== #2184/#2310/#2346/#2956 MutationSafetySnapshot: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

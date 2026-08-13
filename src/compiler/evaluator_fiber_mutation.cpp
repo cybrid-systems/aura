@@ -31,6 +31,8 @@ module;
 #include <algorithm>                  // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
+#include <cstdio>   // Issue #2956: hard-abort fprintf
+#include <cstdlib>  // Issue #2956: hard-abort std::abort
 #include <memory>   // Issue #1880: unique_ptr for soft-path sentinel
 #include <optional> // Issue #2555: optional TransactionGuard for orch agent body
 
@@ -1674,6 +1676,10 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth() {
 // mid-mutation enqueue.
 namespace {
     std::atomic<std::uint32_t> g_process_mutation_boundary_held_count{0};
+    // Issue #2956: outermost Guard / soft-boundary post-publish mirror canary.
+    // Soft (metric-only) vs production/Hard (hard canary + optional mark-failed).
+    std::atomic<std::uint64_t> g_mutation_mirror_inconsistency_hard_total{0};
+    std::atomic<std::uint64_t> g_mutation_mirror_inconsistency_soft_total{0};
 } // namespace
 
 extern "C" void aura_process_mutation_boundary_held_enter() noexcept {
@@ -1684,6 +1690,73 @@ extern "C" void aura_process_mutation_boundary_held_exit() noexcept {
     while (cur > 0 && !g_process_mutation_boundary_held_count.compare_exchange_weak(
                           cur, cur - 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
     }
+}
+
+extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept {
+    return g_process_mutation_boundary_held_count.load(std::memory_order_acquire);
+}
+
+extern "C" std::uint64_t aura_mutation_mirror_inconsistency_hard_total() noexcept {
+    return g_mutation_mirror_inconsistency_hard_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_mutation_mirror_inconsistency_soft_total() noexcept {
+    return g_mutation_mirror_inconsistency_soft_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2956: post-publish held/depth/process-held canary.
+// Call only at outermost Guard enter/exit and soft orch publish sites.
+// Happy path: one mutation_safety_snapshot sample (+ optional process count).
+// Nested Guard must pass is_active=0 (no canary cost).
+// Soft: metric-only soft_total. Production/Hard: hard_total + mark-failed
+// under hard policy (AURA_STEAL_SNAPSHOT_HARD_ABORT still aborts).
+// Steal path keeps independent snapshot check (defense in depth — AC4).
+extern "C" int aura_mutation_boundary_assert_mirrors_consistent(int is_active, int expect_held,
+                                                                int check_process) noexcept {
+    if (is_active == 0)
+        return 1; // AC2: nested Guard — no canary
+    auto* fib = aura::serve::g_current_fiber;
+    if (fib == nullptr)
+        return 1; // host / no fiber — publish was also no-op
+
+    const auto snap = fib->mutation_safety_snapshot();
+    bool bad = fib->mutation_safety_snapshot_inconsistent(snap);
+
+    // held must match the post-publish expectation (enter=true, exit=false).
+    if (static_cast<bool>(expect_held) != snap.held)
+        bad = true;
+
+    // Exit publish with residual stack depth is a tear (held false but
+    // mutation_stack still non-empty). Enter may publish held before stack
+    // push (depth==0 + held=true is documented-ok — #2184).
+    if (expect_held == 0 && snap.depth > 0)
+        bad = true;
+
+    // Full Guard path: process-wide held must be live after enter publish.
+    // Exit does not require process count == 0 (other evaluators may hold).
+    if (check_process != 0 && expect_held != 0) {
+        if (g_process_mutation_boundary_held_count.load(std::memory_order_acquire) == 0)
+            bad = true;
+    }
+
+    if (!bad)
+        return 1;
+
+    // Soft metric-only vs production hard canary (reuse steal snapshot mode).
+    if (aura::serve::is_steal_snapshot_hard_mode()) {
+        g_mutation_mirror_inconsistency_hard_total.fetch_add(1, std::memory_order_relaxed);
+        // Optional mark-failed: prefer failure path over silent long-held (AC1).
+        aura_evaluator_mark_outermost_mutation_failed();
+        if (aura::serve::is_steal_snapshot_hard_abort()) {
+            std::fprintf(stderr,
+                         "FATAL: mutation mirror canary inconsistent "
+                         "(AURA_STEAL_SNAPSHOT_HARD_ABORT=1, depth=%zu held=%d expect_held=%d)\n",
+                         snap.depth, snap.held ? 1 : 0, expect_held);
+            std::abort();
+        }
+    } else {
+        g_mutation_mirror_inconsistency_soft_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    return 0;
 }
 
 // Issue #2114: C-linkage held flag for reemit handshake (bridge / HotUpdate
@@ -2433,6 +2506,12 @@ namespace {
             const auto depth = Evaluator::active_mutation_stack_static().size();
             fib->publish_mutation_safety_mirrors(depth, /*held=*/true,
                                                  ev->defuse_version_for_test());
+            // Issue #2956: soft orch enter post-publish canary (no process
+            // held — soft path does not bump #2849 count). Soft metric-only
+            // unless production hard mode.
+            (void)aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1,
+                                                                   /*expect_held=*/1,
+                                                                   /*check_process=*/0);
         }
         aura::orch::g_orch_module_stats.orch_agent_boundary_entered_total.fetch_add(
             1, std::memory_order_relaxed);
@@ -2459,6 +2538,12 @@ namespace {
                                  ? g_orch_soft_boundary_ev->defuse_version_for_test()
                                  : std::uint64_t{0};
             fib->publish_mutation_safety_mirrors(depth, /*held=*/false, ver);
+            // Issue #2956: soft orch exit post-publish canary before flag clear
+            // (same order as #2515 — probe cannot see flag flip with stale
+            // held). Soft metric-only unless production hard mode.
+            (void)aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1,
+                                                                   /*expect_held=*/0,
+                                                                   /*check_process=*/0);
             fib->set_orch_agent_boundary_active(false);
         }
         // Issue #2600: shared exit helper — force-clear residual GcDefer
