@@ -2456,12 +2456,14 @@ export struct TypeChecker {
             &TypeChecker::occurrence_full_solve_recover_trampoline, this);
     }
 
-    // Issue #2750 / #2909: full ConstraintSystem::solve recover for occurrence
-    // faces and cone-truncate + outside-If goal drop force-closure.
-    // Returns true when SOLVED (occurrence roots / narrowing restored enough
-    // to commit). #2909: after SOLVED, non-empty occurrence_goals_ OR
-    // priority roots preferred; empty CS with SOLVED still clears truncate
-    // stamp so fingerprint path is not half-green on vacuous workspaces.
+    // Issue #2750 / #2909 / #2962: full ConstraintSystem::solve recover for
+    // occurrence faces and cone-truncate + outside-If goal drop force-closure.
+    // Returns true only when SOLVED (occurrence roots / narrowing restored
+    // enough to commit). #2962: CONFLICT/TIMEOUT is hard fail (half-green
+    // close — MutationBoundary must not ship). #2909: after SOLVED, non-empty
+    // occurrence_goals_ OR priority roots preferred; empty CS with SOLVED
+    // still clears truncate stamp so fingerprint path is not half-green on
+    // vacuous workspaces.
     [[nodiscard]] bool try_occurrence_hard_face_full_solve_recover() noexcept {
         try {
             // Issue #2909: one elevated goal-priority reverify before full
@@ -2469,6 +2471,7 @@ export struct TypeChecker {
             (void)solve_delta_cs_.try_goal_priority_reverify_before_full();
             std::vector<Constraint> unresolved;
             const auto full = solve_delta_cs_.solve(&unresolved);
+            // Issue #2962: only SOLVED counts as recover success (commit gate).
             if (full == SolveResult::SOLVED) {
                 solve_delta_cs_.note_full_solve_cleared_truncation();
                 // Clear engine-local truncate stamp so next fidelity proof
@@ -2477,6 +2480,7 @@ export struct TypeChecker {
                 last_partial_cone_dropped_ = 0;
                 return true;
             }
+            // CONFLICT / TIMEOUT / other → recover fail (commit hard-reject).
         } catch (...) {
             // [SILENCE-PRIM-#1669] Issue #2750: recover path must not throw past
             // commit_readiness — fail closed by returning false (class A).

@@ -1541,6 +1541,14 @@ inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_attempt_total{0}
 inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_total{0};
 inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_reject_total{0};
 inline std::atomic<std::uint32_t> g_cone_truncate_force_closure_wired{1};
+// Issue #2962: Agent-facing residual of #2909 — recover must reach SOLVED
+// (goals consistent); hard-reject force_reason cone_outside_goal_drop when
+// recover fails or returns "success" without SOLVED (half-green close).
+// Soft: observe only (no hard path). Quiet: no extra atomics beyond face loads.
+inline constexpr int kConeOutsideGoalDropRecoverRejectIssue = 2962;
+inline std::atomic<std::uint64_t> g_cone_outside_goal_drop_recover_ok_total{0};
+inline std::atomic<std::uint64_t> g_cone_outside_goal_drop_reject_total{0};
+inline std::atomic<std::uint32_t> g_cone_outside_goal_drop_recover_reject_wired{1};
 // Issue #2911: unified refined-consistency face (must be before commit_readiness).
 // Soft vs production decision table (#2911 AC6 — code comments only):
 //   Soft + drift        → observe counter; allow
@@ -1598,10 +1606,21 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     //    OR partial cone truncate (#2621 / #2560 soft|hard overflow).
     //    cone_truncate reason when only cone truncated (not reverify).
     //
-    // Issue #2909: production/Full + cone truncate + outside-If goal drop
-    // must force one full-solve recover (#2750 hook) before hard reject.
+    // Issue #2909 / #2962: production/Full + cone truncate + outside-If
+    // goal drop must force one full-solve recover (#2750 hook) before hard
+    // reject. Recover success allows commit only when SOLVED
+    // (solve_status==0) — #2962 residual half-green close (recover that
+    // reports true but leaves CONFLICT/TIMEOUT is force-rejected with
+    // force_reason cone_outside_goal_drop, Agent-visible code 10).
     // Soft: observe only. Quiet (no outside drop): keep prior cone_truncate
     // hard reject without extra recover cost when truncate_hard.
+    //
+    // Soft vs production decision table (#2962 AC2 / #2909 AC6):
+    //   Soft + truncate + outside drop  → Soft observe (cone_truncate allow)
+    //   production/Full + truncate + outside + recover SOLVED → allow (ok path)
+    //   production/Full + truncate + outside + recover fail/non-SOLVED
+    //       → hard-reject force_reason cone_outside_goal_drop
+    //   no truncate / no outside drop → zero extra recover (quiet)
     const bool trunc_face =
         (in.truncated_reverify && !in.truncated_full_solve_recovered) || in.partial_cone_truncated;
     if (trunc_face) {
@@ -1612,20 +1631,28 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         const bool outside_drop =
             in.cone_outside_goal_drop_face || (hard && cone_outside_goal_drop_total_v_read() > 0);
         if (hard && outside_drop) {
-            // Force-closure recover path (#2909).
+            // Force-closure recover path (#2909) + SOLVED gate (#2962).
             g_cone_truncate_force_closure_attempt_total.fetch_add(1, std::memory_order_relaxed);
-            if (g_occurrence_full_solve_recover_fn != nullptr &&
-                g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx)) {
+            bool recovered = false;
+            if (g_occurrence_full_solve_recover_fn != nullptr)
+                recovered = g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx);
+            // Issue #2962: recover must leave SOLVED (solve_status==0). A
+            // hook that returns true under CONFLICT/TIMEOUT is half-green.
+            if (recovered && in.solve_status != 0)
+                recovered = false;
+            if (recovered) {
                 g_cone_truncate_force_closure_total.fetch_add(1, std::memory_order_relaxed);
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+                g_cone_outside_goal_drop_recover_ok_total.fetch_add(1, std::memory_order_relaxed);
                 // Consume truncate + outside-drop so re-entry is clean.
                 clear_partial_cone_truncate_for_test();
                 clear_cone_outside_goal_drop_for_test();
-                // Fall through to later faces / ok (recovered).
+                // Fall through to later faces / ok (recovered SOLVED).
             } else {
                 g_cone_truncate_force_closure_reject_total.fetch_add(1, std::memory_order_relaxed);
                 g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+                g_cone_outside_goal_drop_reject_total.fetch_add(1, std::memory_order_relaxed);
                 return (set("cone_outside_goal_drop", false, 800), r);
             }
         } else if (in.truncate_hard) {
@@ -1669,10 +1696,18 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         if (cone_face || empty_face) {
             // Issue #2750: Option A recover half — one full solve via hook.
             // Quiet path (no face) never reaches here → zero extra solve cost.
-            if (g_occurrence_full_solve_recover_fn != nullptr &&
-                g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx)) {
+            bool recovered = false;
+            if (g_occurrence_full_solve_recover_fn != nullptr)
+                recovered = g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx);
+            // Issue #2962: SOLVED-only (solve_status==0) after recover.
+            if (recovered && in.solve_status != 0)
+                recovered = false;
+            if (recovered) {
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+                if (cone_face)
+                    g_cone_outside_goal_drop_recover_ok_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
                 // Consume faces so re-entry does not immediately re-reject.
                 clear_cone_outside_goal_drop_for_test();
                 clear_occurrence_empty_after_fence_for_test();
@@ -1680,6 +1715,8 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
             } else {
                 g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
                 if (cone_face) {
+                    // Issue #2962: Agent-facing reject total (outside-drop face).
+                    g_cone_outside_goal_drop_reject_total.fetch_add(1, std::memory_order_relaxed);
                     return (set("cone_outside_goal_drop", false, 800), r);
                 }
                 return (set("occurrence_empty_after_fence", false, 850), r);
@@ -2765,6 +2802,18 @@ inline void clear_cone_truncate_force_closure_for_test() noexcept {
     g_cone_truncate_force_closure_attempt_total.store(0, std::memory_order_relaxed);
     g_cone_truncate_force_closure_total.store(0, std::memory_order_relaxed);
     g_cone_truncate_force_closure_reject_total.store(0, std::memory_order_relaxed);
+    // Issue #2962: Agent-facing residual counters (same test reset surface).
+    g_cone_outside_goal_drop_recover_ok_total.store(0, std::memory_order_relaxed);
+    g_cone_outside_goal_drop_reject_total.store(0, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_recover_ok_total_v_read() noexcept {
+    return g_cone_outside_goal_drop_recover_ok_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_reject_total_v_read() noexcept {
+    return g_cone_outside_goal_drop_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t cone_outside_goal_drop_recover_reject_wired_v_read() noexcept {
+    return g_cone_outside_goal_drop_recover_reject_wired.load(std::memory_order_relaxed);
 }
 
 // ── Issue #2847: region type/occurrence commit bind ────────────────────

@@ -772,6 +772,151 @@ static void ac2909_6_linter_and_no_design() {
           "AC6: no new test file per #81967");
 }
 
+// ── Issue #2962: recover must be SOLVED; hard-reject half-green ──
+static void ac2962_1_recover_non_solved_hard_reject() {
+    std::println("\n--- #2962 AC1: recover true + CONFLICT → hard-reject ---");
+    CHECK(typed_audit::kConeOutsideGoalDropRecoverRejectIssue == 2962, "AC1: issue stamp");
+    reset_2621();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    apply_production_audit_defaults();
+    // Recover hook returns true but solve_status is CONFLICT (2) → #2962 rejects.
+    typed_audit::install_occurrence_full_solve_recover([](void*) noexcept -> bool { return true; },
+                                                       nullptr);
+    publish_partial_cone_truncate(true, 2);
+    typed_audit::publish_cone_outside_goal_drop(1);
+    CommitReadinessInput in;
+    in.partial_cone_truncated = true;
+    in.truncate_hard = true;
+    in.occurrence_face_hard = true;
+    in.cone_outside_goal_drop_face = true;
+    in.solve_status = 2; // CONFLICT
+    in.linear_ok = true;
+    in.blame_ok = true;
+    auto r = commit_readiness(in);
+    CHECK(!r.would_allow_commit, "AC1: no silent green when recover lacks SOLVED");
+    CHECK(r.force_reason == "cone_outside_goal_drop", "AC1: force_reason cone_outside_goal_drop");
+    CHECK(typed_audit::cone_outside_goal_drop_reject_total_v_read() >= 1,
+          "AC1: reject counter advanced");
+    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    // Null recover → reject.
+    clear_cone_outside_goal_drop_for_test();
+    clear_partial_cone_truncate_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    publish_partial_cone_truncate(true, 1);
+    typed_audit::publish_cone_outside_goal_drop(1);
+    in.solve_status = 0;
+    r = commit_readiness(in);
+    CHECK(!r.would_allow_commit, "AC1: null recover hard-rejects");
+    CHECK(r.force_reason == "cone_outside_goal_drop", "AC1: force_reason stable");
+    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    reset_2621();
+}
+
+static void ac2962_2_recover_ok_counters() {
+    std::println("\n--- #2962 AC2: recover SOLVED bumps recover-ok total ---");
+    reset_2621();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    apply_production_audit_defaults();
+    typed_audit::install_occurrence_full_solve_recover([](void*) noexcept -> bool { return true; },
+                                                       nullptr);
+    publish_partial_cone_truncate(true, 1);
+    typed_audit::publish_cone_outside_goal_drop(1);
+    CommitReadinessInput in;
+    in.partial_cone_truncated = true;
+    in.truncate_hard = true;
+    in.occurrence_face_hard = true;
+    in.cone_outside_goal_drop_face = true;
+    in.solve_status = 0; // SOLVED
+    in.linear_ok = true;
+    in.blame_ok = true;
+    const auto ok0 = typed_audit::cone_outside_goal_drop_recover_ok_total_v_read();
+    auto r = commit_readiness(in);
+    CHECK(r.would_allow_commit, "AC2: SOLVED recover allows");
+    CHECK(r.force_reason == "ok", "AC2: recovered → ok");
+    CHECK(typed_audit::cone_outside_goal_drop_recover_ok_total_v_read() > ok0,
+          "AC2: recover-ok total advanced");
+    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    reset_2621();
+}
+
+static void ac2962_3_soft_quiet() {
+    std::println("\n--- #2962 AC3: Soft/quiet zero hard-reject ---");
+    reset_2621();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    apply_dev_audit_defaults();
+    const auto rej0 = typed_audit::cone_outside_goal_drop_reject_total_v_read();
+    typed_audit::publish_cone_outside_goal_drop(1);
+    CommitReadinessInput in;
+    in.partial_cone_truncated = true;
+    in.truncate_hard = false;
+    in.occurrence_face_hard = false;
+    in.cone_outside_goal_drop_face = false;
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    auto r = commit_readiness(in);
+    CHECK(r.would_allow_commit, "AC3: Soft allows");
+    CHECK(typed_audit::cone_outside_goal_drop_reject_total_v_read() == rej0,
+          "AC3: Soft does not bump hard-reject total");
+    // Quiet production path (no truncate).
+    apply_production_audit_defaults();
+    clear_cone_outside_goal_drop_for_test();
+    clear_cone_truncate_force_closure_for_test();
+    const auto att0 = typed_audit::cone_truncate_force_closure_attempt_total_v_read();
+    in.partial_cone_truncated = false;
+    in.truncate_hard = true;
+    in.occurrence_face_hard = true;
+    r = commit_readiness(in);
+    CHECK(typed_audit::cone_truncate_force_closure_attempt_total_v_read() == att0,
+          "AC3: quiet no force-closure attempt");
+    (void)r;
+    reset_2621();
+}
+
+static void ac2962_4_schema_and_source() {
+    std::println("\n--- #2962 AC4: schema + source-cite ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto tc = read_file("src/compiler/type_checker.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto qr = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+    CHECK(tma.find("kConeOutsideGoalDropRecoverRejectIssue") != std::string::npos,
+          "AC4: issue constant");
+    CHECK(tma.find("g_cone_outside_goal_drop_recover_ok_total") != std::string::npos,
+          "AC4: recover-ok counter");
+    CHECK(tma.find("g_cone_outside_goal_drop_reject_total") != std::string::npos,
+          "AC4: reject counter");
+    CHECK(tma.find("#2962") != std::string::npos, "AC4: tma cites #2962");
+    CHECK(tc.find("#2962") != std::string::npos, "AC4: type_checker cites #2962");
+    CHECK(q.find("schema-2962") != std::string::npos || qr.find("schema-2962") != std::string::npos,
+          "AC4: schema-2962 query key");
+    CHECK(q.find("cone-outside-goal-drop-recover-ok-total") != std::string::npos ||
+              qr.find("cone-outside-goal-drop-recover-ok-total") != std::string::npos,
+          "AC4: recover-ok query key");
+    CHECK(q.find("cone-outside-goal-drop-reject-total") != std::string::npos ||
+              qr.find("cone-outside-goal-drop-reject-total") != std::string::npos,
+          "AC4: reject query key");
+    CHECK(q.find("schema-2909") != std::string::npos, "AC4: schema-2909 preserved");
+}
+
+static void ac2962_5_linter_no_design() {
+    std::println("\n--- #2962 AC5: linter + no design + suite extend ---");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_cone_outside_goal_drop_recover_reject_2962.py");
+    const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
+    CHECK(build.find("check_cone_outside_goal_drop_recover_reject_2962") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2962") != std::string::npos, "AC5: linter present");
+    CHECK(t.find("ac2962_1_recover_non_solved_hard_reject") != std::string::npos,
+          "AC5: AC1 test present");
+    CHECK(read_file("docs/design/2962-cone-outside-recover-reject.md").empty(),
+          "AC5: no docs/design/2962-*");
+    CHECK(read_file("tests/compiler/test_issue_2962.cpp").empty(), "AC5: no test_issue_2962.cpp");
+}
+
 } // namespace
 
 // File-scope forward decls for #2694 helpers defined after run_test (pre-existing
@@ -839,9 +984,14 @@ int run_test_partial_cone_commit_gate() {
     ac2909_4_schema_and_publish_wire();
     ac2909_5_source_cite();
     ac2909_6_linter_and_no_design();
-    std::println(
-        "\n=== #2621 + #2646 + #2703 + #2704 + #2716 + #2750 + #2909: {} passed, {} failed ===",
-        g_passed, g_failed);
+    // Issue #2962: residual — recover must be SOLVED; hard-reject otherwise.
+    std::println("\n=== Issue #2962: cone-outside-goal-drop recover SOLVED gate ===");
+    ac2962_1_recover_non_solved_hard_reject();
+    ac2962_2_recover_ok_counters();
+    ac2962_3_soft_quiet();
+    ac2962_4_schema_and_source();
+    ac2962_5_linter_no_design();
+    std::println("\n=== #2621..#2962: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

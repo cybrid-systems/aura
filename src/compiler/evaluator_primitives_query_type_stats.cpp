@@ -1371,6 +1371,24 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                                       cone_truncate_force_closure_wired_v_read()));
                                         insert_kv("schema-2909", kConeTruncateForceClosureIssue);
                                         insert_kv("issue-2909", kConeTruncateForceClosureIssue);
+                                        // Issue #2962: residual SOLVED-only recover /
+                                        // hard-reject Agent keys (additive to #2909).
+                                        insert_kv(
+                                            "cone-outside-goal-drop-recover-ok-total",
+                                            static_cast<std::int64_t>(
+                                                cone_outside_goal_drop_recover_ok_total_v_read()));
+                                        insert_kv(
+                                            "cone-outside-goal-drop-reject-total",
+                                            static_cast<std::int64_t>(
+                                                cone_outside_goal_drop_reject_total_v_read()));
+                                        insert_kv(
+                                            "cone-outside-goal-drop-recover-reject-wired",
+                                            static_cast<std::int64_t>(
+                                                cone_outside_goal_drop_recover_reject_wired_v_read()));
+                                        insert_kv("schema-2962",
+                                                  kConeOutsideGoalDropRecoverRejectIssue);
+                                        insert_kv("issue-2962",
+                                                  kConeOutsideGoalDropRecoverRejectIssue);
                                     }
                                 }
                             }

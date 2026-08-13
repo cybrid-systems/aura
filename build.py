@@ -2525,6 +2525,18 @@ def cmd_lint():
             "Issue #2703 cone-outside-goal-drop linter failed — run python3 scripts/coverage/checks/check_cone_outside_goal_drop_2703.py"
         )
         return r
+    # Issue #2962: residual SOLVED-only recover / hard-reject on cone truncate
+    # + outside drop (refine #2909). Extends test_partial_cone_commit_gate.
+    cogd2962 = COVERAGE_CHECKS / "check_cone_outside_goal_drop_recover_reject_2962.py"
+    if not cogd2962.exists():
+        fail(f"missing {cogd2962}")
+        return 1
+    r = run([sys.executable, str(cogd2962)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2962 cone-outside-goal-drop recover-reject linter failed — run python3 scripts/coverage/checks/check_cone_outside_goal_drop_recover_reject_2962.py"
+        )
+        return r
     # Issue #2704: production hard-face on OccurrenceGoal rehydrate miss
     # after steal/densify fence. Wires
     # check_occurrence_empty_after_fence_2704.py so the new force_reason
@@ -5964,6 +5976,25 @@ def cmd_cone_truncate_force_closure_2909_coverage():
         fail("cone truncate force-closure (#2909) coverage contract rows failed")
         return 1
     ok("cone truncate force-closure (#2909) coverage clean")
+    return 0
+
+
+def cmd_cone_outside_goal_drop_recover_reject_2962_coverage():
+    """Issue #2962: production hard-reject when cone+outside recover fails SOLVED.
+
+    Residual of #2909: recover must leave solve_status==0; Agent-facing
+    recover-ok / reject totals + schema-2962.
+    """
+    print(f"{B}=== cone-outside-goal-drop recover-reject coverage (#2962) ==={N}")
+    script = COVERAGE_CHECKS / "check_cone_outside_goal_drop_recover_reject_2962.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cone-outside-goal-drop recover-reject (#2962) coverage contract rows failed")
+        return 1
+    ok("cone-outside-goal-drop recover-reject (#2962) coverage clean")
     return 0
 
 
@@ -13583,6 +13614,8 @@ def main():
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
         "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,
+        "cone-outside-goal-drop-recover-reject-2962": cmd_cone_outside_goal_drop_recover_reject_2962_coverage,
+        "cone-outside-goal-drop-recover-reject-2962-coverage": cmd_cone_outside_goal_drop_recover_reject_2962_coverage,
         "occurrence-persist-production-2910": cmd_occurrence_persist_production_2910,
         "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,
         "occurrence-commit-snapshot-2938": cmd_occurrence_commit_snapshot_2938,
