@@ -186,86 +186,151 @@ void register_ast_primitives(PrimRegistrar add, Evaluator& ev,
     //   target) as a named checkpoint — dual-workspace Phase 1 (#2918).
     //   Does **not** use bare (current-source) (that is current_flat_).
     //   Names are optional; unnamed snapshots get auto-generated names.
-    //   When workspace_flat_ is null → -1 (no silent empty default path).
+    //
+    // Issue #2966 contract (denseness / stdin probes):
+    //   Snapshot requires a **non-empty workspace** established by
+    //   set-code / mutate:*. Top-level (define …) / (require …) alone
+    //   do **not** populate workspace_flat_ — failure returns -1 and
+    //   publishes last reason via (ast:snapshot-fail-reason) +
+    //   query:workspace-snapshot-stats keys (never silent -1 only).
+    //   Reasons: :guard-reject | :no-workspace | :empty-source
+    //   Successful path uses workspace unparse (#2918).
     //
     // (#107 part 6) Also stores a direct deep-copy of the workspace's
     // FlatAST and StringPool. ast:restore prefers the direct copy
     // (lossless, no reparse) and falls back to the source string
     // only when the direct copy is missing (e.g. for snapshots
     // taken before this feature shipped).
-    add("ast:snapshot", [&ev, workspace_source_string](std::span<const EvalValue> a) -> EvalValue {
-        // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
-        // defuse_version_ + rollback. ok = false on every error path so
-        // the Guard's dtor triggers rollback consistently.
-        bool ok = true;
-        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
-        if (!guard_r) {
-            return make_int(-1);
-        }
-        auto guard = std::move(*guard_r);
-        // Issue #2918: no workspace → hard fail (not empty string from Default path).
-        if (!ev.workspace_flat_ || !ev.workspace_pool_) {
-            ok = false;
-            return make_int(-1);
-        }
+    // Issue #2966: fail-reason codes (Agent-visible, stable).
+    // 0=none, 1=guard-reject, 2=no-workspace, 3=empty-source
+    constexpr std::uint8_t kSnapFailNone = 0;
+    constexpr std::uint8_t kSnapFailGuard = 1;
+    constexpr std::uint8_t kSnapFailNoWorkspace = 2;
+    constexpr std::uint8_t kSnapFailEmptySource = 3;
+    (void)kSnapFailNone;
 
-        // Issue #2918: workspace unparse only (current-source :workspace).
-        auto source_opt = workspace_source_string();
-        if (!source_opt) {
-            ok = false;
-            return make_int(-1);
-        }
-        auto source = std::move(*source_opt);
-
-        // Optional name
-        std::string name;
-        if (a.size() >= 1 && is_string(a[0])) {
-            auto name_idx = as_string_idx(a[0]);
-            if (name_idx < ev.string_heap_.size())
-                name = ev.string_heap_[name_idx];
-        }
-
-        // (#107 part 6) Take a direct deep copy of the workspace's
-        // flat + pool. The snapshot's std::unique_ptr<FlatAST> uses
-        // std::pmr::get_default_resource() (heap); the data is
-        // self-contained and does not alias the workspace. On
-        // restore, we copy-assign back into the workspace pool/flat
-        // (whose pmr vectors use the arena allocator) — the arena
-        // ends up with the restored data, and the snapshot retains
-        // its own heap copy for subsequent restores.
-        // Issue #261: reclaim unreachable NodeId slots before the
-        // deep copy so long-running sessions don't amplify dead
-        // slots into every snapshot.
-        ev.workspace_flat_->recycle_dead_nodes();
-
-        Evaluator::FlatSnapshot fs;
-        try {
-            fs.flat = std::make_unique<aura::ast::FlatAST>();
-            fs.pool = std::make_unique<aura::ast::StringPool>();
-            *fs.flat = *ev.workspace_flat_;
-            *fs.pool = *ev.workspace_pool_;
-            fs.has_flat = true;
-            fs.flat_generation = ev.workspace_flat_->generation();
-            fs.flat_size = ev.workspace_flat_->size();
-            if (ev.workspace_tree_) {
-                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-                if (auto* node = wt->active())
-                    fs.cow_epoch = node->cow_epoch;
+    add("ast:snapshot",
+        [&ev, workspace_source_string, kSnapFailGuard, kSnapFailNoWorkspace,
+         kSnapFailEmptySource](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #1904: MutationBoundaryGuard RAII owns workspace_mtx_ +
+            // defuse_version_ + rollback. ok = false on every error path so
+            // the Guard's dtor triggers rollback consistently.
+            bool ok = true;
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                // Issue #2966: observable fail — guard quota/reject.
+                ev.note_ast_snapshot_fail(kSnapFailGuard);
+                return make_int(-1);
             }
-        } catch (...) {
-            // [SILENCE-PRIM-#615] OOM during deep copy — store the
-            // source anyway so the snapshot at least exists for
-            // diff / fallback restore.
-            fs.has_flat = false;
-        }
+            auto guard = std::move(*guard_r);
+            // Issue #2918 / #2966: no workspace → hard fail with reason.
+            // Top-level define-only denseness probes hit this arm.
+            if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+                ok = false;
+                ev.note_ast_snapshot_fail(kSnapFailNoWorkspace);
+                return make_int(-1);
+            }
 
-        auto id = ev.snapshot_sources_.size();
-        ev.snapshot_sources_.push_back(source);
-        ev.snapshot_names_.push_back(name);
-        ev.snapshot_flats_.push_back(std::move(fs));
-        return make_int(static_cast<std::int64_t>(id));
+            // Issue #2918: workspace unparse only (current-source :workspace).
+            auto source_opt = workspace_source_string();
+            if (!source_opt) {
+                ok = false;
+                ev.note_ast_snapshot_fail(kSnapFailEmptySource);
+                return make_int(-1);
+            }
+            auto source = std::move(*source_opt);
+            // Issue #2966: empty set-code / vacuous workspace is not a
+            // usable denseness checkpoint — fail with :empty-source.
+            if (source.empty() && ev.workspace_flat_->size() == 0) {
+                ok = false;
+                ev.note_ast_snapshot_fail(kSnapFailEmptySource);
+                return make_int(-1);
+            }
+
+            // Optional name
+            std::string name;
+            if (a.size() >= 1 && is_string(a[0])) {
+                auto name_idx = as_string_idx(a[0]);
+                if (name_idx < ev.string_heap_.size())
+                    name = ev.string_heap_[name_idx];
+            }
+
+            // (#107 part 6) Take a direct deep copy of the workspace's
+            // flat + pool. The snapshot's std::unique_ptr<FlatAST> uses
+            // std::pmr::get_default_resource() (heap); the data is
+            // self-contained and does not alias the workspace. On
+            // restore, we copy-assign back into the workspace pool/flat
+            // (whose pmr vectors use the arena allocator) — the arena
+            // ends up with the restored data, and the snapshot retains
+            // its own heap copy for subsequent restores.
+            // Issue #261: reclaim unreachable NodeId slots before the
+            // deep copy so long-running sessions don't amplify dead
+            // slots into every snapshot.
+            ev.workspace_flat_->recycle_dead_nodes();
+
+            Evaluator::FlatSnapshot fs;
+            try {
+                fs.flat = std::make_unique<aura::ast::FlatAST>();
+                fs.pool = std::make_unique<aura::ast::StringPool>();
+                *fs.flat = *ev.workspace_flat_;
+                *fs.pool = *ev.workspace_pool_;
+                fs.has_flat = true;
+                fs.flat_generation = ev.workspace_flat_->generation();
+                fs.flat_size = ev.workspace_flat_->size();
+                if (ev.workspace_tree_) {
+                    auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+                    if (auto* node = wt->active())
+                        fs.cow_epoch = node->cow_epoch;
+                }
+            } catch (...) {
+                // [SILENCE-PRIM-#615] OOM during deep copy — store the
+                // source anyway so the snapshot at least exists for
+                // diff / fallback restore.
+                fs.has_flat = false;
+            }
+
+            auto id = ev.snapshot_sources_.size();
+            ev.snapshot_sources_.push_back(source);
+            ev.snapshot_names_.push_back(name);
+            ev.snapshot_flats_.push_back(std::move(fs));
+            // Issue #2966: clear last fail reason on success.
+            ev.note_ast_snapshot_ok();
+            return make_int(static_cast<std::int64_t>(id));
+        });
+
+    // (ast:snapshot-fail-reason)
+    //   → keyword of last ast:snapshot failure (#2966).
+    //   :none | :guard-reject | :no-workspace | :empty-source
+    //   Agents / denseness probes call this after -1 instead of guessing.
+    add("ast:snapshot-fail-reason", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        (void)a;
+        const char* kw = ":none";
+        switch (ev.last_ast_snapshot_fail_reason()) {
+            case 1:
+                kw = ":guard-reject";
+                break;
+            case 2:
+                kw = ":no-workspace";
+                break;
+            case 3:
+                kw = ":empty-source";
+                break;
+            default:
+                kw = ":none";
+                break;
+        }
+        auto kw_idx = ev.keyword_table_.size();
+        for (std::size_t ki = 0; ki < ev.keyword_table_.size(); ++ki) {
+            if (ev.keyword_table_[ki] == kw) {
+                kw_idx = ki;
+                break;
+            }
+        }
+        if (kw_idx == ev.keyword_table_.size())
+            ev.keyword_table_.push_back(kw);
+        return make_keyword(kw_idx);
     });
 
     // ── Issue #107 part 3: AST versioning protocol primitive ──────────
