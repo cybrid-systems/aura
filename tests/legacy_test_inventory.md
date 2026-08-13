@@ -1135,7 +1135,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_security_event_wal_replay.cpp` (—) [domain_suite, theme_compiler] — AC1: ring ≥ 1024; ring-wrap-total increments when N>1024 denies
 - `tests/compiler/test_security_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Fresh / vacuous → health_bp high / force-reason ok
 - `tests/core/test_set_arena_atomic_owner.cpp` (—) [domain_suite, theme_core] — test_set_arena_atomic_owner.cpp — Issue #1663
-- `tests/compiler/test_solve_delta_epoch_filter.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2065 — solve_delta epoch filter test.
+- `tests/compiler/test_solve_delta_epoch_filter.cpp` (—) [domain_suite, theme_compiler] — Issue #2065 — solve_delta epoch filter test.
 - `tests/serve/test_spawn_quota_no_leak.cpp` (—) [domain_suite, theme_serve] — AC1: Quota reject never calls agent_names_->put (C++ + Aura)
 - `tests/core/test_stringpool_buf_fragmentation_lock.cpp` (—) [domain_suite, theme_core] — AC1: 4 writers intern + 4 readers buf_fragmentation (no crash)
 - `tests/compiler/test_subsecond_clock.cpp` (—) [domain_suite, theme_compiler] — AC1: current-time-ms / monotonic-ms return ints

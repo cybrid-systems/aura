@@ -1626,7 +1626,7 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
     // strengthens consistent_unify edge cases with
     // Dynamic + Forall + Occurrence mixtures; this
     // slice ships the observability foundation.
-    if (metrics_) {
+    if (metrics_full()) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->consistent_unify_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1713,7 +1713,7 @@ bool ConstraintSystem::consistent_subtype(TypeId sub, TypeId sup) {
     // Issue #383: bump the consistent_subtype
     // counter for observability. See consistent_unify
     // above for the full rationale.
-    if (metrics_) {
+    if (metrics_full()) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->consistent_subtype_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1767,7 +1767,7 @@ bool ConstraintSystem::consistent_instance(TypeId poly_or_lhs, TypeId mono_or_rh
                                            bool* depth_capped_out, InstanceRepairHint* hint_out) {
     if (depth_capped_out)
         *depth_capped_out = false;
-    if (metrics_) {
+    if (metrics_full()) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->instance_unify_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1845,7 +1845,7 @@ SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
                     worklist.push_back(idx);
                     continue;
                 }
-                if (ok && metrics_) {
+                if (ok && metrics_full()) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->instance_goal_solve_total.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -1998,19 +1998,18 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
     // Issue #2318 / #2508: anti-starve streak + goal-priority reverify gate.
     // Issue #2913: locality SLO after local SOLVED residual (Soft observe /
     // production escalate). TIMEOUT already escalates via #2277 inside impl.
-    if (metrics_) {
+    // Issue #2993: skip chrono + time fetch_add in Minimal (default).
+    SolveResult result;
+    if (metrics_full()) {
         auto* m = static_cast<CompilerMetrics*>(metrics_);
         auto start = std::chrono::steady_clock::now();
-        auto result = solve_delta_impl(unresolved_out);
+        result = solve_delta_impl(unresolved_out);
         auto end = std::chrono::steady_clock::now();
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
         m->delta_solve_time_us.fetch_add(static_cast<std::uint64_t>(us), std::memory_order_relaxed);
-        SolveResult replaced = result;
-        if (check_truncate_anti_starve_impl(unresolved_out, result, replaced))
-            result = replaced;
-        return escalate_locality_slo_if_production(result, unresolved_out);
+    } else {
+        result = solve_delta_impl(unresolved_out);
     }
-    auto result = solve_delta_impl(unresolved_out);
     SolveResult replaced = result;
     if (check_truncate_anti_starve_impl(unresolved_out, result, replaced))
         result = replaced;
@@ -2045,7 +2044,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         if (!live_goals && !have_roots)
             return SolveResult::SOLVED; // AC4: zero extra reverify
 
-        if (metrics_) {
+        if (metrics_full()) {
             auto* m = static_cast<CompilerMetrics*>(metrics_);
             m->occurrence_goal_forced_reverify_total.fetch_add(1, std::memory_order_relaxed);
             if (live_goals) {
@@ -2125,7 +2124,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             // same root within the same mutation epoch). Bumps
             // solve_delta_epoch_skip_total for observability.
             if (processed_roots_this_epoch_.count(root) > 0) {
-                if (metrics_) {
+                if (metrics_full()) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->solve_delta_epoch_skip_total.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -2259,7 +2258,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     // signal but not surfaced.
     // Issue #2913: snapshot pruned residual for locality SLO (post-delta).
     last_locality_pruned_ = pruned;
-    if (metrics_) {
+    if (metrics_full()) {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->delta_constraints_processed_total.fetch_add(worklist.size(), std::memory_order_relaxed);
         m->delta_constraints_total.fetch_add(dirty_count_, std::memory_order_relaxed);
@@ -2342,7 +2341,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             if (c.kind == Constraint::EQUAL)
                 ok = unify(c.lhs, c.rhs);
             else if (c.kind == Constraint::SUBTYPE) {
-                if (metrics_) {
+                if (metrics_full()) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->subtype_goal_solve_total.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -2355,7 +2354,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
                     worklist.push_back(idx);
                     continue;
                 }
-                if (ok && metrics_) {
+                if (ok && metrics_full()) {
                     auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                     m->instance_goal_solve_total.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -2392,7 +2391,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         // next pass. Bump the lifetime counter for
         // observability.
         if (dirty_count_ > dirty_before) {
-            if (metrics_) {
+            if (metrics_full()) {
                 auto* m = static_cast<struct CompilerMetrics*>(metrics_);
                 m->worklist_restart_total.fetch_add(1, std::memory_order_relaxed);
             }

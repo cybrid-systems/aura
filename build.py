@@ -2459,6 +2459,18 @@ def cmd_lint():
             "Issue #2992 gradual permissiveness linter failed — run python3 scripts/coverage/checks/check_gradual_permissiveness_2992.py"
         )
         return r
+    # Issue #2993: type-check metrics tier (minimal default).
+    # Extends test_solve_delta_epoch_filter + incremental batch + test_ir (#81967).
+    tmt_script = COVERAGE_CHECKS / "check_typecheck_metrics_tier_2993.py"
+    if not tmt_script.exists():
+        fail(f"missing {tmt_script}")
+        return 1
+    r = run([sys.executable, str(tmt_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2993 typecheck metrics tier linter failed — run python3 scripts/coverage/checks/check_typecheck_metrics_tier_2993.py"
+        )
+        return r
     # Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count.
     # Extends test_type_linear_commit_health (#81967); no docs/design/.
     lcrc_script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
@@ -10292,6 +10304,21 @@ def cmd_gradual_permissiveness_2992_coverage():
     return 0
 
 
+def cmd_typecheck_metrics_tier_2993_coverage():
+    """Issue #2993: type-check metrics tier minimal default."""
+    print(f"{B}=== typecheck metrics tier coverage (#2993) ==={N}")
+    script = COVERAGE_CHECKS / "check_typecheck_metrics_tier_2993.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("typecheck metrics tier (#2993) coverage contract rows failed")
+        return 1
+    ok("typecheck metrics tier (#2993) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -14268,6 +14295,7 @@ def main():
         "workspace-concurrent-policy-2990": cmd_workspace_concurrent_policy_2990_coverage,
         "coercion-provenance-hf-mutate-2991": cmd_coercion_provenance_hf_mutate_2991_coverage,
         "gradual-permissiveness-2992": cmd_gradual_permissiveness_2992_coverage,
+        "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
