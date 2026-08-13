@@ -184,6 +184,7 @@ target_sources(aura PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/steal_safety.cpp
+    src/serve/runtime_production_abi.cpp # Issue #2955 production ABI self-check
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
@@ -428,6 +429,7 @@ target_sources(test_ir PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/steal_safety.cpp
+    src/serve/runtime_production_abi.cpp # Issue #2955
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
@@ -497,6 +499,7 @@ target_sources(test_concurrent PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/steal_safety.cpp
+    src/serve/runtime_production_abi.cpp # Issue #2955
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/exec/execution_adapter.cpp
@@ -645,6 +648,7 @@ add_library(aura_test_objects SHARED
     src/serve/worker.cpp
     # Issue #2699 / #2752: unified steal safety transaction (worker Ok path).
     src/serve/steal_safety.cpp
+    src/serve/runtime_production_abi.cpp # Issue #2955 production ABI self-check
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp
     src/serve/http_health.cpp
@@ -907,6 +911,7 @@ target_sources(test_gc_evaluator_integration PRIVATE
     src/serve/fiber.cpp
     src/serve/worker.cpp
     src/serve/steal_safety.cpp
+    src/serve/runtime_production_abi.cpp # Issue #2955
     src/serve/thread_pool.cpp
     src/serve/scheduler.cpp
     src/serve/gc_coordinator.cpp

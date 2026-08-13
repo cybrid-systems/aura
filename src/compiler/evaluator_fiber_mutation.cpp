@@ -1725,6 +1725,10 @@ extern "C" std::size_t aura_evaluator_mutation_stack_depth_from_ptr(void* mutati
     using C = Evaluator::MutationCheckpoint;
     return static_cast<std::vector<C>*>(mutation_stack_storage)->size();
 }
+// Issue #2955: strong-identity marker for depth-from-ptr (production ABI).
+extern "C" int aura_abi_strong_mutation_depth_from_ptr_v(void) noexcept {
+    return 1;
+}
 
 // Issue #1992: C-linkage shims for the CAS-protected
 // ensure_mutation_stack_ptr / ensure_yield_stack_ptr.
@@ -2951,6 +2955,16 @@ extern "C" void aura_evaluator_probe_linear_on_steal() {
 // Soft: steps 3–4 free when residual zero / stamp unset (relaxed loads).
 // Does NOT clear resume_layout_stamp (resume dual-check retains it — #2351).
 // Does NOT reemit / SoftEnter (leave to Guard / #2114).
+// Issue #2955: strong-identity marker for production ABI self-check.
+// Weak stub in fiber_bridge returns 0; this strong def wins when linked.
+extern "C" int aura_abi_strong_steal_complete_v(void) noexcept {
+    return 1;
+}
+// Issue #2955: mutation boundary held is defined strong in this TU.
+extern "C" int aura_abi_strong_mutation_held_v(void) noexcept {
+    return 1;
+}
+
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Always count the steal-complete entry (even with null fiber).
     aura::gc_hooks::g_steal_complete_total.fetch_add(1, std::memory_order_relaxed);

@@ -16,7 +16,8 @@
 #include "serve/scheduler.h"
 #include "serve/http_health.h"
 #include "serve/aura_platform.h"
-#include "compiler/runtime_paths.h" // #906
+#include "serve/runtime_production_abi.h" // #2955 production ABI self-check
+#include "compiler/runtime_paths.h"       // #906
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 // Issue #2076 / #2053: production security defaults (must be before import std).
 #include "compiler/security_defaults.hh"
@@ -370,6 +371,12 @@ int main(int argc, char* argv[]) {
     //   AURA_MUTATION_AUDIT_WAL / AURA_PERSIST_DIR → enable WAL
     // Dev/test: AURA_SANDBOX=off restores Off + Sampled audit.
     aura::compiler::security::apply_production_security_defaults();
+
+    // Issue #2955: production startup strong-symbol ABI self-check for
+    // steal-complete / fiber evaluator_id / mutation held / depth-from-ptr.
+    // Soft / AURA_SANDBOX=off / unit light-link: no-op. Production defaults
+    // with missing strong hooks → abort (never multi-worker with weak no-ops).
+    aura_runtime_require_production_abi_c();
 
     // ── Crash handler: print backtrace on fatal signal ────────────
     // ── Crash handler: print backtrace on fatal signal ────────────

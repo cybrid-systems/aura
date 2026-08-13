@@ -77,6 +77,11 @@ extern "C" void* aura_fiber_evaluator_id_for_steal_safety(void* fiber_ptr) noexc
     auto* fb = static_cast<Fiber*>(fiber_ptr);
     return fb->evaluator_id();
 }
+// Issue #2955: strong-identity marker for fiber evaluator_id steal safety.
+// Weak stub in fiber_bridge returns 0; strong wins when fiber.cpp is linked.
+extern "C" int aura_abi_strong_fiber_eval_id_v(void) noexcept {
+    return 1;
+}
 
 std::atomic<uint64_t> Fiber::next_id_{1};
 std::atomic<std::uint64_t> Fiber::static_gc_pause_attributed_to_mutation_count_{0};

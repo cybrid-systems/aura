@@ -36,7 +36,8 @@ module;
 #include "hash_meta.h"
 #include "basis_points.h"
 #include "serve/fiber.h"
-#include "serve/steal_safety.h" // Issue #2929: StealInvariant counters / last reject bits
+#include "serve/steal_safety.h"           // Issue #2929: StealInvariant counters / last reject bits
+#include "serve/runtime_production_abi.h" // Issue #2955 production ABI self-check counters
 #include "core/gc_hooks.h"
 #include "core/lifetime_contract.h"          // Issue #2300
 #include "core/densify_consistency_report.h" // Issue #2341
@@ -11358,6 +11359,21 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("steal-complete-strong-required-wired", 1);
             insert_kv("schema-2377", 2377);
             insert_kv("issue-2377", 2377);
+            // Issue #2955: production ABI self-check (strong steal/mutation/GC hooks).
+            insert_kv(
+                "production-abi-selfcheck-ok-total",
+                static_cast<std::int64_t>(aura::serve::production_abi_selfcheck_ok_total_v_read()));
+            insert_kv("production-abi-selfcheck-fail-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::production_abi_selfcheck_fail_total_v_read()));
+            insert_kv("production-abi-selfcheck-last-fail-bits",
+                      static_cast<std::int64_t>(
+                          aura::serve::production_abi_selfcheck_last_fail_bits_v_read()));
+            insert_kv(
+                "production-abi-selfcheck-wired",
+                static_cast<std::int64_t>(aura::serve::production_abi_selfcheck_wired_v_read()));
+            insert_kv("schema-2955", 2955);
+            insert_kv("issue-2955", 2955);
             // Issue #2351: steal-complete LayoutStamp dual-check (lineage with #2203).
             {
                 std::int64_t steal_mm = 0;
