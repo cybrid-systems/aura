@@ -11490,6 +11490,17 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 insert_kv(
                     "steal-invariant-bit-envframe",
                     static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::EnvFrameOk)));
+                insert_kv(
+                    "steal-invariant-lifetime-proof-fail-total",
+                    static_cast<std::int64_t>(
+                        aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read()));
+                insert_kv("steal-invariant-bit-lifetime-proof",
+                          static_cast<std::int64_t>(
+                              steal_invariant_mask(StealInvariant::LifetimeProofOk)));
+                insert_kv(
+                    "steal-safety-residual-lifetime-proof-reject-total",
+                    static_cast<std::int64_t>(
+                        aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read()));
                 insert_kv("steal-invariant-table-wired",
                           static_cast<std::int64_t>(
                               aura::serve::steal_safety_invariant_table_wired_v_read()));
@@ -11513,6 +11524,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("issue-2901", 2901);
                 insert_kv("schema-2954", 2954);
                 insert_kv("issue-2954", 2954);
+                // Issue #2957: residual arm (f) last LifetimeConsistencyProof.
+                insert_kv("schema-2957", 2957);
+                insert_kv("issue-2957", 2957);
+                insert_kv("schema-2888", 2888); // #2888 surfaces non-regressing
             }
             // Issue #2667: production-only hard residual GcDefer on
             // steal-complete + PanicCheckpoint rebind. Bumped when

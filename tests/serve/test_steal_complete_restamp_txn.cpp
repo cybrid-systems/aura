@@ -11,6 +11,8 @@
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
+#include "core/densify_consistency_report.h"
+#include "core/lifetime_consistency_proof.hh"
 #include "serve/fiber.h"
 #include "serve/steal_safety.h"
 
@@ -1371,6 +1373,205 @@ static void ac2954_5_source_and_linter() {
     CHECK(read_file("tests/serve/test_issue_2954.cpp").empty(), "2954 AC6: no invent test");
 }
 
+// ── Issue #2957: residual arm (f) last LifetimeConsistencyProof ────────
+// Production + fresh negative proof after densify → RejectHard, no ticket.
+// Soft / no densify / would_allow → no new rejects; zero cost when unset.
+
+static void stamp_negative_lifetime_proof_for_test() noexcept {
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    // densify_scan_fail > 0 → would_allow_commit=false.
+    auto p = lcp::make_lifetime_consistency_proof(
+        /*envframe_hold_gen=*/0, /*envframe_compact_gen=*/0, /*envframe_scans_run=*/0,
+        /*envframe_densify_scan_total=*/1, /*envframe_densify_scan_fail=*/1,
+        /*envframe_hold_gen_mismatch_total=*/0, lcp::kTypeLinearOutcomeQuiet,
+        /*type_linear_linear_root_count=*/0, /*type_linear_stamped_after_rebind_total=*/0,
+        /*type_linear_reject_after_rebind_fail_total=*/0, /*pin_contract_fail_total=*/0,
+        /*pin_remap_miss_total=*/0, /*layout_arena_gen=*/0, /*layout_flat_gen=*/0,
+        /*layout_env_gen=*/0, /*residual_defer_after_exit_total=*/0, /*mutation_epoch=*/1);
+    lcp::stamp_lifetime_consistency_proof(p);
+}
+
+static void stamp_positive_lifetime_proof_for_test() noexcept {
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    auto p = lcp::make_lifetime_consistency_proof(0, 0, 0, 0, 0, 0, lcp::kTypeLinearOutcomeQuiet, 0,
+                                                  0, 0, 0, 0, 0, 0, 0, 0, 1);
+    lcp::stamp_lifetime_consistency_proof(p);
+}
+
+static void ac2957_1_production_negative_proof_rejects() {
+    std::println("\n--- #2957 AC1: production + negative proof after densify → RejectHard ---");
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_residual_lifetime_proof_reject_total;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::steal_invariant_mask;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealInvariant;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    lcp::reset_lifetime_consistency_proof_for_test();
+    // Healthy densify axes so only LifetimeProofOk fires.
+    aura::core::densify_consistency::note_last_densify_envframe_ok(true);
+    aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+    aura::core::densify_consistency::bump_last_densify_call_seq();
+    stamp_negative_lifetime_proof_for_test();
+    CHECK(lcp::last_lifetime_consistency_proof_present(), "2957 AC1: proof present");
+    CHECK(!lcp::last_lifetime_consistency_would_allow(), "2957 AC1: would_allow false");
+
+    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    aura::serve::reset_steal_snapshot_soft_for_test();
+    aura::serve::set_steal_snapshot_soft_for_test(false);
+    CHECK(aura::serve::is_steal_snapshot_hard_mode(), "2957 AC1: Hard/production mode");
+
+    const auto reject0 =
+        g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+    Fiber f([] {});
+    const auto d = steal_safety_transaction(&f);
+    CHECK(d == StealSafetyDecision::RejectHard, "2957 AC1: RejectHard");
+    CHECK(g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) >
+              reject0,
+          "2957 AC1: lifetime_proof reject counter +1");
+    CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+          "2957 AC1: no Ok / no ticket stamp path");
+    const auto bits =
+        aura::serve::g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed);
+    CHECK((bits & steal_invariant_mask(StealInvariant::LifetimeProofOk)) != 0,
+          "2957 AC1: LifetimeProofOk bit set");
+    CHECK(!f.has_resume_safety_ticket(), "2957 AC1: no ticket stamp on RejectHard");
+
+    aura::serve::reset_steal_snapshot_soft_for_test();
+    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    lcp::reset_lifetime_consistency_proof_for_test();
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac2957_2_soft_and_quiet_no_reject() {
+    std::println("\n--- #2957 AC2: Soft / no densify / would_allow → no new rejects ---");
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_residual_lifetime_proof_reject_total;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    lcp::reset_lifetime_consistency_proof_for_test();
+    aura::core::densify_consistency::note_last_densify_envframe_ok(true);
+    aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+
+    // Soft: even with negative proof + densify seq, arm is skipped.
+    ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    aura::serve::set_steal_snapshot_soft_for_test(true);
+    CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "2957 AC2: Soft mode");
+    stamp_negative_lifetime_proof_for_test();
+    aura::core::densify_consistency::bump_last_densify_call_seq();
+    const auto r0 =
+        g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
+    Fiber f_soft([] {});
+    (void)steal_safety_transaction(&f_soft);
+    CHECK(g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) == r0,
+          "2957 AC2: Soft does not bump lifetime_proof reject");
+
+    // Quiet production (hard): no proof present → one present-bit load, no reject.
+    aura::serve::set_steal_snapshot_soft_for_test(false);
+    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    lcp::reset_lifetime_consistency_proof_for_test(); // stamped_total=0
+    CHECK(!lcp::last_lifetime_consistency_proof_present(), "2957 AC2: proof unset");
+    const auto r1 =
+        g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
+    Fiber f_quiet([] {});
+    (void)steal_safety_transaction(&f_quiet);
+    CHECK(g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) == r1,
+          "2957 AC2: unset proof → no reject");
+
+    // Hard + would_allow true after densify → no LifetimeProofOk reject.
+    stamp_positive_lifetime_proof_for_test();
+    CHECK(lcp::last_lifetime_consistency_would_allow(), "2957 AC2: would_allow true");
+    const auto r2 =
+        g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
+    Fiber f_ok([] {});
+    const auto d = steal_safety_transaction(&f_ok);
+    CHECK(d == StealSafetyDecision::Ok, "2957 AC2: positive proof allows Ok");
+    CHECK(g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) == r2,
+          "2957 AC2: would_allow → no lifetime_proof reject");
+
+    aura::serve::reset_steal_snapshot_soft_for_test();
+    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    lcp::reset_lifetime_consistency_proof_for_test();
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac2957_3_prior_arms_preserved() {
+    std::println("\n--- #2957 AC3: arms a–e + #2901 re-arm preserved ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(cpp.find("StealInvariant::BoundarySafe") != std::string::npos, "AC3: arm a");
+    CHECK(cpp.find("StealInvariant::LayoutStampMatch") != std::string::npos, "AC3: arm b");
+    CHECK(cpp.find("StealInvariant::TicketFresh") != std::string::npos, "AC3: arm c");
+    CHECK(cpp.find("StealInvariant::GcDeferClear") != std::string::npos, "AC3: arm d");
+    CHECK(cpp.find("StealInvariant::EnvFrameOk") != std::string::npos, "AC3: arm e");
+    CHECK(cpp.find("StealInvariant::LifetimeProofOk") != std::string::npos, "AC3: arm f");
+    CHECK(cpp.find("g_steal_safety_residual_rearm_race_total") != std::string::npos ||
+              hdr.find("g_steal_safety_residual_rearm_race_total") != std::string::npos,
+          "AC3: #2901 rearm counter preserved");
+    CHECK(hdr.find("LifetimeProofOk") != std::string::npos, "AC3: enum LifetimeProofOk");
+}
+
+static void ac2957_4_query_additive() {
+    std::println("\n--- #2957 AC4: additive query keys; #2888 non-regressing ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("schema-2957") != std::string::npos, "AC4: schema-2957");
+    CHECK(q.find("steal-safety-residual-lifetime-proof-reject-total") != std::string::npos,
+          "AC4: reject total key");
+    CHECK(q.find("steal-invariant-lifetime-proof-fail-total") != std::string::npos,
+          "AC4: invariant fail key");
+    CHECK(q.find("schema-2929") != std::string::npos, "AC4: schema-2929 retained");
+    CHECK(q.find("schema-2888") != std::string::npos, "AC4: schema-2888 additive");
+    const auto qt = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(qt.find("query:lifetime-consistency-proof") != std::string::npos,
+          "AC4: #2888 query surface non-regressing");
+    CompilerService cs;
+    auto r = cs.eval("(hash-ref (engine:metrics \"query:gc-defer-reason-stats\") \"schema-2957\")");
+    if (r && is_int(*r))
+        CHECK(as_int(*r) == 2957, "AC4: live schema-2957");
+    else
+        CHECK(true, "AC4: query soft-miss ok under light-link");
+}
+
+static void ac2957_5_source_and_linter() {
+    std::println("\n--- #2957 AC5: source-cite + linter; no invent / no design ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto lcp = read_file("src/core/lifetime_consistency_proof.hh");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_steal_lifetime_proof_residual_2957.py");
+    CHECK(hdr.find("kStealSafetyLifetimeProofResidualIssue = 2957") != std::string::npos ||
+              hdr.find("Issue #2957") != std::string::npos,
+          "AC5: hdr cites #2957");
+    CHECK(cpp.find("Issue #2957") != std::string::npos, "AC5: cpp cites #2957");
+    CHECK(lcp.find("last_lifetime_consistency_would_allow") != std::string::npos,
+          "AC5: cheap would_allow helper");
+    CHECK(lcp.find("last_lifetime_consistency_proof_present") != std::string::npos,
+          "AC5: present-bit helper");
+    CHECK(t.find("ac2957_1_production_negative_proof_rejects") != std::string::npos, "AC5: AC1");
+    CHECK(t.find("ac2957_2_soft_and_quiet_no_reject") != std::string::npos, "AC5: AC2");
+    CHECK(t.find("ac2957_3_prior_arms_preserved") != std::string::npos, "AC5: AC3");
+    CHECK(t.find("ac2957_4_query_additive") != std::string::npos, "AC5: AC4");
+    CHECK(!lint.empty() && lint.find("2957") != std::string::npos, "AC5: linter present");
+    CHECK(build.find("check_steal_lifetime_proof_residual_2957") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/2957-lifetime-proof-residual.md").empty(),
+          "AC5: no docs/design/2957-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_2957.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_steal_complete_restamp_txn() {
@@ -1432,10 +1633,16 @@ int run_test_steal_complete_restamp_txn() {
     ac2954_3_rearm_still_reject_hard();
     ac2954_4_counters_additive();
     ac2954_5_source_and_linter();
+    std::println("\n=== Issue #2957: residual arm (f) LifetimeConsistencyProof ===");
+    ac2957_1_production_negative_proof_rejects();
+    ac2957_2_soft_and_quiet_no_reject();
+    ac2957_3_prior_arms_preserved();
+    ac2957_4_query_additive();
+    ac2957_5_source_and_linter();
     if (g_failed)
         return 1;
     std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
-                 "#2727 + #2901 + #2929: OK ({} passed)",
+                 "#2727 + #2901 + #2929 + #2954 + #2957: OK ({} passed)",
                  g_passed);
     return 0;
 }

@@ -34,6 +34,7 @@
                          // mutation_safety_snapshot, mutation_safety_snapshot_inconsistent
 #include "core/densify_consistency_report.h" // #2745 last densify envframe/dual_epoch residual
 #include "core/gc_hooks.h" // aura::gc_hooks::force_clear_residual_defer_for_evaluator
+#include "core/lifetime_consistency_proof.hh" // #2957 last LifetimeConsistencyProof residual arm
 
 #include <thread> // std::this_thread::yield for rare same-fiber decision spin
 
@@ -101,6 +102,7 @@ namespace {
                                                                         std::memory_order_relaxed);
                 break;
             case StealInvariant::LayoutStampMatch:
+                // Keep fetch_add(1 on same line for #2721 AC greps.
                 g_steal_safety_residual_layout_stamp_mismatch_total.fetch_add(
                     1, std::memory_order_relaxed);
                 break;
@@ -115,6 +117,11 @@ namespace {
             case StealInvariant::EnvFrameOk:
                 g_steal_safety_residual_envframe_lag_total.fetch_add(1, std::memory_order_relaxed);
                 break;
+            case StealInvariant::LifetimeProofOk:
+                // Keep fetch_add(1 on same line for #2957 AC greps.
+                g_steal_safety_residual_lifetime_proof_reject_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                break;
             case StealInvariant::Count:
             default:
                 break;
@@ -126,12 +133,13 @@ namespace {
     // When bump_counters is true, increments the matching invariant
     // counter on each failing arm. When false (quiet re-sample), only
     // returns bits — zero atomics on the clean path (AC2).
-    // Invariant table (a–e residual arms; SnapshotConsistent is earlier):
+    // Invariant table (a–f residual arms; SnapshotConsistent is earlier):
     //   BoundarySafe      — is_at_mutation_boundary_safe
     //   LayoutStampMatch  — aura_evaluator_check_resume_layout_stamp
     //   TicketFresh       — resume ticket == snap.ticket
     //   GcDeferClear      — victim evaluator GC defer clear
     //   EnvFrameOk        — densify EnvFrame residual (#2745)
+    //   LifetimeProofOk   — last LifetimeConsistencyProof (#2957, production)
     [[nodiscard]] std::uint64_t evaluate_residual_hard_and_bits(Fiber* stolen,
                                                                 const MutationSafetySnapshot& snap,
                                                                 bool bump_counters) noexcept {
@@ -174,6 +182,24 @@ namespace {
                 fail_bits |= steal_invariant_mask(StealInvariant::EnvFrameOk);
                 if (bump_counters)
                     note_steal_invariant_fail(StealInvariant::EnvFrameOk);
+            }
+        }
+        // StealInvariant::LifetimeProofOk — Issue #2957 residual arm (f).
+        // Production/Hard only: when last proof is stamped AND
+        // !would_allow_commit AND recent densify (call_seq>0) → RejectHard
+        // without ticket stamp. Soft: skip entirely (no loads). Quiet
+        // production (stamped_total==0): one relaxed load of present bit.
+        // Do not require proof for all steals (over-block); only gate when
+        // proof is fresh-negative after densify.
+        if (is_steal_snapshot_hard_mode()) {
+            namespace lcp = aura::core::lifetime_consistency_proof;
+            // Single present-bit load first (AC2 zero extra work when unset).
+            if (lcp::last_lifetime_consistency_proof_present() &&
+                aura::core::densify_consistency::last_densify_call_seq() > 0 &&
+                !lcp::last_lifetime_consistency_would_allow()) {
+                fail_bits |= steal_invariant_mask(StealInvariant::LifetimeProofOk);
+                if (bump_counters)
+                    note_steal_invariant_fail(StealInvariant::LifetimeProofOk);
             }
         }
         return fail_bits;
