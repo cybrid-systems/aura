@@ -156,6 +156,77 @@ inline std::uint64_t resolve_mailbox_bp_admit_threshold() noexcept {
     }
 }
 
+// Issue #2948: SSOT BP threshold resolve for spawn admit + watch_all
+// on_backpressure. One pure helper so multi-tenant hosts cannot drift
+// between `:bp-admit-threshold` (spec) and `AgentFailurePolicy::bp_threshold`
+// (watch) semantics.
+//
+// Intentional asymmetry (preserve #2591 vs #2887):
+//   Spec path  (policy_zero_means_process_default=false):
+//     nullopt  → process default (env / #2535 default 32)
+//     0        → ALWAYS REJECT this spawn under attach_mailbox
+//                (source="spec-admit-off"; always_reject=true)
+//     N > 0    → local threshold N (source="spec-override")
+//   Policy path (policy_zero_means_process_default=true):
+//     nullopt or 0 → process default (source="process" / "off")
+//     N > 0        → local threshold N (source="policy")
+//   Process env=0 → threshold=0, always_reject=false, source="off"
+//     (gate inactive — admit/degrade no-op; distinct from spec-0).
+//
+// scope_id only tags using_scope_gauge (load recent via
+// load_mailbox_bp_recent). Threshold value does not depend on scope.
+inline constexpr int kBpThresholdSsotIssue = 2948;
+
+struct BpThresholdDecision {
+    std::uint64_t threshold = 0; // 0 + !always_reject = gate off for this decision
+    bool always_reject = false;  // #2591 spec override=0
+    bool using_process_default = false;
+    bool using_scope_gauge = false;
+    bool override_active = false;   // spawn counter routing (#2591/#2633)
+    const char* source = "process"; // process | off | spec-override | spec-admit-off | policy
+};
+
+// Pure: same inputs → same decision (no atomics). Callers may bump
+// optional resolve counters after the fact.
+[[nodiscard]] inline BpThresholdDecision
+resolve_bp_threshold(std::optional<std::uint64_t> override_threshold, std::string_view scope_id,
+                     bool policy_zero_means_process_default) noexcept {
+    BpThresholdDecision d;
+    d.using_scope_gauge = !scope_id.empty();
+    const auto process = resolve_mailbox_bp_admit_threshold();
+
+    if (!override_threshold.has_value()) {
+        d.threshold = process;
+        d.using_process_default = true;
+        d.source = (process == 0) ? "off" : "process";
+        return d;
+    }
+    const auto v = *override_threshold;
+    if (v == 0) {
+        if (policy_zero_means_process_default) {
+            // #2887: policy bp_threshold=0 → process admit default.
+            d.threshold = process;
+            d.using_process_default = true;
+            d.source = (process == 0) ? "off" : "process";
+            return d;
+        }
+        // #2591: spec bp_admit_threshold=0 → admit off for THIS spawn
+        // (always reject under attach_mailbox). NOT the same as process
+        // env=0 (gate off) or policy 0 (process default).
+        d.threshold = 0;
+        d.always_reject = true;
+        d.override_active = true;
+        d.source = "spec-admit-off";
+        return d;
+    }
+    // N > 0: explicit local threshold.
+    d.threshold = v;
+    d.override_active = true;
+    d.using_process_default = false;
+    d.source = policy_zero_means_process_default ? "policy" : "spec-override";
+    return d;
+}
+
 // Issue #2465 / #2398: quiet-period window for mailbox_bp_recent_total.
 // Without decay, the "recent" counter is process-wide cumulative forever —
 // once AURA_ORCH_BP_ADMIT_THRESHOLD > 0, a past storm permanently soft-rejects
@@ -408,6 +479,10 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> agent_bp_degrade_total{0};
     std::atomic<std::uint64_t> agent_bp_cancel_total{0};
     std::atomic<std::uint64_t> agent_bp_throttle_total{0};
+    // Issue #2948: SSOT resolve_bp_threshold call counter (optional audit).
+    // Bumped once per spawn-admit / watch degrade resolve. source tag is
+    // not histogrammed (keep process-wide cheap).
+    std::atomic<std::uint64_t> bp_threshold_resolve_total{0};
     // Issue #2756: workflow-level FailurePolicy composition counters.
     // Bumped by compose_workflow_policy / note_workflow_residual_reclaim_
     // under_policy. Additive — #2007/#2229/#2539 surfaces unchanged.
@@ -779,6 +854,19 @@ inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scop
     if (it == g_scope_bp_map.end())
         return nullptr;
     return it->second;
+}
+
+// Issue #2948: load the BP recent gauge a spawn/watch decision should
+// compare against for `scope_id`. empty → process bucket; named scope
+// → scope gauge (0 if no events yet). Single relaxed load (or one map
+// lookup); no hist walk. Same source for admit + degrade (AC4).
+[[nodiscard]] inline std::uint64_t load_mailbox_bp_recent(std::string_view scope_id) noexcept {
+    if (scope_id.empty()) {
+        return g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+    }
+    if (auto gauge = lookup_scope_bp_gauge(scope_id))
+        return gauge->recent.load(std::memory_order_relaxed);
+    return 0;
 }
 
 // Issue #2778: explicit free of one scope gauge (tenant / session
@@ -1397,82 +1485,57 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // (quota_dimension = "fibers" / "memory"); BP is a separate
     // admission dimension so Agent frameworks can branch on it.
     if (spec.attach_mailbox) {
-        // Issue #2228 / #2398 / #2535: mailbox-BP admit gate.
-        // Production default threshold=32 (#2535). threshold==0 (env
-        // opt-out) → admit control off; zero cost beyond the single
-        // threshold load (no decay work, no BP reject).
-        // Issue #2591: spec.bp_admit_threshold (optional) overrides
-        // the process default for this spawn only — multi-tenant /
-        // multi-scope isolation. nullopt → process default; 0 →
-        // admit off for THIS spawn (always reject when attach_mailbox);
-        // N > 0 → local threshold (per-spawn policy isolation, gauge
-        // is still process-global).
-        // Issue #2633: spec.bp_scope_id (optional) routes the recent
-        // gauge to a per-scope bucket (bounded map, cap 256). empty →
-        // process-global bucket (backward compat with #2535/#2591);
-        // non-empty → scope-local gauge + per-scope decay (storm in A
-        // does not poison B/C). Threshold still resolved from
-        // bp_admit_threshold / env (process or per-spec); only the
-        // gauge that the threshold reads against changes.
-        const auto override_threshold = spec.bp_admit_threshold;
-        const auto process_threshold = resolve_mailbox_bp_admit_threshold();
-        const auto threshold = override_threshold ? *override_threshold : process_threshold;
-        const bool override_active = override_threshold.has_value();
-        const bool scope_active = !spec.bp_scope_id.empty();
-        if (threshold > 0) {
-            // Issue #2398: quiet-period decay — if no BP events for
-            // window_ms (AURA_ORCH_BP_WINDOW_MS / AURA_ORCH_BP_DECAY_MS),
-            // zero mailbox_bp_recent_total so storms self-heal without
-            // process restart. send_backpressure_total stays cumulative.
-            // Issue #2633: also decays every per-scope gauge in
-            // g_scope_bp_map under the same shared window clock.
-            maybe_decay_mailbox_bp_recent();
-            std::uint64_t bp_recent = 0;
+        // Issue #2228 / #2398 / #2535 / #2591 / #2633 / #2948:
+        // mailbox-BP admit gate via SSOT resolve_bp_threshold.
+        //   nullopt → process default; 0 → always reject THIS spawn
+        //   (#2591); N>0 → local threshold. Scope id selects the gauge
+        //   (load_mailbox_bp_recent) — same helper watch_all uses.
+        const auto thr_d = resolve_bp_threshold(spec.bp_admit_threshold, spec.bp_scope_id,
+                                                /*policy_zero_means_process_default=*/false);
+        g_orch_module_stats.bp_threshold_resolve_total.fetch_add(1, std::memory_order_relaxed);
+        const bool scope_active = thr_d.using_scope_gauge;
+        const bool override_active = thr_d.override_active;
+        const auto threshold = thr_d.threshold;
+
+        auto reject_bp = [&](std::uint64_t bp_recent, std::uint64_t thr_limit) {
+            g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
             if (scope_active) {
-                // #2633: scope-local gauge. If the scope hasn't seen
-                // any BP events yet (lookup returns nullptr), recent=0
-                // (silent admit — the scope is "clean" by default).
-                if (auto gauge = lookup_scope_bp_gauge(spec.bp_scope_id))
-                    bp_recent = gauge->recent.load(std::memory_order_relaxed);
+                g_orch_module_stats.spawn_bp_admit_reject_scope_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else if (override_active) {
+                g_orch_module_stats.spawn_bp_admit_reject_override_total.fetch_add(
+                    1, std::memory_order_relaxed);
             } else {
-                bp_recent =
-                    g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+                g_orch_module_stats.spawn_bp_admit_reject_total.fetch_add(
+                    1, std::memory_order_relaxed);
             }
+            h.quota_exceeded = true;
+            h.quota_dimension = "mailbox-bp";
+            h.quota_used = bp_recent;
+            h.quota_limit = thr_limit;
+            h.retry_after_ms = 50;
+            h.error =
+                "AdmissionRejected: mailbox backpressure (bp_recent=" + std::to_string(bp_recent) +
+                " >= threshold=" + std::to_string(thr_limit) +
+                " override=" + (override_active ? "true" : "false") + " source=" + thr_d.source +
+                ")";
+            h.reserved_memory_bytes = 0;
+            finalize_spawn_quota_reject(h);
+        };
+
+        if (thr_d.always_reject) {
+            // #2591 / #2948: spec override=0 → admit off for THIS spawn
+            // even when bp_recent=0 (distinct from process env=0 = gate off).
+            reject_bp(/*bp_recent=*/0, /*thr_limit=*/0);
+            return h;
+        }
+        if (threshold > 0) {
+            // Issue #2398: quiet-period decay; #2633 also decays scope gauges.
+            maybe_decay_mailbox_bp_recent();
+            // #2948: same load path as watch_all degrade.
+            const auto bp_recent = load_mailbox_bp_recent(spec.bp_scope_id);
             if (bp_recent >= threshold) {
-                g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
-                if (scope_active) {
-                    // #2633: scope-local storm deny (third counter;
-                    // process / override / scope — no double-count).
-                    g_orch_module_stats.spawn_bp_admit_reject_scope_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                } else if (override_active) {
-                    // #2591: per-spec override deny (separate counter
-                    // so multi-tenant hosts can distinguish "process
-                    // default storm" from "local override storm").
-                    g_orch_module_stats.spawn_bp_admit_reject_override_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                } else {
-                    g_orch_module_stats.spawn_bp_admit_reject_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                }
-                h.quota_exceeded = true;
-                h.quota_dimension = "mailbox-bp";
-                h.quota_used = bp_recent;
-                h.quota_limit = threshold;
-                h.retry_after_ms = 50;
-                h.error = "AdmissionRejected: mailbox backpressure (bp_recent=" +
-                          std::to_string(bp_recent) + " >= threshold=" + std::to_string(threshold) +
-                          " override=" + (override_active ? "true" : "false") + ")";
-                // #2155 parity: reserved never set on BP reject
-                // (h.reserved_memory_bytes still holds the planned
-                // mem_cost, but finalize_spawn_quota_reject is no-leak
-                // for the !ok path: it only releases if reserved != 0,
-                // and BP reject happens before the arena reservation is
-                // actually committed via the Scheduler; we explicitly
-                // zero reserved here so no future code path can release
-                // a phantom allocation).
-                h.reserved_memory_bytes = 0;
-                finalize_spawn_quota_reject(h);
+                reject_bp(bp_recent, threshold);
                 return h;
             }
         }
@@ -2667,10 +2730,12 @@ struct AgentFailurePolicy {
     // Throttle → cooperative helper_stop only (no body kill).
     // RestartN → same re-spawn path as on_stall RestartN (capped).
     AgentFailureAction on_backpressure = AgentFailureAction::ReportOnly;
-    // Issue #2887: BP recent threshold for on_backpressure. 0 = use
-    // process admit threshold (resolve_mailbox_bp_admit_threshold /
-    // #2535 default 32). Explicit N>0 overrides. When both resolve to
-    // 0 (admit opt-out + no override), BP degrade is a no-op.
+    // Issue #2887 / #2948: BP recent threshold for on_backpressure.
+    // 0 = use process admit threshold via resolve_bp_threshold
+    // (policy_zero_means_process_default=true — NOT the #2591
+    // spec-override=0 "always reject" meaning). Explicit N>0 overrides.
+    // When both resolve to 0 (admit opt-out + no override), BP degrade
+    // is a no-op. See resolve_bp_threshold comment for the asymmetry.
     std::uint64_t bp_threshold = 0;
     // RestartN cap. 0 = restart disabled (Cancel-only behaviour).
     std::uint32_t max_restarts = 0;

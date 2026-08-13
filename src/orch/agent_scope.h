@@ -511,36 +511,40 @@ public:
             }
         }
 
-        // Issue #2887: after stall pass, optionally degrade BP-hot
+        // Issue #2887 / #2948: after stall pass, optionally degrade BP-hot
         // producers already in this scope. Admit gate still soft-rejects
         // *new* attach_mailbox spawns (#2228/#2535); this path converges
         // existing producers. Default on_backpressure=ReportOnly → no-op
         // (AC1). Scope-local only — no process-global registry (AC4).
+        // Threshold via SSOT resolve_bp_threshold: policy 0 → process
+        // default (NOT always-reject — that is #2591 spec-only).
         if (policy.on_backpressure != AgentFailureAction::ReportOnly) {
-            const auto thr = policy.bp_threshold != 0 ? policy.bp_threshold
-                                                      : resolve_mailbox_bp_admit_threshold();
+            const auto thr_override = policy.bp_threshold == 0
+                                          ? std::optional<std::uint64_t>{}
+                                          : std::optional<std::uint64_t>{policy.bp_threshold};
+            // scope_id empty at resolve — threshold does not depend on
+            // scope; gauges loaded below with load_mailbox_bp_recent.
+            const auto thr_d = resolve_bp_threshold(thr_override, /*scope_id=*/{},
+                                                    /*policy_zero_means_process_default=*/true);
+            g_orch_module_stats.bp_threshold_resolve_total.fetch_add(1, std::memory_order_relaxed);
+            const auto thr = thr_d.threshold;
             if (thr > 0) {
                 // Scope BP recent: max across handle specs' bp_scope_id
-                // gauges; empty ids fall back to process bucket. Multi-
-                // tenant isolation: a hot gauge for scope A does not
-                // force degrade on a different AgentScope whose handles
-                // only use scope B (AC verification: inject BP on one
-                // scope → other scopes unaffected).
+                // via load_mailbox_bp_recent (same as spawn admit, #2948
+                // AC4). Multi-tenant isolation: hot gauge A does not
+                // force degrade on a scope that only uses B.
                 std::uint64_t scope_bp_recent = 0;
                 bool any_named_scope = false;
                 for (const auto& sp : specs_) {
                     if (sp.bp_scope_id.empty())
                         continue;
                     any_named_scope = true;
-                    if (auto gauge = lookup_scope_bp_gauge(sp.bp_scope_id)) {
-                        const auto v = gauge->recent.load(std::memory_order_relaxed);
-                        if (v > scope_bp_recent)
-                            scope_bp_recent = v;
-                    }
+                    const auto v = load_mailbox_bp_recent(sp.bp_scope_id);
+                    if (v > scope_bp_recent)
+                        scope_bp_recent = v;
                 }
                 if (!any_named_scope) {
-                    scope_bp_recent =
-                        g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+                    scope_bp_recent = load_mailbox_bp_recent(/*scope_id=*/{});
                 }
                 if (scope_bp_recent >= thr) {
                     for (std::size_t i = 0; i < handles_.size(); ++i) {

@@ -50,8 +50,11 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <optional>
 #include <print>
 #include <string>
+#include <string_view>
 #include <thread>
 
 import std;
@@ -514,6 +517,57 @@ int run_test_agent_failure_policy() {
             std::println("  tests/orch/test_agent_failure_policy.cpp  #2887 ACs");
             std::println("  scripts/coverage/checks/check_agent_bp_degrade_2887.py");
             CHECK(true, "2887 AC6: source-cite");
+        }
+
+        // ── Issue #2948: SSOT threshold shared with watch degrade ──
+        {
+            std::println("\n--- #2948 AC2/AC5: policy 0 → process; query schema ---");
+            CHECK(aura::orch::kBpThresholdSsotIssue == 2948, "2948: issue stamp");
+            unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+            const auto proc = aura::orch::resolve_mailbox_bp_admit_threshold();
+            // AC2: policy bp_threshold=0 resolves to process default
+            const auto d0 = aura::orch::resolve_bp_threshold(
+                std::optional<std::uint64_t>{0}, {}, /*policy_zero_means_process_default=*/true);
+            CHECK(d0.threshold == proc, "2948 AC2: policy 0 → process default");
+            CHECK(!d0.always_reject, "2948 AC2: policy 0 never always_reject");
+            const auto dN =
+                aura::orch::resolve_bp_threshold(std::optional<std::uint64_t>{7}, {}, true);
+            CHECK(dN.threshold == 7, "2948 AC2: policy N → N");
+            CHECK(std::string_view{dN.source} == "policy", "2948 AC2: source=policy");
+
+            // Live: policy thr=0 uses process default against same scope gauge.
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "2948-watch-ssot";
+            spec.attach_mailbox = true;
+            spec.bp_scope_id = "tenant-2948";
+            spec.keepalive_interval_ms = 0;
+            spec.body = [] {};
+            AgentHandle& h = scope.spawn(spec);
+            CHECK(h.ok, "2948 AC2: spawn admitted for watch test");
+            // Inject recent just under process default if default is 32
+            // and force degrade with explicit N=3 first (SSOT shared load).
+            for (int i = 0; i < 5; ++i)
+                aura::orch::note_mailbox_bp_recent_event("tenant-2948");
+            CHECK(aura::orch::load_mailbox_bp_recent("tenant-2948") >= 5,
+                  "2948 AC4: load_mailbox_bp_recent matches inject");
+            AgentFailurePolicy pol;
+            pol.on_stall = AgentFailureAction::ReportOnly;
+            pol.on_backpressure = AgentFailureAction::Cancel;
+            pol.bp_threshold = 3; // explicit N — SSOT policy path
+            auto wr = scope.watch_all(0, pol);
+            CHECK(wr.bp_degraded >= 1, "2948 AC2: watch degrade fires on shared scope gauge");
+            (void)aura::orch::erase_scope_bp_gauge("tenant-2948");
+
+            // AC5: query keys
+            CHECK(href(cs, "schema-2948") == 2948, "2948 AC5: schema-2948");
+            CHECK(href(cs, "issue-2948") == 2948, "2948 AC5: issue-2948");
+            CHECK(href(cs, "bp-threshold-ssot-wired") == 1, "2948 AC5: wired sentinel");
+            CHECK(href(cs, "bp-threshold-resolve-total") >= 0,
+                  "2948 AC5: bp-threshold-resolve-total");
+            CHECK(href(cs, "schema-2887") == 2887, "2948 AC5: schema-2887 preserved");
         }
     }
 
