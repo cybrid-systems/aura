@@ -54,6 +54,7 @@ using aura::compiler::security::kEffectMacroSelfEvo;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectSyscall;
 using aura::compiler::security::kEffectTenantAdmin;
+using aura::core::capability::CapabilityGrant;
 using aura::core::capability::check_and_record_effect;
 using aura::core::capability::Effect;
 using aura::core::capability::EffectProvenance;
@@ -339,14 +340,21 @@ int run_test_capability_single_use_consume() {
         CHECK(epoch_after == epoch_before + 1,
               "AC1: capability_high_risk_forced_single_use_total bumps under Restricted");
 
+        // Restricted needs sandbox_active=true for grant enforcement.
+        // Stamp mid so fail-closed mid join (#2707) matches the grant.
+        EffectProvenance prov{};
+        prov.mutation_id = 1;
+        prov.epoch = 1;
         // 1st allow — Mutate bit satisfied by the grant.
-        const bool ok1 = check_and_record_effect(Effect::Mutate, Effect::Mutate, EffectProvenance{},
-                                                 /*tenant=*/7, "2882-default-1");
+        const bool ok1 = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, /*tenant=*/7,
+                                                 "2882-default-1", /*wildcard_ok=*/false,
+                                                 /*sandbox_active=*/true);
         CHECK(ok1, "AC1: 1st allow under production default high-risk grant");
 
         // 2nd deny — single_use consumed by 1st allow.
-        const bool ok2 = check_and_record_effect(Effect::Mutate, Effect::Mutate, EffectProvenance{},
-                                                 /*tenant=*/7, "2882-default-2");
+        const bool ok2 = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, /*tenant=*/7,
+                                                 "2882-default-2", /*wildcard_ok=*/false,
+                                                 /*sandbox_active=*/true);
         CHECK(!ok2, "AC1: 2nd deny (forced single_use consumed)");
     }
 
@@ -508,6 +516,153 @@ int run_test_capability_single_use_consume() {
                 const auto name = entry.path().filename().string();
                 CHECK(name.find("2882-") == std::string::npos,
                       std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
+    // ── #2944: mutation-session grants (mid-bound + auto-revoke on boundary) ──
+    {
+        std::println("\n--- #2944 AC1: session grant mid-bound under Restricted ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+        EffectProvenance prov{};
+        prov.epoch = 10;
+        prov.mutation_id = 10;
+        // session_bound without single_use so multi-check under same mid works.
+        g_capability_registry().grant_session(/*tenant=*/20, "mut-2944-sess", Effect::Mutate, prov,
+                                              /*single_use=*/false);
+
+        CapabilityGrant g;
+        CHECK(g_capability_registry().find_grant(20, "mut-2944-sess", g), "AC1: grant found");
+        CHECK(g.session_bound, "AC1: session_bound stamped");
+        CHECK(g.bound_mutation_id == 10, "AC1: bound_mutation_id == 10");
+
+        // Restricted needs sandbox_active=true for grant + mid join enforce.
+        const bool ok_same = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 20,
+                                                     "2944-same-mid", false, true);
+        CHECK(ok_same, "AC1: same-mid check allows under Restricted");
+
+        EffectProvenance other = prov;
+        other.mutation_id = 11;
+        other.epoch = 11;
+        const bool ok_cross = check_and_record_effect(Effect::Mutate, Effect::Mutate, other, 20,
+                                                      "2944-cross-mid", false, true);
+        CHECK(!ok_cross, "AC1: cross-mid check denies under Restricted");
+
+        const auto snap = snapshot_capability_effect_stats();
+        CHECK(snap.capability_session_grant >= 1, "AC1: session_grant counter");
+        CHECK(snap.capability_live_session_grants >= 1, "AC1: live session residual");
+    }
+    {
+        std::println("\n--- #2944 AC2: revoke_session_grants_for_mid on mid exit ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+        EffectProvenance prov{};
+        prov.epoch = 20;
+        prov.mutation_id = 20;
+        g_capability_registry().grant_session(21, "mut-2944-exit", Effect::Mutate, prov, false);
+
+        CHECK(check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 21, "2944-pre", false,
+                                      true),
+              "AC2: allow before session revoke");
+
+        const auto n = g_capability_registry().revoke_session_grants_for_mid(20);
+        CHECK(n >= 1, "AC2: revoke_session_grants_for_mid revokes >=1");
+
+        const auto snap = snapshot_capability_effect_stats();
+        CHECK(snap.capability_session_revoke >= 1, "AC2: session_revoke counter");
+        CHECK(snap.capability_live_session_grants == 0, "AC2: live residual cleared");
+
+        CHECK(!check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 21, "2944-post", false,
+                                       true),
+              "AC2: deny after session revoke");
+
+        // SE dual-write reason session-mid-exit
+        const auto* se = ring_lookup_reason("session-mid-exit");
+        CHECK(se != nullptr, "AC2: SE reason session-mid-exit present");
+    }
+    {
+        std::println("\n--- #2944 AC3: Soft/Off zero-cost empty session path ---");
+        reset_all();
+        set_mode(SandboxMode::Off);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        const auto n = g_capability_registry().revoke_session_grants_for_mid(99);
+        CHECK(n == 0, "AC3: empty live session → revoke returns 0");
+        const auto snap = snapshot_capability_effect_stats();
+        CHECK(snap.capability_session_revoke == 0, "AC3: no session_revoke under empty");
+    }
+    {
+        std::println("\n--- #2944 AC4: durable grants unaffected by session revoke ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(22);
+        // Durable Mutate (sticky) + session Mutate under same mid.
+        ev.grant_effect_durable(22, "mut-2944-dur", kEffectMutate, /*mid=*/30);
+        ev.grant_effect_session(22, "mut-2944-sess2", kEffectMutate, /*mid=*/30,
+                                /*single_use=*/false);
+
+        EffectProvenance prov{};
+        prov.epoch = 30;
+        prov.mutation_id = 30;
+        CHECK(check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 22, "2944-both", false,
+                                      true),
+              "AC4: allow with durable+session");
+
+        (void)g_capability_registry().revoke_session_grants_for_mid(30);
+        // Durable remains — still allows.
+        CHECK(check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 22, "2944-dur-only",
+                                      false, true),
+              "AC4: durable survives session revoke");
+    }
+    {
+        std::println("\n--- #2944 AC5/AC6: schema + source-cite + no invent ---");
+        const auto cap = read_file("src/core/capability_model.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto ixx = read_file("src/compiler/evaluator.ixx");
+        const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto build = read_file("build.py");
+        CHECK(cap.find("session_bound") != std::string::npos, "AC6: session_bound field");
+        CHECK(cap.find("revoke_session_grants_for_mid") != std::string::npos,
+              "AC6: revoke_session_grants_for_mid");
+        CHECK(cap.find("capability_session_revoke_total") != std::string::npos,
+              "AC6: session_revoke metric");
+        CHECK(sec.find("grant_effect_session") != std::string::npos,
+              "AC6: grant_effect_session impl");
+        CHECK(ixx.find("grant_effect_session") != std::string::npos,
+              "AC6: grant_effect_session decl");
+        CHECK(bound.find("revoke_session_grants_for_mid") != std::string::npos,
+              "AC6: outermost dtor revokes session");
+        CHECK(bound.find("Issue #2944") != std::string::npos ||
+                  bound.find("#2944") != std::string::npos,
+              "AC6: boundary cites #2944");
+        CHECK(posture.find("schema-2944") != std::string::npos, "AC5: schema-2944");
+        CHECK(posture.find("mutation-session-grant-wired") != std::string::npos,
+              "AC5: mutation-session-grant-wired");
+        CHECK(posture.find("capability-session-revoke-total") != std::string::npos,
+              "AC5: session-revoke-total key");
+        CHECK(build.find("check_mutation_session_grant_2944") != std::string::npos,
+              "AC6: build.py wires linter");
+        std::ifstream invent("tests/core/test_issue_2944.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_2944.cpp");
+        CHECK(!invent.good(), "AC6: no test_issue_2944.cpp");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("2944-") == std::string::npos,
+                      std::string("AC6: no docs/design/") + name);
             }
         }
     }

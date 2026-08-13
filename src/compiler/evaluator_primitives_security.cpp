@@ -688,6 +688,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(snap.capability_single_use_consumed));
                 insert_kv("capability-single-use-consumed-wired", 1);
             }
+            // Issue #2944: mutation-session grant lifecycle.
+            {
+                insert_kv("schema-2944", 2944);
+                insert_kv("issue-2944", 2944);
+                insert_kv("mutation-session-grant-wired", 1);
+                insert_kv("capability-session-grant-total",
+                          static_cast<std::int64_t>(snap.capability_session_grant));
+                insert_kv("capability-session-revoke-total",
+                          static_cast<std::int64_t>(snap.capability_session_revoke));
+                insert_kv("capability-live-session-grants",
+                          static_cast<std::int64_t>(snap.capability_live_session_grants));
+            }
             // Issue #2882: production default single-use for high-risk
             // grants (Mutate | MacroSelfEvo | TenantAdmin | Syscall) under
             // Restricted/Strict. Default `grant_effect_capability` surface
