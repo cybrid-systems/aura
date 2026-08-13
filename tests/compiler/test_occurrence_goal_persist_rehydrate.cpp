@@ -54,6 +54,8 @@ namespace {
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
+using aura::compiler::TypeChecker;
+namespace typed_audit = aura::compiler::typed_audit;
 using aura::compiler::solve_delta_occurrence;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
@@ -709,6 +711,138 @@ static void ac2938_6_linter_and_no_design() {
           "AC6: no invent test file per #81967");
 }
 
+// ── Issue #2981: steal/densify rehydrate miss binds TypeLinearCommitProof ──
+
+static void ac2981_1_prod_miss_rejects_proof() {
+    std::println("\n--- #2981 AC1: production + rehydrate miss → proof would_allow=false ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    tc.set_cache_epoch(1);
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 1, 10, /*epoch=*/1);
+    CHECK(cs.occurrence_goals_size() == 1, "AC1: one live goal");
+    // No snapshot → fence prune + persist enabled (production) → miss.
+    const auto rej0 = typed_audit::type_linear_proof_reject_empty_after_fence_total_v_read();
+    const auto dropped = tc.note_steal_or_densify_epoch_fence(2);
+    CHECK(dropped >= 1, "AC1: fence dropped goals");
+    CHECK(cs.occurrence_goals_size() == 0, "AC1: empty after miss");
+    CHECK(occurrence_empty_after_fence_total_v_read() > 0, "AC1: #2704 hard face latched");
+    CHECK(typed_audit::occurrence_empty_after_fence_blocks_proof(0), "AC1: helper blocks empty CS");
+    CHECK(!typed_audit::occurrence_empty_after_fence_blocks_proof(1),
+          "AC1: CS non-empty does not block");
+    CHECK(typed_audit::type_linear_proof_reject_empty_after_fence_total_v_read() > rej0,
+          "AC1: reject-empty-after-fence counter");
+    CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0,
+          "AC1: last proof would_allow_commit=false");
+    CHECK(typed_audit::last_type_linear_proof_outcome_v_read() ==
+              typed_audit::kTypeLinearProofOutcomeReject,
+          "AC1: outcome Reject");
+    // Same-txn with_outcome success must not go green.
+    const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+        99, /*would_allow_commit=*/true, /*linear_ok=*/true, /*goals=*/0, /*fp=*/0,
+        /*from_cs=*/true);
+    CHECK(!p.would_allow_commit, "AC1: with_outcome cannot stay green on empty+face");
+    CHECK(p.force_reason_code == 11, "AC1: force_reason_code 11");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    CHECK(ixx.find("Issue #2981") != std::string::npos, "AC1: fence cites #2981");
+    apply_dev_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+}
+
+static void ac2981_2_soft_observe_only() {
+    std::println("\n--- #2981 AC2: Soft + miss → soft counter; proof may allow ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
+    typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/false);
+    CHECK(occurrence_empty_after_fence_soft_total_v_read() > 0, "AC2: soft counter");
+    CHECK(occurrence_empty_after_fence_total_v_read() == 0, "AC2: hard total stays 0");
+    CHECK(!typed_audit::occurrence_empty_after_fence_blocks_proof(0),
+          "AC2: Soft does not block proof");
+    const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(1, true, true,
+                                                                                      0, 0, true);
+    CHECK(p.would_allow_commit, "AC2: Soft may still allow");
+}
+
+static void ac2981_3_quiet_zero_extra() {
+    std::println("\n--- #2981 AC3: quiet (no prune / rehydrate success) → no extra reject ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    tc.set_cache_epoch(5);
+    CHECK(tc.note_steal_or_densify_epoch_fence(5) == 0, "AC3: same epoch zero prune");
+    CHECK(!typed_audit::occurrence_empty_after_fence_blocks_proof(0),
+          "AC3: no face → helper false");
+    CHECK(typed_audit::type_linear_proof_reject_empty_after_fence_total_v_read() == 0,
+          "AC3: no reject bump");
+    apply_dev_audit_defaults();
+}
+
+static void ac2981_4_same_txn_order() {
+    std::println("\n--- #2981 AC4: #2854 same-txn order preserved ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(mb.find("empty_fence_2981") != std::string::npos, "AC4: densify folds #2981");
+    CHECK(efm.find("empty_fence_2981") != std::string::npos, "AC4: steal folds #2981");
+    const auto fence_pos = mb.find("note_type_freshness_after_steal_or_densify()");
+    const auto fold_pos = mb.find("empty_fence_2981");
+    CHECK(fence_pos != std::string::npos && fold_pos != std::string::npos && fence_pos < fold_pos,
+          "AC4: fence before densify proof fold");
+}
+
+static void ac2981_5_additive_schema() {
+    std::println("\n--- #2981 AC5: additive schema; #2704/#2910/#2842/#2697 preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2981") == 2981, "AC5: schema-2981");
+    CHECK(href(cs, "issue-2981") == 2981, "AC5: issue-2981");
+    CHECK(href(cs, "type-linear-proof-empty-after-fence-wired") == 1, "AC5: wired");
+    CHECK(href(cs, "type-linear-proof-reject-empty-after-fence-total") >= 0, "AC5: reject total");
+    CHECK(href(cs, "schema-2910") == 2910, "AC5: schema-2910 preserved");
+    CHECK(href(cs, "schema-2608") == 2608, "AC5: schema-2608 preserved");
+    CHECK(href(cs, "schema-2896") == 2896, "AC5: schema-2896 preserved");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("g_occurrence_empty_after_fence_total") != std::string::npos,
+          "AC5: #2704 counter preserved");
+    CHECK(tma.find("occurrence_empty_after_fence_blocks_proof") != std::string::npos,
+          "AC5: #2981 helper");
+}
+
+static void ac2981_6_source_and_linter() {
+    std::println("\n--- #2981 AC6: source-cite + linter + no docs/design ---");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    CHECK(t.find("ac2981_1_prod_miss_rejects_proof") != std::string::npos, "AC6: AC1 present");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("occurrence_empty_after_fence_blocks_proof") != std::string::npos,
+          "AC6: helper in tma");
+    CHECK(tma.find("Issue #2981") != std::string::npos, "AC6: tma cites #2981");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #2981") != std::string::npos, "AC6: mb cites #2981");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_type_linear_proof_empty_after_fence_2981.py");
+    CHECK(!lint.empty() && lint.find("2981") != std::string::npos, "AC6: linter present");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_type_linear_proof_empty_after_fence_2981") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2981-empty-after-fence-proof.md").empty(),
+          "AC6: no docs/design/2981-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2981.cpp").empty(),
+          "AC6: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_occurrence_goal_persist_rehydrate() {
@@ -743,6 +877,13 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2938_4_fence_after_snapshot();
     ac2938_5_lineage_query();
     ac2938_6_linter_and_no_design();
+    std::println("\n=== #2981 same-txn proof bind on empty-after-fence miss ===");
+    ac2981_1_prod_miss_rejects_proof();
+    ac2981_2_soft_observe_only();
+    ac2981_3_quiet_zero_extra();
+    ac2981_4_same_txn_order();
+    ac2981_5_additive_schema();
+    ac2981_6_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

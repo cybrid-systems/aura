@@ -974,6 +974,34 @@ static void ac2911_6_linter_and_decision_table() {
           "2911 AC6: no new test file per #81967");
 }
 
+static void ac2981_1_helper_and_with_outcome() {
+    std::println("\n--- #2981 AC1: helper + with_outcome same-txn reject ---");
+    apply_production_audit_defaults();
+    typed_audit::clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
+    typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
+    CHECK(typed_audit::occurrence_empty_after_fence_blocks_proof(0), "2981: empty+face blocks");
+    CHECK(!typed_audit::occurrence_empty_after_fence_blocks_proof(3),
+          "2981: non-empty CS does not block");
+    using typed_audit::build_type_linear_commit_proof_from_live_with_outcome;
+    const auto p = build_type_linear_commit_proof_from_live_with_outcome(7, true, true, 0, 0, true);
+    CHECK(!p.would_allow_commit, "2981: green with_outcome flipped");
+    CHECK(p.force_reason_code == 11, "2981: force_reason 11");
+    apply_dev_audit_defaults();
+    typed_audit::clear_occurrence_empty_after_fence_for_test();
+}
+
+static void ac2981_2_health_schema() {
+    std::println("\n--- #2981 AC5: type-linear-commit-health schema-2981 ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2981") == 2981, "2981: schema-2981 on health");
+    CHECK(href(cs, "issue-2981") == 2981, "2981: issue-2981");
+    CHECK(href(cs, "type-linear-proof-empty-after-fence-wired") == 1, "2981: wired");
+    CHECK(href(cs, "force-reason-occurrence-empty-after-fence") == 11, "2981: reason 11 key");
+    CHECK(href(cs, "schema-2613") == 2613, "2981: schema-2613 preserved");
+    CHECK(href_evolv(cs, "schema-2981") == 2981, "2981: evolution snapshot schema-2981");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -1031,8 +1059,12 @@ int run_test_type_linear_commit_health() {
     ac2911_4_schema_and_lineage();
     ac2911_5_source_cite();
     ac2911_6_linter_and_decision_table();
+    std::println("\n=== Issue #2981: empty-after-fence same-txn proof bind ===");
+    ac2981_1_helper_and_with_outcome();
+    ac2981_2_health_schema();
     std::println(
-        "\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911: {} passed, {} failed ===",
+        "\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981: {} passed, {} "
+        "failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

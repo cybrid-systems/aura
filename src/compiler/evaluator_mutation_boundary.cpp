@@ -3364,7 +3364,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // non-empty live_goal_count + fingerprint on green path).
             const auto densify_goal_truth_2842 =
                 freeze_proof_goal_truth_from_type_checker(ev_->commit_type_checker_handle());
-            if (reject_path_2854) {
+            // Issue #2981: same-txn bind — rehydrate miss + empty CS goals
+            // under production/Full must stamp would_allow_commit=false
+            // (force_reason 11) so trail Success cannot hold a green proof.
+            // Prefer CS truth (#2842). Soft: helper false.
+            const bool empty_fence_2981 = typed_audit::occurrence_empty_after_fence_blocks_proof(
+                densify_goal_truth_2842.live_goal_count);
+            if (reject_path_2854 || empty_fence_2981) {
                 // Mismatch detected → force_linear_rollback bumps
                 // linear_densify_scan_mismatch_total and sets
                 // deny_kind=linear-densify-root-mismatch. Do NOT advance
@@ -3372,19 +3378,26 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // (would_allow_commit=false, linear_ok=false) so no
                 // success proof can outlive this failed rebind on the
                 // same exit (#2854 AC2).
-                ev_->force_linear_rollback("densify-phase5-linear-scan");
+                if (reject_path_2854)
+                    ev_->force_linear_rollback("densify-phase5-linear-scan");
                 (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                     ev_->defuse_version_.load(std::memory_order_acquire),
                     /*would_allow_commit=*/false, /*linear_ok=*/false,
                     densify_goal_truth_2842.live_goal_count,
-                    densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
-                typed_audit::g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(
-                    1, std::memory_order_relaxed);
+                    densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs,
+                    empty_fence_2981 ? 11u : static_cast<std::uint32_t>(-1));
+                if (empty_fence_2981)
+                    typed_audit::g_type_linear_proof_reject_empty_after_fence_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                if (reject_path_2854) {
+                    typed_audit::g_type_linear_proof_reject_after_rebind_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (auto* gm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        gm->type_linear_proof_reject_after_rebind_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
                 typed_audit::publish_type_linear_proof_outcome(
                     typed_audit::kTypeLinearProofOutcomeReject);
-                if (auto* gm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                    gm->type_linear_proof_reject_after_rebind_fail_total.fetch_add(
-                        1, std::memory_order_relaxed);
             } else if (!densify_scan_mismatch) {
                 // Success path (rebind ok + scan pass — AC1): stamp
                 // success proof with post-remap linear_root_count via

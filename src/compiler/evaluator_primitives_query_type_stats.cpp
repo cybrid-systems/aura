@@ -630,6 +630,14 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("occurrence-persist-production-always-on-success", 1);
                 insert_kv("schema-2910", 2910);
                 insert_kv("issue-2910", 2910);
+                // Issue #2981: same-txn proof reject on empty-after-fence miss.
+                insert_kv("type-linear-proof-reject-empty-after-fence-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::
+                                  type_linear_proof_reject_empty_after_fence_total_v_read()));
+                insert_kv("type-linear-proof-empty-after-fence-wired", 1);
+                insert_kv("schema-2981", 2981);
+                insert_kv("issue-2981", 2981);
                 // Issue #2938: outermost success freezes Occurrence into
                 // immutable commit snapshot + post-persist proof stamp.
                 // Additive; Soft/empty leave counters at 0.
@@ -1309,6 +1317,14 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                                   wired);
                                         insert_kv("schema-2704", 2704);
                                         insert_kv("issue-2704", 2704);
+                                        insert_kv(
+                                            "type-linear-proof-reject-empty-after-fence-total",
+                                            static_cast<std::int64_t>(
+                                                aura::compiler::typed_audit::
+                                                    type_linear_proof_reject_empty_after_fence_total_v_read()));
+                                        insert_kv("type-linear-proof-empty-after-fence-wired", 1);
+                                        insert_kv("schema-2981", 2981);
+                                        insert_kv("issue-2981", 2981);
                                     }
                                     // Issue #2716: occurrence
                                     // hard-faces active branch
