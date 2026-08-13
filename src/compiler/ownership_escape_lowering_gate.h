@@ -3,6 +3,12 @@
 // the last OwnershipEscapeSummary without importing type_checker
 // (avoids module cycles: lowering → evaluator already).
 //
+// Issue #2964: escape_move_gate_active / escape_blocks_move_elision* are
+// one arm of the unified linear_fast_path_ok predicate (with mid-boundary
+// + densify-pending + proof freshness). When the escape gate is active,
+// IR Move/Drop must not take the #2899 proven fast-path and outermost
+// MutationBoundary success under production forces linear revalidate.
+//
 // Definitions live in typed_mutation_audit_hooks.cpp (non-module TU).
 // Gate mutators used from type_checker purview go through C linkage so
 // Clang does not attach @type_checker module linkage to undefined symbols.

@@ -1229,29 +1229,49 @@ inline void reset_linear_ir_fastpath_counters_for_test() noexcept {
     g_linear_ir_fastpath_boundary_depth_override = -1;
 }
 
-// Purpose: IR Move/Drop may skip redundant provenance re-sim when proof fresh
-// Pre: none (pure relaxed loads)
-// Post: true → caller may skip enforce provenance; counter bumped
-// Safety Class: P1 (performance; never weakens #2108/#2563 — escape/depth/reject block)
-// Issue: #2899
-// AI-Native Rationale: high-frequency mutate loops skip audit when proof says linear_ok
-[[nodiscard]] inline bool linear_ir_fastpath_try_skip() noexcept {
-    // AC3 / zero cost: no recent proof stamp → full check, no counter noise.
+// Issue #2964: unified Linear fast-path eligibility (symmetric to #2899 IR
+// Move/Drop elision). Pure preferred — no counter side effects.
+//   linear_fast_path_ok =
+//     proof.fresh && would_allow && linear_ok
+//     && boundary_depth==0 && !escape_gate && !densify_pending
+// Any arm false → IR must not elide; outermost MutationBoundary success
+// under production/Full must force dirty-root linear revalidate (AC2).
+inline constexpr int kLinearFastPathUnifiedIssue = 2964;
+inline std::atomic<std::uint64_t> g_linear_fast_path_force_revalidate_total{0};
+inline std::atomic<std::uint64_t> g_linear_fast_path_force_revalidate_observe_total{0};
+inline std::atomic<std::uint32_t> g_linear_fast_path_unified_wired{1};
+
+[[nodiscard]] inline std::uint64_t linear_fast_path_force_revalidate_total_v_read() noexcept {
+    return g_linear_fast_path_force_revalidate_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+linear_fast_path_force_revalidate_observe_total_v_read() noexcept {
+    return g_linear_fast_path_force_revalidate_observe_total.load(std::memory_order_relaxed);
+}
+inline void reset_linear_fast_path_force_revalidate_for_test() noexcept {
+    g_linear_fast_path_force_revalidate_total.store(0, std::memory_order_relaxed);
+    g_linear_fast_path_force_revalidate_observe_total.store(0, std::memory_order_relaxed);
+}
+
+// Purpose: single pure eligibility for Linear IR fast-path + boundary revalidate
+// Pre: none (relaxed loads only)
+// Post: true iff proof fresh, linear_ok, outermost, no escape, no densify-pending
+// Safety Class: P1 (perf gate; false → full check / force revalidate)
+// Issue: #2964 / #2899
+// AI-Native Rationale: one predicate Agents can mirror for elision vs revalidate
+[[nodiscard]] inline bool linear_fast_path_ok() noexcept {
+    // proof.fresh — no stamp → not eligible (quiet full check)
     if (g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed) == 0)
         return false;
-    // AC2: Reject outcome never skips.
+    // Reject outcome never eligible
     if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
-        /*Reject*/ 2) {
-        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        /*Reject*/ 2)
         return false;
-    }
-    // (a) would_allow && linear_ok from last stamp
+    // proof.linear_ok && would_allow_commit
     if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 ||
-        g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0) {
-        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0)
         return false;
-    }
-    // (c) mid MutationBoundary → foreign work; full check
+    // mid MutationBoundary arm (#2964 AC3) — boundary_depth > 0 disables
     {
         std::size_t depth = 0;
         if (g_linear_ir_fastpath_boundary_depth_override >= 0) {
@@ -1259,19 +1279,55 @@ inline void reset_linear_ir_fastpath_counters_for_test() noexcept {
         } else {
             depth = aura_evaluator_mutation_boundary_depth();
         }
-        if (depth > 0) {
-            g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        if (depth > 0)
             return false;
-        }
     }
-    // (b) escape-blocked set active → do not skip (AC2 inject escape)
-    if (aura_escape_move_gate_active() != 0) {
-        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+    // escape gate arm (#2964 AC3 / #2263)
+    if (aura_escape_move_gate_active() != 0)
         return false;
-    }
-    // Production must not skip when densify scan mismatch is pending
+    // densify-pending arm (#2964 AC3 / densify Phase-5 scan inject)
     if (g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
-            std::memory_order_relaxed) > 0) {
+            std::memory_order_relaxed) > 0)
+        return false;
+    return true;
+}
+
+// Boundary exit action when !linear_fast_path_ok (AC2).
+// Quiet when ok; SoftObserve under Soft; ForceRevalidate under production/Full.
+enum class LinearFastPathExitAction : std::uint8_t {
+    Quiet = 0,
+    SoftObserve = 1,
+    ForceRevalidate = 2,
+};
+
+// Purpose: decide post-mutate revalidate for outermost MutationBoundary success
+// Pre: prefer call when depth already 0 (after exit_mutation_boundary pop)
+// Post: Quiet → no extra work; SoftObserve → observe counter only;
+//       ForceRevalidate → caller must revalidate dirty linear roots
+// Safety Class: P0 under ForceRevalidate (no silent skip of revalidate)
+// Issue: #2964
+// AI-Native Rationale: inverse of IR elision — stale proof forces revalidate
+[[nodiscard]] inline LinearFastPathExitAction linear_fast_path_boundary_exit_action() noexcept {
+    if (linear_fast_path_ok())
+        return LinearFastPathExitAction::Quiet; // AC4 zero extra revalidate
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard)
+        return LinearFastPathExitAction::ForceRevalidate;
+    return LinearFastPathExitAction::SoftObserve;
+}
+
+// Purpose: IR Move/Drop may skip redundant provenance re-sim when proof fresh
+// Pre: none (pure relaxed loads + counter bumps)
+// Post: true → caller may skip enforce provenance; counter bumped
+// Safety Class: P1 (performance; never weakens #2108/#2563 — escape/depth/reject block)
+// Issue: #2899 / #2964
+// AI-Native Rationale: high-frequency mutate loops skip audit when proof says linear_ok
+[[nodiscard]] inline bool linear_ir_fastpath_try_skip() noexcept {
+    // AC3 / zero cost: no recent proof stamp → full check, no counter noise.
+    if (g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed) == 0)
+        return false;
+    // Issue #2964: single predicate drives elision (preserve #2899 counters).
+    if (!linear_fast_path_ok()) {
         g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
