@@ -15013,6 +15013,13 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"epoch-invariant-event-wired", make_int(1)},
                 {"schema-2668", make_int(2668)},
                 {"issue-2668", make_int(2668)},
+                // Issue #2980: event-walk + residual remount merged heal.
+                {"epoch-residual-merged-heal-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura_epoch_residual_merged_heal_total_v_read()))},
+                {"epoch-residual-merged-heal-wired", make_int(1)},
+                {"schema-2980", make_int(2980)},
+                {"issue-2980", make_int(2980)},
                 // Issue #2693: Soft epoch-invariant consecutive-dirty fuse
                 // (refine #2640 / #2668 — bumps
                 // epoch_invariant_soft_fuse_total after K consecutive Soft
@@ -15479,6 +15486,13 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"reemit-success-sync-covered-remount-wired", make_int(1)},
                 {"schema-2978", make_int(2978)},
                 {"issue-2978", make_int(2978)},
+                // Issue #2980: event-walk + residual remount merged heal.
+                {"epoch-residual-merged-heal-total",
+                 make_int(
+                     static_cast<std::int64_t>(aura_epoch_residual_merged_heal_total_v_read()))},
+                {"epoch-residual-merged-heal-wired", make_int(1)},
+                {"schema-2980", make_int(2980)},
+                {"issue-2980", make_int(2980)},
                 // Issue #2638: residual sid=0 growth hard cap + fail-closed
                 // drop/MustDeopt under sustained reemit. env
                 // AURA_RESIDUAL_SID0_CAP (default 256 under production;

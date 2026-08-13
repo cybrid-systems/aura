@@ -224,6 +224,37 @@ static void ac2668_3_build_linter_wired() {
           "2668 AC6: build.py wires check_2668_coverage linter");
 }
 
+// ── Issue #2980: merge residual remount into event-driven Soft walk ──
+static void ac2980_1_event_walk_merges_residual() {
+    std::println("\n--- #2980 AC1: event walk source-cites residual merge ---");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #2980") != std::string::npos, "2980 AC1: bridge cites #2980");
+    CHECK(br.find("aura_residual_live_closure_remount_tick") != std::string::npos,
+          "2980 AC1: residual tick in event walk");
+    CHECK(br.find("g_epoch_residual_merged_heal_total") != std::string::npos,
+          "2980 AC1: merged heal counter");
+    CHECK(br.find("aura_event_driven_epoch_invariant_walk_if_due") != std::string::npos,
+          "2980 AC1: event walk still the bump edge");
+}
+
+static void ac2980_2_query_and_linter() {
+    std::println("\n--- #2980 AC5/AC6: query keys + linter ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("epoch-residual-merged-heal-total") != std::string::npos,
+          "2980 AC5: obs_eval merged-heal-total");
+    CHECK(q.find("schema-2980") != std::string::npos, "2980 AC5: schema-2980");
+    CHECK(q.find("schema-2668") != std::string::npos, "2980 AC5: schema-2668 preserved");
+    CHECK(q.find("schema-2640") != std::string::npos, "2980 AC5: schema-2640 preserved");
+    const auto t = read_file("tests/compiler/test_epoch_invariant_walk.cpp");
+    CHECK(t.find("ac2980_1_event_walk_merges_residual") != std::string::npos,
+          "2980 AC6: epoch-invariant suite extended");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_epoch_residual_merged_heal_2980") != std::string::npos,
+          "2980 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2980-epoch-residual-merged-heal.md").empty(),
+          "2980 AC6: no docs/design/2980-* per #1655");
+}
+
 // ── Issue #2640 AC1: production + Soft + inject → walk runs, behind count drops to 0 ──
 static void ac2640_periodic_walk_clears_stale() {
     std::println("\n--- #2640 AC1: periodic walk clears injected stale slot ---");
@@ -826,6 +857,9 @@ int run_test_epoch_invariant_walk() {
     ac2668_1_event_driven_walk_wired();
     ac2668_2_query_keys_added();
     ac2668_3_build_linter_wired();
+    std::println("\n=== Issue #2980: event-walk + residual remount merged heal ===");
+    ac2980_1_event_walk_merges_residual();
+    ac2980_2_query_and_linter();
     std::println("\n=== Issue #2693: Soft consecutive-dirty fuse + joint epoch bump gate ===");
     ac2693_1_consecutive_dirty_fuse_fires();
     ac2693_2_clean_resets_consecutive_and_K0();
@@ -849,10 +883,9 @@ int run_test_epoch_invariant_walk() {
     ac2747_2_owner_set_still_invalidates();
     ac2747_3_query_keys();
     ac2747_4_source_and_no_design();
-    std::println("\n=== #2366 + #2640 + #2668 + #2693 + #2712: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== #2366 + #2640 + #2668 + #2693 + #2712 + #2980: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
-}
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
