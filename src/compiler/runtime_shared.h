@@ -202,12 +202,19 @@ extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept;
 // budget B, default 32 production / 0 Soft). Outside reemit-success paths
 // (#2602/#2691/#2850). budget_skip under hard storm / reemit throttle.
 // Soft / budget=0 / nslots==0 → zero walk beyond one budget load.
+// Issue #2977: production prefers sid-bit ∩ (force_jit | last_success)
+// inside the same budget; Soft / mask idle unchanged.
 extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
 extern "C" std::uint64_t aura_residual_remount_cursor() noexcept;
 extern "C" std::uint64_t aura_residual_remount_ok_total_v_read() noexcept;
 extern "C" std::uint64_t aura_residual_remount_budget_skip_total_v_read() noexcept;
+extern "C" std::uint64_t aura_residual_remount_prefer_force_jit_total_v_read() noexcept;
+extern "C" std::uint64_t aura_residual_remount_prefer_hit_total_v_read() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 extern "C" void aura_test_set_residual_remount_budget(std::uint64_t budget) noexcept;
+extern "C" void aura_test_set_residual_remount_cursor(std::uint64_t cursor) noexcept;
+extern "C" void aura_test_set_closure_stable_func_id(std::int64_t closure_id,
+                                                     std::uint32_t sid) noexcept;
 extern "C" void aura_test_set_residual_remount_force_skip(int v) noexcept;
 extern "C" void aura_test_reset_residual_remount_state() noexcept;
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.

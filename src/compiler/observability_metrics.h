@@ -9259,6 +9259,11 @@ struct CompilerMetrics {
     // Soft / budget=0 → counters stay 0 (zero extra work).
     std::atomic<std::uint64_t> residual_remount_ok_total{0};          // #2928
     std::atomic<std::uint64_t> residual_remount_budget_skip_total{0}; // #2928
+    // Issue #2977: residual remount prefer force_jit / last_success.
+    // prefer_force_jit_total: ticks that entered the prefer queue.
+    // prefer_hit_total: remount-ok on a cid whose sid bit intersected.
+    std::atomic<std::uint64_t> residual_remount_prefer_force_jit_total{0}; // #2977
+    std::atomic<std::uint64_t> residual_remount_prefer_hit_total{0};       // #2977
     // Issue #2092: live closures retargeted via the (off-by-default)
     // name fallback path because their stable_func_id stamp was 0
     // (legacy closure / define processed after set_name). Non-zero

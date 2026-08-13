@@ -24,6 +24,11 @@ extern "C" void aura_bump_pure_anon_bg_totals(std::uint64_t enqueue, std::uint64
                                               std::uint64_t drain_fail, std::uint64_t overflow);
 // Issue #2928: residual round-robin remount counters (outside reemit-success).
 extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_t budget_skip);
+// Issue #2977: prefer-path counters (force_jit / last_success coverage).
+extern "C" void aura_bump_residual_remount_prefer_totals(std::uint64_t enter, std::uint64_t hit);
+// Issue #2977: force_jit + last_success masks (HotUpdateRegistry C ABI).
+extern "C" std::uint64_t aura_hot_update_force_jit_regions_mask(void);
+extern "C" std::uint64_t aura_hot_update_last_reemit_success_region_mask(void);
 // Issue #2638 residual sid=0 cap-hit counter.
 extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
 // Issue #2928: storm / throttle gates (production in hot_update_registry.cpp).
@@ -2483,6 +2488,11 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
 //   - on remount ok: clear MustDeopt + restamp bridge/defuse/env
 //   - hard storm / reemit throttle → skip walk (budget_skip +1)
 //   - Soft / budget=0 / nslots==0 → zero extra work beyond budget load
+// Issue #2977: production + (force_jit_regions_mask | last_success) != 0
+// prefers closures whose stable_func_id bit (sid % 64) intersects the
+// mask, inside the same budget B. Remaining budget continues the
+// global cursor so non-demoted closures rotate (no starvation). Soft /
+// mask idle → identical to #2928 (no extra walk). Storm skip unchanged.
 // Call sites: on_reemit_pipeline_call quiet path; MutationBoundary
 // outermost success exit (after deferred drain). Never on reemit-success
 // remount path (AC3 no double-remount same tick).
@@ -2491,6 +2501,10 @@ static std::atomic<std::uint64_t> g_residual_remount_cursor{0};
 // Process-local totals (light-link-safe; metrics bump may be weak stub).
 static std::atomic<std::uint64_t> g_residual_remount_ok_total{0};
 static std::atomic<std::uint64_t> g_residual_remount_budget_skip_total{0};
+// Issue #2977: prefer-path enter (ticks that took the coverage queue)
+// and hit (remount ok on a preferred cid). Soft / idle never bump.
+static std::atomic<std::uint64_t> g_residual_remount_prefer_force_jit_total{0};
+static std::atomic<std::uint64_t> g_residual_remount_prefer_hit_total{0};
 // Test override: when set (non-UINT64_MAX), budget_default returns it.
 static std::atomic<std::uint64_t> g_residual_remount_budget_override{UINT64_MAX};
 // Test: force storm/throttle skip path without spinning deopt storm.
@@ -2523,8 +2537,35 @@ extern "C" std::uint64_t aura_residual_remount_budget_skip_total_v_read() noexce
     return g_residual_remount_budget_skip_total.load(std::memory_order_relaxed);
 }
 
+extern "C" std::uint64_t aura_residual_remount_prefer_force_jit_total_v_read() noexcept {
+    return g_residual_remount_prefer_force_jit_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_residual_remount_prefer_hit_total_v_read() noexcept {
+    return g_residual_remount_prefer_hit_total.load(std::memory_order_relaxed);
+}
+
 extern "C" void aura_test_set_residual_remount_budget(std::uint64_t budget) noexcept {
     g_residual_remount_budget_override.store(budget, std::memory_order_relaxed);
+}
+
+extern "C" void aura_test_set_residual_remount_cursor(std::uint64_t cursor) noexcept {
+    g_residual_remount_cursor.store(cursor, std::memory_order_relaxed);
+}
+
+// Issue #2977: test inject sid so light-link (stable-map stub) can still
+// exercise prefer without aura_get_or_preserve_stable_func_id.
+extern "C" void aura_test_set_closure_stable_func_id(std::int64_t closure_id,
+                                                     std::uint32_t sid) noexcept {
+    if (closure_id < 0)
+        return;
+    std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return;
+    if (g_closure_stable_func_ids.size() < g_closure_func_ids.size())
+        g_closure_stable_func_ids.resize(g_closure_func_ids.size(), 0);
+    g_closure_stable_func_ids[cid] = sid;
 }
 
 extern "C" void aura_test_set_residual_remount_force_skip(int v) noexcept {
@@ -2536,6 +2577,19 @@ extern "C" void aura_test_reset_residual_remount_state() noexcept {
     g_residual_remount_budget_override.store(UINT64_MAX, std::memory_order_relaxed);
     g_residual_force_skip.store(0, std::memory_order_relaxed);
     // Do not zero ok/skip totals — monotonic for Agents; tests delta against snapshot.
+}
+
+// Issue #2977: sid → force-JIT / last-success coverage bit.
+// Anonymous (sid==0) never intersects. Named: bit (sid % 64) so
+// Version|Defuse=0, Env=1, Linear=2, Region|Staging=3, Dlopen|Other=4
+// match #2927 aot_reload_fail_to_force_jit_mask when sid % 64 lands there.
+static std::uint64_t residual_closure_sid_region_bits_unlocked(std::size_t cid) noexcept {
+    if (cid >= g_closure_stable_func_ids.size())
+        return 0;
+    const auto sid = g_closure_stable_func_ids[cid];
+    if (sid == 0)
+        return 0;
+    return static_cast<std::uint64_t>(1) << (static_cast<unsigned>(sid) % 64u);
 }
 
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
@@ -2555,6 +2609,8 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
     }
 
     std::uint64_t ok = 0;
+    std::uint64_t prefer_hit = 0;
+    bool prefer_entered = false;
     {
         std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
         aura_lock_workspace_write();
@@ -2573,6 +2629,8 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
             g_closure_defuse_versions.resize(nslots, 0);
         if (g_closure_env_gen.size() < nslots)
             g_closure_env_gen.resize(nslots, 0);
+        if (g_closure_stable_func_ids.size() < nslots)
+            g_closure_stable_func_ids.resize(nslots, 0);
 
         const std::uint64_t live_env = aura_get_aot_live_env_frame_version();
         const std::uint64_t table_epoch = aura_aot_func_table_epoch();
@@ -2580,34 +2638,81 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         const std::uint64_t start =
             g_residual_remount_cursor.load(std::memory_order_relaxed) % nslots;
 
-        std::uint64_t used = 0;
-        std::size_t steps = 0;
-        std::size_t idx = static_cast<std::size_t>(start);
-        while (used < budget && steps < nslots) {
-            const std::size_t cid = idx;
-            idx = (idx + 1) % nslots;
-            ++steps;
-            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
-                continue;
-            // Budget unit: remount attempt on a live slot.
+        // Issue #2977: production + non-idle coverage → prefer queue.
+        // Soft / idle → prefer_mask=0, identical to #2928 (no extra walk).
+        std::uint64_t prefer_mask = 0;
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            prefer_mask = aura_hot_update_force_jit_regions_mask() |
+                          aura_hot_update_last_reemit_success_region_mask();
+        }
+
+        auto heal_slot = [&](std::size_t cid) -> bool {
             if (remount_or_force_deopt_unlocked_no_call_time_counter(
                     static_cast<std::int64_t>(cid), live_env,
                     /*linear_fp=*/0, table_epoch) != 0) {
-                // Residual heal: remount ok → clear MustDeopt + restamp
-                // dual-epoch so first call does not force-deopt.
                 g_closure_must_deopt[cid] = 0;
                 g_closure_bridge_epochs[cid] = table_epoch;
                 g_closure_defuse_versions[cid] = host_defuse;
                 g_closure_env_gen[cid] = live_env;
                 invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
                 ++ok;
+                return true;
             }
+            return false;
+        };
+
+        std::uint64_t used = 0;
+        std::size_t steps = 0;
+        std::size_t idx = static_cast<std::size_t>(start);
+
+        if (prefer_mask != 0) {
+            prefer_entered = true;
+            std::size_t pidx = static_cast<std::size_t>(start);
+            std::size_t psteps = 0;
+            while (used < budget && psteps < nslots) {
+                const std::size_t cid = pidx;
+                pidx = (pidx + 1) % nslots;
+                ++psteps;
+                if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                    continue;
+                if ((residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) == 0)
+                    continue;
+                if (heal_slot(cid))
+                    ++prefer_hit;
+                ++used;
+            }
+        }
+
+        while (used < budget && steps < nslots) {
+            const std::size_t cid = idx;
+            idx = (idx + 1) % nslots;
+            ++steps;
+            if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+                continue;
+            // Already considered on the prefer pass — no double remount.
+            if (prefer_mask != 0 &&
+                (residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) != 0)
+                continue;
+            (void)heal_slot(cid);
             ++used;
+        }
+        // AC4: always rotate the global cursor. If prefer spent the
+        // whole budget, still advance so non-demoted slots are not starved.
+        if (steps == 0 && nslots != 0) {
+            const auto adv = static_cast<std::size_t>(
+                budget < static_cast<std::uint64_t>(nslots) ? budget : nslots);
+            idx = (static_cast<std::size_t>(start) + adv) % nslots;
         }
         g_residual_remount_cursor.store(static_cast<std::uint64_t>(idx), std::memory_order_relaxed);
         aura_unlock_workspace_write();
     }
 
+    if (prefer_entered) {
+        g_residual_remount_prefer_force_jit_total.fetch_add(1, std::memory_order_relaxed);
+        if (prefer_hit > 0)
+            g_residual_remount_prefer_hit_total.fetch_add(prefer_hit, std::memory_order_relaxed);
+        aura_bump_residual_remount_prefer_totals(1, prefer_hit);
+    }
     if (ok > 0) {
         g_residual_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
         aura_bump_residual_remount_totals(ok, /*budget_skip=*/0);

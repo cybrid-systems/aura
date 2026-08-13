@@ -2038,6 +2038,19 @@ def cmd_lint():
             "Issue #2976 AgentScope concurrency linter failed — run python3 scripts/coverage/checks/check_agent_scope_concurrency_2976.py"
         )
         return r
+    # Issue #2977: residual remount prefer force_jit / last_success.
+    # Extends test_anonymous_residual_stable_id_policy (#81967);
+    # no docs/design/ (#1655).
+    rrp_script = COVERAGE_CHECKS / "check_residual_remount_prefer_force_jit_2977.py"
+    if not rrp_script.exists():
+        fail(f"missing {rrp_script}")
+        return 1
+    r = run([sys.executable, str(rrp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2977 residual remount prefer linter failed — run python3 scripts/coverage/checks/check_residual_remount_prefer_force_jit_2977.py"
+        )
+        return r
     # Issue #2839: residual side-effect + fiber-entry principal enforcement.
     # require_effect_for_node_id + production hard-face on TenantScope
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
@@ -7477,6 +7490,21 @@ def cmd_residual_remount_round_robin_2928_coverage():
         fail("residual remount round-robin (#2928) coverage contract rows failed")
         return 1
     ok("residual remount round-robin (#2928) coverage clean")
+    return 0
+
+
+def cmd_residual_remount_prefer_force_jit_2977_coverage():
+    """Issue #2977: residual remount prefer force_jit / last_success."""
+    print(f"{B}=== residual remount prefer force_jit coverage (#2977) ==={N}")
+    script = COVERAGE_CHECKS / "check_residual_remount_prefer_force_jit_2977.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual remount prefer force_jit (#2977) coverage contract rows failed")
+        return 1
+    ok("residual remount prefer force_jit (#2977) coverage clean")
     return 0
 
 
@@ -13782,6 +13810,7 @@ def main():
         "scope-resolve-2926": cmd_scope_resolve_2926_coverage,
         "force-jit-reason-bit-map-2927": cmd_force_jit_reason_bit_map_2927_coverage,
         "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,
+        "residual-remount-prefer-2977": cmd_residual_remount_prefer_force_jit_2977_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
         "bridge-epoch-zero-stale-2930": cmd_bridge_epoch_zero_stale_2930_coverage,
         "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,

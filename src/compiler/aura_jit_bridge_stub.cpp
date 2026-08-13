@@ -508,10 +508,30 @@ extern "C" __attribute__((weak)) std::uint64_t aura_residual_remount_ok_total_v_
 extern "C" __attribute__((weak)) std::uint64_t aura_residual_remount_budget_skip_total_v_read() {
     return 0;
 }
+extern "C" __attribute__((weak)) std::uint64_t
+aura_residual_remount_prefer_force_jit_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_residual_remount_prefer_hit_total_v_read() {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_bump_residual_remount_prefer_totals(std::uint64_t /*enter*/, std::uint64_t /*hit*/) {}
+extern "C" __attribute__((weak)) std::uint64_t aura_hot_update_force_jit_regions_mask(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_hot_update_last_reemit_success_region_mask(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) void
 aura_residual_live_closure_remount_tick(std::uint64_t /*budget*/) {}
 extern "C" __attribute__((weak)) void
 aura_test_set_residual_remount_budget(std::uint64_t /*budget*/) {}
+extern "C" __attribute__((weak)) void
+aura_test_set_residual_remount_cursor(std::uint64_t /*cursor*/) {}
+extern "C" __attribute__((weak)) void
+aura_test_set_closure_stable_func_id(std::int64_t /*closure_id*/, std::uint32_t /*sid*/) {}
 extern "C" __attribute__((weak)) void aura_test_set_residual_remount_force_skip(int /*v*/) {}
 extern "C" __attribute__((weak)) void aura_test_reset_residual_remount_state() {}
 extern "C" __attribute__((weak)) void

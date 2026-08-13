@@ -1195,6 +1195,14 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"residual-remount-wired", make_int(1)},
                 {"schema-2928", make_int(2928)},
                 {"issue-2928", make_int(2928)},
+                // Issue #2977: residual remount prefer force_jit / last_success.
+                {"residual-remount-prefer-force-jit-total",
+                 make_int(L(&CompilerMetrics::residual_remount_prefer_force_jit_total))},
+                {"residual-remount-prefer-hit-total",
+                 make_int(L(&CompilerMetrics::residual_remount_prefer_hit_total))},
+                {"residual-remount-prefer-wired", make_int(1)},
+                {"schema-2977", make_int(2977)},
+                {"issue-2977", make_int(2977)},
                 // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
                 // assert. Soft single-eval / process-default (filter
                 // eval = nullptr) keeps this at 0. Production hard

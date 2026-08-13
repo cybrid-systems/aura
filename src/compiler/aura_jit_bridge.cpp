@@ -282,6 +282,14 @@ extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_
     }
 }
 
+// Issue #2977: prefer-path counters (force_jit / last_success coverage).
+extern "C" void aura_bump_residual_remount_prefer_totals(std::uint64_t enter, std::uint64_t hit) {
+    if (auto* m = aot_metrics()) {
+        m->residual_remount_prefer_force_jit_total.fetch_add(enter, std::memory_order_relaxed);
+        m->residual_remount_prefer_hit_total.fetch_add(hit, std::memory_order_relaxed);
+    }
+}
+
 // Issue #2638: residual sid=0 cap-hit counter bumper. Bumped when
 // the residual backfill branch in aura_remap_live_closures_after_reemit
 // sees cur_backfill >= cap (or 0 cap = unlimited → never). Distinct

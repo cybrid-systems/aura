@@ -14,6 +14,7 @@
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -1017,6 +1018,178 @@ static void ac2928_6_source_and_linter() {
           "AC6: no invent test per #81967");
 }
 
+// ── Issue #2977: residual remount prefer force_jit / last_success ──
+
+static void ac2977_restore_prod(std::uint32_t save) {
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        save, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_residual_remount_state();
+}
+
+static void ac2977_1_prefer_demoted_region() {
+    std::println("\n--- #2977 AC1: production + multi-bit force_jit prefers demoted sid ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(1);
+    const auto dummy = aura_alloc_closure(/*func_id=*/0);
+    CHECK(dummy >= 0, "AC1: dummy alloc");
+    aura_test_set_closure_stable_func_id(dummy, 0);
+    aura_closure_set_must_deopt(dummy, 1);
+    const auto named = aura_alloc_closure(/*func_id=*/0);
+    CHECK(named >= 0, "AC1: named alloc");
+    // sid=1 → bit 1 = Env (#2927). Bypass light-link map stub.
+    aura_test_set_closure_stable_func_id(named, 1);
+    aura_closure_set_must_deopt(named, 1);
+    CHECK(aura_get_closure_stable_func_id(named) == 1, "AC1: inject sid=1 (Env bit)");
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    reg.on_force_jit_for_reason(AotReloadFail::Linear);
+    const auto mask = aura_hot_update_force_jit_regions_mask();
+    CHECK((mask & aot_reload_fail_to_force_jit_mask(AotReloadFail::Env)) != 0, "AC1: Env bit");
+    CHECK((mask & aot_reload_fail_to_force_jit_mask(AotReloadFail::Linear)) != 0,
+          "AC1: Linear bit");
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(dummy));
+    const auto e0 = aura_residual_remount_prefer_force_jit_total_v_read();
+    const auto h0 = aura_residual_remount_prefer_hit_total_v_read();
+    aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_closure_get_must_deopt(dummy) == 1,
+          "AC1: dummy at cursor not remounted first (prefer skipped)");
+    CHECK(aura_residual_remount_prefer_force_jit_total_v_read() > e0, "AC1: prefer enter");
+    CHECK(aura_residual_remount_prefer_hit_total_v_read() > h0 ||
+              aura_closure_get_must_deopt(named) == 0,
+          "AC1: prefer hit or named healed");
+    ac2977_restore_prod(save);
+}
+
+static void ac2977_2_soft_idle_zero_cost() {
+    std::println("\n--- #2977 AC2: Soft / mask idle / budget=0 → no prefer ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(0, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    aura_test_reset_residual_remount_state();
+    const auto e0 = aura_residual_remount_prefer_force_jit_total_v_read();
+    const auto h0 = aura_residual_remount_prefer_hit_total_v_read();
+    aura_test_set_residual_remount_budget(0);
+    aura_residual_live_closure_remount_tick(0);
+    CHECK(aura_residual_remount_prefer_force_jit_total_v_read() == e0, "AC2: budget=0 no prefer");
+    CHECK(aura_residual_remount_prefer_hit_total_v_read() == h0, "AC2: budget=0 no hit");
+    // Soft + force_mask set + budget>0: remounts cursor order, no prefer path.
+    aura_test_set_residual_remount_budget(1);
+    const auto dummy = aura_alloc_closure(/*func_id=*/0);
+    CHECK(dummy >= 0, "AC2: dummy alloc");
+    aura_closure_set_must_deopt(dummy, 1);
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(dummy));
+    aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_residual_remount_prefer_force_jit_total_v_read() == e0,
+          "AC2: Soft no prefer enter even with force_jit");
+    CHECK(aura_closure_get_must_deopt(dummy) == 0, "AC2: Soft remounts cursor-first (#2928)");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("production_defaults_active()") != std::string::npos, "AC2: production gate");
+    CHECK(rt.find("prefer_mask") != std::string::npos ||
+              rt.find("prefer_mask =") != std::string::npos,
+          "AC2: prefer_mask idle path");
+    ac2977_restore_prod(save);
+}
+
+static void ac2977_3_reemit_success_no_double() {
+    std::println("\n--- #2977 AC3: named/captured remount unchanged; no double remount ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "AC3: named remount (#2602) preserved");
+    CHECK(rt.find("aura_sync_remount_anon_captured_live_closures") != std::string::npos,
+          "AC3: captured remount (#2691) preserved");
+    CHECK(rt.find("aura_sync_remount_pure_anon_live_closures") != std::string::npos,
+          "AC3: pure-anon remount (#2850) preserved");
+    CHECK(rt.find("no double remount") != std::string::npos, "AC3: no double remount same tick");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(reg.find("candidates == 0") != std::string::npos, "AC3: residual quiet-only");
+}
+
+static void ac2977_4_cursor_no_starvation() {
+    std::println("\n--- #2977 AC4: remaining budget + cursor still rotate ---");
+    auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+    ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.on_reload_success();
+    reg.note_reemit_success_coverage(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(2);
+    const auto dummy = aura_alloc_closure(/*func_id=*/0);
+    CHECK(dummy >= 0, "AC4: dummy alloc");
+    aura_test_set_closure_stable_func_id(dummy, 0);
+    aura_closure_set_must_deopt(dummy, 1);
+    const auto named = aura_alloc_closure(/*func_id=*/0);
+    CHECK(named >= 0, "AC4: named alloc");
+    aura_test_set_closure_stable_func_id(named, 1);
+    aura_closure_set_must_deopt(named, 1);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    aura_test_set_residual_remount_cursor(static_cast<std::uint64_t>(dummy));
+    const auto c0 = aura_residual_remount_cursor();
+    aura_residual_live_closure_remount_tick(2);
+    CHECK(aura_residual_remount_cursor() != c0 || aura_closure_get_must_deopt(dummy) == 0,
+          "AC4: cursor advanced or remaining budget healed dummy");
+    ac2977_restore_prod(save);
+}
+
+static void ac2977_5_query_keys() {
+    std::println("\n--- #2977 AC5: additive query keys; #2928/#2895/#2949 preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2977") == 2977, "AC5: schema-2977");
+    CHECK(href(cs, "issue-2977") == 2977, "AC5: issue-2977");
+    CHECK(href(cs, "residual-remount-prefer-wired") == 1, "AC5: prefer-wired");
+    CHECK(href(cs, "residual-remount-prefer-force-jit-total") >= 0, "AC5: prefer-force-jit-total");
+    CHECK(href(cs, "residual-remount-prefer-hit-total") >= 0, "AC5: prefer-hit-total");
+    CHECK(href(cs, "schema-2928") == 2928, "AC5: schema-2928 preserved");
+    CHECK(href(cs, "residual-remount-ok-total") >= 0, "AC5: #2928 ok preserved");
+    const auto q = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(q.find("schema-2895") != std::string::npos, "AC5: schema-2895 surface preserved");
+    CHECK(q.find("schema-2949") != std::string::npos, "AC5: schema-2949 surface preserved");
+}
+
+static void ac2977_6_source_and_linter() {
+    std::println("\n--- #2977 AC6: source-cite + linter + no docs/design ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto t = read_file("tests/compiler/test_anonymous_residual_stable_id_policy.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_residual_remount_prefer_force_jit_2977.py");
+    CHECK(rt.find("Issue #2977") != std::string::npos, "AC6: runtime cites #2977");
+    CHECK(rt.find("residual_closure_sid_region_bits_unlocked") != std::string::npos,
+          "AC6: sid bit helper");
+    CHECK(rt.find("prefer_mask") != std::string::npos, "AC6: prefer_mask");
+    CHECK(br.find("aura_bump_residual_remount_prefer_totals") != std::string::npos,
+          "AC6: bridge bump");
+    CHECK(reg.find("aura_hot_update_force_jit_regions_mask") != std::string::npos,
+          "AC6: registry C ABI");
+    CHECK(hh.find("Issue #2977") != std::string::npos, "AC6: registry header cites #2977");
+    CHECK(obs.find("residual_remount_prefer_force_jit_total") != std::string::npos,
+          "AC6: metrics prefer enter");
+    CHECK(obs.find("residual_remount_prefer_hit_total") != std::string::npos, "AC6: metrics hit");
+    CHECK(t.find("ac2977_1_prefer_demoted_region") != std::string::npos, "AC6: AC1 test");
+    CHECK(!lint.empty() && lint.find("2977") != std::string::npos, "AC6: linter present");
+    CHECK(build.find("check_residual_remount_prefer_force_jit_2977") != std::string::npos ||
+              build.find("residual-remount-prefer-2977") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/2977-residual-remount-prefer.md").empty(),
+          "AC6: no docs/design/2977-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_2977.cpp").empty(),
+          "AC6: no invent test per #81967");
+}
+
 int run_test_anonymous_residual_stable_id_policy() {
     std::println(
         "=== Issue #2605+#2637+#2638: anonymous / residual sid=0 policy + sync remount + cap ===");
@@ -1372,10 +1545,17 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2928_4_soft_budget_zero();
     ac2928_5_query_keys();
     ac2928_6_source_and_linter();
+    std::println("\n=== Issue #2977: residual remount prefer force_jit / last_success ===");
+    ac2977_1_prefer_demoted_region();
+    ac2977_2_soft_idle_zero_cost();
+    ac2977_3_reemit_success_no_double();
+    ac2977_4_cursor_no_starvation();
+    ac2977_5_query_keys();
+    ac2977_6_source_and_linter();
 
-    std::println(
-        "\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928: {} passed, {} failed ===",
-        g_passed, g_failed);
+    std::println("\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977: {} passed, "
+                 "{} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
