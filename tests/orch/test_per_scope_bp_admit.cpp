@@ -44,7 +44,9 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <print>
 #include <string>
 #include <string_view>
@@ -249,10 +251,93 @@ int run_test_per_scope_bp_admit() {
               "AC5: spawn_bp_admit_reject_override_total NOT bumped on default reject");
     }
 
+    // ── Issue #2948: SSOT resolve_bp_threshold (spawn face) ──────
+    {
+        std::println("\n--- #2948 AC1/AC3/AC6: resolve_bp_threshold spawn semantics ---");
+        CHECK(aura::orch::kBpThresholdSsotIssue == 2948, "2948: issue stamp");
+
+        // AC1: nullopt + empty scope → same as resolve_mailbox_bp_admit_threshold
+        {
+            unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+            const auto proc = aura::orch::resolve_mailbox_bp_admit_threshold();
+            const auto d = aura::orch::resolve_bp_threshold(
+                std::nullopt, /*scope_id=*/{}, /*policy_zero_means_process_default=*/false);
+            CHECK(d.threshold == proc, "2948 AC1: nullopt threshold == process default");
+            CHECK(d.using_process_default, "2948 AC1: using_process_default");
+            CHECK(!d.always_reject, "2948 AC1: not always_reject");
+            CHECK(std::string_view{d.source} == "process" || std::string_view{d.source} == "off",
+                  "2948 AC1: source process|off");
+        }
+
+        // AC3: spec 0 → always_reject (distinct from process env=0)
+        {
+            unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+            const auto d = aura::orch::resolve_bp_threshold(
+                std::optional<std::uint64_t>{0}, {}, /*policy_zero_means_process_default=*/false);
+            CHECK(d.always_reject, "2948 AC3: spec 0 → always_reject");
+            CHECK(std::string_view{d.source} == "spec-admit-off",
+                  "2948 AC3: source=spec-admit-off");
+            CHECK(d.override_active, "2948 AC3: override_active for counter routing");
+        }
+
+        // Policy flag: 0 → process default (not always_reject)
+        {
+            const auto proc = aura::orch::resolve_mailbox_bp_admit_threshold();
+            const auto d = aura::orch::resolve_bp_threshold(
+                std::optional<std::uint64_t>{0}, {}, /*policy_zero_means_process_default=*/true);
+            CHECK(!d.always_reject, "2948 AC3: policy 0 is NOT always_reject");
+            CHECK(d.threshold == proc, "2948 AC3: policy 0 → process threshold");
+            CHECK(d.using_process_default, "2948 AC3: policy 0 using_process_default");
+        }
+
+        // Spec N>0
+        {
+            const auto d =
+                aura::orch::resolve_bp_threshold(std::optional<std::uint64_t>{64}, {}, false);
+            CHECK(d.threshold == 64, "2948: spec N → threshold N");
+            CHECK(std::string_view{d.source} == "spec-override", "2948: source=spec-override");
+            CHECK(!d.always_reject, "2948: N not always_reject");
+        }
+
+        // AC4: load_mailbox_bp_recent scope isolation
+        {
+            reset_all();
+            aura::orch::note_mailbox_bp_recent_event("tenant-ssot-a");
+            aura::orch::note_mailbox_bp_recent_event("tenant-ssot-a");
+            aura::orch::note_mailbox_bp_recent_event("tenant-ssot-a");
+            const auto a = aura::orch::load_mailbox_bp_recent("tenant-ssot-a");
+            const auto b = aura::orch::load_mailbox_bp_recent("tenant-ssot-b");
+            CHECK(a >= 3, "2948 AC4: scope A recent loaded");
+            CHECK(b == 0, "2948 AC4: scope B clean (same helper as spawn)");
+            (void)aura::orch::erase_scope_bp_gauge("tenant-ssot-a");
+        }
+
+        // Source-cite
+        {
+            auto spawn_h = read_file("src/orch/agent_spawn.h");
+            auto scope_h = read_file("src/orch/agent_scope.h");
+            auto build = read_file("build.py");
+            CHECK(spawn_h.find("resolve_bp_threshold") != std::string::npos,
+                  "2948 AC6: resolve_bp_threshold present");
+            CHECK(spawn_h.find("load_mailbox_bp_recent") != std::string::npos,
+                  "2948 AC6: load_mailbox_bp_recent present");
+            CHECK(spawn_h.find("spec-admit-off") != std::string::npos,
+                  "2948 AC6: documents spec-admit-off");
+            CHECK(spawn_h.find("policy_zero_means_process_default") != std::string::npos,
+                  "2948 AC6: policy_zero flag");
+            CHECK(scope_h.find("resolve_bp_threshold") != std::string::npos,
+                  "2948 AC6: watch_all uses resolve_bp_threshold");
+            CHECK(build.find("check_bp_threshold_ssot_2948") != std::string::npos,
+                  "2948 AC6: build.py wires linter");
+            CHECK(read_file("docs/design/2948-bp-threshold-ssot.md").empty(),
+                  "2948 AC6: no docs/design/");
+        }
+    }
+
     g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
     g_orch_module_stats.spawn_bp_admit_reject_total.store(0, std::memory_order_relaxed);
     g_orch_module_stats.spawn_bp_admit_reject_override_total.store(0, std::memory_order_relaxed);
-    std::println("\n=== #2591: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    std::println("\n=== #2591/#2948: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

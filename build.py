@@ -2108,6 +2108,21 @@ def cmd_lint():
             "Issue #2947 mailbox hold SLO security-schedule linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_slo_security_schedule_2947.py"
         )
         return r
+    # Issue #2948: SSOT resolve_bp_threshold for spawn admit + watch
+    # on_backpressure (refine #2591/#2887). Spec-0 always-reject vs
+    # policy-0 process default; shared load_mailbox_bp_recent. Extends
+    # test_per_scope_bp_admit + test_agent_failure_policy (#81967);
+    # no docs/design/ (#1655).
+    bpts_script = COVERAGE_CHECKS / "check_bp_threshold_ssot_2948.py"
+    if not bpts_script.exists():
+        fail(f"missing {bpts_script}")
+        return 1
+    r = run([sys.executable, str(bpts_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2948 BP threshold SSOT linter failed — run python3 scripts/coverage/checks/check_bp_threshold_ssot_2948.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -5299,6 +5314,25 @@ def cmd_mailbox_hold_slo_security_schedule_2947_coverage():
         fail("mailbox hold SLO security-schedule (#2947) coverage contract rows failed")
         return 1
     ok("mailbox hold SLO security-schedule (#2947) coverage clean")
+    return 0
+
+
+def cmd_bp_threshold_ssot_2948_coverage():
+    """Issue #2948: SSOT resolve_bp_threshold for spawn admit + watch degrade.
+
+    Spec-0 always-reject vs policy-0 process default; shared
+    load_mailbox_bp_recent; additive schema-2948.
+    """
+    print(f"{B}=== BP threshold SSOT coverage (#2948) ==={N}")
+    script = COVERAGE_CHECKS / "check_bp_threshold_ssot_2948.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("BP threshold SSOT (#2948) coverage contract rows failed")
+        return 1
+    ok("BP threshold SSOT (#2948) coverage clean")
     return 0
 
 

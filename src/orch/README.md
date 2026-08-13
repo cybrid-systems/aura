@@ -702,6 +702,12 @@ most production hosts).
 | `0` | **Admit off for THIS spawn** — always reject under `attach_mailbox` (cheap self-isolation for low-trust scopes) |
 | `N > 0` | **Local threshold** — only deny if `mailbox_bp_recent_total >= N` (relax policy for trusted scopes) |
 
+**Issue #2948 SSOT:** spawn admit and `watch_all` on_backpressure both call
+`resolve_bp_threshold` / `load_mailbox_bp_recent`. Spec `0` = always-reject
+this spawn; policy `bp_threshold=0` = process default (not always-reject).
+Process env `AURA_ORCH_BP_ADMIT_THRESHOLD=0` = gate off (distinct from
+spec-0).
+
 Aura surface: `:bp-admit-threshold n` kwarg on `(orch:spawn-agent …)`:
 
 ```text

@@ -68,7 +68,10 @@ def main() -> int:
     must("request_cancel", "AC2", scope)
     must("agent_bp_cancel_total", "AC2", scope)
     must("agent_bp_degrade_total", "AC2", scope)
-    must("lookup_scope_bp_gauge", "AC2", scope)
+    # Scope gauge load: direct lookup_scope_bp_gauge or #2948 SSOT
+    # load_mailbox_bp_recent (same map / process bucket).
+    if "lookup_scope_bp_gauge" not in scope and "load_mailbox_bp_recent" not in scope:
+        fails.append("AC2: missing scope BP recent load (lookup_scope_bp_gauge or load_mailbox_bp_recent)")
     # Admit soft-reject surface still present (#2228/#2535).
     must("spawn_bp_admit_reject_total", "AC2", spawn)
     must("resolve_mailbox_bp_admit_threshold", "AC2", spawn)

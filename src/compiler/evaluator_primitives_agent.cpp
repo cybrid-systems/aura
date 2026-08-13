@@ -5045,6 +5045,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("agent-bp-throttle-total",
                       static_cast<std::int64_t>(
                           os.agent_bp_throttle_total.load(std::memory_order_relaxed)));
+            // Issue #2948: SSOT resolve_bp_threshold call counter (optional audit).
+            insert_kv("bp-threshold-resolve-total",
+                      static_cast<std::int64_t>(
+                          os.bp_threshold_resolve_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-2948", aura::orch::kBpThresholdSsotIssue);
+            insert_kv("issue-2948", aura::orch::kBpThresholdSsotIssue);
+            insert_kv("bp-threshold-ssot-wired", 1);
             // Issue #2925: producer self-throttle (consecutive BP budget).
             insert_kv("agent-producer-throttle-enter-total",
                       static_cast<std::int64_t>(
