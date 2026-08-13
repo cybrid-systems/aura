@@ -30,6 +30,7 @@
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
+#include "serve/steal_safety.h"
 
 #include <atomic>
 #include <chrono>
@@ -917,6 +918,141 @@ static void ac2849_5_schema_query() {
           "2849 AC5: shared-evaluator deferred retained");
 }
 
+// ── Issue #2987: mailbox residual hard-AND (steal StealInvariant table) ──
+static void ac2987_1_inject_residual_bp() {
+    std::println("\n--- #2987 AC1: inject residual / stamp / ticket → BP ---");
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "2987 AC1: depth 0");
+    MultiFiberMailbox mb(/*high_water=*/16);
+    aura::serve::set_mailbox_delivery_inject_for_test(
+        aura::serve::MailboxDeliveryInject::ResidualGcDefer);
+    MailMessage mid;
+    mid.payload = "residual-2987";
+    CHECK(mb.push(std::move(mid)) == PushStatus::Backpressure,
+          "2987 AC1: residual inject → BP (depth looks safe)");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_residual_total.load(
+              std::memory_order_relaxed) >= 1,
+          "2987 AC1: residual reject counter");
+    auto peek = mb.recv(false, 0);
+    CHECK(!peek.has_value(), "2987 AC1: never enqueue under residual");
+
+    aura::serve::set_mailbox_delivery_inject_for_test(
+        aura::serve::MailboxDeliveryInject::LayoutStamp);
+    MailMessage ls;
+    ls.payload = "layout-2987";
+    CHECK(mb.push(std::move(ls)) == PushStatus::Backpressure, "2987 AC1: layout inject → BP");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_layout_stamp_total.load(
+              std::memory_order_relaxed) >= 1,
+          "2987 AC1: layout-stamp reject counter");
+
+    aura::serve::set_mailbox_delivery_inject_for_test(
+        aura::serve::MailboxDeliveryInject::TicketStale);
+    MailMessage tk;
+    tk.payload = "ticket-2987";
+    CHECK(mb.push(std::move(tk)) == PushStatus::Backpressure, "2987 AC1: ticket inject → BP");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_ticket_stale_total.load(
+              std::memory_order_relaxed) >= 1,
+          "2987 AC1: ticket-stale reject counter");
+
+    MailMessage proto;
+    proto.payload = "fanout-residual-2987";
+    CHECK(mb.broadcast_fanout(proto) == PushStatus::Backpressure,
+          "2987 AC1: fanout also BP under inject");
+
+    aura::serve::clear_mailbox_delivery_inject_for_test();
+    MailMessage okm;
+    okm.payload = "cleared-2987";
+    CHECK(mb.push(std::move(okm)) == PushStatus::Ok, "2987 AC1: clear inject → Ok resume");
+    auto got = mb.recv(false, 0);
+    CHECK(got.has_value() && got->payload == "cleared-2987",
+          "2987 AC1: payload delivered after clear");
+}
+
+static void ac2987_2_soft_still_bp() {
+    std::println("\n--- #2987 AC2: Soft still BP (never silent Ok) ---");
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "2987 AC2: depth 0");
+    MultiFiberMailbox mb(/*high_water=*/8);
+    const auto soft0 = g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+        std::memory_order_relaxed);
+    aura::serve::set_mailbox_delivery_inject_for_test(
+        aura::serve::MailboxDeliveryInject::ResidualGcDefer);
+    MailMessage m;
+    m.payload = "soft-bp-2987";
+    CHECK(mb.push(std::move(m)) == PushStatus::Backpressure, "2987 AC2: Soft still BP");
+    CHECK(!mb.recv(false, 0).has_value(), "2987 AC2: never enqueue");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+              std::memory_order_relaxed) > soft0,
+          "2987 AC2: soft_observe advanced (default Soft)");
+    aura::serve::clear_mailbox_delivery_inject_for_test();
+}
+
+static void ac2987_3_happy_zero_extra() {
+    std::println("\n--- #2987 AC3: happy path no residual reject ---");
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "2987 AC3: depth 0");
+    aura::serve::clear_mailbox_delivery_inject_for_test();
+    const auto r0 =
+        g_mf_mailbox_stats.mailbox_delivery_reject_residual_total.load(std::memory_order_relaxed);
+    const auto l0 = g_mf_mailbox_stats.mailbox_delivery_reject_layout_stamp_total.load(
+        std::memory_order_relaxed);
+    MultiFiberMailbox mb(/*high_water=*/8);
+    MailMessage m;
+    m.payload = "happy-2987";
+    CHECK(mb.push(std::move(m)) == PushStatus::Ok, "2987 AC3: push Ok");
+    MailMessage proto;
+    proto.payload = "fanout-happy-2987";
+    CHECK(mb.broadcast_fanout(proto) == PushStatus::Ok, "2987 AC3: fanout Ok");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_residual_total.load(
+              std::memory_order_relaxed) == r0,
+          "2987 AC3: residual reject unchanged");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_layout_stamp_total.load(
+              std::memory_order_relaxed) == l0,
+          "2987 AC3: layout reject unchanged");
+}
+
+static void ac2987_4_shared_invariants() {
+    std::println("\n--- #2987 AC4: steal + mailbox share StealInvariant ---");
+    const auto ss = read_file("src/serve/steal_safety.h");
+    const auto sc = read_file("src/serve/steal_safety.cpp");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(ss.find("evaluate_residual_hard_and_bits") != std::string::npos,
+          "2987 AC4: shared helper");
+    CHECK(sc.find("mailbox_delivery_safety_transaction") != std::string::npos,
+          "2987 AC4: mailbox txn");
+    CHECK(sc.find("StealInvariant::LayoutStampMatch") != std::string::npos, "2987 AC4: layout");
+    CHECK(sc.find("StealInvariant::TicketFresh") != std::string::npos, "2987 AC4: ticket");
+    CHECK(sc.find("StealInvariant::GcDeferClear") != std::string::npos, "2987 AC4: residual");
+    CHECK(mb.find("note_mailbox_delivery_safety") != std::string::npos, "2987 AC4: mailbox helper");
+    CHECK(ss.find("Does NOT take the") != std::string::npos, "2987 AC4: no steal mutex");
+}
+
+static void ac2987_5_query_additive() {
+    std::println("\n--- #2987 AC5: schema-2987 + lineage ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "2987 AC5 warm");
+    CHECK(href(cs, "schema-2987") == 2987, "2987 AC5: schema-2987");
+    CHECK(href(cs, "issue-2987") == 2987, "2987 AC5: issue-2987");
+    CHECK(href(cs, "mailbox-delivery-safety-wired") == 1, "2987 AC5: wired");
+    CHECK(href(cs, "mailbox-delivery-reject-layout-stamp-total") >= 0, "2987 AC5: layout key");
+    CHECK(href(cs, "mailbox-delivery-reject-ticket-stale-total") >= 0, "2987 AC5: ticket key");
+    CHECK(href(cs, "mailbox-delivery-reject-residual-total") >= 0, "2987 AC5: residual key");
+    CHECK(href(cs, "schema-2849") == 2849, "2987 AC5: schema-2849 retained");
+    CHECK(href(cs, "schema-2903") == 2903, "2987 AC5: schema-2903 retained");
+    CHECK(href(cs, "schema-2551") == 2551, "2987 AC5: schema-2551 retained");
+}
+
+static void ac2987_6_source_and_linter() {
+    std::println("\n--- #2987 AC6: source-cite + linter ---");
+    const auto lint = read_file("scripts/coverage/checks/check_mailbox_delivery_safety_2987.py");
+    const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    CHECK(!lint.empty() && lint.find("2987") != std::string::npos, "2987 AC6: linter");
+    CHECK(t.find("ac2987_1_inject_residual_bp") != std::string::npos, "2987 AC6: AC1 test");
+    CHECK(build.find("check_mailbox_delivery_safety_2987") != std::string::npos,
+          "2987 AC6: build.py");
+    CHECK(read_file("docs/design/2987-mailbox-delivery-safety.md").empty(),
+          "2987 AC6: no docs/design/");
+    CHECK(read_file("tests/serve/test_issue_2987.cpp").empty(), "2987 AC6: no invent test");
+}
+
 static void ac2849_6_soft_never_weakens() {
     std::println("\n--- #2849 AC6: Soft still BP (gate never weakened) ---");
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
@@ -1461,6 +1597,13 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac2958_3_one_shot_no_storm();
     ac2958_4_query_additive();
     ac2958_5_source_and_linter();
+    std::println("\n=== Issue #2987: mailbox delivery residual hard-AND ===");
+    ac2987_1_inject_residual_bp();
+    ac2987_2_soft_still_bp();
+    ac2987_3_happy_zero_extra();
+    ac2987_4_shared_invariants();
+    ac2987_5_query_additive();
+    ac2987_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

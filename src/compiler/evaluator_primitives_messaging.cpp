@@ -293,8 +293,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             MultiFiberMailbox::snapshot_global_full(pushes, pops, broadcasts, bp, attaches, ph,
                                                     waits, tmo, lchk, lviol, &fbp, &rej_bound,
                                                     &def_mh);
-            // Capacity 64→128: #2188/#2312/#2347/#2378 drain-SLA keys.
-            auto* ht = FlatHashTable::create(128);
+            // Capacity 64→128→256: #2188/#2312/#2347/#2378/#2987 keys.
+            auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -546,6 +546,33 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                               std::memory_order_relaxed)));
             insert_kv("schema-2958", 2958);
             insert_kv("issue-2958", 2958);
+            // Issue #2987: mailbox delivery residual hard-AND (steal table).
+            insert_kv("mailbox-delivery-reject-layout-stamp-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_delivery_reject_layout_stamp_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-delivery-reject-ticket-stale-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_delivery_reject_ticket_stale_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-delivery-reject-residual-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_delivery_reject_residual_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-delivery-reject-hard-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_delivery_reject_hard_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-delivery-reject-soft-observe-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "mailbox-delivery-safety-wired",
+                static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_delivery_safety_wired.load(
+                    std::memory_order_relaxed)));
+            insert_kv("schema-2987", 2987);
+            insert_kv("issue-2987", 2987);
             // Issue #2587: mutate admission gate counter (hard reject
             // vs metric-only soft path; AC1 / AC2). Zero cost when
             // agent-throttle flag == 0 — single relaxed load at every

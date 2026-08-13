@@ -128,83 +128,6 @@ namespace {
         }
     }
 
-    // Issue #2929 / #2721: evaluate residual hard-AND arms as named
-    // StealInvariant checks. Returns fail bit-set (0 = all pass).
-    // When bump_counters is true, increments the matching invariant
-    // counter on each failing arm. When false (quiet re-sample), only
-    // returns bits — zero atomics on the clean path (AC2).
-    // Invariant table (a–f residual arms; SnapshotConsistent is earlier):
-    //   BoundarySafe      — is_at_mutation_boundary_safe
-    //   LayoutStampMatch  — aura_evaluator_check_resume_layout_stamp
-    //   TicketFresh       — resume ticket == snap.ticket
-    //   GcDeferClear      — victim evaluator GC defer clear
-    //   EnvFrameOk        — densify EnvFrame residual (#2745)
-    //   LifetimeProofOk   — last LifetimeConsistencyProof (#2957, production)
-    [[nodiscard]] std::uint64_t evaluate_residual_hard_and_bits(Fiber* stolen,
-                                                                const MutationSafetySnapshot& snap,
-                                                                bool bump_counters) noexcept {
-        std::uint64_t fail_bits = 0;
-        // StealInvariant::BoundarySafe
-        if (!stolen->is_at_mutation_boundary_safe()) {
-            fail_bits |= steal_invariant_mask(StealInvariant::BoundarySafe);
-            if (bump_counters)
-                note_steal_invariant_fail(StealInvariant::BoundarySafe);
-        }
-        // StealInvariant::LayoutStampMatch
-        if (aura_evaluator_check_resume_layout_stamp(stolen) != 0) {
-            fail_bits |= steal_invariant_mask(StealInvariant::LayoutStampMatch);
-            if (bump_counters)
-                note_steal_invariant_fail(StealInvariant::LayoutStampMatch);
-        }
-        // StealInvariant::TicketFresh
-        if (stolen->has_resume_safety_ticket() && stolen->resume_safety_ticket() != snap.ticket) {
-            fail_bits |= steal_invariant_mask(StealInvariant::TicketFresh);
-            if (bump_counters)
-                note_steal_invariant_fail(StealInvariant::TicketFresh);
-        }
-        // StealInvariant::GcDeferClear
-        // (#2721 hard-AND + #2727 per-Fiber durable evaluator_id identity)
-        {
-            void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
-            if (victim_eval_id != nullptr &&
-                aura::gc_hooks::gc_deferred_for_evaluator(victim_eval_id)) {
-                fail_bits |= steal_invariant_mask(StealInvariant::GcDeferClear);
-                if (bump_counters)
-                    note_steal_invariant_fail(StealInvariant::GcDeferClear);
-            }
-        }
-        // StealInvariant::EnvFrameOk — Issue #2745: EnvFrame residual after densify
-        // last densify left envframe_ok=false or dual_epoch lag. Quiet path
-        // (call_seq==0) skips densify residual.
-        if (aura::core::densify_consistency::last_densify_call_seq() > 0) {
-            if (!aura::core::densify_consistency::last_densify_envframe_ok() ||
-                !aura::core::densify_consistency::last_densify_dual_epoch_ok()) {
-                fail_bits |= steal_invariant_mask(StealInvariant::EnvFrameOk);
-                if (bump_counters)
-                    note_steal_invariant_fail(StealInvariant::EnvFrameOk);
-            }
-        }
-        // StealInvariant::LifetimeProofOk — Issue #2957 residual arm (f).
-        // Production/Hard only: when last proof is stamped AND
-        // !would_allow_commit AND recent densify (call_seq>0) → RejectHard
-        // without ticket stamp. Soft: skip entirely (no loads). Quiet
-        // production (stamped_total==0): one relaxed load of present bit.
-        // Do not require proof for all steals (over-block); only gate when
-        // proof is fresh-negative after densify.
-        if (is_steal_snapshot_hard_mode()) {
-            namespace lcp = aura::core::lifetime_consistency_proof;
-            // Single present-bit load first (AC2 zero extra work when unset).
-            if (lcp::last_lifetime_consistency_proof_present() &&
-                aura::core::densify_consistency::last_densify_call_seq() > 0 &&
-                !lcp::last_lifetime_consistency_would_allow()) {
-                fail_bits |= steal_invariant_mask(StealInvariant::LifetimeProofOk);
-                if (bump_counters)
-                    note_steal_invariant_fail(StealInvariant::LifetimeProofOk);
-            }
-        }
-        return fail_bits;
-    }
-
     // Boolean wrapper (preserves #2721/#2901 residual_ok naming for greps).
     [[nodiscard]] bool evaluate_residual_hard_and(Fiber* stolen, const MutationSafetySnapshot& snap,
                                                   bool bump_counters) noexcept {
@@ -212,6 +135,86 @@ namespace {
     }
 
 } // namespace
+
+// Issue #2929 / #2721 / #2987: evaluate residual hard-AND arms as named
+// StealInvariant checks. Returns fail bit-set (0 = all pass).
+// When bump_counters is true, increments the matching invariant
+// counter on each failing arm. When false (quiet re-sample / mailbox),
+// only returns bits — zero atomics on the clean path (AC2 / #2987 AC3).
+// skip_mask omits arms (mailbox skips LifetimeProofOk; EnvFrameOk only
+// when the payload carries a held-ref). Same table as steal:
+//   BoundarySafe      — is_at_mutation_boundary_safe
+//   LayoutStampMatch  — aura_evaluator_check_resume_layout_stamp
+//   TicketFresh       — resume ticket == snap.ticket
+//   GcDeferClear      — victim evaluator GC defer clear
+//   EnvFrameOk        — densify EnvFrame residual (#2745)
+//   LifetimeProofOk   — last LifetimeConsistencyProof (#2957, production)
+[[nodiscard]] std::uint64_t evaluate_residual_hard_and_bits(Fiber* stolen,
+                                                            const MutationSafetySnapshot& snap,
+                                                            bool bump_counters,
+                                                            std::uint64_t skip_mask) noexcept {
+    std::uint64_t fail_bits = 0;
+    if (!stolen)
+        return steal_invariant_mask(StealInvariant::SnapshotConsistent);
+    const auto skip = [skip_mask](StealInvariant inv) noexcept {
+        return (skip_mask & steal_invariant_mask(inv)) != 0;
+    };
+    // StealInvariant::BoundarySafe
+    if (!skip(StealInvariant::BoundarySafe) && !stolen->is_at_mutation_boundary_safe()) {
+        fail_bits |= steal_invariant_mask(StealInvariant::BoundarySafe);
+        if (bump_counters)
+            note_steal_invariant_fail(StealInvariant::BoundarySafe);
+    }
+    // StealInvariant::LayoutStampMatch
+    if (!skip(StealInvariant::LayoutStampMatch) &&
+        aura_evaluator_check_resume_layout_stamp(stolen) != 0) {
+        fail_bits |= steal_invariant_mask(StealInvariant::LayoutStampMatch);
+        if (bump_counters)
+            note_steal_invariant_fail(StealInvariant::LayoutStampMatch);
+    }
+    // StealInvariant::TicketFresh
+    if (!skip(StealInvariant::TicketFresh) && stolen->has_resume_safety_ticket() &&
+        stolen->resume_safety_ticket() != snap.ticket) {
+        fail_bits |= steal_invariant_mask(StealInvariant::TicketFresh);
+        if (bump_counters)
+            note_steal_invariant_fail(StealInvariant::TicketFresh);
+    }
+    // StealInvariant::GcDeferClear
+    // (#2721 hard-AND + #2727 per-Fiber durable evaluator_id identity)
+    if (!skip(StealInvariant::GcDeferClear)) {
+        void* victim_eval_id = aura_fiber_evaluator_id_for_steal_safety(stolen);
+        if (victim_eval_id != nullptr &&
+            aura::gc_hooks::gc_deferred_for_evaluator(victim_eval_id)) {
+            fail_bits |= steal_invariant_mask(StealInvariant::GcDeferClear);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::GcDeferClear);
+        }
+    }
+    // StealInvariant::EnvFrameOk — Issue #2745: EnvFrame residual after densify
+    if (!skip(StealInvariant::EnvFrameOk) &&
+        aura::core::densify_consistency::last_densify_call_seq() > 0) {
+        if (!aura::core::densify_consistency::last_densify_envframe_ok() ||
+            !aura::core::densify_consistency::last_densify_dual_epoch_ok()) {
+            fail_bits |= steal_invariant_mask(StealInvariant::EnvFrameOk);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::EnvFrameOk);
+        }
+    }
+    // StealInvariant::LifetimeProofOk — Issue #2957 residual arm (f).
+    // Soft: skip entirely (no loads). Production/Hard only when last
+    // proof is stamped AND !would_allow AND recent densify.
+    if (!skip(StealInvariant::LifetimeProofOk) && is_steal_snapshot_hard_mode()) {
+        namespace lcp = aura::core::lifetime_consistency_proof;
+        if (lcp::last_lifetime_consistency_proof_present() &&
+            aura::core::densify_consistency::last_densify_call_seq() > 0 &&
+            !lcp::last_lifetime_consistency_would_allow()) {
+            fail_bits |= steal_invariant_mask(StealInvariant::LifetimeProofOk);
+            if (bump_counters)
+                note_steal_invariant_fail(StealInvariant::LifetimeProofOk);
+        }
+    }
+    return fail_bits;
+}
 
 StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
     if (!stolen) [[unlikely]] {
@@ -323,6 +326,47 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
 
     g_steal_safety_transaction_ok_total.fetch_add(1, std::memory_order_relaxed);
     return StealSafetyDecision::Ok;
+}
+
+MailboxDeliverySafety mailbox_delivery_safety_transaction(Fiber* target,
+                                                          const MutationSafetySnapshot* snap,
+                                                          bool check_envframe) noexcept {
+    MailboxDeliverySafety out{};
+    // Issue #2987: test inject short-circuits (same StealInvariant bits)
+    // without steal mutex / ticket stamp / on_steal_complete.
+    switch (g_mailbox_delivery_inject) {
+        case MailboxDeliveryInject::LayoutStamp:
+            out.fail_bits = steal_invariant_mask(StealInvariant::LayoutStampMatch);
+            out.decision = StealSafetyDecision::RejectHard;
+            return out;
+        case MailboxDeliveryInject::TicketStale:
+            out.fail_bits = steal_invariant_mask(StealInvariant::TicketFresh);
+            out.decision = StealSafetyDecision::RejectHard;
+            return out;
+        case MailboxDeliveryInject::ResidualGcDefer:
+            out.fail_bits = steal_invariant_mask(StealInvariant::GcDeferClear);
+            out.decision = StealSafetyDecision::RejectHard;
+            return out;
+        case MailboxDeliveryInject::EnvFrame:
+            out.fail_bits = steal_invariant_mask(StealInvariant::EnvFrameOk);
+            out.decision = StealSafetyDecision::RejectHard;
+            return out;
+        case MailboxDeliveryInject::None:
+        default:
+            break;
+    }
+    if (!target) {
+        out.decision = StealSafetyDecision::Ok;
+        return out;
+    }
+    MutationSafetySnapshot local = snap ? *snap : target->mutation_safety_snapshot();
+    std::uint64_t skip = steal_invariant_mask(StealInvariant::LifetimeProofOk);
+    if (!check_envframe)
+        skip |= steal_invariant_mask(StealInvariant::EnvFrameOk);
+    // Mailbox never bumps steal counters (own mailbox_* totals).
+    out.fail_bits = evaluate_residual_hard_and_bits(target, local, /*bump_counters=*/false, skip);
+    out.decision = (out.fail_bits == 0) ? StealSafetyDecision::Ok : StealSafetyDecision::RejectHard;
+    return out;
 }
 
 } // namespace aura::serve

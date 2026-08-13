@@ -41,6 +41,7 @@
 namespace aura::serve {
 
 class Fiber;
+struct MutationSafetySnapshot;
 
 enum class StealSafetyDecision : std::uint8_t {
     Ok = 0,
@@ -215,6 +216,52 @@ steal_safety_residual_lifetime_proof_reject_total_v_read() noexcept {
 // mismatch) keep bumping via the underlying primitives — additive, not
 // regressing.
 StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept;
+
+// Issue #2987: mailbox-facing residual hard-AND. Same StealInvariant
+// definitions as steal_safety_transaction (LayoutStampMatch / TicketFresh /
+// GcDeferClear / BoundarySafe / optional EnvFrameOk). Does NOT take the
+// steal decision window, does NOT stamp a resume ticket, does NOT call
+// on_steal_complete. Soft + production both return RejectHard on fail
+// (mailbox maps that to Backpressure; never silent Ok).
+struct MailboxDeliverySafety {
+    StealSafetyDecision decision = StealSafetyDecision::Ok;
+    std::uint64_t fail_bits = 0;
+};
+
+enum class MailboxDeliveryInject : std::uint8_t {
+    None = 0,
+    LayoutStamp = 1,
+    TicketStale = 2,
+    ResidualGcDefer = 3,
+    EnvFrame = 4,
+};
+
+// Thread-local test inject — not an atomic (AC3 happy path: no extra
+// atomics). Production always None.
+inline thread_local MailboxDeliveryInject g_mailbox_delivery_inject{MailboxDeliveryInject::None};
+
+inline void set_mailbox_delivery_inject_for_test(MailboxDeliveryInject i) noexcept {
+    g_mailbox_delivery_inject = i;
+}
+inline void clear_mailbox_delivery_inject_for_test() noexcept {
+    g_mailbox_delivery_inject = MailboxDeliveryInject::None;
+}
+
+inline constexpr int kMailboxDeliverySafetyIssue = 2987;
+
+// Evaluate residual hard-AND for mailbox delivery. `snap` may be null
+// (sampled from target when present). `check_envframe` enables EnvFrameOk
+// when the payload carries a held-ref / StableNodeRef.
+MailboxDeliverySafety mailbox_delivery_safety_transaction(Fiber* target,
+                                                          const MutationSafetySnapshot* snap,
+                                                          bool check_envframe) noexcept;
+
+// Shared residual evaluator (steal + mailbox). skip_mask bits omit arms.
+// bump_counters only for the steal path (mailbox has its own counters).
+[[nodiscard]] std::uint64_t evaluate_residual_hard_and_bits(Fiber* stolen,
+                                                            const MutationSafetySnapshot& snap,
+                                                            bool bump_counters,
+                                                            std::uint64_t skip_mask = 0) noexcept;
 
 // Issue #2901: test seam — optional hook invoked after on_steal_complete
 // clear and before residual hard-AND / stamp (under the per-Fiber decision
