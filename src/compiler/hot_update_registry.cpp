@@ -19,6 +19,9 @@ extern "C" int aura_evaluator_mutation_boundary_held();
 // Issue #2928: residual remount tick (production in aura_jit_runtime.cpp).
 extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
+// Issue #2949: production_defaults_active probe (strong in
+// typed_mutation_audit_hooks; weak no-op in fiber.cpp).
+extern "C" int aura_production_defaults_active_probe() noexcept;
 
 namespace aura::compiler {
 
@@ -286,13 +289,13 @@ void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
         return;
     // Window met: clear demoted mask bits. Stamp last repromoted reason
     // from the demotion that put us here for agent correlation.
-    // Issue #2895: optional partial clear — only force_mask ∩ last_success
-    // when repromote_only_covered_bits is set (default off → wholesale
-    // clear preserves #2502). Soft residual stays force-JIT.
+    // Issue #2895 / #2949: partial clear — only force_mask ∩ last_success
+    // when resolve_force_jit_repromote_only_covered() is true.
+    // Soft / auto → wholesale (#2502); production default only_covered
+    // (#2949). Soft residual stays force-JIT under partial.
     const auto reason = last_force_jit_reason_.load(std::memory_order_relaxed);
     const auto last_cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
-    const bool partial =
-        force_jit_repromote_only_covered_bits_.load(std::memory_order_relaxed) != 0;
+    const bool partial = resolve_force_jit_repromote_only_covered();
     if (partial && last_cov != 0) {
         const auto clear_bits = mask & last_cov;
         if (clear_bits == 0) {
@@ -367,9 +370,11 @@ void HotUpdateRegistry::reset_force_jit_repromote_for_test() noexcept {
     force_jit_repromote_total_.store(0, std::memory_order_relaxed);
     last_force_jit_repromote_reason_.store(0, std::memory_order_relaxed);
     last_force_jit_repromote_at_epoch_notify_.store(0, std::memory_order_relaxed);
-    // Issue #2895: coverage + partial knobs / counters.
+    // Issue #2895 / #2949: coverage + partial knobs / counters.
+    // Auto mode (override=0) → Soft wholesale; production injects only_covered.
     last_reemit_success_region_mask_.store(0, std::memory_order_relaxed);
     force_jit_repromote_only_covered_bits_.store(0, std::memory_order_relaxed);
+    force_jit_repromote_only_covered_override_.store(0, std::memory_order_relaxed);
     force_jit_repromote_partial_total_.store(0, std::memory_order_relaxed);
     reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
 }
@@ -388,12 +393,38 @@ void HotUpdateRegistry::note_reemit_success_coverage(
     last_reemit_success_region_mask_.store(covered_force_jit_bits, std::memory_order_relaxed);
 }
 
+// Issue #2949: production default only_covered partial re-promote.
+// Priority (mirrors #2838 / #2946 production-default inject):
+//   1. AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED=0 → wholesale (opt-out)
+//   2. AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED=1 → only_covered (force)
+//   3. sticky set via set_force_jit_repromote_only_covered_bits → sticky
+//   4. Soft / AURA_SANDBOX=off → wholesale (#2502 unit ergonomics)
+//   5. production_defaults_active → only_covered (#2949)
+//   6. else wholesale
+bool HotUpdateRegistry::resolve_force_jit_repromote_only_covered() const noexcept {
+    const char* e = std::getenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    if (e != nullptr && e[0] == '0' && e[1] == '\0')
+        return false;
+    if (e != nullptr && e[0] == '1' && e[1] == '\0')
+        return true;
+    if (force_jit_repromote_only_covered_override_.load(std::memory_order_relaxed) != 0) {
+        return force_jit_repromote_only_covered_bits_.load(std::memory_order_relaxed) != 0;
+    }
+    const char* sb = std::getenv("AURA_SANDBOX");
+    if (sb != nullptr && sb[0] != '\0' && std::strcmp(sb, "off") == 0)
+        return false;
+    if (aura_production_defaults_active_probe() != 0)
+        return true;
+    return false;
+}
+
 void HotUpdateRegistry::set_force_jit_repromote_only_covered_bits(bool only_covered) noexcept {
     force_jit_repromote_only_covered_bits_.store(only_covered ? 1 : 0, std::memory_order_relaxed);
+    force_jit_repromote_only_covered_override_.store(1, std::memory_order_relaxed);
 }
 
 bool HotUpdateRegistry::force_jit_repromote_only_covered_bits() const noexcept {
-    return force_jit_repromote_only_covered_bits_.load(std::memory_order_relaxed) != 0;
+    return resolve_force_jit_repromote_only_covered();
 }
 
 std::uint64_t HotUpdateRegistry::force_jit_repromote_partial_total() const noexcept {
@@ -1007,6 +1038,10 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
         static_cast<std::int64_t>(reg.force_jit_repromote_partial_total());
     out->schema_2895 = 2895;
     out->issue_2895 = 2895;
+    // Issue #2949: production default only_covered resolve (additive).
+    out->force_jit_repromote_only_covered_default_wired = 1;
+    out->schema_2949 = 2949;
+    out->issue_2949 = 2949;
     // Issue #2601: exhausted min-dirty retry closed loop.
     out->aot_exhausted_min_dirty_retry_total =
         static_cast<std::int64_t>(reg.aot_exhausted_min_dirty_retry_total());

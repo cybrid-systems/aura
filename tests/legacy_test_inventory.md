@@ -1632,7 +1632,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_dep_graph_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2032; get/set_partial_relower_threshold; reject counter
 - `tests/compiler/test_emit_object_deprecated.cpp` (—) [domain_suite, theme_compiler] — AC1: emit_object returns false
 - `tests/compiler/test_epoch_invariant_complete.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft inject stale AOT slot → violation count; hard clears fn_ptr
-- `tests/compiler/test_force_jit_repromote.cpp` (—) [domain_suite, theme_compiler] — Issue #2895 — last success coverage + partial re-promote knobs
+- `tests/compiler/test_force_jit_repromote.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2895 — last success coverage + partial re-promote knobs
 - `tests/compiler/test_hot_strategy.cpp` (—) [domain_suite, theme_compiler] — Issue #2684 — rebind dirty / jit-stats observability (H7).
 - `tests/compiler/test_hot_update_cascade_dirty_reemit.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2035; notify_hot_update_after_cascade_ +
 - `tests/compiler/test_incremental_effectiveness_snapshot_fail.cpp` (—) [domain_suite, theme_compiler] — Issue #1669/#1854/#1856 (#1978 renamed): issue# moved from filename to header.
