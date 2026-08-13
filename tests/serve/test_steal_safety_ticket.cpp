@@ -52,6 +52,15 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// Query-key source checks span evaluator_primitives_query.cpp AND
+// evaluator_primitives_query_type_stats.cpp (resume-hard-fail / #2702
+// family lives in the type-stats handler). Concatenate both so
+// q.find matches wherever the insert_kv actually lives.
+static std::string read_query_srcs() {
+    return read_file("src/compiler/evaluator_primitives_query.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+}
+
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:orchestration-steal-outermost-stats\") \"{}\")", key));
@@ -287,7 +296,7 @@ static void ac2702_4_steal_safety_ticket_interaction() {
 // preserved (strict superset).
 static void ac2702_5_query_keys_and_source_cite() {
     std::println("\n--- #2702 AC5: query keys + source-cite ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto fh = read_file("src/serve/fiber.h");
     CHECK(q.find("\"resume-hard-fail-total\"") != std::string::npos,
           "AC5: resume-hard-fail-total key");

@@ -4601,10 +4601,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                   : 0;
             const auto cm_lin =
                 m ? m->orch_linear_violation_prevented_total.load(std::memory_order_relaxed) : 0;
-            // Capacity 256: #1588 + #1879/#1880/#1881 health fields + subsequent
-            // scope/directory/obs keys (#2588/#2631/#2751/…); 128 overflowed
-            // (~191 insert_kv) so later schema/wired sentinels were dropped.
-            auto* ht = FlatHashTable::create(256);
+            // Capacity 512: #1588 + #1879/#1880/#1881 health fields + subsequent
+            // scope/directory/obs keys (#2588/#2631/#2751/…); 256 overflowed
+            // (~285 insert_kv) so later schema/wired sentinels were dropped
+            // (e.g. schema-2153 / join-drain-wired at the tail). 512 headroom
+            // keeps every schema/wired sentinel present for AC greps.
+            auto* ht = FlatHashTable::create(512);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();

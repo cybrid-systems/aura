@@ -56,9 +56,22 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// Query-key source checks span evaluator_primitives_query.cpp AND
+// evaluator_primitives_query_type_stats.cpp: the mutation-hold-budget /
+// mutation-region / holder-degrade / region-type-cross-talk families are
+// registered in the type-stats handler (query:type-incremental-fidelity-
+// stats) while other surfaces live in query.cpp. Concatenate both so
+// source_has_key matches wherever the insert_kv actually lives.
+static std::string read_query_srcs() {
+    return read_file("src/compiler/evaluator_primitives_query.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_type_stats.cpp") +
+           read_file("src/compiler/evaluator_primitives_messaging.cpp");
+}
+
 // clang-format may split long string literals in evaluator_primitives_query.cpp
-// (adjacent literals concat at compile time). Match keys after stripping
-// quotes + whitespace — same approach as coverage linter must_key.
+// or evaluator_primitives_query_type_stats.cpp (adjacent literals concat at
+// compile time). Match keys after stripping quotes + whitespace — same
+// approach as coverage linter must_key.
 [[nodiscard]] static bool source_has_key(const std::string& hay, std::string_view key) {
     std::string n;
     n.reserve(hay.size());
@@ -292,7 +305,7 @@ static void ac2701_2_soft_path_metric_only() {
 // ── Issue #2701 AC4: query keys + Agent-visible counters ──
 static void ac2701_4_query_keys_added() {
     std::println("\n--- #2701 AC4: query keys + counters ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     CHECK(source_has_key(q, "query:mutation-hold-budget-gate") ||
               source_has_key(q, "mutation-hold-budget-reject-total"),
           "AC4: query primitive / reject-total surfaced");
@@ -309,7 +322,7 @@ static void ac2701_5_source_and_linter() {
     std::println("\n--- #2701 AC5: source-cite + linter ---");
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
     const auto lint =
@@ -439,7 +452,7 @@ static void ac2720_3_nested_outermost_only() {
 // holder-degrade counters; all #2701/#2313/#2517/#2587 surfaces preserved.
 static void ac2720_4_query_keys() {
     std::println("\n--- #2720 AC4: additive query keys + sentinels ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     // #2720 new keys present (format-robust vs clang-format splits).
     CHECK(source_has_key(q, "mutation-hold-budget-holder-degrade-total"),
           "AC4: holder-degrade-total key");
@@ -471,7 +484,7 @@ static void ac2720_5_source_and_linter() {
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     CHECK(mhb.find("Issue #2720") != std::string::npos, "AC5: mhb cites #2720");
     CHECK(emb.find("Issue #2720") != std::string::npos, "AC5: emb cites #2720");
@@ -595,7 +608,7 @@ static void ac2724_5_additive_observability() {
     std::println("\n--- #2724 AC5: additive observability ---");
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     // New atomics + sentinels (shared header).
     CHECK(mhb.find("g_mutation_region_concurrent_admit_total{0}") != std::string::npos,
           "AC5: concurrent-admit-total counter initialized");
@@ -628,7 +641,7 @@ static void ac2724_5_additive_observability() {
 static void ac2724_6_source_and_linter() {
     std::println("\n--- #2724 AC6: source-cite + linter + no docs/design/ ---");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     // Source-cite: emb cites #2724.
     CHECK(emb.find("Issue #2724") != std::string::npos, "AC6: emb cites #2724");
@@ -755,7 +768,7 @@ static void ac2726_3_nested_outermost_only() {
 // contiguous quoted key (same approach as the #2726 linter must_key).
 static void ac2726_4_query_keys() {
     std::println("\n--- #2726 AC4: additive query keys ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     // #2726 new keys present (tolerate clang-format line splits).
     CHECK(source_has_key(q, "mutation-hold-budget-holder-degrade-cross-fiber-cancel-fired-total"),
           "AC4: cross-fiber-cancel-fired-total key");
@@ -784,7 +797,7 @@ static void ac2726_5_source_and_linter() {
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto fh = read_file("src/serve/fiber.h");
     const auto fc = read_file("src/serve/fiber.cpp");
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
@@ -1138,7 +1151,7 @@ static void ac2754_4_densify_under_concurrent_holds() {
 static void ac2754_5_additive_observability() {
     std::println("\n--- #2754 AC5: additive observability ---");
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     CHECK(mhb.find("g_mutation_region_concurrent_cone_admit_total{0}") != std::string::npos,
           "AC5: cone-admit-total counter initialized");
     CHECK(mhb.find("g_mutation_region_cone_disjoint_wired{1}") != std::string::npos,
@@ -1169,7 +1182,7 @@ static void ac2754_6_source_and_linter() {
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
     const auto lint = read_file("scripts/coverage/checks/check_region_cone_disjoint_admit_2754.py");
@@ -1271,7 +1284,7 @@ static void ac2757_3_soft_and_quiet_path() {
 static void ac2757_5_additive_observability() {
     std::println("\n--- #2757 AC5: additive observability ---");
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     CHECK(mhb.find("g_mutation_region_mask_disjoint_admit_total{0}") != std::string::npos,
           "AC5: mask-disjoint-admit-total initialized");
     CHECK(mhb.find("g_mutation_region_mask_disjoint_wired{1}") != std::string::npos,
@@ -1296,7 +1309,7 @@ static void ac2757_6_source_and_linter() {
     std::println("\n--- #2757 AC6: source-cite + linter ---");
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
     const auto lint = read_file("scripts/coverage/checks/check_region_mask_disjoint_admit_2757.py");
@@ -1392,7 +1405,7 @@ static void ac2760_4_densify_isolation() {
 // ── Issue #2760 AC5: additive observability ──
 static void ac2760_5_additive_observability() {
     std::println("\n--- #2760 AC5: additive observability ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     CHECK(mhb.find("g_mutation_region_impact_mask_wired{1}") != std::string::npos,
           "AC5: impact-mask-wired sentinel");
@@ -1421,7 +1434,7 @@ static void ac2760_6_source_and_linter() {
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
     const auto lint = read_file("scripts/coverage/checks/check_region_impact_mask_admit_2760.py");
@@ -1516,7 +1529,7 @@ static void ac2761_3_soft_and_hot_path() {
 // ── Issue #2761 AC5: additive observability ──
 static void ac2761_5_additive_observability() {
     std::println("\n--- #2761 AC5: additive observability ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     CHECK(mhb.find("g_mutation_region_mask_overlap_wired{1}") != std::string::npos,
           "AC5: mask-overlap-wired sentinel");
@@ -1549,7 +1562,7 @@ static void ac2761_6_source_and_linter() {
     std::println("\n--- #2761 AC6: source-cite + linter ---");
     const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
     const auto lint = read_file("scripts/coverage/checks/check_region_mask_overlap_admit_2761.py");
@@ -1647,7 +1660,7 @@ static void ac2847_4_zero_cost_quiet() {
 
 static void ac2847_5_additive_and_preserved() {
     std::println("\n--- #2847 AC5: additive query + prior region surfaces ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(source_has_key(q, "region-type-cross-talk-observe-total"), "AC5: query observe total");
     CHECK(source_has_key(q, "region-type-cross-talk-reject-total"), "AC5: query reject total");
@@ -1672,7 +1685,7 @@ static void ac2847_6_source_and_linter() {
     const auto ta = read_file("src/compiler/typed_mutation_audit.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto eix = read_file("src/compiler/evaluator.ixx");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_srcs();
     const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
     const auto build = read_file("build.py");
     const auto lint = read_file("scripts/coverage/checks/check_region_type_commit_gate_2847.py");
