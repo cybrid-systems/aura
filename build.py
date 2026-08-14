@@ -2768,6 +2768,18 @@ def cmd_lint():
             "Issue #2990 ConcurrentMutationPolicy linter failed — run python3 scripts/coverage/checks/check_workspace_concurrent_policy_2990.py"
         )
         return r
+    # Issue #3039: ScopedParallel overlap production hard-reject.
+    # Extends test_workspace_region_concurrency (#81967); no docs/design/.
+    spoh_script = COVERAGE_CHECKS / "check_scoped_parallel_overlap_hard_reject_3039.py"
+    if not spoh_script.exists():
+        fail(f"missing {spoh_script}")
+        return 1
+    r = run([sys.executable, str(spoh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3039 ScopedParallel overlap hard-reject linter failed — run python3 scripts/coverage/checks/check_scoped_parallel_overlap_hard_reject_3039.py"
+        )
+        return r
     # Issue #2991: coercion provenance under high-frequency mutate.
     # Extends test_coercion_stamp_at_add (#81967); no docs/design/.
     cph_script = COVERAGE_CHECKS / "check_coercion_provenance_hf_mutate_2991.py"
@@ -11112,6 +11124,26 @@ def cmd_workspace_concurrent_policy_2990_coverage():
     return 0
 
 
+def cmd_scoped_parallel_overlap_hard_reject_3039_coverage():
+    """Issue #3039: production ScopedParallel overlap hard-reject."""
+    print(f"{B}=== ScopedParallel overlap hard-reject coverage (#3039) ==={N}")
+    script = COVERAGE_CHECKS / "check_scoped_parallel_overlap_hard_reject_3039.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ScopedParallel overlap hard-reject (#3039) coverage contract rows failed")
+        return 1
+    ok("ScopedParallel overlap hard-reject (#3039) coverage clean")
+    return 0
+
+
+def cmd_scoped_parallel_overlap_hard_reject_3039():
+    """Alias for coverage check."""
+    return cmd_scoped_parallel_overlap_hard_reject_3039_coverage()
+
+
 def cmd_coercion_provenance_hf_mutate_2991_coverage():
     """Issue #2991: coercion provenance completeness under hf mutate."""
     print(f"{B}=== coercion provenance hf-mutate coverage (#2991) ==={N}")
@@ -15601,6 +15633,8 @@ def main():
         "mutate-invalidate-incremental-2988": cmd_mutate_invalidate_incremental_2988_coverage,
         "query-concurrent-hygiene-safe-span-2989": cmd_query_concurrent_hygiene_safe_span_2989_coverage,
         "workspace-concurrent-policy-2990": cmd_workspace_concurrent_policy_2990_coverage,
+        "scoped-parallel-overlap-hard-reject-3039": cmd_scoped_parallel_overlap_hard_reject_3039,
+        "scoped-parallel-overlap-hard-reject-3039-coverage": cmd_scoped_parallel_overlap_hard_reject_3039_coverage,
         "coercion-provenance-hf-mutate-2991": cmd_coercion_provenance_hf_mutate_2991_coverage,
         "gradual-permissiveness-2992": cmd_gradual_permissiveness_2992_coverage,
         "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,

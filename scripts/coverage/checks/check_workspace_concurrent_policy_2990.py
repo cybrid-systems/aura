@@ -7,7 +7,7 @@ Workspace-layer policy. Complements #2976 AgentScope + #2985 health
 Contract:
   AC1 SingleWriter default; try_acquire no auto-redirect
   AC2 ScopedParallel opt-in; disjoint TLS region may redirect
-  AC3 overlap fail-closed fallback SingleWriter
+  AC3 overlap fail-closed fallback SingleWriter (Soft; production is #3039)
   AC4 query:workspace-concurrency-stats schema-2990; #2985/#2976 wired
   AC5 extend test_workspace_region_concurrency; no docs/design / invent
 
@@ -67,10 +67,11 @@ def main() -> int:
     must("workspace:set-concurrent-mutation-policy", "AC2", ws)
     must("ac2990_2_scoped_parallel_disjoint", "AC2", t)
 
-    # AC3 — overlap fallback
+    # AC3 — overlap fallback (Soft). Production hard-reject is #3039.
     must("bump_scoped_parallel_conflict_fallback", "AC3", mb)
     must("scoped_parallel_overlap_fallback", "AC3", mb)
     must("ac2990_3_overlap_fallback", "AC3", t)
+    must("Issue #3039", "AC3 successor", mb)
 
     # AC4 — stats + no health reimplementation
     must_key("query:workspace-concurrency-stats", "AC4", q)

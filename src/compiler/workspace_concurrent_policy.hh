@@ -8,7 +8,9 @@
 // Production default: SingleWriter (workspace_mtx_ unique, current
 // try_acquire GlobalExclusive). Explicit opt-in ScopedParallel allows
 // disjoint-subtree RegionExclusive (try_acquire_for_region + ImpactScope
-// / dirty-cone proof). Overlap fail-closed falls back to SingleWriter.
+// / dirty-cone proof). Issue #3039: production overlap hard-rejects
+// (AdmissionRejected: region-overlap) — no silent SingleWriter degrade.
+// Soft / sandbox=off still observes + may degrade (metric only).
 //
 // Env opt-in: AURA_WORKSPACE_CONCURRENT_MUTATION_POLICY=scoped-parallel|1
 
@@ -27,6 +29,7 @@ enum class ConcurrentMutationPolicy : std::uint8_t {
 };
 
 inline constexpr int kWorkspaceConcurrentPolicyIssue = 2990;
+inline constexpr int kWorkspaceScopedParallelOverlapHardIssue = 3039;
 
 // Production default SingleWriter. Soft/dev may still opt in via env.
 [[nodiscard]] inline ConcurrentMutationPolicy
