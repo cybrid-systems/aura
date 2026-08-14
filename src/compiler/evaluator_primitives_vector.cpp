@@ -262,12 +262,18 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         mutate_general(3, "(vector int any) -> void", "Set vector element at index."));
     register_prim(
         add, ev, "vector-length",
-        [&vector_heap](std::span<const EvalValue> a) {
-            if (a.empty() || !is_vector(a[0]))
-                return make_int(0);
+        [&vector_heap, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.empty() || !is_vector(a[0])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector-length: not a vector", primitive_error_counter);
+            }
             auto idx = as_vector_idx(a[0]);
-            if (idx >= vector_heap.size())
-                return make_int(0);
+            if (idx >= vector_heap.size()) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector-length: corrupted vector",
+                                            primitive_error_counter);
+            }
             return make_int(static_cast<std::int64_t>(vector_heap[idx].size()));
         },
         pure_general(1, "(vector) -> int", "Number of elements in a vector."));
@@ -362,12 +368,18 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(1, "(list) -> vector", "Convert a list to a vector."));
     register_prim(
         add, ev, "vector->list",
-        [&pairs, &vector_heap](std::span<const EvalValue> a) {
-            if (a.empty() || !is_vector(a[0]))
-                return make_void();
+        [&pairs, &vector_heap, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.empty() || !is_vector(a[0])) {
+                return make_primitive_error(string_heap, error_values, "vector->list: not a vector",
+                                            primitive_error_counter);
+            }
             auto idx = as_vector_idx(a[0]);
-            if (idx >= vector_heap.size())
-                return make_void();
+            if (idx >= vector_heap.size()) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector->list: corrupted vector",
+                                            primitive_error_counter);
+            }
             EvalValue result = make_void();
             for (auto it = vector_heap[idx].rbegin(); it != vector_heap[idx].rend(); ++it) {
                 auto pid = pairs.size();
