@@ -41,6 +41,9 @@ inline std::atomic<std::uint64_t> dirty_push_to_ir_total{0};
 inline std::atomic<std::uint64_t> type_dirty_cone_mirrored_total{0};
 inline std::atomic<std::uint64_t> type_ir_cone_union_size_sum{0};
 inline std::atomic<std::uint64_t> type_ir_cone_union_samples{0};
+// Issue #3045: match / exhaustiveness sites forced into the type∪IR cone
+// when Agent under-marked a Variant / constructor / match-arm.
+inline std::atomic<std::uint64_t> adt_exhaust_undermark_force_total{0};
 
 // Issue #2106: optional sink → CompilerMetrics::cascade_skip_subtree_total.
 // Set by CompilerService ctor (or tests); null when no service is live.
@@ -615,6 +618,32 @@ inline std::size_t mirror_type_affected_to_cascade(std::span<const NodeId> affec
     type_ir_cone_union_size_sum.fetch_add(union_sz, std::memory_order_relaxed);
     type_ir_cone_union_samples.fetch_add(1, std::memory_order_relaxed);
     return mirrored;
+}
+
+// Issue #3045: force exhaustiveness match sites into the type∪IR dirty
+// cone (encode_ast_dep_node + pipeline cascade root). Called when Agent
+// under-marked a Variant / constructor / match-arm so the containing
+// match never entered affected. Empty span → zero extra (Quiet / AC3).
+// evaluator_typecheck + mutate_type_gate Hard still reject if the
+// recheck stays non-exhaustive (Production / Full).
+inline std::size_t force_adt_exhaust_sites_into_cone(std::span<const NodeId> match_sites) {
+    if (match_sites.empty())
+        return 0; // Quiet: no ADT touch → zero extra beyond existing dirty
+    std::size_t n = 0;
+    for (NodeId nid : match_sites) {
+        if (nid == 0)
+            continue;
+        // Cascade root for this pass only. Do not persist on
+        // g_global_dirty — the next mutate's pull_cascade_ast_dirty_into
+        // would treat a reused NodeId as still-dirty (unbound-var after
+        // rebind). End-of-infer mirror_type_affected_to_cascade marks
+        // the live affected cone.
+        note_pipeline_cascade_root(encode_ast_dep_node(nid));
+        ++n;
+    }
+    if (n)
+        adt_exhaust_undermark_force_total.fetch_add(n, std::memory_order_relaxed);
+    return n;
 }
 
 // Sync multi-function block dirty matrix [func][block] into DirtySet.

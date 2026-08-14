@@ -445,6 +445,13 @@ inline constexpr int kDeltaTimeoutFailClosedIssue = 3003;
 // Quiet only when the goal was never dirty.
 inline constexpr int kAdtExhaustDirtyConeIssue = 3005;
 
+// Issue #3045: residual of #3005 — variant add / arm delete under-mark
+// must still force containing match / exhaustiveness sites into the
+// dirty cone (dirty_propagation + evaluator_typecheck + mutate_type_gate).
+// Production hard-rejects non-exhaustive after recheck; Soft observe-only;
+// Quiet (no ADT ancestor) is zero extra.
+inline constexpr int kAdtExhaustUndermarkConeIssue = 3045;
+
 // Issue #2900 / #2963: Agent-controlled delta TIMEOUT policy (SolverBudget).
 // Production never honors allow_timeout_commit (always escalate / reject
 // on unsolved via #2277). Soft + allow_timeout_commit: keep TIMEOUT with
@@ -1133,6 +1140,11 @@ public:
     // Issue #3005: seed subject ADT TypeId into touched + pending_full_solve
     // so solve_delta dep-closure BFS sees the exhaustiveness obligation.
     void note_adt_exhaust_dirty_type(std::uint32_t adt_type_id) noexcept;
+    // Issue #3045: under-mark force — insert match NodeIds into reverify
+    // roots when the Agent dirtied only a constructor / single arm.
+    // Empty input → 0 (Quiet).
+    [[nodiscard]] std::size_t
+    force_adt_exhaust_undermark_from_match_nodes(const std::vector<std::uint32_t>& nodes) noexcept;
     [[nodiscard]] std::size_t adt_match_goals_size() const noexcept {
         return adt_match_goals_.size();
     }
@@ -3433,6 +3445,16 @@ export std::size_t revalidate_linear_after_coercion(aura::ast::FlatAST& flat,
 export void refresh_adt_constructors_for_dirty_define_types(
     aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
     const std::vector<aura::ast::NodeId>& dirty_nodes, void* metrics = nullptr);
+
+// Issue #3045: walk ancestors of dirty constructor / match-arm nodes,
+// refresh DefineType ctor lists, seed exhaustiveness reverify roots,
+// and mark match sites via dirty::force_adt_exhaust_sites_into_cone.
+// Empty dirty / no ADT ancestor → 0 (Quiet).
+export std::size_t
+force_adt_exhaust_undermark_into_cone(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                                      aura::core::TypeRegistry& reg,
+                                      const std::vector<aura::ast::NodeId>& dirty_nodes,
+                                      ConstraintSystem* cs = nullptr, void* metrics = nullptr);
 
 // Issue #692: incremental ADT exhaustiveness + pattern provenance refresh
 // for infer_flat_partial structural typed mutation.

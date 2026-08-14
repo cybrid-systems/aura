@@ -448,6 +448,24 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // when a constructor clause was removed.
             if (hard_gate) {
                 auto& treg_ex = *static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
+                // Issue #3045: under-mark cone-force before the Hard walk.
+                // Variant add / arm delete may dirty only a constructor or
+                // a single arm; refresh constructors + force containing
+                // match sites into dirty_propagation so this walk (and
+                // mutate_type_gate Hard) sees the non-exhaustive residual.
+                // Quiet: no mutation seeds → force is a no-op.
+                {
+                    std::vector<aura::ast::NodeId> seeds;
+                    for (const auto& rec : workspace_flat_->all_mutations()) {
+                        if (rec.target_node != 0)
+                            seeds.push_back(rec.target_node);
+                        if (rec.parent_id != 0)
+                            seeds.push_back(rec.parent_id);
+                    }
+                    (void)force_adt_exhaust_undermark_into_cone(*workspace_flat_, *workspace_pool_,
+                                                                treg_ex, seeds, nullptr,
+                                                                compiler_metrics_);
+                }
                 for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
                     if (!workspace_flat_->has_match_info(id))
                         continue;
@@ -2650,6 +2668,12 @@ void Evaluator::partial_recover_adt_exhaustiveness(std::uint64_t mutation_id) no
         }
         if (roots.empty() && flat.root != 0)
             roots.push_back(flat.root);
+        // Issue #3045: force containing match sites into the dirty cone
+        // even when Agent under-marked (constructor / arm only). Quiet
+        // when roots have no ADT ancestor. Production Hard reject stays
+        // on mutate_type_gate + the invariant walk above.
+        (void)force_adt_exhaust_undermark_into_cone(flat, pool, reg, roots, nullptr,
+                                                    compiler_metrics_);
         (void)selective_adt_guardshape_renarrow(flat, pool, reg, roots, compiler_metrics_);
         aura::ast::MutationRecord stub{};
         stub.mutation_id = mutation_id;

@@ -845,6 +845,30 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                                     insert_kv("adt-exhaust-dirty-cone-wired", 1);
                                                     insert_kv("schema-3005", 3005);
                                                     insert_kv("issue-3005", 3005);
+                                                    // Issue #3045: under-mark cone-force (variant
+                                                    // add / arm delete when match site was not
+                                                    // dirty).
+                                                    const std::int64_t undermark_cs =
+                                                        m ? static_cast<std::int64_t>(
+                                                                m->adt_exhaust_undermark_force_total
+                                                                    .load(
+                                                                        std::memory_order_relaxed))
+                                                          : 0;
+                                                    const std::int64_t undermark_dp =
+                                                        static_cast<std::int64_t>(
+                                                            aura::compiler::dirty::
+                                                                adt_exhaust_undermark_force_total
+                                                                    .load(
+                                                                        std::memory_order_relaxed));
+                                                    insert_kv("adt-exhaust-undermark-force-total",
+                                                              undermark_cs);
+                                                    insert_kv(
+                                                        "adt-exhaust-undermark-force-dirty-total",
+                                                        undermark_dp);
+                                                    insert_kv("adt-exhaust-undermark-cone-wired",
+                                                              1);
+                                                    insert_kv("schema-3045", 3045);
+                                                    insert_kv("issue-3045", 3045);
                                                 }
                                                 // Issue #2552: joint steal/densify OccurrenceGoal +
                                                 // type_dep fence.

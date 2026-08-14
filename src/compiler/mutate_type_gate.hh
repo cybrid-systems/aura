@@ -7,6 +7,10 @@
 // Hard (production defaults / Restricted+Full audit):
 //   Match exhaustiveness TypeError hard-rejects mutate (boundary rollback);
 //   remaining TypeError rejects; Note/Warning stay non-fatal (AC4).
+// Issue #3045: after dirty_propagation / evaluator_typecheck under-mark
+// cone-force (variant add / arm delete), Hard still rejects exhaustiveness
+// TypeErrors. Soft remains observe-only; Quiet (no ADT) does not change
+// the gate.
 //
 // Env: AURA_MUTATE_TYPE_GATE=soft|hard  (always wins when set)
 // Env: AURA_ALLOW_SOFT_TYPE_GATE=1      (production-only opt-out — #2279)
@@ -222,7 +226,8 @@ inline void apply_production_defaults(bool dev_sandbox_off) noexcept {
 
 // Match exhaustiveness / ADT soft-filter message detection (shared with TC).
 // Covers type_checker format_match_exhaustiveness_message + eval_flat runtime
-// "match warning: unhandled constructor".
+// "match warning: unhandled constructor". #3045: Hard reject still keys off
+// these messages after under-mark cone-force.
 [[nodiscard]] inline bool is_match_exhaustiveness_msg(std::string_view msg) noexcept {
     return msg.find("missing constructor") != std::string_view::npos ||
            msg.find("missing constructors") != std::string_view::npos ||
