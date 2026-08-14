@@ -81,6 +81,10 @@ struct TenantIsolationMetrics {
     // module BMIs writing at wrong offsets corrupt neighboring heap — see
     // #2906).
     std::atomic<std::uint64_t> cross_tenant_grant_deny_total{0};
+    // Issue #3010: allow_cross_tenant_ write deny — same-tenant self-grant
+    // of the isolation-bypass flag without TenantAdmin / wildcard under
+    // production. Appended at END (#2906).
+    std::atomic<std::uint64_t> allow_cross_tenant_deny_total{0};
 };
 
 inline TenantIsolationMetrics& g_tenant_isolation_metrics() noexcept {
@@ -343,6 +347,9 @@ struct WorkspaceIsolationPolicy {
                 record_audit(target, ref_tenant, true, false, false, op, required_effects);
                 return false;
             }
+            // Issue #3010: this bypass remains; *writing* allow_cross_tenant_
+            // is gated at Evaluator::set_tenant_principal /
+            // security:set-tenant-principal! (TenantAdmin | wildcard).
             if (allow_cross_tenant) {
                 record_audit(target, ref_tenant, false, false, false, op, required_effects);
                 return true;
@@ -437,6 +444,7 @@ inline void reset_tenant_isolation_for_test() noexcept {
     m.isolation_audit_total.store(0, std::memory_order_relaxed);
     m.strict_sandbox_isolation_denials.store(0, std::memory_order_relaxed);
     m.cross_tenant_grant_deny_total.store(0, std::memory_order_relaxed); // #2968
+    m.allow_cross_tenant_deny_total.store(0, std::memory_order_relaxed); // #3010
 }
 
 struct TenantIsolationStatsSnapshot {
@@ -456,6 +464,9 @@ struct TenantIsolationStatsSnapshot {
     int isolation_enabled = 0;
     int allow_cross = 0;
     int strict_linked = 0;
+    // Issue #3010: allow_cross flag-write deny (missing TenantAdmin).
+    // Appended (do not insert mid-struct — positional snapshot init).
+    std::uint64_t allow_cross_tenant_deny = 0;
 };
 
 [[nodiscard]] inline TenantIsolationStatsSnapshot snapshot_tenant_isolation_stats() noexcept {
@@ -476,6 +487,7 @@ struct TenantIsolationStatsSnapshot {
         p.isolation_enabled ? 1 : 0,
         p.current.allow_cross_tenant ? 1 : 0,
         p.strict_sandbox_linked ? 1 : 0,
+        m.allow_cross_tenant_deny_total.load(std::memory_order_relaxed),
     };
 }
 

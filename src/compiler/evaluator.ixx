@@ -5959,6 +5959,8 @@ private:
     // (matches the prior semantics of WorkspaceIsolationPolicy::current.
     // allow_cross_tenant_). Stored locally so multiple Evaluators in one
     // process do not race on a global. Snapshot/restore in TenantScope.
+    // Issue #3010: writing true under production requires TenantAdmin
+    // or wildcard (security:set-tenant-principal! + set_tenant_principal).
     bool allow_cross_tenant_ = false;
 
 public:
@@ -6332,7 +6334,15 @@ public:
     [[nodiscard]] std::uint64_t capability_tenant_id() const noexcept {
         return capability_tenant_id_;
     }
+    // Issue #3010: per-Evaluator isolation-bypass flag (read-only). Write
+    // path is set_tenant_principal / security:set-tenant-principal!.
+    [[nodiscard]] bool allow_cross_tenant() const noexcept { return allow_cross_tenant_; }
     // Issue #1566: WorkspaceIsolationPolicy enforcement.
+    // Issue #3010: under production (sandbox_mode_ != 0 ||
+    // effect_sandbox_mode() != 0), allow_cross=true requires TenantAdmin
+    // or wildcard (or "capability" meta-priv). Missing privilege keeps
+    // the flag false, emits SE reason allow-cross-needs-tenant-admin.
+    // Soft / Off: zero extra cost; flag can still be set.
     void set_tenant_principal(std::uint64_t tenant_id, std::string_view name = {},
                               bool allow_cross = false) noexcept;
     // Issue #2055: RAII principal snapshot for fiber entry / multi-tenant
