@@ -1,6 +1,7 @@
 // @category: unit
 // @reason: Issue #2564 — ADT match exhaustiveness goal table + delta
-//          reverify roots for Soft delta fidelity.
+//          reverify roots for Soft delta fidelity. Issue #3005 extends
+//          the same suite: dirty-cone seed + Production no Dynamic slide.
 //
 //   AC1: note goals + invalidate by ADT → reverify roots; Soft recheck path
 //   AC2: no ADT/match mutation → zero invalidate / reverify-root counters
@@ -152,7 +153,8 @@ static void ac4_schema() {
     CHECK(om.find("adt_goal_invalidate_total") != std::string::npos, "AC4: metrics");
     CHECK(om.find("adt_reverify_root_total") != std::string::npos, "AC4: reverify metric");
 
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(q.find("schema-2564") != std::string::npos, "AC4: schema-2564");
     CHECK(q.find("adt-goal-table-size") != std::string::npos, "AC4: table-size key");
     CHECK(q.find("adt-goal-invalidate-total") != std::string::npos, "AC4: invalidate key");
@@ -188,16 +190,152 @@ static void ac5_hard_gate_retained() {
           "AC5: existing ADT hard-gate tests still present");
 }
 
+// ── Issue #3005: dirty cone + Production no Dynamic slide ──
+// AC1: variant invalidate + pattern seed → reverify roots + dirty-type seed
+// AC2: Production unproven / via_dynamic → reject path (no Dynamic slide)
+// AC3: Soft observe only
+// AC4: Quiet empty → zero seed / zero roots
+// AC5: schema-3005 + #2564/#2288/#2219/#2939 lineage
+// AC6: linter + no test_issue_3005 / no docs/design
+
+static void ac3005_1_cone_seed() {
+    std::println("\n--- #3005 AC1: invalidate + pattern seed → cone roots ---");
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    u.cs.note_adt_match_goal(10, 42, 0xabc);
+    u.cs.note_adt_match_goal(11, 42, 0xdef);
+    CHECK(u.cs.invalidate_adt_goals_for(42) == 2, "3005 AC1: invalidate 2");
+    CHECK(u.cs.adt_reverify_roots_size() == 2, "3005 AC1: two reverify roots");
+    const std::vector<std::uint32_t> extra{11, 99};
+    const auto seeded = u.cs.seed_adt_reverify_from_match_nodes(extra);
+    CHECK(seeded == 1, "3005 AC1: pattern seed inserts new match only");
+    CHECK(u.cs.adt_reverify_roots_size() == 3, "3005 AC1: 11+10+99");
+    u.cs.note_adt_exhaust_dirty_type(42);
+    CHECK(u.cs.pending_full_solve_roots_size() >= 1 || !u.cs.touched_roots().empty(),
+          "3005 AC1: dirty-type seeds solve_delta touched/pending");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("seed_adt_reverify_from_match_nodes") != std::string::npos,
+          "3005 AC1: pattern seed wired");
+    CHECK(tci.find("note_adt_exhaust_dirty_type") != std::string::npos,
+          "3005 AC1: solve_delta dirty-type seed");
+    CHECK(tci.find("adt_exhaust_cone_seed_total") != std::string::npos,
+          "3005 AC1: cone-seed counter");
+    CHECK(tci.find("kAdtExhaustDirtyConeIssue") != std::string::npos ||
+              tci.find("#3005") != std::string::npos,
+          "3005 AC1: cites #3005");
+}
+
+static void ac3005_2_production_no_dynamic() {
+    std::println("\n--- #3005 AC2: Production no Dynamic slide ---");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    const auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(tci.find("via_dynamic") != std::string::npos, "3005 AC2: via_dynamic stamped");
+    CHECK(tci.find("adt_exhaust_production_reject_total") != std::string::npos,
+          "3005 AC2: production reject counter");
+    CHECK(tci.find("adt_exhaust_dynamic_slide_prevented_total") != std::string::npos,
+          "3005 AC2: Dynamic-slide prevented");
+    CHECK(tci.find("last_type_export_authoritative_ = false") != std::string::npos,
+          "3005 AC2: Production fail-closed authority");
+    CHECK(ev.find("via_dynamic") != std::string::npos, "3005 AC2: hard-gate / audit via_dynamic");
+    CHECK(ev.find("exhaustiveness unproven (Dynamic subject)") != std::string::npos,
+          "3005 AC2: hard-gate Dynamic message");
+    CHECK(read_file("src/compiler/type_checker.ixx").find("via_dynamic") != std::string::npos,
+          "3005 AC2: result field");
+}
+
+static void ac3005_3_soft_observe() {
+    std::println("\n--- #3005 AC3: Soft observe only ---");
+    UnitCs u;
+    u.cs.note_adt_match_goal(7, 1, 1);
+    (void)u.cs.invalidate_adt_goals_for(1);
+    CHECK(u.cs.adt_reverify_roots_size() == 1, "3005 AC3: Soft still seeds roots");
+    CHECK(u.m.adt_exhaust_production_reject_total.load() == 0,
+          "3005 AC3: no production reject on unit CS");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("adt_exhaust_soft_observe_total") != std::string::npos,
+          "3005 AC3: Soft observe counter");
+    CHECK(tci.find("production_defaults_active()") != std::string::npos,
+          "3005 AC3: Production vs Soft branch");
+}
+
+static void ac3005_4_quiet_empty() {
+    std::println("\n--- #3005 AC4: Quiet empty → zero ---");
+    UnitCs u;
+    const std::vector<std::uint32_t> empty;
+    CHECK(u.cs.seed_adt_reverify_from_match_nodes(empty) == 0, "3005 AC4: empty seed 0");
+    CHECK(u.cs.adt_reverify_roots_size() == 0, "3005 AC4: no roots");
+    CHECK(u.cs.invalidate_adt_goals_for(99) == 0, "3005 AC4: invalidate empty 0");
+    u.cs.note_adt_exhaust_dirty_type(0);
+    CHECK(u.cs.pending_full_solve_roots_size() == 0, "3005 AC4: type 0 no pending");
+    CHECK(u.m.adt_exhaust_cone_seed_total.load() == 0, "3005 AC4: cone seed quiet");
+}
+
+static void ac3005_5_schema_lineage() {
+    std::println("\n--- #3005 AC5: schema-3005 + lineage ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(q.find("schema-3005") != std::string::npos, "3005 AC5: schema-3005");
+    CHECK(q.find("adt-exhaust-cone-seed-total") != std::string::npos, "3005 AC5: cone-seed key");
+    CHECK(q.find("adt-exhaust-production-reject-total") != std::string::npos,
+          "3005 AC5: reject key");
+    CHECK(q.find("adt-exhaust-dynamic-slide-prevented-total") != std::string::npos,
+          "3005 AC5: slide key");
+    CHECK(q.find("schema-2564") != std::string::npos, "3005 AC5: lineage #2564");
+    CHECK(read_file("src/compiler/type_checker.ixx").find("kAdtExhaustDirtyConeIssue = 3005") !=
+              std::string::npos,
+          "3005 AC5: issue stamp");
+    CHECK(read_file("src/compiler/type_checker_impl.cpp").find("#2288") != std::string::npos,
+          "3005 AC5: lineage #2288");
+    CHECK(read_file("src/compiler/evaluator_typecheck.cpp").find("#2219") != std::string::npos,
+          "3005 AC5: lineage #2219");
+    CHECK(read_file("src/compiler/type_checker_impl.cpp").find("#2939") != std::string::npos ||
+              read_file("src/compiler/type_checker.ixx").find("#2939") != std::string::npos,
+          "3005 AC5: lineage #2939");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3005") == 3005, "3005 AC5: live schema-3005");
+    CHECK(href(cs, "issue-3005") == 3005, "3005 AC5: live issue-3005");
+    CHECK(href(cs, "adt-exhaust-dirty-cone-wired") == 1, "3005 AC5: wired");
+    CHECK(href(cs, "adt-exhaust-cone-seed-total") >= 0, "3005 AC5: cone-seed queryable");
+    CHECK(href(cs, "schema-2564") == 2564, "3005 AC5: schema-2564 preserved");
+}
+
+static void ac3005_6_linter_no_design() {
+    std::println("\n--- #3005 AC6: linter + no invent / no design ---");
+    const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_adt_exhaust_dirty_cone_3005.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3005_1_cone_seed") != std::string::npos, "3005 AC6: AC1");
+    CHECK(t.find("ac3005_2_production_no_dynamic") != std::string::npos, "3005 AC6: AC2");
+    CHECK(t.find("ac3005_3_soft_observe") != std::string::npos, "3005 AC6: AC3");
+    CHECK(t.find("ac3005_4_quiet_empty") != std::string::npos, "3005 AC6: AC4");
+    CHECK(t.find("ac3005_5_schema_lineage") != std::string::npos, "3005 AC6: AC5");
+    CHECK(lint.find("check_adt_exhaust_dirty_cone_3005") != std::string::npos ||
+              lint.find("#3005") != std::string::npos,
+          "3005 AC6: linter present");
+    CHECK(build.find("check_adt_exhaust_dirty_cone_3005") != std::string::npos,
+          "3005 AC6: build.py gate");
+    CHECK(build.find("cmd_adt_exhaust_dirty_cone_3005_coverage") != std::string::npos,
+          "3005 AC6: build.py cmd");
+    CHECK(read_file("tests/compiler/test_issue_3005.cpp").empty(),
+          "3005 AC6: no test_issue_3005.cpp");
+}
+
 } // namespace
 
 int run_test_adt_match_goal_table() {
-    std::println("=== Issue #2564: ADT match goal table + reverify roots ===");
+    std::println("=== Issue #2564 / #3005: ADT match goal table + dirty cone ===");
     ac1_note_invalidate_reverify();
     ac2_zero_work();
     ac3_cap();
     ac4_schema();
     ac5_hard_gate_retained();
-    std::println("\n=== #2564: {} passed, {} failed ===", g_passed, g_failed);
+    ac3005_1_cone_seed();
+    ac3005_2_production_no_dynamic();
+    ac3005_3_soft_observe();
+    ac3005_4_quiet_empty();
+    ac3005_5_schema_lineage();
+    ac3005_6_linter_no_design();
+    std::println("\n=== #2564/#3005: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -596,6 +596,30 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("adt-goal-table-wired", 1);
                 insert_kv("schema-2564", 2564);
                 insert_kv("issue-2564", 2564);
+                // Issue #3005: dirty-cone seed + Production no Dynamic slide.
+                const std::int64_t cone_seed =
+                    m ? static_cast<std::int64_t>(
+                            m->adt_exhaust_cone_seed_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t prod_rej =
+                    m ? static_cast<std::int64_t>(
+                            m->adt_exhaust_production_reject_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t soft_obs =
+                    m ? static_cast<std::int64_t>(
+                            m->adt_exhaust_soft_observe_total.load(std::memory_order_relaxed))
+                      : 0;
+                const std::int64_t dyn_prev =
+                    m ? static_cast<std::int64_t>(m->adt_exhaust_dynamic_slide_prevented_total.load(
+                            std::memory_order_relaxed))
+                      : 0;
+                insert_kv("adt-exhaust-cone-seed-total", cone_seed);
+                insert_kv("adt-exhaust-production-reject-total", prod_rej);
+                insert_kv("adt-exhaust-soft-observe-total", soft_obs);
+                insert_kv("adt-exhaust-dynamic-slide-prevented-total", dyn_prev);
+                insert_kv("adt-exhaust-dirty-cone-wired", 1);
+                insert_kv("schema-3005", 3005);
+                insert_kv("issue-3005", 3005);
             }
             // Issue #2552: joint steal/densify OccurrenceGoal +
             // type_dep fence.

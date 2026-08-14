@@ -2567,6 +2567,18 @@ def cmd_lint():
             "Issue #3003 solve_delta timeout fail-closed linter failed — run python3 scripts/coverage/checks/check_solve_delta_timeout_fail_closed_3003.py"
         )
         return r
+    # Issue #3005: ADT exhaustiveness into dirty cone; Production no Dynamic.
+    # Extends test_adt_match_goal_table (#81967); no docs/design/.
+    aedc_script = COVERAGE_CHECKS / "check_adt_exhaust_dirty_cone_3005.py"
+    if not aedc_script.exists():
+        fail(f"missing {aedc_script}")
+        return 1
+    r = run([sys.executable, str(aedc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3005 ADT exhaust dirty-cone linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_dirty_cone_3005.py"
+        )
+        return r
     # Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count.
     # Extends test_type_linear_commit_health (#81967); no docs/design/.
     lcrc_script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
@@ -10527,6 +10539,25 @@ def cmd_solve_delta_timeout_fail_closed_3003_coverage():
     return 0
 
 
+def cmd_adt_exhaust_dirty_cone_3005_coverage():
+    """Issue #3005: ADT variant / pattern mutate → exhaustiveness dirty cone.
+
+    Production / Full hard-reject non-exhaustive or Dynamic-slide;
+    Soft observe; Quiet when the goal was never dirty.
+    """
+    print(f"{B}=== ADT exhaust dirty-cone coverage (#3005) ==={N}")
+    script = COVERAGE_CHECKS / "check_adt_exhaust_dirty_cone_3005.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ADT exhaust dirty-cone (#3005) coverage contract rows failed")
+        return 1
+    ok("ADT exhaust dirty-cone (#3005) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -14637,6 +14668,7 @@ def main():
         "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,
         "solve-delta-locality-budget-2994": cmd_solve_delta_locality_budget_2994_coverage,
         "solve-delta-timeout-fail-closed-3003": cmd_solve_delta_timeout_fail_closed_3003_coverage,
+        "adt-exhaust-dirty-cone-3005": cmd_adt_exhaust_dirty_cone_3005_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
