@@ -1055,6 +1055,123 @@ static void ac2987_6_source_and_linter() {
     CHECK(read_file("tests/serve/test_issue_2987.cpp").empty(), "2987 AC6: no invent test");
 }
 
+// ── Issue #3036: production residual RejectHard cannot Soft-escape ──
+static void ac3036_1_production_residual_hard_bp() {
+    std::println("\n--- #3036 AC1: production + residual → BP + hard-reject ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    unsetenv("AURA_SANDBOX");
+    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    CHECK(aura::serve::mf_mailbox::mailbox_residual_hard_enabled(),
+          "3036 AC1: production residual hard enabled");
+    CHECK(aura_evaluator_mutation_boundary_depth() == 0, "3036 AC1: depth 0");
+    MultiFiberMailbox mb(/*high_water=*/16);
+    const auto hard0 =
+        g_mf_mailbox_stats.mailbox_residual_hard_reject_total.load(std::memory_order_relaxed);
+    const auto soft0 = g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+        std::memory_order_relaxed);
+    aura::serve::set_mailbox_delivery_inject_for_test(
+        aura::serve::MailboxDeliveryInject::ResidualGcDefer);
+    MailMessage mid;
+    mid.payload = "residual-3036";
+    CHECK(mb.push(std::move(mid)) == PushStatus::Backpressure, "3036 AC1: residual → BP");
+    CHECK(!mb.recv(false, 0).has_value(), "3036 AC1: never enqueue");
+    CHECK(g_mf_mailbox_stats.mailbox_residual_hard_reject_total.load(std::memory_order_relaxed) >
+              hard0,
+          "3036 AC1: residual hard-reject counter");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+              std::memory_order_relaxed) == soft0,
+          "3036 AC1: Soft observe not used under production");
+    aura::serve::clear_mailbox_delivery_inject_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3036_2_soft_observe_only() {
+    std::println("\n--- #3036 AC2: Soft observe on fail; happy zero extra ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    unsetenv("AURA_MUTATE_MAILBOX_STRICT");
+    CHECK(!aura::serve::mf_mailbox::mailbox_residual_hard_enabled(),
+          "3036 AC2: Soft residual hard off");
+    const auto hard0 =
+        g_mf_mailbox_stats.mailbox_residual_hard_reject_total.load(std::memory_order_relaxed);
+    const auto soft0 = g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+        std::memory_order_relaxed);
+    aura::serve::clear_mailbox_delivery_inject_for_test();
+    MultiFiberMailbox happy(/*high_water=*/8);
+    MailMessage okm;
+    okm.payload = "happy-3036";
+    CHECK(happy.push(std::move(okm)) == PushStatus::Ok, "3036 AC2: happy Ok");
+    CHECK(g_mf_mailbox_stats.mailbox_residual_hard_reject_total.load(std::memory_order_relaxed) ==
+              hard0,
+          "3036 AC2: happy no hard-reject");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+              std::memory_order_relaxed) == soft0,
+          "3036 AC2: happy no soft_observe");
+    aura::serve::set_mailbox_delivery_inject_for_test(
+        aura::serve::MailboxDeliveryInject::ResidualGcDefer);
+    MultiFiberMailbox mb(/*high_water=*/8);
+    MailMessage m;
+    m.payload = "soft-3036";
+    CHECK(mb.push(std::move(m)) == PushStatus::Backpressure, "3036 AC2: Soft still BP");
+    CHECK(!mb.recv(false, 0).has_value(), "3036 AC2: never enqueue");
+    CHECK(g_mf_mailbox_stats.mailbox_residual_hard_reject_total.load(std::memory_order_relaxed) ==
+              hard0,
+          "3036 AC2: Soft no hard-reject");
+    CHECK(g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.load(
+              std::memory_order_relaxed) > soft0,
+          "3036 AC2: soft_observe on fail");
+    aura::serve::clear_mailbox_delivery_inject_for_test();
+}
+
+static void ac3036_3_shared_steal_bits() {
+    std::println("\n--- #3036 AC3: same StealInvariant bit-set as steal ---");
+    const auto sc = read_file("src/serve/steal_safety.cpp");
+    const auto ss = read_file("src/serve/steal_safety.h");
+    CHECK(sc.find("evaluate_residual_hard_and_bits") != std::string::npos, "3036 AC3: shared eval");
+    CHECK(sc.find("StealInvariant::LayoutStampMatch") != std::string::npos, "3036 AC3: layout");
+    CHECK(sc.find("StealInvariant::TicketFresh") != std::string::npos, "3036 AC3: ticket");
+    CHECK(sc.find("StealInvariant::GcDeferClear") != std::string::npos, "3036 AC3: gc defer");
+    CHECK(sc.find("StealInvariant::BoundarySafe") != std::string::npos ||
+              ss.find("BoundarySafe") != std::string::npos,
+          "3036 AC3: boundary");
+    CHECK(sc.find("mailbox_delivery_safety_transaction") != std::string::npos,
+          "3036 AC3: mailbox txn");
+    CHECK(sc.find("skip_mask") != std::string::npos || sc.find("skip |=") != std::string::npos,
+          "3036 AC3: same table, mailbox skip only Lifetime/Env");
+}
+
+static void ac3036_4_schema() {
+    std::println("\n--- #3036 AC4: mailbox-residual-hard-reject + schema-2987 ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3036 AC4: warm");
+    CHECK(href(cs, "schema-3036") == 3036, "3036 AC4: schema-3036");
+    CHECK(href(cs, "issue-3036") == 3036, "3036 AC4: issue-3036");
+    CHECK(href(cs, "mailbox-residual-hard-reject-wired") == 1, "3036 AC4: wired");
+    CHECK(href(cs, "mailbox-residual-hard-reject-total") >= 0, "3036 AC4: hard-reject key");
+    CHECK(href(cs, "schema-2987") == 2987, "3036 AC4: schema-2987 preserved");
+    CHECK(href(cs, "mailbox-delivery-safety-wired") == 1, "3036 AC4: 2987 wired");
+    CHECK(href(cs, "schema-2958") == 2958, "3036 AC4: schema-2958 preserved");
+}
+
+static void ac3036_5_source_linter_chaos() {
+    std::println("\n--- #3036 AC5: linter + chaos production_defaults ---");
+    const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mailbox_residual_hard_reject_3036.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3036_1_production_residual_hard_bp") != std::string::npos, "3036 AC5: AC1");
+    CHECK(chaos.find("apply_production_audit_defaults") != std::string::npos,
+          "3036 AC5: chaos production_defaults");
+    CHECK(chaos.find("ac3036_mailbox_residual_prod_fail_closed_cite") != std::string::npos,
+          "3036 AC5: chaos cite");
+    CHECK(!lint.empty() && lint.find("3036") != std::string::npos, "3036 AC5: linter");
+    CHECK(build.find("check_mailbox_residual_hard_reject_3036") != std::string::npos,
+          "3036 AC5: build.py");
+    CHECK(read_file("docs/design/3036-mailbox-residual-hard-reject.md").empty(),
+          "3036 AC5: no docs/design/");
+    CHECK(read_file("tests/serve/test_issue_3036.cpp").empty(), "3036 AC5: no invent test");
+}
+
 static void ac2849_6_soft_never_weakens() {
     std::println("\n--- #2849 AC6: Soft still BP (gate never weakened) ---");
     const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
@@ -1774,6 +1891,12 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac2987_4_shared_invariants();
     ac2987_5_query_additive();
     ac2987_6_source_and_linter();
+    std::println("\n=== Issue #3036: production mailbox residual fail-closed ===");
+    ac3036_1_production_residual_hard_bp();
+    ac3036_2_soft_observe_only();
+    ac3036_3_shared_steal_bits();
+    ac3036_4_schema();
+    ac3036_5_source_linter_chaos();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

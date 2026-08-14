@@ -579,6 +579,17 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                     std::memory_order_relaxed)));
             insert_kv("schema-2987", 2987);
             insert_kv("issue-2987", 2987);
+            // Issue #3036: production residual RejectHard (no Soft escape).
+            insert_kv("mailbox-residual-hard-reject-total",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_residual_hard_reject_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-residual-hard-reject-wired",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_residual_hard_reject_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-3036", 3036);
+            insert_kv("issue-3036", 3036);
             // Issue #2587: mutate admission gate counter (hard reject
             // vs metric-only soft path; AC1 / AC2). Zero cost when
             // agent-throttle flag == 0 — single relaxed load at every
