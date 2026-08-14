@@ -55,3 +55,17 @@ Factories: `pure_general`, `io_general`, `mutate_general` (all in the scaffold h
 ## Proof migration
 
 `evaluator_primitives_misc.cpp` uses `register_prim` for `current-time`, `current-time-ms`, `monotonic-ms`, and `arena-offset` (Issue #2915).
+
+## Core TU migration (Issue #2996)
+
+These commercial hot-path TUs are **migrated** onto `register_prim` + `PrimSpec` (non-empty `schema` + `doc` on every name). Do not reintroduce bare `add(...)` without PrimMeta in them:
+
+| TU | Group |
+|----|--------|
+| `evaluator_primitives_list.cpp` | list / list? / null? / length / list-ref / member / append / reverse / map / filter / take / drop / foldl / list-sort |
+| `evaluator_primitives_math.cpp` | math + regex + arithmetic (+ gated m4-*) |
+| `evaluator_primitives_json.cpp` | json-encode / json-parse / json-get-string |
+| `evaluator_primitives_pair.cpp` | pair + string core constructors |
+| `evaluator_primitives_vector.cpp` | vector + hash core |
+
+`g_register_prim_scaffold_total` counts every `register_prim` stamp. Discovery: `query:primitives-meta` / `primitive:describe`.

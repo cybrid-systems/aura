@@ -52,6 +52,8 @@ def main() -> int:
     must_not("as_int(v) == 0", "AC1", ebody)
 
     nidx = lst.find('add("null?"')
+    if nidx < 0:
+        nidx = lst.find('"null?"')
     nbody = lst[nidx : nidx + 250] if nidx >= 0 else ""
     must("is_void", "AC2", nbody)
     must_not("as_int", "AC2", nbody)

@@ -1,4 +1,5 @@
 // evaluator_primitives_pair.cpp — P0 step 2: pair/list/string heap primitives
+// Issue #2996: migrate evaluator_primitives_pair.cpp onto register_prim + PrimSpec.
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 //
 // aura.compiler.evaluator module partition.
@@ -9,6 +10,8 @@ module;
 
 #include "runtime_shared.h"
 #include "prim_heap_quota.hh" // Issue #2916
+
+#include "prim_registrar_scaffold.hh" // Issue #2996
 
 module aura.compiler.evaluator;
 
@@ -62,70 +65,128 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                                          std::pmr::vector<std::string>& string_heap,
                                          std::vector<EvalValue>& error_values,
                                          std::atomic<std::uint64_t>* primitive_error_counter) {
-    add("string-copy", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
-        // Strings are immutable-like; just return the same reference
-        return a[0];
-    });
-    add("string-fill!", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
-            return make_void();
-        // Issue #2651: serialize content mutate vs concurrent reallocate.
-        std::lock_guard lock(ev.alloc_storage_lock_);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap.size())
-            return make_void();
-        auto fill_char = static_cast<char>(as_int(a[1]));
-        std::fill(string_heap[idx].begin(), string_heap[idx].end(), fill_char);
-        return make_void();
-    });
-    add("string->list", [&ev, &pairs, &string_heap, &error_values,
-                         primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
-        // Issue #2651: pairs_ + string_heap_ under alloc_storage_lock_.
-        std::lock_guard lock(ev.alloc_storage_lock_);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= string_heap.size())
-            return make_bool(false);
-        auto& s = string_heap[idx];
-        // Issue #2916: soft pairs quota for char list materialization.
-        if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + s.size())) {
-            return make_primitive_error(
-                string_heap, error_values,
-                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                primitive_error_counter);
-        }
-        EvalValue result = make_void();
-        for (auto it = s.rbegin(); it != s.rend(); ++it) {
-            auto pid = pairs.size();
-            pairs.push_back(
-                {make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*it))), result});
-            result = make_pair(pid);
-        }
-        return result;
-    });
-    add("list->string", [&ev, &pairs, &string_heap, &error_values,
-                         primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_bool(false);
-        // Issue #2651: snapshot under lock then intern.
-        std::string result;
-        {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
+    register_prim(
+        add, ev, "string-copy",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            // Strings are immutable-like; just return the same reference
+            return a[0];
+        },
+        pure_general(1, "(string) -> string", "Copy a string."));
+    register_prim(
+        add, ev, "string-fill!",
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
+                return make_void();
+            // Issue #2651: serialize content mutate vs concurrent reallocate.
             std::lock_guard lock(ev.alloc_storage_lock_);
+            auto idx = as_string_idx(a[0]);
+            if (idx >= string_heap.size())
+                return make_void();
+            auto fill_char = static_cast<char>(as_int(a[1]));
+            std::fill(string_heap[idx].begin(), string_heap[idx].end(), fill_char);
+            return make_void();
+        },
+        mutate_general(2, "(string char) -> void", "Fill a string with a character."));
+    register_prim(
+        add, ev, "string->list",
+        [&ev, &pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            // Issue #2651: pairs_ + string_heap_ under alloc_storage_lock_.
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            auto idx = as_string_idx(a[0]);
+            if (idx >= string_heap.size())
+                return make_bool(false);
+            auto& s = string_heap[idx];
+            // Issue #2916: soft pairs quota for char list materialization.
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + s.size())) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    primitive_error_counter);
+            }
+            EvalValue result = make_void();
+            for (auto it = s.rbegin(); it != s.rend(); ++it) {
+                auto pid = pairs.size();
+                pairs.push_back(
+                    {make_int(static_cast<std::int64_t>(static_cast<unsigned char>(*it))), result});
+                result = make_pair(pid);
+            }
+            return result;
+        },
+        pure_general(1, "(string) -> list", "Convert a string to a list of chars."));
+    register_prim(
+        add, ev, "list->string",
+        [&ev, &pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_bool(false);
+            // Issue #2651: snapshot under lock then intern.
+            std::string result;
+            {
+                std::lock_guard lock(ev.alloc_storage_lock_);
+                auto v = a[0];
+                while (is_pair(v)) {
+                    auto p = as_pair_idx(v);
+                    if (p >= pairs.size())
+                        break;
+                    auto car = pairs[p].car;
+                    if (is_int(car)) {
+                        result += static_cast<char>(as_int(car));
+                    } else if (is_string(car)) {
+                        auto sidx = as_string_idx(car);
+                        if (sidx < string_heap.size())
+                            result += string_heap[sidx];
+                    }
+                    v = pairs[p].cdr;
+                }
+                if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                        primitive_error_counter);
+                }
+                auto sidx = string_heap.size();
+                string_heap.push_back(std::move(result));
+                return make_string(sidx);
+            }
+        },
+        pure_general(1, "(list) -> string", "Convert a list of chars to a string."));
+    register_prim(
+        add, ev, "string-join",
+        [&ev, &pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_string(a[1]))
+                return make_bool(false);
+            // Issue #2651: multi-fiber long joins (overnight pads) must lock.
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            auto delim_idx = as_string_idx(a[1]);
+            if (delim_idx >= string_heap.size())
+                return make_bool(false);
+            auto& delim = string_heap[delim_idx];
+            std::string result;
+            bool first = true;
             auto v = a[0];
             while (is_pair(v)) {
                 auto p = as_pair_idx(v);
                 if (p >= pairs.size())
                     break;
                 auto car = pairs[p].car;
-                if (is_int(car)) {
-                    result += static_cast<char>(as_int(car));
-                } else if (is_string(car)) {
+                if (is_string(car)) {
                     auto sidx = as_string_idx(car);
-                    if (sidx < string_heap.size())
+                    if (sidx < string_heap.size()) {
+                        if (!first)
+                            result += delim;
                         result += string_heap[sidx];
+                        first = false;
+                    }
                 }
                 v = pairs[p].cdr;
             }
@@ -138,255 +199,264 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             auto sidx = string_heap.size();
             string_heap.push_back(std::move(result));
             return make_string(sidx);
-        }
-    });
-    add("string-join", [&ev, &pairs, &string_heap, &error_values,
-                        primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_string(a[1]))
-            return make_bool(false);
-        // Issue #2651: multi-fiber long joins (overnight pads) must lock.
-        std::lock_guard lock(ev.alloc_storage_lock_);
-        auto delim_idx = as_string_idx(a[1]);
-        if (delim_idx >= string_heap.size())
-            return make_bool(false);
-        auto& delim = string_heap[delim_idx];
-        std::string result;
-        bool first = true;
-        auto v = a[0];
-        while (is_pair(v)) {
-            auto p = as_pair_idx(v);
-            if (p >= pairs.size())
-                break;
-            auto car = pairs[p].car;
-            if (is_string(car)) {
-                auto sidx = as_string_idx(car);
-                if (sidx < string_heap.size()) {
-                    if (!first)
-                        result += delim;
-                    result += string_heap[sidx];
-                    first = false;
-                }
-            }
-            v = pairs[p].cdr;
-        }
-        if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
-            return make_primitive_error(
-                string_heap, error_values,
-                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
-                primitive_error_counter);
-        }
-        auto sidx = string_heap.size();
-        string_heap.push_back(std::move(result));
-        return make_string(sidx);
-    });
+        },
+        pure_general(2, "(list string) -> string", "Join string list with a separator."));
 
     // ── Pair / List / String primitives ─────────────────────────
-    add("cons", [&ev, &pairs, &string_heap, &error_values,
-                 primitive_error_counter](std::span<const EvalValue> a) {
-        // Issue #2651 / #1397: concurrent fiber cons must not race pairs_.
-        // Issue #2916: soft pairs quota under multi-fiber Agent loops.
-        std::lock_guard lock(ev.alloc_storage_lock_);
-        if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
-            return make_primitive_error(
-                string_heap, error_values,
-                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                primitive_error_counter);
-        }
-        auto id = pairs.size();
-        pairs.push_back({a[0], a[1]});
-        return make_pair(id);
-    });
-    add("car", [&pairs, &string_heap, &error_values,
-                primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.empty() || !is_pair(a[0])) {
-            return make_primitive_error(string_heap, error_values, "car: not a pair",
-                                        primitive_error_counter);
-        }
-        auto id = as_pair_idx(a[0]);
-        if (id < pairs.size())
-            return pairs[id].car;
-        // Fallback to shared pair storage (JIT/arena pairs)
-        if (id < g_pair_slots.size() && g_pair_slots[id])
-            return types::EvalValue{g_pair_slots[id]->car};
-        return make_int(0);
-    });
-    add("cdr", [&pairs, &string_heap, &error_values,
-                primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.empty() || !is_pair(a[0])) {
-            return make_primitive_error(string_heap, error_values, "cdr: not a pair",
-                                        primitive_error_counter);
-        }
-        auto id = as_pair_idx(a[0]);
-        if (id < pairs.size())
-            return pairs[id].cdr;
-        // Fallback to shared pair storage (JIT/arena pairs)
-        if (id < g_pair_slots.size() && g_pair_slots[id])
-            return types::EvalValue{g_pair_slots[id]->cdr};
-        return make_int(0);
-    });
-    add("pair?", [](const auto& a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_pair(a[0]));
-    });
+    register_prim(
+        add, ev, "cons",
+        [&ev, &pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            // Issue #2651 / #1397: concurrent fiber cons must not race pairs_.
+            // Issue #2916: soft pairs quota under multi-fiber Agent loops.
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    primitive_error_counter);
+            }
+            auto id = pairs.size();
+            pairs.push_back({a[0], a[1]});
+            return make_pair(id);
+        },
+        pure_general(2, "(any any) -> pair", "Construct a pair."));
+    register_prim(
+        add, ev, "car",
+        [&pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.empty() || !is_pair(a[0])) {
+                return make_primitive_error(string_heap, error_values, "car: not a pair",
+                                            primitive_error_counter);
+            }
+            auto id = as_pair_idx(a[0]);
+            if (id < pairs.size())
+                return pairs[id].car;
+            // Fallback to shared pair storage (JIT/arena pairs)
+            if (id < g_pair_slots.size() && g_pair_slots[id])
+                return types::EvalValue{g_pair_slots[id]->car};
+            return make_int(0);
+        },
+        pure_general(1, "(pair) -> any", "First element of a pair."));
+    register_prim(
+        add, ev, "cdr",
+        [&pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.empty() || !is_pair(a[0])) {
+                return make_primitive_error(string_heap, error_values, "cdr: not a pair",
+                                            primitive_error_counter);
+            }
+            auto id = as_pair_idx(a[0]);
+            if (id < pairs.size())
+                return pairs[id].cdr;
+            // Fallback to shared pair storage (JIT/arena pairs)
+            if (id < g_pair_slots.size() && g_pair_slots[id])
+                return types::EvalValue{g_pair_slots[id]->cdr};
+            return make_int(0);
+        },
+        pure_general(1, "(pair) -> any", "Rest of a pair."));
+    register_prim(
+        add, ev, "pair?",
+        [](const auto& a) {
+            if (a.empty())
+                return make_bool(false);
+            return make_bool(is_pair(a[0]));
+        },
+        pure_general(1, "(any) -> bool", "True if value is a pair."));
 
     // ── Cadr / Caddr shorthands ────────────────────────────────────
-    add("caar", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].car;
-        if (!is_pair(c))
-            return make_void();
-        return pairs[as_pair_idx(c)].car;
-    });
-    add("cadr", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].cdr;
-        if (!is_pair(c))
-            return make_void();
-        return pairs[as_pair_idx(c)].car;
-    });
-    add("cdar", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].car;
-        if (!is_pair(c))
-            return make_void();
-        return pairs[as_pair_idx(c)].cdr;
-    });
-    add("cddr", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].cdr;
-        if (!is_pair(c))
-            return make_void();
-        return pairs[as_pair_idx(c)].cdr;
-    });
-    add("caaar", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].car;
-        if (!is_pair(c))
-            return make_void();
-        auto d = pairs[as_pair_idx(c)].car;
-        if (!is_pair(d))
-            return make_void();
-        return pairs[as_pair_idx(d)].car;
-    });
-    add("caadr", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].cdr;
-        if (!is_pair(c))
-            return make_void();
-        auto d = pairs[as_pair_idx(c)].car;
-        if (!is_pair(d))
-            return make_void();
-        return pairs[as_pair_idx(d)].car;
-    });
-    add("cadar", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].car;
-        if (!is_pair(c))
-            return make_void();
-        auto d = pairs[as_pair_idx(c)].cdr;
-        if (!is_pair(d))
-            return make_void();
-        return pairs[as_pair_idx(d)].car;
-    });
-    add("caddr", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].cdr;
-        if (!is_pair(c))
-            return make_void();
-        auto d = pairs[as_pair_idx(c)].cdr;
-        if (!is_pair(d))
-            return make_void();
-        return pairs[as_pair_idx(d)].car;
-    });
-    add("cdaar", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].car;
-        if (!is_pair(c))
-            return make_void();
-        auto d = pairs[as_pair_idx(c)].car;
-        if (!is_pair(d))
-            return make_void();
-        return pairs[as_pair_idx(d)].cdr;
-    });
-    add("cdadr", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].cdr;
-        if (!is_pair(c))
-            return make_void();
-        auto d = pairs[as_pair_idx(c)].car;
-        if (!is_pair(d))
-            return make_void();
-        return pairs[as_pair_idx(d)].cdr;
-    });
-    add("cddar", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].car;
-        if (!is_pair(c))
-            return make_void();
-        auto d = pairs[as_pair_idx(c)].cdr;
-        if (!is_pair(d))
-            return make_void();
-        return pairs[as_pair_idx(d)].cdr;
-    });
-    add("cdddr", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_pair(a[0]))
-            return make_void();
-        auto idx = as_pair_idx(a[0]);
-        if (idx >= pairs.size())
-            return make_void();
-        auto c = pairs[idx].cdr;
-        if (!is_pair(c))
-            return make_void();
-        auto d = pairs[as_pair_idx(c)].cdr;
-        if (!is_pair(d))
-            return make_void();
-        return pairs[as_pair_idx(d)].cdr;
-    });
+    register_prim(
+        add, ev, "caar",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].car;
+            if (!is_pair(c))
+                return make_void();
+            return pairs[as_pair_idx(c)].car;
+        },
+        pure_general(1, "(pair) -> any", "car of car."));
+    register_prim(
+        add, ev, "cadr",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].cdr;
+            if (!is_pair(c))
+                return make_void();
+            return pairs[as_pair_idx(c)].car;
+        },
+        pure_general(1, "(pair) -> any", "car of cdr."));
+    register_prim(
+        add, ev, "cdar",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].car;
+            if (!is_pair(c))
+                return make_void();
+            return pairs[as_pair_idx(c)].cdr;
+        },
+        pure_general(1, "(pair) -> any", "cdr of car."));
+    register_prim(
+        add, ev, "cddr",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].cdr;
+            if (!is_pair(c))
+                return make_void();
+            return pairs[as_pair_idx(c)].cdr;
+        },
+        pure_general(1, "(pair) -> any", "cdr of cdr."));
+    register_prim(
+        add, ev, "caaar",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].car;
+            if (!is_pair(c))
+                return make_void();
+            auto d = pairs[as_pair_idx(c)].car;
+            if (!is_pair(d))
+                return make_void();
+            return pairs[as_pair_idx(d)].car;
+        },
+        pure_general(1, "(pair) -> any", "car of caar."));
+    register_prim(
+        add, ev, "caadr",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].cdr;
+            if (!is_pair(c))
+                return make_void();
+            auto d = pairs[as_pair_idx(c)].car;
+            if (!is_pair(d))
+                return make_void();
+            return pairs[as_pair_idx(d)].car;
+        },
+        pure_general(1, "(pair) -> any", "car of cadr."));
+    register_prim(
+        add, ev, "cadar",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].car;
+            if (!is_pair(c))
+                return make_void();
+            auto d = pairs[as_pair_idx(c)].cdr;
+            if (!is_pair(d))
+                return make_void();
+            return pairs[as_pair_idx(d)].car;
+        },
+        pure_general(1, "(pair) -> any", "car of cdar."));
+    register_prim(
+        add, ev, "caddr",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].cdr;
+            if (!is_pair(c))
+                return make_void();
+            auto d = pairs[as_pair_idx(c)].cdr;
+            if (!is_pair(d))
+                return make_void();
+            return pairs[as_pair_idx(d)].car;
+        },
+        pure_general(1, "(pair) -> any", "car of cddr."));
+    register_prim(
+        add, ev, "cdaar",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].car;
+            if (!is_pair(c))
+                return make_void();
+            auto d = pairs[as_pair_idx(c)].car;
+            if (!is_pair(d))
+                return make_void();
+            return pairs[as_pair_idx(d)].cdr;
+        },
+        pure_general(1, "(pair) -> any", "cdr of caar."));
+    register_prim(
+        add, ev, "cdadr",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].cdr;
+            if (!is_pair(c))
+                return make_void();
+            auto d = pairs[as_pair_idx(c)].car;
+            if (!is_pair(d))
+                return make_void();
+            return pairs[as_pair_idx(d)].cdr;
+        },
+        pure_general(1, "(pair) -> any", "cdr of cadr."));
+    register_prim(
+        add, ev, "cddar",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].car;
+            if (!is_pair(c))
+                return make_void();
+            auto d = pairs[as_pair_idx(c)].cdr;
+            if (!is_pair(d))
+                return make_void();
+            return pairs[as_pair_idx(d)].cdr;
+        },
+        pure_general(1, "(pair) -> any", "cdr of cdar."));
+    register_prim(
+        add, ev, "cdddr",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_pair(a[0]))
+                return make_void();
+            auto idx = as_pair_idx(a[0]);
+            if (idx >= pairs.size())
+                return make_void();
+            auto c = pairs[idx].cdr;
+            if (!is_pair(c))
+                return make_void();
+            auto d = pairs[as_pair_idx(c)].cdr;
+            if (!is_pair(d))
+                return make_void();
+            return pairs[as_pair_idx(d)].cdr;
+        },
+        pure_general(1, "(pair) -> any", "cdr of cddr."));
 
     // ── Mutable pair operations ───────────────────────────────────
     // Issue #1397 + #1399: set-car!/set-cdr! mutate an existing
@@ -405,7 +475,8 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
     // (idx capture → bounds check → field write) sequence is one
     // atomic critical section. Combined with #1397, this closes
     // the cross-fiber pair-mutation race.
-    add("set-car!",
+    register_prim(
+        add, ev, "set-car!",
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_pair(a[0]))
                 return make_void();
@@ -421,8 +492,10 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 g_pair_slots[idx]->car = a[1].val;
             }
             return make_void();
-        });
-    add("set-cdr!",
+        },
+        mutate_general(2, "(pair any) -> void", "Set the car of a pair."));
+    register_prim(
+        add, ev, "set-cdr!",
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_pair(a[0]))
                 return make_void();
@@ -436,228 +509,264 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
                 g_pair_slots[idx]->cdr = a[1].val;
             }
             return make_void();
-        });
+        },
+        mutate_general(2, "(pair any) -> void", "Set the cdr of a pair."));
 
-    add("string?", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_string(a[0]));
-    });
-    add("string-append", [&ev, &pairs, &string_heap, &error_values,
-                          primitive_error_counter](std::span<const EvalValue> a) {
-        // Issue #2651: overnight multi-agent long-context pads call
-        // string-append heavily under fiber fanout. Unlocked push_back
-        // races pmr::vector / monotonic_buffer_resource → SIGSEGV in
-        // allocate/deallocate (H9). Hold alloc_storage_lock_ for the
-        // entire read-intern-push critical section.
-        std::lock_guard lock(ev.alloc_storage_lock_);
-        std::string result;
-        for (auto& v : a) {
-            if (is_string(v)) {
-                auto idx = as_string_idx(v);
-                if (idx < string_heap.size())
-                    result += string_heap[idx];
-            } else if (is_int(v)) {
-                result += std::to_string(as_int(v));
+    register_prim(
+        add, ev, "string?",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_bool(false);
+            return make_bool(is_string(a[0]));
+        },
+        pure_general(1, "(any) -> bool", "True if value is a string."));
+    register_prim(
+        add, ev, "string-append",
+        [&ev, &pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            // Issue #2651: overnight multi-agent long-context pads call
+            // string-append heavily under fiber fanout. Unlocked push_back
+            // races pmr::vector / monotonic_buffer_resource → SIGSEGV in
+            // allocate/deallocate (H9). Hold alloc_storage_lock_ for the
+            // entire read-intern-push critical section.
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            std::string result;
+            for (auto& v : a) {
+                if (is_string(v)) {
+                    auto idx = as_string_idx(v);
+                    if (idx < string_heap.size())
+                        result += string_heap[idx];
+                } else if (is_int(v)) {
+                    result += std::to_string(as_int(v));
+                }
             }
-        }
-        // Issue #2577: content intern — repeated append of the same pieces
-        // (hot PrimCall loops) reuses one heap slot instead of O(N) growth.
-        for (std::size_t i = 0; i < string_heap.size(); ++i) {
-            if (string_heap[i] == result)
-                return make_string(i);
-        }
-        // Issue #2916: soft strings quota only when a new slot is required.
-        if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
-            return make_primitive_error(
-                string_heap, error_values,
-                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
-                primitive_error_counter);
-        }
-        auto id = string_heap.size();
-        string_heap.push_back(std::move(result));
-        return make_string(id);
-    });
-    add("string-length", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        std::size_t len = 0;
-        if (is_string(a[0])) {
-            auto idx = as_string_idx(a[0]);
-            len = (idx < string_heap.size()) ? string_heap[idx].size() : 0;
-        } else if (is_int(a[0])) {
-            len = std::to_string(as_int(a[0])).size();
-        }
-        return make_int(static_cast<std::int64_t>(len));
-    });
-    add("string-ref", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.size() < 2) {
-            auto __i = static_cast<std::uint64_t>(ev.push_string_heap("string-ref: too few args"));
-            auto __e = error_values.size();
-            error_values.push_back(make_string(__i));
-            return make_error(__e);
-        }
-        std::string s;
-        if (is_string(a[0]))
-            s = ev.copy_string_heap_at(as_string_idx(a[0]));
-        else if (is_int(a[0]))
-            s = std::to_string(as_int(a[0]));
-        auto pos = static_cast<std::size_t>(as_int(a[1]));
-        if (pos >= s.size()) {
-            auto __i =
-                static_cast<std::uint64_t>(ev.push_string_heap("string-ref: index out of bounds"));
-            auto __e = error_values.size();
-            error_values.push_back(make_string(__i));
-            return make_error(__e);
-        }
-        return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
-    });
-    add("substring", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.size() < 3)
-            return make_int(0);
-        // Issue #2652: copy source under lock then push via locked helper.
-        std::string s;
-        if (is_string(a[0]))
-            s = ev.copy_string_heap_at(as_string_idx(a[0]));
-        else if (is_int(a[0]))
-            s = std::to_string(as_int(a[0]));
-        else
-            return make_int(0);
-        auto start = static_cast<std::size_t>(as_int(a[1]));
-        auto end = static_cast<std::size_t>(as_int(a[2]));
-        if (start > s.size())
-            start = s.size();
-        if (end > s.size())
-            end = s.size();
-        if (start >= end)
-            return make_string(static_cast<std::uint64_t>(ev.push_string_heap("")));
-        return make_string(
-            static_cast<std::uint64_t>(ev.push_string_heap(s.substr(start, end - start))));
-    });
-    add("string=?", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_bool(false);
-        auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
-            if (is_string(v)) {
-                auto idx = as_string_idx(v);
-                return (idx < string_heap.size()) ? string_heap[idx] : "";
+            // Issue #2577: content intern — repeated append of the same pieces
+            // (hot PrimCall loops) reuses one heap slot instead of O(N) growth.
+            for (std::size_t i = 0; i < string_heap.size(); ++i) {
+                if (string_heap[i] == result)
+                    return make_string(i);
             }
-            if (is_int(v))
-                return std::to_string(as_int(v));
-            return "";
-        };
-        return make_bool(to_str(a[0]) == to_str(a[1]));
-    });
-    add("string<?", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_bool(false);
-        auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
-            if (is_string(v)) {
-                auto idx = as_string_idx(v);
-                return (idx < string_heap.size()) ? string_heap[idx] : "";
+            // Issue #2916: soft strings quota only when a new slot is required.
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Strings)),
+                    primitive_error_counter);
             }
-            if (is_int(v))
-                return std::to_string(as_int(v));
-            return "";
-        };
-        return make_bool(to_str(a[0]) < to_str(a[1]));
-    });
-    add("string->number", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.size() < 1 || a.size() > 2)
-            return make_int(0);
-        auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
-            if (is_string(v)) {
-                auto idx = as_string_idx(v);
-                return (idx < string_heap.size()) ? string_heap[idx] : "";
+            auto id = string_heap.size();
+            string_heap.push_back(std::move(result));
+            return make_string(id);
+        },
+        pure_general(255, "(...strings) -> string", "Concatenate strings."));
+    register_prim(
+        add, ev, "string-length",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            std::size_t len = 0;
+            if (is_string(a[0])) {
+                auto idx = as_string_idx(a[0]);
+                len = (idx < string_heap.size()) ? string_heap[idx].size() : 0;
+            } else if (is_int(a[0])) {
+                len = std::to_string(as_int(a[0])).size();
             }
-            return "";
-        };
-        auto s = to_str(a[0]);
-        auto radix = (a.size() > 1 && is_int(a[1])) ? static_cast<int>(as_int(a[1])) : 10;
-        try {
-            if (s.find('.') != std::string::npos)
-                return make_float(std::stod(s));
-            return make_int(static_cast<std::int64_t>(std::stoll(s, nullptr, radix)));
-        } catch (...) {
-            // [SILENCE-PRIM-#615] string-to-int/float parse failure —
-            // (#) returns #f on parse failure per the documented pair
-            // primitive contract; raising would break every existing
-            // caller that relies on #f as the parse-failure sentinel.
-            return make_bool(false);
-        }
-    });
+            return make_int(static_cast<std::int64_t>(len));
+        },
+        pure_general(1, "(string) -> int", "Number of characters in a string."));
+    register_prim(
+        add, ev, "string-ref",
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 2) {
+                auto __i =
+                    static_cast<std::uint64_t>(ev.push_string_heap("string-ref: too few args"));
+                auto __e = error_values.size();
+                error_values.push_back(make_string(__i));
+                return make_error(__e);
+            }
+            std::string s;
+            if (is_string(a[0]))
+                s = ev.copy_string_heap_at(as_string_idx(a[0]));
+            else if (is_int(a[0]))
+                s = std::to_string(as_int(a[0]));
+            auto pos = static_cast<std::size_t>(as_int(a[1]));
+            if (pos >= s.size()) {
+                auto __i = static_cast<std::uint64_t>(
+                    ev.push_string_heap("string-ref: index out of bounds"));
+                auto __e = error_values.size();
+                error_values.push_back(make_string(__i));
+                return make_error(__e);
+            }
+            return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(s[pos])));
+        },
+        pure_general(2, "(string int) -> int", "Character code at index."));
+    register_prim(
+        add, ev, "substring",
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 3)
+                return make_int(0);
+            // Issue #2652: copy source under lock then push via locked helper.
+            std::string s;
+            if (is_string(a[0]))
+                s = ev.copy_string_heap_at(as_string_idx(a[0]));
+            else if (is_int(a[0]))
+                s = std::to_string(as_int(a[0]));
+            else
+                return make_int(0);
+            auto start = static_cast<std::size_t>(as_int(a[1]));
+            auto end = static_cast<std::size_t>(as_int(a[2]));
+            if (start > s.size())
+                start = s.size();
+            if (end > s.size())
+                end = s.size();
+            if (start >= end)
+                return make_string(static_cast<std::uint64_t>(ev.push_string_heap("")));
+            return make_string(
+                static_cast<std::uint64_t>(ev.push_string_heap(s.substr(start, end - start))));
+        },
+        pure_general(3, "(string int int) -> string", "Substring from start to end."));
+    register_prim(
+        add, ev, "string=?",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_bool(false);
+            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+                if (is_string(v)) {
+                    auto idx = as_string_idx(v);
+                    return (idx < string_heap.size()) ? string_heap[idx] : "";
+                }
+                if (is_int(v))
+                    return std::to_string(as_int(v));
+                return "";
+            };
+            return make_bool(to_str(a[0]) == to_str(a[1]));
+        },
+        pure_general(2, "(string string) -> bool", "String equality."));
+    register_prim(
+        add, ev, "string<?",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_bool(false);
+            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+                if (is_string(v)) {
+                    auto idx = as_string_idx(v);
+                    return (idx < string_heap.size()) ? string_heap[idx] : "";
+                }
+                if (is_int(v))
+                    return std::to_string(as_int(v));
+                return "";
+            };
+            return make_bool(to_str(a[0]) < to_str(a[1]));
+        },
+        pure_general(2, "(string string) -> bool", "Lexicographic string less-than."));
+    register_prim(
+        add, ev, "string->number",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 1 || a.size() > 2)
+                return make_int(0);
+            auto to_str = [&pairs, &string_heap, &error_values](const EvalValue& v) -> std::string {
+                if (is_string(v)) {
+                    auto idx = as_string_idx(v);
+                    return (idx < string_heap.size()) ? string_heap[idx] : "";
+                }
+                return "";
+            };
+            auto s = to_str(a[0]);
+            auto radix = (a.size() > 1 && is_int(a[1])) ? static_cast<int>(as_int(a[1])) : 10;
+            try {
+                if (s.find('.') != std::string::npos)
+                    return make_float(std::stod(s));
+                return make_int(static_cast<std::int64_t>(std::stoll(s, nullptr, radix)));
+            } catch (...) {
+                // [SILENCE-PRIM-#615] string-to-int/float parse failure —
+                // (#) returns #f on parse failure per the documented pair
+                // primitive contract; raising would break every existing
+                // caller that relies on #f as the parse-failure sentinel.
+                return make_bool(false);
+            }
+        },
+        pure_general(1, "(string) -> any", "Parse a string as a number."));
 
-    add("string-index", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(-1);
-        auto haystack = (is_string(a[0]) && as_string_idx(a[0]) < string_heap.size())
-                            ? string_heap[as_string_idx(a[0])]
-                            : "";
-        auto needle = (is_string(a[1]) && as_string_idx(a[1]) < string_heap.size())
-                          ? string_heap[as_string_idx(a[1])]
-                          : "";
-        auto start = (a.size() > 2 && is_int(a[2])) ? static_cast<std::size_t>(as_int(a[2])) : 0;
-        if (needle.empty())
-            return make_int(0);
-        auto pos = haystack.find(needle, start);
-        return make_int(pos != std::string::npos ? static_cast<std::int64_t>(pos) : -1);
-    });
+    register_prim(
+        add, ev, "string-index",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(-1);
+            auto haystack = (is_string(a[0]) && as_string_idx(a[0]) < string_heap.size())
+                                ? string_heap[as_string_idx(a[0])]
+                                : "";
+            auto needle = (is_string(a[1]) && as_string_idx(a[1]) < string_heap.size())
+                              ? string_heap[as_string_idx(a[1])]
+                              : "";
+            auto start =
+                (a.size() > 2 && is_int(a[2])) ? static_cast<std::size_t>(as_int(a[2])) : 0;
+            if (needle.empty())
+                return make_int(0);
+            auto pos = haystack.find(needle, start);
+            return make_int(pos != std::string::npos ? static_cast<std::int64_t>(pos) : -1);
+        },
+        pure_general(3, "(string string int) -> int", "Index of substring or -1."));
 
-    add("number->string", [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        std::string s;
-        if (is_float(a[0]))
-            s = std::to_string(as_float(a[0]));
-        else if (is_int(a[0]))
-            s = std::to_string(as_int(a[0]));
-        else
-            s = "0";
-        // Trim trailing zeros from float representation
-        if (is_float(a[0])) {
-            auto dot = s.find('.');
-            if (dot != std::string::npos) {
-                auto last = s.find_last_not_of('0');
-                if (last > dot)
-                    s = s.substr(0, last + 1);
-                else
-                    s = s.substr(0, dot);
+    register_prim(
+        add, ev, "number->string",
+        [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            std::string s;
+            if (is_float(a[0]))
+                s = std::to_string(as_float(a[0]));
+            else if (is_int(a[0]))
+                s = std::to_string(as_int(a[0]));
+            else
+                s = "0";
+            // Trim trailing zeros from float representation
+            if (is_float(a[0])) {
+                auto dot = s.find('.');
+                if (dot != std::string::npos) {
+                    auto last = s.find_last_not_of('0');
+                    if (last > dot)
+                        s = s.substr(0, last + 1);
+                    else
+                        s = s.substr(0, dot);
+                }
             }
-        }
-        // Issue #2652: locked push.
-        return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(s))));
-    });
-    add("string->number", [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
-        if (a.empty() || !is_string(a[0]))
+            // Issue #2652: locked push.
+            return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(s))));
+        },
+        pure_general(1, "(number) -> string", "Render a number as a string."));
+    register_prim(
+        add, ev, "string->number",
+        [&pairs, &string_heap, &error_values](std::span<const EvalValue> a) {
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            auto i = as_string_idx(a[0]);
+            if (i >= string_heap.size())
+                return make_bool(false);
+            auto& str = string_heap[i];
+            if (str.empty())
+                return make_bool(false);
+            // Trim leading/trailing whitespace (CSV fields, user input)
+            auto first = str.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos)
+                return make_bool(false);
+            auto last = str.find_last_not_of(" \t\r\n");
+            std::string_view trimmed(str.data() + first, last - first + 1);
+            // Use from_chars — entire trimmed string must be consumed
+            const char* start = trimmed.data();
+            const char* end = start + trimmed.size();
+            // Try float first (includes ints like "42" → 42.0)
+            double fval;
+            auto [pfloat, ec_float] = std::from_chars(start, end, fval);
+            if (ec_float == std::errc{} && pfloat == end) {
+                // Check if it has a decimal point or exponent → return float
+                if (trimmed.find('.') != std::string_view::npos ||
+                    trimmed.find('e') != std::string_view::npos ||
+                    trimmed.find('E') != std::string_view::npos)
+                    return make_float(fval);
+                return make_int(static_cast<std::int64_t>(fval));
+            }
             return make_bool(false);
-        auto i = as_string_idx(a[0]);
-        if (i >= string_heap.size())
-            return make_bool(false);
-        auto& str = string_heap[i];
-        if (str.empty())
-            return make_bool(false);
-        // Trim leading/trailing whitespace (CSV fields, user input)
-        auto first = str.find_first_not_of(" \t\r\n");
-        if (first == std::string::npos)
-            return make_bool(false);
-        auto last = str.find_last_not_of(" \t\r\n");
-        std::string_view trimmed(str.data() + first, last - first + 1);
-        // Use from_chars — entire trimmed string must be consumed
-        const char* start = trimmed.data();
-        const char* end = start + trimmed.size();
-        // Try float first (includes ints like "42" → 42.0)
-        double fval;
-        auto [pfloat, ec_float] = std::from_chars(start, end, fval);
-        if (ec_float == std::errc{} && pfloat == end) {
-            // Check if it has a decimal point or exponent → return float
-            if (trimmed.find('.') != std::string_view::npos ||
-                trimmed.find('e') != std::string_view::npos ||
-                trimmed.find('E') != std::string_view::npos)
-                return make_float(fval);
-            return make_int(static_cast<std::int64_t>(fval));
-        }
-        return make_bool(false);
-    });
+        },
+        pure_general(1, "(string) -> any", "Parse a string as a number."));
 }
 
 } // namespace aura::compiler::primitives_detail

@@ -39,6 +39,7 @@ inline constexpr std::string_view kPrimCategoryRendering = "rendering";
 // #709: capture contract + fast slot dispatch + registry stats.
 // #498: constraint skeleton template + query:primitive-metadata.
 // #2915: register_prim / PrimSpec authoring scaffold + agent contract.
+// #2996: core TUs (list/math/json/pair/vector) migrated onto register_prim.
 inline constexpr int kPrimitivesExtensionKitVersion = 4;
 
 // Agent-facing skeleton bundle returned by primitive:generate-skeleton.

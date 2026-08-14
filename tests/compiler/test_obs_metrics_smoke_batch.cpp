@@ -4,6 +4,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/prim_registrar_scaffold.hh"
 #include "compiler/runtime_shared.h"
 
 #include <cstdint>
@@ -2271,6 +2272,93 @@ int run_1903_metrics_smoke() {
 }
 } // namespace aura_obs_run_wave58_1903
 
+// Issue #2996: core TUs on register_prim + PrimSpec (follow #2915).
+namespace aura_obs_run_2996 {
+using aura::compiler::CompilerService;
+using aura::compiler::g_register_prim_scaffold_total;
+using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
+using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
+using aura::test::g_failed;
+using aura::test::g_passed;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static std::int64_t describe_arity(CompilerService& cs, const char* name) {
+    auto r = cs.eval(std::format("(car (primitive:describe \"{}\"))", name));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static bool describe_has_schema(CompilerService& cs, const char* name) {
+    // primitive:describe = (arity . (pure . (safety . (perf . (sec . (doc . (cat . schema)))))))
+    auto r = cs.eval(
+        std::format("(cdr (cdr (cdr (cdr (cdr (cdr (cdr (primitive:describe \"{}\"))))))))", name));
+    if (!r || !is_string(*r))
+        return false;
+    auto idx = as_string_idx(*r);
+    if (idx >= cs.evaluator().string_heap_size())
+        return false;
+    return !cs.evaluator().string_heap_at(idx).empty();
+}
+
+int run_2996_core_register_prim() { // ac2996
+    std::println("\n=== #2996: core register_prim + PrimSpec ===");
+    std::println("\n--- #2996 AC1/AC5: source-cite migrated TUs ---");
+    const auto list = read_file("src/compiler/evaluator_primitives_list.cpp");
+    const auto math = read_file("src/compiler/evaluator_primitives_math.cpp");
+    const auto json = read_file("src/compiler/evaluator_primitives_json.cpp");
+    const auto pair = read_file("src/compiler/evaluator_primitives_pair.cpp");
+    const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    const auto reg = read_file("src/compiler/evaluator_primitives_registry.cpp");
+    CHECK(list.find("register_prim") != std::string::npos, "2996 AC1: list register_prim");
+    CHECK(list.find("\"list-sort\"") != std::string::npos, "2996 AC1: list-sort");
+    CHECK(math.find("register_prim") != std::string::npos, "2996 AC1: math register_prim");
+    CHECK(json.find("register_prim") != std::string::npos, "2996 AC1: json register_prim");
+    CHECK(pair.find("register_prim") != std::string::npos, "2996 AC1: pair register_prim");
+    CHECK(vec.find("register_prim") != std::string::npos, "2996 AC1: vector register_prim");
+    CHECK(reg.find("#2996") != std::string::npos, "2996 AC5: registry migrated cite");
+    CHECK(read_file("docs/design/2996-register-prim.md").empty(), "2996: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_2996.cpp").empty(), "2996: no invent test file");
+
+    std::println("\n--- #2996 AC3: scaffold total increased ---");
+    const auto stamped = g_register_prim_scaffold_total().load(std::memory_order_relaxed);
+    // misc (4) + core TUs (~100). Cold process may be 0 if this TU
+    // constructed no Evaluator yet — construct one first.
+    CompilerService cs;
+    const auto after = g_register_prim_scaffold_total().load(std::memory_order_relaxed);
+    CHECK(after > stamped || after >= 80, "2996 AC3: scaffold total after boot");
+    CHECK(after >= 80, "2996 AC3: g_register_prim_scaffold_total >= 80");
+
+    std::println("\n--- #2996 AC2/AC6: PrimMeta schema + arity ---");
+    CHECK(describe_arity(cs, "length") == 1, "2996 AC6: length arity 1");
+    CHECK(describe_arity(cs, "cons") == 2, "2996 AC6: cons arity 2");
+    CHECK(describe_arity(cs, "list") == 255, "2996 AC6: list variadic");
+    CHECK(describe_arity(cs, "vector-ref") == 2, "2996 AC6: vector-ref arity 2");
+    CHECK(describe_has_schema(cs, "length"), "2996 AC2: length schema");
+    CHECK(describe_has_schema(cs, "cons"), "2996 AC2: cons schema");
+    CHECK(describe_has_schema(cs, "json-encode"), "2996 AC2: json-encode schema");
+    CHECK(describe_has_schema(cs, "sin"), "2996 AC2: sin schema");
+    CHECK(describe_has_schema(cs, "hash-ref"), "2996 AC2: hash-ref schema");
+    CHECK(describe_has_schema(cs, "list-sort"), "2996 AC2: list-sort schema");
+    const auto documented = cs.evaluator().get_primitive_documented_meta_count();
+    CHECK(documented >= 80, "2996 AC6: documented PrimMeta count");
+    return g_failed ? 1 : 0;
+}
+} // namespace aura_obs_run_2996
+
 int main() {
 
 
@@ -3057,6 +3145,11 @@ int main() {
     ::aura::test::g_passed = 0;
     std::println("\n######## wave58_1903 ########");
     if (int rc = aura_obs_run_wave58_1903::run_1903_metrics_smoke(); rc != 0)
+        return rc;
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## #2996 core register_prim ########");
+    if (int rc = aura_obs_run_2996::run_2996_core_register_prim(); rc != 0)
         return rc;
 
     std::println("\ntest_obs_metrics_smoke_batch: OK");

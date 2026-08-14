@@ -49,12 +49,14 @@ def main() -> int:
     list_cpp = _read("src/compiler/evaluator_primitives_list.cpp")
     must("prim_heap_quota_allow" in list_cpp, "AC2: list TU uses allow helper")
     must("PrimHeapDim::Pairs" in list_cpp, "AC2: pairs dim in list")
-    must('add("list"' in list_cpp, "AC2: list registered")
-    must('add("map"' in list_cpp, "AC2: map registered")
-    must('add("append"' in list_cpp, "AC2: append registered")
-    must('add("list-ref"' in list_cpp, "AC5: list-ref present")
+    must('add("list"' in list_cpp or '"list"' in list_cpp, "AC2: list registered")
+    must('add("map"' in list_cpp or '"map"' in list_cpp, "AC2: map registered")
+    must('add("append"' in list_cpp or '"append"' in list_cpp, "AC2: append registered")
+    must('add("list-ref"' in list_cpp or '"list-ref"' in list_cpp, "AC5: list-ref present")
     # list-ref lambda body must not consult the soft quota
     after = list_cpp.split('add("list-ref"', 1)
+    if len(after) == 1:
+        after = list_cpp.split('"list-ref"', 1)
     if len(after) > 1:
         body = after[1][:1500]
         must("prim_heap_quota" not in body, "AC5: list-ref must not call prim_heap_quota")
