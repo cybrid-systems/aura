@@ -3493,6 +3493,21 @@ public:
     [[nodiscard]] bool type_export_authoritative() const noexcept {
         return type_export_authoritative_;
     }
+    // Issue #3004: Production infer SOLVED but persist+Full audit not yet
+    // committed. query:type signals "in-flight" (not durable authority).
+    [[nodiscard]] bool type_export_inflight() const noexcept { return type_export_inflight_; }
+    void grant_type_export_authority() noexcept {
+        type_export_authoritative_ = true;
+        type_export_inflight_ = false;
+    }
+    void clear_type_export_authority() noexcept {
+        type_export_authoritative_ = false;
+        type_export_inflight_ = false;
+    }
+    void note_type_export_inflight() noexcept {
+        type_export_authoritative_ = false;
+        type_export_inflight_ = true;
+    }
     // Issue #2308: opaque handle to the live commit TypeChecker (null
     // when no commit CS is currently live). Query primitives cast it
     // to TypeChecker* and call constraint_system() to build a
@@ -14763,8 +14778,10 @@ private:
     void* commit_type_checker_opaque_ = nullptr;
     std::uint64_t commit_tc_registry_gen_ = 0;
     bool commit_cs_live_ = false;
-    // Issue #3003: type-export authority (default true = pre-#3003).
+    // Issue #3003 / #3004: type-export authority (default true = pre-#3003).
+    // Production: false until persist + Full audit success (#3004).
     bool type_export_authoritative_ = true;
+    bool type_export_inflight_ = false;
     // Opaque std::vector<TypeId>* — stashed occurrence span for commit.
     void* commit_occurrence_vars_opaque_ = nullptr;
     void destroy_commit_type_checker() noexcept;

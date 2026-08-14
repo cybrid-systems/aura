@@ -687,6 +687,20 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                           aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue);
                 insert_kv("issue-2938",
                           aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue);
+                // Issue #3004: persist + Full audit atomic with query:type.
+                insert_kv(
+                    "occurrence-provisional-discard-total",
+                    static_cast<std::int64_t>(aura::compiler::typed_audit::
+                                                  occurrence_provisional_discard_total_v_read()));
+                insert_kv(
+                    "occurrence-persist-audit-atomic-wired",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::g_occurrence_persist_audit_atomic_wired.load(
+                            std::memory_order_relaxed)));
+                insert_kv("schema-3004",
+                          aura::compiler::typed_audit::kOccurrencePersistAuditAtomicIssue);
+                insert_kv("issue-3004",
+                          aura::compiler::typed_audit::kOccurrencePersistAuditAtomicIssue);
                 // Issue #2995: unified OccurrenceCommitHealth (additive).
                 insert_kv("occurrence-commit-health-faces",
                           static_cast<std::int64_t>(

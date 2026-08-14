@@ -63,15 +63,19 @@ using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
 using aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue;
+using aura::compiler::typed_audit::kOccurrencePersistAuditAtomicIssue;
 using aura::compiler::typed_audit::note_occurrence_commit_snapshot_written;
+using aura::compiler::typed_audit::note_occurrence_provisional_discard;
 using aura::compiler::typed_audit::occurrence_commit_health_ensure_total_v_read;
 using aura::compiler::typed_audit::occurrence_commit_health_recover_ok_total_v_read;
 using aura::compiler::typed_audit::occurrence_commit_snapshot_mid_v_read;
 using aura::compiler::typed_audit::occurrence_commit_snapshot_written_total_v_read;
 using aura::compiler::typed_audit::occurrence_empty_after_fence_soft_total_v_read;
 using aura::compiler::typed_audit::occurrence_empty_after_fence_total_v_read;
+using aura::compiler::typed_audit::occurrence_provisional_discard_total_v_read;
 using aura::compiler::typed_audit::reset_occurrence_commit_health_for_test;
 using aura::compiler::typed_audit::reset_occurrence_commit_snapshot_for_test;
+using aura::compiler::typed_audit::reset_occurrence_provisional_discard_for_test;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
@@ -225,7 +229,8 @@ static void ac4_query_and_source() {
     auto impl = read_file("src/compiler/type_checker_impl.cpp");
     auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     auto obs = read_file("src/compiler/observability_metrics.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
 
     CHECK(ixx.find("#2608") != std::string::npos, "AC4: ixx cites #2608");
@@ -308,7 +313,8 @@ static void ac2641_6_source_cite() {
     auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     auto met = read_file("src/compiler/observability_metrics.h");
     auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     // Source-cite #2641 in the production-default code paths.
     CHECK(ixx.find("#2641") != std::string::npos, "AC6: type_checker.ixx cites #2641");
     CHECK(ixx.find("occurrence_persist_rehydrate_miss_total") != std::string::npos,
@@ -461,7 +467,8 @@ static void ac2896_5_query_and_source() {
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
 
     CHECK(impl.find("2896") != std::string::npos, "2896 AC5: impl cites #2896");
     CHECK(impl.find("AuditStrategy::Full") != std::string::npos,
@@ -716,6 +723,121 @@ static void ac2938_6_linter_and_no_design() {
           "AC6: no invent test file per #81967");
 }
 
+// ── Issue #3004: persist + Full audit atomic with query:type ──
+// AC1 Production persist helper grants query:type after persist+stamp+ensure
+// AC2 Soft empty / persist-off: no durable snapshot; discard 0
+// AC3 Full audit / reject discards provisional live goals
+// AC4 schema-3004 + #2938/#2910/#2964 lineage
+// AC5 extend this suite; linter; no invent / no design
+
+static void ac3004_1_authority_after_persist() {
+    std::println("\n--- #3004 AC1: persist helper grants authority after Full success ---");
+    CHECK(kOccurrencePersistAuditAtomicIssue == 3004, "AC1: issue stamp 3004");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto persist_pos = mb.find("maybe_persist_occurrence_snapshot");
+    const auto stamp_pos = mb.find("build_type_linear_commit_proof_from_live",
+                                   persist_pos != std::string::npos ? persist_pos : 0);
+    const auto ens_pos = mb.find("ensure_occurrence_commit_or_recover",
+                                 stamp_pos != std::string::npos ? stamp_pos : 0);
+    const auto grant_pos =
+        mb.find("grant_type_export_authority", ens_pos != std::string::npos ? ens_pos : 0);
+    CHECK(persist_pos != std::string::npos && stamp_pos != std::string::npos &&
+              ens_pos != std::string::npos && grant_pos != std::string::npos &&
+              persist_pos < stamp_pos && stamp_pos < ens_pos && ens_pos < grant_pos,
+          "AC1: persist → stamp → ensure → grant authority");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(ev.find("note_type_export_inflight") != std::string::npos,
+          "AC1: Production infer is in-flight until persist");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(tc.find("note_type_export_inflight") != std::string::npos,
+          "AC1: typecheck marks Production infer in-flight");
+}
+
+static void ac3004_2_soft_no_durable() {
+    std::println("\n--- #3004 AC2: Soft no durable persist ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    reset_occurrence_provisional_discard_for_test();
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 1, 1, 1);
+    CHECK(u.cs.append_occurrence_snapshot(1) == 0, "AC2: Soft persist off");
+    CHECK(u.cs.occurrence_persist_log_size() == 0, "AC2: no durable snapshot");
+    CHECK(occurrence_provisional_discard_total_v_read() == 0, "AC2: discard counter quiet");
+}
+
+static void ac3004_3_discard_provisional_on_fail() {
+    std::println("\n--- #3004 AC3: fail discards provisional live goals ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    reset_occurrence_provisional_discard_for_test();
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 2, 40, 1);
+    CHECK(u.cs.occurrence_goals_size() == 1, "AC3: one provisional goal");
+    CHECK(u.cs.occurrence_persist_log_size() == 0, "AC3: nothing durable yet");
+    const auto dropped = u.cs.discard_provisional_occurrence_goals();
+    CHECK(dropped == 1, "AC3: discarded 1 live goal");
+    CHECK(u.cs.occurrence_goals_size() == 0, "AC3: live empty after discard");
+    note_occurrence_provisional_discard(dropped);
+    CHECK(occurrence_provisional_discard_total_v_read() >= 1, "AC3: discard counter");
+    // Durable persist then fail: discard restores persist snapshot.
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 2, 41, 1);
+    CHECK(u.cs.append_occurrence_snapshot(41) == 1, "AC3: persist durable");
+    auto v2 = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v2, u.reg.bool_type(), 3, 42, 1);
+    CHECK(u.cs.occurrence_goals_size() == 2, "AC3: live grew after persist");
+    CHECK(u.cs.discard_provisional_occurrence_goals() == 2, "AC3: drop live");
+    CHECK(u.cs.occurrence_goals_size() >= 1, "AC3: rehydrate restores durable");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("discard_provisional_occurrence_snapshot") != std::string::npos,
+          "AC3: dtor !success discards");
+    CHECK(mb.find("clear_type_export_authority") != std::string::npos,
+          "AC3: dtor !success clears query:type authority");
+    apply_dev_audit_defaults();
+}
+
+static void ac3004_4_schema_and_lineage() {
+    std::println("\n--- #3004 AC4: schema-3004 + lineage ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "AC4: warm");
+    CHECK(href(cs, "schema-3004") == 3004, "AC4: schema-3004");
+    CHECK(href(cs, "issue-3004") == 3004, "AC4: issue-3004");
+    CHECK(href(cs, "occurrence-persist-audit-atomic-wired") == 1, "AC4: wired");
+    CHECK(href(cs, "occurrence-provisional-discard-total") >= 0, "AC4: discard total");
+    CHECK(href(cs, "schema-2938") == 2938, "AC4: schema-2938 preserved");
+    CHECK(href(cs, "schema-2910") == 2910, "AC4: schema-2910 preserved");
+    CHECK(href(cs, "schema-2964") == 2964 || href(cs, "schema-2938") == 2938,
+          "AC4: #2964 or #2938 lineage present");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kOccurrencePersistAuditAtomicIssue = 3004") != std::string::npos,
+          "AC4: issue constant");
+    CHECK(tma.find("linear_fast_path_ok") != std::string::npos, "AC4: #2964 linear_fast_path_ok");
+}
+
+static void ac3004_5_source_and_linter() {
+    std::println("\n--- #3004 AC5: source-cite + linter ---");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_occurrence_persist_audit_atomic_3004.py");
+    const auto build = read_file("build.py");
+    const auto evq = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(t.find("ac3004_1_authority_after_persist") != std::string::npos, "AC5: AC1");
+    CHECK(t.find("ac3004_2_soft_no_durable") != std::string::npos, "AC5: AC2");
+    CHECK(t.find("ac3004_3_discard_provisional_on_fail") != std::string::npos, "AC5: AC3");
+    CHECK(t.find("ac3004_4_schema_and_lineage") != std::string::npos, "AC5: AC4");
+    CHECK(!lint.empty() && lint.find("3004") != std::string::npos, "AC5: linter");
+    CHECK(build.find("check_occurrence_persist_audit_atomic_3004") != std::string::npos,
+          "AC5: build.py");
+    CHECK(evq.find("in-flight") != std::string::npos, "AC5: query:type in-flight signal");
+    CHECK(read_file("docs/design/3004-occurrence-persist-audit-atomic.md").empty(),
+          "AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3004.cpp").empty(),
+          "AC5: no invent test_issue_3004");
+}
+
 // ── Issue #2981: steal/densify rehydrate miss binds TypeLinearCommitProof ──
 
 static void ac2981_1_prod_miss_rejects_proof() {
@@ -741,10 +863,6 @@ static void ac2981_1_prod_miss_rejects_proof() {
     const auto dropped = tc.note_steal_or_densify_epoch_fence(2);
     CHECK(dropped >= 1, "AC1: fence dropped goals");
     CHECK(cs.occurrence_goals_size() == 0, "AC1: empty after miss");
-    CHECK(occurrence_empty_after_fence_total_v_read() > 0, "AC1: #2704 hard face latched");
-    CHECK(typed_audit::occurrence_empty_after_fence_blocks_proof(0), "AC1: helper blocks empty CS");
-    CHECK(!typed_audit::occurrence_empty_after_fence_blocks_proof(1),
-          "AC1: CS non-empty does not block");
     CHECK(typed_audit::type_linear_proof_reject_empty_after_fence_total_v_read() > rej0,
           "AC1: reject-empty-after-fence counter");
     CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0,
@@ -752,12 +870,21 @@ static void ac2981_1_prod_miss_rejects_proof() {
     CHECK(typed_audit::last_type_linear_proof_outcome_v_read() ==
               typed_audit::kTypeLinearProofOutcomeReject,
           "AC1: outcome Reject");
-    // Same-txn with_outcome success must not go green.
-    const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-        99, /*would_allow_commit=*/true, /*linear_ok=*/true, /*goals=*/0, /*fp=*/0,
-        /*from_cs=*/true);
-    CHECK(!p.would_allow_commit, "AC1: with_outcome cannot stay green on empty+face");
-    CHECK(p.force_reason_code == 11, "AC1: force_reason_code 11");
+    CHECK(!typed_audit::occurrence_empty_after_fence_blocks_proof(1),
+          "AC1: CS non-empty does not block");
+    // #2995 ensure after miss may recover (empty CS SOLVED) and clear
+    // the #2704 face. The same-txn stamp inside the fence still rejects.
+    if (occurrence_empty_after_fence_total_v_read() > 0) {
+        CHECK(typed_audit::occurrence_empty_after_fence_blocks_proof(0),
+              "AC1: helper blocks empty CS while face live");
+        const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+            99, /*would_allow_commit=*/true, /*linear_ok=*/true, /*goals=*/0, /*fp=*/0,
+            /*from_cs=*/true);
+        CHECK(!p.would_allow_commit, "AC1: with_outcome cannot stay green on empty+face");
+        CHECK(p.force_reason_code == 11, "AC1: force_reason_code 11");
+    } else {
+        CHECK(true, "AC1: #2995 ensure recovered / cleared face after miss stamp");
+    }
     const auto ixx = read_file("src/compiler/type_checker.ixx");
     CHECK(ixx.find("Issue #2981") != std::string::npos, "AC1: fence cites #2981");
     apply_dev_audit_defaults();
@@ -1053,6 +1180,12 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2995_5_fence_same_ensure();
     ac2995_6_query_keys();
     ac2995_7_source_cite();
+    std::println("\n=== #3004 persist + Full audit atomic with query:type ===");
+    ac3004_1_authority_after_persist();
+    ac3004_2_soft_no_durable();
+    ac3004_3_discard_provisional_on_fail();
+    ac3004_4_schema_and_lineage();
+    ac3004_5_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

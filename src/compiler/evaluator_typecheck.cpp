@@ -297,12 +297,18 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             if (!tc.last_type_export_authoritative() &&
                 aura::compiler::typed_audit::production_defaults_active()) {
                 commit_cs_live_ = false;
-                type_export_authoritative_ = false;
+                clear_type_export_authority();
                 last_mutate_error_ =
                     "typecheck after mutate: solve_delta not SOLVED (production fail-closed)";
                 return false;
             }
-            type_export_authoritative_ = tc.last_type_export_authoritative();
+            // Issue #3004: Production infer SOLVED is in-flight until
+            // outermost persist + Full audit (#2938 helper grants).
+            // Soft: keep #3003 observe authority after SOLVED infer.
+            if (aura::compiler::typed_audit::production_defaults_active())
+                note_type_export_inflight();
+            else
+                type_export_authoritative_ = tc.last_type_export_authoritative();
             // Issue #537: mirror per-call TypeChecker narrowing stats
             // into lifetime CompilerMetrics (same as CompilerService
             // typecheck / incremental_infer paths).
@@ -1519,7 +1525,7 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     // Issue #3003: reject clears partial CS stash (no later recover).
     if (!cr.solve_ok) {
         commit_cs_live_ = false;
-        type_export_authoritative_ = false;
+        clear_type_export_authority();
     }
     if (out_commit)
         *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;

@@ -199,7 +199,12 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // this helper — #2938). Soft empty → evaluate only; production
     // faces → existing try_occurrence_hard_face_full_solve_recover.
     (void)tc->ensure_occurrence_commit_or_recover();
-    (void)ev; // reserved for future evaluator-scoped stamp faces
+    // Issue #3004: query:type authority only after persist + Full
+    // audit success (this helper runs only on outermost && success).
+    // Soft: persist is off; grant still marks the post-audit surface
+    // so Soft observe matches #3003 SOLVED infer. Production grant
+    // is the sole moment persist + linear proof + health are durable.
+    ev->grant_type_export_authority();
 }
 
 namespace aura::compiler {
@@ -3811,6 +3816,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_steal_recoveries.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #3004: Full audit / TIMEOUT / reject — discard provisional
+        // OccurrenceGoal live table; no query:type authority.
+        if (auto* tc = static_cast<TypeChecker*>(ev_->commit_type_checker_handle())) {
+            const auto dropped = tc->discard_provisional_occurrence_snapshot();
+            if (dropped > 0)
+                aura::compiler::typed_audit::note_occurrence_provisional_discard(dropped);
+        }
+        ev_->clear_type_export_authority();
     }
     // Issue #1255: on Guard exit, if hygiene drift was seen,
     // force DefUseIndex sync before releasing the boundary.

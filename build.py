@@ -2531,6 +2531,18 @@ def cmd_lint():
             "Issue #2995 OccurrenceCommitHealth linter failed — run python3 scripts/coverage/checks/check_occurrence_commit_health_2995.py"
         )
         return r
+    # Issue #3004: occurrence persist atomic with Full audit + query:type.
+    # Extends test_occurrence_goal_persist_rehydrate (#81967); no docs/design/.
+    opaa_script = COVERAGE_CHECKS / "check_occurrence_persist_audit_atomic_3004.py"
+    if not opaa_script.exists():
+        fail(f"missing {opaa_script}")
+        return 1
+    r = run([sys.executable, str(opaa_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3004 occurrence persist-audit atomic linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_audit_atomic_3004.py"
+        )
+        return r
     # Issue #2994: Agent locality residual budget on production solve_delta.
     # Extends test_solve_delta_unresolved_export (#81967); no docs/design/.
     lrb_script = COVERAGE_CHECKS / "check_solve_delta_locality_budget_2994.py"
@@ -10057,6 +10069,25 @@ def cmd_occurrence_commit_snapshot_2938_coverage():
     return 0
 
 
+def cmd_occurrence_persist_audit_atomic_3004_coverage():
+    """Issue #3004: persist + Full audit atomic with query:type authority.
+
+    Production infer SOLVED is in-flight until persist+stamp+ensure.
+    Failure discards provisional OccurrenceGoals. Soft: no durable persist.
+    """
+    print(f"{B}=== occurrence persist-audit atomic coverage (#3004) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_persist_audit_atomic_3004.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence persist-audit atomic (#3004) coverage contract rows failed")
+        return 1
+    ok("occurrence persist-audit atomic (#3004) coverage clean")
+    return 0
+
+
 def cmd_occurrence_commit_snapshot_2938():
     """Issue #2938: freeze Occurrence truth on every successful outermost commit.
 
@@ -14652,6 +14683,7 @@ def main():
         "occurrence-persist-production-2910": cmd_occurrence_persist_production_2910,
         "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,
         "occurrence-commit-snapshot-2938": cmd_occurrence_commit_snapshot_2938,
+        "occurrence-persist-audit-atomic-3004": cmd_occurrence_persist_audit_atomic_3004_coverage,
         "occurrence-commit-snapshot-2938-coverage": cmd_occurrence_commit_snapshot_2938_coverage,
         "occurrence-commit-health-2995": cmd_occurrence_commit_health_2995,
         "occurrence-commit-health-2995-coverage": cmd_occurrence_commit_health_2995_coverage,

@@ -1002,6 +1002,10 @@ public:
     // Returns number of goals rehydrated (0 when disabled / live non-empty /
     // buffer empty). preferred_mid=0 → latest mid present in buffer.
     std::size_t rehydrate_occurrence_from_persist(std::uint64_t preferred_mid = 0) noexcept;
+    // Issue #3004: Full audit / outermost failure discards live provisional
+    // goals and restores the last durable persist snapshot (if any).
+    // Returns number of live goals dropped. Soft empty → 0.
+    std::size_t discard_provisional_occurrence_goals() noexcept;
     [[nodiscard]] std::size_t occurrence_persist_log_size() const noexcept {
         return occurrence_persist_log_.size();
     }
@@ -2456,6 +2460,12 @@ export struct TypeChecker {
         if (metrics_)
             solve_delta_cs_.set_metrics(metrics_);
         return solve_delta_cs_.append_occurrence_snapshot(mutation_id);
+    }
+    // Issue #3004: discard live provisional goals on Full audit failure.
+    std::size_t discard_provisional_occurrence_snapshot() noexcept {
+        if (metrics_)
+            solve_delta_cs_.set_metrics(metrics_);
+        return solve_delta_cs_.discard_provisional_occurrence_goals();
     }
     // Issue #258: plumb the CompilerMetrics pointer through
     // to ConstraintSystem::solve_delta() for timing. Today

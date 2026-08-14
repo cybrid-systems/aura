@@ -920,7 +920,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         if (!ev.type_export_authoritative()) {
             auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("not-authoritative");
+            ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
+                                                                : "not-authoritative");
             return make_string(sidx);
         }
         auto type_idx = flat.type_id(node);
@@ -973,7 +974,8 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                 }
                 if (!ev.type_export_authoritative()) {
                     auto sidx = ev.string_heap_.size();
-                    ev.string_heap_.push_back("not-authoritative");
+                    ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
+                                                                        : "not-authoritative");
                     return make_string(sidx);
                 }
                 auto type_idx = flat.type_id(type_target);

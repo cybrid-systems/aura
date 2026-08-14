@@ -1201,6 +1201,27 @@ inline void reset_occurrence_commit_snapshot_for_test() noexcept {
     g_occurrence_commit_snapshot_mid.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3004: persist + Full audit is the sole query:type authority
+// moment. Production infer SOLVED is in-flight. Failure discards
+// provisional live OccurrenceGoals (restore last durable persist).
+inline constexpr int kOccurrencePersistAuditAtomicIssue = 3004;
+inline std::atomic<std::uint64_t> g_occurrence_provisional_discard_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_provisional_discard_goals_total{0};
+inline std::atomic<std::uint32_t> g_occurrence_persist_audit_atomic_wired{1};
+[[nodiscard]] inline std::uint64_t occurrence_provisional_discard_total_v_read() noexcept {
+    return g_occurrence_provisional_discard_total.load(std::memory_order_relaxed);
+}
+inline void note_occurrence_provisional_discard(std::uint64_t goals_dropped) noexcept {
+    g_occurrence_provisional_discard_total.fetch_add(1, std::memory_order_relaxed);
+    if (goals_dropped > 0)
+        g_occurrence_provisional_discard_goals_total.fetch_add(goals_dropped,
+                                                               std::memory_order_relaxed);
+}
+inline void reset_occurrence_provisional_discard_for_test() noexcept {
+    g_occurrence_provisional_discard_total.store(0, std::memory_order_relaxed);
+    g_occurrence_provisional_discard_goals_total.store(0, std::memory_order_relaxed);
+}
+
 // Issue #2995: last OccurrenceCommitHealth snapshot + ensure counters.
 // Soft + empty / no faces: evaluate is pure loads (these stay at reset).
 // ensure_* only fetch_adds when production needs_recover.
