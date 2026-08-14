@@ -5,6 +5,8 @@ module;
 
 // Issue #2611: note_dce_narrow_hits after evidence-backed elisions.
 #include "compiler/typed_mutation_audit.h"
+// Issue #3046: residual non-identity CastOp density-policy keep / relower.
+#include "compiler/castop_density_policy.hh"
 
 export module aura.compiler.optimization_passes;
 
@@ -90,30 +92,50 @@ inline std::atomic<std::uint32_t> dead_coercion_hot_residual_wired{1};
     return n;
 }
 
+// Count every CastOp (identity + non-identity). Used by #3046 so a
+// leftover non-elidable CastOp cannot silent-JIT under Production.
+[[nodiscard]] inline std::size_t count_all_castops(const aura::ir::IRFunction& f) noexcept {
+    std::size_t n = 0;
+    for (const auto& block : f.blocks) {
+        for (const auto& instr : block.instructions) {
+            if (instr.opcode == aura::ir::IROpcode::CastOp)
+                ++n;
+        }
+    }
+    return n;
+}
+
 // Production: full-fn DCE (ignore dirty cone) then reject if identity
 // CastOps remain. Soft: observe-only (return current count, no extra DCE).
+// Issue #3046: leftover non-identity CastOps take an explicit density-policy
+// keep / force-relower (never silent JIT hot path).
 inline std::size_t sweep_production_hot_residual_castops(aura::ir::IRFunction& f,
                                                          const aura::core::TypeRegistry* reg,
                                                          std::uint64_t epoch = 0) noexcept {
     const bool production = aura::compiler::typed_audit::production_defaults_active();
     if (!production)
-        return count_identity_castops(f);
+        return count_identity_castops(f); // Soft / identity path: zero extra
     dead_coercion_hot_residual_sweep_total.fetch_add(1, std::memory_order_relaxed);
-    if (count_identity_castops(f) == 0)
-        return 0;
-    aura::compiler::DeadCoercionEliminationPass pass(reg);
-    if (epoch != 0)
-        pass.set_pipeline_epoch(epoch);
-    pass.run_function(f);
-    if (pass.eliminated_count() > 0) {
-        dead_coercion_hot_residual_elided_total.fetch_add(pass.eliminated_count(),
-                                                          std::memory_order_relaxed);
-        dead_coercion_ir_elided_total.fetch_add(pass.eliminated_count(), std::memory_order_relaxed);
+    if (count_identity_castops(f) > 0) {
+        aura::compiler::DeadCoercionEliminationPass pass(reg);
+        if (epoch != 0)
+            pass.set_pipeline_epoch(epoch);
+        pass.run_function(f);
+        if (pass.eliminated_count() > 0) {
+            dead_coercion_hot_residual_elided_total.fetch_add(pass.eliminated_count(),
+                                                              std::memory_order_relaxed);
+            dead_coercion_ir_elided_total.fetch_add(pass.eliminated_count(),
+                                                    std::memory_order_relaxed);
+        }
+        const auto left = count_identity_castops(f);
+        if (left > 0)
+            dead_coercion_hot_residual_reject_total.fetch_add(1, std::memory_order_relaxed);
     }
-    const auto left = count_identity_castops(f);
-    if (left > 0)
-        dead_coercion_hot_residual_reject_total.fetch_add(1, std::memory_order_relaxed);
-    return left;
+    // #3046: remaining CastOps are non-elidable. Production records a
+    // density-policy keep + force-JIT/relower; leftover==0 is Quiet.
+    (void)aura::compiler::castop_density::note_hot_residual_nonidentity_castops(
+        count_all_castops(f));
+    return count_identity_castops(f);
 }
 
 // Issue #2611: re-export dce deopt-meta counter names for query/docs lineage.

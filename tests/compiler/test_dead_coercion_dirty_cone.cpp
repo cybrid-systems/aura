@@ -354,6 +354,22 @@ static void ac3007_4_linter_no_design() {
           "3007 AC4: no test_issue_3007.cpp");
 }
 
+static void ac3046_nonidentity_density_cite() {
+    std::println("\n--- #3046: DCE leftover CastOp density-policy ---");
+    const auto opt = read_file("src/compiler/optimization_passes.ixx");
+    CHECK(opt.find("count_all_castops") != std::string::npos, "3046: count leftover CastOps");
+    CHECK(opt.find("note_hot_residual_nonidentity_castops") != std::string::npos,
+          "3046: density keep after identity sweep");
+    CHECK(opt.find("#3046") != std::string::npos, "3046: opt cites #3046");
+    CHECK(read_file("src/compiler/castop_density_policy.hh")
+                  .find("note_hot_residual_nonidentity_castops") != std::string::npos,
+          "3046: policy helper");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3046") == 3046, "3046: live schema-3046");
+    CHECK(href(cs, "hot-residual-nonidentity-wired") == 1, "3046: wired");
+    CHECK(href(cs, "hot-residual-nonidentity-total") >= 0, "3046: leftover queryable");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -367,7 +383,8 @@ int run_test_dead_coercion_dirty_cone() {
     ac3007_2_soft_keeps_cone_skip();
     ac3007_3_schema_and_source();
     ac3007_4_linter_no_design();
-    std::println("\n=== #2556/#3007: {} passed, {} failed ===", g_passed, g_failed);
+    ac3046_nonidentity_density_cite();
+    std::println("\n=== #2556/#3007/#3046: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

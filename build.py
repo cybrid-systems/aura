@@ -2872,6 +2872,19 @@ def cmd_lint():
             "Issue #2991 coercion provenance hf-mutate linter failed — run python3 scripts/coverage/checks/check_coercion_provenance_hf_mutate_2991.py"
         )
         return r
+    # Issue #3046: session-mid always-stamp + residual non-identity CastOp
+    # density keep. Extends test_coercion_stamp_at_add + DeadCoercion
+    # (#81967); no docs/design/.
+    chl3046 = COVERAGE_CHECKS / "check_coercion_hf_lag_hot_residual_3046.py"
+    if not chl3046.exists():
+        fail(f"missing {chl3046}")
+        return 1
+    r = run([sys.executable, str(chl3046)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3046 coercion hf-lag / hot residual linter failed — run python3 scripts/coverage/checks/check_coercion_hf_lag_hot_residual_3046.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
@@ -11239,6 +11252,21 @@ def cmd_coercion_provenance_hf_mutate_2991_coverage():
     return 0
 
 
+def cmd_coercion_hf_lag_hot_residual_3046_coverage():
+    """Issue #3046: session-mid always-stamp + residual CastOp density keep."""
+    print(f"{B}=== coercion hf-lag / hot residual coverage (#3046) ==={N}")
+    script = COVERAGE_CHECKS / "check_coercion_hf_lag_hot_residual_3046.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("coercion hf-lag / hot residual (#3046) coverage contract rows failed")
+        return 1
+    ok("coercion hf-lag / hot residual (#3046) coverage clean")
+    return 0
+
+
 def cmd_gradual_permissiveness_2992_coverage():
     """Issue #2992: non-strict ground-type Warning + AURA_GRADUAL_PERMISSIVENESS."""
     print(f"{B}=== gradual permissiveness coverage (#2992) ==={N}")
@@ -15736,6 +15764,7 @@ def main():
         "scoped-parallel-overlap-hard-reject-3039": cmd_scoped_parallel_overlap_hard_reject_3039,
         "scoped-parallel-overlap-hard-reject-3039-coverage": cmd_scoped_parallel_overlap_hard_reject_3039_coverage,
         "coercion-provenance-hf-mutate-2991": cmd_coercion_provenance_hf_mutate_2991_coverage,
+        "coercion-hf-lag-hot-residual-3046": cmd_coercion_hf_lag_hot_residual_3046_coverage,
         "gradual-permissiveness-2992": cmd_gradual_permissiveness_2992_coverage,
         "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,
         "solve-delta-locality-budget-2994": cmd_solve_delta_locality_budget_2994_coverage,

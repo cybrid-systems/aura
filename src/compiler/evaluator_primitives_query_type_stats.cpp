@@ -22,6 +22,7 @@ module;
 #include "typed_mutation_audit.h"
 #include "compiler/dce_elided_deopt_meta.h"
 #include "compiler/castop_typed_meta.h"
+#include "compiler/castop_density_policy.hh" // Issue #3046 hot residual CastOp keys
 #include "linear_occurrence_mutate_stats.h"
 #include "basis_points.h"
 #include "core/provenance_tracker.hh"
@@ -3060,6 +3061,28 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                                         aura::compiler::
                                                             g_coercion_blame_hf_mutate_wired.load(
                                                                 std::memory_order_relaxed)));
+                                                // Issue #3046: session-always-stamp + stale
+                                                // narrowing drop (residual of #2991).
+                                                insert_kv("schema-3046", 3046);
+                                                insert_kv("issue-3046", 3046);
+                                                insert_kv(
+                                                    "coercion-blame-hf-lag-wired",
+                                                    static_cast<std::int64_t>(
+                                                        aura::compiler::
+                                                            g_coercion_blame_hf_lag_wired.load(
+                                                                std::memory_order_relaxed)));
+                                                insert_kv(
+                                                    "coercion-blame-session-force-total",
+                                                    static_cast<std::int64_t>(
+                                                        aura::compiler::
+                                                            g_coercion_blame_session_force_total
+                                                                .load(std::memory_order_relaxed)));
+                                                insert_kv(
+                                                    "coercion-blame-stale-narrowing-drop-total",
+                                                    static_cast<std::int64_t>(
+                                                        aura::compiler::
+                                                            g_coercion_blame_stale_narrowing_drop_total
+                                                                .load(std::memory_order_relaxed)));
                                                 // Issue #2148: precision meet/join lattice
                                                 // observability.
                                                 const std::int64_t meet_prec =
@@ -4859,6 +4882,26 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                               dead_coercion_hot_residual_wired.load(std::memory_order_relaxed)));
                 insert_kv("schema-3007", 3007);
                 insert_kv("issue-3007", 3007);
+                // Issue #3046: residual non-identity CastOp density keep.
+                insert_kv("schema-3046", 3046);
+                insert_kv("issue-3046", 3046);
+                insert_kv("hot-residual-nonidentity-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::castop_density::g_hot_residual_nonidentity_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv(
+                    "hot-residual-density-keep-total",
+                    static_cast<std::int64_t>(
+                        aura::compiler::castop_density::g_hot_residual_density_keep_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv("hot-residual-relower-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::castop_density::g_hot_residual_relower_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("hot-residual-nonidentity-wired",
+                          static_cast<std::int64_t>(
+                              aura::compiler::castop_density::g_hot_residual_nonidentity_wired.load(
+                                  std::memory_order_relaxed)));
             }
             // Issue #2562: dual-require drop observability (layered dead-coercion
             // + dual gate for Agent pre-check / insert integrity).

@@ -4173,8 +4173,12 @@ void InferenceEngine::add_deferred_coercion(const FlatAST& flat, NodeId parent,
     for (const auto& nr : flat.all_narrowings()) {
         if (want_pred != 0 && nr.cond_node != want_pred)
             continue;
-        if (session != 0 && nr.source_mutation_id != 0 && nr.source_mutation_id != session)
+        if (session != 0 && nr.source_mutation_id != 0 && nr.source_mutation_id != session) {
+            // Issue #3046: reject leftover NarrowingRecords from prior epochs.
+            aura::compiler::g_coercion_blame_stale_narrowing_drop_total.fetch_add(
+                1, std::memory_order_relaxed);
             continue; // leftover from an earlier/later mutate
+        }
         if (nr.source_mutation_id != 0 && pin.narrowing_mid == 0)
             pin.narrowing_mid = nr.source_mutation_id;
         if (nr.cond_node != 0 && pin.narrowing_pred == 0)

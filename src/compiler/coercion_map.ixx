@@ -173,6 +173,13 @@ export inline std::atomic<std::uint64_t> g_coercion_blame_missing_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_blame_epoch_restamp_total{0};
 export inline std::atomic<std::uint32_t> g_coercion_blame_hf_mutate_wired{1};
 export inline constexpr int kCoercionBlameHfMutateIssue = 2991;
+// Issue #3046: residual of #2991 — non-zero session always stamps mid
+// (including over weak leftover / prior-epoch NarrowingRecords). CastOp
+// hot residual is the density-policy face in castop_density_policy.hh.
+export inline constexpr int kCoercionBlameHfLagIssue = 3046;
+export inline std::atomic<std::uint64_t> g_coercion_blame_session_force_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_blame_stale_narrowing_drop_total{0};
+export inline std::atomic<std::uint32_t> g_coercion_blame_hf_lag_wired{1};
 // Issue #2562: dual-require drop counter is process-wide in policy.hh
 // (g_coercion_dual_require_drop_total); re-exported above.
 // Issue #2025: AST-level identity elision count (apply_coercion_map) for
@@ -521,26 +528,19 @@ deferred_coercion_session_mid(const DeferredCoercionProvenanceIn& in) noexcept {
 export inline void resolve_deferred_coercion_provenance(CoercionEntry& e,
                                                         const DeferredCoercionProvenanceIn& in) {
     const auto session = deferred_coercion_session_mid(in);
-    if (e.source_mutation_id == 0) {
-        if (in.explicit_mid != 0)
-            e.source_mutation_id = in.explicit_mid;
-        else if (in.engine_active_mid != 0)
-            e.source_mutation_id = in.engine_active_mid;
-        else if (s_coercion_active_mutation_id != 0)
-            e.source_mutation_id = s_coercion_active_mutation_id;
-        else if (in.narrowing_mid != 0)
+    // Issue #3046: non-zero session always stamps source_mutation_id.
+    // Leftover / weak / log.back() / prior-epoch NarrowingRecords lose.
+    // Quiet: session == 0 → fill zeros only (identity / no-mutate path).
+    if (session != 0) {
+        if (e.source_mutation_id != 0 && e.source_mutation_id != session)
+            g_coercion_blame_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+        e.source_mutation_id = session;
+        g_coercion_blame_session_force_total.fetch_add(1, std::memory_order_relaxed);
+    } else if (e.source_mutation_id == 0) {
+        if (in.narrowing_mid != 0)
             e.source_mutation_id = in.narrowing_mid;
         else if (in.log_back_mid != 0)
             e.source_mutation_id = in.log_back_mid;
-    }
-    if (session != 0 && e.source_mutation_id != 0 && e.source_mutation_id != session &&
-        !is_weak_coercion_mutation_id(e)) {
-        e.source_mutation_id = session;
-        g_coercion_blame_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    if (session != 0 && e.source_mutation_id == 0) {
-        e.source_mutation_id = session;
-        g_coercion_blame_missing_total.fetch_add(1, std::memory_order_relaxed);
     }
     if (e.predicate_cond_node == 0) {
         if (in.explicit_pred != 0)
@@ -1080,15 +1080,20 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // Unified contract (#2620 Phase A): incomplete dual provenance never
         // becomes executable IR under any non-Off strategy (default).
         const bool prov_complete = fill_coercion_provenance_chain(flat, e);
-        // Issue #2991: under a live mutate session, CoercionNode/CastOp must
-        // carry non-zero source_mutation_id (post-condition). Force-stamp
-        // TLS session if fill left mid empty.
-        if (s_coercion_active_mutation_id != 0 && e.source_mutation_id == 0) {
-            e.source_mutation_id = s_coercion_active_mutation_id;
-            g_coercion_blame_missing_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (s_coercion_active_mutation_id != 0 && e.source_mutation_id != 0)
+        // Issue #2991 / #3046: under a live mutate session, CoercionNode/CastOp
+        // must carry the current session mid (post-condition). Force-stamp
+        // TLS session over empty, weak, or leftover prior-epoch mids.
+        if (s_coercion_active_mutation_id != 0) {
+            if (e.source_mutation_id != s_coercion_active_mutation_id) {
+                if (e.source_mutation_id != 0)
+                    g_coercion_blame_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                else
+                    g_coercion_blame_missing_total.fetch_add(1, std::memory_order_relaxed);
+                e.source_mutation_id = s_coercion_active_mutation_id;
+                g_coercion_blame_session_force_total.fetch_add(1, std::memory_order_relaxed);
+            }
             g_coercion_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+        }
         if (!prov_complete) {
             using aura::compiler::typed_audit::AuditStrategy;
             using aura::compiler::typed_audit::get_strategy;
