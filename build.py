@@ -2215,6 +2215,21 @@ def cmd_lint():
             "Issue #3010 allow_cross TenantAdmin gate linter failed — run python3 scripts/coverage/checks/check_allow_cross_tenant_admin_3010.py"
         )
         return r
+    # Issue #3011: IsolationDeny SecurityEvent stamps live fiber via
+    # effect_fiber_id_or (no hard-coded 0). query:security-audit filters
+    # IsolationDeny by fiber. Extends
+    # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
+    # (#1655).
+    idf_script = COVERAGE_CHECKS / "check_isolation_deny_fiber_3011.py"
+    if not idf_script.exists():
+        fail(f"missing {idf_script}")
+        return 1
+    r = run([sys.executable, str(idf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3011 IsolationDeny fiber linter failed — run python3 scripts/coverage/checks/check_isolation_deny_fiber_3011.py"
+        )
+        return r
     # Issue #2970: JoinPolicy optional wait_reclaimed_ms — auto-wait after
     # JoinStatus::Reclaimed so hosts do not have to remember a second
     # wait_reclaimed_body prim call (#2661 footgun). nullopt = off (zero

@@ -9,6 +9,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 #include "core/workspace_isolation.hh"
+#include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 
@@ -35,9 +36,13 @@ using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectWrite;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
 using aura::core::security_event::g_security_event_ring;
@@ -101,6 +106,7 @@ void reset_all() {
     // registry; reset_all() must also clear it or later blocks reusing the
     // same tenant id see a leaked admin and the gate never denies.
     aura::core::capability::reset_capability_effects_for_test();
+    aura::core::capability::set_effect_fiber_id_override(0);
     set_mode(SandboxMode::Off);
     // Soft / unit path: hard-close off so Soft global-fallback tests stay green.
     aura::core::provenance::set_hard_capture_tenant(false);
@@ -1514,6 +1520,133 @@ int main() {
             for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
                 const auto name = entry.path().filename().string();
                 CHECK(name.find("3010-") == std::string::npos,
+                      std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
+    // ── #3011: IsolationDeny SecurityEvent stamps live fiber ──
+    {
+        std::println("\n--- #3011 AC1: IsolationDeny fiber_id == calling fiber ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::capability::set_effect_fiber_id_override(42);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto& ring = g_security_event_ring();
+        const auto baseline = ring.seq.load(std::memory_order_acquire);
+        CHECK(!ev.check_workspace_isolation(99, 0, kEffectMutate, "test:3011-cross"),
+              "AC1: Restricted cross-tenant mutate denied");
+        bool found = false;
+        const auto head = ring.seq.load(std::memory_order_acquire);
+        for (auto s = baseline; s < head; ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.kind == SecurityEventKind::IsolationDeny && e.seq == s) {
+                CHECK(e.fiber_id == 42, "AC1: IsolationDeny fiber_id equals calling fiber");
+                found = true;
+            }
+        }
+        CHECK(found, "AC1: IsolationDeny SE recorded");
+        aura::core::workspace_isolation::IsolationAuditEntry priv{};
+        const auto aseq = g_workspace_isolation().load_audit_seq();
+        CHECK(aseq >= 1 && g_workspace_isolation().try_load_audit_seq(aseq - 1, priv),
+              "AC1: private isolation ring loadable");
+        CHECK(priv.denied && priv.fiber_id == 42, "AC1: private ring fiber_id matches");
+    }
+
+    {
+        std::println("\n--- #3011 AC2: EffectDeny fiber path unchanged ---");
+        const auto cap = read_file("src/core/capability_model.hh");
+        CHECK(cap.find("static_cast<std::int64_t>(prov.fiber_id)") != std::string::npos,
+              "AC2: EffectDeny still stamps prov.fiber_id");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        CHECK(iso.find("/*fiber_id=*/0") == std::string::npos,
+              "AC2: IsolationDeny no longer hard-codes fiber_id=0");
+    }
+
+    {
+        std::println("\n--- #3011 AC3: Soft / Off allow does not emit IsolationDeny ---");
+        reset_all(); // Off
+        const auto& ring = g_security_event_ring();
+        const auto before = ring.seq.load(std::memory_order_acquire);
+        CHECK(check_boundary(0, 0), "AC3: Off unset principal allows");
+        const auto after = ring.seq.load(std::memory_order_acquire);
+        CHECK(after == before, "AC3: Off allow does not append IsolationDeny");
+    }
+
+    {
+        std::println("\n--- #3011 AC4: query:security-audit filters IsolationDeny by fiber ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::capability::set_effect_fiber_id_override(42);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(!ev.check_workspace_isolation(99, 0, kEffectMutate, "test:3011-filter"),
+              "AC4: deny to seed IsolationDeny");
+        auto q = cs.eval(R"((engine:metrics "query:security-audit" 16 99 42))");
+        CHECK(q.has_value(), "AC4: query:security-audit fiber filter callable");
+        bool saw_fiber = false;
+        if (q) {
+            auto cur = *q;
+            int guard = 0;
+            auto& pairs = ev.pairs();
+            auto heap = ev.string_heap();
+            while (is_pair(cur) && guard++ < 64) {
+                const auto idx = as_pair_idx(cur);
+                if (idx >= pairs.size())
+                    break;
+                if (is_string(pairs[idx].car)) {
+                    const auto sidx = as_string_idx(pairs[idx].car);
+                    if (sidx < heap.size()) {
+                        const std::string ln(heap[sidx]);
+                        if (ln.find("kind=IsolationDeny") != std::string::npos &&
+                            ln.find("fiber=42") != std::string::npos)
+                            saw_fiber = true;
+                    }
+                }
+                cur = pairs[idx].cdr;
+            }
+        }
+        CHECK(saw_fiber, "AC4: query:security-audit fiber=42 returns IsolationDeny");
+        auto wired = cs.eval(
+            R"((hash-ref (engine:metrics "query:security-stats") "isolation-deny-fiber-wired"))");
+        CHECK(wired && is_int(*wired) && as_int(*wired) == 1,
+              "AC4: query:security-stats exposes isolation-deny-fiber-wired");
+        auto schema =
+            cs.eval(R"((hash-ref (engine:metrics "query:security-stats") "schema-3011"))");
+        CHECK(schema && is_int(*schema) && as_int(*schema) == 3011,
+              "AC4: query:security-stats cites schema-3011");
+    }
+
+    {
+        std::println("\n--- #3011 AC5/AC6: source-cite + no invent + no docs/design/ ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        const auto build = read_file("build.py");
+        CHECK(iso.find("#3011") != std::string::npos, "AC6: workspace_isolation.hh cites #3011");
+        CHECK(iso.find("effect_fiber_id_or") != std::string::npos,
+              "AC5: record_audit uses effect_fiber_id_or");
+        CHECK(posture.find("schema-3011") != std::string::npos, "AC5: posture cites schema-3011");
+        CHECK(posture.find("filt_fiber") != std::string::npos,
+              "AC5: query:security-audit still filters by fiber");
+        CHECK(test_self.find("#3011") != std::string::npos, "AC6: test file cites #3011");
+        CHECK(build.find("check_isolation_deny_fiber_3011") != std::string::npos,
+              "AC6: build.py wires #3011 linter");
+        std::ifstream invent("tests/core/test_issue_3011.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3011.cpp");
+        CHECK(!invent.good(), "AC6: no tests/core/test_issue_3011.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3011-") == std::string::npos,
                       std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
             }
         }
