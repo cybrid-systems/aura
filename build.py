@@ -2973,6 +2973,18 @@ def cmd_lint():
             "Issue #2961 rename/replace hygiene restamp linter failed — run python3 scripts/coverage/checks/check_rename_replace_hygiene_restamp_2961.py"
         )
         return r
+    # Issue #3027: residual MacroIntroduced gates on structural mutate prims.
+    # Extends test_hygiene_mutate_closed_loop (#81967); no docs/design.
+    smh_script = COVERAGE_CHECKS / "check_structural_macro_hygiene_3027.py"
+    if not smh_script.exists():
+        fail(f"missing {smh_script}")
+        return 1
+    r = run([sys.executable, str(smh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3027 structural MacroIntroduced hygiene linter failed — run python3 scripts/coverage/checks/check_structural_macro_hygiene_3027.py"
+        )
+        return r
     # Issue #3000: query:*-stable restamp-lag export face (#2934/#2960 residual).
     # Extends test_hygiene_mutate_closed_loop + isolation/tenant-capture
     # (#81967); no docs/design (#1655).
@@ -11764,6 +11776,27 @@ def cmd_rename_replace_hygiene_restamp_2961_coverage():
     return 0
 
 
+def cmd_structural_macro_hygiene_3027_coverage():
+    """Issue #3027: residual structural MacroIntroduced gates (static)."""
+    print(f"{B}=== structural MacroIntroduced hygiene coverage (#3027) ==={N}")
+    script = COVERAGE_CHECKS / "check_structural_macro_hygiene_3027.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("structural MacroIntroduced hygiene (#3027) coverage contract rows failed")
+        return 1
+    ok("structural MacroIntroduced hygiene (#3027) coverage clean")
+    return 0
+
+
+def cmd_structural_macro_hygiene_3027():
+    """Issue #3027: close residual MacroIntroduced gates on structural mutate prims."""
+    print(f"{B}=== structural MacroIntroduced hygiene (#3027) ==={N}")
+    return cmd_structural_macro_hygiene_3027_coverage()
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -15273,6 +15306,8 @@ def main():
         "query-stable-ref-stamp-2960": cmd_query_stable_ref_stamp_2960_coverage,
         "query-stable-ref-restamp-lag-3000": cmd_query_stable_ref_restamp_lag_3000_coverage,
         "rename-replace-hygiene-restamp-2961": cmd_rename_replace_hygiene_restamp_2961_coverage,
+        "structural-macro-hygiene-3027": cmd_structural_macro_hygiene_3027,
+        "structural-macro-hygiene-3027-coverage": cmd_structural_macro_hygiene_3027_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

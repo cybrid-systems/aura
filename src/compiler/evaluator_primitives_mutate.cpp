@@ -663,6 +663,44 @@ namespace {
         return false;
     }
 
+    // Issue #3027: residual structural-prim MacroIntroduced gate.
+    // Same deny face as rename-symbol (#2961): kind "hygiene",
+    // "cannot <prim> MacroIntroduced without :allow-macro? #t".
+    // Soft / non-macro: one is_macro_introduced load.
+    static std::optional<EvalValue> reject_structural_macro_hygiene(Evaluator& ev,
+                                                                    const aura::ast::FlatAST& flat,
+                                                                    aura::ast::NodeId id,
+                                                                    bool allow, const char* prim,
+                                                                    const MakeErrorVal& mev) {
+        if (allow)
+            return std::nullopt;
+        if (id == aura::ast::NULL_NODE || id >= flat.size() || !flat.is_macro_introduced(id))
+            return std::nullopt;
+        ev.record_hygiene_violation_attempt();
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+            m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
+            m->last_hygiene_blame_node = static_cast<std::uint32_t>(id);
+        }
+        typed_audit::capture_macro_hygiene_audit(
+            "hygiene-protected", typed_audit::AuditOutcome::Error, static_cast<std::uint32_t>(id),
+            static_cast<std::int64_t>(aura_fiber_current_id()), ev.capability_tenant_id());
+        return mev("hygiene",
+                   std::string("cannot ") + prim + " MacroIntroduced without :allow-macro? #t");
+    }
+
+    static aura::ast::NodeId first_macro_introduced_in_subtree(const aura::ast::FlatAST& flat,
+                                                               aura::ast::NodeId root) {
+        aura::ast::NodeId hit = aura::ast::NULL_NODE;
+        if (root == aura::ast::NULL_NODE || root >= flat.size())
+            return hit;
+        flat.walk_subtree(root, [&](aura::ast::NodeId id) {
+            if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                hit = id;
+        });
+        return hit;
+    }
+
     // Issue #2858: parse `:no-auto-restamp? #t` from a mutate:*
     // primitive's argument span. Returns true iff the kwarg is
     // present AND its value is true. Default #f if absent. Used to
@@ -3360,7 +3398,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:set-body name new-body-code [summary])");
+            return mev("bad-arg",
+                       "usage: (mutate:set-body name new-body-code [:allow-macro? #t] [summary])");
         }
         auto name_idx = as_string_idx(a[0]);
         auto code_idx = as_string_idx(a[1]);
@@ -3402,6 +3441,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ok = false;
                     return mev("type-error",
                                std::string("function \"") + name + "\" body is not a Lambda node");
+                }
+
+                // Issue #3027: MacroIntroduced define / lambda default-reject.
+                const bool allow_macro_set_body =
+                    ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+                bool was_macro_set_body =
+                    flat.is_macro_introduced(id) || flat.is_macro_introduced(lambda_id);
+                if (auto err = reject_structural_macro_hygiene(ev, flat, id, allow_macro_set_body,
+                                                               "set-body", mev)) {
+                    ok = false;
+                    return *err;
+                }
+                if (auto err = reject_structural_macro_hygiene(
+                        ev, flat, lambda_id, allow_macro_set_body, "set-body", mev)) {
+                    ok = false;
+                    return *err;
                 }
 
                 // Parse new body INTO workspace flat (all IDs stay valid).
@@ -3504,6 +3559,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                                          std::memory_order_relaxed);
                         pr_root_v = flat.get(body_to_set);
                     }
+                    // Issue #3027: parsed body walk (parity with #2792 rebind).
+                    {
+                        const auto body_hit = first_macro_introduced_in_subtree(flat, body_to_set);
+                        if (body_hit != aura::ast::NULL_NODE) {
+                            was_macro_set_body = true;
+                            if (!allow_macro_set_body) {
+                                free_set_body_parse_orphans();
+                                ok = false;
+                                if (auto err = reject_structural_macro_hygiene(
+                                        ev, flat, body_hit, /*allow=*/false, "set-body", mev))
+                                    return *err;
+                                return mev("hygiene", "cannot set-body MacroIntroduced without "
+                                                      ":allow-macro? #t");
+                            }
+                        }
+                    }
                     if (pr_root_v.tag == aura::ast::NodeTag::Lambda) {
                         flat.set_child(id, 0, body_to_set);
                     } else if (lambda_id < flat.size() && !flat.is_free_slot(lambda_id)) {
@@ -3514,6 +3585,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         // consistency with the Lambda branch.
                         flat.set_child(id, 0, body_to_set);
                     }
+                    if (allow_macro_set_body && was_macro_set_body)
+                        propagate_macro_introduced_marker(ev, flat, body_to_set);
                 }
 
                 // 依赖图驱动：dirty 所有调用者
@@ -3651,7 +3724,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_) {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:remove-node node-id)");
+            return mev("bad-arg", "usage: (mutate:remove-node node-id [:allow-macro? #t])");
         }
         auto target = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;
@@ -3659,6 +3732,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return mev("out-of-range", "node ID " + std::to_string(target) + " >= flat size " +
                                            std::to_string(flat.size()));
+        }
+
+        // Issue #3027: MacroIntroduced target default-reject.
+        {
+            const bool allow_macro_rm =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            if (auto err = reject_structural_macro_hygiene(ev, flat, target, allow_macro_rm,
+                                                           "remove-node", mev)) {
+                ok = false;
+                return *err;
+            }
         }
 
         // Issue #1688: remove from ALL parents (not just the first).
@@ -3729,8 +3813,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_string(a[2]) ||
             !ev.workspace_flat_ || !ev.workspace_pool_) {
             ok = false;
-            return mev("bad-arg",
-                       "usage: (mutate:insert-child parent-id position code-string [summary])");
+            return mev("bad-arg", "usage: (mutate:insert-child parent-id position code-string "
+                                  "[:allow-macro? #t] [summary])");
         }
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
@@ -3746,6 +3830,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             static_cast<std::size_t>(parent) >= size_before_parse || !flat.is_live_node(parent)) {
             ok = false;
             return mev("out-of-range", "insert-child: parent-id out of range");
+        }
+
+        // Issue #3027: injecting into a MacroIntroduced spine requires allow.
+        const bool allow_macro_ins =
+            ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+        const bool parent_was_macro = flat.is_macro_introduced(parent);
+        if (auto err = reject_structural_macro_hygiene(ev, flat, parent, allow_macro_ins,
+                                                       "insert-child", mev)) {
+            ok = false;
+            return *err;
         }
 
         // Parse child code INTO workspace (append mode — all IDs stay valid)
@@ -3773,6 +3867,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (static_cast<std::size_t>(parent) >= size_before_parse || !flat.is_live_node(parent)) {
             ok = false;
             return mev("stale-ref", "insert-child: parent invalid after parse");
+        }
+
+        // Issue #3027: parsed child walk (do not install MacroIntroduced).
+        {
+            const auto child_hit = first_macro_introduced_in_subtree(flat, pr.root);
+            if (child_hit != aura::ast::NULL_NODE && !allow_macro_ins) {
+                if (size_before_parse < flat.size())
+                    (void)flat.free_orphan_nodes_from(
+                        static_cast<aura::ast::NodeId>(size_before_parse));
+                ok = false;
+                if (auto err = reject_structural_macro_hygiene(ev, flat, child_hit, /*allow=*/false,
+                                                               "insert-child", mev))
+                    return *err;
+                return mev("hygiene",
+                           "cannot insert-child MacroIntroduced without :allow-macro? #t");
+            }
         }
 
         // Phase 4: route the structural mutation through the
@@ -3811,6 +3921,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return mev(mut_tag, mut_err.empty() ? "insert-child failed" : mut_err);
         }
+
+        if (allow_macro_ins && parent_was_macro)
+            propagate_macro_introduced_marker(ev, flat, pr.root);
 
         return make_int(static_cast<std::int64_t>(pr.root));
     });
@@ -5334,8 +5447,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return ev.make_merr(
-                "bad-arg", "usage: (mutate:splice parent-id position code-strings... [summary])");
+            return ev.make_merr("bad-arg", "usage: (mutate:splice parent-id position "
+                                           "code-strings... [:allow-macro? #t] [summary])");
         }
         auto parent = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto pos = static_cast<std::uint32_t>(as_int(a[1]));
@@ -5347,6 +5460,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return ev.make_merr("out-of-range", "parent node ID " + std::to_string(parent) +
                                                     " >= flat size " + std::to_string(flat.size()));
+        }
+        // Issue #3027: splicing into a MacroIntroduced spine requires allow.
+        const bool allow_macro_spl =
+            ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+        const bool parent_was_macro_spl = flat.is_macro_introduced(parent);
+        {
+            const MakeErrorVal spl_mev = [&ev](const std::string& k, const std::string& m) {
+                return ev.make_merr(k, m);
+            };
+            if (auto err = reject_structural_macro_hygiene(ev, flat, parent, allow_macro_spl,
+                                                           "splice", spl_mev)) {
+                ok = false;
+                return *err;
+            }
         }
         // Note: do NOT gate on StableNodeRef::is_valid_in after parse —
         // parse_to_flat restamps all node generations (#273), so a
@@ -5400,6 +5527,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
 
             flat.insert_child(parent, insert_pos, pr.root);
+            if (allow_macro_spl && parent_was_macro_spl)
+                propagate_macro_introduced_marker(ev, flat, pr.root);
 
             flat.add_mutation(parent, "splice", std::to_string(insert_pos), ev.string_heap_[cidx],
                               summary);
@@ -5459,8 +5588,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return ev.make_merr("bad-arg",
-                                "usage: (mutate:wrap node-id wrapper-template [summary])");
+            return ev.make_merr(
+                "bad-arg",
+                "usage: (mutate:wrap node-id wrapper-template [:allow-macro? #t] [summary])");
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto tmpl_idx = as_string_idx(a[1]);
@@ -5473,6 +5603,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
                                                     " >= flat size " + std::to_string(flat.size()));
+        }
+
+        // Issue #3027: wrapping a MacroIntroduced node requires allow.
+        const bool allow_macro_wrap =
+            ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+        const bool node_was_macro = flat.is_macro_introduced(node);
+        {
+            const MakeErrorVal wrap_mev = [&ev](const std::string& k, const std::string& m) {
+                return ev.make_merr(k, m);
+            };
+            if (auto err = reject_structural_macro_hygiene(ev, flat, node, allow_macro_wrap, "wrap",
+                                                           wrap_mev)) {
+                ok = false;
+                return *err;
+            }
         }
 
         std::string summary = (a.size() > 2 && is_string(a[2]))
@@ -5590,6 +5735,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         flat.add_mutation(node, "wrap", parsed_tmpl, summary, summary);
         flat.mark_dirty_upward(parent_of_target);
+        if (allow_macro_wrap && node_was_macro)
+            propagate_macro_introduced_marker(ev, flat, pr.root);
         return make_int(static_cast<std::int64_t>(pr.root));
     });
 
@@ -6177,7 +6324,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 return ev.make_merr("read-only", "workspace is read-only");
             if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
                 !ev.workspace_pool_)
-                return ev.make_merr("bad-arg", "usage: (mutate:extract-function node-id name)");
+                return ev.make_merr(
+                    "bad-arg", "usage: (mutate:extract-function node-id name [:allow-macro? #t])");
             auto node = static_cast<NodeId>(as_int(a[0]));
             auto name_idx = as_string_idx(a[1]);
             if (name_idx >= ev.string_heap_.size())
@@ -6186,6 +6334,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (node >= flat.size())
                 return ev.make_merr("out-of-range", std::to_string(node) + " >= flat size " +
                                                         std::to_string(flat.size()));
+
+            // Issue #3027: gate BEFORE any set_marker(MacroIntroduced).
+            // Never create MacroIntroduced nodes without :allow-macro? / global.
+            const bool allow_macro_ex =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            const bool target_was_macro = flat.is_macro_introduced(node);
+            {
+                const MakeErrorVal ex_mev = [&ev](const std::string& k, const std::string& m) {
+                    return ev.make_merr(k, m);
+                };
+                if (auto err = reject_structural_macro_hygiene(ev, flat, node, allow_macro_ex,
+                                                               "extract-function", ex_mev))
+                    return *err;
+            }
 
             auto new_name = ev.string_heap_[name_idx];
             std::string summary =
@@ -6246,12 +6408,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     // Step 2: Create (define new-name lambda)
                     auto new_sym = ev.workspace_pool_->intern(new_name);
                     auto define_id = flat.add_define(new_sym, lambda_id);
-                    flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
-                    flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
+                    // Issue #3027: stamp MacroIntroduced only after successful allow
+                    // on a MacroIntroduced target. Never invent markers otherwise.
+                    const bool stamp_macro = allow_macro_ex && target_was_macro;
+                    if (stamp_macro) {
+                        flat.set_marker(define_id, SyntaxMarker::MacroIntroduced);
+                        flat.set_marker(lambda_id, SyntaxMarker::MacroIntroduced);
+                    }
 
                     // Step 3: Create call site (new-name free-var-1 ...)
                     auto var_id = flat.add_variable(new_sym);
-                    flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
+                    if (stamp_macro)
+                        flat.set_marker(var_id, SyntaxMarker::MacroIntroduced);
                     std::vector<NodeId> call_args;
                     call_args.reserve(free_vars.size());
                     for (auto fv : free_vars) {
@@ -6259,7 +6427,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         call_args.push_back(arg_var);
                     }
                     auto call_id = flat.add_call(var_id, call_args);
-                    flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
+                    if (stamp_macro)
+                        flat.set_marker(call_id, SyntaxMarker::MacroIntroduced);
 
                     // Issue #1701: re-validate target + parent edge after multi-add_*.
                     if (static_cast<std::size_t>(node) >= size_before_appends ||
@@ -6304,6 +6473,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ev.workspace_flat_->mark_dirty_upward(ws_root);
 
                     flat.add_mutation(define_id, "extract-function", new_name, summary, summary);
+                    if (allow_macro_ex && target_was_macro) {
+                        propagate_macro_introduced_marker(ev, flat, define_id);
+                        propagate_macro_introduced_marker(ev, flat, call_id);
+                    }
                     flat.restamp_all_node_generations();
 
                     // Return (define-node-id . call-node-id)
@@ -6345,13 +6518,29 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_ || !ev.workspace_pool_) {
             ok = false;
-            return ev.make_merr("bad-arg", "usage: (mutate:inline-call call-node-id)");
+            return ev.make_merr("bad-arg",
+                                "usage: (mutate:inline-call call-node-id [:allow-macro? #t])");
         }
         auto call_id = static_cast<NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;
         if (call_id >= flat.size()) {
             ok = false;
             return ev.make_merr("out-of-range", "call node ID out of range");
+        }
+
+        // Issue #3027: inlining through MacroIntroduced requires allow.
+        const bool allow_macro_inl =
+            ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+        bool was_macro_inl = flat.is_macro_introduced(call_id);
+        {
+            const MakeErrorVal inl_mev = [&ev](const std::string& k, const std::string& m) {
+                return ev.make_merr(k, m);
+            };
+            if (auto err = reject_structural_macro_hygiene(ev, flat, call_id, allow_macro_inl,
+                                                           "inline-call", inl_mev)) {
+                ok = false;
+                return *err;
+            }
         }
 
         auto cv = flat.get(call_id);
@@ -6407,6 +6596,35 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         if (func_body_node == NULL_NODE)
             return ev.make_merr("inline-error", "function definition not found for inlining");
+
+        // Issue #3027: callee body / define MacroIntroduced also gated.
+        {
+            const MakeErrorVal inl_mev = [&ev](const std::string& k, const std::string& m) {
+                return ev.make_merr(k, m);
+            };
+            if (flat.is_macro_introduced(func_body_node))
+                was_macro_inl = true;
+            if (auto err = reject_structural_macro_hygiene(
+                    ev, flat, func_body_node, allow_macro_inl, "inline-call", inl_mev)) {
+                ok = false;
+                return *err;
+            }
+            if (fv.tag == NodeTag::Variable) {
+                for (NodeId id = 0; id < flat.size(); ++id) {
+                    auto v = flat.get(id);
+                    if (v.tag == NodeTag::Define && v.sym_id == fv.sym_id) {
+                        if (flat.is_macro_introduced(id))
+                            was_macro_inl = true;
+                        if (auto err2 = reject_structural_macro_hygiene(
+                                ev, flat, id, allow_macro_inl, "inline-call", inl_mev)) {
+                            ok = false;
+                            return *err2;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
 
         // Get actual arguments (children after the function node)
         std::vector<NodeId> actual_args;
@@ -6607,6 +6825,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
 
         flat.set_child(call_parent, static_cast<std::uint32_t>(call_idx_in_parent), cloned_body);
         ev.workspace_flat_->mark_dirty_upward(call_parent);
+        if (allow_macro_inl && was_macro_inl)
+            propagate_macro_introduced_marker(ev, flat, cloned_body);
 
         flat.add_mutation(call_id, "inline-call", summary, summary, summary);
         flat.restamp_all_node_generations();
