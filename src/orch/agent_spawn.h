@@ -307,11 +307,34 @@ inline constexpr int kKeepaliveHelperReclaimIssue = 2783;
 // deadline ms. When set and Fiber::join returns Reclaimed, join_agent /
 // join_agents call wait_reclaimed_body once so hosts do not have to
 // remember the second prim call (closes #2661 host footgun).
+// Issue #3012: production + unset wait does **not** inject a deadline
+// (Soft / explicit nullopt stay zero-cost). Instead join surfaces
+// must_wait_reclaimed so hosts fail-closed; ~AgentHandle finishes
+// cleanup if the host never waited.
 struct JoinPolicy {
     std::optional<std::uint64_t> primary_ms{};
     std::uint64_t drain_ms = kDefaultJoinDrainMs;
     std::optional<std::uint64_t> wait_reclaimed_ms{};
 };
+
+// Issue #3012: documented mild deadline hosts should pass when the
+// Reclaimed hash carries must-wait-reclaimed=1. Not auto-injected
+// (keeps join Soft/nullopt zero-cost; #2661 body-stack stays).
+inline constexpr std::uint64_t kProductionWaitReclaimedMsDefault = 50;
+
+// Same probe mailbox / runtime ABI already use (strong def in
+// typed_mutation_audit_hooks.cpp). Avoid importing evaluator from orch.
+extern "C" int aura_production_defaults_active_probe() noexcept;
+
+// Issue #3012: production Restricted/Strict (probe on, AURA_SANDBOX!=off)
+// must surface must-wait-reclaimed after Reclaimed when wait_reclaimed_ms
+// is unset. Soft / sandbox=off: false (zero extra join work).
+[[nodiscard]] inline bool production_reclaimed_must_wait() noexcept {
+    const char* sb = std::getenv("AURA_SANDBOX");
+    if (sb && *sb && std::string_view(sb) == "off")
+        return false;
+    return aura_production_defaults_active_probe() != 0;
+}
 
 // Estimated per-agent arena footprint + mailbox high-water bytes (#1880).
 inline constexpr std::uint64_t kOrchAgentArenaBytes = 4096;
@@ -1057,6 +1080,10 @@ struct AgentHandle {
     // Zero-cost: stays false when wait_reclaimed_ms unset (AC1).
     bool wait_reclaimed_used = false;
     bool wait_reclaimed_timeout = false;
+    // Issue #3012: production + Reclaimed + wait_reclaimed_ms unset.
+    // Hosts must wait or drop the handle (dtor finishes cleanup). Soft /
+    // explicit wait stay false (zero-cost).
+    bool must_wait_reclaimed = false;
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1085,7 +1112,10 @@ struct AgentHandle {
         , producer_bp_budget(o.producer_bp_budget)
         , consecutive_bp_count(o.consecutive_bp_count)
         , producer_throttled(o.producer_throttled)
-        , last_producer_bp_us(o.last_producer_bp_us) {
+        , last_producer_bp_us(o.last_producer_bp_us)
+        , wait_reclaimed_used(o.wait_reclaimed_used)
+        , wait_reclaimed_timeout(o.wait_reclaimed_timeout)
+        , must_wait_reclaimed(o.must_wait_reclaimed) {
         o.id = 0;
         o.fiber = nullptr;
         o.ok = false;
@@ -1104,12 +1134,16 @@ struct AgentHandle {
         o.consecutive_bp_count = 0;
         o.producer_throttled = false;
         o.last_producer_bp_us = 0;
+        o.wait_reclaimed_used = false;
+        o.wait_reclaimed_timeout = false;
+        o.must_wait_reclaimed = false;
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
         if (this != &o) {
             // Release our outstanding reservation before adopting o's.
-            release_reservation_if_any();
+            // Issue #3012: finish deferred Reclaimed cleanup first.
+            finish_reclaimed_cleanup_on_dtor();
             if (liveness)
                 liveness->helper_stop.store(true, std::memory_order_release);
             id = o.id;
@@ -1135,6 +1169,9 @@ struct AgentHandle {
             consecutive_bp_count = o.consecutive_bp_count;
             producer_throttled = o.producer_throttled;
             last_producer_bp_us = o.last_producer_bp_us;
+            wait_reclaimed_used = o.wait_reclaimed_used;
+            wait_reclaimed_timeout = o.wait_reclaimed_timeout;
+            must_wait_reclaimed = o.must_wait_reclaimed;
             o.id = 0;
             o.fiber = nullptr;
             o.ok = false;
@@ -1153,6 +1190,9 @@ struct AgentHandle {
             o.consecutive_bp_count = 0;
             o.producer_throttled = false;
             o.last_producer_bp_us = 0;
+            o.wait_reclaimed_used = false;
+            o.wait_reclaimed_timeout = false;
+            o.must_wait_reclaimed = false;
         }
         return *this;
     }
@@ -1166,7 +1206,10 @@ struct AgentHandle {
             liveness->helper_stop.store(true, std::memory_order_release);
         keepalive_active = false;
         keepalive_helper = nullptr;
-        release_reservation_if_any();
+        // Issue #3012: if host never waited after Reclaimed, finish
+        // cleanup here (Done-path when body exited; reservation always
+        // released so there is no permanent leak).
+        finish_reclaimed_cleanup_on_dtor();
     }
 
     // Issue #2009 / #1880: idempotent reservation release (also used by join).
@@ -1177,6 +1220,10 @@ struct AgentHandle {
             reserved_memory_bytes);
         reserved_memory_bytes = 0;
     }
+
+    // Issue #3012: dtor / move-assign finish after Reclaimed. Defined
+    // after complete_agent_join_cleanup (needs that helper).
+    void finish_reclaimed_cleanup_on_dtor() noexcept;
 };
 
 struct AgentSpec {
@@ -1857,6 +1904,21 @@ inline void complete_agent_join_cleanup(AgentHandle& h, serve::JoinResult jr) no
     // (idempotent with this helper).
 }
 
+// Issue #3012: ~AgentHandle / move-assign finish after Reclaimed.
+// If the body has exited, run Done-path cleanup (mailbox detach +
+// reservation). Always release reservation so a host that never
+// waited cannot leak quota. Does not free body-stack while the
+// fiber is still running (#2661).
+inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
+    if (reclaimed_deferred_cleanup && fiber && fiber->is_done()) {
+        serve::JoinResult done_jr;
+        done_jr.status = serve::JoinStatus::Ok;
+        complete_agent_join_cleanup(*this, done_jr);
+    }
+    release_reservation_if_any();
+    must_wait_reclaimed = false;
+}
+
 // Issue #2924: wait for still-running body after JoinStatus::Reclaimed.
 // Hosts call this instead of ad-hoc polling after still-running=1.
 //   - Invalid / no-op unless Reclaimed deferred cleanup is pending (or
@@ -2149,8 +2211,16 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // N>0 = deadline ms. Body exit → Done-path cleanup runs once
     // (idempotent with #2924); timeout keeps the Reclaimed contract
     // (no early free, #2661 preserved) and surfaces still-running.
+    // Issue #3012: production + unset wait → must_wait_reclaimed (no
+    // extra poll / no wait_reclaimed_* bump). Soft / sandbox=off stay
+    // false. Dtor finishes cleanup if the host never waited.
     h.wait_reclaimed_used = false;
     h.wait_reclaimed_timeout = false;
+    h.must_wait_reclaimed = false;
+    if (jr.status == serve::JoinStatus::Reclaimed && !policy.wait_reclaimed_ms.has_value() &&
+        production_reclaimed_must_wait()) {
+        h.must_wait_reclaimed = true;
+    }
     if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
         auto wr = wait_reclaimed_body(h, policy.wait_reclaimed_ms);
         jr.wait_us += wr.wait_us; // fold auto-wait into join wait-us (AC4)
@@ -2238,6 +2308,13 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // exit → Done-path cleanup once; timeout keeps Reclaimed + no early
     // free (#2661). Folds wait_us into the batch join result; flags on
     // each handle surface wait-reclaimed / wait-timeout on the Aura hash.
+    // Issue #3012: production + unset wait → must_wait_reclaimed on each
+    // handle (fail-closed Aura flag). No extra wait / counter bump.
+    if (jr.status == serve::JoinStatus::Reclaimed && !policy.wait_reclaimed_ms.has_value() &&
+        production_reclaimed_must_wait()) {
+        for (auto& a : agents)
+            a.must_wait_reclaimed = true;
+    }
     if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
         for (auto& a : agents) {
             a.wait_reclaimed_used = false;
