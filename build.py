@@ -11007,6 +11007,25 @@ def cmd_producer_bp_budget_2925_coverage():
     return 0
 
 
+def cmd_mailbox_credit_inflight_2972_coverage():
+    """Issue #2972: per-mailbox inflight credit / push backpressure.
+
+    Complements storm-oriented BP-recent admit (#2228/#2535). Soft same
+    semantics (no silent drop). Extends test_mailbox_bp_admit (#81967).
+    """
+    print(f"{B}=== mailbox credit inflight coverage (#2972) ==={N}")
+    script = COVERAGE_CHECKS / "check_mailbox_credit_inflight_2972.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox credit inflight (#2972) coverage contract rows failed")
+        return 1
+    ok("mailbox credit inflight (#2972) coverage clean")
+    return 0
+
+
 def cmd_scope_resolve_2926_coverage():
     """Issue #2926: session-local scope-resolve by name.
 
@@ -14643,6 +14662,7 @@ def main():
         "isolation-decide-2923": cmd_isolation_decide_2923_coverage,
         "wait-reclaimed-2924": cmd_wait_reclaimed_2924_coverage,
         "producer-bp-budget-2925": cmd_producer_bp_budget_2925_coverage,
+        "mailbox-credit-2972": cmd_mailbox_credit_inflight_2972_coverage,
         "scope-resolve-2926": cmd_scope_resolve_2926_coverage,
         "force-jit-reason-bit-map-2927": cmd_force_jit_reason_bit_map_2927_coverage,
         "residual-remount-2928": cmd_residual_remount_round_robin_2928_coverage,

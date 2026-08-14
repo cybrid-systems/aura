@@ -990,6 +990,176 @@ int run_test_mailbox_bp_admit() {
         }
     }
 
+    // ── Issue #2972: per-mailbox inflight credit (complement BP-recent) ──
+    {
+        using aura::orch::agent_send;
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::kMailboxCreditInflightIssue;
+
+        std::println("\n--- #2972 AC1: inflight == credit → BP; recv frees a slot ---");
+        {
+            MultiFiberMailbox mb(/*high_water=*/16, /*credit_limit=*/2);
+            CHECK(mb.effective_credit() == 2, "2972 AC1: effective credit = 2");
+            CHECK(mb.inflight() == 0, "2972 AC1: inflight starts 0");
+            MailMessage a;
+            a.payload = "a";
+            CHECK(mb.push(std::move(a)) == PushStatus::Ok, "2972 AC1: first push Ok");
+            CHECK(mb.inflight() == 1, "2972 AC1: inflight 1 after first Ok");
+            MailMessage b;
+            b.payload = "b";
+            CHECK(mb.push(std::move(b)) == PushStatus::Ok, "2972 AC1: second push Ok");
+            CHECK(mb.inflight() == 2, "2972 AC1: inflight == credit");
+            const auto cred0 =
+                g_mf_mailbox_stats.mailbox_credit_bp_total.load(std::memory_order_relaxed);
+            MailMessage c;
+            c.payload = "c";
+            CHECK(mb.push(std::move(c)) == PushStatus::Backpressure,
+                  "2972 AC1: third push Backpressure");
+            CHECK(mb.inflight() == 2, "2972 AC1: inflight unchanged on BP");
+            CHECK(g_mf_mailbox_stats.mailbox_credit_bp_total.load(std::memory_order_relaxed) >=
+                      cred0 + 1,
+                  "2972 AC1: mailbox-credit-bp-total bumped");
+            auto got = mb.try_recv();
+            CHECK(got.has_value(), "2972 AC1: recv drains one");
+            CHECK(mb.inflight() == 1, "2972 AC1: recv decrements inflight");
+            MailMessage d;
+            d.payload = "d";
+            CHECK(mb.push(std::move(d)) == PushStatus::Ok, "2972 AC1: push Ok after recv");
+            CHECK(mb.inflight() == 2, "2972 AC1: inflight back to credit");
+        }
+
+        std::println("\n--- #2972 AC2: close drops queued + zeros inflight ---");
+        {
+            MultiFiberMailbox mb(/*high_water=*/16, /*credit_limit=*/4);
+            for (int i = 0; i < 3; ++i) {
+                MailMessage m;
+                m.payload = "q";
+                CHECK(mb.push(std::move(m)) == PushStatus::Ok, "2972 AC2: fill Ok");
+            }
+            CHECK(mb.inflight() == 3, "2972 AC2: inflight 3 before close");
+            mb.close();
+            CHECK(mb.closed(), "2972 AC2: closed");
+            CHECK(mb.inflight() == 0, "2972 AC2: close zeros inflight");
+            CHECK(mb.empty(), "2972 AC2: queue dropped on close");
+            MailMessage z;
+            z.payload = "after-close";
+            CHECK(mb.push(std::move(z)) == PushStatus::Closed,
+                  "2972 AC2: push after close is Closed (not credit BP)");
+            CHECK(mb.inflight() == 0, "2972 AC2: Closed push does not bump inflight");
+        }
+
+        std::println("\n--- #2972 AC3: credit BP notes recent; admit stays independent ---");
+        {
+            const auto recent0 =
+                g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+            MultiFiberMailbox mb(/*high_water=*/64, /*credit_limit=*/1);
+            MailMessage a;
+            a.payload = "one";
+            CHECK(mb.push(std::move(a)) == PushStatus::Ok, "2972 AC3: first Ok");
+            MailMessage b;
+            b.payload = "two";
+            CHECK(mb.push(std::move(b)) == PushStatus::Backpressure, "2972 AC3: credit BP");
+            CHECK(g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed) >
+                      recent0,
+                  "2972 AC3: credit BP notes mailbox_bp_recent_total");
+            std::ifstream spawn_in("src/orch/agent_spawn.h");
+            if (!spawn_in)
+                spawn_in.open("../src/orch/agent_spawn.h");
+            std::string spawn((std::istreambuf_iterator<char>(spawn_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(spawn.find("bp_recent >= threshold") != std::string::npos,
+                  "2972 AC3: admit still keys off recent gauge");
+            CHECK(spawn.find("inflight") == std::string::npos ||
+                      spawn.find("mailbox_credit") != std::string::npos,
+                  "2972 AC3: admit formula not replaced by inflight");
+        }
+
+        std::println("\n--- #2972 AC4: credit BP counts for #2925 consecutive throttle ---");
+        {
+            auto mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/16, /*credit_limit=*/1);
+            {
+                MailMessage fill;
+                fill.payload = "fill";
+                CHECK(mb->push(std::move(fill)) == PushStatus::Ok, "2972 AC4: fill to credit");
+            }
+            AgentHandle h;
+            h.ok = true;
+            h.id = 2972;
+            h.mailbox = mb;
+            h.producer_bp_budget = 2;
+            h.liveness = std::make_shared<aura::orch::AgentLiveness>();
+            const auto enter0 = g_orch_module_stats.agent_producer_throttle_enter_total.load(
+                std::memory_order_relaxed);
+            int bp_n = 0;
+            for (int i = 0; i < 4; ++i) {
+                MailMessage m;
+                m.payload = "credit-storm";
+                if (agent_send(h, std::move(m)) == PushStatus::Backpressure)
+                    ++bp_n;
+            }
+            CHECK(bp_n >= 2, "2972 AC4: credit BP outcomes");
+            CHECK(h.producer_throttled, "2972 AC4: producer throttle keys off credit BP");
+            CHECK(g_orch_module_stats.agent_producer_throttle_enter_total.load(
+                      std::memory_order_relaxed) >= enter0 + 1,
+                  "2972 AC4: enter_total bumped");
+        }
+
+        std::println("\n--- #2972 AC5: additive metrics + Soft + no invent ---");
+        {
+            CHECK(kMailboxCreditInflightIssue == 2972, "2972 AC5: issue stamp");
+            CHECK(href(cs, "schema-2972") == 2972, "2972 AC5: schema-2972 on orch-module-stats");
+            CHECK(href(cs, "issue-2972") == 2972, "2972 AC5: issue-2972");
+            CHECK(href(cs, "mailbox-credit-wired") == 1, "2972 AC5: mailbox-credit-wired");
+            CHECK(href(cs, "mailbox-credit-bp-total") >= 0, "2972 AC5: mailbox-credit-bp-total");
+            CHECK(href(cs, "mailbox-inflight-hwm") >= 0, "2972 AC5: mailbox-inflight-hwm");
+            CHECK(g_mf_mailbox_stats.mailbox_inflight_hwm.load(std::memory_order_relaxed) >= 1,
+                  "2972 AC5: inflight HWM observed");
+            std::ifstream invent("tests/orch/test_issue_2972.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_2972.cpp");
+            CHECK(!invent.good(), "2972 AC5: no test_issue_2972.cpp per #81967");
+            std::ifstream design("docs/design/2972-mailbox-credit.md");
+            if (!design.good())
+                design.open("../docs/design/2972-mailbox-credit.md");
+            CHECK(!design.good(), "2972 AC5: no docs/design/2972-* per #1655");
+        }
+
+        std::println("\n--- #2972 AC6: source-cite + MVP scope (no AgentRegistry) ---");
+        {
+            std::ifstream mb_in("src/serve/multi_fiber_mailbox.h");
+            if (!mb_in)
+                mb_in.open("../src/serve/multi_fiber_mailbox.h");
+            std::string mb((std::istreambuf_iterator<char>(mb_in)),
+                           std::istreambuf_iterator<char>());
+            CHECK(mb.find("Issue #2972") != std::string::npos, "2972 AC6: mailbox cites #2972");
+            CHECK(mb.find("inflight_") != std::string::npos, "2972 AC6: inflight_ field");
+            CHECK(mb.find("note_credit_backpressure") != std::string::npos,
+                  "2972 AC6: credit BP helper");
+            CHECK(mb.find("AgentRegistry") == std::string::npos, "2972 AC6: no AgentRegistry");
+            std::ifstream spawn_in("src/orch/agent_spawn.h");
+            if (!spawn_in)
+                spawn_in.open("../src/orch/agent_spawn.h");
+            std::string spawn((std::istreambuf_iterator<char>(spawn_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(spawn.find("mailbox_credit") != std::string::npos, "2972 AC6: AgentSpec credit");
+            std::ifstream agent_in("src/compiler/evaluator_primitives_agent.cpp");
+            if (!agent_in)
+                agent_in.open("../src/compiler/evaluator_primitives_agent.cpp");
+            std::string agent((std::istreambuf_iterator<char>(agent_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(agent.find("mailbox-credit") != std::string::npos,
+                  "2972 AC6: Aura :mailbox-credit");
+            std::ifstream build_in("build.py");
+            if (!build_in)
+                build_in.open("../build.py");
+            std::string build((std::istreambuf_iterator<char>(build_in)),
+                              std::istreambuf_iterator<char>());
+            CHECK(build.find("mailbox-credit-2972") != std::string::npos ||
+                      build.find("mailbox_credit_2972") != std::string::npos,
+                  "2972 AC6: build.py coverage cmd");
+        }
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
