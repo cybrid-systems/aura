@@ -1372,6 +1372,153 @@ int main() {
         }
     }
 
+    // ── #3010: allow_cross_tenant_ write requires TenantAdmin ──
+    {
+        std::println(
+            "\n--- #3010 AC1: Restricted same-tenant allow_cross without admin → deny ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(!ev.allow_cross_tenant(), "AC1: flag starts false");
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        CHECK(!ev.allow_cross_tenant(), "AC1: C++ set_tenant_principal refuses flag without admin");
+        CHECK(ev.capability_tenant_id() == 7, "AC1: tenant id still binds on flag deny");
+        const auto deny_cpp = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                  .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_cpp == deny_before + 1, "AC1: C++ deny bumps allow_cross_tenant_deny_total");
+
+        auto edsl = cs.eval("(security:set-tenant-principal! 7 #t)");
+        CHECK(edsl && is_bool(*edsl) && !as_bool(*edsl),
+              "AC1: EDSL set-tenant-principal! same-tenant #t returns #f");
+        CHECK(!ev.allow_cross_tenant(), "AC1: EDSL deny leaves flag false");
+        const auto deny_edsl = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                   .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_edsl == deny_cpp + 1, "AC1: EDSL deny bumps allow_cross_tenant_deny_total");
+
+        const auto& ring = g_security_event_ring();
+        bool found = false;
+        const auto cur = ring.seq.load(std::memory_order_acquire);
+        for (auto s = cur; s > 0 && s + 16 > cur; --s) {
+            const auto& e = ring.ring[(s - 1) % ring.ring.size()];
+            if (std::string_view(e.reason) == "allow-cross-needs-tenant-admin") {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found, "AC1: SE reason 'allow-cross-needs-tenant-admin' recorded");
+    }
+
+    {
+        std::println("\n--- #3010 AC2: Restricted + TenantAdmin can set flag ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        auto edsl = cs.eval("(security:set-tenant-principal! 7 #t)");
+        CHECK(edsl && is_bool(*edsl) && as_bool(*edsl),
+              "AC2: EDSL set-tenant-principal! with TenantAdmin returns #t");
+        CHECK(ev.allow_cross_tenant(), "AC2: flag set with TenantAdmin");
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC2: admin path does not bump deny counter");
+        // Isolation bypass is the flag's job; grant-write (#2968) stays gated
+        // independently — a second non-admin Evaluator still cannot widen
+        // the process-global cross_grants table.
+        CHECK(ev.check_workspace_isolation(42, 0, kEffectMutate, "3010-cross"),
+              "AC2: allow_cross bypasses isolation check");
+        {
+            // Different principal: TenantAdmin was granted on tenant 7 in the
+            // process-global registry; a non-admin tenant must still hit #2968.
+            CompilerService cs2;
+            auto& ev2 = cs2.evaluator();
+            ev2.set_effect_sandbox_mode(1);
+            ev2.set_capability_tenant_id(9);
+            ev2.grant_cross_tenant_access(9, 42, kEffectMutate);
+            CHECK(g_workspace_isolation().cross_grant_bits(9, 42) == 0,
+                  "AC2: #2968 grant-write still requires TenantAdmin");
+        }
+    }
+
+    {
+        std::println("\n--- #3010 AC3: Soft / Off path no hard gate ---");
+        reset_all(); // Off
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        CHECK(ev.allow_cross_tenant(), "AC3: Off C++ path sets flag without admin");
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/false);
+        auto edsl = cs.eval("(security:set-tenant-principal! 7 #t)");
+        CHECK(edsl && is_bool(*edsl) && as_bool(*edsl), "AC3: Off EDSL path sets flag");
+        CHECK(ev.allow_cross_tenant(), "AC3: Off EDSL flag set");
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC3: Off path does not deny (no hard gate)");
+    }
+
+    {
+        std::println("\n--- #3010 AC5: snapshot + posture additive keys ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true); // deny
+        const auto snap = snapshot_tenant_isolation_stats();
+        CHECK(snap.allow_cross_tenant_deny >= 1, "AC5: snapshot exposes allow_cross_tenant_deny");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(posture.find("schema-3010") != std::string::npos, "AC5: posture cites schema-3010");
+        CHECK(posture.find("allow-cross-tenant-admin-wired") != std::string::npos,
+              "AC5: posture exposes allow-cross-tenant-admin-wired");
+        CHECK(posture.find("allow-cross-tenant-deny-total") != std::string::npos,
+              "AC5: posture exposes allow-cross-tenant-deny-total");
+        CHECK(posture.find("allow-cross-needs-tenant-admin") != std::string::npos,
+              "AC5: prim cites SE reason allow-cross-needs-tenant-admin");
+    }
+
+    {
+        std::println("\n--- #3010 AC6: source-cite + no invent + no docs/design/ ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        const auto build = read_file("build.py");
+        CHECK(iso.find("#3010") != std::string::npos, "AC6: workspace_isolation.hh cites #3010");
+        CHECK(sec.find("#3010") != std::string::npos, "AC6: evaluator_security.cpp cites #3010");
+        CHECK(posture.find("schema-3010") != std::string::npos,
+              "AC6: evaluator_primitives_security.cpp cites schema-3010");
+        CHECK(test_self.find("#3010") != std::string::npos, "AC6: test file cites #3010");
+        CHECK(build.find("check_allow_cross_tenant_admin_3010") != std::string::npos,
+              "AC6: build.py wires #3010 linter");
+        std::ifstream invent("tests/core/test_issue_3010.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3010.cpp");
+        CHECK(!invent.good(), "AC6: no tests/core/test_issue_3010.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3010-") == std::string::npos,
+                      std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

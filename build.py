@@ -2199,6 +2199,22 @@ def cmd_lint():
             "Issue #2969 registry write-fence linter failed — run python3 scripts/coverage/checks/check_capability_write_fence_2969.py"
         )
         return r
+    # Issue #3010: allow_cross_tenant_ write gate — under production,
+    # security:set-tenant-principal! / set_tenant_principal with
+    # allow_cross=true requires TenantAdmin or wildcard. Deny → SE
+    # reason allow-cross-needs-tenant-admin + allow_cross_tenant_deny_
+    # total. Extends test_tenant_isolation_enforcement.cpp (#81967);
+    # no docs/design/ (#1655).
+    acx_script = COVERAGE_CHECKS / "check_allow_cross_tenant_admin_3010.py"
+    if not acx_script.exists():
+        fail(f"missing {acx_script}")
+        return 1
+    r = run([sys.executable, str(acx_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3010 allow_cross TenantAdmin gate linter failed — run python3 scripts/coverage/checks/check_allow_cross_tenant_admin_3010.py"
+        )
+        return r
     # Issue #2970: JoinPolicy optional wait_reclaimed_ms — auto-wait after
     # JoinStatus::Reclaimed so hosts do not have to remember a second
     # wait_reclaimed_body prim call (#2661 footgun). nullopt = off (zero

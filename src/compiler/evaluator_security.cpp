@@ -1005,6 +1005,39 @@ void Evaluator::apply_env_sandbox() noexcept {
 // process-global (shared policy).
 void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /*name*/,
                                      bool allow_cross) noexcept {
+    // Issue #3010: production same-tenant self-grant of the isolation
+    // bypass flag requires TenantAdmin / wildcard / capability. Soft/Off
+    // (sandbox_mode_ == 0 && effect_sandbox_mode() == 0) short-circuits
+    // before any privilege lookup (AC3: zero extra cost).
+    if (allow_cross) {
+        const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+        if (force_bind) {
+            using aura::compiler::security::kCapCapability;
+            using aura::compiler::security::kCapTenantAdmin;
+            using aura::compiler::security::kCapWildcard;
+            const bool privileged = has_capability(kCapTenantAdmin) ||
+                                    has_capability(kCapWildcard) || has_capability(kCapCapability);
+            if (!privileged) {
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto fid =
+                    static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
+                        static_cast<std::uint32_t>(aura_fiber_current_id())));
+                g_tenant_isolation_metrics().allow_cross_tenant_deny_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                bump_capability_denial();
+                emit_security_event_durable(SecurityEventKind::EffectDeny, tenant_id, mid, epoch,
+                                            /*effect_bits=*/0, "set-tenant-principal",
+                                            "allow-cross-needs-tenant-admin",
+                                            /*denied=*/true, fid);
+                capability_tenant_id_ = tenant_id;
+                return; // refuse the flag — leave allow_cross_tenant_ unchanged
+            }
+        }
+    }
     capability_tenant_id_ = tenant_id;
     allow_cross_tenant_ = allow_cross;
 }

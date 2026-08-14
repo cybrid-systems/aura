@@ -773,6 +773,19 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("capability-grant-foreign-tenant-deny-total",
                           static_cast<std::int64_t>(cap.capability_grant_foreign_tenant_deny));
             }
+            // Issue #3010: allow_cross_tenant_ write gate — production
+            // same-tenant self-grant of the isolation-bypass flag requires
+            // TenantAdmin / wildcard. Deny → SE reason
+            // allow-cross-needs-tenant-admin + deny counter.
+            {
+                using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+                const auto iso = snapshot_tenant_isolation_stats();
+                insert_kv("schema-3010", 3010);
+                insert_kv("issue-3010", 3010);
+                insert_kv("allow-cross-tenant-admin-wired", 1);
+                insert_kv("allow-cross-tenant-deny-total",
+                          static_cast<std::int64_t>(iso.allow_cross_tenant_deny));
+            }
             // Issue #2883: production hard principal check on fiber
             // resume/steal handoff. Under production/Restricted, if the
             // current fiber resume had a hard principal mismatch (ambient
@@ -826,6 +839,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     // via the grant-effect path below when bits include kEffectMacroSelfEvo.
 
     // Issue #1566: (security:set-tenant-principal! id [allow-cross?])
+    // Issue #3010: under production, allow_cross=#t requires TenantAdmin
+    // or wildcard (or "capability" meta-priv). Same-tenant self-grant of
+    // the isolation-bypass flag without meta-priv → #f + SE reason
+    // allow-cross-needs-tenant-admin. Soft/Off: zero extra cost.
     add("security:set-tenant-principal!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
@@ -838,6 +855,29 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         const auto tid = static_cast<std::uint64_t>(as_int(a[0]));
         const bool allow_cross = a.size() >= 2 && is_bool(a[1]) && as_bool(a[1]);
+        const bool force_bind = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
+        if (force_bind && allow_cross) {
+            using aura::compiler::security::kCapCapability;
+            using aura::compiler::security::kCapTenantAdmin;
+            using aura::compiler::security::kCapWildcard;
+            if (!ev.has_capability(kCapTenantAdmin) && !ev.has_capability(kCapWildcard) &&
+                !ev.has_capability(kCapCapability)) {
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
+                ev.bump_capability_denial();
+                g_tenant_isolation_metrics().allow_cross_tenant_deny_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                emit_security_event_durable(SecurityEventKind::EffectDeny, tid, mid, epoch,
+                                            /*effect_bits=*/0, "set-tenant-principal",
+                                            "allow-cross-needs-tenant-admin",
+                                            /*denied=*/true, fid);
+                return make_bool(false);
+            }
+        }
         ev.set_tenant_principal(tid, {}, allow_cross);
         return make_bool(true);
     });
@@ -882,7 +922,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->cross_tenant_capability_grant_total.store(snap.cross_tenant_capability_grants,
                                                              std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -927,6 +967,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("isolation-enabled", snap.isolation_enabled);
             insert_kv("allow-cross", snap.allow_cross);
             insert_kv("strict-linked", snap.strict_linked);
+            insert_kv("allow-cross-tenant-deny-total",
+                      static_cast<std::int64_t>(snap.allow_cross_tenant_deny));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
