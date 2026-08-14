@@ -92,7 +92,7 @@ int run_test_issue_178() {
 }
 #endif
 
-#ifndef AURA_ISSUE_BATCH_MEMBER
+#if !defined(AURA_ISSUE_BATCH_MEMBER) && !defined(AURA_ISSUE_BUNDLE_MEMBER)
 int main() {
     return run_test_issue_178();
 }

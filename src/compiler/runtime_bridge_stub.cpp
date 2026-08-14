@@ -37,10 +37,12 @@ aura_macro_provenance_repin_on_steal(void* /*ev_ptr*/, std::uint64_t /*cloned_ma
 // Issue #1368: aura_set_aot_metrics — service.ixx / evaluator.ixx wire the
 // CompilerMetrics pointer at startup/teardown. Strong definition lives in
 // aura_jit_bridge.cpp (full JIT) / aura_jit_bridge_stub.cpp (light JIT);
-// weak stub here so libaura_test_objects.so resolves it at load time even
-// when mold --as-needed strips the JIT libs (same class as the other four
-// stubs above — e6f8e7dd missed this one).
-extern "C" __attribute__((weak)) void aura_set_aot_metrics(void* /*metrics*/) {}
+// light-link tests (aura_issue_test_link_light) resolve this from
+// libaura_jit_light_test_objects.so (strong). Do NOT stub it here: an empty
+// weak stub in libaura_test_objects.so preempts the strong definition, so
+// tests that wire metrics via aura_set_aot_metrics write into a no-op stub
+// and counter assertions observe zero motion (same class as
+// aura_aot_bump_func_table_epoch — e6f8e7dd missed this one).
 
 // Issue #1522: batch-deopt target registration. service.ixx registers the
 // AuraJIT* at boot; strong def lives in aura_jit_bridge.cpp. Weak stub so
@@ -105,7 +107,6 @@ extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::ui
     return 0;
 }
 
-extern "C" __attribute__((weak)) void aura_aot_bump_func_table_epoch(void) {}
 
 extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behind_slots(void) {
     return 0;
