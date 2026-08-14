@@ -1200,6 +1200,43 @@ summarize_block_dirty(const std::vector<std::vector<std::uint8_t>>& block_dirty_
     return true;
 }
 
+// ── Issue #3034: ImpactScope / hybrid-cascade cross-check ────────────
+// Production partial decisions must not rely solely on the local
+// block_dirty mask: when a dual-DepGraph callee edge (or a pending
+// hybrid_node_cascade_ / ImpactScope walk) has not yet been reflected
+// into the mask, dirty_count can under-estimate and leave blocks /
+// callers with stale IR under a partial peel.
+//
+// Cross-check contract (monotonic):
+//   - only upgrades partial → full (never lowers a partial decision)
+//   - zero extra cost when dirty_count == 0 or impact_upper_bound == 0
+//     (early exit, AC: Soft path stays zero-cost on clean windows)
+//   - when impact_upper_bound > dirty_count, the mask is incomplete →
+//     the caller must force full (or expand the dirty set first)
+[[nodiscard]] inline bool
+should_partial_relower_impact_checked(std::size_t dirty_count,
+                                      std::size_t impact_upper_bound) noexcept {
+    if (dirty_count == 0)
+        return false; // clean — nothing to do (zero-cost early exit)
+    if (impact_upper_bound > dirty_count)
+        return false; // impact exceeds local mask → force full
+    return should_partial_relower(dirty_count);
+}
+
+// Issue #3034: estimate_relower_blocks with an optional impact
+// upper-bound. When the pure estimate is lower than the impact /
+// hybrid-cascade size, return the sentinel full value (-1) instead of
+// the under-estimated count. Zero cost on clean (0) or empty impact.
+[[nodiscard]] inline std::size_t
+estimate_relower_blocks_impact_checked(std::size_t dirty_count,
+                                       std::size_t impact_upper_bound) noexcept {
+    if (dirty_count == 0)
+        return 0;
+    if (impact_upper_bound > dirty_count)
+        return static_cast<std::size_t>(-1); // force full
+    return estimate_relower_blocks(dirty_count);
+}
+
 // ── Issue #2190 / #2212: StormLevel gate on partial vs full ──────
 // HotUpdateRegistry::StormLevel (via aura_hot_update_current_storm_level):
 //   None=0, Shape=1, Global=2, Both=3.

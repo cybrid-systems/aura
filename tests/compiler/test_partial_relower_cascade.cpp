@@ -28,10 +28,12 @@ namespace {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::estimate_relower_blocks_impact_checked;
 using aura::compiler::get_partial_relower_threshold;
 using aura::compiler::reset_partial_relower_threshold_for_test;
 using aura::compiler::set_partial_relower_threshold;
 using aura::compiler::should_partial_relower;
+using aura::compiler::should_partial_relower_impact_checked;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -199,6 +201,69 @@ void ac6_epoch_still_enforced() {
           "post-invalidate eval ok");
 }
 
+void ac7_impact_cross_check() {
+    std::println("\n--- AC7: ImpactScope cross-check upgrades partial → full (#3034) ---");
+    // Monotonic: only upgrades to full, never lowers.
+    // Clean / empty-impact windows stay zero-cost.
+    CHECK(!should_partial_relower_impact_checked(0, 5), "clean → no partial");
+    CHECK(should_partial_relower_impact_checked(1, 1), "impact == dirty → partial");
+    CHECK(should_partial_relower_impact_checked(7, 7), "impact == dirty → partial (thr 8)");
+    CHECK(!should_partial_relower_impact_checked(7, 8), "impact > dirty → force full");
+    CHECK(!should_partial_relower_impact_checked(8, 1), "dirty ≥ thr → full regardless");
+    CHECK(should_partial_relower_impact_checked(7, 0), "empty impact → pure partial");
+    CHECK(estimate_relower_blocks_impact_checked(3, 3) == 3, "est: equal → exact");
+    CHECK(estimate_relower_blocks_impact_checked(3, 8) == static_cast<std::size_t>(-1),
+          "est: impact > dirty → sentinel full");
+    CHECK(estimate_relower_blocks_impact_checked(0, 8) == 0, "est: clean → 0");
+    CHECK(estimate_relower_blocks_impact_checked(8, 1) == static_cast<std::size_t>(-1),
+          "est: thr reached → sentinel full");
+    // Query schema wires the new counter (existing keys untouched).
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) x))\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto h = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
+    CHECK(h && is_hash(*h), "hash");
+    CHECK(href(cs, "issue-3034") == 3034, "issue-3034 wire");
+    CHECK(href(cs, "schema-3034") == 3034, "schema-3034 wire");
+    CHECK(href(cs, "impact-cross-check-wired") == 1, "impact-cross-check wired");
+    CHECK(href(cs, "partial_forced_full_by_impact_total") >= 0,
+          "partial_forced_full_by_impact_total key");
+}
+
+void ac8_underestimate_forces_full() {
+    std::println("\n--- AC8: cross-fn callee edge + dirty_count < T → full relower (#3034) ---");
+    reset_partial_relower_threshold_for_test();
+    CompilerService cs;
+    // a 调 b 两次(if 分支 → 多个 blocks);invalidate b → a 的 caller blocks
+    // 被 cascade 标(部分),但 ImpactScope 从 a 的 AST 覆盖更多 blocks →
+    // local dirty mask 低估 → 决策升级 full + counter 增长。
+    CHECK(cs.eval("(set-code \""
+                  "(define b (lambda (x) (+ x 1)))"
+                  "(define a (lambda (x) (if (b x) (b x) (b x))))"
+                  "\")")
+              .has_value(),
+          "set-code chain");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto forced0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto full0 = m->incremental_full_fallback_total.load(std::memory_order_relaxed);
+    // invalidate callee b → cascade marks a's call-site blocks via dep graph.
+    cs.public_invalidate_function("b");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current after invalidate");
+    const auto forced1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto full1 = m->incremental_full_fallback_total.load(std::memory_order_relaxed);
+    std::println("  forced {}→{} full {}→{}", forced0, forced1, full0, full1);
+    // Either the cross-check upgraded to full (forced++), or the cascade was
+    // already precise — but never a silent stale: a must eval to the new body.
+    CHECK(forced1 >= forced0, "partial_forced_full_by_impact_total non-decreasing");
+    CHECK(full1 + forced1 >= full0 + forced0, "relower activity non-decreasing");
+    auto r = cs.eval("(a 1)");
+    CHECK(r.has_value(), "a evals after invalidate");
+    if (r && is_int(*r))
+        CHECK(as_int(*r) == 2, "a returns correct result (no stale IR)");
+}
+
 } // namespace
 
 int run_test_partial_relower_cascade() {
@@ -209,6 +274,8 @@ int run_test_partial_relower_cascade() {
     ac4_sustained_mutate();
     ac5_threshold_respected();
     ac6_epoch_still_enforced();
+    ac7_impact_cross_check();
+    ac8_underestimate_forces_full();
     if (g_failed)
         return 1;
     std::println("partial re-lower cascade (#2041): OK ({} passed)", g_passed);

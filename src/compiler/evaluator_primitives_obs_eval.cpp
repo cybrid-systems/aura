@@ -7716,6 +7716,15 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"jit-partial-recompile-on-cascade-wired", make_int(1)},
                 {"schema-2041", make_int(2041)},
                 {"issue-2041", make_int(2041)},
+                // Issue #3034: ImpactScope / hybrid-cascade cross-check —
+                // partial upgraded to full on under-estimate.
+                {"partial_forced_full_by_impact_total",
+                 make_int(m ? load(m->partial_forced_full_by_impact_total) : 0)},
+                {"partial-forced-full-by-impact-total",
+                 make_int(m ? load(m->partial_forced_full_by_impact_total) : 0)},
+                {"impact-cross-check-wired", make_int(1)},
+                {"schema-3034", make_int(3034)},
+                {"issue-3034", make_int(3034)},
                 // Issue #2044: cascade full re-lower uses full dirty pass suite
                 {"cascade_incremental_pass_pipeline_total",
                  make_int(m ? load(m->cascade_incremental_pass_pipeline_total) : 0)},

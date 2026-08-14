@@ -1187,6 +1187,19 @@ void CompilerService::invalidate_function(const std::string& name) {
         for (const auto& fb : vit->second.block_dirty_per_func_)
             total_blocks += fb.size();
         const auto adaptive = consult_workload_adaptive_partial_(dirty_n, total_blocks);
+        // Issue #3034: cross-check ImpactScope / hybrid-cascade upper bound.
+        // Monotonic — only upgrades partial → full, never lowers (storm
+        // gates stay the outer envelope). Zero cost on clean / empty-impact
+        // windows (helper returns 0 → no upgrade).
+        if (dirty_n > 0 && adaptive.want_partial) {
+            const std::size_t impact_ub = impact_upper_bound_for_entry_(fname, vit->second);
+            if (!should_partial_relower_impact_checked(dirty_n, impact_ub)) {
+                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                note_fb(RelowerFallbackReason::Threshold);
+                return false;
+            }
+        }
         if (dirty_n > 0 && !adaptive.want_partial) {
             note_fb(RelowerFallbackReason::Threshold);
             return false;
