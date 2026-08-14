@@ -975,6 +975,154 @@ static void ac2981_6_source_and_linter() {
           "AC6: no invent test per #81967");
 }
 
+// ── Issue #3032: rehydrate-miss invalidates linear_fast_path + force deopt ──
+
+static void ac3032_1_prod_miss_invalidates_fast_path() {
+    std::println("\n--- #3032 AC1: production miss → !linear_fast_path_ok + deopt ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::reset_linear_ir_fastpath_counters_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    typed_audit::stamp_type_linear_commit_proof(30321);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "3032 AC1: green before miss");
+    CHECK(typed_audit::linear_ir_fastpath_try_skip(), "3032 AC1: try_skip before miss");
+
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    tc.set_cache_epoch(1);
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 1, 10, /*epoch=*/1);
+    const auto inv0 = typed_audit::rehydrate_miss_invalidate_total_v_read();
+    const auto deopt0 = typed_audit::rehydrate_miss_force_deopt_total_v_read();
+    const auto dropped = tc.note_steal_or_densify_epoch_fence(2);
+    CHECK(dropped >= 1, "3032 AC1: fence dropped goals");
+    CHECK(cs.occurrence_goals_size() == 0, "3032 AC1: empty after miss");
+    CHECK(typed_audit::rehydrate_miss_invalidate_total_v_read() > inv0, "3032 AC1: invalidate");
+    CHECK(typed_audit::rehydrate_miss_force_deopt_total_v_read() > deopt0, "3032 AC1: force deopt");
+    CHECK(!typed_audit::linear_fast_path_ok(), "3032 AC1: !ok after miss");
+    CHECK(!typed_audit::linear_ir_fastpath_try_skip(), "3032 AC1: Move/Drop cannot skip");
+    CHECK(typed_audit::linear_fast_path_boundary_exit_action() ==
+              typed_audit::LinearFastPathExitAction::ForceRevalidate,
+          "3032 AC1: ForceRevalidate until next green");
+
+    apply_dev_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3032_2_soft_observe_only() {
+    std::println("\n--- #3032 AC2: Soft miss observe; no gen bump ---");
+    apply_dev_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::set_strategy(typed_audit::AuditStrategy::Sampled);
+    const auto hard0 = typed_audit::rehydrate_miss_invalidate_total_v_read();
+    const auto obs0 = typed_audit::rehydrate_miss_invalidate_observe_total_v_read();
+    CHECK(!typed_audit::invalidate_fast_path_on_rehydrate_miss(), "3032 AC2: Soft returns false");
+    CHECK(typed_audit::rehydrate_miss_invalidate_total_v_read() == hard0, "3032 AC2: no hard");
+    CHECK(typed_audit::rehydrate_miss_invalidate_observe_total_v_read() == obs0 + 1,
+          "3032 AC2: observe");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == 0, "3032 AC2: no gen bump");
+}
+
+static void ac3032_3_quiet_zero_cost() {
+    std::println("\n--- #3032 AC3: quiet (no miss) zero extra ---");
+    apply_production_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    tc.set_cache_epoch(5);
+    const auto inv0 = typed_audit::rehydrate_miss_invalidate_total_v_read();
+    const auto obs0 = typed_audit::rehydrate_miss_invalidate_observe_total_v_read();
+    CHECK(tc.note_steal_or_densify_epoch_fence(5) == 0, "3032 AC3: same epoch no prune");
+    CHECK(typed_audit::rehydrate_miss_invalidate_total_v_read() == inv0, "3032 AC3: no invalidate");
+    CHECK(typed_audit::rehydrate_miss_invalidate_observe_total_v_read() == obs0,
+          "3032 AC3: no observe");
+    apply_dev_audit_defaults();
+}
+
+static void ac3032_4_success_bind() {
+    std::println("\n--- #3032 AC4: successful rehydrate binds before green ---");
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    const auto b0 = typed_audit::rehydrate_success_bind_total_v_read();
+    typed_audit::note_rehydrate_success_bind(3, 0xabc);
+    CHECK(typed_audit::rehydrate_success_bind_total_v_read() == b0 + 1, "3032 AC4: bind total");
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    apply_production_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    CHECK(typed_audit::invalidate_fast_path_on_rehydrate_miss(), "3032 AC4: miss invalidate");
+    CHECK(!typed_audit::linear_fast_path_ok(), "3032 AC4: !ok after miss");
+    typed_audit::stamp_type_linear_commit_proof(30324);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "3032 AC4: green after bind restores");
+    apply_dev_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3032_5_schema() {
+    std::println("\n--- #3032 AC5: schema-3032 + lineage ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3032 AC5: warm");
+    CHECK(href(svc, "schema-3032") == 3032, "3032 AC5: schema-3032");
+    CHECK(href(svc, "issue-3032") == 3032, "3032 AC5: issue-3032");
+    CHECK(href(svc, "rehydrate-miss-invalidate-wired") == 1, "3032 AC5: wired");
+    CHECK(href(svc, "rehydrate-miss-invalidate-total") >= 0, "3032 AC5: invalidate");
+    CHECK(href(svc, "rehydrate-miss-invalidate-observe-total") >= 0, "3032 AC5: observe");
+    CHECK(href(svc, "rehydrate-miss-force-deopt-total") >= 0, "3032 AC5: deopt");
+    CHECK(href(svc, "rehydrate-miss-success-bind-total") >= 0, "3032 AC5: bind");
+    CHECK(href(svc, "schema-2981") == 2981, "3032 AC5: schema-2981 preserved");
+    CHECK(href(svc, "schema-2910") == 2910, "3032 AC5: schema-2910 preserved");
+}
+
+static void ac3032_6_source_and_linter() {
+    std::println("\n--- #3032 AC6: source-cite + linter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_rehydrate_miss_invalidate_3032.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("invalidate_fast_path_on_rehydrate_miss") != std::string::npos,
+          "3032 AC6: helper");
+    CHECK(tma.find("kRehydrateMissInvalidateIssue") != std::string::npos, "3032 AC6: issue stamp");
+    CHECK(ixx.find("invalidate_fast_path_on_rehydrate_miss") != std::string::npos,
+          "3032 AC6: fence");
+    CHECK(mb.find("invalidate_fast_path_on_rehydrate_miss") != std::string::npos,
+          "3032 AC6: densify");
+    CHECK(efm.find("invalidate_fast_path_on_rehydrate_miss") != std::string::npos,
+          "3032 AC6: steal");
+    CHECK(efm.find("aura_jit_walk_active_closures") != std::string::npos, "3032 AC6: walk deopt");
+    CHECK(t.find("ac3032_1_prod_miss_invalidates_fast_path") != std::string::npos, "3032 AC6: AC1");
+    CHECK(!lint.empty() && lint.find("3032") != std::string::npos, "3032 AC6: linter");
+    CHECK(build.find("check_rehydrate_miss_invalidate_3032") != std::string::npos,
+          "3032 AC6: build.py");
+    CHECK(read_file("docs/design/3032-rehydrate-miss-invalidate.md").empty(),
+          "3032 AC6: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3032.cpp").empty(),
+          "3032 AC6: no invent test_issue_3032");
+}
+
 // ── Issue #2995: unified OccurrenceCommitHealth + single-shot ensure ──
 
 static void ac2995_1_soft_empty_pure_loads() {
@@ -1186,6 +1334,13 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3004_3_discard_provisional_on_fail();
     ac3004_4_schema_and_lineage();
     ac3004_5_source_and_linter();
+    std::println("\n=== #3032 rehydrate-miss invalidates linear_fast_path + deopt ===");
+    ac3032_1_prod_miss_invalidates_fast_path();
+    ac3032_2_soft_observe_only();
+    ac3032_3_quiet_zero_cost();
+    ac3032_4_success_bind();
+    ac3032_5_schema();
+    ac3032_6_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

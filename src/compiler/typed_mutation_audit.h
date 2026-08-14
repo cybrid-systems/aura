@@ -1140,9 +1140,83 @@ inline void clear_type_linear_commit_proof_for_test() noexcept {
     clear_last_proof_face_for_test();
 }
 
+// Issue #3032: densify/steal rehydrate-miss must invalidate the in-flight
+// linear_fast_path face and force a hot deopt/revalidate so Move/Drop
+// cannot keep a pre-miss green stamp. Soft: observe only. Quiet: helper
+// not called. Green stamp re-binds gen via publish_last_proof_face.
+inline constexpr int kRehydrateMissInvalidateIssue = 3032;
+inline std::atomic<std::uint64_t> g_rehydrate_miss_invalidate_gen{0};
+inline std::atomic<std::uint64_t> g_rehydrate_miss_green_bind_gen{0};
+inline std::atomic<std::uint64_t> g_rehydrate_miss_invalidate_total{0};
+inline std::atomic<std::uint64_t> g_rehydrate_miss_invalidate_observe_total{0};
+inline std::atomic<std::uint64_t> g_rehydrate_miss_force_deopt_total{0};
+inline std::atomic<std::uint64_t> g_rehydrate_success_bind_total{0};
+inline std::atomic<std::uint64_t> g_rehydrate_success_bound_goals{0};
+inline std::atomic<std::uint64_t> g_rehydrate_success_bound_fp{0};
+inline std::atomic<std::uint32_t> g_rehydrate_miss_invalidate_wired{1};
+
+[[nodiscard]] inline std::uint64_t rehydrate_miss_invalidate_gen_v_read() noexcept {
+    return g_rehydrate_miss_invalidate_gen.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t rehydrate_miss_invalidate_total_v_read() noexcept {
+    return g_rehydrate_miss_invalidate_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t rehydrate_miss_invalidate_observe_total_v_read() noexcept {
+    return g_rehydrate_miss_invalidate_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t rehydrate_miss_force_deopt_total_v_read() noexcept {
+    return g_rehydrate_miss_force_deopt_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t rehydrate_success_bind_total_v_read() noexcept {
+    return g_rehydrate_success_bind_total.load(std::memory_order_relaxed);
+}
+inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
+    g_rehydrate_miss_invalidate_gen.store(0, std::memory_order_relaxed);
+    g_rehydrate_miss_green_bind_gen.store(0, std::memory_order_relaxed);
+    g_rehydrate_miss_invalidate_total.store(0, std::memory_order_relaxed);
+    g_rehydrate_miss_invalidate_observe_total.store(0, std::memory_order_relaxed);
+    g_rehydrate_miss_force_deopt_total.store(0, std::memory_order_relaxed);
+    g_rehydrate_success_bind_total.store(0, std::memory_order_relaxed);
+    g_rehydrate_success_bound_goals.store(0, std::memory_order_relaxed);
+    g_rehydrate_success_bound_fp.store(0, std::memory_order_relaxed);
+}
+
+// Purpose: drop green linear_fast_path after densify/steal rehydrate miss
+// Pre: caller already stamped Reject (or is about to)
+// Post: invalidate_gen advanced under production/Full → linear_fast_path_ok
+//       false until a later green face bind; Soft observe only
+// Safety Class: P0 under production/Full (stale green Move/Drop is residual)
+// Issue: #3032
+// AI-Native Rationale: Agents join miss → invalidate → deopt → next stamp
+[[nodiscard]] inline bool invalidate_fast_path_on_rehydrate_miss() noexcept {
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard) {
+        g_rehydrate_miss_invalidate_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_rehydrate_miss_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+    g_rehydrate_miss_force_deopt_total.fetch_add(1, std::memory_order_relaxed);
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_relaxed);
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    return true;
+}
+
+inline void note_rehydrate_success_bind(std::uint64_t goals, std::uint64_t fp) noexcept {
+    g_rehydrate_success_bound_goals.store(goals, std::memory_order_relaxed);
+    g_rehydrate_success_bound_fp.store(fp, std::memory_order_relaxed);
+    g_rehydrate_success_bind_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 inline void publish_last_proof_face(bool would_allow, bool linear_ok) noexcept {
     g_last_proof_would_allow_commit.store(would_allow ? 1 : 0, std::memory_order_relaxed);
     g_last_proof_linear_ok.store(linear_ok ? 1 : 0, std::memory_order_relaxed);
+    // Issue #3032: a fresh green face re-binds invalidate gen so Move/Drop
+    // may elide again only after the miss generation is acknowledged.
+    if (would_allow && linear_ok)
+        g_rehydrate_miss_green_bind_gen.store(
+            g_rehydrate_miss_invalidate_gen.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
 }
 
 // Issue #2717: active stamp inside boundary + composite commit. The
@@ -1462,6 +1536,10 @@ inline void reset_linear_fast_path_dirty_revalidate_for_test() noexcept {
     // densify-pending arm (#2964 AC3 / densify Phase-5 scan inject)
     if (g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
             std::memory_order_relaxed) > 0)
+        return false;
+    // Issue #3032: rehydrate-miss invalidate gen must match last green bind.
+    if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_relaxed) !=
+        g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed))
         return false;
     return true;
 }

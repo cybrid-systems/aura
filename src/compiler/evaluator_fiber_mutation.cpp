@@ -2389,11 +2389,13 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         // Issue #2910: rehydrate if live table empty under production persist,
         // then freeze CS goal truth (prefer non-empty live_goal_count on green).
         typed_audit::ProofGoalTruth steal_goal_truth_2910{};
+        std::size_t steal_reh_n = 0;
+        bool steal_persist_on = false;
         if (void* h = commit_type_checker_handle()) {
             auto* tc = static_cast<TypeChecker*>(h);
-            if (tc->constraint_system().occurrence_goals_size() == 0 &&
-                tc->constraint_system().occurrence_persist_enabled()) {
-                (void)tc->constraint_system().rehydrate_occurrence_from_persist(0);
+            steal_persist_on = tc->constraint_system().occurrence_persist_enabled();
+            if (tc->constraint_system().occurrence_goals_size() == 0 && steal_persist_on) {
+                steal_reh_n = tc->constraint_system().rehydrate_occurrence_from_persist(0);
             }
             const auto& goals = tc->constraint_system().occurrence_goals_for_test();
             steal_goal_truth_2910.live_goal_count = static_cast<std::uint64_t>(goals.size());
@@ -2412,11 +2414,26 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
                 steal_goal_truth_2910.goal_fingerprint = (hmix != 0) ? hmix : 1;
             }
         }
+        // Issue #3032: successful rehydrate re-binds EnvFrame/occurrence
+        // fingerprint before any new green stamp.
+        if (steal_reh_n > 0 && steal_goal_truth_2910.live_goal_count > 0) {
+            typed_audit::note_rehydrate_success_bind(steal_goal_truth_2910.live_goal_count,
+                                                     steal_goal_truth_2910.goal_fingerprint);
+            (void)unified_restamp_after_boundary(UnifiedRestampSite::StealComplete);
+        }
         // Issue #2981: same-txn bind — steal rehydrate miss + empty CS
         // goals under production/Full → would_allow_commit=false /
         // force_reason 11. Prefer CS truth. Soft: helper false.
+        // Issue #3032: treat persist-on + still-empty after rehydrate as
+        // a miss even when the #2704 face was not yet latched.
+        const bool steal_reh_miss = steal_persist_on && steal_goal_truth_2910.live_goal_count == 0;
+        const bool hard_3032 = typed_audit::production_defaults_active() ||
+                               typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+        if (steal_reh_miss && hard_3032)
+            typed_audit::note_occurrence_empty_after_fence(true);
         const bool empty_fence_2981 = typed_audit::occurrence_empty_after_fence_blocks_proof(
-            steal_goal_truth_2910.live_goal_count);
+                                          steal_goal_truth_2910.live_goal_count) ||
+                                      (steal_reh_miss && hard_3032);
         if (steal_rebind_fail_2854 || empty_fence_2981) {
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                 defuse_version_.load(std::memory_order_acquire),
@@ -2436,6 +2453,12 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
             }
             typed_audit::publish_type_linear_proof_outcome(
                 typed_audit::kTypeLinearProofOutcomeReject);
+            // Issue #3032: miss/reject → invalidate fast-path + force deopt.
+            if (typed_audit::invalidate_fast_path_on_rehydrate_miss()) {
+                const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+                (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
+                aura_aot_record_deopt_on_steal();
+            }
         } else {
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                 defuse_version_.load(std::memory_order_acquire),

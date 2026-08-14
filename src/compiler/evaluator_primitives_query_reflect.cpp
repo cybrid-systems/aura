@@ -321,7 +321,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             const auto scored = compute_type_linear_commit_health(snap);
 
             // Issue #3020: ~73 live keys; next_pow2(planned*2) (256).
-            constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 93;
+            constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 100;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kTypeLinearCommitHealthPlannedKeys));
             if (!ht)
@@ -529,6 +529,26 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("force-reason-pending-full-solve-residual", 16);
             insert_kv("schema-3031", aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
             insert_kv("issue-3031", aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
+            // Issue #3032: rehydrate-miss → proof-invalidate → deopt.
+            insert_kv("rehydrate-miss-invalidate-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::rehydrate_miss_invalidate_total_v_read()));
+            insert_kv(
+                "rehydrate-miss-invalidate-observe-total",
+                static_cast<std::int64_t>(
+                    aura::compiler::typed_audit::rehydrate_miss_invalidate_observe_total_v_read()));
+            insert_kv("rehydrate-miss-force-deopt-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::rehydrate_miss_force_deopt_total_v_read()));
+            insert_kv("rehydrate-miss-success-bind-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::rehydrate_success_bind_total_v_read()));
+            insert_kv("rehydrate-miss-invalidate-wired",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::g_rehydrate_miss_invalidate_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-3032", aura::compiler::typed_audit::kRehydrateMissInvalidateIssue);
+            insert_kv("issue-3032", aura::compiler::typed_audit::kRehydrateMissInvalidateIssue);
 
             return query_hash_finish(ht, string_heap, overflowed);
         });

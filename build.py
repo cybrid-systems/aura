@@ -1626,6 +1626,19 @@ def cmd_lint():
             "Issue #3031 pending_full_solve residual linter failed — run python3 scripts/coverage/checks/check_pending_full_solve_residual_3031.py"
         )
         return r
+    # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
+    # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
+    # (#81967); no docs/design.
+    rhmi_script = COVERAGE_CHECKS / "check_rehydrate_miss_invalidate_3032.py"
+    if not rhmi_script.exists():
+        fail(f"missing {rhmi_script}")
+        return 1
+    r = run([sys.executable, str(rhmi_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3032 rehydrate-miss invalidate linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_invalidate_3032.py"
+        )
+        return r
     # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
     # ac2807 in test_unquote_splicing_hygiene.
     ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
@@ -3336,6 +3349,18 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #2981 empty-after-fence proof bind linter failed — run python3 scripts/coverage/checks/check_type_linear_proof_empty_after_fence_2981.py"
+        )
+        return r
+    # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path.
+    # Extends persist-rehydrate + escape-elision (#81967); no docs/design/.
+    rhmi2_script = COVERAGE_CHECKS / "check_rehydrate_miss_invalidate_3032.py"
+    if not rhmi2_script.exists():
+        fail(f"missing {rhmi2_script}")
+        return 1
+    r = run([sys.executable, str(rhmi2_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3032 rehydrate-miss invalidate linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_invalidate_3032.py"
         )
         return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id)
@@ -11255,6 +11280,30 @@ def cmd_pending_full_solve_residual_3031():
     return cmd_pending_full_solve_residual_3031_coverage()
 
 
+def cmd_rehydrate_miss_invalidate_3032_coverage():
+    """Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path.
+
+    Production/Full miss → Reject + invalidate_gen + force deopt/revalidate.
+    Soft observe. Quiet (no miss) is zero extra.
+    """
+    print(f"{B}=== rehydrate-miss invalidate coverage (#3032) ==={N}")
+    script = COVERAGE_CHECKS / "check_rehydrate_miss_invalidate_3032.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("rehydrate-miss invalidate (#3032) coverage contract rows failed")
+        return 1
+    ok("rehydrate-miss invalidate (#3032) coverage clean")
+    return 0
+
+
+def cmd_rehydrate_miss_invalidate_3032():
+    """Alias for coverage check."""
+    return cmd_rehydrate_miss_invalidate_3032_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -15470,6 +15519,8 @@ def main():
         "type-linear-proof-clear-on-abort-3030-coverage": cmd_type_linear_proof_clear_on_abort_3030_coverage,
         "pending-full-solve-residual-3031": cmd_pending_full_solve_residual_3031,
         "pending-full-solve-residual-3031-coverage": cmd_pending_full_solve_residual_3031_coverage,
+        "rehydrate-miss-invalidate-3032": cmd_rehydrate_miss_invalidate_3032,
+        "rehydrate-miss-invalidate-3032-coverage": cmd_rehydrate_miss_invalidate_3032_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

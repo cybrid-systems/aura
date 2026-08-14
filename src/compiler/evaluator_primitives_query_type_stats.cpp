@@ -660,6 +660,41 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                                     insert_kv("issue-3031",
                                                               aura::compiler::typed_audit::
                                                                   kPendingFullSolveResidualIssue);
+                                                    // Issue #3032: rehydrate-miss invalidate.
+                                                    insert_kv(
+                                                        "rehydrate-miss-invalidate-total",
+                                                        static_cast<std::int64_t>(
+                                                            aura::compiler::typed_audit::
+                                                                rehydrate_miss_invalidate_total_v_read()));
+                                                    insert_kv(
+                                                        "rehydrate-miss-invalidate-observe-total",
+                                                        static_cast<std::int64_t>(
+                                                            aura::compiler::typed_audit::
+                                                                rehydrate_miss_invalidate_observe_total_v_read()));
+                                                    insert_kv(
+                                                        "rehydrate-miss-force-deopt-total",
+                                                        static_cast<std::int64_t>(
+                                                            aura::compiler::typed_audit::
+                                                                rehydrate_miss_force_deopt_total_v_read()));
+                                                    insert_kv(
+                                                        "rehydrate-miss-success-bind-total",
+                                                        static_cast<std::int64_t>(
+                                                            aura::compiler::typed_audit::
+                                                                rehydrate_success_bind_total_v_read()));
+                                                    insert_kv(
+                                                        "rehydrate-miss-invalidate-wired",
+                                                        static_cast<std::int64_t>(
+                                                            aura::compiler::typed_audit::
+                                                                g_rehydrate_miss_invalidate_wired
+                                                                    .load(
+                                                                        std::
+                                                                            memory_order_relaxed)));
+                                                    insert_kv("schema-3032",
+                                                              aura::compiler::typed_audit::
+                                                                  kRehydrateMissInvalidateIssue);
+                                                    insert_kv("issue-3032",
+                                                              aura::compiler::typed_audit::
+                                                                  kRehydrateMissInvalidateIssue);
                                                 }
                                                 // Issue #2278: epoch-scoped OccurrenceGoal table
                                                 // metrics.
