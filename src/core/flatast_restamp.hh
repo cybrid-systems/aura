@@ -90,7 +90,14 @@ inline constexpr int kRestampIncrementalDefaultIssue = 2402;
 // or lazy-align only (skip O(N) full walk); never silent torn gen
 // (lazy-align keeps is_valid/make_ref consistent). Env:
 // AURA_RESTAMP_BUDGET_NODES (process-wide, cached).
+// Issue #3000: export-face residual — query:*-stable must not hand
+// the Agent a pre-mutate generation when last restamp exceeded and
+// the node was not eagerly restamped. Lazy-align still keeps
+// is_valid/make_ref consistent (never silent torn generation, #2934 AC2);
+// production export rejects (typed restamp-lag) instead of stamping-green
+// a lagging gen.
 inline constexpr int kRestampBudgetIssue = 2934;
+inline constexpr int kQueryStableRefRestampLagIssue = 3000;
 
 [[nodiscard]] inline std::atomic<std::uint32_t>& g_restamp_budget_nodes_override() noexcept {
     static std::atomic<std::uint32_t> v{0};

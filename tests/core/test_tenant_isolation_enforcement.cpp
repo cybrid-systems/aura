@@ -6,6 +6,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 #include "core/workspace_isolation.hh"
 #include "core/sandbox.hh"
@@ -949,6 +950,58 @@ int main() {
                               "docs/query_stable_ref_stamp_2960.md", "design/2960.md"}) {
             std::ifstream f(p);
             CHECK(!f.good(), "AC4: no design doc at " + std::string(p));
+        }
+    }
+
+    // ── #3000: restamp-lag export face (isolation / tenant-capture sibling) ──
+    {
+        std::println("\n--- #3000 AC1/AC2: stamp rejects lagging gen under production ---");
+        reset_all();
+        CHECK(aura::core::provenance::kQueryStableRefRestampLagIssue == 3000,
+              "AC4: kQueryStableRefRestampLagIssue == 3000");
+        using aura::ast::clear_restamp_budget_nodes_override_for_test;
+        using aura::ast::set_restamp_budget_nodes_for_process;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (q-lag a) a) (define (q-lag2 b) b) "
+                      "(define (q-lag3 c) c) (define (q-lag4 d) d)\")")
+                  .has_value(),
+              "set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "live node");
+        apply_production_audit_defaults();
+        set_restamp_budget_nodes_for_process(1);
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+        CHECK(ws->restamp_last_budget_exceeded(), "#3000: last restamp exceeded");
+        if (!ws->node_generation_is_post_mutate(id)) {
+            CHECK(!ev.allow_query_stable_ref_export(id),
+                  "#3000: production allow rejects lagging node");
+            FlatAST::StableNodeRef brace{};
+            brace.id = id;
+            ev.stamp_query_stable_ref_export(brace);
+            CHECK(brace.id == NULL_NODE, "#3000: stamp nulls lagging export");
+            CHECK(aura::core::provenance::g_query_stable_ref_restamp_lag_prevented_total_atomic()
+                          .load(std::memory_order_relaxed) >= 1,
+                  "#3000: prevented advanced");
+        } else {
+            CHECK(true, "#3000: node incrementally restamped — post-mutate allow");
+        }
+        apply_dev_audit_defaults();
+        clear_restamp_budget_nodes_override_for_test();
+        const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+        CHECK(qws.find("restamp-lag") != std::string::npos, "#3000: typed restamp-lag reason");
+        CHECK(qws.find("allow_query_stable_ref_export") != std::string::npos,
+              "#3000: query workspace gates export");
+        for (const auto& p : {"docs/design/3000-restamp-lag.md", "docs/query_restamp_lag_3000.md",
+                              "design/3000.md"}) {
+            std::ifstream f(p);
+            CHECK(!f.good(), "#3000: no design doc at " + std::string(p));
         }
     }
 

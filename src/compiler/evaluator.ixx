@@ -6368,7 +6368,14 @@ public:
     // Remakes brace-init residuals via make_ref_layout when workspace has
     // non-zero wrap/cow (counts unstamped_prevented), then stamp_stable_ref
     // and bumps query_stable_ref_stamped_total.
+    // Issue #3000: production + last restamp-budget exceeded + node not
+    // eagerly restamped → reject (null ref; restamp-lag prevented). Soft:
+    // observe only, stamp as #2960. Call allow_query_stable_ref_export
+    // before make_ref_layout so lazy-align cannot hide a pre-mutate gen.
     void stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) const noexcept;
+    // Issue #3000: export-face restamp-lag gate. Quiet path (budget
+    // unlimited / not exceeded): one relaxed load, no new atomics.
+    [[nodiscard]] bool allow_query_stable_ref_export(ast::NodeId id) const noexcept;
     // Issue #2056: create helpers that stamp before returning to Agent code.
     [[nodiscard]] ast::FlatAST::StableNodeRef make_stamped_ref(ast::NodeId id) const noexcept;
     [[nodiscard]] ast::FlatAST::StableNodeRef
@@ -14223,6 +14230,8 @@ public:
     // Issue #2934: successful exit drives restamp_all_node_generations
     // under AURA_RESTAMP_BUDGET_NODES (soft-degrade over budget; see
     // flatast_restamp.hh + evaluator_mutation_boundary.cpp exit path).
+    // Issue #3000: export face is separate — query:*-stable must not
+    // stamp a pre-mutate generation when last restamp exceeded.
     class MutationBoundaryGuard {
         // Issue #241: did we capture a panic checkpoint at ctor?
         // (save_panic_checkpoint returns false if no source is loaded

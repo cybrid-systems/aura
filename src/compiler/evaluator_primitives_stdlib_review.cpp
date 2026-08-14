@@ -11,7 +11,8 @@ module;
 #include "core/arena_auto_policy_stats.h"
 #include "core/cpp26_contract_stats.h"
 #include "core/gap_buffer.hh"
-#include "core/zero_copy_output.hh" // #2048 zero_copy_handoff metrics
+#include "core/zero_copy_output.hh"   // #2048 zero_copy_handoff metrics
+#include "core/provenance_tracker.hh" // Issue #3000: restamp-lag export counters
 #include "jit_typed_mutation_stats.h"
 #include "tui/tui_runtime.hh"
 
@@ -1370,6 +1371,30 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                     kv.emplace_back("schema-2934", make_int(aura::ast::kRestampBudgetIssue));
                     kv.emplace_back("issue-2934", make_int(aura::ast::kRestampBudgetIssue));
                     kv.emplace_back("restamp-budget-wired", make_int(1));
+                    // Issue #3000: query:*-stable restamp-lag export face.
+                    kv.emplace_back("query-stable-ref-restamp-lag-prevented-total",
+                                    make_int(static_cast<std::int64_t>(
+                                        aura::core::provenance::
+                                            g_query_stable_ref_restamp_lag_prevented_total_atomic()
+                                                .load(std::memory_order_relaxed))));
+                    kv.emplace_back(
+                        "query-stable-ref-restamp-lag-soft-observe-total",
+                        make_int(static_cast<std::int64_t>(
+                            aura::core::provenance::
+                                g_query_stable_ref_restamp_lag_soft_observe_total_atomic()
+                                    .load(std::memory_order_relaxed))));
+                    kv.emplace_back("query-stable-ref-restamp-lag-last-reason",
+                                    make_int(static_cast<std::int64_t>(
+                                        aura::core::provenance::
+                                            g_query_stable_ref_restamp_lag_last_reason_atomic()
+                                                .load(std::memory_order_relaxed))));
+                    kv.emplace_back(
+                        "schema-3000",
+                        make_int(aura::core::provenance::kQueryStableRefRestampLagIssue));
+                    kv.emplace_back(
+                        "issue-3000",
+                        make_int(aura::core::provenance::kQueryStableRefRestampLagIssue));
+                    kv.emplace_back("query-stable-ref-restamp-lag-wired", make_int(1));
                 }
             }
             return build_kv_hash(ev, kv);

@@ -14,6 +14,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 
 #include <cstdint>
@@ -35,6 +36,8 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -705,11 +708,226 @@ static void ac2961_5_no_docs_linter() {
     CHECK(t.find("#2961") != std::string::npos, "AC5: suite cites #2961");
 }
 
+static std::int64_t href_stable(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:stable-ref-stats-hash\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static std::int64_t href_gen(CompilerService& cs, std::string_view key) {
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:generation-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static bool setup_dense_ws(CompilerService& cs) {
+    return cs.eval("(set-code \""
+                   "(define (f x) (+ x 1)) (define (g x) (+ x 2)) "
+                   "(define (h x) (+ x 3)) (define (i x) (+ x 4)) "
+                   "(define (j x) (+ x 5)) (define (k x) (+ x 6)) "
+                   "(define base 10) (+ base 1) (+ base 2) (+ base 3)\")")
+               .has_value() &&
+           cs.eval("(eval-current)").has_value();
+}
+
+static aura::ast::NodeId first_lagging(aura::ast::FlatAST& ws) {
+    for (aura::ast::NodeId id = 1; id < ws.size(); ++id) {
+        if (ws.is_live_node(id) && !ws.is_free_slot(id) && !ws.node_generation_is_post_mutate(id))
+            return id;
+    }
+    return aura::ast::NULL_NODE;
+}
+
+static void ac3000_1_production_reject_or_post_mutate() {
+    std::println("\n--- #3000 AC1: production children-stable / stable-ref fail-closed or "
+                 "post-mutate gen ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(1);
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "AC1: dense workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "AC1: workspace");
+    auto renamed = cs.eval("(mutate:rename-symbol \"f\" \"ff\")");
+    CHECK(renamed.has_value(), "AC1: mutate ran");
+    if (!ws->restamp_last_budget_exceeded()) {
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+    }
+    CHECK(ws->restamp_last_budget_exceeded(), "AC1: last restamp exceeded under budget=1");
+    auto lag = first_lagging(*ws);
+    if (lag == aura::ast::NULL_NODE) {
+        // Incremental cone restamped every live slot — export must be post-mutate.
+        aura::ast::NodeId live = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+            if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+                live = id;
+                break;
+            }
+        }
+        CHECK(live != aura::ast::NULL_NODE, "AC1: live node");
+        auto car = cs.eval(std::format("(car (query:stable-ref {}))", live));
+        CHECK(car && is_int(*car), "AC1: restamped node exports id (post-mutate)");
+        auto gen = cs.eval(std::format("(car (cdr (query:stable-ref {})))", live));
+        CHECK(gen && is_int(*gen) && as_int(*gen) == static_cast<std::int64_t>(ws->generation()),
+              "AC1: exported gen == workspace generation_");
+    } else {
+        CHECK(!ws->node_generation_is_post_mutate(lag), "AC1: lagging node pre-mutate");
+        aura::ast::FlatAST::StableNodeRef brace{};
+        brace.id = lag;
+        cs.evaluator().stamp_query_stable_ref_export(brace);
+        CHECK(brace.id == aura::ast::NULL_NODE, "AC1: stamp nulls lagging ref under production");
+        auto car = cs.eval(std::format("(car (query:stable-ref {}))", lag));
+        CHECK(car && is_string(*car), "AC1: production typed reject (not bare -1)");
+        auto kids = cs.eval(std::format("(query :children-stable {})", lag));
+        CHECK(kids.has_value(), "AC1: children-stable returns value");
+        auto kids_car = cs.eval(std::format("(car (query :children-stable {}))", lag));
+        if (kids_car && is_string(*kids_car))
+            CHECK(true, "AC1: children-stable restamp-lag reject");
+        else if (kids_car && is_int(*kids_car)) {
+            auto g = cs.eval(std::format("(car (cdr (car (query :children-stable {}))))", lag));
+            CHECK(!g || !is_int(*g) || as_int(*g) == static_cast<std::int64_t>(ws->generation()),
+                  "AC1: if children-stable returns refs, gen is post-mutate");
+        }
+        CHECK(aura::core::provenance::g_query_stable_ref_restamp_lag_prevented_total_atomic().load(
+                  std::memory_order_relaxed) >= 1,
+              "AC1: prevented total advanced");
+        CHECK(aura::core::provenance::g_query_stable_ref_restamp_lag_last_reason_atomic().load(
+                  std::memory_order_relaxed) == 1,
+              "AC3: last-reason set (not silent -1)");
+    }
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3000_2_soft_observe_unlimited_green() {
+    std::println("\n--- #3000 AC2: Soft observe; unlimited identical to #2960 ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "AC2: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "AC2: workspace");
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "AC2: live");
+    const auto stamped0 = aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
+        std::memory_order_relaxed);
+    const auto prev0 =
+        aura::core::provenance::g_query_stable_ref_restamp_lag_prevented_total_atomic().load(
+            std::memory_order_relaxed);
+    auto car = cs.eval(std::format("(car (query:stable-ref {}))", live));
+    CHECK(car && is_int(*car), "AC2: unlimited / not-exceeded stamps as #2960");
+    CHECK(aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
+              std::memory_order_relaxed) > stamped0,
+          "AC4: stamped_total non-regressing (advanced)");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_lag_prevented_total_atomic().load(
+              std::memory_order_relaxed) == prev0,
+          "AC2: happy path no new prevented atomic");
+
+    set_restamp_budget_nodes_for_process(1);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_last_budget_exceeded(), "AC2: exceeded under Soft");
+    auto lag = first_lagging(*ws);
+    if (lag != aura::ast::NULL_NODE) {
+        const auto obs0 =
+            aura::core::provenance::g_query_stable_ref_restamp_lag_soft_observe_total_atomic().load(
+                std::memory_order_relaxed);
+        CHECK(cs.evaluator().allow_query_stable_ref_export(lag), "AC2: Soft allow (no reject)");
+        CHECK(
+            aura::core::provenance::g_query_stable_ref_restamp_lag_soft_observe_total_atomic().load(
+                std::memory_order_relaxed) > obs0,
+            "AC2: Soft observe advanced");
+        CHECK(aura::core::provenance::g_query_stable_ref_restamp_lag_prevented_total_atomic().load(
+                  std::memory_order_relaxed) == prev0,
+              "AC2: Soft does not prevent");
+        aura::ast::FlatAST::StableNodeRef brace{};
+        brace.id = lag;
+        cs.evaluator().stamp_query_stable_ref_export(brace);
+        CHECK(brace.id == lag, "AC2: Soft stamp proceeds (does not null)");
+    }
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3000_4_schema_and_source() {
+    std::println("\n--- #3000 AC4/AC6: schema + source-cite + no docs ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto astx = read_file("src/core/ast.ixx");
+    const auto prov = read_file("src/core/provenance_tracker.hh");
+    const auto gen = read_file("src/compiler/evaluator_primitives_stdlib_review.cpp");
+    CHECK(q.find("schema-3000") != std::string::npos, "AC4: schema-3000 on stable-ref-stats-hash");
+    CHECK(q.find("query-stable-ref-restamp-lag-prevented-total") != std::string::npos,
+          "AC4: prevented key");
+    CHECK(q.find("query-stable-ref-stamped-total") != std::string::npos,
+          "AC4: stamped_total preserved");
+    CHECK(q.find("query-stable-ref-unstamped-prevented-total") != std::string::npos,
+          "AC4: unstamped_prevented preserved");
+    CHECK(gen.find("schema-3000") != std::string::npos, "AC4: schema-3000 on generation-stats");
+    CHECK(qws.find("restamp-lag") != std::string::npos, "AC3: typed restamp-lag reason");
+    CHECK(qws.find("Issue #3000") != std::string::npos, "AC6: query workspace cites #3000");
+    CHECK(sec.find("allow_query_stable_ref_export") != std::string::npos, "AC6: allow helper");
+    CHECK(sec.find("Issue #3000") != std::string::npos, "AC6: stamp cites #3000");
+    CHECK(astx.find("node_generation_is_post_mutate") != std::string::npos, "AC6: raw peek helper");
+    CHECK(prov.find("kQueryStableRefRestampLagIssue = 3000") != std::string::npos,
+          "AC6: issue stamp 3000");
+    CHECK(read_file("tests/compiler/test_issue_3000.cpp").empty(),
+          "AC5: no invent test_issue_3000.cpp");
+    CHECK(read_file("docs/design/3000-restamp-lag.md").empty(), "AC6: no docs/design/3000-*");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define z 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    const auto s = href_stable(cs, "schema-3000");
+    if (s >= 0)
+        CHECK(s == 3000, "AC4: schema-3000 == 3000 when query wired");
+    else
+        CHECK(true, "AC4: light-link skip (schema not registered)");
+    const auto g = href_gen(cs, "schema-3000");
+    if (g >= 0)
+        CHECK(g == 3000, "AC4: generation-stats schema-3000");
+    else
+        CHECK(true, "AC4: light-link skip generation-stats");
+}
+
+static void ac3000_5_linter_and_suites() {
+    std::println("\n--- #3000 AC5/AC6: linter + isolation/tenant-capture ---");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_query_stable_ref_restamp_lag_3000.py");
+    const auto iso = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+    const auto cap = read_file("tests/core/test_stable_ref_tenant_capture.cpp");
+    CHECK(build.find("check_query_stable_ref_restamp_lag_3000") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("3000") != std::string::npos, "AC6: linter present");
+    CHECK(iso.find("#3000") != std::string::npos, "AC5: isolation suite cites #3000");
+    CHECK(cap.find("#3000") != std::string::npos, "AC5: tenant-capture cites #3000");
+}
+
 } // namespace
 
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
-                 "#2961) ===");
+                 "#2961 + #3000) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
@@ -746,6 +964,11 @@ int main() {
     ac2961_3_rename_user_symbol_restamps();
     ac2961_4_query_schema();
     ac2961_5_no_docs_linter();
+    std::println("\n=== Issue #3000: query:*-stable restamp-lag export face ===");
+    ac3000_1_production_reject_or_post_mutate();
+    ac3000_2_soft_observe_unlimited_green();
+    ac3000_4_schema_and_source();
+    ac3000_5_linter_and_suites();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -1141,10 +1141,37 @@ void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcep
     ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
 }
 
+// Issue #3000: production query:*-stable must not export a pre-mutate
+// generation when the last outermost restamp hit AURA_RESTAMP_BUDGET_NODES
+// and this node was not eagerly restamped. Soft / sandbox=off: observe
+// only (stamp proceeds). Quiet path: last-exceeded false → one relaxed load,
+// no new atomics. Peek node_gen_ *before* make_ref_layout so
+// lazy-align cannot hide lag.
+bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
+    auto* ws = workspace_flat_;
+    if (!ws || id == ast::NULL_NODE)
+        return true;
+    if (!ws->restamp_last_budget_exceeded())
+        return true;
+    if (ws->node_generation_is_post_mutate(id))
+        return true;
+    if (typed_audit::production_defaults_active()) {
+        ::aura::core::provenance::record_query_stable_ref_restamp_lag_prevented();
+        return false;
+    }
+    ::aura::core::provenance::record_query_stable_ref_restamp_lag_soft_observe();
+    return true;
+}
+
 // Issue #2960: query Agent export — remake brace-init residuals, stamp tenant+fiber,
 // count stamped / unstamped_prevented (target 0 residual under production).
+// Issue #3000: production restamp-lag reject (null ref; do not stamp-green).
 void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) const noexcept {
     if (workspace_flat_ && ref.id != ast::NULL_NODE) {
+        if (!allow_query_stable_ref_export(ref.id)) {
+            ref = {};
+            return;
+        }
         const auto we = workspace_flat_->wrap_epoch();
         const auto ce = workspace_flat_->workspace_cow_epoch();
         // Brace-init {id, gen} leaves wrap/cow at 0 while advanced workspaces
