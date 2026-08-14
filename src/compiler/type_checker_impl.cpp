@@ -650,6 +650,17 @@ ConstraintSystem::rehydrate_occurrence_from_persist(std::uint64_t preferred_mid)
     return n;
 }
 
+std::size_t ConstraintSystem::discard_provisional_occurrence_goals() noexcept {
+    const auto dropped = occurrence_goals_.size();
+    if (dropped == 0)
+        return 0;
+    occurrence_goals_.clear();
+    // Restore last durable persist snapshot (if any). Empty persist
+    // (Soft / first mutate fail) leaves live table empty.
+    (void)rehydrate_occurrence_from_persist(0);
+    return dropped;
+}
+
 void ConstraintSystem::mark_let_poly_dirty(TypeId var) {
     // Issue #1617: Let-Poly free / instantiation vars need
     // re-generalization priority in solve_delta + reverify.
