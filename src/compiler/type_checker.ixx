@@ -376,6 +376,12 @@ export enum class SolveResult : std::uint8_t {
 // remains observe-only.
 inline constexpr int kDeltaTimeoutFailClosedIssue = 3003;
 
+// Issue #3005: ADT variant / match-pattern mutate must put exhaustiveness
+// goals into the dirty cone / solve_delta dep-closure. Production / Full
+// hard-reject a non-exhaustive (or Dynamic-slide) result; Soft observes;
+// Quiet only when the goal was never dirty.
+inline constexpr int kAdtExhaustDirtyConeIssue = 3005;
+
 // Issue #2900 / #2963: Agent-controlled delta TIMEOUT policy (SolverBudget).
 // Production never honors allow_timeout_commit (always escalate / reject
 // on unsolved via #2277). Soft + allow_timeout_commit: keep TIMEOUT with
@@ -440,8 +446,10 @@ export struct OccurrencePersistEntry {
     std::uint64_t stamp_epoch = 0; // epoch at write (forensic)
 };
 
-// Issue #2564: ADT match exhaustiveness goal — first-class priority root
-// for Soft delta reverify when ADT variants / match arms mutate.
+// Issue #2564 / #3005: ADT match exhaustiveness goal — first-class
+// priority root for Soft delta reverify when ADT variants / match arms
+// mutate. #3005 unions those roots into the infer_flat_partial dirty
+// cone + solve_delta touched/pending seeds (same BFS as #2939).
 // Keyed by match_node + adt TypeId index; covered_variants_hash fingerprints
 // the arm set so Agents can detect drift. Cap via AURA_ADT_GOAL_TABLE_CAP
 // (default 256, same soft-cone discipline as #2560).
@@ -512,9 +520,10 @@ export class ConstraintSystem {
     // Issue #2608: optional persist side buffer (production / env opt-in).
     // Survives prune_occurrence_goals so steal/densify can rehydrate.
     std::vector<OccurrencePersistEntry> occurrence_persist_log_;
-    // Issue #2564: ADT match exhaustiveness goals + pending reverify roots
-    // (match NodeIds). Survives clear_blame_context; invalidate on ADT
-    // variant mutate pushes match sites into adt_reverify_roots_.
+    // Issue #2564 / #3005: ADT match exhaustiveness goals + pending
+    // reverify roots (match NodeIds). Survives clear_blame_context;
+    // variant / pattern mutate pushes match sites into adt_reverify_roots_
+    // and #3005 unions them into the dirty cone / solve_delta seeds.
     std::vector<AdtMatchGoal> adt_match_goals_;
     std::unordered_set<std::uint32_t> adt_reverify_roots_;
     // Issue #1617: Union-Find roots tied to Let-Polymorphism
@@ -1036,14 +1045,22 @@ public:
     }
     void set_current_epoch(std::uint64_t epoch) noexcept { current_epoch_ = epoch; }
     [[nodiscard]] std::uint64_t current_epoch() const noexcept { return current_epoch_; }
-    // Issue #2564: ADT match goal table API.
+    // Issue #2564 / #3005: ADT match goal table API.
     // note: upsert by match_node (cap-enforced). invalidate: drop goals for
     // adt_type_id and push match_node into reverify roots. drain: move
     // reverify roots out for Soft delta / partial recheck. Zero cost when
-    // table empty (AC2).
+    // table empty (AC2). #3005: seed_adt_reverify_from_match_nodes covers
+    // pattern-node mutate (match in dirty set, ADT type id unchanged).
     void note_adt_match_goal(std::uint32_t match_node, std::uint32_t adt_type_id,
                              std::uint64_t covered_variants_hash) noexcept;
     [[nodiscard]] std::size_t invalidate_adt_goals_for(std::uint32_t adt_type_id) noexcept;
+    // Issue #3005: push dirty match NodeIds into reverify roots (pattern
+    // mutate). Returns newly inserted count. Zero cost on empty input.
+    [[nodiscard]] std::size_t
+    seed_adt_reverify_from_match_nodes(const std::vector<std::uint32_t>& nodes) noexcept;
+    // Issue #3005: seed subject ADT TypeId into touched + pending_full_solve
+    // so solve_delta dep-closure BFS sees the exhaustiveness obligation.
+    void note_adt_exhaust_dirty_type(std::uint32_t adt_type_id) noexcept;
     [[nodiscard]] std::size_t adt_match_goals_size() const noexcept {
         return adt_match_goals_.size();
     }
@@ -3329,6 +3346,7 @@ export std::vector<std::string> analyze_match_exhaustiveness(const aura::ast::Fl
 export struct MatchExhaustivenessResult {
     bool checked = false;          // true if a real ADT subject + match site
     bool exhaustive = true;        // true if no missing ctors (or N/A)
+    bool via_dynamic = false;      // Issue #3005: subject slid to Dynamic
     std::string subject_type_name; // ADT type name when known
     std::vector<std::string> missing_constructors;
     std::vector<std::string> all_constructors; // full ctor set from registry

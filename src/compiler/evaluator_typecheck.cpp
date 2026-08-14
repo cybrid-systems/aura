@@ -428,6 +428,16 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                         continue;
                     auto exh =
                         check_match_exhaustiveness(*workspace_flat_, *workspace_pool_, treg_ex, id);
+                    // Issue #3005: Dynamic-slide is not a proof of exhaustiveness
+                    // under Hard / Production (no residual SOLVED via Dynamic).
+                    if (exh.via_dynamic) {
+                        auto msg = format_match_exhaustiveness_message(exh);
+                        if (msg.empty())
+                            msg = "match: exhaustiveness unproven (Dynamic subject)";
+                        local_diags.push_back(
+                            aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError, msg));
+                        continue;
+                    }
                     if (!exh.checked || exh.exhaustive || exh.missing_constructors.empty())
                         continue;
                     auto msg = format_match_exhaustiveness_message(exh);
@@ -1655,10 +1665,12 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
                     continue;
                 r.adt_match_sites_present = true;
                 const auto exh = check_match_exhaustiveness(*flat, *pool, *reg, id);
-                if (!exh.checked)
+                if (!exh.checked && !exh.via_dynamic)
                     continue;
                 ++r.adt_sites_checked;
-                if (!exh.exhaustive) {
+                // Issue #3005: via_dynamic is not exhaustive (Production /
+                // Full must not keep a stale Dynamic proof).
+                if (!exh.exhaustive || exh.via_dynamic) {
                     ++r.adt_non_exhaustive;
                     r.adt_ok = false;
                 }

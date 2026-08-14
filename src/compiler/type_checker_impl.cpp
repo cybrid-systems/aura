@@ -474,6 +474,34 @@ std::vector<std::uint32_t> ConstraintSystem::drain_adt_reverify_roots() noexcept
     return out;
 }
 
+// Issue #3005: pattern-node mutate — match sites already in the dirty
+// set must re-enter reverify roots even when the ADT type id is unchanged.
+std::size_t ConstraintSystem::seed_adt_reverify_from_match_nodes(
+    const std::vector<std::uint32_t>& nodes) noexcept {
+    if (nodes.empty())
+        return 0; // Quiet: empty input → zero cost
+    std::size_t n = 0;
+    for (auto id : nodes) {
+        if (id == 0)
+            continue;
+        if (adt_reverify_roots_.insert(id).second)
+            ++n;
+    }
+    return n;
+}
+
+void ConstraintSystem::note_adt_exhaust_dirty_type(std::uint32_t adt_type_id) noexcept {
+    if (adt_type_id == 0)
+        return;
+    TypeId t{adt_type_id, 1};
+    note_touched_var(t);
+    const auto rep = union_find_rep_index(t);
+    if (rep != UINT32_MAX)
+        pending_full_solve_roots_.insert(rep);
+    else
+        pending_full_solve_roots_.insert(adt_type_id);
+}
+
 // Issue #2564: TLS pending match reverify roots filled by static ADT
 // invalidate path (no CS* required). Absorbed into CS on partial/delta.
 namespace {
@@ -3074,6 +3102,13 @@ void ConstraintSystem::import_delta_marks_from(ConstraintSystem& src) {
     // survive only while current_epoch_ hasn't advanced past them.
     for (const auto& g : src.occurrence_goals_)
         occurrence_goals_.push_back(g);
+    // Issue #3005: keep ADT exhaustiveness goals + pending reverify
+    // roots on the long-lived CS so solve_delta / next partial still
+    // sees the dirty-cone obligation (not a Soft-only TLS flash).
+    for (const auto& g : src.adt_match_goals_)
+        note_adt_match_goal(g.match_node, g.adt_type_id, g.covered_variants_hash);
+    for (auto id : src.adt_reverify_roots_)
+        adt_reverify_roots_.insert(id);
 } // ═══════════════════════════════════════════════════════════
 // InferenceEngine
 // ═══════════════════════════════════════════════════════════
@@ -6610,10 +6645,26 @@ MatchExhaustivenessResult check_match_exhaustiveness(const FlatAST& flat, const 
         r.checked = true;
         r.exhaustive = false;
     }
+    // Issue #3005: Dynamic (or ctor-less) subject + real ADT arms is not
+    // a proof of exhaustiveness. Soft callers keep exhaustive=true so
+    // legacy observe paths stay quiet; Production / dirty-cone reject
+    // via `via_dynamic` (no "exhaustive via Dynamic" slide-through).
+    if (!minfo->has_wildcard &&
+        (!minfo->used_constructors.empty() || !minfo->candidate_constructors.empty()) &&
+        (reg.tag_of(subject) == TypeTag::DYNAMIC || r.all_constructors.empty())) {
+        r.via_dynamic = true;
+        r.checked = true;
+    }
     return r;
 }
 
 std::string format_match_exhaustiveness_message(const MatchExhaustivenessResult& r) {
+    if (r.via_dynamic && (r.exhaustive || r.missing_constructors.empty())) {
+        std::string msg = "match: exhaustiveness unproven (Dynamic subject)";
+        if (!r.subject_type_name.empty())
+            msg += " in " + r.subject_type_name;
+        return msg;
+    }
     if (r.exhaustive || r.missing_constructors.empty())
         return {};
     std::string msg = "match: ";
@@ -8724,31 +8775,92 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             renarrow_roots.push_back(id);
         (void)selective_adt_guardshape_renarrow(flat, pool, types, renarrow_roots, metrics_);
     }
-    // Issue #2288 / #2564: selective ADT exhaustiveness on infer_flat_partial
-    // main path. Iterates match nodes in affected + occurrence_targets +
-    // ADT goal reverify roots (from variant mutate invalidate). Soft bumps
-    // adt_partial_non_exhaustive_total; Full hard-gate still owns #2264.
-    // Zero cost when no match sites / no reverify roots (AC2).
+    // Issue #2288 / #2564 / #3005: selective ADT exhaustiveness on
+    // infer_flat_partial. Variant invalidate + pattern-dirty match
+    // nodes seed reverify roots; those roots join the dirty cone
+    // (affected) and solve_delta touched/pending seeds (#2939 BFS).
+    // Soft bumps observe counters; Production hard-rejects unproven
+    // / Dynamic-slide results (no residual SOLVED via Dynamic).
+    // Quiet: no match in dirty set and no reverify roots → zero extra.
     engine.constraint_system().absorb_pending_adt_reverify_roots();
+    {
+        std::vector<std::uint32_t> pattern_matches;
+        pattern_matches.reserve(affected.size() + occurrence_targets.size());
+        auto push_match = [&](NodeId nid) {
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                return;
+            if (flat.has_match_info(nid))
+                pattern_matches.push_back(static_cast<std::uint32_t>(nid));
+        };
+        for (auto nid : affected)
+            push_match(nid);
+        for (auto nid : occurrence_targets)
+            push_match(nid);
+        (void)engine.constraint_system().seed_adt_reverify_from_match_nodes(pattern_matches);
+    }
     auto adt_reverify = engine.constraint_system().drain_adt_reverify_roots();
-    if (metrics_ || !adt_reverify.empty()) {
+    if (!adt_reverify.empty()) {
+        std::unordered_set<NodeId> cone_seen(affected.begin(), affected.end());
         auto* m = metrics_ ? static_cast<struct CompilerMetrics*>(metrics_) : nullptr;
+        for (auto raw : adt_reverify) {
+            const auto nid = static_cast<NodeId>(raw);
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                continue;
+            if (cone_seen.insert(nid).second) {
+                affected.push_back(nid);
+                if (m)
+                    m->adt_exhaust_cone_seed_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (auto* mi = flat.get_match_info(nid)) {
+                if (mi->subject_type_id > 0)
+                    engine.constraint_system().note_adt_exhaust_dirty_type(mi->subject_type_id);
+            }
+        }
         auto recheck = [&](NodeId nid) {
             if (nid == aura::ast::NULL_NODE || nid >= flat.size())
                 return;
             if (!flat.has_match_info(nid))
                 return;
             auto exh = check_match_exhaustiveness(flat, pool, types, nid);
-            if (m && !exh.missing_constructors.empty())
+            const bool unproven = exh.via_dynamic || !exh.missing_constructors.empty() ||
+                                  !exh.checked || !exh.exhaustive;
+            if (m && (!exh.missing_constructors.empty() || exh.via_dynamic))
+                m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
+            if (!unproven)
+                return;
+            // Pre-infer: observe only. Production fail-closed waits
+            // until after re-infer so a pattern mutate that *adds*
+            // an arm is not rejected on stale match_info.
+            if (m)
+                m->adt_exhaust_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+        };
+        std::unordered_set<NodeId> rechecked;
+        rechecked.reserve((affected.size() + occurrence_targets.size() + adt_reverify.size()) * 2);
+        auto once = [&](NodeId nid) {
+            if (rechecked.insert(nid).second)
+                recheck(nid);
+        };
+        for (auto nid : affected)
+            once(nid);
+        for (auto nid : occurrence_targets)
+            once(nid);
+        for (auto raw : adt_reverify)
+            once(static_cast<NodeId>(raw));
+    } else if (metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        auto recheck = [&](NodeId nid) {
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                return;
+            if (!flat.has_match_info(nid))
+                return;
+            auto exh = check_match_exhaustiveness(flat, pool, types, nid);
+            if (!exh.missing_constructors.empty())
                 m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
         };
         for (auto nid : affected)
             recheck(nid);
         for (auto nid : occurrence_targets)
             recheck(nid);
-        // Issue #2564: priority roots from ADT goal invalidate (capped set).
-        for (auto raw : adt_reverify)
-            recheck(static_cast<NodeId>(raw));
     }
     if (on_touched_roots_snapshot_)
         on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
@@ -8805,6 +8917,43 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             ++re_inferred;
         }
     }
+    // Issue #3005: post-re-infer Production / Full fail-closed on dirty
+    // exhaustiveness cone. Uses updated match_info (pattern mutate) +
+    // refreshed ADT constructors (variant mutate). Soft already observed
+    // pre-infer; Quiet never reaches here with a non-empty cone.
+    if (!adt_reverify.empty()) {
+        const bool production = aura::compiler::typed_audit::production_defaults_active();
+        auto* m = metrics_ ? static_cast<struct CompilerMetrics*>(metrics_) : nullptr;
+        bool production_adt_fail = false;
+        for (auto raw : adt_reverify) {
+            const auto nid = static_cast<NodeId>(raw);
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                continue;
+            if (!flat.has_match_info(nid))
+                continue;
+            auto exh = check_match_exhaustiveness(flat, pool, types, nid);
+            const bool unproven = exh.via_dynamic || !exh.missing_constructors.empty() ||
+                                  (exh.checked && !exh.exhaustive);
+            if (!unproven)
+                continue;
+            if (production) {
+                production_adt_fail = true;
+                if (m) {
+                    m->adt_exhaust_production_reject_total.fetch_add(1, std::memory_order_relaxed);
+                    if (exh.via_dynamic)
+                        m->adt_exhaust_dynamic_slide_prevented_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+                auto msg = format_match_exhaustiveness_message(exh);
+                if (msg.empty())
+                    msg = "match: exhaustiveness unproven after ADT/pattern mutate";
+                diag.report(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError, msg));
+            }
+        }
+        if (production_adt_fail)
+            last_type_export_authoritative_ = false;
+    }
+
     // Issue #2516 phase 2 complete: re-infer finished; type_dep re-recorded
     // for visited nodes. Phase 3 mirror must see this post-infer cone.
     if (metrics_) {

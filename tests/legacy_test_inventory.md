@@ -1153,7 +1153,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp
-- `tests/compiler/test_adt_match_goal_table.cpp` (—) [domain_suite, theme_compiler] — reverify roots for Soft delta fidelity.
+- `tests/compiler/test_adt_match_goal_table.cpp` (—) [domain_suite, theme_compiler] — reverify roots for Soft delta fidelity. Issue #3005 extends
 - `tests/compiler/test_aether_denseness_residual.cpp` (—) [domain_suite, theme_compiler] — AC1: orch:parallel 2-arg typechecks (dotted-rest + namespaced .aura-type)
 - `tests/compiler/test_atomic_batch_core_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — R19 phase4 dup-merge — atomic-batch core trio: Issue #1899 (dispatch + STRONG atomicity) + Issue
 - `tests/compiler/test_atomic_batch_move_noop.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: atomic-batch bool-false path cites #2794; sub_op_noop_total

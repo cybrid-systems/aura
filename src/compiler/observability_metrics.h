@@ -1420,6 +1420,11 @@ struct CompilerMetrics {
     // (#2264) catches it under Full. Distinct from adt_non_exhaustive_caught_total
     // (which counts Full-audit catches).
     std::atomic<std::uint64_t> adt_partial_non_exhaustive_total{0};
+    // Issue #3005: dirty-cone seed + Production no-Dynamic-slide.
+    std::atomic<std::uint64_t> adt_exhaust_cone_seed_total{0};
+    std::atomic<std::uint64_t> adt_exhaust_production_reject_total{0};
+    std::atomic<std::uint64_t> adt_exhaust_soft_observe_total{0};
+    std::atomic<std::uint64_t> adt_exhaust_dynamic_slide_prevented_total{0};
     // Issue #2564: ADT match exhaustiveness goal table + delta reverify roots.
     // adt_goal_table_size is a live snapshot key (queried from CS); counters:
     std::atomic<std::uint64_t> adt_goal_note_total{0};
