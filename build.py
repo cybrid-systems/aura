@@ -2466,6 +2466,19 @@ def cmd_lint():
             "Issue #3025 production C-ABI reemit owner linter failed — run python3 scripts/coverage/checks/check_reemit_owner_required_prod_multi_3025.py"
         )
         return r
+    # Issue #3026: residual force after reload-fail / storm-clear is
+    # agent-actionable (observe-only playbook hint + stale-observe).
+    # Extends test_reload_recovery_query (#81967); no docs/design.
+    rfaa_script = COVERAGE_CHECKS / "check_residual_force_agent_actionable_3026.py"
+    if not rfaa_script.exists():
+        fail(f"missing {rfaa_script}")
+        return 1
+    r = run([sys.executable, str(rfaa_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3026 residual force agent-actionable linter failed — run python3 scripts/coverage/checks/check_residual_force_agent_actionable_3026.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -8108,6 +8121,29 @@ def cmd_reemit_owner_required_prod_multi_3025():
     """
     print(f"{B}=== production C-ABI reemit owner (#3025) ==={N}")
     return cmd_reemit_owner_required_prod_multi_3025_coverage()
+
+
+def cmd_residual_force_agent_actionable_3026_coverage():
+    """Issue #3026: residual force agent-actionable (static)."""
+    print(f"{B}=== residual force agent-actionable coverage (#3026) ==={N}")
+    script = COVERAGE_CHECKS / "check_residual_force_agent_actionable_3026.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual force agent-actionable (#3026) coverage contract rows failed")
+        return 1
+    ok("residual force agent-actionable (#3026) coverage clean")
+    return 0
+
+
+def cmd_residual_force_agent_actionable_3026():
+    """Issue #3026: force-JIT residual after reload-fail / storm-clear is
+    agent-actionable without permanent demotion (playbook observe-only).
+    """
+    print(f"{B}=== residual force agent-actionable (#3026) ==={N}")
+    return cmd_residual_force_agent_actionable_3026_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -15192,6 +15228,8 @@ def main():
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,
         "reemit-owner-required-prod-multi-3025-coverage": cmd_reemit_owner_required_prod_multi_3025_coverage,
+        "residual-force-agent-actionable-3026": cmd_residual_force_agent_actionable_3026,
+        "residual-force-agent-actionable-3026-coverage": cmd_residual_force_agent_actionable_3026_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,

@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -1174,6 +1175,273 @@ static void ac2982_6_source_and_linter() {
           "AC6: no invent test per #81967");
 }
 
+// ── Issue #3026: residual force agent-actionable (observe-only) ──
+// AC1: reload-fail / storm-clear residual stays queryable until covered
+// AC2: agent min-dirty + reemit coverage restores native for covered bits
+// AC3: no auto-reemit; #2953 playbook action table unchanged
+// AC4: Soft / Off — no extra counters
+// AC5: source-cite + linter; no invent / docs/design
+
+static void ac3026_1_residual_visible_until_covered() {
+    std::println("\n--- #3026 AC1: residual visible after reload-fail / storm-clear ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    CompilerService cs;
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+    aura_hot_update_reset_residual_force_observe_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+
+    // Reload-fail: force-JIT Env, no coverage → residual == Env bit.
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    CHECK(reg.residual_force_mask() == env_bit, "3026 AC1: fail residual == Env bit");
+    CHECK(aura_hot_update_residual_force_mask() == env_bit, "3026 AC1: C ABI residual");
+    aura_reload_recovery_snapshot snap{};
+    aura_hot_update_reload_recovery_get_snapshot(&snap);
+    CHECK(snap.residual_force_mask == static_cast<std::int64_t>(env_bit),
+          "3026 AC1: snap residual after fail");
+    CHECK(snap.schema_3026 == 3026, "3026 AC1: snap schema-3026");
+    CHECK(snap.residual_force_observe_wired == 1, "3026 AC1: observe wired");
+    CHECK(href(cs, "query:reload-recovery-state", "residual-force-mask") ==
+              static_cast<std::int64_t>(env_bit),
+          "3026 AC1: recovery-state residual");
+    CHECK(href(cs, "query:hot-update-registry-stats", "residual-force-mask") ==
+              static_cast<std::int64_t>(env_bit),
+          "3026 AC1: hot-update residual");
+    CHECK(href(cs, "query:reload-recovery-playbook", "residual-force-mask") ==
+              static_cast<std::int64_t>(env_bit),
+          "3026 AC1: playbook residual");
+    CHECK(href(cs, "query:reload-recovery-playbook", "playbook-hint-min-dirty-reemit") == 1,
+          "3026 AC1: hint set while residual live");
+
+    // Storm-clear residual: production only_covered leaves uncovered Env.
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    unsetenv("AURA_SANDBOX");
+    CHECK(reg.resolve_force_jit_repromote_only_covered(), "3026 AC1: production only_covered");
+    reg.set_force_jit_repromote_window(1);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    const auto both = defuse_bit | env_bit;
+    CHECK((reg.force_jit_regions_mask() & both) == both, "3026 AC1: multi-bit demoted");
+    reg.note_reemit_success_coverage(defuse_bit);
+    CHECK(reg.residual_force_mask() == env_bit, "3026 AC1: uncovered Env residual");
+    reg.on_reemit_pipeline_call(1, 1); // window=1 → partial re-promote
+    CHECK((reg.force_jit_regions_mask() & env_bit) != 0,
+          "3026 AC1: storm-clear leaves uncovered Env");
+    CHECK((reg.force_jit_regions_mask() & defuse_bit) == 0, "3026 AC1: covered Defuse cleared");
+    CHECK(reg.residual_force_mask() == env_bit, "3026 AC1: residual still Env after only_covered");
+    CHECK(href(cs, "query:reload-recovery-state", "residual-force-mask") ==
+              static_cast<std::int64_t>(env_bit),
+          "3026 AC1: residual queryable until covered");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+}
+
+static void ac3026_2_agent_min_dirty_reemit_clears() {
+    std::println("\n--- #3026 AC2: agent min-dirty + reemit restores covered native ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    CompilerService cs;
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+    aura_hot_update_reset_residual_force_observe_for_test();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    unsetenv("AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED");
+    unsetenv("AURA_SANDBOX");
+
+    {
+        AotReloadConsistencyProof ok{};
+        ok.would_allow_native = true;
+        ok.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(ok);
+    }
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 1,
+          "3026 AC2: pre-fail allow native");
+
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    CHECK(reg.residual_force_mask() == env_bit, "3026 AC2: residual after fail");
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+          "3026 AC2: fail stamps would_allow_native=false");
+    CHECK(href(cs, "query:reload-recovery-playbook", "playbook-hint-min-dirty-reemit") == 1,
+          "3026 AC2: hint asks min-dirty+reemit");
+    CHECK(href(cs, "query:reload-recovery-playbook", "playbook-action") ==
+              static_cast<std::int64_t>(ReloadRecoveryPlaybookAction::Reemit),
+          "3026 AC2: playbook action Reemit");
+
+    // Agent follows observe-only playbook: min-dirty residual bits → reemit
+    // → coverage. Does not change playbook (agent-driven, not auto-heal).
+    reg.set_force_jit_repromote_window(1);
+    reg.note_reemit_success_coverage(env_bit);
+    CHECK(reg.residual_force_mask() == 0, "3026 AC2: coverage clears residual");
+    CHECK(href(cs, "query:reload-recovery-playbook", "playbook-hint-min-dirty-reemit") == 0,
+          "3026 AC2: hint clear after coverage");
+    reg.on_reemit_pipeline_call(1, 1);
+    CHECK(reg.force_jit_regions_mask() == 0, "3026 AC2: covered bits re-promoted");
+    CHECK(reg.residual_force_mask() == 0, "3026 AC2: residual stays 0");
+
+    AotReloadConsistencyProof ok{};
+    ok.table_epoch = 11;
+    ok.bridge_epoch = 11;
+    ok.defuse_version = 1;
+    ok.region_mask = 0;
+    ok.last_fail_reason = 0;
+    ok.force_jit_regions_mask = 0;
+    ok.would_allow_native = true;
+    ok.schema = kAotReloadConsistencyProofIssue;
+    stamp_aot_reload_consistency_proof(ok);
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 1,
+          "3026 AC2: would_allow_native recovers for covered region");
+
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+}
+
+static void ac3026_3_no_auto_reemit_playbook_unchanged() {
+    std::println("\n--- #3026 AC3: no auto-reemit; playbook table unchanged ---");
+    using Act = ReloadRecoveryPlaybookAction;
+
+    // Storm + residual → WaitStorm still wins; hint is additive only.
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.storm_level = 2;
+        in.force_jit_regions_mask = 0b11;
+        in.last_reemit_success_region_mask = 0b01;
+        in.recovery_active = 1;
+        const auto r = aura_reload_recovery_playbook_decide(in);
+        CHECK(r.action == Act::WaitStorm, "3026 AC3: storm still beats residual Reemit");
+        CHECK(r.residual_force_mask == 0b10, "3026 AC3: residual echo");
+        CHECK(r.playbook_hint_min_dirty_reemit == 1, "3026 AC3: hint 1 with residual");
+        CHECK(r.schema_2953 == 2953, "3026 AC3: schema-2953 preserved");
+        CHECK(r.schema_3026 == 3026, "3026 AC3: schema-3026 additive");
+    }
+    // Covered force only → FallBackJit; hint 0.
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.force_jit_regions_mask = 0b01;
+        in.last_reemit_success_region_mask = 0b01;
+        in.recovery_active = 1;
+        const auto r = aura_reload_recovery_playbook_decide(in);
+        CHECK(r.action == Act::FallBackJit, "3026 AC3: covered force still FallBackJit");
+        CHECK(r.playbook_hint_min_dirty_reemit == 0, "3026 AC3: hint 0 when residual empty");
+    }
+    // Residual alone still Reemit (#2953 row 5).
+    {
+        ReloadRecoveryPlaybookInput in{};
+        in.force_jit_regions_mask = 0b10;
+        in.last_reemit_success_region_mask = 0;
+        in.recovery_active = 1;
+        const auto r = aura_reload_recovery_playbook_decide(in);
+        CHECK(r.action == Act::Reemit, "3026 AC3: residual still Reemit");
+        CHECK(r.playbook_hint_min_dirty_reemit == 1, "3026 AC3: hint 1");
+    }
+
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto start = cpp.find("void HotUpdateRegistry::observe_residual_force_stale()");
+    CHECK(start != std::string::npos, "3026 AC3: observe helper present");
+    const auto body = cpp.substr(start, 900);
+    CHECK(body.find("aura_reemit_aot_for_dirty") == std::string::npos,
+          "3026 AC3: observe does not reemit");
+    CHECK(body.find("on_reemit_pipeline_call") == std::string::npos,
+          "3026 AC3: observe does not pipeline-reemit");
+    CHECK(body.find("aura_reload_aot") == std::string::npos, "3026 AC3: observe does not reload");
+    const auto decide = cpp.find("aura_reload_recovery_playbook_decide");
+    CHECK(decide != std::string::npos, "3026 AC3: decide present");
+    const auto dbody = cpp.substr(decide, 1800);
+    CHECK(dbody.find("playbook_hint_min_dirty_reemit") != std::string::npos,
+          "3026 AC3: hint set in decide");
+    CHECK(dbody.find("aura_reemit_aot_for_dirty") == std::string::npos,
+          "3026 AC3: decide still observe-only");
+}
+
+static void ac3026_4_soft_zero_extra() {
+    std::println("\n--- #3026 AC4: Soft / Off no extra counters ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+    aura_hot_update_reset_residual_force_observe_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+
+    reg.on_force_jit_for_reason(AotReloadFail::Env);
+    CHECK(reg.residual_force_mask() != 0, "3026 AC4: residual live under Soft");
+    const auto stale0 = reg.residual_force_stale_observe_total();
+    for (int i = 0; i < 40; ++i)
+        aura_hot_update_observe_residual_force_stale();
+    CHECK(reg.residual_force_stale_observe_total() == stale0,
+          "3026 AC4: Soft observe does not bump stale total");
+
+    // Production ages residual; 32 unchanged exits → +1.
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura_hot_update_reset_residual_force_observe_for_test();
+    const auto stale1 = reg.residual_force_stale_observe_total();
+    for (int i = 0; i < 32; ++i)
+        aura_hot_update_observe_residual_force_stale();
+    CHECK(reg.residual_force_stale_observe_total() == stale1 + 1,
+          "3026 AC4: production 32 exits bump stale-observe");
+    // Mask change resets age (no extra bump on 8 more).
+    reg.on_force_jit_for_reason(AotReloadFail::Linear);
+    for (int i = 0; i < 8; ++i)
+        aura_hot_update_observe_residual_force_stale();
+    CHECK(reg.residual_force_stale_observe_total() == stale1 + 1,
+          "3026 AC4: mask change resets age");
+
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+    aura_hot_update_reset_residual_force_observe_for_test();
+}
+
+static void ac3026_5_source_and_linter() {
+    std::println("\n--- #3026 AC5: source-cite + linter ---");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto bnd = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_residual_force_agent_actionable_3026.py");
+    CHECK(hh.find("Issue #3026") != std::string::npos, "3026 AC5: header cites #3026");
+    CHECK(hh.find("residual_force_mask") != std::string::npos, "3026 AC5: residual helper");
+    CHECK(hh.find("observe_residual_force_stale") != std::string::npos, "3026 AC5: observe API");
+    CHECK(hh.find("playbook_hint_min_dirty_reemit") != std::string::npos,
+          "3026 AC5: playbook hint");
+    CHECK(cpp.find("observe_residual_force_stale") != std::string::npos, "3026 AC5: observe impl");
+    CHECK(cpp.find("kStaleExits") != std::string::npos, "3026 AC5: 32-exit rate limit");
+    CHECK(mut.find("residual-force-mask") != std::string::npos, "3026 AC5: query residual");
+    CHECK(mut.find("playbook-hint-min-dirty-reemit") != std::string::npos, "3026 AC5: query hint");
+    CHECK(mut.find("schema-3026") != std::string::npos, "3026 AC5: schema-3026");
+    CHECK(bnd.find("aura_hot_update_observe_residual_force_stale") != std::string::npos,
+          "3026 AC5: BoundaryExit observe hook");
+    CHECK(stub.find("aura_hot_update_observe_residual_force_stale") != std::string::npos,
+          "3026 AC5: weak stub");
+    CHECK(!lint.empty() && lint.find("Issue #3026") != std::string::npos, "3026 AC5: linter");
+    CHECK(build.find("check_residual_force_agent_actionable_3026") != std::string::npos,
+          "3026 AC5: build.py wires linter");
+    {
+        CompilerService cs;
+        CHECK(href(cs, "query:reload-recovery-state", "schema-3026") == 3026,
+              "3026 AC5: schema-3026 on recovery-state");
+        CHECK(href(cs, "query:reload-recovery-state", "schema-2953") == 2953,
+              "3026 AC5: schema-2953 preserved");
+        CHECK(href(cs, "query:reload-recovery-state", "schema-2367") == 2367,
+              "3026 AC5: schema-2367 preserved");
+        CHECK(href(cs, "query:hot-update-registry-stats", "schema-3026") == 3026,
+              "3026 AC5: schema-3026 on hot-update");
+        CHECK(href(cs, "query:reload-recovery-playbook", "issue-3026") == 3026,
+              "3026 AC5: issue-3026 on playbook");
+    }
+    CHECK(read_file("docs/design/3026-residual-force-agent-actionable.md").empty(),
+          "3026 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3026.cpp").empty(),
+          "3026 AC5: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_reload_recovery_query() {
@@ -1217,10 +1485,17 @@ int run_test_reload_recovery_query() {
     ac2982_4_soft_zero_extra();
     ac2982_5_query_keys();
     ac2982_6_source_and_linter();
+    std::println("\n=== Issue #3026: residual force agent-actionable ===");
+    ac3026_1_residual_visible_until_covered();
+    ac3026_2_agent_min_dirty_reemit_clears();
+    ac3026_3_no_auto_reemit_playbook_unchanged();
+    ac3026_4_soft_zero_extra();
+    ac3026_5_source_and_linter();
     if (g_failed)
         return 1;
     std::println(
-        "reload recovery query #2367 + #2753 + #2776 + #2845 + #2927 + #2953 + #2982 + #3025: OK "
+        "reload recovery query #2367 + #2753 + #2776 + #2845 + #2927 + #2953 + #2982 + #3025 + "
+        "#3026: OK "
         "({} "
         "passed)",
         g_passed);

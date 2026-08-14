@@ -529,6 +529,63 @@ std::uint64_t HotUpdateRegistry::last_reemit_success_region_mask() const noexcep
     return last_reemit_success_region_mask_.load(std::memory_order_relaxed);
 }
 
+// Issue #3026: residual = force & ~last_success. Two relaxed loads.
+std::uint64_t HotUpdateRegistry::residual_force_mask() const noexcept {
+    const auto force = force_jit_regions_mask_.load(std::memory_order_relaxed);
+    if (force == 0)
+        return 0;
+    return force & ~last_reemit_success_region_mask_.load(std::memory_order_relaxed);
+}
+
+std::uint64_t HotUpdateRegistry::residual_force_stale_observe_total() const noexcept {
+    return residual_force_stale_observe_total_.load(std::memory_order_relaxed);
+}
+
+void HotUpdateRegistry::reset_residual_force_observe_for_test() noexcept {
+    residual_force_stale_observe_total_.store(0, std::memory_order_relaxed);
+    residual_force_observe_age_.store(0, std::memory_order_relaxed);
+    residual_force_observe_last_mask_.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3026: production-only residual-age observe. Soft / Off is one
+// production_defaults load. Never reemits. Rate-limit: bump every 32
+// BoundaryExits with unchanged residual bits.
+void HotUpdateRegistry::observe_residual_force_stale() noexcept {
+    if (aura_production_defaults_active_probe() == 0)
+        return; // Soft / Off: zero extra walk
+    const auto residual = residual_force_mask();
+    if (residual == 0) {
+        residual_force_observe_age_.store(0, std::memory_order_relaxed);
+        residual_force_observe_last_mask_.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const auto prev = residual_force_observe_last_mask_.load(std::memory_order_relaxed);
+    if (prev != residual) {
+        residual_force_observe_last_mask_.store(residual, std::memory_order_relaxed);
+        residual_force_observe_age_.store(1, std::memory_order_relaxed);
+        return;
+    }
+    const auto age = residual_force_observe_age_.fetch_add(1, std::memory_order_relaxed) + 1;
+    constexpr std::uint64_t kStaleExits = 32;
+    if (age >= kStaleExits) {
+        residual_force_stale_observe_total_.fetch_add(1, std::memory_order_relaxed);
+        residual_force_observe_age_.store(0, std::memory_order_relaxed);
+    }
+}
+
+extern "C" std::uint64_t aura_hot_update_residual_force_mask(void) {
+    return aura::compiler::hot_update_registry().residual_force_mask();
+}
+extern "C" std::uint64_t aura_hot_update_residual_force_stale_observe_total(void) {
+    return aura::compiler::hot_update_registry().residual_force_stale_observe_total();
+}
+extern "C" void aura_hot_update_observe_residual_force_stale(void) {
+    aura::compiler::hot_update_registry().observe_residual_force_stale();
+}
+extern "C" void aura_hot_update_reset_residual_force_observe_for_test(void) {
+    aura::compiler::hot_update_registry().reset_residual_force_observe_for_test();
+}
+
 std::uint64_t HotUpdateRegistry::force_jit_regions_mask() const noexcept {
     return force_jit_regions_mask_.load(std::memory_order_relaxed);
 }
@@ -1337,6 +1394,13 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
     out->ops_fail_wired = 1;
     out->schema_2982 = 2982;
     out->issue_2982 = 2982;
+    // Issue #3026: residual force bits + stale-observe (additive).
+    out->residual_force_mask = static_cast<std::int64_t>(reg.residual_force_mask());
+    out->residual_force_stale_observe_total =
+        static_cast<std::int64_t>(reg.residual_force_stale_observe_total());
+    out->residual_force_observe_wired = 1;
+    out->schema_3026 = 3026;
+    out->issue_3026 = 3026;
     const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
                         rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
                         snap.storm_level != 0 || snap.reemit_deferred_pending != 0 ||
@@ -2025,6 +2089,11 @@ aura_reload_recovery_playbook_decide(const ReloadRecoveryPlaybookInput& in) noex
     out.playbook_wired = 1;
     out.schema_2953 = 2953;
     out.issue_2953 = 2953;
+    // Issue #3026: observe-only hint — min-dirty residual then reemit.
+    // Does not change action table (#2953 semantics preserved).
+    out.playbook_hint_min_dirty_reemit = residual != 0 ? 1 : 0;
+    out.schema_3026 = 3026;
+    out.issue_3026 = 3026;
 
     // 1. reject-cross-ws
     if (in.cross_ws_reject != 0) {

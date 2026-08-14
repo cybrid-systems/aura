@@ -58,6 +58,7 @@ module;
                                              // aura_hot_update_notify_epoch_bump
                                              // aura_hot_update_reemit_provider_wired
                                              // aura_reemit_aot_for_dirty
+                                             // Issue #3026 observe_residual_force_stale
 #include "typed_mutation_audit.h"            // Issue #1589 / #1614 / #1894 / #2145 / #2964
 #include "linear_occurrence_mutate_stats.h"  // Issue #2964: record_revalidate_hit on force
 #include "core/sandbox.hh"                   // Issue #2145 Strict hard-gate
@@ -3928,6 +3929,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (max_n > 0)
                 aura_pure_anon_bg_remount_drain(max_n);
         }
+        // Issue #3026: observe-only residual-force stale watchdog.
+        // Soft / Off is one production_defaults load. Never reemits.
+        aura_hot_update_observe_residual_force_stale();
     }
     // Issue #2727: clear the durable per-Fiber evaluator_id so stale
     // steals cannot observe a previous evaluator. Only outermost
