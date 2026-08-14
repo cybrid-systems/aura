@@ -70,6 +70,8 @@ def main() -> int:
     must("check_hot_contract_placement_2435", "gate", build)
     must("cmd_hot_contract_placement_coverage", "gate", build)
     must("test_hot_contract_placement", "gate", cmake)
+    # Issue #3043 lineage: Soft-observe sits on this placement policy.
+    must("3043", "lineage", _read("scripts/coverage/checks/check_hot_contract_soft_observe_3043.py"))
 
     if fails:
         for f in fails:

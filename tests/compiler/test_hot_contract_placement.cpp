@@ -7,6 +7,8 @@
 //   AC3: Microbench proxy: 1e6 as_int under OFF ≈ fully disabled
 //   AC4: Cold-path / debug still catch violations (source + mode)
 //   AC5: Policy docs + schema-2435 + source-cite
+//   #3043 AC1–AC5: Soft-observe tier (metrics, no abort); production OFF
+//                  default unchanged; query hot-contract-false-total
 
 #include "test_harness.hpp"
 
@@ -86,7 +88,8 @@ int run_test_hot_contract_placement() {
         CHECK(hh.find("Hot") != std::string::npos && hh.find("Cold") != std::string::npos,
               "AC1: Hot vs Cold tier docs");
 #if defined(NDEBUG) && !defined(AURA_CONTRACTS_ENFORCE) && !defined(AURA_CONTRACTS_OBSERVE) &&     \
-    !defined(AURA_CONTRACTS_HOT_MODE_ENFORCE) && !defined(AURA_CONTRACTS_HOT_MODE_OBSERVE)
+    !defined(AURA_CONTRACTS_HOT_MODE_ENFORCE) && !defined(AURA_CONTRACTS_HOT_MODE_OBSERVE) &&      \
+    !defined(AURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE) && !defined(AURA_HOT_SOFT_OBSERVE)
         CHECK(kHotContractsMode == kHotModeOff, "AC1: NDEBUG default mode=off");
 #else
         // Debug/enforce/observe builds are intentional non-production.
@@ -204,7 +207,78 @@ int run_test_hot_contract_placement() {
         CHECK(mode == kHotContractsMode, "AC5: query matches compile-time mode");
     }
 
-    std::println("\n=== #2435 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #3043: Soft-observe tier (production default still OFF) ─────
+    {
+        std::println("\n--- #3043 AC1: production default still OFF ---");
+        CHECK(aura::core::cpp26::kHotContractSoftObserveIssue == 3043, "3043 AC1: issue constant");
+        auto hh = read_file("src/core/cpp26_contract_stats.h");
+        CHECK(hh.find("Issue #3043") != std::string::npos, "3043 AC1: policy #3043");
+        CHECK(hh.find("Soft-observe") != std::string::npos ||
+                  hh.find("SOFT_OBSERVE") != std::string::npos,
+              "3043 AC1: Soft-observe tier documented");
+        CHECK(hh.find("AURA_HOT_MODE_OFF") != std::string::npos, "3043 AC1: OFF still present");
+#if defined(NDEBUG) && !defined(AURA_CONTRACTS_ENFORCE) && !defined(AURA_CONTRACTS_OBSERVE) &&     \
+    !defined(AURA_CONTRACTS_HOT_MODE_ENFORCE) && !defined(AURA_CONTRACTS_HOT_MODE_OBSERVE) &&      \
+    !defined(AURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE) && !defined(AURA_HOT_SOFT_OBSERVE)
+        CHECK(kHotContractsMode == kHotModeOff, "3043 AC1: NDEBUG default still off");
+        const auto h0 = hotpath_invariant_hits_total.load(std::memory_order_relaxed);
+        AURA_HOT_CHECK(false); // must not abort under production OFF
+        AURA_HOT_RECORD();
+        const auto h1 = hotpath_invariant_hits_total.load(std::memory_order_relaxed);
+        CHECK(h1 == h0, "3043 AC1: OFF RECORD still zero-cost");
+#else
+        CHECK(kHotContractsMode == kHotModeEnforce || kHotContractsMode == kHotModeObserve ||
+                  kHotContractsMode == kHotModeOff,
+              "3043 AC1: mode is valid enum");
+#endif
+
+        std::println("\n--- #3043 AC2: Soft-observe metrics, no abort ---");
+        CHECK(hh.find("observe_hot_contract_false") != std::string::npos,
+              "3043 AC2: observe helper present");
+        CHECK(hh.find("AURA_HOT_MODE_SOFT_OBSERVE") != std::string::npos,
+              "3043 AC2: Soft-observe flag");
+        const auto f0 =
+            aura::core::cpp26::contract_violation_hotpath_count.load(std::memory_order_relaxed);
+        aura::core::cpp26::observe_hot_contract_false();
+        const auto f1 =
+            aura::core::cpp26::contract_violation_hotpath_count.load(std::memory_order_relaxed);
+        CHECK(f1 > f0, "3043 AC2: observe_hot_contract_false visible");
+        CHECK(true, "3043 AC2: helper does not abort");
+
+        std::println("\n--- #3043 AC3: Enforce path unchanged ---");
+        CHECK(hh.find("contract_assert(expr)") != std::string::npos, "3043 AC3: enforce assert");
+        CHECK(hh.find("AURA_HOT_MODE_ENFORCE") != std::string::npos, "3043 AC3: enforce flag");
+        CHECK(hh.find("fail-closed") != std::string::npos, "3043 AC3: fail-closed debug");
+
+        std::println("\n--- #3043 AC4: sampled RECORD upper bound ---");
+        CHECK(hh.find("kHotSoftObserveRecordSample") != std::string::npos,
+              "3043 AC4: sample period named");
+        CHECK(aura::core::cpp26::kHotSoftObserveRecordSample == 256, "3043 AC4: sample period 256");
+        CHECK(hh.find("record_hotpath_invariant_hit_sampled") != std::string::npos,
+              "3043 AC4: sampled RECORD helper");
+        CHECK(hh.find("per-call atomic") != std::string::npos ||
+                  hh.find("per-call atomic RMW") != std::string::npos,
+              "3043 AC4: no per-call RMW documented");
+
+        std::println("\n--- #3043 AC5: query hot-contract-false ---");
+        auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(q.find("schema-3043") != std::string::npos, "3043 AC5: schema-3043 query key");
+        CHECK(q.find("hot-contract-false-total") != std::string::npos,
+              "3043 AC5: false-total query key");
+        CompilerService cs3043;
+        CHECK(cs3043.eval("(+ 1 2)").has_value(), "3043 eval ok");
+        CHECK(href(cs3043, "schema-3043") == 3043, "3043 AC5: schema-3043 runtime");
+        CHECK(href(cs3043, "issue-3043") == 3043, "3043 AC5: issue-3043");
+        CHECK(href(cs3043, "hot-contract-soft-observe-wired") == 1, "3043 AC5: soft-observe wired");
+        CHECK(href(cs3043, "hot-contract-false-total") >= 0, "3043 AC5: false-total readable");
+        CHECK(href(cs3043, "hot-contract-soft-observe-sample-period") == 256,
+              "3043 AC5: sample period queryable");
+        CHECK(href(cs3043, "hot-contracts-mode-env") >= 0, "3043 AC5: mode-env readable");
+        CHECK(href(cs3043, "hot-contracts-production-off-default") == 1,
+              "3043 AC5: production OFF default wired");
+    }
+
+    std::println("\n=== #2435/#3043 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

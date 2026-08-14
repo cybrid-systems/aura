@@ -1,5 +1,6 @@
-// cpp26_contract_stats.h — Issue #742 / #2142 / #2435: runtime observability
-// for C++26 Contracts + consteval hot-path invariants (zero release cost).
+// cpp26_contract_stats.h — Issue #742 / #2142 / #2435 / #3043: runtime
+// observability for C++26 Contracts + consteval hot-path invariants
+// (zero release cost by default).
 //
 // Plain header (not a module) so contract_handler.cpp, value_tags.h,
 // arena.ixx, and pass_manager can all bump counters without crossing
@@ -28,14 +29,21 @@
 //   AURA_COLD_CONTRACT(expr)    — cold-edge enforce (debug/enforce only)
 //   AURA_HOT_CHECK_CONSTEXPR    — constexpr-friendly column bounds (hot)
 //
-// Hot-mode selection (Issue #2435 AC1 — production default OFF):
-//   * -DAURA_CONTRACTS_HOT_MODE_ENFORCE  or -DAURA_CONTRACTS_ENFORCE
+// Three tiers (Issue #2435 AC1 + #3043 Soft-observe):
+//   * Enforce — -DAURA_CONTRACTS_HOT_MODE_ENFORCE / -DAURA_CONTRACTS_ENFORCE
 //       or debug (!NDEBUG) without OFF/OBSERVE override:
-//         RECORD + CHECK → contract_assert  (fail-closed)
-//   * -DAURA_CONTRACTS_HOT_MODE_OBSERVE  or -DAURA_CONTRACTS_OBSERVE:
-//         RECORD + CHECK → metrics only (no abort)
-//   * -DAURA_CONTRACTS_HOT_MODE_OFF  or production (NDEBUG) default:
+//         RECORD (every call) + CHECK → contract_assert  (fail-closed)
+//   * Soft-observe — -DAURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE /
+//       -DAURA_HOT_SOFT_OBSERVE / -DAURA_CONTRACTS_HOT_MODE_OBSERVE /
+//       -DAURA_CONTRACTS_OBSERVE:
+//         sampled RECORD + CHECK → observe_hot_contract_false() only
+//         (metrics, no abort). Sample period avoids per-call atomic RMW.
+//   * Off — -DAURA_CONTRACTS_HOT_MODE_OFF or production (NDEBUG) default:
 //         RECORD + CHECK → no-op  (zero cost on happy path)
+//
+// Env AURA_CONTRACTS_HOT_MODE=soft|observe|off|enforce is Agent-visible
+// intent on query:cpp26-contracts-stats (hot-contracts-mode-env). It does
+// not change compile-time OFF macros, so production default stays zero-cost.
 //
 // Do NOT scatter bare contract_assert on new absolute-hot accessors —
 // use AURA_HOT_CHECK / AURA_HOT_CHECK_CONSTEXPR so interpreter/JIT walks
@@ -46,20 +54,26 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 
 // ── Hot mode preprocessor selection (Issue #2435) ───────────────────────
 // Priority: explicit HOT_MODE_* > ENFORCE/OBSERVE legacy flags > NDEBUG.
 #if defined(AURA_CONTRACTS_HOT_MODE_ENFORCE) || defined(AURA_CONTRACTS_ENFORCE)
 #define AURA_HOT_MODE_ENFORCE 1
-#elif defined(AURA_CONTRACTS_HOT_MODE_OBSERVE) || defined(AURA_CONTRACTS_OBSERVE)
+#elif defined(AURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE) || defined(AURA_HOT_SOFT_OBSERVE) ||           \
+    defined(AURA_CONTRACTS_HOT_MODE_OBSERVE) || defined(AURA_CONTRACTS_OBSERVE)
+// Issue #3043: Soft-observe is the production-optional metrics-only tier.
+// Legacy OBSERVE flags alias the same mode.
 #define AURA_HOT_MODE_OBSERVE 1
+#define AURA_HOT_MODE_SOFT_OBSERVE 1
 #elif defined(AURA_CONTRACTS_HOT_MODE_OFF)
 #define AURA_HOT_MODE_OFF 1
 #elif !defined(NDEBUG)
 // Debug default: enforce (fail-closed) — matches pre-#2435 developer UX.
 #define AURA_HOT_MODE_ENFORCE 1
 #else
-// Issue #2435 AC1: production (NDEBUG) default — hot contracts OFF.
+// Issue #2435 AC1 / #3043 AC1: production (NDEBUG) default — hot contracts OFF.
 #define AURA_HOT_MODE_OFF 1
 #endif
 
@@ -73,6 +87,11 @@ namespace aura::core::cpp26 {
 inline constexpr int kHotContractUnifyIssue = 2142;
 // Issue #2435: hot vs cold tier policy + production OFF default.
 inline constexpr int kHotContractPlacementIssue = 2435;
+// Issue #3043: Soft-observe tier (metrics, no abort) + sampled RECORD.
+inline constexpr int kHotContractSoftObserveIssue = 3043;
+// Soft-observe RECORD sample period (power of two). Acceptable upper
+// bound vs OFF: one relaxed atomic per this many RECORD sites.
+inline constexpr std::uint32_t kHotSoftObserveRecordSample = 256;
 
 // Hot-mode enum for query surface (0=off, 1=observe, 2=enforce).
 inline constexpr int kHotModeOff = 0;
@@ -134,6 +153,9 @@ inline std::atomic<std::uint64_t> aura_hot_contract_wired{1};
 inline std::atomic<std::uint64_t> hotpath_contracts_2435_active{1};
 inline std::atomic<std::uint64_t> hot_contract_placement_wired{1};
 inline std::atomic<std::uint64_t> hot_contracts_production_off_default{1};
+// Issue #3043: Soft-observe wired (compile-time optional; default OFF).
+inline std::atomic<std::uint64_t> hot_contract_soft_observe_wired{1};
+inline std::atomic<std::uint64_t> hotpath_contracts_3043_active{1};
 inline std::atomic<std::uint64_t> arena_tier_contracts_active{1};
 inline std::atomic<std::uint64_t> value_as_star_contracts_active{1};
 inline std::atomic<std::uint64_t> shape_bit_test_contracts_active{1};
@@ -165,22 +187,53 @@ inline void record_consteval_invariant_added() noexcept {
     consteval_invariants_total.fetch_add(1, std::memory_order_relaxed);
 }
 
-// Issue #2142: release-observe sample (optional AURA_CONTRACTS_OBSERVE).
+// Issue #2142 / #3043: Soft-observe CHECK failure (metrics only, no abort).
 inline void observe_hot_contract_false() noexcept {
     record_contract_violation_hotpath();
+}
+
+// Soft-observe RECORD: thread-local sample, not a per-call atomic RMW.
+inline void record_hotpath_invariant_hit_sampled() noexcept {
+    static thread_local std::uint32_t n = 0;
+    if ((++n & (kHotSoftObserveRecordSample - 1u)) == 0)
+        record_hotpath_invariant_hit();
 }
 
 [[nodiscard]] inline int current_hot_contracts_mode() noexcept {
     return kHotContractsMode;
 }
 
+// Cold-path env peek (query / startup). Does not change OFF macros.
+[[nodiscard]] inline int peek_hot_contracts_mode_env() noexcept {
+    static std::atomic<int> cached{-1};
+    int v = cached.load(std::memory_order_relaxed);
+    if (v >= 0)
+        return v;
+    int parsed = kHotModeOff;
+    if (const char* e = std::getenv("AURA_CONTRACTS_HOT_MODE")) {
+        if (std::strcmp(e, "soft") == 0 || std::strcmp(e, "observe") == 0 ||
+            std::strcmp(e, "SOFT") == 0 || std::strcmp(e, "OBSERVE") == 0)
+            parsed = kHotModeObserve;
+        else if (std::strcmp(e, "enforce") == 0 || std::strcmp(e, "ENFORCE") == 0)
+            parsed = kHotModeEnforce;
+        else
+            parsed = kHotModeOff;
+    }
+    int expected = -1;
+    cached.compare_exchange_strong(expected, parsed, std::memory_order_relaxed);
+    return cached.load(std::memory_order_relaxed);
+}
+
 } // namespace aura::core::cpp26
 
 // ── Issue #2142 / #2435: AURA_HOT_* macros (see file header policy) ─────
 
-// Hot RECORD — atomic probe. Elided under production OFF (#2435).
+// Hot RECORD — elided under production OFF (#2435). Soft-observe (#3043)
+// samples so the happy path is not a per-call atomic RMW.
 #if defined(AURA_HOT_MODE_OFF)
 #define AURA_HOT_RECORD() ((void)0)
+#elif defined(AURA_HOT_MODE_SOFT_OBSERVE) || defined(AURA_HOT_MODE_OBSERVE)
+#define AURA_HOT_RECORD() ::aura::core::cpp26::record_hotpath_invariant_hit_sampled()
 #else
 #define AURA_HOT_RECORD() ::aura::core::cpp26::record_hotpath_invariant_hit()
 #endif

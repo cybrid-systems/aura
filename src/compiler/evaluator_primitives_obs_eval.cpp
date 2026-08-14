@@ -9624,6 +9624,27 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(
                           aura::core::cpp26::hot_contracts_production_off_default.load(
                               std::memory_order_relaxed)));
+            // Issue #3043: Soft-observe tier (metrics, no abort)
+            insert_kv("schema-3043", 3043);
+            insert_kv("issue-3043", 3043);
+            insert_kv("hot-contract-soft-observe-issue",
+                      static_cast<std::int64_t>(aura::core::cpp26::kHotContractSoftObserveIssue));
+            insert_kv(
+                "hot-contract-soft-observe-wired",
+                static_cast<std::int64_t>(aura::core::cpp26::hot_contract_soft_observe_wired.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "hotpath-contracts-3043-active",
+                static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_3043_active.load(
+                    std::memory_order_relaxed)));
+            insert_kv(
+                "hot-contract-false-total",
+                static_cast<std::int64_t>(aura::core::cpp26::contract_violation_hotpath_count.load(
+                    std::memory_order_relaxed)));
+            insert_kv("hot-contract-soft-observe-sample-period",
+                      static_cast<std::int64_t>(aura::core::cpp26::kHotSoftObserveRecordSample));
+            insert_kv("hot-contracts-mode-env",
+                      static_cast<std::int64_t>(aura::core::cpp26::peek_hot_contracts_mode_env()));
             insert_kv("arena-tier-contracts-active",
                       static_cast<std::int64_t>(aura::core::cpp26::arena_tier_contracts_active.load(
                           std::memory_order_relaxed)));
