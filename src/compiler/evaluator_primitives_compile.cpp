@@ -5900,6 +5900,18 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
                 {"match-check-wired", make_int(1)},
                 {"schema-2348", make_int(2348)},
                 {"issue-2348", make_int(2348)},
+                // Issue #3044: uncovered bidirectional tag (silent Dynamic gate)
+                {"schema-3044", make_int(3044)},
+                {"issue-3044", make_int(3044)},
+                {"uncovered-tag-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_bidirectional_uncovered_tag_total.load(
+                         std::memory_order_relaxed)))},
+                {"uncovered-tag-hard-reject-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::g_bidirectional_uncovered_tag_hard_reject_total.load(
+                         std::memory_order_relaxed)))},
+                {"uncovered-tag-wired", make_int(1)},
                 // Issue #2992: ground-type permissiveness knob + diagnostics
                 {"gradual-permissiveness", gp_ev},
                 {"gradual-permissiveness-mode", make_int(static_cast<std::int64_t>(gp))},
