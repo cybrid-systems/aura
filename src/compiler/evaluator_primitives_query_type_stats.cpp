@@ -673,6 +673,38 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                           aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue);
                 insert_kv("issue-2938",
                           aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue);
+                // Issue #2995: unified OccurrenceCommitHealth (additive).
+                insert_kv("occurrence-commit-health-faces",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::g_occurrence_commit_health_faces.load(
+                                  std::memory_order_relaxed)));
+                insert_kv(
+                    "occurrence-commit-health-goals-live",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::g_occurrence_commit_health_goals_live.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "occurrence-commit-health-persist-size",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::g_occurrence_commit_health_persist_size.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "occurrence-commit-health-needs-recover",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::g_occurrence_commit_health_needs_recover.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "occurrence-commit-health-recovered-ok",
+                    static_cast<std::int64_t>(aura::compiler::typed_audit::
+                                                  occurrence_commit_health_recovered_ok_v_read()));
+                insert_kv(
+                    "occurrence-commit-health-fingerprint-ok",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::g_occurrence_commit_health_fingerprint_ok.load(
+                            std::memory_order_relaxed)));
+                insert_kv("occurrence-commit-health-wired", 1);
+                insert_kv("schema-2995", aura::compiler::typed_audit::kOccurrenceCommitHealthIssue);
+                insert_kv("issue-2995", aura::compiler::typed_audit::kOccurrenceCommitHealthIssue);
             }
             // Issue #2307: sole-authority sentinel.
             // solve_delta_occurrence now seeds occurrence

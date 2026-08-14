@@ -1195,6 +1195,56 @@ inline void reset_occurrence_commit_snapshot_for_test() noexcept {
     g_occurrence_commit_snapshot_written_total.store(0, std::memory_order_relaxed);
     g_occurrence_commit_snapshot_mid.store(0, std::memory_order_relaxed);
 }
+
+// Issue #2995: last OccurrenceCommitHealth snapshot + ensure counters.
+// Soft + empty / no faces: evaluate is pure loads (these stay at reset).
+// ensure_* only fetch_adds when production needs_recover.
+inline constexpr int kOccurrenceCommitHealthIssue = 2995;
+inline std::atomic<std::uint32_t> g_occurrence_commit_health_faces{0};
+inline std::atomic<std::uint64_t> g_occurrence_commit_health_goals_live{0};
+inline std::atomic<std::uint64_t> g_occurrence_commit_health_persist_size{0};
+inline std::atomic<std::uint8_t> g_occurrence_commit_health_needs_recover{0};
+inline std::atomic<std::uint8_t> g_occurrence_commit_health_recovered_ok{0};
+inline std::atomic<std::uint8_t> g_occurrence_commit_health_fingerprint_ok{1};
+inline std::atomic<std::uint32_t> g_occurrence_commit_health_wired{1};
+inline std::atomic<std::uint64_t> g_occurrence_commit_health_ensure_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_commit_health_recover_ok_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_commit_health_recover_fail_total{0};
+[[nodiscard]] inline std::uint8_t occurrence_commit_health_recovered_ok_v_read() noexcept {
+    return g_occurrence_commit_health_recovered_ok.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_commit_health_ensure_total_v_read() noexcept {
+    return g_occurrence_commit_health_ensure_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_commit_health_recover_ok_total_v_read() noexcept {
+    return g_occurrence_commit_health_recover_ok_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_commit_health_recover_fail_total_v_read() noexcept {
+    return g_occurrence_commit_health_recover_fail_total.load(std::memory_order_relaxed);
+}
+inline void publish_occurrence_commit_health(std::uint32_t faces, std::uint64_t goals_live,
+                                             std::uint64_t persist_size, bool needs_recover,
+                                             bool recovered_ok, bool fingerprint_ok) noexcept {
+    g_occurrence_commit_health_faces.store(faces, std::memory_order_relaxed);
+    g_occurrence_commit_health_goals_live.store(goals_live, std::memory_order_relaxed);
+    g_occurrence_commit_health_persist_size.store(persist_size, std::memory_order_relaxed);
+    g_occurrence_commit_health_needs_recover.store(needs_recover ? 1 : 0,
+                                                   std::memory_order_relaxed);
+    g_occurrence_commit_health_recovered_ok.store(recovered_ok ? 1 : 0, std::memory_order_relaxed);
+    g_occurrence_commit_health_fingerprint_ok.store(fingerprint_ok ? 1 : 0,
+                                                    std::memory_order_relaxed);
+}
+inline void reset_occurrence_commit_health_for_test() noexcept {
+    g_occurrence_commit_health_faces.store(0, std::memory_order_relaxed);
+    g_occurrence_commit_health_goals_live.store(0, std::memory_order_relaxed);
+    g_occurrence_commit_health_persist_size.store(0, std::memory_order_relaxed);
+    g_occurrence_commit_health_needs_recover.store(0, std::memory_order_relaxed);
+    g_occurrence_commit_health_recovered_ok.store(0, std::memory_order_relaxed);
+    g_occurrence_commit_health_fingerprint_ok.store(1, std::memory_order_relaxed);
+    g_occurrence_commit_health_ensure_total.store(0, std::memory_order_relaxed);
+    g_occurrence_commit_health_recover_ok_total.store(0, std::memory_order_relaxed);
+    g_occurrence_commit_health_recover_fail_total.store(0, std::memory_order_relaxed);
+}
 // Process gauge published by stamp sites / query when CS goals known.
 // Quiet default 0 (no CS / empty goals). Gauge is fallback-only under
 // production when CS is unavailable (#2842) — prefer CS size at stamp.

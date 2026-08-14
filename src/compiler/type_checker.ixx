@@ -2198,6 +2198,26 @@ export TypeCheckResult type_check_flat_pure(
     // implicit at the language level.
     pre(true);
 
+// Issue #2995: unified Occurrence narrowing commit health. Agents fold
+// persist / fence / fingerprint / face bits into one snapshot instead of
+// joining #2938 / #2910 / #2704 / #2909 / #2911 surfaces.
+// Soft + empty / no faces → pure loads (no persist write, no recover).
+// production + face → needs_recover; ensure_* runs the existing
+// try_occurrence_hard_face_full_solve_recover once (no second solver).
+export inline constexpr std::uint32_t kOccurrenceCommitFaceEmptyAfterFence = 1u << 0;
+export inline constexpr std::uint32_t kOccurrenceCommitFaceConeOutside = 1u << 1;
+export inline constexpr std::uint32_t kOccurrenceCommitFaceRefinedDrift = 1u << 2;
+export inline constexpr std::uint32_t kOccurrenceCommitFaceFingerprintMismatch = 1u << 3;
+export inline constexpr int kOccurrenceCommitHealthIssue = 2995;
+export struct OccurrenceCommitHealth {
+    std::uint32_t faces_bitmask = 0;
+    std::size_t goals_live = 0;
+    std::size_t persist_size = 0;
+    bool fingerprint_ok = true;
+    bool needs_recover = false;
+    bool recovered_ok = false;
+};
+
 export struct TypeChecker {
     aura::core::TypeRegistry& types;
     aura::core::TypeId infer_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
@@ -2399,6 +2419,11 @@ export struct TypeChecker {
             // Issue #2622: fence joint memo+goal authority wired.
             m->occurrence_memo_goal_fence_joint_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #2995: single-shot health / recover AFTER #2910
+        // fence → rehydrate → miss latch. Do not reorder densify
+        // stamp (#2910); stamp sites remain later. Same ensure
+        // entry as outermost success — no third recover path.
+        (void)ensure_occurrence_commit_or_recover();
         return goals_dropped;
     }
     // Issue #2608: outermost success boundary hook — persist live goals
@@ -2692,6 +2717,83 @@ export struct TypeChecker {
         if (!ctx)
             return false;
         return static_cast<TypeChecker*>(ctx)->try_occurrence_hard_face_full_solve_recover();
+    }
+
+    // Issue #2995: pure health snapshot. Soft + empty goals / no faces
+    // is loads only (no persist write, no recover, counters stable).
+    [[nodiscard]] OccurrenceCommitHealth evaluate_occurrence_commit_health() const noexcept {
+        OccurrenceCommitHealth h;
+        h.goals_live = solve_delta_cs_.occurrence_goals_size();
+        h.persist_size = solve_delta_cs_.occurrence_persist_log_size();
+        using namespace aura::compiler::typed_audit;
+        if (occurrence_empty_after_fence_total_v_read() > 0)
+            h.faces_bitmask |= kOccurrenceCommitFaceEmptyAfterFence;
+        if (cone_outside_goal_drop_total_v_read() > 0)
+            h.faces_bitmask |= kOccurrenceCommitFaceConeOutside;
+        if (refined_consistency_drift_face_hit())
+            h.faces_bitmask |= kOccurrenceCommitFaceRefinedDrift;
+        std::uint64_t live_fp = 0;
+        const auto& goals = solve_delta_cs_.occurrence_goals_for_test();
+        if (!goals.empty()) {
+            std::uint64_t acc = 0xcbf29ce484222325ULL;
+            const auto n = goals.size() < kProofGoalFingerprintMaxGoals
+                               ? goals.size()
+                               : kProofGoalFingerprintMaxGoals;
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& g = goals[i];
+                acc = mix_occurrence_goal_into_fingerprint(acc, g.var.index, g.refined.index,
+                                                           g.predicate_cond_node,
+                                                           g.source_mutation_id, g.epoch);
+            }
+            live_fp = (acc != 0) ? acc : 1;
+        }
+        const auto stamped_fp = last_proof_goal_fingerprint_v_read();
+        const auto stamped_n = last_proof_live_goal_count_v_read();
+        const bool have_stamp = stamped_fp != 0 || stamped_n != 0;
+        h.fingerprint_ok = !have_stamp || stamped_fp == live_fp;
+        if (!h.fingerprint_ok)
+            h.faces_bitmask |= kOccurrenceCommitFaceFingerprintMismatch;
+        const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        // Recover authority: empty_after_fence / cone_outside / refined_drift
+        // (AC2). Fingerprint mismatch is Agent-visible but does not force
+        // recover (rehydrate stamps epoch=0, which would false-positive).
+        const auto recover_faces = h.faces_bitmask & (kOccurrenceCommitFaceEmptyAfterFence |
+                                                      kOccurrenceCommitFaceConeOutside |
+                                                      kOccurrenceCommitFaceRefinedDrift);
+        h.needs_recover = hard && recover_faces != 0;
+        h.recovered_ok = occurrence_commit_health_recovered_ok_v_read() != 0;
+        return h;
+    }
+
+    // Issue #2995: Soft → evaluate only. production + needs_recover →
+    // exactly one try_occurrence_hard_face_full_solve_recover. Success
+    // clears face stamps per existing recover semantics. Fail leaves
+    // faces so commit_readiness still uses existing force_reason codes.
+    bool ensure_occurrence_commit_or_recover() noexcept {
+        auto h = evaluate_occurrence_commit_health();
+        if (!h.needs_recover)
+            return true;
+        using namespace aura::compiler::typed_audit;
+        g_occurrence_commit_health_ensure_total.fetch_add(1, std::memory_order_relaxed);
+        const bool ok = try_occurrence_hard_face_full_solve_recover();
+        if (ok) {
+            clear_cone_outside_goal_drop_for_test();
+            clear_occurrence_empty_after_fence_for_test();
+            clear_partial_cone_truncate_for_test();
+            g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);
+            g_occurrence_hard_face_recover_success_total.fetch_add(1, std::memory_order_relaxed);
+            g_occurrence_commit_health_recover_ok_total.fetch_add(1, std::memory_order_relaxed);
+            g_occurrence_commit_health_recovered_ok.store(1, std::memory_order_relaxed);
+        } else {
+            g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+            g_occurrence_commit_health_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+            g_occurrence_commit_health_recovered_ok.store(0, std::memory_order_relaxed);
+        }
+        h = evaluate_occurrence_commit_health();
+        publish_occurrence_commit_health(h.faces_bitmask, static_cast<std::uint64_t>(h.goals_live),
+                                         static_cast<std::uint64_t>(h.persist_size),
+                                         h.needs_recover, ok, h.fingerprint_ok);
+        return ok;
     }
 
     // Issue #1414: expose a persistent ConstraintSystem so

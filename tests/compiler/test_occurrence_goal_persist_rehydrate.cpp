@@ -56,16 +56,21 @@ using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
 using aura::compiler::TypeChecker;
 namespace typed_audit = aura::compiler::typed_audit;
+using aura::compiler::kOccurrenceCommitFaceEmptyAfterFence;
+using aura::compiler::kOccurrenceCommitHealthIssue;
 using aura::compiler::solve_delta_occurrence;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
 using aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue;
 using aura::compiler::typed_audit::note_occurrence_commit_snapshot_written;
+using aura::compiler::typed_audit::occurrence_commit_health_ensure_total_v_read;
+using aura::compiler::typed_audit::occurrence_commit_health_recover_ok_total_v_read;
 using aura::compiler::typed_audit::occurrence_commit_snapshot_mid_v_read;
 using aura::compiler::typed_audit::occurrence_commit_snapshot_written_total_v_read;
 using aura::compiler::typed_audit::occurrence_empty_after_fence_soft_total_v_read;
 using aura::compiler::typed_audit::occurrence_empty_after_fence_total_v_read;
+using aura::compiler::typed_audit::reset_occurrence_commit_health_for_test;
 using aura::compiler::typed_audit::reset_occurrence_commit_snapshot_for_test;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -843,6 +848,163 @@ static void ac2981_6_source_and_linter() {
           "AC6: no invent test per #81967");
 }
 
+// ── Issue #2995: unified OccurrenceCommitHealth + single-shot ensure ──
+
+static void ac2995_1_soft_empty_pure_loads() {
+    std::println("\n--- #2995 AC1: Soft + empty → pure loads, no persist/recover ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    reset_occurrence_commit_health_for_test();
+    reset_occurrence_commit_snapshot_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    const auto ensure0 = occurrence_commit_health_ensure_total_v_read();
+    const auto rec0 = occurrence_commit_health_recover_ok_total_v_read();
+    const auto snap0 = occurrence_commit_snapshot_written_total_v_read();
+    const auto h = tc.evaluate_occurrence_commit_health();
+    CHECK(h.goals_live == 0, "2995 AC1: goals_live 0");
+    CHECK(h.persist_size == 0, "2995 AC1: persist_size 0");
+    CHECK(h.faces_bitmask == 0, "2995 AC1: no faces");
+    CHECK(!h.needs_recover, "2995 AC1: Soft no recover");
+    CHECK(h.fingerprint_ok, "2995 AC1: fingerprint_ok");
+    CHECK(!h.recovered_ok, "2995 AC1: recovered_ok false");
+    CHECK(tc.ensure_occurrence_commit_or_recover(), "2995 AC1: ensure is evaluate-only");
+    CHECK(occurrence_commit_health_ensure_total_v_read() == ensure0,
+          "2995 AC1: ensure counter stable");
+    CHECK(occurrence_commit_health_recover_ok_total_v_read() == rec0,
+          "2995 AC1: recover counter stable");
+    CHECK(occurrence_commit_snapshot_written_total_v_read() == snap0, "2995 AC1: no persist write");
+    CHECK(tc.maybe_persist_occurrence_snapshot(1) == 0, "2995 AC1: persist still Soft-off");
+}
+
+static void ac2995_2_production_face_one_shot_recover() {
+    std::println("\n--- #2995 AC2: production + empty-after-fence → one recover ---");
+    apply_production_audit_defaults();
+    reset_occurrence_commit_health_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
+    const auto h0 = tc.evaluate_occurrence_commit_health();
+    CHECK(h0.needs_recover, "2995 AC2: needs_recover");
+    CHECK((h0.faces_bitmask & kOccurrenceCommitFaceEmptyAfterFence) != 0,
+          "2995 AC2: empty-after-fence face");
+    const auto ensure0 = occurrence_commit_health_ensure_total_v_read();
+    const auto rec0 = occurrence_commit_health_recover_ok_total_v_read();
+    CHECK(tc.ensure_occurrence_commit_or_recover(), "2995 AC2: empty CS recover SOLVED");
+    CHECK(occurrence_commit_health_ensure_total_v_read() == ensure0 + 1,
+          "2995 AC2: ensure exactly once");
+    CHECK(occurrence_commit_health_recover_ok_total_v_read() == rec0 + 1, "2995 AC2: recover ok");
+    CHECK(occurrence_empty_after_fence_total_v_read() == 0, "2995 AC2: face cleared");
+    const auto h1 = tc.evaluate_occurrence_commit_health();
+    CHECK(!h1.needs_recover, "2995 AC2: needs_recover cleared");
+    CHECK(h1.recovered_ok, "2995 AC2: recovered_ok");
+    apply_dev_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+    reset_occurrence_commit_health_for_test();
+}
+
+static void ac2995_4_fingerprint_after_persist() {
+    std::println("\n--- #2995 AC4: post-persist fingerprint matches live goals ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    reset_occurrence_commit_health_for_test();
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    auto& cs = tc.constraint_system();
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 7, 99, 1);
+    CHECK(tc.maybe_persist_occurrence_snapshot(99) >= 1, "2995 AC4: persist wrote");
+    std::uint64_t acc = 0xcbf29ce484222325ULL;
+    for (const auto& g : cs.occurrence_goals_for_test()) {
+        acc = typed_audit::mix_occurrence_goal_into_fingerprint(acc, g.var.index, g.refined.index,
+                                                                g.predicate_cond_node,
+                                                                g.source_mutation_id, g.epoch);
+    }
+    const auto fp = (acc != 0) ? acc : 1;
+    (void)typed_audit::build_type_linear_commit_proof_from_live(
+        99, static_cast<std::uint64_t>(cs.occurrence_goals_size()), fp, true);
+    const auto h = tc.evaluate_occurrence_commit_health();
+    CHECK(h.goals_live == 1, "2995 AC4: goals_live 1");
+    CHECK(h.persist_size >= 1, "2995 AC4: persist_size");
+    CHECK(h.fingerprint_ok, "2995 AC4: fingerprint matches after stamp");
+    apply_dev_audit_defaults();
+}
+
+static void ac2995_5_fence_same_ensure() {
+    std::println("\n--- #2995 AC5: fence health + same ensure entry ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    reset_occurrence_commit_health_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    auto& cs = tc.constraint_system();
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 3, 50, 1);
+    CHECK(tc.maybe_persist_occurrence_snapshot(50) >= 1, "2995 AC5: snapshot");
+    const auto dropped = tc.note_steal_or_densify_epoch_fence(2);
+    CHECK(dropped == 1, "2995 AC5: prune dropped 1");
+    const auto h = tc.evaluate_occurrence_commit_health();
+    CHECK(h.goals_live > 0, "2995 AC5: post-rehydrate live size");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(ixx.find("ensure_occurrence_commit_or_recover") != std::string::npos,
+          "2995 AC5: fence calls ensure");
+    const auto reh = ixx.find("rehydrate_occurrence_from_persist");
+    const auto ens =
+        ixx.find("ensure_occurrence_commit_or_recover", reh != std::string::npos ? reh : 0);
+    CHECK(reh != std::string::npos && ens != std::string::npos && reh < ens,
+          "2995 AC5: ensure after #2910 rehydrate");
+    CHECK(mb.find("ensure_occurrence_commit_or_recover") != std::string::npos,
+          "2995 AC5: outermost success same ensure");
+    apply_dev_audit_defaults();
+    clear_occurrence_empty_after_fence_for_test();
+}
+
+static void ac2995_6_query_keys() {
+    std::println("\n--- #2995 AC6: fidelity query keys ---");
+    CompilerService svc;
+    CHECK(href(svc, "schema-2995") == 2995, "2995 AC6: schema-2995");
+    CHECK(href(svc, "issue-2995") == 2995, "2995 AC6: issue-2995");
+    CHECK(href(svc, "occurrence-commit-health-wired") == 1, "2995 AC6: wired");
+    CHECK(href(svc, "occurrence-commit-health-faces") >= 0, "2995 AC6: faces");
+    CHECK(href(svc, "occurrence-commit-health-goals-live") >= 0, "2995 AC6: goals-live");
+    CHECK(href(svc, "occurrence-commit-health-persist-size") >= 0, "2995 AC6: persist-size");
+    CHECK(href(svc, "occurrence-commit-health-needs-recover") >= 0, "2995 AC6: needs-recover");
+    CHECK(href(svc, "occurrence-commit-health-recovered-ok") >= 0, "2995 AC6: recovered-ok");
+    CHECK(href(svc, "schema-2938") == 2938, "2995 AC6: schema-2938 preserved");
+    CHECK(href(svc, "schema-2910") == 2910, "2995 AC6: schema-2910 preserved");
+    CHECK(kOccurrenceCommitHealthIssue == 2995, "2995 AC6: ixx issue constant");
+}
+
+static void ac2995_7_source_cite() {
+    std::println("\n--- #2995 AC7: source-cite + linter ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_occurrence_commit_health_2995.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("struct OccurrenceCommitHealth") != std::string::npos, "2995 AC7: struct");
+    CHECK(ixx.find("evaluate_occurrence_commit_health") != std::string::npos, "2995 AC7: evaluate");
+    CHECK(ixx.find("ensure_occurrence_commit_or_recover") != std::string::npos, "2995 AC7: ensure");
+    CHECK(ixx.find("try_occurrence_hard_face_full_solve_recover") != std::string::npos,
+          "2995 AC7: existing recover");
+    CHECK(mb.find("#2938") != std::string::npos, "2995 AC7: #2938 order");
+    CHECK(ixx.find("#2910") != std::string::npos, "2995 AC7: #2910 order");
+    CHECK(t.find("ac2995_1_soft_empty_pure_loads") != std::string::npos, "2995 AC7: AC1");
+    CHECK(!lint.empty(), "2995 AC7: linter");
+    CHECK(build.find("check_occurrence_commit_health_2995") != std::string::npos,
+          "2995 AC7: build.py");
+    CHECK(read_file("docs/design/2995-occurrence-commit-health.md").empty(),
+          "2995 AC7: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_2995.cpp").empty(),
+          "2995 AC7: no invent test_issue_2995");
+}
+
 } // namespace
 
 int run_test_occurrence_goal_persist_rehydrate() {
@@ -884,6 +1046,13 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2981_4_same_txn_order();
     ac2981_5_additive_schema();
     ac2981_6_source_and_linter();
+    std::println("\n=== #2995 OccurrenceCommitHealth + single-shot ensure ===");
+    ac2995_1_soft_empty_pure_loads();
+    ac2995_2_production_face_one_shot_recover();
+    ac2995_4_fingerprint_after_persist();
+    ac2995_5_fence_same_ensure();
+    ac2995_6_query_keys();
+    ac2995_7_source_cite();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

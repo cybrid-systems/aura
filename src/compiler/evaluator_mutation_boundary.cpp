@@ -194,6 +194,11 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     const auto truth = freeze_proof_goal_truth_from_type_checker(tc);
     (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live(
         mutation_id, truth.live_goal_count, truth.goal_fingerprint, truth.from_cs);
+    // Issue #2995: single-shot OccurrenceCommitHealth after persist +
+    // post-persist stamp. Does not write persist (sole writer remains
+    // this helper — #2938). Soft empty → evaluate only; production
+    // faces → existing try_occurrence_hard_face_full_solve_recover.
+    (void)tc->ensure_occurrence_commit_or_recover();
     (void)ev; // reserved for future evaluator-scoped stamp faces
 }
 
