@@ -3711,6 +3711,27 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
             insert_kv("dirty-cone-cast-sites-scanned",
                       static_cast<std::int64_t>(cast_sites_scanned));
             insert_kv("full-scan-runs", static_cast<std::int64_t>(full_scan_runs));
+            // Issue #3007: Production hot-fn residual identity CastOp sweep.
+            {
+                using aura::compiler::opt_registry::dead_coercion_hot_residual_elided_total;
+                using aura::compiler::opt_registry::dead_coercion_hot_residual_reject_total;
+                using aura::compiler::opt_registry::dead_coercion_hot_residual_sweep_total;
+                using aura::compiler::opt_registry::dead_coercion_hot_residual_wired;
+                insert_kv("hot-residual-sweep-total",
+                          static_cast<std::int64_t>(dead_coercion_hot_residual_sweep_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("hot-residual-elided-total",
+                          static_cast<std::int64_t>(dead_coercion_hot_residual_elided_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("hot-residual-reject-total",
+                          static_cast<std::int64_t>(dead_coercion_hot_residual_reject_total.load(
+                              std::memory_order_relaxed)));
+                insert_kv("hot-residual-wired",
+                          static_cast<std::int64_t>(
+                              dead_coercion_hot_residual_wired.load(std::memory_order_relaxed)));
+                insert_kv("schema-3007", 3007);
+                insert_kv("issue-3007", 3007);
+            }
             // Issue #2562: dual-require drop observability (layered dead-coercion
             // + dual gate for Agent pre-check / insert integrity).
             insert_kv(
