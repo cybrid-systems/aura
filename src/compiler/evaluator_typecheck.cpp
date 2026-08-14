@@ -1036,6 +1036,25 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                         cr.solve_ok = true;
                     }
                 }
+                // Issue #3031: pending_full_solve / locality residual must
+                // escalate before TypeLinearCommitProof stamp. Production/Full:
+                // drain → SOLVED or hard-reject (force_reason 16). Soft:
+                // observe allow. Quiet (empty residual): two size reads.
+                {
+                    auto drain = cs_ptr->drain_pending_full_solve_before_commit(&unresolved);
+                    if (drain != SolveResult::SOLVED) {
+                        cr.solve_ok = false;
+                        const bool hard =
+                            production_defaults_active() || get_strategy() == AuditStrategy::Full;
+                        if (hard) {
+                            (void)build_type_linear_commit_proof_from_live_with_outcome(
+                                after_epoch, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                                kProofLiveGoalCountHintAuto, 0, false,
+                                /*force_reason=*/16);
+                            publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+                        }
+                    }
+                }
                 // Issue #2262 / #2345: expected-partial + empty CS anti false-green.
                 // Production defaults / Full / AURA_COMPOSITE_EMPTY_CS_HARD=1 →
                 // hard-reject (solve_ok=false). Dev Sampled soft → observe only
@@ -1468,6 +1487,22 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                             cr.solve_ok = true;
                         else if (gate2.observed && post_escalate2 == SolveResult::SOLVED)
                             cr.solve_ok = true;
+                    }
+                    // Issue #3031: same drain on Full recovery re-solve.
+                    {
+                        auto drain2 = cs.drain_pending_full_solve_before_commit(nullptr);
+                        if (drain2 != SolveResult::SOLVED) {
+                            cr.solve_ok = false;
+                            const bool hard = production_defaults_active() ||
+                                              get_strategy() == AuditStrategy::Full;
+                            if (hard) {
+                                (void)build_type_linear_commit_proof_from_live_with_outcome(
+                                    after_epoch, /*would_allow_commit=*/false,
+                                    /*linear_ok=*/false, kProofLiveGoalCountHintAuto, 0, false,
+                                    /*force_reason=*/16);
+                                publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+                            }
+                        }
                     }
                     if (!cr.solve_ok)
                         c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);

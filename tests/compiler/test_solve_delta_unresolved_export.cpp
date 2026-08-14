@@ -1610,6 +1610,242 @@ static void ac3003_5_source_and_linter() {
           "3003 AC5: no invent test_issue_3003");
 }
 
+// ── Issue #3031: pending_full_solve / locality residual before commit ──
+// AC1 production pending/locality → escalate; still dirty → reject
+// AC2 Soft observe allow
+// AC3 quiet (no residual) zero extra counters
+// AC4 commit_readiness hermetic force_reason 16
+// AC5 schema-3031 keys
+// AC6 source-cite + linter; no invent / no design
+
+static void ac3031_1_production_drain_escalate_reject() {
+    std::println("\n--- #3031 AC1: production drain escalate / reject ---");
+    using aura::compiler::typed_audit::commit_readiness;
+    using aura::compiler::typed_audit::CommitReadinessInput;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::pending_full_solve_residual_last_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_reject_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    cs.seed_pending_full_solve_root_for_test(1);
+    const auto esc0 = pending_full_solve_residual_escalate_total_v_read();
+    const auto rej0 = pending_full_solve_residual_reject_total_v_read();
+    const auto obs0 = pending_full_solve_residual_observe_total_v_read();
+    auto r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r == SolveResult::SOLVED, "3031 AC1: empty-CS pending drains to SOLVED");
+    CHECK(cs.pending_full_solve_roots_size() == 0, "3031 AC1: pending cleared");
+    CHECK(cs.last_locality_pruned() == 0, "3031 AC1: locality cleared");
+    CHECK(pending_full_solve_residual_escalate_total_v_read() > esc0, "3031 AC1: escalate bumps");
+    CHECK(pending_full_solve_residual_reject_total_v_read() == rej0,
+          "3031 AC1: no reject on SOLVED");
+    CHECK(pending_full_solve_residual_observe_total_v_read() == obs0, "3031 AC1: no Soft observe");
+    CHECK(!pending_full_solve_residual_face_hit(), "3031 AC1: face clear after recover");
+
+    cs.force_locality_pruned_for_test(2);
+    r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r == SolveResult::SOLVED, "3031 AC1: locality residual drains to SOLVED");
+    CHECK(cs.last_locality_pruned() == 0, "3031 AC1: locality residual cleared");
+
+    ConstraintSystem cs2(reg);
+    auto a = cs2.fresh_var();
+    Constraint eq1;
+    eq1.kind = Constraint::EQUAL;
+    eq1.lhs = a;
+    eq1.rhs = reg.int_type();
+    Constraint eq2;
+    eq2.kind = Constraint::EQUAL;
+    eq2.lhs = a;
+    eq2.rhs = reg.bool_type();
+    cs2.add_delta(std::move(eq1));
+    cs2.add_delta(std::move(eq2));
+    cs2.seed_pending_full_solve_root_for_test(1);
+    auto r2 = cs2.drain_pending_full_solve_before_commit();
+    CHECK(r2 != SolveResult::SOLVED, "3031 AC1: conflict residual hard-rejects");
+    CHECK(pending_full_solve_residual_reject_total_v_read() > rej0, "3031 AC1: reject total");
+    CHECK(pending_full_solve_residual_face_hit(), "3031 AC1: face latched on reject");
+    CHECK(pending_full_solve_residual_last_v_read() > 0, "3031 AC1: last residual");
+
+    CommitReadinessInput in;
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    in.pending_full_solve_hard = true;
+    in.pending_full_solve_residual = true;
+    auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "3031 AC1: readiness rejects dirty residual");
+    CHECK(cr.force_reason == "pending_full_solve_residual", "3031 AC1: force_reason");
+    CHECK(cr.force_reason_code == 16, "3031 AC1: force_reason_code 16");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3031_2_soft_observe_allow() {
+    std::println("\n--- #3031 AC2: Soft residual observe allow ---");
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_reject_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    using aura::compiler::typed_audit::set_strategy;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    auto save_strat = get_strategy();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    cs.seed_pending_full_solve_root_for_test(1);
+    cs.force_locality_pruned_for_test(1);
+    const auto obs0 = pending_full_solve_residual_observe_total_v_read();
+    const auto esc0 = pending_full_solve_residual_escalate_total_v_read();
+    const auto rej0 = pending_full_solve_residual_reject_total_v_read();
+    auto r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r == SolveResult::SOLVED, "3031 AC2: Soft allows residual SOLVED");
+    CHECK(cs.pending_full_solve_roots_size() > 0, "3031 AC2: Soft does not clear pending");
+    CHECK(pending_full_solve_residual_observe_total_v_read() > obs0, "3031 AC2: observe bumps");
+    CHECK(pending_full_solve_residual_escalate_total_v_read() == esc0, "3031 AC2: no escalate");
+    CHECK(pending_full_solve_residual_reject_total_v_read() == rej0, "3031 AC2: no reject");
+    CHECK(!pending_full_solve_residual_face_hit(), "3031 AC2: Soft does not latch face");
+
+    reset_pending_full_solve_residual_for_test();
+    set_strategy(save_strat);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3031_3_quiet_zero_cost() {
+    std::println("\n--- #3031 AC3: quiet no residual → zero extra ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_reject_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    const auto obs0 = pending_full_solve_residual_observe_total_v_read();
+    const auto esc0 = pending_full_solve_residual_escalate_total_v_read();
+    const auto rej0 = pending_full_solve_residual_reject_total_v_read();
+    auto r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r == SolveResult::SOLVED, "3031 AC3: quiet SOLVED");
+    CHECK(pending_full_solve_residual_observe_total_v_read() == obs0, "3031 AC3: no observe");
+    CHECK(pending_full_solve_residual_escalate_total_v_read() == esc0, "3031 AC3: no escalate");
+    CHECK(pending_full_solve_residual_reject_total_v_read() == rej0, "3031 AC3: no reject");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3031_4_commit_readiness_hermetic() {
+    std::println("\n--- #3031 AC4: commit_readiness hermetic code 16 ---");
+    using aura::compiler::typed_audit::commit_readiness;
+    using aura::compiler::typed_audit::commit_readiness_reason_code;
+    using aura::compiler::typed_audit::CommitReadinessInput;
+    CHECK(commit_readiness_reason_code("pending_full_solve_residual") == 16,
+          "3031 AC4: reason_code 16");
+    CommitReadinessInput hard;
+    hard.solve_status = 0;
+    hard.linear_ok = true;
+    hard.blame_ok = true;
+    hard.pending_full_solve_hard = true;
+    hard.pending_full_solve_residual = true;
+    auto r = commit_readiness(hard);
+    CHECK(!r.would_allow_commit, "3031 AC4: hard residual rejects");
+    CHECK(r.force_reason == "pending_full_solve_residual", "3031 AC4: force_reason");
+    CHECK(r.force_reason_code == 16, "3031 AC4: force_reason_code");
+    CHECK(r.readiness_bp == 700, "3031 AC4: hard bp 700");
+
+    CommitReadinessInput soft = hard;
+    soft.pending_full_solve_hard = false;
+    r = commit_readiness(soft);
+    CHECK(r.would_allow_commit, "3031 AC4: Soft residual allows");
+    CHECK(r.force_reason == "pending_full_solve_residual", "3031 AC4: Soft still names reason");
+    CHECK(r.readiness_bp == 7200, "3031 AC4: Soft bp 7200");
+
+    CommitReadinessInput quiet;
+    quiet.solve_status = 0;
+    quiet.linear_ok = true;
+    quiet.blame_ok = true;
+    quiet.pending_full_solve_hard = true;
+    quiet.pending_full_solve_residual = false;
+    r = commit_readiness(quiet);
+    CHECK(r.would_allow_commit, "3031 AC4: quiet allow");
+    CHECK(r.force_reason == "ok", "3031 AC4: quiet ok");
+}
+
+static void ac3031_5_schema() {
+    std::println("\n--- #3031 AC5: schema-3031 + residual keys ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3031 AC5: warm");
+    CHECK(href(svc, "schema-3031") == 3031, "3031 AC5: schema-3031");
+    CHECK(href(svc, "issue-3031") == 3031, "3031 AC5: issue-3031");
+    CHECK(href(svc, "pending-full-solve-residual-wired") == 1, "3031 AC5: wired");
+    CHECK(href(svc, "pending-full-solve-residual-last") >= 0, "3031 AC5: last");
+    CHECK(href(svc, "pending-full-solve-residual-observe-total") >= 0, "3031 AC5: observe");
+    CHECK(href(svc, "pending-full-solve-residual-escalate-total") >= 0, "3031 AC5: escalate");
+    CHECK(href(svc, "pending-full-solve-residual-reject-total") >= 0, "3031 AC5: reject");
+    CHECK(href(svc, "schema-2994") == 2994, "3031 AC5: schema-2994 preserved");
+    CHECK(href(svc, "schema-2913") == 2913, "3031 AC5: schema-2913 preserved");
+}
+
+static void ac3031_6_source_and_linter() {
+    std::println("\n--- #3031 AC6: source-cite + linter ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_pending_full_solve_residual_3031.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3031 AC6: drain API");
+    CHECK(ixx.find("seed_pending_full_solve_root_for_test") != std::string::npos,
+          "3031 AC6: seed helper");
+    CHECK(impl.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3031 AC6: drain body");
+    CHECK(impl.find("escalate_if_production(SolveResult::TIMEOUT") != std::string::npos,
+          "3031 AC6: drain synthesizes TIMEOUT escalate");
+    CHECK(aud.find("pending_full_solve_residual") != std::string::npos, "3031 AC6: readiness face");
+    CHECK(aud.find("kPendingFullSolveResidualIssue") != std::string::npos, "3031 AC6: issue stamp");
+    CHECK(ev.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3031 AC6: composite_txn_commit drain");
+    CHECK(ev.find("force_reason=*/16") != std::string::npos ||
+              ev.find("force_reason=*/16u") != std::string::npos ||
+              ev.find("/*force_reason=*/16") != std::string::npos,
+          "3031 AC6: reject proof force_reason 16");
+    CHECK(t.find("ac3031_1_production_drain_escalate_reject") != std::string::npos,
+          "3031 AC6: AC1");
+    CHECK(!lint.empty() && lint.find("3031") != std::string::npos, "3031 AC6: linter");
+    CHECK(build.find("check_pending_full_solve_residual_3031") != std::string::npos,
+          "3031 AC6: build.py");
+    CHECK(read_file("docs/design/3031-pending-full-solve-residual.md").empty(),
+          "3031 AC6: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3031.cpp").empty(),
+          "3031 AC6: no invent test_issue_3031");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -1665,6 +1901,13 @@ int run_test_solve_delta_unresolved_export() {
     ac3003_3_no_stash_no_authority();
     ac3003_4_schema_and_lineage();
     ac3003_5_source_and_linter();
+    std::println("\n=== Issue #3031: pending_full_solve residual before commit ===");
+    ac3031_1_production_drain_escalate_reject();
+    ac3031_2_soft_observe_allow();
+    ac3031_3_quiet_zero_cost();
+    ac3031_4_commit_readiness_hermetic();
+    ac3031_5_schema();
+    ac3031_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

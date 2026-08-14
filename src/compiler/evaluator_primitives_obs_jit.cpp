@@ -10401,6 +10401,32 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                             std::memory_order_relaxed)));
                     insert_kv("schema-3030", 3030);
                     insert_kv("issue-3030", 3030);
+                    // Issue #3031: pending_full_solve residual at commit.
+                    using aura::compiler::typed_audit::g_pending_full_solve_residual_wired;
+                    using aura::compiler::typed_audit::kPendingFullSolveResidualIssue;
+                    using aura::compiler::typed_audit::
+                        pending_full_solve_residual_escalate_total_v_read;
+                    using aura::compiler::typed_audit::pending_full_solve_residual_last_v_read;
+                    using aura::compiler::typed_audit::
+                        pending_full_solve_residual_observe_total_v_read;
+                    using aura::compiler::typed_audit::
+                        pending_full_solve_residual_reject_total_v_read;
+                    insert_kv("pending-full-solve-residual-last",
+                              static_cast<std::int64_t>(pending_full_solve_residual_last_v_read()));
+                    insert_kv("pending-full-solve-residual-observe-total",
+                              static_cast<std::int64_t>(
+                                  pending_full_solve_residual_observe_total_v_read()));
+                    insert_kv("pending-full-solve-residual-escalate-total",
+                              static_cast<std::int64_t>(
+                                  pending_full_solve_residual_escalate_total_v_read()));
+                    insert_kv("pending-full-solve-residual-reject-total",
+                              static_cast<std::int64_t>(
+                                  pending_full_solve_residual_reject_total_v_read()));
+                    insert_kv("pending-full-solve-residual-wired",
+                              static_cast<std::int64_t>(g_pending_full_solve_residual_wired.load(
+                                  std::memory_order_relaxed)));
+                    insert_kv("schema-3031", kPendingFullSolveResidualIssue);
+                    insert_kv("issue-3031", kPendingFullSolveResidualIssue);
                 }
             }
             // Issue #2286: per-(eval, cow_gen) gate scoping.

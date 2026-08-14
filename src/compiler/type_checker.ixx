@@ -735,6 +735,15 @@ public:
     // Issue #2994: merge dirty constraint var-reps into pending_full_solve
     // so the next solve_delta drains residual (budget-allow path).
     void handoff_locality_residual_to_pending();
+    // Issue #3031: before composite / lockless commit stamp — if
+    // pending_full_solve_roots_ or last_locality_pruned_ residual,
+    // production/Full force one escalate; still dirty → TIMEOUT reject.
+    // Soft: observe + allow. Quiet (no residual): zero extra work.
+    SolveResult
+    drain_pending_full_solve_before_commit(std::vector<Constraint>* unresolved_out = nullptr);
+    void seed_pending_full_solve_root_for_test(std::uint32_t rep) {
+        pending_full_solve_roots_.insert(rep);
+    }
     // Issue #2900: Agent SolverBudget surface (null/default = current behavior).
     void set_solver_budget(SolverBudget b) noexcept { solver_budget_ = b; }
     void clear_solver_budget() noexcept { solver_budget_ = kSolverBudgetDefault; }

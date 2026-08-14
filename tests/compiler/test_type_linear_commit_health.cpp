@@ -1133,6 +1133,22 @@ static void ac3030_health_schema() {
     CHECK(href(cs, "schema-2613") == 2613, "3030: schema-2613 preserved");
 }
 
+static void ac3031_health_schema() {
+    std::println("\n--- #3031 AC: type-linear-commit-health residual keys ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3031") == 3031, "3031: schema-3031 on health");
+    CHECK(href(cs, "issue-3031") == 3031, "3031: issue-3031");
+    CHECK(href(cs, "pending-full-solve-residual-wired") == 1, "3031: wired");
+    CHECK(href(cs, "pending-full-solve-residual-last") >= 0, "3031: last");
+    CHECK(href(cs, "pending-full-solve-residual-observe-total") >= 0, "3031: observe");
+    CHECK(href(cs, "pending-full-solve-residual-escalate-total") >= 0, "3031: escalate");
+    CHECK(href(cs, "pending-full-solve-residual-reject-total") >= 0, "3031: reject");
+    CHECK(href(cs, "force-reason-pending-full-solve-residual") == 16, "3031: force-reason 16");
+    CHECK(href(cs, "schema-3030") == 3030, "3031: schema-3030 preserved");
+    CHECK(href(cs, "schema-2613") == 2613, "3031: schema-2613 preserved");
+    CHECK(href(cs, "overflow") == -1, "3031: health query not overflowed");
+}
+
 static void ac2995_3_recover_fail_keeps_reject() {
     std::println("\n--- #2995 AC3: recover fail → existing force_reason, no silent green ---");
     apply_production_audit_defaults();
@@ -1249,8 +1265,10 @@ int run_test_type_linear_commit_health() {
     ac2995_6_health_query_keys();
     std::println("\n=== Issue #3030: abort-clear keys on type-linear-commit-health ===");
     ac3030_health_schema();
+    std::println("\n=== Issue #3031: pending_full_solve residual on type-linear-commit-health ===");
+    ac3031_health_schema();
     std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984 + "
-                 "#2995 + #3030: {} "
+                 "#2995 + #3030 + #3031: {} "
                  "passed, {} "
                  "failed ===",
                  g_passed, g_failed);
