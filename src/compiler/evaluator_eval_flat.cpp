@@ -335,6 +335,16 @@ invoke_closure_bridge_checked(Evaluator& ev, Evaluator::ClosureBridgeFn& bridge,
     return result;
 }
 
+// Issue #3021: apply/use-site lifetime protocol. Freed/tombstone →
+// reject (same skip as scan_skip_freed). Soft extra cost is one
+// lifetime_version load — no Guard, no live-closure walk.
+bool Evaluator::closure_apply_use_site_ok(const Closure& cl) noexcept {
+    if (cl.lifetime_valid_for_views())
+        return true;
+    g_closure_apply_use_site_reject_total.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+
 // apply_closure — looks up closures_, foreign functions, or IR bridge
 std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const EvalValue> args) {
     // Issue #252: closure dual-path observability. Bump the
@@ -443,9 +453,10 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
         auto it = closures_.find(cid);
         if (it != closures_.end()) {
-            // Issue #1926 / #1929: refuse tombstoned entries under lock
-            // before copying (avoids half-state snapshots).
-            if (!it->second.lifetime_valid_for_views()) {
+            // Issue #1926 / #1929 / #3021: refuse tombstoned entries
+            // under lock before copying (apply/use-site protocol —
+            // same skip as scan_skip_freed).
+            if (!closure_apply_use_site_ok(it->second)) {
                 tombstoned = true;
             } else {
                 cl_copy = it->second;
@@ -1848,6 +1859,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 auto cid = types::as_closure_id(fn_val);
                 auto it = closures_.find(cid);
                 if (it != closures_.end()) {
+                    // Issue #3021: no bare apply of freed/tombstone.
+                    if (!closure_apply_use_site_ok(it->second))
+                        return std::unexpected(
+                            Diagnostic{ErrorKind::InvalidClosure,
+                                       "eval_data_as_code: freed/tombstoned closure"});
                     auto& cl = it->second;
                     // Evaluate args and apply
                     std::vector<EvalValue> cargs;
@@ -1889,9 +1905,11 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         if (result)
             return *result;
 
-        // Fallback: manual closure apply via eval_flat
+        // Fallback: manual closure apply via eval_flat.
+        // Issue #3021: never re-apply a slot apply_closure already
+        // rejected as freed/tombstone (bare-apply UAF window).
         auto it = closures_.find(cid);
-        if (it != closures_.end()) {
+        if (it != closures_.end() && it->second.lifetime_valid_for_views()) {
             auto& cl = it->second;
             std::vector<EvalValue> cargs;
             auto current = cdr_val;
@@ -4336,6 +4354,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                             std::shared_lock<std::shared_mutex> rlock(closures_mtx_);
                             auto it = closures_.find(cid);
                             if (it != closures_.end()) {
+                                // Issue #3021: no bare TCO apply of
+                                // freed/tombstoned slots (scan_skip_freed
+                                // semantics). Stale-but-live still
+                                // inlines; force-drop uses apply_closure.
+                                if (!closure_apply_use_site_ok(it->second)) {
+                                    return std::unexpected(
+                                        Diagnostic{ErrorKind::InvalidClosure,
+                                                   "eval_flat: freed/tombstoned closure"});
+                                }
                                 cl = it->second;
                                 tw_closure = true;
                             }

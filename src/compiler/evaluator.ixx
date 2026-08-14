@@ -1136,6 +1136,12 @@ export struct Closure {
 // (make_closure_view is Evaluator-free; declared early for Evaluator methods).
 export inline std::atomic<std::uint64_t> g_closure_view_dangling_prevented_total{0};
 
+// Issue #3021: apply/use-site reject (freed / tombstone). Same skip
+// semantics as scan_skip_freed. Process atomic — no second metrics
+// bus. Soft extra cost is one lifetime_version load (no Guard, no
+// live-closure walk).
+export inline std::atomic<std::uint64_t> g_closure_apply_use_site_reject_total{0};
+
 // Issue #1947: process-wide counter for ClosureView invalid-access
 // (strong revalidation via is_closure_view_valid(view, cl) failed —
 // view's source_lifetime_version no longer matches Closure's lifetime_version,
@@ -1732,6 +1738,11 @@ public:
     // Look up a closure and apply it with given args.
     // Tries closures_ first, then IR bridge.
     std::optional<EvalValue> apply_closure(ClosureId cid, std::span<const EvalValue> args);
+    // Issue #3021: apply/use-site lifetime protocol. Freed or
+    // tombstone → reject (same skip as Guard dtor scan_skip_freed).
+    // Not a Guard — Soft pays only the already-required
+    // lifetime_version load. No second lifetime model.
+    [[nodiscard]] static bool closure_apply_use_site_ok(const Closure& cl) noexcept;
     std::optional<EvalValue> apply_closure(ClosureId cid, std::initializer_list<EvalValue> args) {
         return apply_closure(cid, std::span<const EvalValue>(args.begin(), args.size()));
     }

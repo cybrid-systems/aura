@@ -3344,7 +3344,8 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
         aura_unlock_workspace_read();
         return closure_id; /* match IRInterpreter: return callee_val for non-callable */
     }
-    // Issue #1361: refuse to call a freed closure (graceful, no UAF)
+    // Issue #1361 / #3021: refuse to call a freed closure (apply/use-site
+    // protocol — same skip as scan_skip_freed; no Guard on Soft).
     {
         size_t cid = static_cast<size_t>(closure_id);
         if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0) {

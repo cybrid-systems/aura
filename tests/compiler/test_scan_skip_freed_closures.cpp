@@ -18,6 +18,8 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <thread>
 #include <vector>
@@ -503,8 +505,52 @@ static void ac_h4_phase_and_schema() {
           "AC_H4: blocked-compact-while-guard-held key present");
 }
 
+static std::string read_src(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+// Issue #3021: freed/tombstoned closure re-apply canary.
+// apply_closure and eval_flat TCO must reject (scan_skip_freed
+// semantics) — not a Guard, no extra walk on Soft.
+static void ac3021_freed_reapply_canary() {
+    std::println("\n--- #3021: freed-closure re-apply canary ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto cid = make_moved_tw(ev);
+    CHECK(ev.find_active_closure(cid).has_value(), "AC3021: live before tombstone");
+    const auto r0 =
+        aura::compiler::g_closure_apply_use_site_reject_total.load(std::memory_order_relaxed);
+    ev.walk_active_closures([&](ClosureId id, Closure& cl) {
+        if (id == cid)
+            cl.tombstone_for_views();
+    });
+    CHECK(!ev.find_active_closure(cid).has_value(), "AC3021: tombstone hidden from find");
+    auto applied = ev.apply_closure(cid, {});
+    CHECK(!applied.has_value(), "AC3021: freed/tombstone re-apply rejected");
+    CHECK(aura::compiler::g_closure_apply_use_site_reject_total.load(std::memory_order_relaxed) >
+              r0,
+          "AC3021: closure_apply_use_site_reject_total bumped");
+    const auto evf = read_src("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(evf.find("closure_apply_use_site_ok") != std::string::npos,
+          "AC3021: apply/use-site protocol wired");
+    CHECK(evf.find("no bare TCO apply") != std::string::npos,
+          "AC3021: eval_flat TCO is not a bare apply");
+    CHECK(evf.find("never re-apply a slot apply_closure already") != std::string::npos,
+          "AC3021: eval_data_as_code fallback not a tombstone bypass");
+    const auto jit = read_src("src/compiler/aura_jit_runtime.cpp");
+    CHECK(jit.find("Issue #1361 / #3021") != std::string::npos,
+          "AC3021: aura_closure_call cites use-site protocol");
+}
+
 int main() {
-    std::println("=== Issue #1665 / #2164: scan_skip_freed + EnvFrame hold-pin ===");
+    std::println("=== Issue #1665 / #2164 / #3021: scan_skip_freed + apply protocol ===");
     ac1_first_mark();
     ac2_no_reinflate();
     ac3_erase_tw();
@@ -517,6 +563,7 @@ int main() {
     ac_h2_compact_after_guard();
     ac_h3_fiber_steal_site_stress();
     ac_h4_phase_and_schema();
+    ac3021_freed_reapply_canary();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
