@@ -12,6 +12,7 @@ module;
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -198,6 +199,53 @@ export struct DefineDirtyMaskView {
         return n;
     }
 };
+
+// Issue #3042: production PureWrap dirty predicates — no std::function.
+// DefaultAllDirty when unset; column view via DefineDirtyMaskView; optional
+// function-pointer hook for tests (non-capturing, no heap / type erasure).
+export struct BlockDirtyPred {
+    const DefineDirtyMaskView* cache = nullptr;
+    std::size_t func_idx = 0;
+    bool (*fn)(std::uint32_t) = nullptr;
+
+    [[nodiscard]] bool operator()(std::uint32_t block_id) const noexcept {
+        if (fn)
+            return fn(block_id);
+        if (cache && cache->block_dirty_per_func)
+            return cache->is_block_dirty(func_idx, block_id);
+        return true; // DefaultAllDirty
+    }
+    [[nodiscard]] constexpr bool wired() const noexcept {
+        return fn != nullptr || (cache && cache->block_dirty_per_func);
+    }
+    [[nodiscard]] explicit constexpr operator bool() const noexcept { return wired(); }
+};
+
+export struct InstructionDirtyPred {
+    const DefineDirtyMaskView* cache = nullptr;
+    std::size_t func_idx = 0;
+    bool (*fn)(std::uint32_t, std::uint32_t) = nullptr;
+
+    [[nodiscard]] bool operator()(std::uint32_t block_id, std::uint32_t inst_id) const noexcept {
+        if (fn)
+            return fn(block_id, inst_id);
+        if (cache && cache->instruction_dirty_per_func)
+            return cache->is_instruction_dirty(func_idx, block_id, inst_id);
+        return true;
+    }
+    [[nodiscard]] constexpr bool wired() const noexcept {
+        return fn != nullptr || (cache && cache->instruction_dirty_per_func);
+    }
+    [[nodiscard]] explicit constexpr operator bool() const noexcept { return wired(); }
+};
+
+export inline constexpr int kPureWrapNoStdFunctionDirtyIssue = 3042;
+export inline std::atomic<std::uint64_t> pure_wrap_no_std_function_dirty_wired{1};
+
+static_assert(std::is_trivially_copyable_v<BlockDirtyPred>,
+              "BlockDirtyPred must be inlineable (no std::function) (#3042)");
+static_assert(std::is_trivially_copyable_v<InstructionDirtyPred>,
+              "InstructionDirtyPred must be inlineable (no std::function) (#3042)");
 
 // Entire optimization pass skipped because define-level mask is clean.
 export inline std::atomic<std::uint64_t> optimization_passes_skipped_by_define_dirty{0};
@@ -569,7 +617,7 @@ bool run_incremental_pipeline(aura::ir::IRModule& mod, P& pass) {
 // DefineDirtyMaskView). When non-null and fully clean, the entire pass
 // is skipped (optimization_passes_skipped_by_define_dirty++). When
 // partially dirty, block dirtiness prefers the define mask over the
-// pass's own is_block_dirty, and set_block_dirty_fn is installed when
+// pass's own is_block_dirty, and set_block_dirty_pred is installed when
 // the pass supports it so fold/propagate only touch dirty blocks.
 // Issue #2060: prefer run_on_dirty_blocks_only / dirty block peel so
 // clean regions never pay residual full-function walks under sparse
@@ -620,31 +668,18 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
         const bool fn_shape_stable =
             g_fn_shape_stable_probe != nullptr && g_fn_shape_stable_probe(func.name);
 
-        // Issue #1574: wire define mask into pass when it supports
-        // set_block_dirty_fn (ConstantFoldingWrap / EscapeAnalysis / …).
-        if constexpr (requires(P& p, std::function<bool(std::uint32_t)> f) {
-                          p.set_block_dirty_fn(std::move(f));
-                      }) {
-            if (define_cache && define_cache->block_dirty_per_func) {
-                const auto* cache = define_cache;
-                const std::size_t func_idx = fi;
-                pass.set_block_dirty_fn([cache, func_idx](std::uint32_t block_id) -> bool {
-                    return cache->is_block_dirty(func_idx, block_id);
-                });
-            }
+        // Issue #1574 / #3042: wire define mask as BlockDirtyPred (no
+        // std::function type erasure on PureWrap hot path).
+        if constexpr (requires(P& p, BlockDirtyPred pred) { p.set_block_dirty_pred(pred); }) {
+            if (define_cache && define_cache->block_dirty_per_func)
+                pass.set_block_dirty_pred(BlockDirtyPred{define_cache, fi, nullptr});
         }
-        // Issue #2133: wire instruction dirty from ImpactScope / define cache
-        // so DirtyAware passes can peel clean slots inside dirty blocks.
-        if constexpr (requires(P& p, std::function<bool(std::uint32_t, std::uint32_t)> f) {
-                          p.set_instruction_dirty_fn(std::move(f));
+        // Issue #2133 / #3042: instruction dirty as InstructionDirtyPred.
+        if constexpr (requires(P& p, InstructionDirtyPred pred) {
+                          p.set_instruction_dirty_pred(pred);
                       }) {
             if (define_cache && define_cache->instruction_dirty_per_func) {
-                const auto* cache = define_cache;
-                const std::size_t func_idx = fi;
-                pass.set_instruction_dirty_fn(
-                    [cache, func_idx](std::uint32_t block_id, std::uint32_t inst_id) -> bool {
-                        return cache->is_instruction_dirty(func_idx, block_id, inst_id);
-                    });
+                pass.set_instruction_dirty_pred(InstructionDirtyPred{define_cache, fi, nullptr});
                 instr_level_pass_runs_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
@@ -713,7 +748,7 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
                 dirty_only_blocks_skipped_total.fetch_add(clean_blocks, std::memory_order_relaxed);
             pass.run_on_dirty_blocks_only(func);
         } else {
-            // DirtyAware + set_block_dirty_fn: pass peels clean blocks internally.
+            // DirtyAware + set_block_dirty_pred: pass peels clean blocks internally.
             // Still record #2060 skip metrics for Agent sparse-dirty dashboards.
             dirty_only_entry_hits_total.fetch_add(1, std::memory_order_relaxed);
             dirty_only_blocks_run_total.fetch_add(dirty_blocks, std::memory_order_relaxed);

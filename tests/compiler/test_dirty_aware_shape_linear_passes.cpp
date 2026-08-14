@@ -100,7 +100,10 @@ int run_test_dirty_aware_shape_linear_passes() {
     {
         std::println("\n--- AC5: source ---");
         auto opt = read_file("src/compiler/optimization_passes.ixx");
-        auto pm = read_file("src/compiler/pass_manager.ixx");
+        // #2524: dirty peel lives in pipeline core + impls; facade re-exports.
+        auto pm = read_file("src/compiler/pass_manager.ixx") +
+                  read_file("src/compiler/pass_pipeline_core.ixx") +
+                  read_file("src/compiler/pass_impls.ixx");
         CHECK(opt.find("Issue #2130") != std::string::npos, "opt_registry #2130");
         CHECK(pm.find("Issue #2130") != std::string::npos ||
                   pm.find("run_on_function") != std::string::npos,

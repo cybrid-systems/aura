@@ -521,8 +521,7 @@ static void run_1875_dirty_aware_escape() {
     CHECK(func.escape_map.size() == 8, "escape_map sized");
     CHECK(full.functions_analyzed() >= 1, "functions analyzed");
     EscapeAnalysisPass dirty;
-    std::unordered_set<std::uint32_t> dirty_set{0};
-    dirty.set_block_dirty_fn([&](std::uint32_t bi) { return dirty_set.count(bi) > 0; });
+    dirty.set_block_dirty_fn([](std::uint32_t bi) { return bi == 0; });
     dirty.run(func);
     CHECK(dirty.dirty_blocks_analyzed() >= 1, "dirty blocks analyzed");
     CHECK(dirty.is_block_dirty(0), "block 0 dirty");

@@ -1242,7 +1242,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_guard_exit_occurrence_refresh.cpp` (—) [domain_suite, theme_compiler] — AC1: multi-round mutate on if-predicate binding → selective invalidate
 - `tests/compiler/test_hard_gate_full_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: Full + injected use-after-move / Moved → rollback; mutation not visible
 - `tests/compiler/test_hot_pass_dirty_soa.cpp` (—) [domain_suite, theme_compiler] — AC1: DirtySoAEntryPass + kRequireDirtySoAEntry on production wraps
-- `tests/compiler/test_hot_pass_hard_dod.cpp` (—) [domain_suite, theme_compiler] — AC1: All production pack stages HotPassDodCompliant (or explicit Legacy)
+- `tests/compiler/test_hot_pass_hard_dod.cpp` (—) [domain_suite, theme_compiler] — Issue #3042 — drop residual std::function dirty predicates from
 - `tests/compiler/test_hot_pass_pure_wrap.cpp` (—) [domain_suite, theme_compiler] — AC1: Pipeline registration rejects non-HotPassDodCompliant dirty/inc packs
 - `tests/core/test_hotpath_matrix_batch.cpp` (—) [large, batch_driver, domain_suite, theme_core] — test_hotpath_matrix_batch.cpp — Domain suite batch: behavioral gates.
 - `tests/compiler/test_hygiene_checkpoint.cpp` (—) [domain_suite, theme_compiler] — AC1: save → mutate (introduce new MacroIntroduced node) → restore → pre-save

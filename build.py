@@ -748,6 +748,19 @@ def cmd_lint():
             "Issue #3041 restamp-budget QueryEpoch stale linter failed — run python3 scripts/coverage/checks/check_restamp_budget_query_epoch_stale_3041.py"
         )
         return r
+    # Issue #3042: eliminate residual std::function dirty predicates
+    # from PureWrap production stages. Extends test_hot_pass_hard_dod
+    # + test_hot_pass_pure_wrap (#81967); no docs/design/ (#1655).
+    pw3042_script = COVERAGE_CHECKS / "check_pure_wrap_no_std_function_3042.py"
+    if not pw3042_script.exists():
+        fail(f"missing {pw3042_script}")
+        return 1
+    r = run([sys.executable, str(pw3042_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3042 PureWrap no-std-function dirty linter failed — run python3 scripts/coverage/checks/check_pure_wrap_no_std_function_3042.py"
+        )
+        return r
     # Issue #2754: region concurrent cone / ImpactScope mask-AND
     # disjointness (#2724 residual). Equal keys + proven cone masks
     # (mask AND == 0) → concurrent admit; true overlap still rejects.
