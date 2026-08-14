@@ -237,6 +237,9 @@ extern "C" __attribute__((weak)) std::uint64_t cross_eval_hard_owner_scoped_tota
 extern "C" __attribute__((weak)) std::uint64_t cross_eval_hard_global_bump_total_v_read(void) {
     return 0;
 }
+extern "C" __attribute__((weak)) std::uint64_t reemit_owner_missing_reject_total_v_read(void) {
+    return 0;
+}
 extern "C" void aura_aot_bump_func_table_epoch(void) {
     g_aot_table_epoch_stub.fetch_add(1, std::memory_order_relaxed);
 }

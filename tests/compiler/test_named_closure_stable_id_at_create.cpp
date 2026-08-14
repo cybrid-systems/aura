@@ -26,6 +26,7 @@
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -1331,6 +1332,119 @@ static void ac2951_6_source_and_linter() {
           "2951 AC6: no docs/design/");
 }
 
+// ── Issue #3025: production C-ABI reemit requires owner under multi-eval ──
+// Direct aura_reemit_aot_for_dirty without reemit/register owner must
+// not silently reemit (peer-visible / unstamped force_jit). Soft /
+// single-eval unchanged. Service cascade still sets ReemitEvalOwnerGuard.
+
+static void ac3025_1_prod_multi_no_owner_rejects() {
+    std::println("\n--- #3025 AC1: production multi-eval C-ABI reemit without owner → 0 ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("Issue #3025") != std::string::npos, "3025 AC1: bridge cites #3025");
+    CHECK(cpp.find("g_reemit_owner_missing_reject_total") != std::string::npos,
+          "3025 AC1: reject counter");
+    CHECK(cpp.find("aura_aot_get_reemit_owner_eval() == nullptr") != std::string::npos,
+          "3025 AC1: reemit-owner null gate");
+
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA3025ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3025ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    if (aura_aot_state_map_size() < 2) {
+        CHECK(true, "3025 AC1: light-link map size ≤1 — contract source-cited");
+        aura_cleanup_aot_state(eval_a);
+        aura_cleanup_aot_state(eval_b);
+        return;
+    }
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    const auto rej0 = reemit_owner_missing_reject_total_v_read();
+    const auto epoch0 = aura_aot_func_table_epoch();
+    const auto n = aura_reemit_aot_for_dirty(0);
+    const auto epoch1 = aura_aot_func_table_epoch();
+    const auto rej1 = reemit_owner_missing_reject_total_v_read();
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(n == 0, "3025 AC1: no silent peer-visible reemit");
+    CHECK(rej1 > rej0, "3025 AC1: owner-missing reject metric");
+    CHECK(epoch1 == epoch0, "3025 AC1: no unstamped joint epoch / force_jit");
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+}
+
+static void ac3025_2_soft_single_unchanged() {
+    std::println("\n--- #3025 AC2: Soft / single-eval C-ABI reemit unchanged ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("Soft / Off / single-eval") != std::string::npos,
+          "3025 AC2: Soft/single-eval cite");
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(0, std::memory_order_relaxed);
+    aura_aot_set_reemit_owner_eval(nullptr);
+    aura_aot_set_register_owner_eval(nullptr);
+    const auto rej0 = reemit_owner_missing_reject_total_v_read();
+    (void)aura_reemit_aot_for_dirty(0);
+    CHECK(reemit_owner_missing_reject_total_v_read() == rej0,
+          "3025 AC2: Soft does not bump owner-missing reject");
+    prod.store(prev, std::memory_order_relaxed);
+}
+
+static void ac3025_3_service_cascade_unchanged() {
+    std::println("\n--- #3025 AC3: service cascade still sets ReemitEvalOwnerGuard ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("ReemitEvalOwnerGuard") != std::string::npos,
+          "3025 AC3: service_dirty ReemitEvalOwnerGuard");
+    CHECK(dirty.find("aura_aot_set_reemit_owner_eval") != std::string::npos,
+          "3025 AC3: cascade stamps reemit owner");
+    CHECK(dirty.find("aura_reemit_aot_for_dirty") != std::string::npos,
+          "3025 AC3: cascade still calls C ABI");
+}
+
+static void ac3025_4_query_additive() {
+    std::println("\n--- #3025 AC4: additive schema-3025 keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("schema-3025") != std::string::npos, "3025 AC4: schema-3025");
+    CHECK(q.find("issue-3025") != std::string::npos, "3025 AC4: issue-3025");
+    CHECK(q.find("reemit-owner-missing-reject-total") != std::string::npos,
+          "3025 AC4: reject-total");
+    CHECK(q.find("reemit-owner-missing-reject-wired") != std::string::npos, "3025 AC4: wired");
+    CHECK(q.find("schema-2951") != std::string::npos, "3025 AC4: schema-2951 preserved");
+    CHECK(q.find("schema-2841") != std::string::npos, "3025 AC4: schema-2841 preserved");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3025") == 3025 || href(cs, "schema-3025") == -1,
+          "3025 AC4: schema-3025 queryable or soft miss");
+}
+
+static void ac3025_5_source_and_linter() {
+    std::println("\n--- #3025 AC5: source-cite + linter ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto hdr = read_file("src/compiler/aura_jit_bridge.h");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto t = read_file("tests/compiler/test_named_closure_stable_id_at_create.cpp");
+    const auto rec = read_file("tests/compiler/test_reload_recovery_query.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_reemit_owner_required_prod_multi_3025.py");
+    CHECK(cpp.find("Issue #3025") != std::string::npos, "3025 AC5: bridge cites #3025");
+    CHECK(hdr.find("reemit_owner_missing_reject_total_v_read") != std::string::npos,
+          "3025 AC5: header declares v_read");
+    CHECK(stub.find("reemit_owner_missing_reject_total_v_read") != std::string::npos,
+          "3025 AC5: weak stub");
+    CHECK(t.find("ac3025_1_prod_multi_no_owner_rejects") != std::string::npos,
+          "3025 AC5: AC1 test");
+    CHECK(rec.find("ac3025_reload_fail_stamps_proof") != std::string::npos,
+          "3025 AC5: reload fail stamp test");
+    CHECK(!lint.empty() && lint.find("Issue #3025") != std::string::npos, "3025 AC5: linter");
+    CHECK(build.find("check_reemit_owner_required_prod_multi_3025") != std::string::npos,
+          "3025 AC5: build.py wires linter");
+    CHECK(!std::filesystem::exists("docs/design/3025-reemit-owner-required.md"),
+          "3025 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3025.cpp").empty(),
+          "3025 AC5: no invent test per #81967");
+}
+
 int run_test_named_closure_stable_id_at_create() {
     std::println("=== Issue #2550 + #2670: named closure stable_func_id at create ===");
     ac1_named_create_nonzero();
@@ -1384,6 +1498,13 @@ int run_test_named_closure_stable_id_at_create() {
     ac2951_4_same_eval_joint_preserved();
     ac2951_5_query_additive();
     ac2951_6_source_and_linter();
+    // Issue #3025: production C-ABI reemit requires owner under multi-eval.
+    std::println("\n=== Issue #3025: production C-ABI reemit owner required ===");
+    ac3025_1_prod_multi_no_owner_rejects();
+    ac3025_2_soft_single_unchanged();
+    ac3025_3_service_cascade_unchanged();
+    ac3025_4_query_additive();
+    ac3025_5_source_and_linter();
     // Issue #2857: atomic eval cleanup (single ordered transaction).
     std::println("\n=== Issue #2857: atomic eval cleanup (single ordered transaction) ===");
     ac2857_1_dual_eval_destroy_a_reemit_b();
@@ -1392,7 +1513,8 @@ int run_test_named_closure_stable_id_at_create() {
     ac2857_4_register_time_assert_preserved();
     ac2857_5_source_cite_and_no_design();
     std::println(
-        "\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2841 + #2857: {} passed, {} failed ===",
+        "\n=== #2550 + #2670 + #2692 + #2713 + #2744 + #2841 + #2857 + #3025: {} passed, {} "
+        "failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

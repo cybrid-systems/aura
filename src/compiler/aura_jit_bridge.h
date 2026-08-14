@@ -728,6 +728,8 @@ std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void);
 // Issue #2951: hard invalidate owner-scoped / hard global multi bump totals.
 std::uint64_t cross_eval_hard_owner_scoped_total_v_read(void);
 std::uint64_t cross_eval_hard_global_bump_total_v_read(void);
+// Issue #3025: production multi-eval C-ABI reemit rejected (no owner).
+std::uint64_t reemit_owner_missing_reject_total_v_read(void);
 
 // Issue #2304 / #2366: epoch invariant mode (process-level).
 //   0 = off (production default; single relaxed load, zero walk cost)

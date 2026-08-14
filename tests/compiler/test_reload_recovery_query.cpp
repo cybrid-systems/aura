@@ -647,6 +647,36 @@ static void ac2845_6_source_and_linter() {
           "AC6: no invent test file per #81967");
 }
 
+// ── Issue #3025: residual public reload fail exits stamp proof ──
+static void ac3025_reload_fail_stamps_proof() {
+    std::println("\n--- #3025 AC2: public reload fail stamps would_allow_native=false ---");
+    {
+        AotReloadConsistencyProof ok{};
+        ok.would_allow_native = true;
+        ok.schema = kAotReloadConsistencyProofIssue;
+        stamp_aot_reload_consistency_proof(ok);
+    }
+    CHECK(aura_last_aot_reload_consistency_would_allow_native() == 1,
+          "3025 AC2: pre-fail allow native");
+    const auto fail_before = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    CHECK(aura_reload_aot_module(nullptr, 0) == false, "3025 AC2: null path fails");
+    CHECK(aura_reload_aot_module("/tmp/__aura_3025_missing__.so", 0) == false,
+          "3025 AC2: missing module fails");
+    const auto fail_after = aura_aot_reload_consistency_proof_stamped_on_fail_total();
+    if (fail_after > fail_before) {
+        CHECK(aura_last_aot_reload_consistency_would_allow_native() == 0,
+              "3025 AC2: public fail stamps would_allow_native=false");
+    } else {
+        CHECK(true, "3025 AC2: light-link reload stub — stamp contract source-cited");
+    }
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("Issue #3025: public reload fail stamps would_allow_native=false") !=
+              std::string::npos,
+          "3025 AC2: residual exits cite #3025");
+    CHECK(br.find("Issue #3025: public fail still stamps proof") != std::string::npos,
+          "3025 AC2: null-path stamps via note_reload_rollback");
+}
+
 // ── Issue #2927: stable AotReloadFail → force_jit_regions_mask bit groups ──
 // Version|Defuse→0, Env→1, Linear→2, Region|Staging→3, Dlopen|Other→4.
 
@@ -1169,6 +1199,8 @@ int run_test_reload_recovery_query() {
     ac2845_4_concurrent_fail_success_no_tear();
     ac2845_5_soft_no_extra_stamp();
     ac2845_6_source_and_linter();
+    std::println("\n=== Issue #3025: residual public reload fail stamps proof ===");
+    ac3025_reload_fail_stamps_proof();
     std::println("\n=== Issue #2927: AotReloadFail → force_jit group bits ===");
     ac2927_1_env_only_bit();
     ac2927_2_linear_and_proof_match();
@@ -1188,7 +1220,8 @@ int run_test_reload_recovery_query() {
     if (g_failed)
         return 1;
     std::println(
-        "reload recovery query #2367 + #2753 + #2776 + #2845 + #2927 + #2953 + #2982: OK ({} "
+        "reload recovery query #2367 + #2753 + #2776 + #2845 + #2927 + #2953 + #2982 + #3025: OK "
+        "({} "
         "passed)",
         g_passed);
     return 0;

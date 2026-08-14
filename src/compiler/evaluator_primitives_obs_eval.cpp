@@ -109,6 +109,8 @@ extern "C" std::uint64_t cross_eval_epoch_action_throttled_total_v_read(void);
 extern "C" std::uint64_t cross_eval_hard_owner_scoped_total_v_read(void);
 extern "C" std::uint64_t cross_eval_hard_global_bump_total_v_read(void);
 extern "C" int aura_aot_cross_eval_hard_owner_scoped_armed(void);
+// Issue #3025: production multi-eval C-ABI reemit rejected (no owner).
+extern "C" std::uint64_t reemit_owner_missing_reject_total_v_read(void);
 // Issue #2712: Soft fuse heal total (defs in aura_jit_bridge.cpp).
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void);
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read(void);
@@ -15508,6 +15510,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"cross-eval-hard-owner-scoped-wired", make_int(1)},
                 {"schema-2951", make_int(2951)},
                 {"issue-2951", make_int(2951)},
+                // Issue #3025: production multi-eval C-ABI reemit owner gate.
+                {"reemit-owner-missing-reject-total",
+                 make_int(static_cast<std::int64_t>(reemit_owner_missing_reject_total_v_read()))},
+                {"reemit-owner-missing-reject-wired", make_int(1)},
+                {"schema-3025", make_int(3025)},
+                {"issue-3025", make_int(3025)},
                 // Issue #2602: synchronous remount walk on reemit success
                 // (named closures with stable_func_id != 0). Distinct
                 // from call-time closure_capture_remount_ok / _fail.

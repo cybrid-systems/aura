@@ -2452,6 +2452,20 @@ def cmd_lint():
             "Issue #3024 production overflow MustDeopt linter failed — run python3 scripts/coverage/checks/check_pure_anon_bg_overflow_must_deopt_3024.py"
         )
         return r
+    # Issue #3025: production multi-eval C-ABI reemit requires owner
+    # (close residual after #2951/#2845). Soft / single-eval unchanged.
+    # Extends test_named_closure_stable_id_at_create +
+    # test_reload_recovery_query (#81967); no docs/design.
+    reown_script = COVERAGE_CHECKS / "check_reemit_owner_required_prod_multi_3025.py"
+    if not reown_script.exists():
+        fail(f"missing {reown_script}")
+        return 1
+    r = run([sys.executable, str(reown_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3025 production C-ABI reemit owner linter failed — run python3 scripts/coverage/checks/check_reemit_owner_required_prod_multi_3025.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -8070,6 +8084,30 @@ def cmd_pure_anon_bg_overflow_must_deopt_3024():
     """
     print(f"{B}=== production overflow MustDeopt (#3024) ==={N}")
     return cmd_pure_anon_bg_overflow_must_deopt_3024_coverage()
+
+
+def cmd_reemit_owner_required_prod_multi_3025_coverage():
+    """Issue #3025: production C-ABI reemit owner required (static)."""
+    print(f"{B}=== production C-ABI reemit owner coverage (#3025) ==={N}")
+    script = COVERAGE_CHECKS / "check_reemit_owner_required_prod_multi_3025.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("production C-ABI reemit owner (#3025) coverage contract rows failed")
+        return 1
+    ok("production C-ABI reemit owner (#3025) coverage clean")
+    return 0
+
+
+def cmd_reemit_owner_required_prod_multi_3025():
+    """Issue #3025: production multi-eval C-ABI reemit requires owner.
+
+    Soft / single-eval unchanged. Reload public fail stamps proof.
+    """
+    print(f"{B}=== production C-ABI reemit owner (#3025) ==={N}")
+    return cmd_reemit_owner_required_prod_multi_3025_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -15152,6 +15190,8 @@ def main():
         "linear-root-abort-release-3023-coverage": cmd_linear_root_abort_release_3023_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
+        "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,
+        "reemit-owner-required-prod-multi-3025-coverage": cmd_reemit_owner_required_prod_multi_3025_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,
