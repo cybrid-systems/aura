@@ -1882,6 +1882,8 @@ static std::atomic<std::uint64_t> g_cross_eval_epoch_action_throttled_total{0};
 static std::atomic<std::uint64_t> g_cross_eval_hard_owner_scoped_total{0};
 // Issue #2951: hard / force path advanced process-global table epoch under multi.
 static std::atomic<std::uint64_t> g_cross_eval_hard_global_bump_total{0};
+// Issue #3025: production multi-eval C-ABI reemit rejected (no owner TLS).
+static std::atomic<std::uint64_t> g_reemit_owner_missing_reject_total{0};
 // Force flag: hard invalidate / Agent fence paths set this TLS so the
 // next bump always advances the process-global epoch (AC hard path).
 // Issue #2841: invalidate_function notes force-bump before the unified bump
@@ -1911,6 +1913,9 @@ extern "C" std::uint64_t cross_eval_hard_owner_scoped_total_v_read(void) {
 }
 extern "C" std::uint64_t cross_eval_hard_global_bump_total_v_read(void) {
     return g_cross_eval_hard_global_bump_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t reemit_owner_missing_reject_total_v_read(void) {
+    return g_reemit_owner_missing_reject_total.load(std::memory_order_relaxed);
 }
 extern "C" void aura_aot_note_cross_eval_epoch_force_bump(void) {
     g_cross_eval_epoch_force_bump = 1;
@@ -2945,6 +2950,8 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
             aura::compiler::typed_audit::capture_aot_hotupdate_audit(
                 /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
                 "cross-COW cow_gen mismatch");
+            // Issue #3025: public reload fail stamps would_allow_native=false.
+            note_reload_rollback(AotReloadFail::Other);
             return false;
         }
         // Issue #1882: audit the rejected cross-workspace attempt so Agent
@@ -2952,11 +2959,14 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
         aura::compiler::typed_audit::capture_aot_hotupdate_audit(
             /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
             "cross-workspace hot-update rejected");
+        // Issue #3025: public reload fail stamps would_allow_native=false.
+        note_reload_rollback(AotReloadFail::Other);
         return false;
     }
     if (!path) {
         aot_log("aura_reload_aot_module: null path\n");
-        // No module loaded — no staged table to discard; skip rollback metric.
+        // Issue #3025: public fail still stamps proof (no staged table).
+        note_reload_rollback(AotReloadFail::Other);
         audit_fail("aot-hotupdate-null-path");
         return false;
     }
@@ -3591,6 +3601,21 @@ static void adapt_emit_region_mask(const std::uint64_t dirty_by_region[3], bool 
 // Thread-safety: atomic metric increments (relaxed). commit_func_table_swap
 // uses acq_rel on the table epoch. Stable func_id map is mutex-guarded.
 extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_version) {
+    // Issue #3025: production multi-eval C-ABI must not reemit without
+    // an explicit owner (reemit TLS or register TLS). Null owner used
+    // to walk every candidate (peer-visible / unstamped force_jit).
+    // Soft / Off / single-eval: owner==0 filter stays a no-op.
+    // Service cascade still sets ReemitEvalOwnerGuard first.
+    if (aura::compiler::typed_audit::production_defaults_active() &&
+        aura_aot_state_map_size() > 1 && aura_aot_get_reemit_owner_eval() == nullptr &&
+        aura_aot_get_register_owner_eval() == nullptr) {
+        g_reemit_owner_missing_reject_total.fetch_add(1, std::memory_order_relaxed);
+        g_last_reemit_dirty_count.store(0, std::memory_order_relaxed);
+        g_last_reemit_region_skips.store(0, std::memory_order_relaxed);
+        g_last_reemit_closure_dep_count.store(0, std::memory_order_relaxed);
+        g_last_reemit_success_count.store(0, std::memory_order_relaxed);
+        return 0;
+    }
     if (!g_reemit_candidate_fn) {
         // No host callback wired → Phase 1 skeleton fallback.
         if (aot_metrics())
