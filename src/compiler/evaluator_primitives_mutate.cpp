@@ -3274,11 +3274,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 ev.workspace_flat_ ? static_cast<std::uint64_t>(
                                          ev.workspace_flat_->all_mutations().size() > 0 ? 1 : 0)
                                    : 0;
-            // Issue #2814 M7: link TLS mid to the same total_mutations_ the
-            // Guard/finish_mutate_hard_gate trail uses — NOT nchg (0|1).
-            // Mismatched mid left a gap fprintf on stderr that polluted bash
-            // regression captures (agent:mutate-rebind / edsl-ir-cache).
-            const std::uint64_t audit_mid = ev.total_mutations();
+            // Issue #3016: same resolve/TLS mid the Guard trail uses
+            // (not total_mutations_ volume, not nchg 0|1).
+            const std::uint64_t audit_mid = aura::compiler::typed_audit::stamp_boundary_audit_mid();
             aura::compiler::typed_audit::note_invariant_enforcement_ran(audit_mid);
             if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
                 ok = false;

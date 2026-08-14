@@ -8976,7 +8976,7 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
                   : 0;
             const std::int64_t active = 1;
             auto* ht = FlatHashTable::create(
-                80) /* #1141 / #1894 / #2053 / #2814 / #2818 — room for schema keys */;
+                96) /* #1141 / #1894 / #2053 / #2814 / #2818 / #3016 — room for schema keys */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -9088,6 +9088,13 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             insert_kv("sample-ratio", static_cast<std::int64_t>(get_sample_ratio()));
             insert_kv("schema-2053", 2053);
             insert_kv("issue-2053", 2053);
+            // Issue #3016: boundary trail mid == resolve_audit_mutation_id.
+            insert_kv("schema-3016", 3016);
+            insert_kv("issue-3016", 3016);
+            insert_kv("boundary-audit-mid-wired", 1);
+            insert_kv("last-stamped-audit-mid",
+                      static_cast<std::int64_t>(
+                          g_last_stamped_audit_mid.load(std::memory_order_relaxed)));
             // Issue #2223: ADT exhaustiveness invariant dimension
             insert_kv("adt-invariant-ok", static_cast<std::int64_t>(
                                               g_typed_mutation_audit_counters.adt_invariant_ok.load(

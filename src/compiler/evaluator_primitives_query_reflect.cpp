@@ -568,6 +568,9 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("goal-fingerprint", snap.goal_fingerprint);
             insert_kv("linear-root-count", snap.linear_root_count);
             insert_kv("last-proof-stamp", snap.last_proof_stamp);
+            insert_kv("last-proof-mid", snap.last_proof_mid);
+            insert_kv("schema-3016", 3016);
+            insert_kv("issue-3016", 3016);
             // #2854 same-tx order totals
             insert_kv("proof-stamped-after-rebind-total", snap.proof_stamped_after_rebind_total);
             insert_kv("proof-reject-after-rebind-fail-total",

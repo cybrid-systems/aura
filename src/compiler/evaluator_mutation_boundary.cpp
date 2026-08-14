@@ -318,6 +318,20 @@ void Evaluator::enter_mutation_boundary() {
                           macro_introduced_count_at_entry, flat_generation_at_entry,
                           std::move(children_snapshot), fine_rollback, std::move(sym_id_snapshot),
                           std::move(param_snapshot), lightweight};
+    // Issue #3016: resolve audit mid once at enter (outer inherits from
+    // TLS / parent checkpoint). total_mutations_ stays volume-only.
+    {
+        std::uint64_t audit_mid = 0;
+        auto& stk = active_mutation_stack();
+        if (!stk.empty() && stk.back().audit_mid != 0)
+            audit_mid = stk.back().audit_mid;
+        else if (typed_audit::g_tls_boundary_audit_noted)
+            audit_mid = typed_audit::current_boundary_audit_mid();
+        else
+            audit_mid = typed_audit::resolve_audit_mutation_id();
+        cp.audit_mid = audit_mid;
+        typed_audit::note_boundary_audit_mid(audit_mid);
+    }
     active_mutation_stack().push_back(std::move(cp));
     const std::size_t depth = active_mutation_stack().size();
     // Issue #2105: mark txn-dirty for nested / atomic_batch so Agents
@@ -386,6 +400,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool nested_boundary = stack.size() > 1;
     auto cp = stack.back();
     stack.pop_back();
+    if (stack.empty())
+        typed_audit::clear_boundary_audit_mid();
     // Issue #2920 SSOT: FlatAST is authoritative after structural mutate.
     // Invalidate set-code text cache when this flat actually mutated so
     // JIT/serialize cannot re-parse pre-mutate source. set-code swaps in a
@@ -763,7 +779,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // Issue #2215 RenderFastExit: skip Full suite under render hotpath
         // success (frame budget); still record lightweight boundary outcome.
         {
-            const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+            const std::uint64_t mid = cp.audit_mid;
             const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
             if (render_fast_exit_this_boundary_ && !nested_boundary) {
                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
@@ -1177,7 +1193,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     if (!nested_boundary)
                         clear_txn_dirty();
                     last_mutate_error_ = "guard-reflect-validate-fail-strict-rollback";
-                    const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+                    const std::uint64_t mid = cp.audit_mid;
                     const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
                     typed_audit::record_boundary_outcome(
                         mid, "guard-reflect-validate-force-rollback", cp.version,
@@ -1191,7 +1207,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     } else if (!success) {
         // Issue #1589: TypedMutationAudit rollback trail.
         const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
-        const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+        const std::uint64_t mid = cp.audit_mid;
         const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
         typed_audit::record_boundary_outcome(mid, "rollback", cp.version, epoch_after,
                                              /*success=*/false, 0, 0, fid);
@@ -1798,9 +1814,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // Issue #2944: capture Mutation epoch mid for session-grant revoke on
     // outermost exit. Nested boundaries do not stamp (session_mid stays 0).
     if (outermost) {
-        session_mid_at_enter_ = aura::core::current_mutation_epoch();
-        if (session_mid_at_enter_ == 0)
-            session_mid_at_enter_ = 1; // non-zero join for session stamps
+        // Issue #3016: same resolve as trail stamp (caller → epoch → RQ →
+        // Soft gen / production refuse). Do not force mid=1 (that was a
+        // process-origin join key).
+        session_mid_at_enter_ = typed_audit::resolve_audit_mutation_id();
+        typed_audit::note_boundary_audit_mid(session_mid_at_enter_);
     }
     // Issue #2215: RenderFastExit eligible when outermost Guard is entered
     // under render hotpath (RenderHotEntryGuard / enter_render_hotpath).

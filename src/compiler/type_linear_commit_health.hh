@@ -196,6 +196,9 @@ struct TypeLinearEvolutionSnapshot {
     std::int64_t cone_outside_goal_drop_total = 0;
     // Additive lineage gauges (still pure loads)
     std::int64_t last_proof_stamp = 0;
+    // Issue #3016: last trail mid (same resolve vocabulary) so evolution
+    // snapshot joins SE / Typed trail / grant without a second bus.
+    std::int64_t last_proof_mid = 0;
     std::int64_t proof_stamped_after_rebind_total = 0;
     std::int64_t proof_reject_after_rebind_fail_total = 0;
     std::int64_t occurrence_empty_after_fence_soft_total = 0;
@@ -225,6 +228,8 @@ struct TypeLinearEvolutionSnapshot {
         static_cast<std::int64_t>(typed_audit::last_proof_linear_root_count_v_read());
     s.last_proof_stamp =
         static_cast<std::int64_t>(typed_audit::last_type_linear_commit_proof_stamp_v_read());
+    s.last_proof_mid = static_cast<std::int64_t>(
+        typed_audit::g_last_stamped_audit_mid.load(std::memory_order_relaxed));
     s.proof_stamped_after_rebind_total = static_cast<std::int64_t>(
         typed_audit::type_linear_proof_stamped_after_rebind_total_v_read());
     s.proof_reject_after_rebind_fail_total = static_cast<std::int64_t>(

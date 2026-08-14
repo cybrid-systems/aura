@@ -193,6 +193,93 @@ static void ac6_source_and_gate() {
           "AC6: coverage linter present");
 }
 
+// Issue #3016: boundary trail mid == resolve_audit_mutation_id (not
+// total_mutations_). Production refuse does not stamp mid=0; Soft
+// still generates a fallback. Two evaluators with coincidental volume
+// counters do not cross-join.
+static void ac7_boundary_trail_uses_resolve() {
+    std::println("\n--- #3016 AC: boundary trail mid == resolve ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(mb.find("Issue #3016") != std::string::npos, "#3016 AC5: boundary cites #3016");
+    CHECK(mb.find("cp.audit_mid") != std::string::npos, "#3016 AC5: trail uses checkpoint mid");
+    CHECK(tma.find("stamp_boundary_audit_mid") != std::string::npos,
+          "#3016 AC5: stamp helper present");
+    CHECK(tma.find("if (mutation_id == 0)") != std::string::npos, "#3016 AC3: capture skips mid=0");
+    CHECK(read_file("docs/design/3016-boundary-audit-mid.md").empty(), "#3016: no docs/design/");
+
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 55);
+    const auto expected = resolve_audit_mutation_id(0);
+    CHECK(expected == 55, "#3016 AC5: resolve == epoch 55");
+
+    CompilerService cs1;
+    auto& ev1 = cs1.evaluator();
+    bool ok = true;
+    auto g1 = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev1, 1, &ok);
+    CHECK(g1.has_value(), "#3016 AC5: Guard acquire");
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == expected,
+          "#3016 AC5: TLS mid == resolve");
+    aura::compiler::typed_audit::capture_audit_event_forced(
+        expected, "test:3016-boundary", aura::compiler::typed_audit::MutationKind::Structural, 1, 2,
+        aura::compiler::typed_audit::AuditOutcome::Success, 0, 0, 0, 0);
+    if (g1.has_value())
+        (*g1).reset();
+
+    aura::compiler::typed_audit::TypedMutationAuditEvent te{};
+    const bool found = aura::compiler::typed_audit::trail_find_by_mutation_id(expected, te);
+    CHECK(found, "#3016 AC5: trail find by resolved mid");
+    if (found)
+        CHECK(te.mutation_id == expected, "#3016 AC5: trail mid == resolve (not volume)");
+
+    // AC4: second evaluator with its own volume counter still stamps epoch,
+    // not coincidental total_mutations_.
+    CompilerService cs2;
+    auto& ev2 = cs2.evaluator();
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 77);
+    const auto expected2 = resolve_audit_mutation_id(0);
+    CHECK(expected2 == 77, "#3016 AC4: epoch 77");
+    auto g2 = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev2, 1, &ok);
+    CHECK(g2.has_value(), "#3016 AC4: second Guard");
+    CHECK(aura::compiler::typed_audit::current_boundary_audit_mid() == expected2,
+          "#3016 AC4: ev2 TLS mid == 77 (not ev1 volume)");
+    aura::compiler::typed_audit::capture_audit_event_forced(
+        expected2, "test:3016-ev2", aura::compiler::typed_audit::MutationKind::Structural, 1, 2,
+        aura::compiler::typed_audit::AuditOutcome::Success, 0, 0, 0, 0);
+    if (g2.has_value())
+        (*g2).reset();
+    aura::compiler::typed_audit::TypedMutationAuditEvent te2{};
+    CHECK(aura::compiler::typed_audit::trail_find_by_mutation_id(77, te2),
+          "#3016 AC4: trail find 77");
+
+    // AC3: production + all upstream 0 → no mid=0 trail stamp.
+    {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(1, std::memory_order_relaxed);
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+        process_resource_quota_manager().provenance_mutation_id = 0;
+        const auto refused0 =
+            g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load();
+        CompilerService cs3;
+        auto g3 =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs3.evaluator(), 1, &ok);
+        const auto mid0 = aura::compiler::typed_audit::current_boundary_audit_mid();
+        CHECK(mid0 == 0, "#3016 AC3: production refuse mid=0");
+        CHECK(g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load() > refused0,
+              "#3016 AC3: refused bumped");
+        aura::compiler::typed_audit::TypedMutationAuditEvent te0{};
+        CHECK(!aura::compiler::typed_audit::trail_find_by_mutation_id(0, te0),
+              "#3016 AC3: mid=0 not joinable in trail");
+        if (g3.has_value())
+            g3->reset();
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(0, std::memory_order_relaxed);
+        aura::compiler::typed_audit::clear_boundary_audit_mid();
+    }
+}
+
 } // namespace
 
 int run_test_audit_mutation_id_unify() {
@@ -203,6 +290,7 @@ int run_test_audit_mutation_id_unify() {
     ac4_soft_no_activity_fallback();
     ac5_correlated_audit_join();
     ac6_source_and_gate();
+    ac7_boundary_trail_uses_resolve();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
