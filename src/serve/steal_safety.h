@@ -100,6 +100,9 @@ inline std::atomic<std::uint64_t> g_steal_safety_residual_gc_defer_armed_total{0
 inline std::atomic<std::uint64_t> g_steal_safety_residual_envframe_lag_total{0};
 // Issue #2957: last LifetimeConsistencyProof negative after recent densify
 // (production residual arm (f)). Soft / no densify / no proof: no bump.
+// Issue #3001: nightly chaos soak fail-closed if this counter (or
+// residual_envframe_lag / residual_rearm_race) grows without matching
+// RejectHard + last_reject_invariant_bits covering the arm.
 inline std::atomic<std::uint64_t> g_steal_safety_residual_lifetime_proof_reject_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_residual_hard_and_wired{1};
 inline constexpr int kStealSafetyLifetimeProofResidualIssue = 2957;

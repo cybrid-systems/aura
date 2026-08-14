@@ -2693,6 +2693,19 @@ def cmd_lint():
             "Issue #3000 query stable-ref restamp-lag linter failed — run python3 scripts/coverage/checks/check_query_stable_ref_restamp_lag_3000.py"
         )
         return r
+    # Issue #3001: chaos soak fail-closed on LifetimeProofOk / EnvFrameOk
+    # residual arms (#2931/#2957 residual). Extends test_chaos_steal_mutation_gc
+    # + test_steal_complete_restamp_txn (#81967); no docs/design (#1655).
+    csl_script = COVERAGE_CHECKS / "check_chaos_steal_lifetime_envframe_3001.py"
+    if not csl_script.exists():
+        fail(f"missing {csl_script}")
+        return 1
+    r = run([sys.executable, str(csl_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3001 chaos steal lifetime/envframe linter failed — run python3 scripts/coverage/checks/check_chaos_steal_lifetime_envframe_3001.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -11149,6 +11162,25 @@ def cmd_chaos_steal_gc_nightly_2931_coverage():
     return 0
 
 
+def cmd_chaos_steal_lifetime_envframe_3001_coverage():
+    """Issue #3001: chaos soak fail-closed on LifetimeProofOk / EnvFrameOk.
+
+    Additive to #2931: residual_lifetime_proof_reject / envframe_lag /
+    rearm_race without matching RejectHard is soak-abort. Soft metric-only.
+    """
+    print(f"{B}=== chaos steal lifetime/envframe soak fail-closed (#3001) ==={N}")
+    script = COVERAGE_CHECKS / "check_chaos_steal_lifetime_envframe_3001.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("chaos steal lifetime/envframe (#3001) coverage contract rows failed")
+        return 1
+    ok("chaos steal lifetime/envframe (#3001) coverage clean")
+    return 0
+
+
 def cmd_hold_budget_dtor_consume_2999_coverage():
     """Issue #2999: outermost Guard dtor consume of hold-budget cancel."""
     print(f"{B}=== hold-budget dtor consume coverage (#2999) ==={N}")
@@ -14435,6 +14467,7 @@ def main():
         "bridge-epoch-zero-stale-2930": cmd_bridge_epoch_zero_stale_2930_coverage,
         "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,
         "chaos-steal-gc-nightly-2931-coverage": cmd_chaos_steal_gc_nightly_2931_coverage,
+        "chaos-steal-lifetime-envframe-3001": cmd_chaos_steal_lifetime_envframe_3001_coverage,
         "hold-budget-forced-fail-closed-2932": cmd_hold_budget_forced_fail_closed_2932_coverage,
         "hold-budget-dtor-consume-2999": cmd_hold_budget_dtor_consume_2999_coverage,
         "query-result-binding-2933": cmd_query_result_binding_2933_coverage,

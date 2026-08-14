@@ -190,7 +190,8 @@ namespace {
                 note_steal_invariant_fail(StealInvariant::GcDeferClear);
         }
     }
-    // StealInvariant::EnvFrameOk — Issue #2745: EnvFrame residual after densify
+    // StealInvariant::EnvFrameOk — Issue #2745: EnvFrame residual after densify.
+    // Issue #3001: chaos soak fail-closed if this arm grows without RejectHard.
     if (!skip(StealInvariant::EnvFrameOk) &&
         aura::core::densify_consistency::last_densify_call_seq() > 0) {
         if (!aura::core::densify_consistency::last_densify_envframe_ok() ||
@@ -203,6 +204,8 @@ namespace {
     // StealInvariant::LifetimeProofOk — Issue #2957 residual arm (f).
     // Soft: skip entirely (no loads). Production/Hard only when last
     // proof is stamped AND !would_allow AND recent densify.
+    // Issue #3001: soak fail-closed if this arm grows without matching
+    // RejectHard / no-ticket (last_reject_invariant_bits covers the arm).
     if (!skip(StealInvariant::LifetimeProofOk) && is_steal_snapshot_hard_mode()) {
         namespace lcp = aura::core::lifetime_consistency_proof;
         if (lcp::last_lifetime_consistency_proof_present() &&

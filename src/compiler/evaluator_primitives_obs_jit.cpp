@@ -11527,6 +11527,11 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("steal-invariant-envframe-fail-total",
                           static_cast<std::int64_t>(
                               aura::serve::steal_safety_residual_envframe_lag_total_v_read()));
+                insert_kv("steal-safety-residual-envframe-lag-total",
+                          static_cast<std::int64_t>(
+                              aura::serve::steal_safety_residual_envframe_lag_total_v_read()));
+                insert_kv("schema-2745", 2745);
+                insert_kv("issue-2745", 2745);
                 insert_kv("steal-invariant-last-reject-bits",
                           static_cast<std::int64_t>(
                               aura::serve::steal_safety_last_reject_invariant_bits_v_read()));
