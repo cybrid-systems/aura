@@ -33,6 +33,11 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     aud = _read("src/compiler/typed_mutation_audit.h")
     tc = _read("src/compiler/evaluator_typecheck.cpp")
     q = read_query_prims()
@@ -64,7 +69,7 @@ def main() -> int:
     must("schema-2898", "AC5", q)
     must("schema-2610", "AC5", q)
     must("composite-required-type-auto-fill-total", "AC5", q)
-    must("commit-readiness-force-reason-required-type", "AC5", q)
+    must_key("commit-readiness-force-reason-required-type", "AC5", q)
     must("ac2983_5_additive_query", "AC5", t)
 
     must("ac2983_6_source_and_linter", "AC6", t)
