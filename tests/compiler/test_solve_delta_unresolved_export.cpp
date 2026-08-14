@@ -1224,6 +1224,251 @@ static void ac2913_6_wired_in_solve_delta() {
           "2913 AC6: impl snapshots pruned residual");
 }
 
+// ── Issue #2994: Agent locality residual budget ──
+
+static void ac2994_1_default_budget_escalate() {
+    std::println("\n--- #2994 AC1: default budget 0 → #2913 escalate ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    CHECK(cs.solver_budget().is_default(), "2994 AC1: default is_default");
+    CHECK(cs.solver_budget().max_locality_residual == 0, "2994 AC1: residual budget 0");
+    cs.force_locality_pruned_for_test(3);
+    const auto allow0 = g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+        std::memory_order_relaxed);
+    const auto esc0 = g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+        std::memory_order_relaxed);
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "2994 AC1: escalate SOLVED on empty CS");
+    CHECK(cs.production_escalated(), "2994 AC1: production_escalated");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+              std::memory_order_relaxed) > esc0,
+          "2994 AC1: #2913 escalate still fires");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+              std::memory_order_relaxed) == allow0,
+          "2994 AC1: budget-allow not bumped on default");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2994_2_budget_allow_pending_handoff() {
+    std::println("\n--- #2994 AC2: residual ≤ budget → SOLVED + pending handoff ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.max_locality_residual = 4;
+    cs.set_solver_budget(b);
+    CHECK(!cs.solver_budget().is_default(), "2994 AC2: N>0 is not default");
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    CHECK(cs.is_dirty(), "2994 AC2: dirty residual");
+    cs.force_locality_pruned_for_test(2);
+    const auto allow0 = g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+        std::memory_order_relaxed);
+    const auto hand0 =
+        g_typed_mutation_audit_counters.delta_locality_budget_pending_handoff_total.load(
+            std::memory_order_relaxed);
+    const auto esc0 = g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+        std::memory_order_relaxed);
+
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "2994 AC2: SOLVED retained");
+    CHECK(!cs.production_escalated(), "2994 AC2: no full escalate");
+    CHECK(cs.pending_full_solve_roots_size() > 0, "2994 AC2: pending handoff non-empty");
+    CHECK(cs.is_dirty(), "2994 AC2: dirty bits retained (no silent drop)");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+              std::memory_order_relaxed) > allow0,
+          "2994 AC2: allow counter");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_pending_handoff_total.load(
+              std::memory_order_relaxed) > hand0,
+          "2994 AC2: pending-handoff counter");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+              std::memory_order_relaxed) == esc0,
+          "2994 AC2: #2913 escalate not bumped");
+    const auto pend0 = cs.pending_full_solve_roots_size();
+    auto next = cs.solve_delta();
+    CHECK(next == SolveResult::SOLVED, "2994 AC2: next solve_delta consumes");
+    CHECK(cs.pending_full_solve_roots_size() < pend0 || !cs.is_dirty(),
+          "2994 AC2: pending/dirty drained");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2994_3_budget_over_escalate() {
+    std::println("\n--- #2994 AC3: residual > budget → full escalate ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.max_locality_residual = 1;
+    cs.set_solver_budget(b);
+    cs.force_locality_pruned_for_test(5);
+    const auto besc0 = g_typed_mutation_audit_counters.delta_locality_budget_escalate_total.load(
+        std::memory_order_relaxed);
+    const auto esc0 = g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+        std::memory_order_relaxed);
+    auto post = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(post == SolveResult::SOLVED, "2994 AC3: escalate SOLVED on empty CS");
+    CHECK(cs.production_escalated(), "2994 AC3: production_escalated");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_escalate_total.load(
+              std::memory_order_relaxed) > besc0,
+          "2994 AC3: budget-escalate");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+              std::memory_order_relaxed) > esc0,
+          "2994 AC3: #2913 escalate");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2994_4_soft_no_budget_counters() {
+    std::println("\n--- #2994 AC4: Soft residual never full-solves ---");
+    using aura::compiler::SolverBudget;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::set_strategy;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    auto save_strat = get_strategy();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.max_locality_residual = 8;
+    cs.set_solver_budget(b);
+    cs.force_locality_pruned_for_test(3);
+    const auto allow0 = g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+        std::memory_order_relaxed);
+    const auto besc0 = g_typed_mutation_audit_counters.delta_locality_budget_escalate_total.load(
+        std::memory_order_relaxed);
+    const auto esc0 = g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+        std::memory_order_relaxed);
+    auto soft = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(soft == SolveResult::SOLVED, "2994 AC4: Soft allows");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_locality_escalate_total.load(
+              std::memory_order_relaxed) == esc0,
+          "2994 AC4: no full escalate");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+              std::memory_order_relaxed) == allow0,
+          "2994 AC4: no budget-allow (Soft observe only)");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_escalate_total.load(
+              std::memory_order_relaxed) == besc0,
+          "2994 AC4: no budget-escalate");
+
+    set_strategy(save_strat);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2994_5_quiet_zero_cost() {
+    std::println("\n--- #2994 AC5: residual 0 → no new atomics ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    const auto allow0 = g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+        std::memory_order_relaxed);
+    const auto besc0 = g_typed_mutation_audit_counters.delta_locality_budget_escalate_total.load(
+        std::memory_order_relaxed);
+    const auto hand0 =
+        g_typed_mutation_audit_counters.delta_locality_budget_pending_handoff_total.load(
+            std::memory_order_relaxed);
+    auto quiet = cs.escalate_locality_slo_if_production(SolveResult::SOLVED);
+    CHECK(quiet == SolveResult::SOLVED, "2994 AC5: quiet SOLVED");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+              std::memory_order_relaxed) == allow0,
+          "2994 AC5: no allow");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_escalate_total.load(
+              std::memory_order_relaxed) == besc0,
+          "2994 AC5: no budget-escalate");
+    CHECK(g_typed_mutation_audit_counters.delta_locality_budget_pending_handoff_total.load(
+              std::memory_order_relaxed) == hand0,
+          "2994 AC5: no handoff");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac2994_6_is_default_and_schema() {
+    std::println("\n--- #2994 AC6: is_default + schema-2994 ---");
+    CHECK(kSolverBudgetDefault.is_default(), "2994 AC6: kSolverBudgetDefault");
+    CHECK(aura::compiler::kSolverBudgetLocalityIssue == 2994, "2994 AC6: issue constant");
+    SolverBudget b{};
+    CHECK(b.is_default(), "2994 AC6: zero-init is_default");
+    b.max_locality_residual = 2;
+    CHECK(!b.is_default(), "2994 AC6: residual N>0 not default");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "2994 AC6: warm");
+    CHECK(href(svc, "schema-2994") == 2994, "2994 AC6: schema-2994");
+    CHECK(href(svc, "issue-2994") == 2994, "2994 AC6: issue-2994");
+    CHECK(href(svc, "delta-locality-budget-wired") == 1, "2994 AC6: wired");
+    CHECK(href(svc, "delta-locality-budget-allow-total") >= 0, "2994 AC6: allow key");
+    CHECK(href(svc, "delta-locality-budget-escalate-total") >= 0, "2994 AC6: escalate key");
+    CHECK(href(svc, "delta-locality-budget-pending-handoff-total") >= 0, "2994 AC6: handoff key");
+    CHECK(href(svc, "schema-2913") == 2913, "2994 AC6: schema-2913 preserved");
+}
+
+static void ac2994_7_source_cite() {
+    std::println("\n--- #2994 AC7: source-cite ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_solve_delta_locality_budget_2994.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("escalate_locality_slo_if_production") != std::string::npos,
+          "2994 AC7: escalate API");
+    CHECK(ixx.find("max_locality_residual") != std::string::npos, "2994 AC7: budget field");
+    CHECK(ixx.find("prefer_pending_roots_next") != std::string::npos, "2994 AC7: prefer pending");
+    CHECK(impl.find("handoff_locality_residual_to_pending") != std::string::npos,
+          "2994 AC7: handoff");
+    CHECK(impl.find("delta_locality_budget_allow_total") != std::string::npos, "2994 AC7: allow");
+    CHECK(t.find("ac2994_1_default_budget_escalate") != std::string::npos, "2994 AC7: AC1");
+    CHECK(t.find("force_locality_pruned_for_test") != std::string::npos, "2994 AC7: inject");
+    CHECK(!lint.empty(), "2994 AC7: linter");
+    CHECK(build.find("check_solve_delta_locality_budget_2994") != std::string::npos,
+          "2994 AC7: build.py");
+    CHECK(read_file("docs/design/2994-locality-residual-budget.md").empty(),
+          "2994 AC7: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_2994.cpp").empty(),
+          "2994 AC7: no invent test_issue_2994");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -1265,6 +1510,14 @@ int run_test_solve_delta_unresolved_export() {
     ac2913_4_additive_schema();
     ac2913_5_source_cite();
     ac2913_6_wired_in_solve_delta();
+    std::println("\n=== Issue #2994: locality residual budget ===");
+    ac2994_1_default_budget_escalate();
+    ac2994_2_budget_allow_pending_handoff();
+    ac2994_3_budget_over_escalate();
+    ac2994_4_soft_no_budget_counters();
+    ac2994_5_quiet_zero_cost();
+    ac2994_6_is_default_and_schema();
+    ac2994_7_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

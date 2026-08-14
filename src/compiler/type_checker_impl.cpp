@@ -2727,9 +2727,28 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
 // Soft vs production table:
 //   Soft + residual          → observe + allow (return prior SOLVED)
 //   production / Full + residual → escalate full solve; reject if unsolved
+//   production + budget N>0 + residual≤N → keep SOLVED + pending handoff (#2994)
+//   production + budget 0     → #2913 escalate (compat)
 //   clean local (no residual) → zero cost pass-through
 // TIMEOUT residual is already escalated by escalate_if_production (#2277);
 // this gate only fires on SOLVED with deferred dirty (locality prune miss).
+void ConstraintSystem::handoff_locality_residual_to_pending() {
+    auto note = [this](TypeId id) {
+        if (!id.valid() || !reg_.is_var(id))
+            return;
+        const auto rep = union_find_rep_index(id);
+        if (rep != UINT32_MAX)
+            pending_full_solve_roots_.insert(rep);
+    };
+    const auto n = std::min(constraint_dirty_.size(), constraints_.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!constraint_dirty_[i])
+            continue;
+        note(constraints_[i].lhs);
+        note(constraints_[i].rhs);
+    }
+}
+
 SolveResult
 ConstraintSystem::escalate_locality_slo_if_production(SolveResult prior,
                                                       std::vector<Constraint>* unresolved_out) {
@@ -2753,6 +2772,40 @@ ConstraintSystem::escalate_locality_slo_if_production(SolveResult prior,
                 ->solve_delta_locality_slo_observe_total.fetch_add(1, std::memory_order_relaxed);
         }
         return prior;
+    }
+
+    // Issue #2994: production residual ≤ Agent budget → keep SOLVED and
+    // hand off roots to pending_full_solve (next solve_delta consumes).
+    // budget 0 = #2913 compat (always escalate). No half-solved ship:
+    // dirty bits stay set; pending records the handoff.
+    const auto residual = last_locality_pruned_ > 0 ? last_locality_pruned_ : dirty_count_;
+    const auto budget = solver_budget_.max_locality_residual;
+    if (budget > 0 && residual > 0 && residual <= static_cast<std::size_t>(budget)) {
+        if (solver_budget_.prefer_pending_roots_next) {
+            handoff_locality_residual_to_pending();
+            if (!pending_full_solve_roots_.empty()) {
+                c.delta_locality_budget_pending_handoff_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                if (metrics_) {
+                    static_cast<struct CompilerMetrics*>(metrics_)
+                        ->delta_locality_budget_pending_handoff_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+            }
+        }
+        c.delta_locality_budget_allow_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->delta_locality_budget_allow_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        return prior;
+    }
+    if (budget > 0) {
+        c.delta_locality_budget_escalate_total.fetch_add(1, std::memory_order_relaxed);
+        if (metrics_) {
+            static_cast<struct CompilerMetrics*>(metrics_)
+                ->delta_locality_budget_escalate_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
 
     // production / Full: escalate to full solve — never silent-green residual.

@@ -477,6 +477,25 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("solve-delta-locality-slo-wired", 1);
                 insert_kv("schema-2913", 2913);
                 insert_kv("issue-2913", 2913);
+                // Issue #2994: Agent locality residual budget.
+                insert_kv(
+                    "delta-locality-budget-allow-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.delta_locality_budget_allow_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "delta-locality-budget-escalate-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.delta_locality_budget_escalate_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "delta-locality-budget-pending-handoff-total",
+                    static_cast<std::int64_t>(
+                        g_typed_mutation_audit_counters.delta_locality_budget_pending_handoff_total
+                            .load(std::memory_order_relaxed)));
+                insert_kv("delta-locality-budget-wired", 1);
+                insert_kv("schema-2994", 2994);
+                insert_kv("issue-2994", 2994);
             }
             // Issue #2278: epoch-scoped OccurrenceGoal table
             // metrics.
