@@ -459,6 +459,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         if (stats.children_column_restored && cp.macro_introduced_count_at_entry > 0) {
             macro_rollback_hits_.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #3033: dual-topology abort leaves IR cache version stamps
+        // pointing at intermediate/pre-abort state — force-dirty + zero-
+        // restamp every cached entry so should_relower is forced true and
+        // lookup_define_v2 / eval / AOT reemit never serve stale IR.
+        if (abort_ir_cache_force_dirty_fn_)
+            abort_ir_cache_force_dirty_fn_();
         last_boundary_rollback_stats_ = stats;
         // Invalidate the def-use index — the workspace state
         // is now different from what the index reflects.
@@ -1073,6 +1079,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                 workspace_flat_->rollback_atomic_batch();
                             suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
                         }
+                        // Issue #3033: dual-topology abort → force-dirty IR cache
+                        // (stamps point at intermediate state; see exit boundary).
+                        if (abort_ir_cache_force_dirty_fn_)
+                            abort_ir_cache_force_dirty_fn_();
                         last_boundary_rollback_stats_ = stats;
                         defuse_index_ = nullptr;
                         // Issue #2105: leave txn_dirty set until outermost clean exit,
@@ -1151,6 +1161,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         stats.sym_id_column_restored = true;
                         stats.param_columns_restored = true;
                     }
+                    // Issue #3033: dual-topology abort → force-dirty IR cache.
+                    if (abort_ir_cache_force_dirty_fn_)
+                        abort_ir_cache_force_dirty_fn_();
                     last_boundary_rollback_stats_ = stats;
                     defuse_index_ = nullptr;
                     if (!nested_boundary)

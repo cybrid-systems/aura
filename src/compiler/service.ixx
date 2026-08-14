@@ -803,6 +803,11 @@ public:
         evaluator_.set_mark_define_dirty_fn(
             [this](const std::string& name) { this->mark_define_dirty(name); });
         evaluator_.set_mark_all_defines_dirty_fn([this]() { this->mark_all_defines_dirty(); });
+        // Issue #3033: dual-topology abort → force-dirty + zero-restamp every
+        // IR cache entry so should_relower is forced true (abort path leaves
+        // version stamps pointing at intermediate/pre-abort state).
+        evaluator_.set_abort_ir_cache_force_dirty_fn(
+            [this]() { this->force_ir_cache_dirty_after_abort(); });
         // Issue #2730: rebind/set-body publish new source before dirty cascade.
         evaluator_.set_update_function_source_fn(
             [this](const std::string& name, const std::string& src) {
@@ -5156,6 +5161,34 @@ public:
         entry.stamp_version(mut, bridge, defuse, soa);
         metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.cache_stamp_restamp_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #3033: dual-topology abort force-dirty. abort_restore_dual_topology
+    // restores AST topology but the IR cache version stamps still point at
+    // intermediate/pre-abort state, so should_relower can return false and
+    // silently serve stale IR. Force-dirty + zero-restamp every cached entry
+    // (abort path only — non-abort path stays zero-cost). Also rebuild
+    // source_to_ir_map so ImpactScope cannot under-invalidate.
+    void force_ir_cache_dirty_after_abort() {
+        std::size_t forced = 0;
+        for (auto& [name, entry] : ir_cache_v2_) {
+            (void)name;
+            entry.dirty = true;
+            entry.mark_all_blocks_dirty();
+            // Zero stamps → should_relower forced true on every domain
+            // (mutation/bridge/defuse/soa) regardless of live counters.
+            entry.stamp_version(0, 0, 0, 0);
+            // finish_cascade_soa_dirty_sync_ handles empty/absent SoA
+            // (force_soa_instruction_dirty_sync is a no-op on empty module).
+            finish_cascade_soa_dirty_sync_(entry);
+            // Rebuild source_to_ir_map from current IR so ImpactScope
+            // (compute_impact_scope) cannot under-invalidate on stale map.
+            rebuild_or_patch_source_to_ir_map_(entry, std::nullopt);
+            ++forced;
+        }
+        if (forced > 0)
+            metrics_.abort_ir_cache_force_dirty_total.fetch_add(static_cast<std::uint64_t>(forced),
+                                                                std::memory_order_relaxed);
     }
 
     // Issue #2181: hard-require SoA block↔instr dirty sync before any
