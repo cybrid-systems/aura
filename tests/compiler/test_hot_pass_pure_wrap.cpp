@@ -152,6 +152,10 @@ static void ac4_metrics() {
     CHECK(h && is_hash(*h), "soa-view-enforcement-stats hash");
     CHECK(href(cs, "query:soa-view-enforcement-stats", "schema-2258") == 2258, "schema-2258");
     CHECK(href(cs, "query:soa-view-enforcement-stats", "issue-2258") == 2258, "issue-2258");
+    CHECK(href(cs, "query:soa-view-enforcement-stats", "schema-3042") == 3042, "schema-3042");
+    CHECK(href(cs, "query:soa-view-enforcement-stats", "pure-wrap-no-std-function-dirty-wired") ==
+              1,
+          "3042 no-std-function dirty wired");
     CHECK(href(cs, "query:soa-view-enforcement-stats", "hot-pass-dod-mandatory-wired") == 1,
           "hot pass mandatory wired");
     CHECK(href(cs, "query:soa-view-enforcement-stats", "pure-wrap-enforcement-wired") == 1,

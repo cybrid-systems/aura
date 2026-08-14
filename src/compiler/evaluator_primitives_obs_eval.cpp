@@ -16236,8 +16236,16 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::pass_pipeline_production_pack_inventory_wired.load(
                          std::memory_order_relaxed)))},
+                // Issue #3042: PureWrap dirty predicates — no std::function
+                {"schema-3042", make_int(3042)},
+                {"issue-3042", make_int(3042)},
+                {"pure-wrap-no-std-function-dirty-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::pure_wrap_no_std_function_dirty_wired.load(
+                         std::memory_order_relaxed)))},
                 {"issue", make_int(1619)},
-                {"schema", make_int(1619)}, // lineage 1517 → 1619 + #1918 + #2060 + #2258 + #2434
+                {"schema",
+                 make_int(1619)}, // lineage 1517 → 1619 + #1918 + #2060 + #2258 + #2434 + #3042
             };
             return build_hash(kv);
         });

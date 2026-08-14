@@ -1,12 +1,16 @@
 // @category: unit
 // @reason: Issue #2434 — Harden PureWrapPass + HotPassDodCompliant for all
 //          production pipeline stages; eliminate soft unmarked Legacy skips.
+//          Issue #3042 — drop residual std::function dirty predicates from
+//          PureWrap production stages (column-view / fn-pointer preds).
 //
 //   AC1: All production pack stages HotPassDodCompliant (or explicit Legacy)
 //   AC2: Production pack note_pass_soa_enforcement → concept_rejection delta 0
 //   AC3: Pure Wrap stages still advance pure_wrap_total
 //   AC4: static_assert pack holds; dirty short-circuit intact
 //   AC5: schema-2434 + source-cite + inventory
+//   #3042 AC1–AC5: no std::function dirty members/setters; inlineable preds;
+//                  dod + short-circuit + schema-3042 + concept_rejection==0
 
 #include "test_harness.hpp"
 
@@ -14,6 +18,7 @@
 #include <fstream>
 #include <print>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 import std;
@@ -25,6 +30,7 @@ import aura.compiler.ir;
 namespace {
 
 using aura::compiler::ArityWrap;
+using aura::compiler::BlockDirtyPred;
 using aura::compiler::check_pipeline_dod_compliance;
 using aura::compiler::CompilerService;
 using aura::compiler::ComputeKindWrap;
@@ -34,6 +40,8 @@ using aura::compiler::DeadCoercionEliminationPass;
 using aura::compiler::DefineDirtyMaskView;
 using aura::compiler::HotPassDodCompliant;
 using aura::compiler::InlinePass;
+using aura::compiler::InstructionDirtyPred;
+using aura::compiler::kPureWrapNoStdFunctionDirtyIssue;
 using aura::compiler::LinearOwnershipPass;
 using aura::compiler::MonomorphizePass;
 using aura::compiler::note_pass_soa_enforcement;
@@ -239,7 +247,78 @@ int run_test_hot_pass_hard_dod() {
         CHECK(rej >= 0, "AC5: rejection total readable");
     }
 
-    std::println("\n=== #2434 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #3042: residual std::function dirty predicates gone ────────
+    {
+        std::println("\n--- #3042 AC1/AC2: no std::function dirty predicates ---");
+        CHECK(kPureWrapNoStdFunctionDirtyIssue == 3042, "3042 AC1: issue constant");
+        static_assert(std::is_trivially_copyable_v<BlockDirtyPred>);
+        static_assert(std::is_trivially_copyable_v<InstructionDirtyPred>);
+        CHECK(true, "3042 AC2: BlockDirtyPred / InstructionDirtyPred trivially copyable");
+        auto pm = read_file("src/compiler/pass_manager.ixx") +
+                  read_file("src/compiler/pass_pipeline_core.ixx") +
+                  read_file("src/compiler/pass_impls.ixx") +
+                  read_file("src/compiler/optimization_passes.ixx") +
+                  read_file("src/compiler/service.ixx");
+        CHECK(pm.find("set_block_dirty_fn(std::function") == std::string::npos,
+              "3042 AC1: no std::function block dirty setter");
+        CHECK(pm.find("set_instruction_dirty_fn(std::function") == std::string::npos,
+              "3042 AC1: no std::function instruction dirty setter");
+        CHECK(pm.find("std::function<bool(std::uint32_t)> block_dirty") == std::string::npos,
+              "3042 AC1: no std::function block_dirty member");
+        CHECK(pm.find("struct BlockDirtyPred") != std::string::npos, "3042 AC2: BlockDirtyPred");
+        CHECK(pm.find("struct InstructionDirtyPred") != std::string::npos,
+              "3042 AC2: InstructionDirtyPred");
+
+        std::println("\n--- #3042 AC3/AC5: dod + schema + rejection ---");
+        check_pipeline_dod_compliance<ConstantFoldingWrap, TypePropagationPass, ComputeKindWrap,
+                                      ShapeWrap, DeadCoercionEliminationPass>();
+        CHECK(true, "3042 AC3: check_pipeline_dod_compliance still green");
+        auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(q.find("schema-3042") != std::string::npos, "3042 AC5: schema-3042 query key");
+        const auto rej0 =
+            aura::compiler::pass_pipeline_concept_rejection_total.load(std::memory_order_relaxed);
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "3042 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3042 eval");
+        CHECK(href(cs, "query:soa-view-enforcement-stats", "schema-3042") == 3042,
+              "3042 AC5: schema-3042 runtime");
+        CHECK(href(cs, "query:soa-view-enforcement-stats",
+                   "pure-wrap-no-std-function-dirty-wired") == 1,
+              "3042 AC5: no-std-function dirty wired");
+        CHECK(aura::compiler::pass_pipeline_concept_rejection_total.load(
+                  std::memory_order_relaxed) == rej0,
+              "3042 AC5: pass_pipeline_concept_rejection_total delta 0");
+        auto mod = make_mod(4);
+        ConstantFoldingWrap cf_prod;
+        ComputeKindWrap ck_prod;
+        DCEPass dce_prod;
+        const auto rej1 =
+            aura::compiler::pass_pipeline_concept_rejection_total.load(std::memory_order_relaxed);
+        CHECK(run_pipeline(mod, cf_prod, ck_prod, dce_prod), "3042 AC5: production pack");
+        CHECK(aura::compiler::pass_pipeline_concept_rejection_total.load(
+                  std::memory_order_relaxed) == rej1,
+              "3042 AC5: concept_rejection == 0 under production pack");
+
+        std::println("\n--- #3042 AC4: dirty short-circuit + test setter ---");
+        ConstantFoldingWrap cf;
+        cf.set_block_dirty_fn([](std::uint32_t) { return false; });
+        CHECK(!cf.is_block_dirty(0), "3042 AC4: test-only fn pointer setter (all clean)");
+        cf.set_block_dirty_fn([](std::uint32_t bi) { return bi == 0; });
+        CHECK(cf.is_block_dirty(0) && !cf.is_block_dirty(1), "3042 AC4: block-0 dirty only");
+        auto mod6 = make_mod(6);
+        std::vector<std::vector<std::uint8_t>> clean(1, std::vector<std::uint8_t>(6, 0));
+        DefineDirtyMaskView clean_view;
+        clean_view.block_dirty_per_func = &clean;
+        const auto sc0 =
+            aura::compiler::pipeline_dirty_short_circuit_total.load(std::memory_order_relaxed);
+        ConstantFoldingWrap cf2;
+        CHECK(run_incremental_dirty_pipeline(mod6, cf2, &clean_view), "3042 AC4: clean mask skip");
+        CHECK(aura::compiler::pipeline_dirty_short_circuit_total.load(std::memory_order_relaxed) >
+                  sc0,
+              "3042 AC4: short-circuit advanced");
+    }
+
+    std::println("\n=== #2434/#3042 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -278,17 +278,17 @@ export struct EscapeAnalysisWrap {
     // Per-function escape maps (indexed by IR function id).
     // Each entry: 0=NON_ESCAPING, 1=ESCAPED.
     std::vector<std::vector<std::uint8_t>> maps;
-    std::function<bool(std::uint32_t)> block_dirty_fn_;
+    BlockDirtyPred block_dirty_pred_;
 
-    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
-        block_dirty_fn_ = std::move(fn);
+    void set_block_dirty_pred(BlockDirtyPred pred) noexcept { block_dirty_pred_ = pred; }
+    // Issue #3042: test-only function-pointer setter (non-capturing).
+    void set_block_dirty_fn(bool (*fn)(std::uint32_t)) noexcept {
+        block_dirty_pred_ = BlockDirtyPred{.fn = fn};
     }
 
     // Issue #684: DirtyAwarePass hook for incremental escape analysis.
     [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
-        if (!block_dirty_fn_)
-            return true;
-        return block_dirty_fn_(block_id);
+        return block_dirty_pred_(block_id);
     }
 
     // Issue #1574: IncrementalPass entry points for dirty pipeline.
@@ -299,7 +299,7 @@ export struct EscapeAnalysisWrap {
             maps.resize(func.id + 1);
         std::vector<std::vector<aura::jit::FlatInstruction>> flat_instrs(func.blocks.size());
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
-            if (block_dirty_fn_ && !is_block_dirty(static_cast<std::uint32_t>(bi)))
+            if (block_dirty_pred_ && !is_block_dirty(static_cast<std::uint32_t>(bi)))
                 continue;
             for (auto& instr : func.blocks[bi].instructions) {
                 if (instr.linear_ownership_state != 0 && instr.narrow_evidence != 0)

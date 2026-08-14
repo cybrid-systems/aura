@@ -964,6 +964,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"issue-2434", make_int(2434)},
                 {"pass-pipeline-hard-dod-wired", make_int(1)},
                 {"pass-pipeline-production-pack-inventory-wired", make_int(1)},
+                // Issue #3042: PureWrap dirty predicates — no std::function
+                {"schema-3042", make_int(3042)},
+                {"issue-3042", make_int(3042)},
+                {"pure-wrap-no-std-function-dirty-wired", make_int(1)},
                 // Issue #1919: intelligent auto-compact policy surface
                 {"schema-1919", make_int(1919)},
                 {"issue-1919", make_int(1919)},

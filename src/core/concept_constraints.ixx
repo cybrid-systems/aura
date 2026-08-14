@@ -248,6 +248,11 @@ concept RequiresSoAViewPass =
 //   only with a documented sunset. Production config keeps
 //   pass_pipeline_concept_rejection_total == 0.
 //
+// Issue #3042 contract:
+//   Production PureWrap dirty predicates are BlockDirtyPred /
+//   InstructionDirtyPred (column view or non-capturing function pointer).
+//   No std::function members or setters on PureWrap stages.
+//
 // Issue #2907 contract:
 //   Production packs contain zero SoAtoAoSBridgePass. Hot DirtyAware +
 //   SoAViewAware stages implement run_dirty(IRModuleV2&) (SoaDirtyAwarePass)
@@ -274,7 +279,7 @@ concept PureWrapPass =
 // Pass provides a dirty-only / SoA-columnar entry for sparse
 // incremental re-lower. Preferred surface:
 //   void run_on_dirty_blocks_only(IRFunction&)
-// Accepted equivalent (pipeline routes via dirty peel + set_block_dirty_fn):
+// Accepted equivalent (pipeline routes via dirty peel + set_block_dirty_pred):
 //   IncrementalPass + DirtyAwarePass + SoAViewAwarePass
 //
 // check_pass_dod_compliance / run_incremental_dirty_pipeline assert

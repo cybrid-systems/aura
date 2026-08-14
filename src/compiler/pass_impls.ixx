@@ -69,14 +69,13 @@ public:
     }
 
     // Issue #1574: DirtyAware + IncrementalPass — skip clean blocks when
-    // define-level mask is wired via set_block_dirty_fn / define_cache.
-    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
-        block_dirty_fn_ = std::move(fn);
+    // define-level mask is wired via set_block_dirty_pred / define_cache.
+    void set_block_dirty_pred(BlockDirtyPred pred) noexcept { block_dirty_pred_ = pred; }
+    void set_block_dirty_fn(bool (*fn)(std::uint32_t)) noexcept {
+        block_dirty_pred_ = BlockDirtyPred{.fn = fn};
     }
     [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
-        if (!block_dirty_fn_)
-            return true;
-        return block_dirty_fn_(block_id);
+        return block_dirty_pred_(block_id);
     }
     void run(aura::ir::IRFunction& func) {
         // Analysis is whole-function (compute_kind needs all blocks);
@@ -90,7 +89,7 @@ public:
                 break;
             }
         }
-        if (!any && block_dirty_fn_)
+        if (!any && block_dirty_pred_)
             return;
         results_.push_back(aura::compiler::compute_kind(func));
     }
@@ -114,7 +113,7 @@ private:
     // the accumulator (pure-analysis observation, not a logical
     // mutation of the Pass instance from a caller's perspective).
     mutable std::vector<ComputeKindResult> results_;
-    std::function<bool(std::uint32_t)> block_dirty_fn_;
+    BlockDirtyPred block_dirty_pred_;
 };
 
 // ── ArityWrap — arity checking pass ────────────────────────────
@@ -173,13 +172,12 @@ public:
     }
 
     // Issue #1574: DirtyAware + IncrementalPass for define-mask wiring.
-    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
-        block_dirty_fn_ = std::move(fn);
+    void set_block_dirty_pred(BlockDirtyPred pred) noexcept { block_dirty_pred_ = pred; }
+    void set_block_dirty_fn(bool (*fn)(std::uint32_t)) noexcept {
+        block_dirty_pred_ = BlockDirtyPred{.fn = fn};
     }
     [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
-        if (!block_dirty_fn_)
-            return true;
-        return block_dirty_fn_(block_id);
+        return block_dirty_pred_(block_id);
     }
     void run(aura::ir::IRFunction& func) {
         bool any = false;
@@ -189,7 +187,7 @@ public:
                 break;
             }
         }
-        if (!any && block_dirty_fn_)
+        if (!any && block_dirty_pred_)
             return;
         std::uint32_t sid = 0;
         for (const auto& blk : func.blocks) {
@@ -216,7 +214,7 @@ public:
 private:
     mutable std::vector<std::uint32_t> results_;
     static inline std::atomic<std::uint64_t> pure_delegation_hits_{0};
-    std::function<bool(std::uint32_t)> block_dirty_fn_;
+    BlockDirtyPred block_dirty_pred_;
 };
 
 // ── Issue #606 / #2828: LinearOwnershipWrap — pure read-only linear UaM probe ─
@@ -439,15 +437,14 @@ private:
 // the per-function allocator.
 export class ConstantFoldingWrap {
 public:
-    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
-        block_dirty_fn_ = std::move(fn);
+    void set_block_dirty_pred(BlockDirtyPred pred) noexcept { block_dirty_pred_ = pred; }
+    void set_block_dirty_fn(bool (*fn)(std::uint32_t)) noexcept {
+        block_dirty_pred_ = BlockDirtyPred{.fn = fn};
     }
 
     // Issue #684: DirtyAwarePass hook — 1 = block needs folding.
     [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
-        if (!block_dirty_fn_)
-            return true;
-        return block_dirty_fn_(block_id);
+        return block_dirty_pred_(block_id);
     }
 
     void run(aura::ir::IRModule& module) {
@@ -502,7 +499,7 @@ public:
     // value being the per-function count).
     std::size_t fold_function(aura::ir::IRFunction& func) {
         std::size_t before = folded_;
-        if (!block_dirty_fn_) {
+        if (!block_dirty_pred_) {
             auto r = aura::compiler::constant_fold_function(func);
             folded_ += r.folded_count;
             return folded_ - before;
@@ -539,7 +536,7 @@ public:
 
     // Issue #2060: DirtySoAEntryPass — fold only dirty blocks (no clean peel).
     void run_on_dirty_blocks_only(aura::ir::IRFunction& func) {
-        if (!block_dirty_fn_) {
+        if (!block_dirty_pred_) {
             (void)fold_function(func);
             return;
         }
@@ -575,7 +572,7 @@ private:
     // under some instantiation paths, but the concrete
     // std::unordered_map is fine.
     std::unordered_map<std::uint32_t, std::int64_t> known_;
-    std::function<bool(std::uint32_t)> block_dirty_fn_;
+    BlockDirtyPred block_dirty_pred_;
     std::size_t folded_ = 0;
     std::uint64_t pipeline_epoch_ = 0;
 };
@@ -1260,13 +1257,14 @@ public:
     // Issue #2133: optional instruction dirty mask (absolute index in
     // function instruction stream, parallel to instruction_dirty_per_func_).
     // Empty → process all instrs in selected blocks.
-    void set_instruction_dirty_fn(std::function<bool(std::uint32_t, std::uint32_t)> fn) {
-        instruction_dirty_fn_ = std::move(fn);
+    void set_instruction_dirty_pred(InstructionDirtyPred pred) noexcept {
+        instruction_dirty_pred_ = pred;
+    }
+    void set_instruction_dirty_fn(bool (*fn)(std::uint32_t, std::uint32_t)) noexcept {
+        instruction_dirty_pred_ = InstructionDirtyPred{.fn = fn};
     }
     [[nodiscard]] bool is_instruction_dirty(std::uint32_t block_id, std::uint32_t inst_id) const {
-        if (!instruction_dirty_fn_)
-            return true;
-        return instruction_dirty_fn_(block_id, inst_id);
+        return instruction_dirty_pred_(block_id, inst_id);
     }
 
     void run_function(aura::ir::IRFunction& func, std::span<const std::uint8_t> dirty_blocks = {}) {
@@ -1314,7 +1312,7 @@ public:
             }
             for (std::size_t i = 0; i < block.instructions.size(); ++i) {
                 // Issue #2133: skip clean instructions when mask set.
-                if (instruction_dirty_fn_ &&
+                if (instruction_dirty_pred_ &&
                     !is_instruction_dirty(block_index, static_cast<std::uint32_t>(i))) {
                     instr_level_pass_skipped_clean_total.fetch_add(1, std::memory_order_relaxed);
                     continue;
@@ -1651,7 +1649,7 @@ private:
 
             for (std::uint32_t i = start; i < end; ++i) {
                 const auto local_i = i - start;
-                if (instruction_dirty_fn_ && !is_instruction_dirty(block.block_id, local_i)) {
+                if (instruction_dirty_pred_ && !is_instruction_dirty(block.block_id, local_i)) {
                     instr_level_pass_skipped_clean_total.fetch_add(1, std::memory_order_relaxed);
                     continue;
                 }
@@ -1785,7 +1783,7 @@ private:
     bool keep_for_debug_ = false;
     std::uint64_t pipeline_epoch_ = 0;
     // Issue #2133: optional (block, inst) dirty peel.
-    std::function<bool(std::uint32_t, std::uint32_t)> instruction_dirty_fn_;
+    InstructionDirtyPred instruction_dirty_pred_;
 };
 
 static_assert(JITFriendlyPass<DeadCoercionEliminationPass>,
@@ -2216,13 +2214,12 @@ public:
 
     // Issue #1875: DirtyAware — only re-mark escape points in dirty
     // blocks (backward prop still whole-function for soundness).
-    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
-        block_dirty_fn_ = std::move(fn);
+    void set_block_dirty_pred(BlockDirtyPred pred) noexcept { block_dirty_pred_ = pred; }
+    void set_block_dirty_fn(bool (*fn)(std::uint32_t)) noexcept {
+        block_dirty_pred_ = BlockDirtyPred{.fn = fn};
     }
     [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
-        if (!block_dirty_fn_)
-            return true;
-        return block_dirty_fn_(block_id);
+        return block_dirty_pred_(block_id);
     }
     void run(aura::ir::IRFunction& func) {
         run_on_function(func);
@@ -2252,7 +2249,7 @@ private:
     std::size_t functions_analyzed_ = 0;
     std::size_t dirty_blocks_analyzed_ = 0;
     std::size_t dirty_reruns_ = 0;
-    std::function<bool(std::uint32_t)> block_dirty_fn_;
+    BlockDirtyPred block_dirty_pred_;
     // Returns true if the opcode is a "return" that escapes its
     // operand value to the caller. Mirrors the escape-point
     // list in the existing JIT implementation.
@@ -2401,7 +2398,7 @@ private:
         // Issue #1875: when dirty-aware, preserve non-dirty block
         // escape marks by merging: start from existing map if sized,
         // else zero. Full re-mark of dirty blocks only.
-        const bool dirty_mode = static_cast<bool>(block_dirty_fn_);
+        const bool dirty_mode = static_cast<bool>(block_dirty_pred_);
         if (!dirty_mode || func.escape_map.size() != func.local_count)
             func.escape_map.assign(func.local_count, 0);
         else if (dirty_mode)
@@ -2664,13 +2661,12 @@ public:
     void run_function(aura::ir::IRFunction& func) { run(func); }
 
     // Issue #1574: DirtyAware + IncrementalPass — only dirty blocks.
-    void set_block_dirty_fn(std::function<bool(std::uint32_t)> fn) {
-        block_dirty_fn_ = std::move(fn);
+    void set_block_dirty_pred(BlockDirtyPred pred) noexcept { block_dirty_pred_ = pred; }
+    void set_block_dirty_fn(bool (*fn)(std::uint32_t)) noexcept {
+        block_dirty_pred_ = BlockDirtyPred{.fn = fn};
     }
     [[nodiscard]] bool is_block_dirty(std::uint32_t block_id) const {
-        if (!block_dirty_fn_)
-            return true;
-        return block_dirty_fn_(block_id);
+        return block_dirty_pred_(block_id);
     }
     void run(aura::ir::IRFunction& func) {
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
@@ -3066,7 +3062,7 @@ private:
     std::size_t const_ground_stamped_ = 0; // Issue #1874
     const aura::core::TypeRegistry* reg_ = nullptr;
     std::uint64_t pipeline_epoch_ = 0;
-    std::function<bool(std::uint32_t)> block_dirty_fn_; // Issue #1574
+    BlockDirtyPred block_dirty_pred_; // Issue #1574
 };
 
 static_assert(JITFriendlyPass<TypePropagationPass>,
@@ -4725,20 +4721,21 @@ public:
     }
 
     // Issue #2133: optional instruction-dirty peel (block_id, inst_id).
-    void set_instruction_dirty_fn(std::function<bool(std::uint32_t, std::uint32_t)> fn) {
-        instruction_dirty_fn_ = std::move(fn);
+    void set_instruction_dirty_pred(InstructionDirtyPred pred) noexcept {
+        instruction_dirty_pred_ = pred;
+    }
+    void set_instruction_dirty_fn(bool (*fn)(std::uint32_t, std::uint32_t)) noexcept {
+        instruction_dirty_pred_ = InstructionDirtyPred{.fn = fn};
     }
     [[nodiscard]] bool is_instruction_dirty(std::uint32_t block_id, std::uint32_t inst_id) const {
-        if (!instruction_dirty_fn_)
-            return true;
-        return instruction_dirty_fn_(block_id, inst_id);
+        return instruction_dirty_pred_(block_id, inst_id);
     }
 
     // Issue #2130: optional dirty mask (size == blocks). Empty → process all.
     // Clean blocks are skipped for fold work; ownership scan for MoveOp elide
     // still walks the full function (correctness).
     // Issue #2133: within dirty blocks, clean instructions are skipped when
-    // instruction_dirty_fn_ is set (ImpactScope precision).
+    // instruction_dirty_pred_ is set (ImpactScope precision).
     void run_on_function(aura::ir::IRFunction& func,
                          std::span<const std::uint8_t> dirty_blocks = {}) {
         blocks_processed_ = 0;
@@ -4770,7 +4767,7 @@ public:
             auto& block = func.blocks[bi];
             for (std::size_t ii = 0; ii < block.instructions.size(); ++ii) {
                 // Issue #2133: peel clean instructions inside dirty blocks.
-                if (instruction_dirty_fn_ &&
+                if (instruction_dirty_pred_ &&
                     !is_instruction_dirty(static_cast<std::uint32_t>(bi),
                                           static_cast<std::uint32_t>(ii))) {
                     instr_level_pass_skipped_clean_total.fetch_add(1, std::memory_order_relaxed);
@@ -4860,7 +4857,7 @@ private:
     std::uint64_t blocks_skipped_ = 0;
     std::map<std::string, std::vector<std::uint8_t>> escape_maps_;
     // Issue #2133: optional (block, inst) dirty peel.
-    std::function<bool(std::uint32_t, std::uint32_t)> instruction_dirty_fn_;
+    InstructionDirtyPred instruction_dirty_pred_;
 };
 
 // ── SoAtoAoSBridgePass — Issue #463 (Phase 2 wiring scaffold) ─────
