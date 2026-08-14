@@ -1360,6 +1360,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     ev.workspace_flat() && ev.workspace_flat()->restamp_generation_torn() ? 1 : 0));
             insert_kv("schema-3037", 3037);
             insert_kv("issue-3037", 3037);
+            // Issue #3041: restamp-budget QueryEpoch stale (poll after Guard).
+            insert_kv("restamp-budget-query-epoch-stale-total",
+                      static_cast<std::int64_t>(
+                          aura::core::g_restamp_budget_query_epoch_stale_total().load(
+                              std::memory_order_relaxed)));
+            insert_kv("query-epoch-forced-stale",
+                      aura::core::g_query_epoch_forced_stale().load(std::memory_order_relaxed) ? 1
+                                                                                               : 0);
+            insert_kv("schema-3041", 3041);
+            insert_kv("issue-3041", 3041);
             // Issue #2170: LayoutStamp keys (schema bump — fold into the
             // existing stable-ref-stats-hash per #2170 AC contract,
             // "no new public prim if constrained"). The stamp captures

@@ -3303,7 +3303,7 @@ void register_workspace_query_primitives(
     // query-result-stale-total, query-result-wired, schema-2933.
     auto query_epoch_stats_fn = [ws](const auto&) -> EvalValue {
         aura::core::maybe_init_query_epoch_strict_from_env();
-        auto* ht = FlatHashTable::create(48);
+        auto* ht = FlatHashTable::create(64);
         if (!ht)
             return make_void();
         auto meta = ht->metadata();
@@ -3387,6 +3387,16 @@ void register_workspace_query_primitives(
                       aura::core::g_query_result_wired().load(std::memory_order_relaxed)));
         insert_kv("schema-2933", 2933);
         insert_kv("issue-2933", 2933);
+        // Issue #3041: restamp-budget exceed → QueryEpoch stale (pollable).
+        insert_kv("query-epoch-forced-stale",
+                  aura::core::g_query_epoch_forced_stale().load(std::memory_order_relaxed) ? 1 : 0);
+        insert_kv(
+            "restamp-budget-query-epoch-stale-total",
+            static_cast<std::int64_t>(aura::core::g_restamp_budget_query_epoch_stale_total().load(
+                std::memory_order_relaxed)));
+        insert_kv("restamp-budget-query-epoch-stale-wired", 1);
+        insert_kv("schema-3041", 3041);
+        insert_kv("issue-3041", 3041);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

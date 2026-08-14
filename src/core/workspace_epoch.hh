@@ -273,6 +273,19 @@ inline std::atomic<std::uint64_t>& g_query_epoch_stale_total() noexcept {
     return v;
 }
 
+// Issue #3041: production restamp-budget exceed forces the active
+// QueryEpoch stale so Agents can poll after Guard exit (no wait for
+// the next is_valid / refresh_if_stale). Soft never sets this.
+inline constexpr int kRestampBudgetQueryEpochStaleIssue = 3041;
+inline std::atomic<std::uint32_t>& g_query_epoch_forced_stale() noexcept {
+    static std::atomic<std::uint32_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_restamp_budget_query_epoch_stale_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
 inline void set_query_epoch_strict(bool on) noexcept {
     g_query_epoch_strict().store(on, std::memory_order_release);
 }
@@ -306,7 +319,26 @@ inline void maybe_init_query_epoch_strict_from_env() noexcept {
     g_last_query_bridge_epoch().store(e.bridge_epoch, std::memory_order_relaxed);
     g_last_query_workspace_id().store(e.workspace_id, std::memory_order_relaxed);
     g_query_epoch_capture_total().fetch_add(1, std::memory_order_relaxed);
+    // New capture is consistent with the post-restamp world.
+    g_query_epoch_forced_stale().store(0, std::memory_order_release);
     return e;
+}
+
+// Issue #3041: production budget-exceed → mark last QueryEpoch stale
+// (if any capture exists) + bump the pollable counter. Lazy-align is
+// unchanged (caller still enables it). Soft / unlimited must not call.
+inline void force_query_epoch_stale_from_restamp_budget() noexcept {
+    g_restamp_budget_query_epoch_stale_total().fetch_add(1, std::memory_order_relaxed);
+    if (g_query_epoch_capture_total().load(std::memory_order_relaxed) == 0)
+        return; // no active QueryEpoch
+    if (g_query_epoch_forced_stale().exchange(1, std::memory_order_acq_rel) != 0)
+        return; // already forced this window
+    // Poison last generation so last_query_epoch().is_fresh fails
+    // immediately (Agents poll query:query-epoch-stats after Guard).
+    const auto last_gen = g_last_query_generation().load(std::memory_order_relaxed);
+    g_last_query_generation().store(~last_gen, std::memory_order_relaxed);
+    g_query_epoch_stale_total().fetch_add(1, std::memory_order_relaxed);
+    g_query_epoch_mismatch_total().fetch_add(1, std::memory_order_relaxed);
 }
 
 // End-of-query check. Returns false only when strict mode is on AND
@@ -315,7 +347,8 @@ inline void maybe_init_query_epoch_strict_from_env() noexcept {
 [[nodiscard]] inline bool finish_query_epoch(const QueryEpoch& start,
                                              std::uint64_t flat_generation) noexcept {
     const auto cur_mut = current_mutation_epoch();
-    if (start.is_fresh(cur_mut, flat_generation))
+    const bool forced = g_query_epoch_forced_stale().load(std::memory_order_acquire) != 0;
+    if (!forced && start.is_fresh(cur_mut, flat_generation))
         return true;
     g_query_epoch_mismatch_total().fetch_add(1, std::memory_order_relaxed);
     if (query_epoch_strict()) {
@@ -340,6 +373,8 @@ inline void reset_query_epoch_metrics_for_test() noexcept {
     g_query_epoch_capture_total().store(0, std::memory_order_relaxed);
     g_query_epoch_mismatch_total().store(0, std::memory_order_relaxed);
     g_query_epoch_stale_total().store(0, std::memory_order_relaxed);
+    g_query_epoch_forced_stale().store(0, std::memory_order_relaxed);
+    g_restamp_budget_query_epoch_stale_total().store(0, std::memory_order_relaxed);
     set_query_epoch_strict(false);
 }
 
@@ -431,6 +466,12 @@ inline void note_query_result_stale() noexcept {
 // only if epoch-fresh (Agents always get accurate is_fresh).
 [[nodiscard]] inline bool query_result_check_fresh(const QueryResult& qr,
                                                    std::uint64_t flat_generation) noexcept {
+    // Issue #3041: production restamp-budget exceed forces held results stale
+    // immediately (do not wait for is_valid / refresh_if_stale).
+    if (g_query_epoch_forced_stale().load(std::memory_order_acquire) != 0) {
+        note_query_result_stale();
+        return false;
+    }
     if (qr.is_fresh_live(flat_generation)) {
         note_query_result_fresh_hit();
         return true;

@@ -858,6 +858,9 @@ void FlatAST::restamp_all_node_generations() {
             // Issue #3037: mark generation torn for export (do not rely
             // on lazy-align making node_gen_ look post-mutate).
             restamp_generation_torn_.store(1, std::memory_order_relaxed);
+            // Issue #3041: lazy-align still runs below (is_valid consistent).
+            // Production QueryEpoch stale is forced at unified_restamp
+            // (compiler layer; Soft stays metric-only here).
             if (touched_live > 0 && touched_live <= static_cast<std::uint64_t>(budget)) {
                 // Soft: cone fits — incremental + lazy for untouched.
                 use_incremental = true;

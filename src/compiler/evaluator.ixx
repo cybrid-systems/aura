@@ -14417,7 +14417,7 @@ public:
     // Evaluator access). Heavy try_acquire / AcquireTag ctor / dtor /
     // move / enable_fine_rollback live in evaluator_mutation_boundary.cpp
     // (same module partition pattern as evaluator_fiber_mutation.cpp).
-    // Issue #2934: successful exit drives restamp_all_node_generations
+    // Issue #2934 / #3041: successful exit drives restamp_all_node_generations
     // under AURA_RESTAMP_BUDGET_NODES (soft-degrade over budget; see
     // flatast_restamp.hh + evaluator_mutation_boundary.cpp exit path).
     // Issue #3000: export face is separate — query:*-stable must not

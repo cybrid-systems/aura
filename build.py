@@ -735,6 +735,19 @@ def cmd_lint():
             "Issue #2934 restamp budget linter failed — run python3 scripts/coverage/checks/check_restamp_budget_2934.py"
         )
         return r
+    # Issue #3041: production restamp-budget exceed forces QueryEpoch
+    # stale + pollable counter. Soft / unlimited metric-only.
+    # Extends test_restamp_sla_observability + isolation (#81967).
+    rqe_script = COVERAGE_CHECKS / "check_restamp_budget_query_epoch_stale_3041.py"
+    if not rqe_script.exists():
+        fail(f"missing {rqe_script}")
+        return 1
+    r = run([sys.executable, str(rqe_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3041 restamp-budget QueryEpoch stale linter failed — run python3 scripts/coverage/checks/check_restamp_budget_query_epoch_stale_3041.py"
+        )
+        return r
     # Issue #2754: region concurrent cone / ImpactScope mask-AND
     # disjointness (#2724 residual). Equal keys + proven cone masks
     # (mask AND == 0) → concurrent admit; true overlap still rejects.

@@ -1843,6 +1843,46 @@ int main() {
         }
     }
 
+    // ── #3041: production restamp budget exceed forces QueryEpoch stale ──
+    {
+        std::println("\n--- #3041 AC1: production unified restamp forces QueryEpoch stale ---");
+        reset_all();
+        using aura::ast::clear_restamp_budget_nodes_override_for_test;
+        using aura::ast::set_restamp_budget_nodes_for_process;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::core::capture_query_epoch;
+        using aura::core::g_query_epoch_forced_stale;
+        using aura::core::g_restamp_budget_query_epoch_stale_total;
+        using aura::core::reset_query_epoch_metrics_for_test;
+        reset_query_epoch_metrics_for_test();
+        apply_production_audit_defaults();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3041 a) a) (define (n3041b b) b) "
+                      "(define (n3041c c) c) (define (n3041d d) d)\")")
+                  .has_value(),
+              "3041 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3041 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3041 workspace");
+        (void)capture_query_epoch(ws->generation(), 0);
+        set_restamp_budget_nodes_for_process(1);
+        const auto qe0 = g_restamp_budget_query_epoch_stale_total().load();
+        auto r = ev.unified_restamp_after_boundary(Evaluator::UnifiedRestampSite::BoundarySuccess);
+        CHECK(r.budget_exceeded || ws->restamp_last_budget_exceeded(), "ac3041_1_budget_exceeded");
+        CHECK(ws->restamp_lazy_align_enabled(), "ac3041_1_lazy_align");
+        CHECK(g_query_epoch_forced_stale().load() != 0, "ac3041_1_query_epoch_forced_stale");
+        CHECK(g_restamp_budget_query_epoch_stale_total().load() > qe0, "ac3041_1_stale_counter");
+        apply_dev_audit_defaults();
+        clear_restamp_budget_nodes_override_for_test();
+        reset_query_epoch_metrics_for_test();
+        const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+        CHECK(qws.find("schema-3041") != std::string::npos, "ac3041_4_schema");
+        CHECK(qws.find("restamp-budget-query-epoch-stale-total") != std::string::npos,
+              "ac3041_4_key");
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

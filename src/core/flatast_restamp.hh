@@ -103,6 +103,9 @@ inline constexpr int kRestampIncrementalDefaultIssue = 2402;
 inline constexpr int kRestampBudgetIssue = 2934;
 inline constexpr int kQueryStableRefRestampLagIssue = 3000;
 inline constexpr int kRestampOverBudgetExportIssue = 3037;
+// Issue #3041: production budget exceed forces QueryEpoch stale +
+// pollable restamp-budget-query-epoch-stale-total. Soft metric-only.
+inline constexpr int kRestampBudgetQueryEpochStaleIssue = 3041;
 // Issue #3019: unified restamp after boundary / abort / steal / densify.
 // Additive torn-visible counter — does not replace restamp-lag (#3000).
 inline constexpr int kUnifiedRestampIssue = 3019;
