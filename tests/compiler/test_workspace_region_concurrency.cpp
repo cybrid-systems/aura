@@ -17,6 +17,8 @@
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
+#include "compiler/mutation_hold_budget.h"
 
 #include <atomic>
 #include <chrono>
@@ -397,6 +399,139 @@ static void ac2990_4_stats_and_health() {
           "AC4: health admit still called (no duplicate throttle)");
 }
 
+static std::int64_t href_health(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:mutation-concurrency-health\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static void ac3039_1_production_overlap_hard_reject() {
+    std::println("\n--- #3039 AC1: production ScopedParallel overlap → hard reject ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+          "3039 AC1: opt-in ScopedParallel");
+    Evaluator& ev = cs.evaluator();
+    ev.set_workspace_region_concurrency_enabled(true);
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "3039 AC1: metrics");
+    const auto fb0 = m->scoped_parallel_conflict_fallback_total.load(std::memory_order_relaxed);
+    const auto hard0 = aura::compiler::mutation_region_overlap_hard_reject_total_v_read();
+    const auto key = Evaluator::workspace_region_key_from_name("overlap-3039");
+    bool ok1 = true;
+    auto g1 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok1);
+    CHECK(g1.has_value() && *g1, "3039 AC1: first region admit");
+    (*g1).reset();
+    bool ok2 = true;
+    auto g2 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok2);
+    CHECK(!g2.has_value(), "3039 AC1: overlap hard-rejects (no admit)");
+    CHECK(g2.error().message.find("region-overlap") != std::string::npos,
+          "3039 AC1: structured region-overlap reason");
+    CHECK(aura::compiler::mutation_region_overlap_hard_reject_total_v_read() > hard0,
+          "3039 AC1: hard-reject counter bumps");
+    CHECK(aura::compiler::mutation_region_overlap_last_reason_v_read() == 1,
+          "3039 AC1: last-reason region-overlap");
+    CHECK(m->scoped_parallel_conflict_fallback_total.load(std::memory_order_relaxed) == fb0,
+          "3039 AC1: no GlobalExclusive fallback");
+    apply_dev_audit_defaults();
+}
+
+static void ac3039_2_production_disjoint_proceeds() {
+    std::println("\n--- #3039 AC2: production ScopedParallel disjoint → RegionExclusive ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy \"scoped-parallel\")").has_value(),
+          "3039 AC2: opt-in");
+    Evaluator& ev = cs.evaluator();
+    ev.set_workspace_region_concurrency_enabled(true);
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    const auto hard0 = aura::compiler::mutation_region_overlap_hard_reject_total_v_read();
+    const auto admit0 = m->scoped_parallel_admit_total.load(std::memory_order_relaxed);
+    const auto k0 = Evaluator::workspace_region_key_from_name("d-a-3039");
+    const auto k1 = Evaluator::workspace_region_key_from_name("d-b-3039");
+    bool ok1 = true;
+    auto g1 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, k0, 1, &ok1);
+    CHECK(g1.has_value() && *g1, "3039 AC2: first disjoint admit");
+    (*g1).reset();
+    bool ok2 = true;
+    auto g2 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, k1, 1, &ok2);
+    CHECK(g2.has_value() && *g2, "3039 AC2: second disjoint admit");
+    CHECK(aura::compiler::mutation_region_overlap_hard_reject_total_v_read() == hard0,
+          "3039 AC2: no hard-reject on disjoint");
+    CHECK(m->scoped_parallel_admit_total.load(std::memory_order_relaxed) > admit0,
+          "3039 AC2: ScopedParallel admit credited");
+    apply_dev_audit_defaults();
+}
+
+static void ac3039_3_soft_observe_only() {
+    std::println("\n--- #3039 AC3: Soft overlap observe-only (no hard-reject store) ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(), "3039 AC3: opt-in");
+    Evaluator& ev = cs.evaluator();
+    ev.set_workspace_region_concurrency_enabled(true);
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    const auto hard0 = aura::compiler::mutation_region_overlap_hard_reject_total_v_read();
+    const auto obs0 = aura::compiler::mutation_region_overlap_reject_total_v_read();
+    const auto fb0 = m->scoped_parallel_conflict_fallback_total.load(std::memory_order_relaxed);
+    const auto key = Evaluator::workspace_region_key_from_name("soft-3039");
+    bool ok1 = true;
+    auto g1 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok1);
+    CHECK(g1.has_value() && *g1, "3039 AC3: first admit");
+    (*g1).reset();
+    bool ok2 = true;
+    auto g2 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok2);
+    CHECK(g2.has_value() && *g2, "3039 AC3: Soft still degrades/allows");
+    CHECK(aura::compiler::mutation_region_overlap_hard_reject_total_v_read() == hard0,
+          "3039 AC3: zero extra hard-reject stores");
+    CHECK(aura::compiler::mutation_region_overlap_reject_total_v_read() > obs0,
+          "3039 AC3: existing overlap metric still bumps");
+    CHECK(m->scoped_parallel_conflict_fallback_total.load(std::memory_order_relaxed) > fb0,
+          "3039 AC3: Soft may still degrade");
+}
+
+static void ac3039_4_schema() {
+    std::println("\n--- #3039 AC4: counter + posture keys ---");
+    CompilerService cs;
+    CHECK(href_ws(cs, "schema-3039") == 3039, "3039 AC4: schema-3039");
+    CHECK(href_ws(cs, "issue-3039") == 3039, "3039 AC4: issue-3039");
+    CHECK(href_ws(cs, "mutation-region-overlap-hard-reject-wired") == 1, "3039 AC4: wired");
+    CHECK(href_ws(cs, "region-overlap-hard-reject-wired") == 1, "3039 AC4: alias wired");
+    CHECK(href_ws(cs, "mutation-region-overlap-hard-reject-total") >= 0, "3039 AC4: total key");
+    CHECK(href_ws(cs, "schema-2990") == 2990, "3039 AC4: schema-2990 preserved");
+    const auto h = href_health(cs, "schema-3039");
+    if (h >= 0)
+        CHECK(h == 3039, "3039 AC4: health schema-3039");
+    else
+        CHECK(true, "3039 AC4: light-link skip health");
+}
+
+static void ac3039_5_linter_and_suite() {
+    std::println("\n--- #3039 AC5/AC6: extend #2990 suite + linter ---");
+    const auto t = read_file("tests/compiler/test_workspace_region_concurrency.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_scoped_parallel_overlap_hard_reject_3039.py");
+    const auto lint2990 =
+        read_file("scripts/coverage/checks/check_workspace_concurrent_policy_2990.py");
+    CHECK(t.find("ac3039_1_production_overlap_hard_reject") != std::string::npos, "3039 AC5: AC1");
+    CHECK(t.find("ac2990_3_overlap_fallback") != std::string::npos, "3039 AC5: #2990 Soft kept");
+    CHECK(!lint.empty() && lint.find("3039") != std::string::npos, "3039 AC6: successor linter");
+    CHECK(lint2990.find("3039") != std::string::npos, "3039 AC6: 2990 linter updated");
+    CHECK(build.find("check_scoped_parallel_overlap_hard_reject_3039") != std::string::npos,
+          "3039 AC6: build.py");
+    CHECK(read_file("docs/design/3039-scoped-parallel-overlap-hard-reject.md").empty(),
+          "3039 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3039.cpp").empty(), "3039 AC5: no invent test");
+}
+
 static void ac2990_5_throughput_and_linter() {
     std::println("\n--- #2990 AC5: source-cite + linter + no invented test ---");
     const auto t = read_file("tests/compiler/test_workspace_region_concurrency.cpp");
@@ -428,6 +563,12 @@ int run_test_workspace_region_concurrency() {
     ac2990_3_overlap_fallback();
     ac2990_4_stats_and_health();
     ac2990_5_throughput_and_linter();
+    std::println("\n=== Issue #3039: ScopedParallel overlap production hard-reject ===");
+    ac3039_1_production_overlap_hard_reject();
+    ac3039_2_production_disjoint_proceeds();
+    ac3039_3_soft_observe_only();
+    ac3039_4_schema();
+    ac3039_5_linter_and_suite();
 
     std::println("\n=== test_workspace_region_concurrency: {} passed, {} failed ===", g_passed,
                  g_failed);

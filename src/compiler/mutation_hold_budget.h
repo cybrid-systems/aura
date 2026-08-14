@@ -602,6 +602,25 @@ impact_block_to_region_mask_bit(std::size_t function_index, std::uint32_t block_
     return region_key_as_impact_mask(region_key);
 }
 
+// Issue #3039: production ScopedParallel overlap hard-reject (no
+// GlobalExclusive fallback). Soft / sandbox=off does not bump this
+// (observe-only on the existing overlap-reject-total). Appended at
+// struct END so prior #2724/#2754/#2761 layouts stay stable.
+inline std::atomic<std::uint64_t> g_mutation_region_overlap_hard_reject_total{0};
+inline std::atomic<std::uint32_t> g_mutation_region_overlap_hard_reject_wired{1};
+inline std::atomic<std::uint32_t> g_mutation_region_overlap_last_reason{0}; // 1 = region-overlap
+inline constexpr int kMutationRegionOverlapHardRejectIssue = 3039;
+
+[[nodiscard]] inline std::uint64_t mutation_region_overlap_hard_reject_total_v_read() noexcept {
+    return g_mutation_region_overlap_hard_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_region_overlap_hard_reject_wired_v_read() noexcept {
+    return g_mutation_region_overlap_hard_reject_wired.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_region_overlap_last_reason_v_read() noexcept {
+    return g_mutation_region_overlap_last_reason.load(std::memory_order_relaxed);
+}
+
 } // namespace aura::compiler
 
 #endif // AURA_COMPILER_MUTATION_HOLD_BUDGET_H

@@ -1387,7 +1387,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_workspace_isolation_wire.cpp` (—) [domain_suite, theme_core] — Issue #2073 — wire check_workspace_isolation + stamp_ref_tenant on
 - `tests/core/test_workspace_lock_reentrancy.cpp` (—) [domain_suite, theme_core] — test_wave1_workspace_lock_reentrancy.cpp — Wave1 B-03 / B-09
 - `tests/compiler/test_workspace_lock_unlock.cpp` (—) [domain_suite, theme_compiler] — AC1: lock body guards workspace_read_only_ with active_idx (source)
-- `tests/compiler/test_workspace_region_concurrency.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
+- `tests/compiler/test_workspace_region_concurrency.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 

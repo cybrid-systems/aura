@@ -6727,6 +6727,19 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"health-admit-wired", make_int(1)},       // #2985, not reimplemented
                 {"agent-scope-policy-wired", make_int(1)}, // #2976
                 {"maybe-reject-health-wired", make_int(1)},
+                // Issue #3039: production ScopedParallel overlap hard-reject.
+                {"schema-3039", make_int(3039)},
+                {"issue-3039", make_int(3039)},
+                {"mutation-region-overlap-hard-reject-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::mutation_region_overlap_hard_reject_total_v_read()))},
+                {"mutation-region-overlap-hard-reject-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::mutation_region_overlap_hard_reject_wired_v_read()))},
+                {"last-region-overlap-reason",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::mutation_region_overlap_last_reason_v_read()))},
+                {"region-overlap-hard-reject-wired", make_int(1)},
             };
             return build_hash(kv);
         });

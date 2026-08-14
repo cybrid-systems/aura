@@ -1063,6 +1063,16 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("mutation-concurrency-health-admit-wired", 1);
             insert_kv("schema-2985", 2985);
             insert_kv("issue-2985", 2985);
+            // Issue #3039: production ScopedParallel overlap hard-reject
+            // (additive on existing health surface).
+            insert_kv("mutation-region-overlap-hard-reject-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::mutation_region_overlap_hard_reject_total_v_read()));
+            insert_kv("mutation-region-overlap-hard-reject-wired",
+                      static_cast<std::int64_t>(
+                          aura::compiler::mutation_region_overlap_hard_reject_wired_v_read()));
+            insert_kv("schema-3039", 3039);
+            insert_kv("issue-3039", 3039);
             // Lineage sentinels (existing queries remain authoritative).
             insert_kv("schema-2310", 2310);
             insert_kv("schema-2341", 2341);

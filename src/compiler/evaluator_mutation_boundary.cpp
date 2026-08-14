@@ -1295,9 +1295,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
 //     SingleWriter (production default): try_acquire never auto-redirects
 //     to region even if TLS region_key is set. Explicit try_acquire_for_region
 //     still uses the machinery below (existing orch / #2121 tests).
-//     ScopedParallel (opt-in): TLS region_key may redirect; overlap
-//     fail-closed degrades to SingleWriter (GlobalExclusive) instead of
-//     reject. Health admit remains #2985 (not reimplemented here).
+//     ScopedParallel (opt-in): TLS region_key may redirect; production
+//     overlap hard-rejects (AdmissionRejected: region-overlap, #3039)
+//     — no silent SingleWriter degrade. Soft still observes + may
+//     degrade. Health admit remains #2985 (not reimplemented here).
 //
 //   GlobalExclusive (default try_acquire / legacy ctor):
 //     unique_lock(workspace_mtx_) for the full Guard body.
@@ -1654,25 +1655,25 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                                             g_last_admitted_cone_mask)) {
             // Overlap — bump counter. #2761 AC1/AC5: attribute mask-strength
             // rejects separately (unequal keys with overlapping cones).
-            // Issue #2990: ScopedParallel fail-closed degrades to SingleWriter
-            // (GlobalExclusive) instead of reject. SingleWriter keeps reject
-            // (existing #2724/#2761 contract).
+            // Issue #2990 Soft: ScopedParallel may still degrade to
+            // SingleWriter. Issue #3039: production + ScopedParallel
+            // hard-rejects (no GlobalExclusive fallback). SingleWriter
+            // keeps reject (existing #2724/#2761 contract).
             g_mutation_region_overlap_reject_total.fetch_add(1, std::memory_order_relaxed);
             if (regions_mask_overlap(cone_mask, g_last_admitted_cone_mask))
                 g_mutation_region_mask_overlap_reject_total.fetch_add(1, std::memory_order_relaxed);
             if (ev.scoped_parallel_enabled()) {
-                ev.bump_scoped_parallel_conflict_fallback();
-                scoped_parallel_overlap_fallback = true;
-                g_last_admitted_region_key = 0;
-                g_last_admitted_cone_mask = 0;
-            } else {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
-                    m->mutation_guard_try_acquire_reject_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                return std::unexpected(
-                    aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
-                                          std::string("AdmissionRejected: region-overlap")));
+                // Production ScopedParallel: structured hard reject so two
+                // Agents sharing a StableNodeRef batch cannot silently
+                // share a mutated workspace. No GlobalExclusive fallback.
+                g_mutation_region_overlap_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
+                g_mutation_region_overlap_last_reason.store(1, std::memory_order_relaxed);
             }
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+                m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+            return std::unexpected(
+                aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                      std::string("AdmissionRejected: region-overlap")));
         }
         // #2724 AC1: key-disjoint (no masks) → concurrent admit.
         // #2754 AC1: equal keys + cone-/mask-disjoint → concurrent admit.
@@ -1705,8 +1706,9 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
             g_mutation_region_overlap_reject_total.fetch_add(1, std::memory_order_relaxed);
             if (regions_mask_overlap(cone_mask, g_last_admitted_cone_mask_soft))
                 g_mutation_region_mask_overlap_reject_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #2990: ScopedParallel overlap degrades even on Soft
-            // (observe + GlobalExclusive). Soft still does not reject.
+            // Issue #2990 / #3039: Soft overlap is observe-only (existing
+            // overlap-reject-total). Soft may still degrade to
+            // GlobalExclusive; does NOT bump hard-reject.
             if (ev.scoped_parallel_enabled()) {
                 ev.bump_scoped_parallel_conflict_fallback();
                 scoped_parallel_overlap_fallback = true;
