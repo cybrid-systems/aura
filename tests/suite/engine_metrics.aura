@@ -46,6 +46,19 @@
   (check (eq? (hash-ref q "overflow") (void)))
   (check (eq? (engine:metrics "query:no-such-stats-zzz") (void))))
 
+; Issue #3020: high-churn domain queries keep documented keys; no overflow
+; under default catalog size (soak). Forced-full is C++-only.
+(test-suite "engine:metrics-query-hash-overflow-3020"
+  (define pb (engine:metrics "query:reload-recovery-playbook"))
+  (define sp (engine:metrics "query:security-posture"))
+  (define tl (engine:metrics "query:type-linear-commit-health"))
+  (check (or (eq? pb (void)) (and (hash? pb) (= 2953 (hash-ref pb "schema-2953"))
+                                  (eq? (hash-ref pb "overflow") (void)))))
+  (check (or (eq? sp (void)) (and (hash? sp) (= 2534 (hash-ref sp "schema-2534"))
+                                  (eq? (hash-ref sp "overflow") (void)))))
+  (check (or (eq? tl (void)) (and (hash? tl) (= 2613 (hash-ref tl "schema-2613"))
+                                  (eq? (hash-ref tl "overflow") (void))))))
+
 ; Full-mode parity: direct stats prim matches facade by-name.
 (test-suite "engine:metrics-parity"
   (define via (engine:metrics \"query:macro-hygiene-stats\"))

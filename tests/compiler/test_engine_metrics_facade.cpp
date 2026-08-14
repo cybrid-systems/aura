@@ -56,6 +56,9 @@ std::int64_t hash_len(CompilerService& cs, std::string_view expr) {
 extern "C" void aura_engine_metrics_set_force_hash_cap(std::uint64_t);
 extern "C" std::uint64_t aura_engine_metrics_hash_overflow_total(void);
 extern "C" void aura_engine_metrics_reset_hash_overflow_for_test(void);
+extern "C" void aura_query_hash_set_force_cap(std::uint64_t);
+extern "C" std::uint64_t aura_query_hash_overflow_total(void);
+extern "C" void aura_query_hash_reset_overflow_for_test(void);
 
 int main() {
     CompilerService cs;
@@ -175,6 +178,80 @@ int main() {
               "#3018 AC4: headroom is size*2+8");
         CHECK(src.find("g_engine_metrics_force_hash_cap.load") != std::string::npos,
               "#3018 AC4: Soft extra cost is one force-cap load");
+    }
+
+    // ── Issue #3020: domain query:* hash overflow fail-soft ──
+    // AC1: inventory + sized create / insert_kv_checked (source-cite).
+    // AC2: forced-full insert yields overflow=1 (never silent drop).
+    // AC3: high-churn queries return documented schema sentinels.
+    // AC4: this test + engine_metrics.aura; no test_issue_3020.cpp.
+    // AC5: soak — default catalog does not bump query_hash_overflow_total.
+    {
+        aura_query_hash_reset_overflow_for_test();
+        const auto soak0 = aura_query_hash_overflow_total();
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2534") == 2534,
+              "#3020 AC3: security-posture schema-2534");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")",
+                       "security-posture-wired") == 1,
+              "#3020 AC3: security-posture-wired");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "overflow") == -1,
+              "#3020 AC3: security-posture no overflow under default cap");
+        CHECK(hash_int(cs, "(engine:metrics \"query:type-linear-commit-health\")", "schema-2613") ==
+                  2613,
+              "#3020 AC3: type-linear-commit-health schema-2613");
+        CHECK(hash_int(cs, "(engine:metrics \"query:type-linear-commit-health\")",
+                       "type-linear-commit-health-wired") == 1,
+              "#3020 AC3: type-linear wired");
+        CHECK(hash_int(cs, "(engine:metrics \"query:type-linear-commit-health\")", "overflow") ==
+                  -1,
+              "#3020 AC3: type-linear no overflow under default cap");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-playbook\")", "schema-2953") ==
+                  2953,
+              "#3020 AC3: reload-recovery-playbook schema-2953");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-playbook\")",
+                       "playbook-wired") == 1,
+              "#3020 AC3: playbook-wired");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-playbook\")",
+                       "playbook-reject-cross-ws") == 6,
+              "#3020 AC3: playbook-reject-cross-ws sentinel");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-playbook\")", "overflow") == -1,
+              "#3020 AC3: playbook no overflow under default cap");
+        CHECK(aura_query_hash_overflow_total() == soak0,
+              "#3020 AC5: soak — no query_hash_overflow_total bump under default catalog");
+
+        aura_query_hash_set_force_cap(4);
+        const auto overflow0 = aura_query_hash_overflow_total();
+        auto forced = cs.eval("(engine:metrics \"query:security-posture\")");
+        CHECK(forced && is_hash(*forced), "#3020 AC2: forced-full posture still returns hash");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "overflow") == 1,
+              "#3020 AC2: overflow=1 visible when capacity is artificially low");
+        CHECK(aura_query_hash_overflow_total() > overflow0,
+              "#3020 AC2: query_hash_overflow_total bumped");
+        aura_query_hash_reset_overflow_for_test();
+
+        const auto ev_src = []() -> std::string {
+            for (const auto& p : {std::string("src/compiler/evaluator.ixx"),
+                                  std::string("../src/compiler/evaluator.ixx"),
+                                  std::string("../../src/compiler/evaluator.ixx")}) {
+                std::ifstream in(p);
+                if (!in)
+                    continue;
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            }
+            return {};
+        }();
+        CHECK(ev_src.find("insert_kv_checked") != std::string::npos,
+              "#3020 AC1: shared insert_kv_checked");
+        CHECK(ev_src.find("planned_keys) * 2") != std::string::npos ||
+                  ev_src.find("planned_keys * 2") != std::string::npos,
+              "#3020 AC1: headroom is planned*2 then next_pow2 / ≥64");
+        CHECK(ev_src.find("g_query_hash_force_cap.load") != std::string::npos,
+              "#3020 AC4: Soft extra cost is one force-cap load");
+        CHECK(ev_src.find("no second metrics bus") != std::string::npos,
+              "#3020 AC4: no second metrics bus");
+        CHECK(ev_src.find("headroom-3020") != std::string::npos,
+              "#3020 AC1: residual create(N) headroom documented");
     }
 
     // ── AC6: legacy query:*-stats still via facade (internal impl, #1439) ──

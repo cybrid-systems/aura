@@ -4778,32 +4778,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto reg = g_capability_registry().snapshot_registry_state();
             const auto& se_ring = g_security_event_ring();
 
-            auto* ht = FlatHashTable::create(64);
+            // Issue #3020: ~44 live keys; next_pow2(planned*2) ≥64.
+            constexpr std::size_t kSecurityPosturePlannedKeys = 48;
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
+            bool overflowed = false;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                if (!insert_kv_checked(ht, ev.string_heap_, k_str, v))
+                    overflowed = true;
             };
 
             insert_kv("sandbox-mode", static_cast<std::int64_t>(cap.sandbox_mode));
@@ -4894,9 +4877,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2534", 2534);
             insert_kv("issue-2534", 2534);
             insert_kv("security-posture-wired", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2534: query:security-correlated-trail — join SE + TypedMutation +

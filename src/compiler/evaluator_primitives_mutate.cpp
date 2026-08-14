@@ -8420,32 +8420,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         "query:reload-recovery-playbook", [&ev](const auto&) -> EvalValue {
             ReloadRecoveryPlaybookResult pb{};
             aura_hot_update_reload_recovery_playbook_get(&pb);
-            auto* ht = FlatHashTable::create(64);
+            // Issue #3020: ~26 live keys; next_pow2(planned*2) ≥64.
+            constexpr std::size_t kReloadRecoveryPlaybookPlannedKeys = 32;
+            auto* ht =
+                FlatHashTable::create(query_hash_capacity_for(kReloadRecoveryPlaybookPlannedKeys));
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
+            bool overflowed = false;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = ev.string_heap_.size();
-                        ev.string_heap_.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                if (!insert_kv_checked(ht, ev.string_heap_, k_str, v))
+                    overflowed = true;
             };
             insert_kv("schema", 2953);
             insert_kv("issue", 2953);
@@ -8476,9 +8460,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // Lineage preserved (agents can still poll recovery-state).
             insert_kv("schema-2367", 2367);
             insert_kv("schema-2302", 2302);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // ── Issue #1882: query:aot-hotupdate-audit-stats ──
