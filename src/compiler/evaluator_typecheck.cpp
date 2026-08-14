@@ -340,6 +340,14 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #2514: sticky synth hard-fail for boundary authority.
             if (tc.last_linear_synth_hard_fail())
                 note_linear_synth_hard_fail_pending();
+            // Issue #3044: Production uncovered tag — fail before commit
+            // (TypeError also hits mutate_type_gate; this is sticky fail-closed).
+            if (tc.last_uncovered_bidirectional_tag_hard_fail() &&
+                aura::compiler::typed_audit::production_defaults_active()) {
+                last_mutate_error_ =
+                    "typecheck after mutate: uncovered bidirectional tag (production fail-closed)";
+                return false;
+            }
         } else {
             if (compiler_metrics_)
                 tc.set_metrics(compiler_metrics_);
@@ -364,6 +372,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #2514: sticky synth hard-fail for boundary authority.
             if (tc.last_linear_synth_hard_fail())
                 note_linear_synth_hard_fail_pending();
+            if (tc.last_uncovered_bidirectional_tag_hard_fail() &&
+                aura::compiler::typed_audit::production_defaults_active()) {
+                last_mutate_error_ =
+                    "typecheck after mutate: uncovered bidirectional tag (production fail-closed)";
+                return false;
+            }
         }
 
         {
@@ -419,6 +433,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #2514: full recheck may surface use-after-move synth hard-fail.
             if (tc.last_linear_synth_hard_fail())
                 note_linear_synth_hard_fail_pending();
+            if (tc.last_uncovered_bidirectional_tag_hard_fail() &&
+                aura::compiler::typed_audit::production_defaults_active()) {
+                last_mutate_error_ =
+                    "typecheck after mutate: uncovered bidirectional tag (production fail-closed)";
+                return false;
+            }
             {
                 auto span = full_diag.diagnostics();
                 local_diags.assign(span.begin(), span.end());

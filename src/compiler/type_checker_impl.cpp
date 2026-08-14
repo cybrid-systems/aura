@@ -4559,6 +4559,9 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             result = reg_.void_type();
             break;
         default:
+            // Issue #3044: missing tag must not silently become Dynamic
+            // under Production (consistent_unify(Dynamic, T) would succeed).
+            (void)note_uncovered_bidirectional_tag(flat, id, v.tag);
             result = reg_.dynamic_type();
             break;
     }
@@ -6971,6 +6974,35 @@ bool InferenceEngine::note_linear_synth_violation(FlatAST& flat, NodeId node_id,
     return hard;
 }
 
+// Issue #3044: synthesize_flat default — Production/strict TypeError;
+// Soft Warning + counter only (unit tests unchanged). Covered tags never
+// enter this helper (zero extra cost on the quiet path).
+bool InferenceEngine::note_uncovered_bidirectional_tag(FlatAST& flat, NodeId node_id, NodeTag tag) {
+    const bool hard = strict_ || aura::compiler::typed_audit::production_defaults_active();
+    const auto kind = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+    auto msg =
+        std::string("uncovered bidirectional tag 0x") + std::to_string(static_cast<unsigned>(tag));
+    diag_.report(Diagnostic(kind, std::move(msg), cur_loc_)
+                     .with_blame(BlameInfo{BlameParty::System, "", "compile"})
+                     .with_suggestion("add synthesize_flat / check_flat case for this NodeTag"));
+    if (node_id != NULL_NODE && node_id < flat.size())
+        flat.set_node_error(node_id, static_cast<std::uint8_t>(ErrorKind::TypeError));
+    ++uncovered_bidirectional_tag_count_;
+    if (hard)
+        uncovered_bidirectional_tag_hard_fail_ = true;
+    g_bidirectional_uncovered_tag_total.fetch_add(1, std::memory_order_relaxed);
+    if (hard)
+        g_bidirectional_uncovered_tag_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
+    if (cs_.metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(cs_.metrics_);
+        m->bidirectional_uncovered_tag_total.fetch_add(1, std::memory_order_relaxed);
+        if (hard)
+            m->bidirectional_uncovered_tag_hard_reject_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+    }
+    return hard;
+}
+
 // Issue #903 Phase 1: ownership-op peels from synthesize_flat switch.
 // Issue #2357: Move/Drop/MutBorrow violations fail synthesize hard under
 // production/strict (not only post-mutate audit).
@@ -7197,6 +7229,10 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         }
         // Define returns Void — no check against expected needed
     } else {
+        // Issue #3044: remaining tags (literals, Linear, SV, …) go through
+        // synthesize_flat. Uncovered / future tags hit the default: gate
+        // (TypeError under Production; Warning under Soft). No extra load
+        // on the covered quiet path.
         TypeId inferred = synthesize_flat(flat, pool, id, v);
         if (!cs_.consistent_unify(inferred, expected)) {
             if (is_coercible(inferred, expected)) {
@@ -7868,6 +7904,11 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
         last_linear_synth_hard_fail_ = true;
         last_linear_synth_violation_count_ += r.linear_synth_violation_count;
     }
+    if (r.uncovered_bidirectional_tag_count > 0) {
+        last_uncovered_bidirectional_tag_count_ += r.uncovered_bidirectional_tag_count;
+        if (r.uncovered_bidirectional_tag_hard_fail)
+            last_uncovered_bidirectional_tag_hard_fail_ = true;
+    }
     // Issue #1407 R1: cache the outcome for next call. Only
     // cache when we have a stable epoch (cache_epoch_ > 0);
     // otherwise we'd be caching into an invalid-keyed entry.
@@ -7959,6 +8000,8 @@ TypeCheckResult type_check_flat_pure(
     // Issue #2514: plumb synth hard-fail out of short-lived engine.
     result.linear_synth_hard_fail = engine.linear_synth_hard_fail();
     result.linear_synth_violation_count = engine.linear_synth_violation_count();
+    result.uncovered_bidirectional_tag_hard_fail = engine.uncovered_bidirectional_tag_hard_fail();
+    result.uncovered_bidirectional_tag_count = engine.uncovered_bidirectional_tag_count();
     return result;
 }
 
@@ -9063,6 +9106,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     if (engine.linear_synth_hard_fail()) {
         last_linear_synth_hard_fail_ = true;
         last_linear_synth_violation_count_ += engine.linear_synth_violation_count();
+    }
+    if (engine.uncovered_bidirectional_tag_count() > 0) {
+        last_uncovered_bidirectional_tag_count_ += engine.uncovered_bidirectional_tag_count();
+        if (engine.uncovered_bidirectional_tag_hard_fail())
+            last_uncovered_bidirectional_tag_hard_fail_ = true;
     }
     // Issue #2359: snapshot memo epoch health for the Agent query
     // surface (engine dies at end of this partial; guard_infer_engine

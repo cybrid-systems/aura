@@ -774,6 +774,19 @@ def cmd_lint():
             "Issue #3043 Soft-observe hot-contract linter failed — run python3 scripts/coverage/checks/check_hot_contract_soft_observe_3043.py"
         )
         return r
+    # Issue #3044: exhaustive bidirectional synthesize/check NodeTag
+    # coverage. Missing tag → Production TypeError; Soft Warning.
+    # Extends test_bidirectional_match_check (#81967); no docs/design/.
+    bt3044_script = COVERAGE_CHECKS / "check_bidirectional_tag_coverage_3044.py"
+    if not bt3044_script.exists():
+        fail(f"missing {bt3044_script}")
+        return 1
+    r = run([sys.executable, str(bt3044_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3044 bidirectional tag coverage linter failed — run python3 scripts/coverage/checks/check_bidirectional_tag_coverage_3044.py"
+        )
+        return r
     # Issue #2754: region concurrent cone / ImpactScope mask-AND
     # disjointness (#2724 residual). Equal keys + proven cone masks
     # (mask AND == 0) → concurrent admit; true overlap still rejects.

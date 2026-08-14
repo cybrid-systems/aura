@@ -6704,6 +6704,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> bidirectional_match_check_total{0};
     std::atomic<std::uint64_t> bidirectional_match_refined_total{0};
     std::atomic<std::uint64_t> bidirectional_guardshape_check_total{0};
+    // Issue #3044: uncovered NodeTag in synthesize_flat / check_flat dispatch.
+    std::atomic<std::uint64_t> bidirectional_uncovered_tag_total{0};
+    std::atomic<std::uint64_t> bidirectional_uncovered_tag_hard_reject_total{0};
+    std::atomic<std::uint64_t> bidirectional_uncovered_tag_wired{1};
     // Issue #383: ConstraintSystem worklist + consistent_
     // unify observability. 3 lifetime counters:
     //   - consistent_unify_total: every call to

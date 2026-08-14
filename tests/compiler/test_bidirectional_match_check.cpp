@@ -9,6 +9,7 @@
 //   AC3: bidirectional_mode=false → no match-check bumps (synthesize-only)
 //   AC4: Observability — match-check / match-refined / schema-2348 keys
 //   AC5: Source-cite check_flat_match + selective renarrow integration
+//   #3044: exhaustive NodeTag coverage — Production TypeError / Soft Warning
 
 #include "test_harness.hpp"
 
@@ -21,6 +22,10 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.compiler.type_checker;
+import aura.core;
+import aura.core.type;
+import aura.diag;
 
 namespace {
 
@@ -205,6 +210,105 @@ static void ac5_source_cite() {
     CHECK(impl.find("bidirectional_mode_") != std::string::npos, "AC5: opt-out flag still used");
 }
 
+static void ac3044_exhaustive_tag_coverage() {
+    std::println("\n--- #3044 AC1–AC5: exhaustive bidirectional tag coverage ---");
+    CHECK(aura::compiler::kBidirectionalUncoveredTagIssue == 3044, "3044 AC5: issue constant");
+    using aura::ast::kNodeTagMax;
+    using aura::ast::NodeTag;
+    using aura::compiler::is_bidirectional_tag_covered;
+    for (std::uint32_t i = 1; i <= kNodeTagMax; ++i) {
+        if (i == 0x0C)
+            continue;
+        CHECK(is_bidirectional_tag_covered(static_cast<NodeTag>(i)),
+              "3044 AC3: every non-gap NodeTag covered");
+    }
+    CHECK(!is_bidirectional_tag_covered(static_cast<NodeTag>(0)), "3044 AC3: tag 0 uncovered");
+    CHECK(!is_bidirectional_tag_covered(static_cast<NodeTag>(0x0C)), "3044 AC3: gap uncovered");
+    CHECK(!is_bidirectional_tag_covered(static_cast<NodeTag>(0xFE)),
+          "3044 AC3: future tag uncovered");
+
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    aura::core::TypeRegistry treg;
+    aura::diag::DiagnosticCollector diag;
+
+    // Quiet covered path: LiteralInt must not bump uncovered counters.
+    const auto c0 =
+        aura::compiler::g_bidirectional_uncovered_tag_total.load(std::memory_order_relaxed);
+    {
+        aura::compiler::TypeChecker tc(treg);
+        auto id = flat.add_literal(42);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(ty == treg.int_type(), "3044 AC3: covered LiteralInt → Int");
+        CHECK(tc.last_uncovered_bidirectional_tag_count() == 0, "3044 AC3: no extra cost/count");
+    }
+    CHECK(aura::compiler::g_bidirectional_uncovered_tag_total.load(std::memory_order_relaxed) == c0,
+          "3044 AC3: covered path zero extra stores");
+
+    // Soft: future tag → Warning + counter, no hard fail (unit tests unchanged).
+    {
+        aura::compiler::TypeChecker tc(treg);
+        diag.clear();
+        auto id = flat.add_literal(7);
+        flat.tag(id) = static_cast<NodeTag>(0xFE);
+        (void)tc.infer_flat(flat, pool, id, diag);
+        CHECK(tc.last_uncovered_bidirectional_tag_count() >= 1, "3044 AC2: soft counter");
+        CHECK(!tc.last_uncovered_bidirectional_tag_hard_fail(), "3044 AC2: soft no hard-fail");
+        bool warn = false, err = false;
+        for (const auto& d : diag.diagnostics()) {
+            if (d.message.find("uncovered bidirectional") == std::string::npos)
+                continue;
+            if (d.kind == aura::diag::ErrorKind::Warning)
+                warn = true;
+            if (d.kind == aura::diag::ErrorKind::TypeError)
+                err = true;
+        }
+        CHECK(warn && !err, "3044 AC2: Soft Warning only");
+    }
+
+    // Production/strict: TypeError + hard fail (mutate gate rejects TypeError).
+    {
+        aura::compiler::TypeChecker tc(treg);
+        tc.set_strict(true);
+        diag.clear();
+        auto id = flat.add_literal(8);
+        flat.tag(id) = static_cast<NodeTag>(0xFD);
+        (void)tc.infer_flat(flat, pool, id, diag);
+        CHECK(tc.last_uncovered_bidirectional_tag_hard_fail(), "3044 AC1: strict hard-fail");
+        bool err = false;
+        for (const auto& d : diag.diagnostics()) {
+            if (d.message.find("uncovered bidirectional") != std::string::npos &&
+                d.kind == aura::diag::ErrorKind::TypeError)
+                err = true;
+        }
+        CHECK(err, "3044 AC1: Production/strict TypeError before commit");
+    }
+
+    auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    auto hdr = read_file("src/compiler/type_checker.ixx");
+    auto ast = read_file("src/core/ast.ixx");
+    auto prim = read_file("src/compiler/evaluator_primitives_compile.cpp");
+    auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(hdr.find("is_bidirectional_tag_covered") != std::string::npos, "3044 AC5: table");
+    CHECK(hdr.find("enum class NodeTag") == std::string::npos, "3044 AC5: NodeTag lives in ast");
+    CHECK(ast.find("enum class NodeTag") != std::string::npos, "3044 AC5: NodeTag source");
+    CHECK(impl.find("note_uncovered_bidirectional_tag") != std::string::npos,
+          "3044 AC5: synthesize default gate");
+    CHECK(impl.find("Issue #3044") != std::string::npos, "3044 AC5: impl cite");
+    CHECK(ev.find("uncovered bidirectional tag") != std::string::npos,
+          "3044 AC5: mutate fail-closed");
+    CHECK(prim.find("schema-3044") != std::string::npos, "3044 AC4: schema-3044");
+
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3044 warm");
+    CHECK(href(cs, "schema-3044") == 3044, "3044 AC4: schema-3044 runtime");
+    CHECK(href(cs, "issue-3044") == 3044, "3044 AC4: issue-3044");
+    CHECK(href(cs, "uncovered-tag-wired") == 1, "3044 AC4: wired");
+    CHECK(href(cs, "uncovered-tag-total") >= 0, "3044 AC4: total readable");
+}
+
 } // namespace
 
 int run_test_bidirectional_match_check() {
@@ -214,6 +318,7 @@ int run_test_bidirectional_match_check() {
     ac3_opt_out();
     ac4_observability();
     ac5_source_cite();
+    ac3044_exhaustive_tag_coverage();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

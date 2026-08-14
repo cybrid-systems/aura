@@ -43,6 +43,69 @@ export inline std::atomic<std::uint64_t> g_type_dep_graph_cap_evict_total{0};
 // Issue #2355: dirty NodeId invalidation removals.
 export inline std::atomic<std::uint64_t> g_type_dep_graph_invalidate_total{0};
 
+// Issue #3044: exhaustive bidirectional synthesize/check coverage.
+// Missing NodeTag must not silently become Dynamic under Production.
+// Quiet covered path: no extra load (gate lives in synthesize_flat default).
+export inline constexpr int kBidirectionalUncoveredTagIssue = 3044;
+
+export [[nodiscard]] constexpr bool is_bidirectional_tag_covered(aura::ast::NodeTag tag) noexcept {
+    using T = aura::ast::NodeTag;
+    switch (tag) {
+        case T::LiteralInt:
+        case T::Variable:
+        case T::Call:
+        case T::IfExpr:
+        case T::Lambda:
+        case T::Let:
+        case T::LetRec:
+        case T::Define:
+        case T::Begin:
+        case T::Set:
+        case T::Quote:
+        case T::LiteralString:
+        case T::MacroDef:
+        case T::TypeAnnotation:
+        case T::Coercion:
+        case T::LiteralFloat:
+        case T::Pair:
+        case T::DefineType:
+        case T::DefineModule:
+        case T::Export:
+        case T::Linear:
+        case T::Move:
+        case T::Borrow:
+        case T::MutBorrow:
+        case T::Drop:
+        case T::Interface:
+        case T::Modport:
+        case T::Property:
+        case T::Sequence:
+        case T::Assert:
+        case T::Covergroup:
+        case T::Coverpoint:
+        case T::Constraint:
+        case T::Class:
+            return true;
+        default:
+            return false; // gap 0x0C, 0, or future tag
+    }
+}
+
+consteval bool bidirectional_coverage_table_complete() {
+    for (std::uint32_t i = 1; i <= aura::ast::kNodeTagMax; ++i) {
+        if (i == 0x0C)
+            continue; // reserved gap, not a mutate-reachable tag
+        if (!is_bidirectional_tag_covered(static_cast<aura::ast::NodeTag>(i)))
+            return false;
+    }
+    return true;
+}
+static_assert(bidirectional_coverage_table_complete(),
+              "is_bidirectional_tag_covered must list every non-gap NodeTag (#3044)");
+
+export inline std::atomic<std::uint64_t> g_bidirectional_uncovered_tag_total{0};
+export inline std::atomic<std::uint64_t> g_bidirectional_uncovered_tag_hard_reject_total{0};
+
 // Issue #2355: epoch-stamped type-dep edge (mirrors OccurrenceGoal epoch).
 // epoch==0 is an untagged sentinel (survives epoch prune — AC1).
 export struct TypeDepEdge {
@@ -2045,6 +2108,12 @@ public:
         linear_synth_hard_fail_ = false;
         linear_synth_violation_count_ = 0;
     }
+    [[nodiscard]] bool uncovered_bidirectional_tag_hard_fail() const noexcept {
+        return uncovered_bidirectional_tag_hard_fail_;
+    }
+    [[nodiscard]] std::uint64_t uncovered_bidirectional_tag_count() const noexcept {
+        return uncovered_bidirectional_tag_count_;
+    }
 
 private:
     std::function<void()> on_narrowing_refresh_;
@@ -2119,9 +2188,16 @@ private:
                                      const std::string& suggestion,
                                      aura::core::TypeId binding_ty = {});
 
+    // Issue #3044: uncovered NodeTag in synthesize_flat default.
+    // Production/strict → TypeError + hard fail; Soft → Warning + counter.
+    bool note_uncovered_bidirectional_tag(aura::ast::FlatAST& flat, aura::ast::NodeId node_id,
+                                          aura::ast::NodeTag tag);
+
     // Issue #2357: private sticky flags (public accessors above).
     bool linear_synth_hard_fail_ = false;
     std::uint64_t linear_synth_violation_count_ = 0;
+    bool uncovered_bidirectional_tag_hard_fail_ = false;
+    std::uint64_t uncovered_bidirectional_tag_count_ = 0;
 
     void check_flat_call(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                          aura::ast::NodeView v, aura::core::TypeId expected);
@@ -2184,6 +2260,9 @@ export struct TypeCheckResult {
     // Soft Warning path leaves this false (recoverable).
     bool linear_synth_hard_fail = false;
     std::uint64_t linear_synth_violation_count = 0;
+    // Issue #3044: uncovered NodeTag hard-fail from this pure check call.
+    bool uncovered_bidirectional_tag_hard_fail = false;
+    std::uint64_t uncovered_bidirectional_tag_count = 0;
 
     // Issue #281: predicate memo stats. Mirrors the
     // InferenceEngine's internal counters, copied into the
@@ -2580,6 +2659,17 @@ export struct TypeChecker {
     void clear_last_linear_synth_hard_fail() noexcept {
         last_linear_synth_hard_fail_ = false;
         last_linear_synth_violation_count_ = 0;
+    }
+    // Issue #3044: sticky uncovered-tag hard-fail from last infer.
+    [[nodiscard]] bool last_uncovered_bidirectional_tag_hard_fail() const noexcept {
+        return last_uncovered_bidirectional_tag_hard_fail_;
+    }
+    [[nodiscard]] std::uint64_t last_uncovered_bidirectional_tag_count() const noexcept {
+        return last_uncovered_bidirectional_tag_count_;
+    }
+    void clear_last_uncovered_bidirectional_tag() noexcept {
+        last_uncovered_bidirectional_tag_hard_fail_ = false;
+        last_uncovered_bidirectional_tag_count_ = 0;
     }
     // Issue #2180 / #2262: solve_delta_cs_ after partial import (commit reuse).
     // True when the long-lived CS has dirty/touched/occurrence work after
@@ -3082,6 +3172,8 @@ public:
     // Issue #2514: sticky linear-synth hard-fail from last engine life.
     bool last_linear_synth_hard_fail_ = false;
     std::uint64_t last_linear_synth_violation_count_ = 0;
+    bool last_uncovered_bidirectional_tag_hard_fail_ = false;
+    std::uint64_t last_uncovered_bidirectional_tag_count_ = 0;
 
     // Issue #283 follow-up #5 / #627: plumb bidirectional flag
     // from CompilerService into per-call InferenceEngine instances.
