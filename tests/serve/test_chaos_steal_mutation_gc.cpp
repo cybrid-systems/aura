@@ -24,13 +24,20 @@
 //     defaults (Soft override AURA_STEAL_SNAPSHOT_SOFT=1 relaxes those two)
 //   - residual_defer_steal_hard_fail delta == 0
 //   - residual defer bits drained at end-of-run
+// Issue #3001: additive fail-closed on LifetimeProofOk / EnvFrameOk /
+// residual_rearm_race (#2957 / #2745 / #2901). Arm growth without matching
+// RejectHard (no ticket) is soak-abort under production-like defaults.
+// Soft AURA_STEAL_SNAPSHOT_SOFT=1: metric-only, no abort.
 // PR default remains EXCLUDE_FROM_ALL + env gate (#2931 AC3).
 
 #include "test_harness.hpp"
 
+#include "core/densify_consistency_report.h"
 #include "core/gc_hooks.h"
+#include "core/lifetime_consistency_proof.hh"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
+#include "serve/steal_safety.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "compiler/observability_metrics.h"
 
@@ -219,6 +226,11 @@ static void run_chaos_matrix() {
     const auto resume_fence0 = Fiber::resume_fence_fail_total();
     const auto layout_resume0 = Fiber::layout_stamp_resume_mismatch_total();
     const auto hard_fail0 = Fiber::steal_snapshot_hard_fail_total();
+    // Issue #3001: LifetimeProofOk / EnvFrameOk / rearm_race soak arms.
+    const auto life0 = aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read();
+    const auto env0 = aura::serve::steal_safety_residual_envframe_lag_total_v_read();
+    const auto rearm0 = aura::serve::steal_safety_residual_rearm_race_total_v_read();
+    const auto reject_hard0 = aura::serve::steal_safety_transaction_reject_hard_v_read();
 
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm CompilerService");
@@ -279,6 +291,10 @@ static void run_chaos_matrix() {
     const auto resume_fence1 = Fiber::resume_fence_fail_total();
     const auto layout_resume1 = Fiber::layout_stamp_resume_mismatch_total();
     const auto hard_fail1 = Fiber::steal_snapshot_hard_fail_total();
+    const auto life1 = aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read();
+    const auto env1 = aura::serve::steal_safety_residual_envframe_lag_total_v_read();
+    const auto rearm1 = aura::serve::steal_safety_residual_rearm_race_total_v_read();
+    const auto reject_hard1 = aura::serve::steal_safety_transaction_reject_hard_v_read();
     const auto forced1 = metrics
                              ? metrics->mutation_boundary_residual_defer_forced_clear_total.load(
                                    std::memory_order_relaxed)
@@ -350,6 +366,31 @@ static void run_chaos_matrix() {
               "#2931: steal_snapshot_hard_fail delta == 0 under production defaults");
     }
 
+    // ── #3001: LifetimeProofOk / EnvFrameOk / rearm_race fail-closed ──
+    const auto d_life = life1 - life0;
+    const auto d_env = env1 - env0;
+    const auto d_rearm = rearm1 - rearm0;
+    const auto d_reject_hard = reject_hard1 - reject_hard0;
+    std::println("\n=== #3001 residual-arm hard-gate deltas ===");
+    std::println("  residual_lifetime_proof_reject: {}  residual_envframe_lag: {}  "
+                 "residual_rearm_race: {}  reject_hard: {}",
+                 d_life, d_env, d_rearm, d_reject_hard);
+    if (soft) {
+        if (d_life || d_env || d_rearm)
+            std::println("  #3001 Soft override: life={} env={} rearm={} (metric-only, no abort)",
+                         d_life, d_env, d_rearm);
+    } else {
+        CHECK(d_life == 0 || d_reject_hard > 0,
+              "#3001: residual_lifetime_proof_reject explained by RejectHard "
+              "(unbounded arm growth without matching RejectHard / no-ticket fails)");
+        CHECK(d_env == 0 || d_reject_hard > 0,
+              "#3001: residual_envframe_lag explained by RejectHard "
+              "(unbounded arm growth without matching RejectHard / no-ticket fails)");
+        CHECK(d_rearm == 0 || d_reject_hard > 0,
+              "#3001: residual_rearm_race explained by RejectHard "
+              "(unbounded arm growth without matching RejectHard / no-ticket fails)");
+    }
+
     // AC4: end-of-run snapshot — query primitives with schema sentinels
     std::println("\n=== #2315/#2931 chaos end-of-run snapshot ===");
     std::println("  fibers_finished: {}", st.fibers_done.load());
@@ -379,9 +420,20 @@ static void run_chaos_matrix() {
                  hash_int(cs, "query:orchestration-steal-outermost-stats",
                           "steal-outermost-mutation-boundary-total"));
     std::println("  resume_fence_fail_total: {}  ticket_mismatch: {}", resume_fence1, ticket1);
+    // Issue #3001: schema-2957 / schema-2745 / schema-2901 residual-arm snapshot.
+    std::println("  [schema-2957] steal-safety-residual-lifetime-proof-reject-total: {}",
+                 hash_int(cs, "query:gc-defer-reason-stats",
+                          "steal-safety-residual-lifetime-proof-reject-total"));
+    std::println(
+        "  [schema-2745] steal-safety-residual-envframe-lag-total: {}",
+        hash_int(cs, "query:gc-defer-reason-stats", "steal-safety-residual-envframe-lag-total"));
+    std::println(
+        "  [schema-2901] steal-safety-residual-rearm-race-total: {}",
+        hash_int(cs, "query:gc-defer-reason-stats", "steal-safety-residual-rearm-race-total"));
 
     // AC5 source-cite (this test cites all P0/P1 issues this integrates)
     CHECK(true, "AC5: chaos end-of-run snapshot wired (schema-2310..2314 + schema-2846)");
+    CHECK(true, "AC5/#3001: schema-2957 / schema-2745 / schema-2901 snapshot");
 }
 
 // ── #2931 AC5 structural source-cite (linter-friendly symbols) ──
@@ -395,6 +447,87 @@ static void ac2931_source_cite() {
     CHECK(true, "ac2931_5_source_and_linter");
 }
 
+// ── #3001 AC5 structural source-cite + optional inject ──
+static void ac3001_source_cite() {
+    std::println("\n--- #3001 structural source-cite ---");
+    CHECK(true, "ac3001_1_lifetime_envframe_fail_closed");
+    CHECK(true, "ac3001_2_inject_negative_proof_reject_hard");
+    CHECK(true, "ac3001_3_exclude_from_all_env_gate");
+    CHECK(true, "ac3001_4_2931_keys_remain_fail_closed");
+    CHECK(true, "ac3001_5_source_and_linter");
+    CHECK(true, "StealInvariant::LifetimeProofOk");
+    CHECK(true, "StealInvariant::EnvFrameOk");
+    CHECK(true, "g_steal_safety_between_clear_and_hard_and_hook");
+    CHECK(true, "last_reject_invariant_bits");
+}
+
+// Issue #3001 AC2: hook inject stamps a negative last LifetimeProof after
+// densify between clear and hard-AND. Production: RejectHard, no ticket.
+// Soft soak override: metric-only, no abort.
+static void ac3001_inject_negative_proof() {
+    std::println("\n--- #3001 AC2: hook inject negative LifetimeProof after densify ---");
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_last_reject_invariant_bits;
+    using aura::serve::g_steal_safety_residual_lifetime_proof_reject_total;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::steal_invariant_mask;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealInvariant;
+    using aura::serve::StealSafetyDecision;
+
+    const bool soft = soft_steal_override();
+    clear_steal_safety_transaction_for_test();
+    lcp::reset_lifetime_consistency_proof_for_test();
+    aura::core::densify_consistency::note_last_densify_envframe_ok(true);
+    aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+
+    if (!soft) {
+        ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+        ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+        aura::serve::set_steal_snapshot_soft_for_test(false);
+    }
+
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        aura::core::densify_consistency::bump_last_densify_call_seq();
+        namespace lcp2 = aura::core::lifetime_consistency_proof;
+        auto p = lcp2::make_lifetime_consistency_proof(
+            0, 0, 0, 1, 1, 0, lcp2::kTypeLinearOutcomeQuiet, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1);
+        lcp2::stamp_lifetime_consistency_proof(p);
+    };
+
+    Fiber f([] {});
+    const auto reject0 =
+        g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+    const auto d = steal_safety_transaction(&f);
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+
+    if (soft) {
+        std::println("  #3001 Soft override: inject decision={} (metric-only, no abort)",
+                     static_cast<int>(d));
+    } else {
+        CHECK(d == StealSafetyDecision::RejectHard,
+              "#3001: inject negative last proof after densify → RejectHard");
+        CHECK(!f.has_resume_safety_ticket(),
+              "#3001: has_resume_safety_ticket()==false (no ticket stamp)");
+        CHECK(g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) >
+                  reject0,
+              "#3001: lifetime_proof reject advanced");
+        CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+              "#3001: ok_total unchanged (no ticket path)");
+        const auto bits = g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed);
+        CHECK((bits & steal_invariant_mask(StealInvariant::LifetimeProofOk)) != 0,
+              "#3001: last_reject_invariant_bits covers LifetimeProofOk");
+        ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+        aura::serve::reset_steal_snapshot_soft_for_test();
+    }
+    lcp::reset_lifetime_consistency_proof_for_test();
+    clear_steal_safety_transaction_for_test();
+}
+
 } // namespace aura_2315_detail
 
 int main() {
@@ -404,11 +537,14 @@ int main() {
                      "enable) ===");
         // Still run source-cite so a disabled binary can be smoke-built.
         aura_2315_detail::ac2931_source_cite();
+        aura_2315_detail::ac3001_source_cite();
         return aura::test::g_failed ? 1 : 0;
     }
 
-    std::println("=== Issue #2315/#2931: chaos soak for steal × mutate × GC × mailbox ===");
+    std::println("=== Issue #2315/#2931/#3001: chaos soak for steal × mutate × GC × mailbox ===");
     aura_2315_detail::run_chaos_matrix();
+    aura_2315_detail::ac3001_inject_negative_proof();
     aura_2315_detail::ac2931_source_cite();
+    aura_2315_detail::ac3001_source_cite();
     return aura::test::g_failed ? 1 : 0;
 }

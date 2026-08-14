@@ -1408,7 +1408,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_boundary_yield_steal_metrics.cpp` (—) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns
 - `tests/compiler/test_capability_high_risk_promote.cpp` (—) [domain_suite, theme_compiler] — AC1: Registry-only grant self-evo → has_capability true without relying
 - `tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp` (—) [large, domain_suite, theme_serve] — Issue #2380 — nightly production-concurrency profile: lock-order canary +
-- `tests/serve/test_chaos_steal_mutation_gc.cpp` (—) [domain_suite, theme_serve] — test_chaos_steal_mutation_gc.cpp — Issue #2315 + #2931:
+- `tests/serve/test_chaos_steal_mutation_gc.cpp` (—) [large, domain_suite, theme_serve] — test_chaos_steal_mutation_gc.cpp — Issue #2315 + #2931:
 - `tests/compiler/test_compile_primitive_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1896 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_concurrent.cpp` (—) [large, domain_suite, theme_serve] — test_concurrent.cpp — Concurrency model unit tests
 - `tests/compiler/test_dotted_rest_builtin_rename.cpp` (—) [domain_suite, theme_compiler] — AC1: Lambda fallback cites #2805; hygiene_builtins guard + metric

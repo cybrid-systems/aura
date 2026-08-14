@@ -1572,6 +1572,190 @@ static void ac2957_5_source_and_linter() {
           "AC5: no invent test file per #81967");
 }
 
+// ── Issue #3001: soak fail-closed on LifetimeProofOk / EnvFrameOk / rearm ──
+// Residual of #2931/#2957: chaos soak + unit inject via the #2901 hook.
+// Production: negative last proof after densify → RejectHard, no ticket.
+// Soft: metric-only, no abort. #2931 keys remain fail-closed (additive).
+
+static void ac3001_1_hook_inject_negative_proof_rejects() {
+    std::println("\n--- #3001 AC1/AC2: hook inject negative proof after densify ---");
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_last_reject_invariant_bits;
+    using aura::serve::g_steal_safety_residual_lifetime_proof_reject_total;
+    using aura::serve::g_steal_safety_residual_rearm_race_total;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::g_steal_safety_transaction_reject_hard_total;
+    using aura::serve::steal_invariant_mask;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealInvariant;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    lcp::reset_lifetime_consistency_proof_for_test();
+    aura::core::densify_consistency::note_last_densify_envframe_ok(true);
+    aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+
+    ::setenv("AURA_STEAL_SNAPSHOT_HARD", "1", 1);
+    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    aura::serve::reset_steal_snapshot_soft_for_test();
+    aura::serve::set_steal_snapshot_soft_for_test(false);
+    CHECK(aura::serve::is_steal_snapshot_hard_mode(), "3001 AC2: Hard/production mode");
+
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        aura::core::densify_consistency::bump_last_densify_call_seq();
+        stamp_negative_lifetime_proof_for_test();
+    };
+
+    const auto reject0 =
+        g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
+    const auto rh0 = g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed);
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+    const auto rearm0 = g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
+    Fiber f([] {});
+    const auto d = steal_safety_transaction(&f);
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+
+    CHECK(d == StealSafetyDecision::RejectHard,
+          "3001 AC2: inject negative last proof after densify → RejectHard");
+    CHECK(!f.has_resume_safety_ticket(), "3001 AC2: has_resume_safety_ticket()==false");
+    CHECK(g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) >
+              reject0,
+          "3001 AC2: lifetime_proof reject advanced");
+    CHECK(g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed) > rh0,
+          "3001 AC1: matching RejectHard attribution");
+    CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+          "3001 AC2: no Ok / no ticket stamp path");
+    CHECK(g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) > rearm0,
+          "3001 AC1: residual_rearm_race also attributed");
+    const auto bits = g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed);
+    CHECK((bits & steal_invariant_mask(StealInvariant::LifetimeProofOk)) != 0,
+          "3001 AC1: last_reject_invariant_bits covers LifetimeProofOk");
+
+    aura::serve::reset_steal_snapshot_soft_for_test();
+    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    lcp::reset_lifetime_consistency_proof_for_test();
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac3001_2_soft_metric_only() {
+    std::println("\n--- #3001 AC2: Soft inject is metric-only (no abort) ---");
+    namespace lcp = aura::core::lifetime_consistency_proof;
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_residual_lifetime_proof_reject_total;
+    using aura::serve::steal_safety_transaction;
+
+    clear_steal_safety_transaction_for_test();
+    lcp::reset_lifetime_consistency_proof_for_test();
+    ::setenv("AURA_STEAL_SNAPSHOT_SOFT", "1", 1);
+    ::unsetenv("AURA_STEAL_SNAPSHOT_HARD");
+    aura::serve::set_steal_snapshot_soft_for_test(true);
+    CHECK(!aura::serve::is_steal_snapshot_hard_mode(), "3001 AC2: Soft mode");
+
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        aura::core::densify_consistency::bump_last_densify_call_seq();
+        stamp_negative_lifetime_proof_for_test();
+    };
+    const auto r0 =
+        g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed);
+    Fiber f([] {});
+    (void)steal_safety_transaction(&f);
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+    CHECK(g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) == r0,
+          "3001 AC2: Soft does not bump lifetime_proof reject (metric-only, no abort)");
+
+    aura::serve::reset_steal_snapshot_soft_for_test();
+    ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
+    lcp::reset_lifetime_consistency_proof_for_test();
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac3001_3_envframe_hook_and_2931_keys() {
+    std::println("\n--- #3001 AC4: EnvFrameOk inject + #2931 keys remain ---");
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_last_reject_invariant_bits;
+    using aura::serve::g_steal_safety_residual_envframe_lag_total;
+    using aura::serve::g_steal_safety_transaction_reject_hard_total;
+    using aura::serve::steal_invariant_mask;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealInvariant;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        aura::core::densify_consistency::bump_last_densify_call_seq();
+        aura::core::densify_consistency::note_last_densify_envframe_ok(false);
+    };
+    const auto env0 = g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed);
+    const auto rh0 = g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed);
+    Fiber f([] {});
+    const auto d = steal_safety_transaction(&f);
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+    CHECK(d == StealSafetyDecision::RejectHard, "3001 AC1: EnvFrameOk inject → RejectHard");
+    CHECK(!f.has_resume_safety_ticket(), "3001 AC1: EnvFrame Ok arm no ticket");
+    CHECK(g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed) > env0,
+          "3001 AC1: residual_envframe_lag advanced");
+    CHECK(g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed) > rh0,
+          "3001 AC1: matching RejectHard");
+    const auto bits = g_steal_safety_last_reject_invariant_bits.load(std::memory_order_relaxed);
+    CHECK((bits & steal_invariant_mask(StealInvariant::EnvFrameOk)) != 0,
+          "3001 AC1: last_reject_invariant_bits covers EnvFrameOk");
+
+    const auto chaos = read_file("tests/serve/test_chaos_steal_mutation_gc.cpp");
+    CHECK(chaos.find("#2931: residual_defer_after_exit explained by matching clears") !=
+              std::string::npos,
+          "3001 AC4: #2931 residual-after-exit remain fail-closed");
+    CHECK(chaos.find("#2931: steal_safety_ticket_mismatch delta == 0") != std::string::npos,
+          "3001 AC4: #2931 ticket-mismatch remain fail-closed");
+    CHECK(chaos.find("#2931: resume_fence hard/ticket surplus == 0") != std::string::npos,
+          "3001 AC4: #2931 resume-fence remain fail-closed");
+    CHECK(chaos.find("residual_lifetime_proof_reject explained by RejectHard") != std::string::npos,
+          "3001 AC1: soak asserts LifetimeProofOk arm");
+    CHECK(chaos.find("residual_envframe_lag explained by RejectHard") != std::string::npos,
+          "3001 AC1: soak asserts EnvFrameOk arm");
+    CHECK(chaos.find("residual_rearm_race explained by RejectHard") != std::string::npos,
+          "3001 AC1: soak asserts #2901 rearm arm");
+    CHECK(chaos.find("EXCLUDE_FROM_ALL") != std::string::npos ||
+              read_file("CMakeLists.txt")
+                      .find("set_target_properties(test_chaos_steal_mutation_gc "
+                            "PROPERTIES EXCLUDE_FROM_ALL TRUE)") != std::string::npos,
+          "3001 AC3: EXCLUDE_FROM_ALL preserved");
+    CHECK(chaos.find("AURA_CHAOS_STEAL_GC") != std::string::npos, "3001 AC3: env gate preserved");
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac3001_5_source_and_linter() {
+    std::println("\n--- #3001 AC5/AC6: source-cite + linter + no docs ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto chaos = read_file("tests/serve/test_chaos_steal_mutation_gc.cpp");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_chaos_steal_lifetime_envframe_3001.py");
+    CHECK(cpp.find("Issue #3001") != std::string::npos, "AC5: steal_safety.cpp cites #3001");
+    CHECK(hdr.find("Issue #3001") != std::string::npos, "AC5: steal_safety.h cites #3001");
+    CHECK(cpp.find("StealInvariant::LifetimeProofOk") != std::string::npos,
+          "AC5: LifetimeProofOk arm");
+    CHECK(cpp.find("StealInvariant::EnvFrameOk") != std::string::npos, "AC5: EnvFrameOk arm");
+    CHECK(chaos.find("g_steal_safety_between_clear_and_hard_and_hook") != std::string::npos,
+          "AC5: chaos cites inject hook");
+    CHECK(t.find("ac3001_1_hook_inject_negative_proof_rejects") != std::string::npos,
+          "AC5: AC1/AC2 test");
+    CHECK(t.find("ac3001_2_soft_metric_only") != std::string::npos, "AC5: Soft test");
+    CHECK(!lint.empty() && lint.find("3001") != std::string::npos, "AC5: linter present");
+    CHECK(build.find("check_chaos_steal_lifetime_envframe_3001") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3001-chaos-lifetime-envframe.md").empty(),
+          "AC6: no docs/design/3001-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_3001.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_steal_complete_restamp_txn() {
@@ -1639,10 +1823,15 @@ int run_test_steal_complete_restamp_txn() {
     ac2957_3_prior_arms_preserved();
     ac2957_4_query_additive();
     ac2957_5_source_and_linter();
+    std::println("\n=== Issue #3001: soak fail-closed LifetimeProofOk / EnvFrameOk ===");
+    ac3001_1_hook_inject_negative_proof_rejects();
+    ac3001_2_soft_metric_only();
+    ac3001_3_envframe_hook_and_2931_keys();
+    ac3001_5_source_and_linter();
     if (g_failed)
         return 1;
     std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
-                 "#2727 + #2901 + #2929 + #2954 + #2957: OK ({} passed)",
+                 "#2727 + #2901 + #2929 + #2954 + #2957 + #3001: OK ({} passed)",
                  g_passed);
     return 0;
 }
