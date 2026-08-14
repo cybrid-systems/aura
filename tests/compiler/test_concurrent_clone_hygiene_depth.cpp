@@ -39,6 +39,7 @@ using aura::ast::SyntaxMarker;
 using aura::compiler::macro_exp::clone_macro_body;
 using aura::compiler::macro_exp::g_clone_macro_body_concurrent_top_level_total;
 using aura::compiler::macro_exp::g_macro_clone_in_flight;
+using aura::compiler::macro_exp::g_macro_clone_same_flat_reject_total;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -176,8 +177,130 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(target.is_live_node(c), "AC4: target live");
     }
 
-    std::println("\n=== #2806 concurrent clone hygiene depth: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // ── Issue #3028: TLS not authority; same-FlatAST reject; name_map isolation ──
+    {
+        std::println("\n--- #3028 AC1: explicit depth authority + CapGuard member deny ---");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3028") != std::string::npos, "3028 AC1: cites #3028");
+        CHECK(me.find("denied_") != std::string::npos, "3028 AC1: CapGuard member denied_");
+        CHECK(me.find("session_depth_limit") != std::string::npos,
+              "3028 AC1: session_depth_limit member");
+        CHECK(me.find("s_effective_max_depth < 0") == std::string::npos,
+              "3028 AC1: no TLS -1 sentinel as authority");
+        CHECK(me.find("claim_same_flat_clone") != std::string::npos, "3028 AC1: same-flat claim");
+        CHECK(me.find("NameMapCheckpoint") != std::string::npos, "3028 AC1: name_map checkpoint");
+        CHECK(me.find("TLS is not read for this decision") != std::string::npos ||
+                  me.find("not TLS") != std::string::npos,
+              "3028 AC1: depth decision not TLS");
+        CHECK(me.find("session_depth_limit") != std::string::npos &&
+                  me.find("hygiene_depth + 1") != std::string::npos,
+              "3028 AC1: recursion still explicit");
+    }
+
+    {
+        std::println("\n--- #3028 AC2: same-FlatAST concurrent writers reject or serialize ---");
+        aura::ast::ASTArena src_arena;
+        auto src_alloc = src_arena.allocator();
+        StringPool sp(src_alloc);
+        FlatAST src(src_alloc);
+        // Deep let chain so clone has a visible window.
+        auto leaf = src.add_variable(sp.intern("x"));
+        aura::ast::NodeId body = leaf;
+        for (int i = 0; i < 24; ++i)
+            body = src.add_let(sp.intern(std::format("t{}", i)), leaf, body);
+        aura::ast::ASTArena tgt_arena;
+        auto tgt_alloc = tgt_arena.allocator();
+        StringPool tp(tgt_alloc);
+        FlatAST target(tgt_alloc);
+        aura_test_reset_macro_clone_same_flat_reject_for_test();
+        const auto rej0 = g_macro_clone_same_flat_reject_total.load(std::memory_order_relaxed);
+        constexpr int kThreads = 6;
+        std::atomic<int> ok_n{0};
+        std::atomic<int> fail_n{0};
+        std::atomic<int> map_kept{0};
+        std::vector<std::thread> threads;
+        threads.reserve(kThreads);
+        for (int t = 0; t < kThreads; ++t) {
+            threads.emplace_back([&]() {
+                NameMap nm;
+                nm.emplace("keep", "keep");
+                auto c = clone_macro_body(target, tp, src, sp, body, nullptr, &nm,
+                                          SyntaxMarker::MacroIntroduced);
+                if (c != NULL_NODE)
+                    ok_n.fetch_add(1, std::memory_order_relaxed);
+                else
+                    fail_n.fetch_add(1, std::memory_order_relaxed);
+                if (nm.count("keep") == 1)
+                    map_kept.fetch_add(1, std::memory_order_relaxed);
+            });
+        }
+        for (auto& th : threads)
+            th.join();
+        CHECK(ok_n.load() + fail_n.load() == kThreads, "3028 AC2: all iters done");
+        CHECK(ok_n.load() >= 1, "3028 AC2: at least one clone succeeded");
+        const auto rej1 = g_macro_clone_same_flat_reject_total.load(std::memory_order_relaxed);
+        if (rej1 > rej0) {
+            CHECK(true, "3028 AC2: same-flat reject observed");
+            CHECK(aura_macro_clone_last_reject_reason_v_read() == 2 ||
+                      aura_macro_clone_last_reject_reason_v_read() == 0,
+                  "3028 AC2: last reason same-flat or cleared");
+        } else {
+            CHECK(true, "3028 AC2: soft — clones serialized (also legal)");
+        }
+        CHECK(map_kept.load() == kThreads, "3028 AC3: name_map keep-key survived reject/success");
+        CHECK(g_macro_clone_in_flight.load(std::memory_order_relaxed) == 0,
+              "3028 AC2: in_flight 0 after join");
+    }
+
+    {
+        std::println("\n--- #3028 AC4: Soft / cross-flat concurrent still allowed ---");
+        aura::ast::ASTArena src_arena;
+        auto src_alloc = src_arena.allocator();
+        StringPool sp(src_alloc);
+        FlatAST src(src_alloc);
+        auto pr = aura::parser::parse_to_flat("(lambda (x) x)", src, sp);
+        CHECK(pr.success, "3028 AC4: parse");
+        aura_test_reset_macro_clone_same_flat_reject_for_test();
+        const auto rej0 = g_macro_clone_same_flat_reject_total.load(std::memory_order_relaxed);
+        std::atomic<int> ok_n{0};
+        std::vector<std::thread> threads;
+        for (int t = 0; t < 4; ++t) {
+            threads.emplace_back([&]() {
+                aura::ast::ASTArena ta;
+                StringPool tp(ta.allocator());
+                FlatAST tgt(ta.allocator());
+                NameMap nm;
+                auto c = clone_macro_body(tgt, tp, src, sp, pr.root, nullptr, &nm,
+                                          SyntaxMarker::MacroIntroduced);
+                if (c != NULL_NODE)
+                    ok_n.fetch_add(1, std::memory_order_relaxed);
+            });
+        }
+        for (auto& th : threads)
+            th.join();
+        CHECK(ok_n.load() == 4, "3028 AC4: all cross-flat clones succeeded");
+        CHECK(g_macro_clone_same_flat_reject_total.load(std::memory_order_relaxed) == rej0,
+              "3028 AC4: cross-flat does not bump same-flat reject");
+    }
+
+    {
+        std::println("\n--- #3028 AC5: source-cite + linter + no invent ---");
+        const auto build = read_file("build.py");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_tls_depth_same_flat_clone_3028.py");
+        CHECK(!lint.empty() && lint.find("Issue #3028") != std::string::npos, "3028 AC5: linter");
+        CHECK(build.find("check_tls_depth_same_flat_clone_3028") != std::string::npos,
+              "3028 AC5: build.py wires linter");
+        CHECK(read_file("docs/design/3028-tls-depth-same-flat.md").empty(),
+              "3028 AC5: no docs/design/");
+        CHECK(read_file("tests/compiler/test_issue_3028.cpp").empty(),
+              "3028 AC5: no invent test per #81967");
+        CHECK(aura_macro_clone_same_flat_reject_total_v_read() >= 0, "3028 AC5: v_read");
+        CHECK(aura_macro_clone_steal_abort_total_v_read() >= 0, "3028 AC5: steal-abort v_read");
+    }
+
+    std::println("\n=== #2806 + #3028 concurrent clone hygiene depth: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

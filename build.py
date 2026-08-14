@@ -1575,6 +1575,18 @@ def cmd_lint():
             "Issue #2806 concurrent clone hygiene depth linter failed — run python3 scripts/coverage/checks/check_concurrent_clone_hygiene_depth_2806.py"
         )
         return r
+    # Issue #3028: TLS depth not authority; same-FlatAST clone reject.
+    # Extends test_concurrent_clone_hygiene_depth (#81967); no docs/design.
+    tlsf_script = COVERAGE_CHECKS / "check_tls_depth_same_flat_clone_3028.py"
+    if not tlsf_script.exists():
+        fail(f"missing {tlsf_script}")
+        return 1
+    r = run([sys.executable, str(tlsf_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3028 TLS depth / same-FlatAST clone linter failed — run python3 scripts/coverage/checks/check_tls_depth_same_flat_clone_3028.py"
+        )
+        return r
     # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
     # ac2807 in test_unquote_splicing_hygiene.
     ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
@@ -11797,6 +11809,27 @@ def cmd_structural_macro_hygiene_3027():
     return cmd_structural_macro_hygiene_3027_coverage()
 
 
+def cmd_tls_depth_same_flat_clone_3028_coverage():
+    """Issue #3028: TLS depth not authority; same-FlatAST clone reject (static)."""
+    print(f"{B}=== TLS depth / same-FlatAST clone coverage (#3028) ==={N}")
+    script = COVERAGE_CHECKS / "check_tls_depth_same_flat_clone_3028.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("TLS depth / same-FlatAST clone (#3028) coverage contract rows failed")
+        return 1
+    ok("TLS depth / same-FlatAST clone (#3028) coverage clean")
+    return 0
+
+
+def cmd_tls_depth_same_flat_clone_3028():
+    """Issue #3028: explicit hygiene_depth sole authority; same-FlatAST reject."""
+    print(f"{B}=== TLS depth / same-FlatAST clone (#3028) ==={N}")
+    return cmd_tls_depth_same_flat_clone_3028_coverage()
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -15308,6 +15341,8 @@ def main():
         "rename-replace-hygiene-restamp-2961": cmd_rename_replace_hygiene_restamp_2961_coverage,
         "structural-macro-hygiene-3027": cmd_structural_macro_hygiene_3027,
         "structural-macro-hygiene-3027-coverage": cmd_structural_macro_hygiene_3027_coverage,
+        "tls-depth-same-flat-clone-3028": cmd_tls_depth_same_flat_clone_3028,
+        "tls-depth-same-flat-clone-3028-coverage": cmd_tls_depth_same_flat_clone_3028_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

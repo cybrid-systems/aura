@@ -550,6 +550,20 @@ aura_hot_update_residual_force_stale_observe_total(void) {
 }
 extern "C" __attribute__((weak)) void aura_hot_update_observe_residual_force_stale(void) {}
 extern "C" __attribute__((weak)) void aura_hot_update_reset_residual_force_observe_for_test(void) {}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_macro_clone_same_flat_reject_total_v_read(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_macro_clone_steal_abort_total_v_read(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_macro_clone_last_reject_reason_v_read(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_test_reset_macro_clone_same_flat_reject_for_test(void) noexcept {}
 extern "C" __attribute__((weak)) void
 aura_residual_live_closure_remount_tick(std::uint64_t /*budget*/) {}
 extern "C" __attribute__((weak)) void
