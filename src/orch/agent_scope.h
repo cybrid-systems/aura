@@ -79,6 +79,22 @@ inline constexpr int kAgentScopeSchedulerLifetimeIssue = 2782;
 // Issue #2976: opt-in MutexGuarded concurrency (default SingleOwner).
 inline constexpr int kAgentScopeConcurrencyIssue = 2976;
 
+inline std::atomic<std::uint64_t> g_agent_scope_bp_seq{1};
+
+[[nodiscard]] inline std::string make_agent_scope_bp_id() {
+    const auto n = g_agent_scope_bp_seq.fetch_add(1, std::memory_order_relaxed);
+    return "as:" + std::to_string(n);
+}
+
+// Soft / AURA_SANDBOX=off: do not inherit (process bucket, zero-cost).
+// Production defaults: inherit so sibling scopes cannot cross-poison.
+[[nodiscard]] inline bool production_scope_bp_inherit() noexcept {
+    const char* sb = std::getenv("AURA_SANDBOX");
+    if (sb != nullptr && sb[0] != '\0' && std::string_view(sb) == "off")
+        return false;
+    return aura::compiler::typed_audit::production_defaults_active();
+}
+
 // Issue #2976: per-scope concurrency mode. Default SingleOwner is
 // zero-lock (misuse metric / optional abort — unchanged). MutexGuarded
 // serializes mutating + directory APIs with a per-scope recursive_mutex.
@@ -229,9 +245,15 @@ public:
     // or MutexGuarded. Existing AgentScope(sched) callers are unchanged.
     explicit AgentScope(serve::Scheduler& sched, AgentScopeOptions opts = {}) noexcept
         : sched_(&sched)
-        , mode_(opts.concurrency) {
+        , mode_(opts.concurrency)
+        , bp_scope_id_(make_agent_scope_bp_id()) {
         sched.register_agent_scope_observer(this, &AgentScope::on_scheduler_destroyed_trampoline_);
     }
+
+    // Issue #3015: session-local BP gauge key (not a registry). Stable
+    // for this scope's lifetime. Production spawn inherits it when the
+    // spec left bp_scope_id empty.
+    [[nodiscard]] std::string_view bp_scope_id() const noexcept { return bp_scope_id_; }
 
     // Issue #2976: construction mode (immutable). No lock.
     [[nodiscard]] ScopeConcurrency concurrency() const noexcept { return mode_; }
@@ -278,6 +300,15 @@ public:
             restart_counts_.push_back(0);
             consecutive_stall_counts_.push_back(0);
             return handles_.back();
+        }
+        // Issue #3015: production multi-Scope — fill empty bp_scope_id
+        // from this scope's session-local key so a storm in A cannot
+        // process-bucket-poison B. Soft / sandbox=off / explicit id
+        // (including "-" process-bucket sentinel) are left alone.
+        if (spec.bp_scope_id.empty() && production_scope_bp_inherit()) {
+            spec.bp_scope_id = bp_scope_id_;
+            g_orch_module_stats.spawn_bp_scope_inherited_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
         }
         handles_.emplace_back(spawn_agent_with_mailbox(*sched_, spec));
         // Copy the spec for re-spawn. AgentSpec's body is a
@@ -740,7 +771,8 @@ private:
     // No observer registration.
     explicit AgentScope(std::nullptr_t, AgentScopeOptions opts = {}) noexcept
         : sched_(nullptr)
-        , mode_(opts.concurrency) {}
+        , mode_(opts.concurrency)
+        , bp_scope_id_(make_agent_scope_bp_id()) {}
 
     // Issue #2782: Scheduler dtor callback — null sched_ + fiber pointers
     // before owned fibers are destroyed (prevents UAF).
@@ -1024,6 +1056,8 @@ private:
     std::vector<std::unique_ptr<AgentScope>> children_;
     // Issue #2976: construction mode. SingleOwner = zero lock.
     ScopeConcurrency mode_ = ScopeConcurrency::SingleOwner;
+    // Issue #3015: session-local BP admit key (as:<seq>). Not a registry.
+    std::string bp_scope_id_{};
     // Taken only when mode_ == MutexGuarded. recursive so ~AgentScope
     // → cancel_all → join_all same-thread re-entry does not deadlock.
     mutable std::recursive_mutex api_mu_;

@@ -4929,6 +4929,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3014", 3014);
             insert_kv("issue-3014", 3014);
             insert_kv("body-acquire-rejected-wired", 1);
+            // Issue #3015: production AgentScope bp_scope_id inherit.
+            insert_kv("schema-3015", 3015);
+            insert_kv("issue-3015", 3015);
+            insert_kv("bp-scope-inherit-wired", 1);
+            insert_kv("spawn-bp-scope-inherited-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_bp_scope_inherited_total.load(std::memory_order_relaxed)));
+            insert_kv("spawn-bp-process-bucket-used-total",
+                      static_cast<std::int64_t>(
+                          os.spawn_bp_process_bucket_used_total.load(std::memory_order_relaxed)));
             // Issue #2118: soft mutation-boundary registration (fiber agent body).
             insert_kv("orch_agent_boundary_entered_total",
                       static_cast<std::int64_t>(

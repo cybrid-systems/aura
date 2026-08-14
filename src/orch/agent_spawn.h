@@ -176,6 +176,11 @@ inline std::uint64_t resolve_mailbox_bp_admit_threshold() noexcept {
 // scope_id only tags using_scope_gauge (load recent via
 // load_mailbox_bp_recent). Threshold value does not depend on scope.
 inline constexpr int kBpThresholdSsotIssue = 2948;
+// Issue #3015: production AgentScope auto-inherits a scope-local
+// bp_scope_id when the caller left it empty (no process-bucket
+// cross-poison). Explicit "-" keeps the process bucket (opt-in).
+inline constexpr int kBpScopeInheritIssue = 3015;
+inline constexpr std::string_view kBpScopeProcessBucket = "-";
 
 struct BpThresholdDecision {
     std::uint64_t threshold = 0; // 0 + !always_reject = gate off for this decision
@@ -512,6 +517,13 @@ struct OrchModuleStats {
     // Bumped once per spawn-admit / watch degrade resolve. source tag is
     // not histogrammed (keep process-wide cheap).
     std::atomic<std::uint64_t> bp_threshold_resolve_total{0};
+    // Issue #3015: AgentScope::spawn filled an empty bp_scope_id from the
+    // scope's session-local key (production inherit). process_bucket_used
+    // = attach_mailbox admit still routed to the process gauge under
+    // production (direct spawn / explicit "-"). Soft does not bump
+    // (zero extra atomic on the Soft empty path).
+    std::atomic<std::uint64_t> spawn_bp_scope_inherited_total{0};
+    std::atomic<std::uint64_t> spawn_bp_process_bucket_used_total{0};
     // Issue #2756: workflow-level FailurePolicy composition counters.
     // Bumped by compose_workflow_policy / note_workflow_residual_reclaim_
     // under_policy. Additive — #2007/#2229/#2539 surfaces unchanged.
@@ -1267,12 +1279,14 @@ struct AgentSpec {
     // still process-global). Wire surface: Aura kwarg
     // :bp-admit-threshold n on (orch:spawn-agent).
     std::optional<std::uint64_t> bp_admit_threshold{};
-    // Issue #2633: scope-local BP gauge key. empty = process-default
-    // bucket (backward compatible with #2591). non-empty = the spawn's
-    // mailbox BP events and admit preflight are routed to a per-scope
-    // gauge (bounded map, cap kMailboxBpScopeMapCap). storm in scope A
-    // no longer poisons unrelated scopes B/C. Wire surface: Aura kwarg
-    // :bp-scope-id "tenant-a" on (orch:spawn-agent).
+    // Issue #2633 / #3015: scope-local BP gauge key. empty = process
+    // bucket (Soft / single-agent MVP / explicit opt-in). non-empty =
+    // mailbox BP events + admit preflight route to a per-scope gauge
+    // (bounded map, cap kMailboxBpScopeMapCap). "-" (kBpScopeProcessBucket)
+    // is the documented process-bucket sentinel. Under production,
+    // AgentScope::spawn auto-fills empty with a session-local scope key
+    // so a storm in scope A cannot admit-poison B. Wire surface: Aura
+    // kwarg :bp-scope-id "tenant-a" on (orch:spawn-agent).
     std::string bp_scope_id{};
     // Issue #2925: consecutive Backpressure budget before producer self-throttle.
     // 0 = off (default, zero cost on agent_send). N > 0 → after N consecutive
@@ -1571,12 +1585,23 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         //   nullopt → process default; 0 → always reject THIS spawn
         //   (#2591); N>0 → local threshold. Scope id selects the gauge
         //   (load_mailbox_bp_recent) — same helper watch_all uses.
-        const auto thr_d = resolve_bp_threshold(spec.bp_admit_threshold, spec.bp_scope_id,
+        std::string_view scope_id = spec.bp_scope_id;
+        // Issue #3015: "-" is explicit process-bucket opt-in (never a
+        // named gauge). Soft / empty stays the process bucket.
+        if (scope_id == kBpScopeProcessBucket)
+            scope_id = {};
+        const auto thr_d = resolve_bp_threshold(spec.bp_admit_threshold, scope_id,
                                                 /*policy_zero_means_process_default=*/false);
         g_orch_module_stats.bp_threshold_resolve_total.fetch_add(1, std::memory_order_relaxed);
         const bool scope_active = thr_d.using_scope_gauge;
         const bool override_active = thr_d.override_active;
         const auto threshold = thr_d.threshold;
+        // Production + empty scope id: observable process-bucket risk
+        // (operators can fail-closed). Soft / sandbox=off: no extra atomic.
+        if (scope_id.empty() && production_reclaimed_must_wait()) {
+            g_orch_module_stats.spawn_bp_process_bucket_used_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
 
         auto reject_bp = [&](std::uint64_t bp_recent, std::uint64_t thr_limit) {
             g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
@@ -1614,7 +1639,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
             // Issue #2398: quiet-period decay; #2633 also decays scope gauges.
             maybe_decay_mailbox_bp_recent();
             // #2948: same load path as watch_all degrade.
-            const auto bp_recent = load_mailbox_bp_recent(spec.bp_scope_id);
+            const auto bp_recent = load_mailbox_bp_recent(scope_id);
             if (bp_recent >= threshold) {
                 reject_bp(bp_recent, threshold);
                 return h;
