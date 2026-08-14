@@ -25,6 +25,7 @@ import std;
 export namespace aura::core::lifetime {
 
 // Phase / inventory stamps
+using ::aura::core::lifetime::kFfiOpaquePinOrRemapIssue;
 using ::aura::core::lifetime::kGeneralObjectPinAdoptIssue;
 using ::aura::core::lifetime::kGeneralObjectPinAdoptSiteCount;
 using ::aura::core::lifetime::kGeneralObjectPinAutoWireIssue;
@@ -65,9 +66,11 @@ using ::aura::core::lifetime::LifetimePin;
 using ::aura::core::lifetime::PinOwner;
 
 // Sharded registry
+using ::aura::core::lifetime::any_pin_blocks_arena_reclaim;
 using ::aura::core::lifetime::kPinRegistryShardCount;
 using ::aura::core::lifetime::kPinRegistryShardMask;
 using ::aura::core::lifetime::live_pin_count;
+using ::aura::core::lifetime::note_ffi_opaque_create_exempt;
 using ::aura::core::lifetime::pin_registry_shard_index;
 using ::aura::core::lifetime::pin_registry_shard_max_pin_count;
 using ::aura::core::lifetime::pin_registry_shard_pin_count;
