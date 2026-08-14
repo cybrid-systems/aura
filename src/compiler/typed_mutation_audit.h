@@ -1510,6 +1510,58 @@ enum class LinearFastPathExitAction : std::uint8_t {
 }
 inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 
+// Issue #3030: abort / force-rollback must drop the last TypeLinearCommitProof
+// + linear_fast_path face so a later IR Move/Drop cannot elide on a
+// pre-abort stamp (half-green). Reuses the existing stamp/face/outcome
+// atomics — no second proof model. Soft: observe-only counter; face
+// still cleared (Soft never relies on stamp for commit). Quiet (no
+// face): zero extra stores beyond the four face writes (idempotent).
+inline constexpr int kTypeLinearProofClearedOnAbortIssue = 3030;
+inline std::atomic<std::uint64_t> g_type_linear_proof_cleared_on_abort_total{0};
+inline std::atomic<std::uint64_t> g_type_linear_proof_cleared_on_abort_observe_total{0};
+inline std::atomic<std::uint32_t> g_type_linear_proof_cleared_on_abort_wired{1};
+
+[[nodiscard]] inline std::uint64_t type_linear_proof_cleared_on_abort_total_v_read() noexcept {
+    return g_type_linear_proof_cleared_on_abort_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+type_linear_proof_cleared_on_abort_observe_total_v_read() noexcept {
+    return g_type_linear_proof_cleared_on_abort_observe_total.load(std::memory_order_relaxed);
+}
+inline void reset_type_linear_proof_cleared_on_abort_for_test() noexcept {
+    g_type_linear_proof_cleared_on_abort_total.store(0, std::memory_order_relaxed);
+    g_type_linear_proof_cleared_on_abort_observe_total.store(0, std::memory_order_relaxed);
+}
+
+// Purpose: drop last TypeLinearCommitProof + densify-pending inject on abort
+// Pre: call after abort_restore_dual_topology / hard force-rollback
+// Post: stamp=0, would_allow=0, linear_ok=0, outcome=Reject when a face
+//       was live; linear_fast_path_ok() == false until a fresh stamp
+// Safety Class: P0 under production/Full (missing clear is a hard residual)
+// Issue: #3030
+// AI-Native Rationale: Agents correlate abort → proof-clear → next boundary
+inline void clear_type_linear_commit_proof_on_abort() noexcept {
+    const auto stamp = g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed);
+    const auto would = g_last_proof_would_allow_commit.load(std::memory_order_relaxed);
+    const auto lok = g_last_proof_linear_ok.load(std::memory_order_relaxed);
+    const bool had_face = stamp != 0 || would != 0 || lok != 0;
+    g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    if (had_face)
+        g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeReject,
+                                               std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    if (!had_face)
+        return;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard)
+        g_type_linear_proof_cleared_on_abort_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_type_linear_proof_cleared_on_abort_observe_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 [[nodiscard]] inline std::uint64_t last_proof_live_goal_count_v_read() noexcept {
     return g_last_proof_live_goal_count.load(std::memory_order_relaxed);
 }

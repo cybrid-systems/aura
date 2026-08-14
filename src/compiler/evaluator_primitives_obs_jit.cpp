@@ -10383,6 +10383,24 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                             std::memory_order_relaxed)));
                     insert_kv("schema-3006", 3006);
                     insert_kv("issue-3006", 3006);
+                    // Issue #3030: abort clears proof face (additive).
+                    using aura::compiler::typed_audit::g_type_linear_proof_cleared_on_abort_wired;
+                    using aura::compiler::typed_audit::
+                        type_linear_proof_cleared_on_abort_observe_total_v_read;
+                    using aura::compiler::typed_audit::
+                        type_linear_proof_cleared_on_abort_total_v_read;
+                    insert_kv("type-linear-proof-cleared-on-abort-total",
+                              static_cast<std::int64_t>(
+                                  type_linear_proof_cleared_on_abort_total_v_read()));
+                    insert_kv("type-linear-proof-cleared-on-abort-observe-total",
+                              static_cast<std::int64_t>(
+                                  type_linear_proof_cleared_on_abort_observe_total_v_read()));
+                    insert_kv(
+                        "type-linear-proof-cleared-on-abort-wired",
+                        static_cast<std::int64_t>(g_type_linear_proof_cleared_on_abort_wired.load(
+                            std::memory_order_relaxed)));
+                    insert_kv("schema-3030", 3030);
+                    insert_kv("issue-3030", 3030);
                 }
             }
             // Issue #2286: per-(eval, cow_gen) gate scoping.

@@ -1600,6 +1600,19 @@ def cmd_lint():
             "Issue #3029 grant fence / limit-reason linter failed — run python3 scripts/coverage/checks/check_macro_self_evo_grant_fence_3029.py"
         )
         return r
+    # Issue #3030: abort/restore clears TypeLinearCommitProof + linear_fast_path
+    # face. Extends test_escape_move_elision_gate + test_type_linear_commit_health
+    # (#81967); no docs/design.
+    tlca_script = COVERAGE_CHECKS / "check_type_linear_proof_clear_on_abort_3030.py"
+    if not tlca_script.exists():
+        fail(f"missing {tlca_script}")
+        return 1
+    r = run([sys.executable, str(tlca_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3030 type-linear proof-clear-on-abort linter failed — run python3 scripts/coverage/checks/check_type_linear_proof_clear_on_abort_3030.py"
+        )
+        return r
     # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
     # ac2807 in test_unquote_splicing_hygiene.
     ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
@@ -11168,6 +11181,31 @@ def cmd_linear_fast_path_dirty_revalidate_3006_coverage():
     return 0
 
 
+def cmd_type_linear_proof_clear_on_abort_3030_coverage():
+    """Issue #3030: abort/restore clears TypeLinearCommitProof face.
+
+    Residual of #2964/#3006: dual-topology abort / force-rollback must
+    drop the last proof + linear_fast_path face so Move/Drop cannot
+    elide on a pre-abort stamp.
+    """
+    print(f"{B}=== type-linear proof-clear-on-abort coverage (#3030) ==={N}")
+    script = COVERAGE_CHECKS / "check_type_linear_proof_clear_on_abort_3030.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("type-linear proof-clear-on-abort (#3030) coverage contract rows failed")
+        return 1
+    ok("type-linear proof-clear-on-abort (#3030) coverage clean")
+    return 0
+
+
+def cmd_type_linear_proof_clear_on_abort_3030():
+    """Alias for coverage check."""
+    return cmd_type_linear_proof_clear_on_abort_3030_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -15379,6 +15417,8 @@ def main():
         "tls-depth-same-flat-clone-3028-coverage": cmd_tls_depth_same_flat_clone_3028_coverage,
         "macro-self-evo-grant-fence-3029": cmd_macro_self_evo_grant_fence_3029,
         "macro-self-evo-grant-fence-3029-coverage": cmd_macro_self_evo_grant_fence_3029_coverage,
+        "type-linear-proof-clear-on-abort-3030": cmd_type_linear_proof_clear_on_abort_3030,
+        "type-linear-proof-clear-on-abort-3030-coverage": cmd_type_linear_proof_clear_on_abort_3030_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

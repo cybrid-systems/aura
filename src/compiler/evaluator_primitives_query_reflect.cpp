@@ -321,7 +321,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             const auto scored = compute_type_linear_commit_health(snap);
 
             // Issue #3020: ~73 live keys; next_pow2(planned*2) (256).
-            constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 80;
+            constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 85;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kTypeLinearCommitHealthPlannedKeys));
             if (!ht)
@@ -488,6 +488,24 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("schema-2995", kOccurrenceCommitHealthIssue);
                 insert_kv("issue-2995", kOccurrenceCommitHealthIssue);
             }
+            // Issue #3030: abort/restore clears TypeLinearCommitProof face.
+            insert_kv(
+                "type-linear-proof-cleared-on-abort-total",
+                static_cast<std::int64_t>(aura::compiler::typed_audit::
+                                              type_linear_proof_cleared_on_abort_total_v_read()));
+            insert_kv("type-linear-proof-cleared-on-abort-observe-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::
+                              type_linear_proof_cleared_on_abort_observe_total_v_read()));
+            insert_kv(
+                "type-linear-proof-cleared-on-abort-wired",
+                static_cast<std::int64_t>(
+                    aura::compiler::typed_audit::g_type_linear_proof_cleared_on_abort_wired.load(
+                        std::memory_order_relaxed)));
+            insert_kv("schema-3030",
+                      aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
+            insert_kv("issue-3030",
+                      aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
 
             return query_hash_finish(ht, string_heap, overflowed);
         });
