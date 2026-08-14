@@ -237,7 +237,7 @@ extern "C" __attribute__((weak)) std::uint64_t cross_eval_hard_owner_scoped_tota
 extern "C" __attribute__((weak)) std::uint64_t cross_eval_hard_global_bump_total_v_read(void) {
     return 0;
 }
-extern "C" __attribute__((weak)) void aura_aot_bump_func_table_epoch(void) {
+extern "C" void aura_aot_bump_func_table_epoch(void) {
     g_aot_table_epoch_stub.fetch_add(1, std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) bool
@@ -245,10 +245,18 @@ aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
                           std::uint64_t captured_defuse_or_env_version) {
     const auto cur_b = g_aot_table_epoch_stub.load(std::memory_order_relaxed);
     const auto cur_d = g_aot_defuse_version_stub;
-    const bool bridge_ok = (captured_bridge_epoch == 0) || (captured_bridge_epoch == cur_b);
-    const bool defuse_ok =
-        (captured_defuse_or_env_version == 0) || (captured_defuse_or_env_version == cur_d);
-    return bridge_ok && defuse_ok;
+    // Issue #2930: match full bridge semantics — captured==0 while tracking
+    // active is NOT fresh (unstamped observed during tracking), so stale
+    // closures reach the cross-COW soft/hard path instead of skipping it.
+    auto domain_ok = [](std::uint64_t captured, std::uint64_t current) noexcept {
+        if (current == 0)
+            return true; // tracking inactive for this domain
+        if (captured == 0)
+            return false; // unstamped while tracking active -> stale
+        return captured == current;
+    };
+    return domain_ok(captured_bridge_epoch, cur_b) &&
+           domain_ok(captured_defuse_or_env_version, cur_d);
 }
 extern "C" __attribute__((weak)) void aura_jit_closure_record_dual_check(void) {}
 extern "C" __attribute__((weak)) void aura_jit_closure_record_stale_deopt(void) {}
@@ -593,21 +601,71 @@ aura_bump_must_deopt_force_deopt_success_total(std::uint64_t /*n*/) {}
 extern "C" __attribute__((weak)) void
 aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t /*n*/) {}
 // Issue #2371 / #2603: weak stubs for cross-COW soft migrate counters.
-extern "C" __attribute__((weak)) void aura_bump_cross_cow_soft_migrate_total(void) noexcept {}
+// Light-link tests wire metrics via aura_set_aot_metrics; write through
+// g_aot_metrics_stub so counter assertions observe real motion (mirrors
+// full bridge in aura_jit_bridge.cpp).
+extern "C" __attribute__((weak)) void aura_bump_cross_cow_soft_migrate_total(void) noexcept {
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub))
+        m->cross_cow_soft_migrate_total.fetch_add(1, std::memory_order_relaxed);
+}
 extern "C" __attribute__((weak)) void
-aura_bump_cross_cow_soft_migrate_same_gen_total(void) noexcept {}
-extern "C" __attribute__((weak)) void aura_bump_cross_cow_hard_reject_total(void) noexcept {}
+aura_bump_cross_cow_soft_migrate_same_gen_total(void) noexcept {
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub))
+        m->cross_cow_soft_migrate_same_gen_total.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void aura_bump_cross_cow_hard_reject_total(void) noexcept {
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub))
+        m->cross_cow_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
+}
 extern "C" __attribute__((weak)) void
-aura_bump_cross_cow_hard_reject_reason(std::uint8_t /*reason*/) noexcept {}
+aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept {
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub);
+    if (!m)
+        return;
+    m->cross_cow_last_hard_reject_reason.store(reason, std::memory_order_relaxed);
+    switch (reason) {
+        case 1:
+            m->cross_cow_hard_reject_disabled_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 2:
+            m->cross_cow_hard_reject_freed_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 3:
+            m->cross_cow_hard_reject_far_behind_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 4:
+            m->cross_cow_hard_reject_linear_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 5:
+            m->cross_cow_hard_reject_remount_fail_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 7: // Issue #2547 CowGenMismatch
+            m->cross_cow_hard_reject_cow_gen_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+        case 6:
+        default:
+            m->cross_cow_hard_reject_other_total.fetch_add(1, std::memory_order_relaxed);
+            break;
+    }
+}
 extern "C" __attribute__((weak)) std::uint8_t
 aura_cross_cow_last_hard_reject_reason(void) noexcept {
-    return 0;
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub);
+    return m ? m->cross_cow_last_hard_reject_reason.load(std::memory_order_relaxed) : 0;
 }
 extern "C" __attribute__((weak)) int aura_cross_cow_soft_migrate_enabled(void) noexcept {
+    if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE"))
+        return (e[0] != '0' && e[0] != '\0') ? 1 : 0;
     return 1;
 }
 extern "C" __attribute__((weak)) std::uint64_t
 aura_cross_cow_soft_migrate_max_drift(void) noexcept {
+    if (const char* e = std::getenv("AURA_CROSS_COW_SOFT_MIGRATE_MAX_DRIFT")) {
+        char* end = nullptr;
+        const auto v = std::strtoull(e, &end, 10);
+        if (end != e)
+            return static_cast<std::uint64_t>(v);
+    }
     return 4096;
 }
 // Issue #2547: weak stubs for workspace COW gen (full impl in aura_jit_bridge.cpp).
