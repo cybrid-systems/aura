@@ -197,6 +197,8 @@ extern "C" std::uint64_t aura_pure_anon_bg_enqueue_total_v_read() noexcept;
 extern "C" std::uint64_t aura_pure_anon_bg_drain_ok_total_v_read() noexcept;
 extern "C" std::uint64_t aura_pure_anon_bg_drain_fail_total_v_read() noexcept;
 extern "C" std::uint64_t aura_pure_anon_bg_overflow_total_v_read() noexcept;
+// Issue #3024: production overflow MustDeopt (additive).
+extern "C" std::uint64_t aura_pure_anon_bg_overflow_must_deopt_total_v_read() noexcept;
 extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept;
 // Issue #2928: budgeted residual live-closure remount (round-robin cursor +
 // budget B, default 32 production / 0 Soft). Outside reemit-success paths

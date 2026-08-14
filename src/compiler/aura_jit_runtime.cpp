@@ -22,6 +22,9 @@ extern "C" void aura_bump_live_closure_sync_remount_pure_anon_totals(std::uint64
 // Issue #2950: pure-anon bg queue counter bumps (strong in bridge; weak no-op).
 extern "C" void aura_bump_pure_anon_bg_totals(std::uint64_t enqueue, std::uint64_t drain_ok,
                                               std::uint64_t drain_fail, std::uint64_t overflow);
+// Issue #3024: production overflow MustDeopt (additive; existing overflow
+// counter unchanged). Soft / Off never bump this.
+extern "C" void aura_bump_pure_anon_bg_overflow_must_deopt_total(std::uint64_t n);
 // Issue #2928: residual round-robin remount counters (outside reemit-success).
 extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_t budget_skip);
 // Issue #2977: prefer-path counters (force_jit / last_success coverage).
@@ -2379,6 +2382,8 @@ static std::atomic<std::uint64_t> g_pure_anon_bg_enqueue_total{0};
 static std::atomic<std::uint64_t> g_pure_anon_bg_drain_ok_total{0};
 static std::atomic<std::uint64_t> g_pure_anon_bg_drain_fail_total{0};
 static std::atomic<std::uint64_t> g_pure_anon_bg_overflow_total{0};
+// Issue #3024: production overflow that forced MustDeopt (leave native).
+static std::atomic<std::uint64_t> g_pure_anon_bg_overflow_must_deopt_total{0};
 
 extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept {
     return static_cast<std::uint64_t>(g_pure_anon_bg_size.load(std::memory_order_relaxed));
@@ -2396,6 +2401,9 @@ extern "C" std::uint64_t aura_pure_anon_bg_drain_fail_total_v_read() noexcept {
 extern "C" std::uint64_t aura_pure_anon_bg_overflow_total_v_read() noexcept {
     return g_pure_anon_bg_overflow_total.load(std::memory_order_relaxed);
 }
+extern "C" std::uint64_t aura_pure_anon_bg_overflow_must_deopt_total_v_read() noexcept {
+    return g_pure_anon_bg_overflow_must_deopt_total.load(std::memory_order_relaxed);
+}
 
 extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept {
     std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
@@ -2405,23 +2413,56 @@ extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept {
     // Totals stay monotonic (Agents delta); do not zero.
 }
 
+// Issue #3024: production overflow fail-closed. Set MustDeopt + poison
+// bridge_epoch so dual-fresh / call leave native immediately. Residual
+// remount (#2928) restamps on heal — not a second closure table. Caller
+// must NOT hold g_pure_anon_bg_mtx (queue → table is unused elsewhere).
+static void pure_anon_bg_overflow_force_leave_native(std::int64_t closure_id) noexcept {
+    if (closure_id < 0)
+        return;
+    std::unique_lock<std::shared_mutex> lock(g_closure_table_mtx);
+    const auto cid = static_cast<std::size_t>(closure_id);
+    if (cid >= g_closure_func_ids.size())
+        return;
+    if (cid < g_closure_freed.size() && g_closure_freed[cid] != 0)
+        return;
+    if (g_closure_must_deopt.size() <= cid)
+        g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+    g_closure_must_deopt[cid] = 1;
+    if (g_closure_bridge_epochs.size() <= cid)
+        g_closure_bridge_epochs.resize(g_closure_func_ids.size(), 0);
+    g_closure_bridge_epochs[cid] = 0;
+}
+
 extern "C" void aura_pure_anon_bg_enqueue(std::int64_t closure_id) noexcept {
     if (closure_id < 0)
         return;
-    std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
-    const auto sz = g_pure_anon_bg_size.load(std::memory_order_relaxed);
-    if (sz >= kPureAnonBgQueueCap) {
-        g_pure_anon_bg_overflow_total.fetch_add(1, std::memory_order_relaxed);
-        aura_bump_pure_anon_bg_totals(/*enqueue=*/0, /*drain_ok=*/0, /*drain_fail=*/0,
-                                      /*overflow=*/1);
-        return;
+    bool overflowed = false;
+    {
+        std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+        const auto sz = g_pure_anon_bg_size.load(std::memory_order_relaxed);
+        if (sz >= kPureAnonBgQueueCap) {
+            g_pure_anon_bg_overflow_total.fetch_add(1, std::memory_order_relaxed);
+            aura_bump_pure_anon_bg_totals(/*enqueue=*/0, /*drain_ok=*/0, /*drain_fail=*/0,
+                                          /*overflow=*/1);
+            overflowed = true;
+        } else {
+            g_pure_anon_bg_q[g_pure_anon_bg_tail] = closure_id;
+            g_pure_anon_bg_tail = (g_pure_anon_bg_tail + 1) % kPureAnonBgQueueCap;
+            g_pure_anon_bg_size.store(sz + 1, std::memory_order_relaxed);
+            g_pure_anon_bg_enqueue_total.fetch_add(1, std::memory_order_relaxed);
+            aura_bump_pure_anon_bg_totals(/*enqueue=*/1, /*drain_ok=*/0, /*drain_fail=*/0,
+                                          /*overflow=*/0);
+        }
     }
-    g_pure_anon_bg_q[g_pure_anon_bg_tail] = closure_id;
-    g_pure_anon_bg_tail = (g_pure_anon_bg_tail + 1) % kPureAnonBgQueueCap;
-    g_pure_anon_bg_size.store(sz + 1, std::memory_order_relaxed);
-    g_pure_anon_bg_enqueue_total.fetch_add(1, std::memory_order_relaxed);
-    aura_bump_pure_anon_bg_totals(/*enqueue=*/1, /*drain_ok=*/0, /*drain_fail=*/0,
-                                  /*overflow=*/0);
+    // Issue #3024: production + overflow → MustDeopt before return.
+    // Soft / sandbox=off / budget=0: overflow counter only (AC2).
+    // Residual tick still heals when capacity recovers (#2928).
+    if (overflowed && aura::compiler::typed_audit::production_defaults_active()) {
+        pure_anon_bg_overflow_force_leave_native(closure_id);
+        g_pure_anon_bg_overflow_must_deopt_total.fetch_add(1, std::memory_order_relaxed);
+        aura_bump_pure_anon_bg_overflow_must_deopt_total(1);
+    }
 }
 
 extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {

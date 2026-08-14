@@ -2438,6 +2438,20 @@ def cmd_lint():
             "Issue #3023 linear_roots abort/reclaim linter failed — run python3 scripts/coverage/checks/check_linear_root_abort_release_3023.py"
         )
         return r
+    # Issue #3024: production pure-anon bg overflow → MustDeopt
+    # (close residual native-hole after #2950/#2850). Soft / budget=0
+    # overflow-counter only. Extends
+    # test_anonymous_residual_stable_id_policy (#81967); no docs/design.
+    paov_script = COVERAGE_CHECKS / "check_pure_anon_bg_overflow_must_deopt_3024.py"
+    if not paov_script.exists():
+        fail(f"missing {paov_script}")
+        return 1
+    r = run([sys.executable, str(paov_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3024 production overflow MustDeopt linter failed — run python3 scripts/coverage/checks/check_pure_anon_bg_overflow_must_deopt_3024.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -8032,6 +8046,30 @@ def cmd_linear_root_abort_release_3023():
     """
     print(f"{B}=== linear_roots abort/reclaim (#3023) ==={N}")
     return cmd_linear_root_abort_release_3023_coverage()
+
+
+def cmd_pure_anon_bg_overflow_must_deopt_3024_coverage():
+    """Issue #3024: production overflow MustDeopt (static)."""
+    print(f"{B}=== production overflow MustDeopt coverage (#3024) ==={N}")
+    script = COVERAGE_CHECKS / "check_pure_anon_bg_overflow_must_deopt_3024.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("production overflow MustDeopt (#3024) coverage contract rows failed")
+        return 1
+    ok("production overflow MustDeopt (#3024) coverage clean")
+    return 0
+
+
+def cmd_pure_anon_bg_overflow_must_deopt_3024():
+    """Issue #3024: production pure-anon bg overflow forces MustDeopt.
+
+    Soft / budget=0 stay overflow-counter only. Residual remount heals.
+    """
+    print(f"{B}=== production overflow MustDeopt (#3024) ==={N}")
+    return cmd_pure_anon_bg_overflow_must_deopt_3024_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -15112,6 +15150,8 @@ def main():
         "ffi-opaque-pin-or-remap-3022-coverage": cmd_ffi_opaque_pin_or_remap_3022_coverage,
         "linear-root-abort-release-3023": cmd_linear_root_abort_release_3023,
         "linear-root-abort-release-3023-coverage": cmd_linear_root_abort_release_3023_coverage,
+        "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
+        "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,

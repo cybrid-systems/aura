@@ -9315,6 +9315,9 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> pure_anon_bg_drain_ok_total{0};   // #2950
     std::atomic<std::uint64_t> pure_anon_bg_drain_fail_total{0}; // #2950
     std::atomic<std::uint64_t> pure_anon_bg_overflow_total{0};   // #2950
+    // Issue #3024: production overflow that forced MustDeopt (leave
+    // native immediately). Soft / Off stay 0. Additive to #2950.
+    std::atomic<std::uint64_t> pure_anon_bg_overflow_must_deopt_total{0}; // #3024
     // Issue #2928: residual round-robin remount outside reemit-success.
     // residual_remount_ok: remount+heal success per tick; budget_skip:
     // tick skipped under hard storm / reemit throttle (no remount storm).
