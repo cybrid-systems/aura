@@ -83,7 +83,8 @@
 #include "serve/metrics.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
-#include "serve/steal_safety.h" // Issue #2755/#2901: residual hard-AND + rearm race
+#include "compiler/mutation_hold_budget.h" // #3002 forced-fail-closed soak
+#include "serve/steal_safety.h"            // Issue #2755/#2901: residual hard-AND + rearm race
 
 #include <atomic>
 #include <chrono>
@@ -377,6 +378,12 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     const auto res_ticket0 = aura::serve::steal_safety_residual_ticket_mismatch_total_v_read();
     const auto res_gc_defer0 = aura::serve::steal_safety_residual_gc_defer_armed_total_v_read();
     const auto res_rearm0 = aura::serve::steal_safety_residual_rearm_race_total_v_read();
+    // Issue #3002: mailbox hold p99 ↔ cancel / forced-fail-closed soak.
+    const auto mb_cancel0 =
+        aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(
+            std::memory_order_relaxed);
+    const auto mb_ff0 = aura::compiler::g_mutation_hold_budget_forced_fail_closed_total.load(
+        std::memory_order_relaxed);
     const auto res_defer_hard0 = aura::gc_hooks::residual_defer_steal_hard_fail_total();
     const auto layout_resume0 = Fiber::layout_stamp_resume_mismatch_total();
     const auto force_deopt0 = Fiber::steal_snapshot_mismatch_force_deopt_total();
@@ -641,6 +648,37 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
         CHECK(d_resume_fence_hard == 0,
               "#2902: resume_fence hard/ticket surplus == 0 (layout observe-only)");
         // layout_stamp_resume_mismatch: observe-only (printed above).
+    }
+
+    // Issue #3002: soak fail-closed if p99 stays ≥ SLO and cancel /
+    // forced-fail-closed did not increase (or holder still held).
+    // Soft / PR default: metric-only, no abort. Production-like soak
+    // (residual_zero_gate / prod_gate) aborts.
+    {
+        const auto p99 =
+            aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(
+                std::memory_order_relaxed);
+        const auto slo = aura::compiler::mailbox_under_boundary_wait_slo_us();
+        const auto cancel1 =
+            aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(
+                std::memory_order_relaxed);
+        const auto ff1 = aura::compiler::g_mutation_hold_budget_forced_fail_closed_total.load(
+            std::memory_order_relaxed);
+        const auto d_cancel = cancel1 - mb_cancel0;
+        const auto d_ff = ff1 - mb_ff0;
+        const bool p99_hot = slo != 0 && p99 >= slo;
+        const bool held_still = aura_evaluator_mutation_boundary_held() != 0;
+        std::println("  #3002 mailbox hold SLO: p99={} slo={} cancel_delta={} "
+                     "forced_fail_closed_delta={} held_still={} (gate={})",
+                     p99, slo, d_cancel, d_ff, held_still ? 1 : 0, residual_zero_gate ? 1 : 0);
+        const bool soak_abort = residual_zero_gate || prod_gate;
+        if (soak_abort && aura::compiler::typed_audit::production_defaults_active()) {
+            CHECK(!(p99_hot && d_cancel == 0 && d_ff == 0),
+                  "#3002: hot p99 without hold-cancel / forced-fail-closed");
+            if (p99_hot)
+                CHECK(!held_still,
+                      "#3002: holder released after cancel+safepoint (not still outermost held)");
+        }
     }
 
     CHECK(st.ops.load() > 0, "ops progressed");
@@ -1731,6 +1769,26 @@ static void ac2902_5_release_blocker_docs_and_linter() {
 
 // Issue #2999: residual_zero / chaos cite — dtor consume is the exit half
 // of #2932. In-body window still needs force-safepoint to enter dtor.
+static void ac3002_mailbox_hold_slo_soak_cite() {
+    std::println("\n--- #3002: mailbox hold SLO SSOT soak cite ---");
+    const auto gate = read_file("src/orch/security_schedule_gate.h");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    CHECK(gate.find("sample_mailbox_hold_slo_live") != std::string::npos,
+          "AC2: gate fill uses shared sample");
+    CHECK(mb.find("sample_mailbox_hold_slo_live") != std::string::npos, "AC2: mailbox sample SSOT");
+    CHECK(mb.find("mailbox_hold_slo_live_signal") != std::string::npos, "AC2: shared signal");
+    CHECK(gate.find("maybe_mailbox_defer_slo_hold_cancel") != std::string::npos,
+          "AC1: fill_ requests cancel via #2958 helper");
+    CHECK(chaos.find("hot p99 without hold-cancel") != std::string::npos,
+          "AC3: soak fail-closed on hot p99 + no cancel");
+    CHECK(chaos.find("holder released after cancel+safepoint") != std::string::npos,
+          "AC3: holder-still-held abort");
+    CHECK(read_file("tests/serve/test_issue_3002.cpp").empty(), "AC5: no invent test file");
+    CHECK(read_file("docs/design/3002-mailbox-hold-slo-ssot.md").empty(),
+          "AC6: no docs/design/3002-*");
+}
+
 static void ac2999_residual_dtor_consume_cite() {
     std::println("\n--- #2999: dtor consume cite (residual_zero lineage) ---");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -1761,6 +1819,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2902_4_structural_source_cite();
         ac2902_5_release_blocker_docs_and_linter();
         ac2999_residual_dtor_consume_cite();
+        ac3002_mailbox_hold_slo_soak_cite();
         std::println("\n=== Results (release blocker only): {} passed, {} failed ===", g_passed,
                      g_failed);
         return g_failed ? 1 : 0;
@@ -1771,6 +1830,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     if (chaos_pr_gate_only()) {
         ac2554_pr_gate_short();
         ac2999_residual_dtor_consume_cite();
+        ac3002_mailbox_hold_slo_soak_cite();
         std::println("\n=== Results (PR gate only): {} passed, {} failed ===", g_passed, g_failed);
         return g_failed ? 1 : 0;
     }
@@ -1797,6 +1857,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     // Issue #2999: residual_zero lineage cites dtor consume (hold-starvation
     // is the runtime suite; chaos stays source-cite).
     ac2999_residual_dtor_consume_cite();
+    ac3002_mailbox_hold_slo_soak_cite();
 
     // Issue #2856: production chaos gate (release blocker) — multi-fiber
     // mutate × densify × steal × mailbox composition under production

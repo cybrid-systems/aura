@@ -31,6 +31,8 @@
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 #include "serve/steal_safety.h"
+#include "orch/security_schedule_gate.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <chrono>
@@ -1541,6 +1543,169 @@ static void ac2958_5_source_and_linter() {
           "AC5: no invent test file per #81967");
 }
 
+// ── Issue #3002: SSOT live sample + soak fail-closed p99↔cancel ──
+// AC1 production + signal + live holder → cancel (one-shot); gate still denies new
+// AC2 fill_ and #2958 share sample_mailbox_hold_slo_live / mailbox_hold_slo_live_signal
+// AC3 chaos soak fail-closed on hot p99 + no cancel (source-cite)
+// AC4 additive schema-3002; #2903/#2947/#2958 non-regressing
+// AC5 extend this suite + chaos_mutate; no invent
+// AC6 no docs/design
+
+static void ac3002_1_gate_sample_cancels_holder() {
+    std::println("\n--- #3002 AC1: production + live p99 signal → cancel via fill_ ---");
+    using aura::compiler::mutation_hold_live_note_enter;
+    using aura::compiler::mutation_hold_live_note_exit;
+    using aura::orch::decide_security_schedule;
+    using aura::orch::fill_mailbox_hold_slo_live_;
+    using aura::orch::mailbox_hold_slo_signal;
+    using aura::orch::SecurityScheduleForceReason;
+    using aura::orch::SecurityScheduleInput;
+    using aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed;
+    using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+
+    constexpr std::uint64_t kHolder = 3002;
+    mutation_hold_live_note_enter(kHolder, /*start_ns=*/1, /*depth=*/1);
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(50'000, std::memory_order_relaxed);
+
+    // Soft / sandbox=off: observe only (no cancel).
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    const auto cancel_soft0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto soft0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+    SecurityScheduleInput in_soft{};
+    fill_mailbox_hold_slo_live_(in_soft);
+    CHECK(mailbox_hold_slo_signal(in_soft), "3002 AC1: soft fill_ still trips signal");
+    in_soft.production_mode = false;
+    in_soft.soft_mode = true;
+    const auto soft_d = decide_security_schedule(in_soft);
+    CHECK(soft_d.would_allow_new_mutate, "3002 AC1: soft still admits new mutate");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed) >
+              soft0,
+          "3002 AC1: soft observes only");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) ==
+              cancel_soft0,
+          "3002 AC1: soft does not cancel");
+
+    // Production: cancel live holder (one-shot) + gate still denies new.
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    const auto cancel0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto no0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(std::memory_order_relaxed);
+    const auto soft1 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+
+    SecurityScheduleInput in{};
+    fill_mailbox_hold_slo_live_(in);
+    CHECK(mailbox_hold_slo_signal(in), "3002 AC1: fill_ trips mailbox_hold_slo_signal");
+    CHECK(in.mailbox_wait_p99_us == 50'000, "3002 AC2: fill_ p99 from live sample");
+    in.production_mode = true;
+    in.soft_mode = false;
+    const auto d = decide_security_schedule(in);
+    CHECK(!d.would_allow_new_mutate, "3002 AC1: gate still denies new mutate (#2947)");
+    CHECK(d.force_reason == SecurityScheduleForceReason::mailbox_hold_slo,
+          "3002 AC1: deny reason mailbox_hold_slo");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed) ==
+              soft1,
+          "3002 AC1: production does not soft-observe");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) >
+                  cancel0 ||
+              g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(std::memory_order_relaxed) >
+                  no0,
+          "3002 AC1: one-shot cancel requested or no-holder noted");
+
+    mutation_hold_live_note_exit(kHolder);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+}
+
+static void ac3002_2_shared_sample_quiet_path() {
+    std::println("\n--- #3002 AC2: shared sample; quiet path no extra cancel ---");
+    using aura::orch::fill_mailbox_hold_slo_live_;
+    using aura::orch::mailbox_hold_slo_signal;
+    using aura::orch::SecurityScheduleInput;
+    using aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed;
+    using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+    using aura::serve::mf_mailbox::mailbox_hold_slo_live_signal;
+    using aura::serve::mf_mailbox::sample_mailbox_hold_slo_live;
+
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.store(0, std::memory_order_relaxed);
+    g_mf_mailbox_stats.agent_throttle_for_mailbox_starvation.store(0, std::memory_order_relaxed);
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "100000", 1);
+
+    std::uint64_t p99 = 99, slo = 99;
+    bool th = true;
+    sample_mailbox_hold_slo_live(p99, th, slo);
+    SecurityScheduleInput in{};
+    fill_mailbox_hold_slo_live_(in);
+    CHECK(in.mailbox_wait_p99_us == p99, "3002 AC2: fill_ and sample share p99");
+    CHECK(in.mailbox_wait_slo_us == slo, "3002 AC2: fill_ and sample share SLO");
+    CHECK(in.mailbox_starvation_throttled == th, "3002 AC2: fill_ and sample share throttle");
+    CHECK(mailbox_hold_slo_signal(in) == mailbox_hold_slo_live_signal(p99, slo, th),
+          "3002 AC2: gate predicate == live_signal");
+    CHECK(!mailbox_hold_slo_signal(in), "3002 AC2: quiet path signal false");
+
+    const auto cancel0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    fill_mailbox_hold_slo_live_(in);
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) ==
+              cancel0,
+          "3002 AC2: quiet path no cancel (two relaxed loads only)");
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+}
+
+static void ac3002_4_schema_and_lineage() {
+    std::println("\n--- #3002 AC4: schema-3002 + lineage ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-3002") == 3002, "AC4: schema-3002");
+    CHECK(href(cs, "issue-3002") == 3002, "AC4: issue-3002");
+    CHECK(href(cs, "mailbox-hold-slo-ssot-wired") == 1, "AC4: ssot wired");
+    CHECK(href(cs, "schema-2958") == 2958, "AC4: schema-2958 preserved");
+    CHECK(href(cs, "mailbox-defer-slo-hold-cancel-total") >= 0, "AC4: #2958 cancel total");
+    CHECK(href(cs, "schema-2903") == 2903, "AC4: schema-2903 preserved");
+    CHECK(href(cs, "mailbox-under-boundary-wait-us-p99") >= 0, "AC4: #2903 p99 preserved");
+    const auto gate = read_file("src/orch/security_schedule_gate.h");
+    CHECK(gate.find("kSecurityScheduleMailboxHoldSloIssue = 2947") != std::string::npos,
+          "AC4: #2947 deny lineage");
+    CHECK(gate.find("sample_mailbox_hold_slo_live") != std::string::npos,
+          "AC4: gate uses shared sample");
+}
+
+static void ac3002_5_source_and_linter() {
+    std::println("\n--- #3002 AC5/AC6: source-cite + linter + chaos ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto gate = read_file("src/orch/security_schedule_gate.h");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_mailbox_hold_slo_ssot_soak_3002.py");
+    CHECK(mb.find("kMailboxHoldSloSsotIssue = 3002") != std::string::npos, "AC5: issue stamp");
+    CHECK(mb.find("sample_mailbox_hold_slo_live") != std::string::npos, "AC5: sample helper");
+    CHECK(gate.find("Issue #3002") != std::string::npos, "AC5: gate cites #3002");
+    CHECK(gate.find("maybe_mailbox_defer_slo_hold_cancel") != std::string::npos,
+          "AC5: fill_ feeds #2958 cancel");
+    CHECK(chaos.find("hot p99 without hold-cancel") != std::string::npos,
+          "AC3: chaos soak fail-closed string");
+    CHECK(t.find("ac3002_1_gate_sample_cancels_holder") != std::string::npos, "AC5: AC1 test");
+    CHECK(!lint.empty() && lint.find("3002") != std::string::npos, "AC5: linter present");
+    CHECK(build.find("check_mailbox_hold_slo_ssot_soak_3002") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3002-mailbox-hold-slo-ssot.md").empty(),
+          "AC6: no docs/design/3002-*");
+    CHECK(read_file("tests/serve/test_issue_3002.cpp").empty(), "AC5: no invent test file");
+}
+
 } // namespace
 
 int run_test_mailbox_recv_mutation_boundary() {
@@ -1597,6 +1762,11 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac2958_3_one_shot_no_storm();
     ac2958_4_query_additive();
     ac2958_5_source_and_linter();
+    std::println("\n=== Issue #3002: mailbox hold SLO SSOT + soak fail-closed ===");
+    ac3002_1_gate_sample_cancels_holder();
+    ac3002_2_shared_sample_quiet_path();
+    ac3002_4_schema_and_lineage();
+    ac3002_5_source_and_linter();
     std::println("\n=== Issue #2987: mailbox delivery residual hard-AND ===");
     ac2987_1_inject_residual_bp();
     ac2987_2_soft_still_bp();
