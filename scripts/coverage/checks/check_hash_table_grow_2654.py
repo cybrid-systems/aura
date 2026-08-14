@@ -42,8 +42,11 @@ def main() -> int:
     must("eval_hash_key_hash" in vec, "AC1: key hash helper")
 
     must("capacity * 7" in vec or "size * 10" in vec, "AC2: 0.7 load factor")
-    must("flat_hash_insert_eval" in vec and 'add("hash"' in vec, "AC2: hash uses insert")
-    must('add("hash-set!"' in vec and "flat_hash_insert_eval" in vec, "AC2: hash-set! uses insert")
+    must("flat_hash_insert_eval" in vec and ('add("hash"' in vec or '"hash"' in vec), "AC2: hash uses insert")
+    must(
+        ('add("hash-set!"' in vec or '"hash-set!"' in vec) and "flat_hash_insert_eval" in vec,
+        "AC2: hash-set! uses insert",
+    )
     must("g_hash_tables[hidx] = ht" in vec, "AC2: publish grown pointer")
 
     must("test_hash_table_grow" in cmake, "AC3: cmake")

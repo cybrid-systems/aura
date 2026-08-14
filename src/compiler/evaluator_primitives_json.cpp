@@ -1,4 +1,5 @@
 // evaluator_primitives_json.cpp — P0 step 4: JSON encode/parse primitives
+// Issue #2996: migrate evaluator_primitives_json.cpp onto register_prim + PrimSpec.
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
@@ -8,6 +9,8 @@ module;
 #include "hash_meta.h"        // FNV constants (#901)
 
 #include <stdexcept> // Issue #2480: out_of_range / invalid_argument from stod/stoll
+
+#include "prim_registrar_scaffold.hh" // Issue #2996
 
 module aura.compiler.evaluator;
 
@@ -60,13 +63,17 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::pmr::vector<std::string>& string_heap,
                               std::vector<EvalValue>& error_values,
                               std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
     // Supports: Int, Float, String, Bool, Void→null, Pair→array, Hash→obj
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
     // Issue #2916: soft string quota on result interning under multi-fiber loops.
-    add("json-encode",
+    register_prim(
+        add, ev, "json-encode",
         [&pairs, &string_heap, &error_values, primitive_error_counter,
          &ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty()) {
@@ -185,53 +192,58 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             auto sid = string_heap.size();
             string_heap.push_back(result);
             return types::make_string(sid);
-        });
+        },
+        pure_general(1, "(any) -> string", "Encode an Aura value as a JSON string."));
     // json-get-string: extract string value of a JSON field
     // (json-get-string json-str field-name) → string
-    add("json-get-string", [&pairs, &string_heap](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
-            return make_void();
-        auto json = string_heap[types::as_string_idx(a[0])];
-        auto field = string_heap[types::as_string_idx(a[1])];
+    register_prim(
+        add, ev, "json-get-string",
+        [&pairs, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+                return make_void();
+            auto json = string_heap[types::as_string_idx(a[0])];
+            auto field = string_heap[types::as_string_idx(a[1])];
 
-        // Search for "fieldName":" in the JSON string
-        std::string search = "\"" + field + "\":\"";
-        std::size_t pos = json.find(search);
-        if (pos == std::string::npos)
-            return make_void();
-        std::size_t start = pos + search.size();
-        // Read until closing quote (handle escaped quotes)
-        std::string result;
-        for (std::size_t i = start; i < json.size(); ++i) {
-            if (json[i] == '"')
-                break;
-            if (json[i] == '\\' && i + 1 < json.size()) {
-                ++i;
+            // Search for "fieldName":" in the JSON string
+            std::string search = "\"" + field + "\":\"";
+            std::size_t pos = json.find(search);
+            if (pos == std::string::npos)
+                return make_void();
+            std::size_t start = pos + search.size();
+            // Read until closing quote (handle escaped quotes)
+            std::string result;
+            for (std::size_t i = start; i < json.size(); ++i) {
                 if (json[i] == '"')
-                    result += '"';
-                else if (json[i] == 'n')
-                    result += '\n';
-                else if (json[i] == 't')
-                    result += '\t';
-                else if (json[i] == 'r')
-                    result += '\r';
-                else {
-                    result += '\\';
+                    break;
+                if (json[i] == '\\' && i + 1 < json.size()) {
+                    ++i;
+                    if (json[i] == '"')
+                        result += '"';
+                    else if (json[i] == 'n')
+                        result += '\n';
+                    else if (json[i] == 't')
+                        result += '\t';
+                    else if (json[i] == 'r')
+                        result += '\r';
+                    else {
+                        result += '\\';
+                        result += json[i];
+                    }
+                } else {
                     result += json[i];
                 }
-            } else {
-                result += json[i];
             }
-        }
-        auto sid = string_heap.size();
-        string_heap.push_back(result);
-        return types::make_string(sid);
-    });
+            auto sid = string_heap.size();
+            string_heap.push_back(result);
+            return types::make_string(sid);
+        },
+        pure_general(2, "(any string) -> string", "Lookup a string field from JSON/hash."));
 
 
     // json-parse: parse JSON string into Aura value
     // (json-parse json-str) → value (Int/Float/String/Bool/Void/List/Hash)
-    add("json-parse",
+    register_prim(
+        add, ev, "json-parse",
         [&pairs, &string_heap, &error_values, primitive_error_counter,
          &ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0]))
@@ -645,7 +657,8 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             };
 
             return parse_value();
-        });
+        },
+        pure_general(1, "(string) -> any", "Parse a JSON string into an Aura value."));
 }
 
 } // namespace aura::compiler::primitives_detail

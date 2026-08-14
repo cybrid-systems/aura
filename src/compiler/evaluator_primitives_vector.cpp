@@ -1,4 +1,5 @@
 // evaluator_primitives_vector.cpp — P0 step 5: vector/hash primitives
+// Issue #2996: migrate onto register_prim + PrimSpec (core TU).
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
@@ -6,6 +7,8 @@ module;
 #include "runtime_shared.h"
 #include "prim_heap_quota.hh" // Issue #2916
 #include "hash_meta.h"        // FNV constants (#901)
+
+#include "prim_registrar_scaffold.hh" // Issue #2996
 
 module aura.compiler.evaluator;
 
@@ -199,357 +202,412 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                          std::vector<std::vector<EvalValue>>& vector_heap,
                                          std::atomic<std::uint64_t>* primitive_error_counter,
                                          Evaluator& ev) {
-    add("vector", [&vector_heap, &string_heap, &error_values, primitive_error_counter,
-                   &ev](std::span<const EvalValue> a) {
-        // Issue #2916: soft vectors quota under multi-fiber construction.
-        if (!ev.prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap.size() + 1)) {
-            return make_primitive_error(
-                string_heap, error_values,
-                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
-                primitive_error_counter);
-        }
-        std::vector<EvalValue> elems(a.begin(), a.end());
-        auto idx = vector_heap.size();
-        vector_heap.push_back(std::move(elems));
-        return make_vector(idx);
-    });
-    add("vector-ref", [&vector_heap, &string_heap, &error_values,
-                       primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_vector(a[0])) {
-            return make_primitive_error(string_heap, error_values, "vector-ref: not a vector",
-                                        primitive_error_counter);
-        }
-        auto idx = as_vector_idx(a[0]);
-        auto pos = static_cast<std::size_t>(as_int(a[1]));
-        if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
-            return make_primitive_error(string_heap, error_values,
-                                        "vector-ref: index out of bounds", primitive_error_counter);
-        }
-        return vector_heap[idx][pos];
-    });
-    add("vector-set!", [&vector_heap, &string_heap, &error_values,
-                        primitive_error_counter](std::span<const EvalValue> a) {
-        if (a.size() < 3 || !is_vector(a[0])) {
-            return make_primitive_error(string_heap, error_values, "vector-set!: not a vector",
-                                        primitive_error_counter);
-        }
-        auto idx = as_vector_idx(a[0]);
-        auto pos = static_cast<std::size_t>(as_int(a[1]));
-        if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
-            return make_primitive_error(string_heap, error_values,
-                                        "vector-set!: index out of bounds",
-                                        primitive_error_counter);
-        }
-        vector_heap[idx][pos] = a[2];
-        return make_void();
-    });
-    add("vector-length", [&vector_heap](std::span<const EvalValue> a) {
-        if (a.empty() || !is_vector(a[0]))
-            return make_int(0);
-        auto idx = as_vector_idx(a[0]);
-        if (idx >= vector_heap.size())
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(vector_heap[idx].size()));
-    });
-    add("vector?", [](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_vector(a[0]));
-    });
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
+    register_prim(
+        add, ev, "vector",
+        [&vector_heap, &string_heap, &error_values, primitive_error_counter,
+         &ev](std::span<const EvalValue> a) {
+            // Issue #2916: soft vectors quota under multi-fiber construction.
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap.size() + 1)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
+                    primitive_error_counter);
+            }
+            std::vector<EvalValue> elems(a.begin(), a.end());
+            auto idx = vector_heap.size();
+            vector_heap.push_back(std::move(elems));
+            return make_vector(idx);
+        },
+        pure_general(255, "(...vals) -> vector", "Construct a vector from arguments."));
+    register_prim(
+        add, ev, "vector-ref",
+        [&vector_heap, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_vector(a[0])) {
+                return make_primitive_error(string_heap, error_values, "vector-ref: not a vector",
+                                            primitive_error_counter);
+            }
+            auto idx = as_vector_idx(a[0]);
+            auto pos = static_cast<std::size_t>(as_int(a[1]));
+            if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector-ref: index out of bounds",
+                                            primitive_error_counter);
+            }
+            return vector_heap[idx][pos];
+        },
+        pure_general(2, "(vector int) -> any", "Element at index in a vector."));
+    register_prim(
+        add, ev, "vector-set!",
+        [&vector_heap, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) {
+            if (a.size() < 3 || !is_vector(a[0])) {
+                return make_primitive_error(string_heap, error_values, "vector-set!: not a vector",
+                                            primitive_error_counter);
+            }
+            auto idx = as_vector_idx(a[0]);
+            auto pos = static_cast<std::size_t>(as_int(a[1]));
+            if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector-set!: index out of bounds",
+                                            primitive_error_counter);
+            }
+            vector_heap[idx][pos] = a[2];
+            return make_void();
+        },
+        mutate_general(3, "(vector int any) -> void", "Set vector element at index."));
+    register_prim(
+        add, ev, "vector-length",
+        [&vector_heap](std::span<const EvalValue> a) {
+            if (a.empty() || !is_vector(a[0]))
+                return make_int(0);
+            auto idx = as_vector_idx(a[0]);
+            if (idx >= vector_heap.size())
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(vector_heap[idx].size()));
+        },
+        pure_general(1, "(vector) -> int", "Number of elements in a vector."));
+    register_prim(
+        add, ev, "vector?",
+        [](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_bool(false);
+            return make_bool(is_vector(a[0]));
+        },
+        pure_general(1, "(any) -> bool", "True if value is a vector."));
     // Issue #2965: accept exact integer-valued floats as length (floor/round
     // results); never reinterpret float bits via as_int → max_size() noise.
-    add("make-vector", [&vector_heap, &string_heap, &error_values, primitive_error_counter,
-                        &ev](std::span<const EvalValue> a) {
-        std::size_t n = 0;
-        if (!a.empty()) {
-            std::int64_t len = 0;
-            if (is_int(a[0])) {
-                len = as_int(a[0]);
-            } else if (is_float(a[0])) {
-                const double d = as_float(a[0]);
-                constexpr double kMaxI64 =
-                    static_cast<double>(std::numeric_limits<std::int64_t>::max());
-                // Exact integer-valued, finite, non-negative, in int64 range.
-                if (!(d == d) || d < 0.0 || d >= kMaxI64 || d != std::trunc(d)) {
+    register_prim(
+        add, ev, "make-vector",
+        [&vector_heap, &string_heap, &error_values, primitive_error_counter,
+         &ev](std::span<const EvalValue> a) {
+            std::size_t n = 0;
+            if (!a.empty()) {
+                std::int64_t len = 0;
+                if (is_int(a[0])) {
+                    len = as_int(a[0]);
+                } else if (is_float(a[0])) {
+                    const double d = as_float(a[0]);
+                    constexpr double kMaxI64 =
+                        static_cast<double>(std::numeric_limits<std::int64_t>::max());
+                    // Exact integer-valued, finite, non-negative, in int64 range.
+                    if (!(d == d) || d < 0.0 || d >= kMaxI64 || d != std::trunc(d)) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            std::string(
+                                "make-vector: length must be a non-negative integer, got ") +
+                                std::to_string(d) + " (float)",
+                            primitive_error_counter);
+                    }
+                    len = static_cast<std::int64_t>(d);
+                } else {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        "make-vector: length must be a non-negative integer",
+                        primitive_error_counter);
+                }
+                if (len < 0) {
                     return make_primitive_error(
                         string_heap, error_values,
                         std::string("make-vector: length must be a non-negative integer, got ") +
-                            std::to_string(d) + " (float)",
+                            std::to_string(len),
                         primitive_error_counter);
                 }
-                len = static_cast<std::int64_t>(d);
-            } else {
-                return make_primitive_error(string_heap, error_values,
-                                            "make-vector: length must be a non-negative integer",
-                                            primitive_error_counter);
+                n = static_cast<std::size_t>(len);
+                // Pre-check max_size so callers never see the raw std::vector message.
+                if (n > std::vector<EvalValue>{}.max_size()) {
+                    return make_primitive_error(
+                        string_heap, error_values,
+                        std::string("make-vector: length exceeds maximum vector size, got ") +
+                            std::to_string(len),
+                        primitive_error_counter);
+                }
             }
-            if (len < 0) {
+            // Issue #2916: soft vectors quota before materializing the buffer.
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap.size() + 1)) {
                 return make_primitive_error(
                     string_heap, error_values,
-                    std::string("make-vector: length must be a non-negative integer, got ") +
-                        std::to_string(len),
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
                     primitive_error_counter);
             }
-            n = static_cast<std::size_t>(len);
-            // Pre-check max_size so callers never see the raw std::vector message.
-            if (n > std::vector<EvalValue>{}.max_size()) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string("make-vector: length exceeds maximum vector size, got ") +
-                        std::to_string(len),
-                    primitive_error_counter);
+            EvalValue init = a.size() > 1 ? a[1] : make_void();
+            std::vector<EvalValue> elems(n, init);
+            auto idx = vector_heap.size();
+            vector_heap.push_back(std::move(elems));
+            return make_vector(idx);
+        },
+        pure_general(2, "(int any) -> vector", "Allocate a vector filled with a value."));
+    register_prim(
+        add, ev, "list->vector",
+        [&pairs, &vector_heap](std::span<const EvalValue> a) {
+            std::vector<EvalValue> elems;
+            if (!a.empty()) {
+                auto v = a[0];
+                while (is_pair(v)) {
+                    auto idx = as_pair_idx(v);
+                    if (idx >= pairs.size())
+                        break;
+                    elems.push_back(pairs[idx].car);
+                    v = pairs[idx].cdr;
+                }
             }
-        }
-        // Issue #2916: soft vectors quota before materializing the buffer.
-        if (!ev.prim_heap_quota_allow(PrimHeapDim::Vectors, vector_heap.size() + 1)) {
-            return make_primitive_error(
-                string_heap, error_values,
-                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Vectors)),
-                primitive_error_counter);
-        }
-        EvalValue init = a.size() > 1 ? a[1] : make_void();
-        std::vector<EvalValue> elems(n, init);
-        auto idx = vector_heap.size();
-        vector_heap.push_back(std::move(elems));
-        return make_vector(idx);
-    });
-    add("list->vector", [&pairs, &vector_heap](std::span<const EvalValue> a) {
-        std::vector<EvalValue> elems;
-        if (!a.empty()) {
-            auto v = a[0];
-            while (is_pair(v)) {
-                auto idx = as_pair_idx(v);
-                if (idx >= pairs.size())
-                    break;
-                elems.push_back(pairs[idx].car);
-                v = pairs[idx].cdr;
+            auto idx = vector_heap.size();
+            vector_heap.push_back(std::move(elems));
+            return make_vector(idx);
+        },
+        pure_general(1, "(list) -> vector", "Convert a list to a vector."));
+    register_prim(
+        add, ev, "vector->list",
+        [&pairs, &vector_heap](std::span<const EvalValue> a) {
+            if (a.empty() || !is_vector(a[0]))
+                return make_void();
+            auto idx = as_vector_idx(a[0]);
+            if (idx >= vector_heap.size())
+                return make_void();
+            EvalValue result = make_void();
+            for (auto it = vector_heap[idx].rbegin(); it != vector_heap[idx].rend(); ++it) {
+                auto pid = pairs.size();
+                pairs.push_back({*it, result});
+                result = make_pair(pid);
             }
-        }
-        auto idx = vector_heap.size();
-        vector_heap.push_back(std::move(elems));
-        return make_vector(idx);
-    });
-    add("vector->list", [&pairs, &vector_heap](std::span<const EvalValue> a) {
-        if (a.empty() || !is_vector(a[0]))
-            return make_void();
-        auto idx = as_vector_idx(a[0]);
-        if (idx >= vector_heap.size())
-            return make_void();
-        EvalValue result = make_void();
-        for (auto it = vector_heap[idx].rbegin(); it != vector_heap[idx].rend(); ++it) {
-            auto pid = pairs.size();
-            pairs.push_back({*it, result});
-            result = make_pair(pid);
-        }
-        return result;
-    });
+            return result;
+        },
+        pure_general(1, "(vector) -> list", "Convert a vector to a list."));
 
-    add("hash", [&ev, &string_heap](std::span<const EvalValue> a) {
-        // Issue #2652: lock string_heap reads + g_hash_tables push.
-        // Issue #2654: grow past fixed capacity 8 so 16+ k/v pairs are not
-        // silently dropped (same class as #2481 json-parse). Pre-size so
-        // common N≤16 literals need no grow.
-        std::lock_guard hlock(ev.hash_tables_mutex());
-        std::lock_guard slock(ev.alloc_storage_lock_);
-        const std::size_t npairs = a.size() / 2;
-        // Min capacity 32 so sequential hash-set! of 16 keys (AC2 / denseness
-        // stats) never needs an immediate grow under multi-fiber pressure.
-        std::uint64_t init_cap = 32;
-        while (npairs * 10 > init_cap * 7)
-            init_cap *= 2;
-        auto* ht = FlatHashTable::create(init_cap);
-        if (!ht)
-            return make_void();
-        for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
-            // Skip empty string keys (corruption / make_string(0) sentinel).
-            if (is_string(a[i])) {
-                auto ki = as_string_idx(a[i]);
-                if (ki >= string_heap.size() || string_heap[ki].empty())
+    register_prim(
+        add, ev, "hash",
+        [&ev, &string_heap](std::span<const EvalValue> a) {
+            // Issue #2652: lock string_heap reads + g_hash_tables push.
+            // Issue #2654: grow past fixed capacity 8 so 16+ k/v pairs are not
+            // silently dropped (same class as #2481 json-parse). Pre-size so
+            // common N≤16 literals need no grow.
+            std::lock_guard hlock(ev.hash_tables_mutex());
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            const std::size_t npairs = a.size() / 2;
+            // Min capacity 32 so sequential hash-set! of 16 keys (AC2 / denseness
+            // stats) never needs an immediate grow under multi-fiber pressure.
+            std::uint64_t init_cap = 32;
+            while (npairs * 10 > init_cap * 7)
+                init_cap *= 2;
+            auto* ht = FlatHashTable::create(init_cap);
+            if (!ht)
+                return make_void();
+            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                // Skip empty string keys (corruption / make_string(0) sentinel).
+                if (is_string(a[i])) {
+                    auto ki = as_string_idx(a[i]);
+                    if (ki >= string_heap.size() || string_heap[ki].empty())
+                        continue;
+                }
+                // Unpublished table: safe to free old blocks on grow.
+                if (!flat_hash_insert_eval(ht, a[i], a[i + 1], string_heap,
+                                           /*destroy_old_on_grow=*/true)) {
+                    FlatHashTable::destroy(ht);
+                    return make_void();
+                }
+            }
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        },
+        pure_general(255, "(...kvs) -> hash", "Construct a hash from key/value pairs."));
+    register_prim(
+        add, ev, "hash-ref",
+        [&ev, &string_heap](std::span<const EvalValue> a) {
+            // Issue #2569: honor optional 3rd-arg default when key is missing
+            // (Racket-compatible). 2-arg miss still returns void.
+            if (a.size() < 2 || !is_hash(a[0]))
+                return a.size() >= 3 ? a[2] : make_void();
+            // Issue #2652: serialize hash probe + string key compare under multi-fiber
+            // stats-bump (empty key / wrong counters when g_hash_tables races).
+            std::lock_guard hlock(ev.hash_tables_mutex());
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return a.size() >= 3 ? a[2] : make_void();
+            auto* ht = g_hash_tables[hidx];
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto sh = &string_heap;
+            for (std::size_t i = 0; i < ht->capacity; ++i) {
+                if (meta[i] == 0xFF)
                     continue;
+                auto k = EvalValue{keys[i]};
+                bool eq = false;
+                if (is_int(k) && is_int(a[1]))
+                    eq = as_int(k) == as_int(a[1]);
+                else if (is_string(k) && is_string(a[1])) {
+                    auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
+                    eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
+                } else
+                    eq = keys[i] == a[1].val;
+                if (eq)
+                    return EvalValue{vals[i]};
             }
-            // Unpublished table: safe to free old blocks on grow.
-            if (!flat_hash_insert_eval(ht, a[i], a[i + 1], string_heap,
-                                       /*destroy_old_on_grow=*/true)) {
-                FlatHashTable::destroy(ht);
-                return make_void();
-            }
-        }
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
-    add("hash-ref", [&ev, &string_heap](std::span<const EvalValue> a) {
-        // Issue #2569: honor optional 3rd-arg default when key is missing
-        // (Racket-compatible). 2-arg miss still returns void.
-        if (a.size() < 2 || !is_hash(a[0]))
             return a.size() >= 3 ? a[2] : make_void();
-        // Issue #2652: serialize hash probe + string key compare under multi-fiber
-        // stats-bump (empty key / wrong counters when g_hash_tables races).
-        std::lock_guard hlock(ev.hash_tables_mutex());
-        std::lock_guard slock(ev.alloc_storage_lock_);
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return a.size() >= 3 ? a[2] : make_void();
-        auto* ht = g_hash_tables[hidx];
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto sh = &string_heap;
-        for (std::size_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF)
-                continue;
-            auto k = EvalValue{keys[i]};
-            bool eq = false;
-            if (is_int(k) && is_int(a[1]))
-                eq = as_int(k) == as_int(a[1]);
-            else if (is_string(k) && is_string(a[1])) {
-                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
-                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
-            } else
-                eq = keys[i] == a[1].val;
-            if (eq)
-                return EvalValue{vals[i]};
-        }
-        return a.size() >= 3 ? a[2] : make_void();
-    });
-    add("hash-has-key?", [&ev, &string_heap](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_hash(a[0]))
+        },
+        pure_general(2, "(hash any) -> any", "Lookup a key in a hash."));
+    register_prim(
+        add, ev, "hash-has-key?",
+        [&ev, &string_heap](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_hash(a[0]))
+                return make_bool(false);
+            std::lock_guard hlock(ev.hash_tables_mutex());
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_bool(false);
+            auto* ht = g_hash_tables[hidx];
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto sh = &string_heap;
+            for (std::size_t i = 0; i < ht->capacity; ++i) {
+                if (meta[i] == 0xFF)
+                    continue;
+                auto k = EvalValue{keys[i]};
+                bool eq = false;
+                if (is_int(k) && is_int(a[1]))
+                    eq = as_int(k) == as_int(a[1]);
+                else if (is_string(k) && is_string(a[1])) {
+                    auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
+                    eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
+                } else
+                    eq = keys[i] == a[1].val;
+                if (eq)
+                    return make_bool(true);
+            }
             return make_bool(false);
-        std::lock_guard hlock(ev.hash_tables_mutex());
-        std::lock_guard slock(ev.alloc_storage_lock_);
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return make_bool(false);
-        auto* ht = g_hash_tables[hidx];
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto sh = &string_heap;
-        for (std::size_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF)
-                continue;
-            auto k = EvalValue{keys[i]};
-            bool eq = false;
-            if (is_int(k) && is_int(a[1]))
-                eq = as_int(k) == as_int(a[1]);
-            else if (is_string(k) && is_string(a[1])) {
-                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
-                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
-            } else
-                eq = keys[i] == a[1].val;
-            if (eq)
-                return make_bool(true);
-        }
-        return make_bool(false);
-    });
-    add("hash-set!", [&ev, &string_heap](std::span<const EvalValue> a) {
-        if (a.size() < 3 || !is_hash(a[0]))
-            return make_void();
-        // Issue #2652: aether:stats-bump! path — concurrent hash-set! + string
-        // key compare must not race g_hash_tables or string_heap_ (empty ""
-        // keys / zero counters under overnight fanout).
-        // Issue #2654: grow when full / load > 0.7 — never silent-drop keys.
-        std::lock_guard hlock(ev.hash_tables_mutex());
-        std::lock_guard slock(ev.alloc_storage_lock_);
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return make_void();
-        auto* ht = g_hash_tables[hidx];
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        // Issue #2652: refuse empty string keys (corruption / sentinel make_string(0)).
-        if (is_string(a[1])) {
-            auto bi = as_string_idx(a[1]);
-            if (bi >= string_heap.size() || string_heap[bi].empty())
+        },
+        pure_general(2, "(hash any) -> bool", "True if hash contains the key."));
+    register_prim(
+        add, ev, "hash-set!",
+        [&ev, &string_heap](std::span<const EvalValue> a) {
+            if (a.size() < 3 || !is_hash(a[0]))
                 return make_void();
-        }
-        for (std::size_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF)
-                continue;
-            auto k = EvalValue{keys[i]};
-            if (eval_hash_keys_eq(k, a[1], string_heap)) {
-                vals[i] = a[2].val;
+            // Issue #2652: aether:stats-bump! path — concurrent hash-set! + string
+            // key compare must not race g_hash_tables or string_heap_ (empty ""
+            // keys / zero counters under overnight fanout).
+            // Issue #2654: grow when full / load > 0.7 — never silent-drop keys.
+            std::lock_guard hlock(ev.hash_tables_mutex());
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
                 return make_void();
+            auto* ht = g_hash_tables[hidx];
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            // Issue #2652: refuse empty string keys (corruption / sentinel make_string(0)).
+            if (is_string(a[1])) {
+                auto bi = as_string_idx(a[1]);
+                if (bi >= string_heap.size() || string_heap[bi].empty())
+                    return make_void();
             }
-        }
-        // New key: insert with grow. Published table — do NOT free old
-        // blocks (JIT / concurrent readers may still hold the prior
-        // pointer under workspace lock, not hash_tables_mutex_). Always
-        // publish the possibly-new pointer.
-        (void)flat_hash_insert_eval(ht, a[1], a[2], string_heap,
-                                    /*destroy_old_on_grow=*/false);
-        g_hash_tables[hidx] = ht;
-        return make_void();
-    });
-    add("hash-length", [&ev](std::span<const EvalValue> a) {
-        if (a.empty() || !is_hash(a[0]))
-            return make_int(0);
-        std::lock_guard hlock(ev.hash_tables_mutex());
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(g_hash_tables[hidx]->size));
-    });
-    add("hash-keys", [&ev, &pairs](std::span<const EvalValue> a) {
-        if (a.empty() || !is_hash(a[0]))
-            return make_void();
-        // Issue #2652: lock hash store + pairs_ growth.
-        std::lock_guard hlock(ev.hash_tables_mutex());
-        std::lock_guard slock(ev.alloc_storage_lock_);
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return make_void();
-        auto* ht = g_hash_tables[hidx];
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        // Issue #1398 contract: hash-keys returns BY VALUE — each key
-        // is copied into a freshly-constructed EvalValue and cons'd into
-        // a brand-new pair list. The returned list is independent of the
-        // underlying hash table's internal storage. Caller can safely
-        // invoke (hash-set!) / (hash-remove!) / (hash-clear!) etc. on
-        // the same hash after this call without invalidating the returned
-        // list. Verified by tests/test_hash_iter_invalidation.cpp.
-        EvalValue result = make_void();
-        for (std::size_t i = ht->capacity; i > 0; --i) {
-            if (meta[i - 1] != 0xFF) {
-                auto pid = pairs.size();
-                pairs.push_back({EvalValue{keys[i - 1]}, result});
-                result = make_pair(pid);
+            for (std::size_t i = 0; i < ht->capacity; ++i) {
+                if (meta[i] == 0xFF)
+                    continue;
+                auto k = EvalValue{keys[i]};
+                if (eval_hash_keys_eq(k, a[1], string_heap)) {
+                    vals[i] = a[2].val;
+                    return make_void();
+                }
             }
-        }
-        return result;
-    });
-    add("hash-values", [&ev, &pairs](std::span<const EvalValue> a) {
-        if (a.empty() || !is_hash(a[0]))
+            // New key: insert with grow. Published table — do NOT free old
+            // blocks (JIT / concurrent readers may still hold the prior
+            // pointer under workspace lock, not hash_tables_mutex_). Always
+            // publish the possibly-new pointer.
+            (void)flat_hash_insert_eval(ht, a[1], a[2], string_heap,
+                                        /*destroy_old_on_grow=*/false);
+            g_hash_tables[hidx] = ht;
             return make_void();
-        std::lock_guard hlock(ev.hash_tables_mutex());
-        std::lock_guard slock(ev.alloc_storage_lock_);
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return make_void();
-        auto* ht = g_hash_tables[hidx];
-        auto meta = ht->metadata();
-        auto vals = ht->values();
-        // Issue #1398 contract: hash-values returns BY VALUE — each
-        // value is copied into a freshly-constructed EvalValue and
-        // cons'd into a brand-new pair list. Independent of the hash
-        // table's internal storage; safe to mutate the hash afterward.
-        // Verified by tests/test_hash_iter_invalidation.cpp.
-        EvalValue result = make_void();
-        for (std::size_t i = ht->capacity; i > 0; --i) {
-            if (meta[i - 1] != 0xFF) {
-                auto pid = pairs.size();
-                pairs.push_back({EvalValue{vals[i - 1]}, result});
-                result = make_pair(pid);
+        },
+        mutate_general(3, "(hash any any) -> void", "Insert or replace a hash entry."));
+    register_prim(
+        add, ev, "hash-length",
+        [&ev](std::span<const EvalValue> a) {
+            if (a.empty() || !is_hash(a[0]))
+                return make_int(0);
+            std::lock_guard hlock(ev.hash_tables_mutex());
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(g_hash_tables[hidx]->size));
+        },
+        pure_general(1, "(hash) -> int", "Number of keys in a hash."));
+    register_prim(
+        add, ev, "hash-keys",
+        [&ev, &pairs](std::span<const EvalValue> a) {
+            if (a.empty() || !is_hash(a[0]))
+                return make_void();
+            // Issue #2652: lock hash store + pairs_ growth.
+            std::lock_guard hlock(ev.hash_tables_mutex());
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_void();
+            auto* ht = g_hash_tables[hidx];
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            // Issue #1398 contract: hash-keys returns BY VALUE — each key
+            // is copied into a freshly-constructed EvalValue and cons'd into
+            // a brand-new pair list. The returned list is independent of the
+            // underlying hash table's internal storage. Caller can safely
+            // invoke (hash-set!) / (hash-remove!) / (hash-clear!) etc. on
+            // the same hash after this call without invalidating the returned
+            // list. Verified by tests/test_hash_iter_invalidation.cpp.
+            EvalValue result = make_void();
+            for (std::size_t i = ht->capacity; i > 0; --i) {
+                if (meta[i - 1] != 0xFF) {
+                    auto pid = pairs.size();
+                    pairs.push_back({EvalValue{keys[i - 1]}, result});
+                    result = make_pair(pid);
+                }
             }
-        }
-        return result;
-    });
-    add("hash?", [](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_bool(false);
-        return make_bool(is_hash(a[0]));
-    });
+            return result;
+        },
+        pure_general(1, "(hash) -> list", "List of keys in a hash."));
+    register_prim(
+        add, ev, "hash-values",
+        [&ev, &pairs](std::span<const EvalValue> a) {
+            if (a.empty() || !is_hash(a[0]))
+                return make_void();
+            std::lock_guard hlock(ev.hash_tables_mutex());
+            std::lock_guard slock(ev.alloc_storage_lock_);
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_void();
+            auto* ht = g_hash_tables[hidx];
+            auto meta = ht->metadata();
+            auto vals = ht->values();
+            // Issue #1398 contract: hash-values returns BY VALUE — each
+            // value is copied into a freshly-constructed EvalValue and
+            // cons'd into a brand-new pair list. Independent of the hash
+            // table's internal storage; safe to mutate the hash afterward.
+            // Verified by tests/test_hash_iter_invalidation.cpp.
+            EvalValue result = make_void();
+            for (std::size_t i = ht->capacity; i > 0; --i) {
+                if (meta[i - 1] != 0xFF) {
+                    auto pid = pairs.size();
+                    pairs.push_back({EvalValue{vals[i - 1]}, result});
+                    result = make_pair(pid);
+                }
+            }
+            return result;
+        },
+        pure_general(1, "(hash) -> list", "List of values in a hash."));
+    register_prim(
+        add, ev, "hash?",
+        [](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_bool(false);
+            return make_bool(is_hash(a[0]));
+        },
+        pure_general(1, "(any) -> bool", "True if value is a hash."));
 
     // Issue #278 follow-up #3: (hash->alist hash) — return the
     // hash as a list of (key . value) pairs in arbitrary order.
@@ -558,67 +616,73 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
     // primitive) with a way to iterate. Common use case: AI
     // agent wants to render a mutation-log:summary hash as a
     // string by iterating the alist.
-    add("hash->alist", [&pairs](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_hash(a[0]))
-            return make_void();
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return make_void();
-        auto* ht = g_hash_tables[hidx];
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        EvalValue result = make_void();
-        // Walk in reverse so the resulting alist is in
-        // insertion / hash order.
-        // Issue #1398 contract: hash->alist returns BY VALUE — each
-        // (key . value) cons cell is built from freshly-constructed
-        // EvalValue copies, so the returned alist is independent of the
-        // hash table's internal storage. Safe to mutate the hash
-        // afterward. Verified by tests/test_hash_iter_invalidation.cpp.
-        for (std::size_t i = ht->capacity; i > 0; --i) {
-            if (meta[i - 1] != 0xFF) {
-                // Build (key . value) cons cell.
-                auto kv_pid = pairs.size();
-                pairs.push_back({EvalValue{keys[i - 1]}, EvalValue{vals[i - 1]}});
-                // Prepend to the result list.
-                auto list_pid = pairs.size();
-                pairs.push_back({make_pair(kv_pid), result});
-                result = make_pair(list_pid);
+    register_prim(
+        add, ev, "hash->alist",
+        [&pairs](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_hash(a[0]))
+                return make_void();
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_void();
+            auto* ht = g_hash_tables[hidx];
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            EvalValue result = make_void();
+            // Walk in reverse so the resulting alist is in
+            // insertion / hash order.
+            // Issue #1398 contract: hash->alist returns BY VALUE — each
+            // (key . value) cons cell is built from freshly-constructed
+            // EvalValue copies, so the returned alist is independent of the
+            // hash table's internal storage. Safe to mutate the hash
+            // afterward. Verified by tests/test_hash_iter_invalidation.cpp.
+            for (std::size_t i = ht->capacity; i > 0; --i) {
+                if (meta[i - 1] != 0xFF) {
+                    // Build (key . value) cons cell.
+                    auto kv_pid = pairs.size();
+                    pairs.push_back({EvalValue{keys[i - 1]}, EvalValue{vals[i - 1]}});
+                    // Prepend to the result list.
+                    auto list_pid = pairs.size();
+                    pairs.push_back({make_pair(kv_pid), result});
+                    result = make_pair(list_pid);
+                }
             }
-        }
-        return result;
-    });
-    add("hash-remove!", [&string_heap](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_hash(a[0]))
-            return make_void();
-        auto hidx = as_hash_idx(a[0]);
-        if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-            return make_void();
-        auto* ht = g_hash_tables[hidx];
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto sh = &string_heap;
-        for (std::size_t i = 0; i < ht->capacity; ++i) {
-            if (meta[i] == 0xFF)
-                continue;
-            auto k = EvalValue{keys[i]};
-            bool eq = false;
-            if (is_int(k) && is_int(a[1]))
-                eq = as_int(k) == as_int(a[1]);
-            else if (is_string(k) && is_string(a[1])) {
-                auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
-                eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
-            } else
-                eq = keys[i] == a[1].val;
-            if (eq) {
-                meta[i] = 0xFF;
-                ht->size--;
-                return make_bool(true);
+            return result;
+        },
+        pure_general(1, "(hash) -> list", "Convert a hash to an association list."));
+    register_prim(
+        add, ev, "hash-remove!",
+        [&string_heap](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_hash(a[0]))
+                return make_void();
+            auto hidx = as_hash_idx(a[0]);
+            if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                return make_void();
+            auto* ht = g_hash_tables[hidx];
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto sh = &string_heap;
+            for (std::size_t i = 0; i < ht->capacity; ++i) {
+                if (meta[i] == 0xFF)
+                    continue;
+                auto k = EvalValue{keys[i]};
+                bool eq = false;
+                if (is_int(k) && is_int(a[1]))
+                    eq = as_int(k) == as_int(a[1]);
+                else if (is_string(k) && is_string(a[1])) {
+                    auto ai = as_string_idx(k), bi = as_string_idx(a[1]);
+                    eq = (ai < sh->size() && bi < sh->size()) && (*sh)[ai] == (*sh)[bi];
+                } else
+                    eq = keys[i] == a[1].val;
+                if (eq) {
+                    meta[i] = 0xFF;
+                    ht->size--;
+                    return make_bool(true);
+                }
             }
-        }
-        return make_bool(false);
-    });
+            return make_bool(false);
+        },
+        mutate_general(2, "(hash any) -> bool", "Remove a key from a hash."));
 }
 
 } // namespace aura::compiler::primitives_detail

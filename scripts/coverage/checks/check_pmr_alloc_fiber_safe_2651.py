@@ -56,7 +56,7 @@ def main() -> int:
     if sa != -1:
         win = pair[sa : sa + 800]
         must("alloc_storage_lock_" in win, "AC2: string-append critical section locks")
-    must('add("cons"' in pair or 'add("cons",' in pair, "AC2: cons present")
+    must('add("cons"' in pair or 'add("cons",' in pair or '"cons"' in pair, "AC2: cons present")
 
     must("#2651" in listp, "AC3: list.cpp cites #2651")
     must("alloc_storage_lock_" in listp, "AC3: list primitives lock")

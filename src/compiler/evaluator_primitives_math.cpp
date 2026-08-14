@@ -1,4 +1,5 @@
 // evaluator_primitives_math.cpp — P0 step 6: m4-linear, regex, math, arithmetic
+// Issue #2996: migrate evaluator_primitives_math.cpp onto register_prim + PrimSpec.
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 //
 // Issue #1976: m4-move / m4-borrow / m4-return! (Issue #108 M4 linear-type
@@ -20,6 +21,8 @@ module;
 #ifndef AURA_ENABLE_M4
 #define AURA_ENABLE_M4 1
 #endif
+
+#include "prim_registrar_scaffold.hh" // Issue #2996
 
 module aura.compiler.evaluator;
 
@@ -150,29 +153,45 @@ void register_math_regex_and_arithmetic_primitives(
     PrimRegistrar add, std::pmr::vector<Pair>& pairs, std::pmr::vector<std::string>& string_heap,
     std::vector<EvalValue>& error_values, std::atomic<std::uint64_t>* primitive_error_counter,
     Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
 
 #if AURA_ENABLE_M4
     // ── M4 linear-type primitives (Issue #108 part 3) ─────────────
     // Issue #1976: deferred domain prefix m4-* (AURA_ENABLE_M4).
-    add("m4-move", [](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty())
+    register_prim(
+        add, ev, "m4-move",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return make_void();
+            return a[0];
+        },
+        pure_general(1, "(any) -> any", "M4 linear move stub (identity)."));
+    register_prim(
+        add, ev, "m4-borrow",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty())
+                return make_void();
+            return a[0];
+        },
+        pure_general(1, "(any) -> any", "M4 linear borrow stub (identity)."));
+    register_prim(
+        add, ev, "m4-return!",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
             return make_void();
-        return a[0];
-    });
-    add("m4-borrow", [](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty())
-            return make_void();
-        return a[0];
-    });
-    add("m4-return!", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        return make_void();
-    });
+        },
+        mutate_general(1, "(any) -> any", "M4 linear return stub (identity)."));
 #endif // AURA_ENABLE_M4
-    add("define-linear", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        return make_void();
-    });
+    register_prim(
+        add, ev, "define-linear",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_void();
+        },
+        mutate_general(255, "(...forms) -> any", "Define a linear binding (M4 stub)."));
 
     // ── Regex ──────────────────────────────────────────────────
     // Issue #668: math regex primitive error consistency.
@@ -208,124 +227,136 @@ void register_math_regex_and_arithmetic_primitives(
     const int regex_to_ms = regex_timeout_ms_cfg();
     const std::size_t regex_max = regex_max_input_cfg();
 
-    add("regex-match?", [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
-                         regex_max](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return bump_regex_error("regex-match?", "expected two string arguments");
-        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
-        if (pi >= string_heap.size() || si >= string_heap.size())
-            return bump_regex_error("regex-match?", "string index out of range");
-        const auto& pat = string_heap[pi];
-        const auto& sub = string_heap[si];
-        if (pat.size() > regex_max || sub.size() > regex_max)
-            return bump_regex_error("regex-match?", "regex input exceeds size limit");
-        // Issue #2479: timed regex_search (ReDoS budget).
-        auto [st, matched] = run_regex_timed<bool>(
-            [pat, sub]() {
-                std::regex re(pat);
-                return std::regex_search(sub, re);
-            },
-            regex_to_ms);
-        if (st != RegexRunStatus::Ok)
-            return handle_regex_status(st, "regex-match?");
-        return make_int(matched ? 1 : 0);
-    });
+    register_prim(
+        add, ev, "regex-match?",
+        [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
+         regex_max](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return bump_regex_error("regex-match?", "expected two string arguments");
+            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+            if (pi >= string_heap.size() || si >= string_heap.size())
+                return bump_regex_error("regex-match?", "string index out of range");
+            const auto& pat = string_heap[pi];
+            const auto& sub = string_heap[si];
+            if (pat.size() > regex_max || sub.size() > regex_max)
+                return bump_regex_error("regex-match?", "regex input exceeds size limit");
+            // Issue #2479: timed regex_search (ReDoS budget).
+            auto [st, matched] = run_regex_timed<bool>(
+                [pat, sub]() {
+                    std::regex re(pat);
+                    return std::regex_search(sub, re);
+                },
+                regex_to_ms);
+            if (st != RegexRunStatus::Ok)
+                return handle_regex_status(st, "regex-match?");
+            return make_int(matched ? 1 : 0);
+        },
+        pure_general(2, "(string string) -> bool", "True if regex matches the string."));
 
-    add("regex-find", [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
-                       regex_max](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return bump_regex_error("regex-find", "expected two string arguments");
-        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
-        if (pi >= string_heap.size() || si >= string_heap.size())
-            return bump_regex_error("regex-find", "string index out of range");
-        const auto& pat = string_heap[pi];
-        const auto& sub = string_heap[si];
-        if (pat.size() > regex_max || sub.size() > regex_max)
-            return bump_regex_error("regex-find", "regex input exceeds size limit");
-        struct FindOut {
-            bool found = false;
-            std::string match;
-        };
-        auto [st, out] = run_regex_timed<FindOut>(
-            [pat, sub]() {
-                FindOut o;
-                std::regex re(pat);
-                std::smatch m;
-                if (std::regex_search(sub, m, re)) {
-                    o.found = true;
-                    o.match = m.str();
-                }
-                return o;
-            },
-            regex_to_ms);
-        if (st != RegexRunStatus::Ok)
-            return handle_regex_status(st, "regex-find");
-        if (!out.found)
-            return make_void();
-        auto id = string_heap.size();
-        string_heap.push_back(std::move(out.match));
-        return make_string(id);
-    });
+    register_prim(
+        add, ev, "regex-find",
+        [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
+         regex_max](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return bump_regex_error("regex-find", "expected two string arguments");
+            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+            if (pi >= string_heap.size() || si >= string_heap.size())
+                return bump_regex_error("regex-find", "string index out of range");
+            const auto& pat = string_heap[pi];
+            const auto& sub = string_heap[si];
+            if (pat.size() > regex_max || sub.size() > regex_max)
+                return bump_regex_error("regex-find", "regex input exceeds size limit");
+            struct FindOut {
+                bool found = false;
+                std::string match;
+            };
+            auto [st, out] = run_regex_timed<FindOut>(
+                [pat, sub]() {
+                    FindOut o;
+                    std::regex re(pat);
+                    std::smatch m;
+                    if (std::regex_search(sub, m, re)) {
+                        o.found = true;
+                        o.match = m.str();
+                    }
+                    return o;
+                },
+                regex_to_ms);
+            if (st != RegexRunStatus::Ok)
+                return handle_regex_status(st, "regex-find");
+            if (!out.found)
+                return make_void();
+            auto id = string_heap.size();
+            string_heap.push_back(std::move(out.match));
+            return make_string(id);
+        },
+        pure_general(2, "(string string) -> any", "First regex match or empty."));
 
-    add("regex-replace", [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
-                          regex_max](std::span<const EvalValue> a) {
-        if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
-            return bump_regex_error("regex-replace", "expected three string arguments");
-        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
-        if (pi >= string_heap.size() || si >= string_heap.size() || ri >= string_heap.size())
-            return bump_regex_error("regex-replace", "string index out of range");
-        const auto& pat = string_heap[pi];
-        const auto& sub = string_heap[si];
-        const auto& rep = string_heap[ri];
-        if (pat.size() > regex_max || sub.size() > regex_max || rep.size() > regex_max)
-            return bump_regex_error("regex-replace", "regex input exceeds size limit");
-        auto [st, result] = run_regex_timed<std::string>(
-            [pat, sub, rep]() {
-                std::regex re(pat);
-                return std::regex_replace(sub, re, rep);
-            },
-            regex_to_ms);
-        if (st != RegexRunStatus::Ok)
-            return handle_regex_status(st, "regex-replace");
-        auto id = string_heap.size();
-        string_heap.push_back(std::move(result));
-        return make_string(id);
-    });
+    register_prim(
+        add, ev, "regex-replace",
+        [&string_heap, bump_regex_error, handle_regex_status, regex_to_ms,
+         regex_max](std::span<const EvalValue> a) {
+            if (a.size() < 3 || !is_string(a[0]) || !is_string(a[1]) || !is_string(a[2]))
+                return bump_regex_error("regex-replace", "expected three string arguments");
+            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]), ri = as_string_idx(a[2]);
+            if (pi >= string_heap.size() || si >= string_heap.size() || ri >= string_heap.size())
+                return bump_regex_error("regex-replace", "string index out of range");
+            const auto& pat = string_heap[pi];
+            const auto& sub = string_heap[si];
+            const auto& rep = string_heap[ri];
+            if (pat.size() > regex_max || sub.size() > regex_max || rep.size() > regex_max)
+                return bump_regex_error("regex-replace", "regex input exceeds size limit");
+            auto [st, result] = run_regex_timed<std::string>(
+                [pat, sub, rep]() {
+                    std::regex re(pat);
+                    return std::regex_replace(sub, re, rep);
+                },
+                regex_to_ms);
+            if (st != RegexRunStatus::Ok)
+                return handle_regex_status(st, "regex-replace");
+            auto id = string_heap.size();
+            string_heap.push_back(std::move(result));
+            return make_string(id);
+        },
+        pure_general(3, "(string string string) -> string", "Replace regex matches."));
 
-    add("regex-split", [&string_heap, &pairs, bump_regex_error, handle_regex_status, regex_to_ms,
-                        regex_max](std::span<const EvalValue> a) {
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return bump_regex_error("regex-split", "expected two string arguments");
-        auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
-        if (pi >= string_heap.size() || si >= string_heap.size())
-            return bump_regex_error("regex-split", "string index out of range");
-        const auto& pat = string_heap[pi];
-        const auto& sub = string_heap[si];
-        if (pat.size() > regex_max || sub.size() > regex_max)
-            return bump_regex_error("regex-split", "regex input exceeds size limit");
-        auto [st, parts] = run_regex_timed<std::vector<std::string>>(
-            [pat, sub]() {
-                std::regex re(pat);
-                std::sregex_token_iterator it(sub.begin(), sub.end(), re, -1);
-                std::sregex_token_iterator end;
-                std::vector<std::string> out;
-                for (; it != end; ++it)
-                    out.push_back(it->str());
-                return out;
-            },
-            regex_to_ms);
-        if (st != RegexRunStatus::Ok)
-            return handle_regex_status(st, "regex-split");
-        EvalValue result = make_void();
-        for (auto it2 = parts.rbegin(); it2 != parts.rend(); ++it2) {
-            auto sid = string_heap.size();
-            string_heap.push_back(*it2);
-            auto pid = pairs.size();
-            pairs.push_back({make_string(sid), result});
-            result = make_pair(pid);
-        }
-        return result;
-    });
+    register_prim(
+        add, ev, "regex-split",
+        [&string_heap, &pairs, bump_regex_error, handle_regex_status, regex_to_ms,
+         regex_max](std::span<const EvalValue> a) {
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return bump_regex_error("regex-split", "expected two string arguments");
+            auto pi = as_string_idx(a[0]), si = as_string_idx(a[1]);
+            if (pi >= string_heap.size() || si >= string_heap.size())
+                return bump_regex_error("regex-split", "string index out of range");
+            const auto& pat = string_heap[pi];
+            const auto& sub = string_heap[si];
+            if (pat.size() > regex_max || sub.size() > regex_max)
+                return bump_regex_error("regex-split", "regex input exceeds size limit");
+            auto [st, parts] = run_regex_timed<std::vector<std::string>>(
+                [pat, sub]() {
+                    std::regex re(pat);
+                    std::sregex_token_iterator it(sub.begin(), sub.end(), re, -1);
+                    std::sregex_token_iterator end;
+                    std::vector<std::string> out;
+                    for (; it != end; ++it)
+                        out.push_back(it->str());
+                    return out;
+                },
+                regex_to_ms);
+            if (st != RegexRunStatus::Ok)
+                return handle_regex_status(st, "regex-split");
+            EvalValue result = make_void();
+            for (auto it2 = parts.rbegin(); it2 != parts.rend(); ++it2) {
+                auto sid = string_heap.size();
+                string_heap.push_back(*it2);
+                auto pid = pairs.size();
+                pairs.push_back({make_string(sid), result});
+                result = make_pair(pid);
+            }
+            return result;
+        },
+        pure_general(2, "(string string) -> list", "Split string on regex."));
 
     // ── Math ────────────────────────────────────────────────────
     auto to_double = [](const EvalValue& v) -> double {
@@ -336,99 +367,149 @@ void register_math_regex_and_arithmetic_primitives(
         return 0.0;
     };
 
-    add("sin", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::sin(to_double(a[0])));
-    });
-    add("cos", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::cos(to_double(a[0])));
-    });
-    add("tan", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::tan(to_double(a[0])));
-    });
-    add("asin", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::asin(to_double(a[0])));
-    });
-    add("acos", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::acos(to_double(a[0])));
-    });
-    add("atan", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::atan(to_double(a[0])));
-    });
-    add("log", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::log(to_double(a[0])));
-    });
-    add("log10", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::log10(to_double(a[0])));
-    });
-    add("exp", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::exp(to_double(a[0])));
-    });
-    add("pow", [to_double](const auto& a) {
-        if (a.size() < 2)
-            return make_float(0.0);
-        return make_float(std::pow(to_double(a[0]), to_double(a[1])));
-    });
-    add("sqrt", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::sqrt(to_double(a[0])));
-    });
-    add("floor", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::floor(to_double(a[0])));
-    });
-    add("ceil", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::ceil(to_double(a[0])));
-    });
-    add("round", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::round(to_double(a[0])));
-    });
+    register_prim(
+        add, ev, "sin",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::sin(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Sine of a number."));
+    register_prim(
+        add, ev, "cos",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::cos(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Cosine of a number."));
+    register_prim(
+        add, ev, "tan",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::tan(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Tangent of a number."));
+    register_prim(
+        add, ev, "asin",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::asin(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Arcsine of a number."));
+    register_prim(
+        add, ev, "acos",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::acos(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Arccosine of a number."));
+    register_prim(
+        add, ev, "atan",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::atan(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Arctangent of a number."));
+    register_prim(
+        add, ev, "log",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::log(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Natural logarithm."));
+    register_prim(
+        add, ev, "log10",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::log10(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Base-10 logarithm."));
+    register_prim(
+        add, ev, "exp",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::exp(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "e raised to the argument."));
+    register_prim(
+        add, ev, "pow",
+        [to_double](const auto& a) {
+            if (a.size() < 2)
+                return make_float(0.0);
+            return make_float(std::pow(to_double(a[0]), to_double(a[1])));
+        },
+        pure_general(2, "(number number) -> float", "Raise base to exponent."));
+    register_prim(
+        add, ev, "sqrt",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::sqrt(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Square root."));
+    register_prim(
+        add, ev, "floor",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::floor(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Greatest integer <= argument as float."));
+    register_prim(
+        add, ev, "ceil",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::ceil(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Least integer >= argument as float."));
+    register_prim(
+        add, ev, "round",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::round(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Nearest integer as float."));
     // std/math re-exports (define trunc trunc); was missing while floor/ceil/round existed.
-    add("trunc", [to_double](const auto& a) {
-        if (a.empty())
-            return make_float(0.0);
-        return make_float(std::trunc(to_double(a[0])));
-    });
+    register_prim(
+        add, ev, "trunc",
+        [to_double](const auto& a) {
+            if (a.empty())
+                return make_float(0.0);
+            return make_float(std::trunc(to_double(a[0])));
+        },
+        pure_general(1, "(number) -> float", "Truncate toward zero as float."));
 
     // Issue #1153/#1158/#1174 family: saturate float→int out of range.
-    add("inexact->exact", [](const auto& a) -> EvalValue {
-        if (a.empty())
-            return make_int(0);
-        if (types::is_float(a[0])) {
-            const double d = types::as_float(a[0]);
-            constexpr double kMax = static_cast<double>(std::numeric_limits<std::int64_t>::max());
-            constexpr double kMin = static_cast<double>(std::numeric_limits<std::int64_t>::min());
-            if (!(d == d) || d >= kMax)
-                return types::make_int(std::numeric_limits<std::int64_t>::max());
-            if (d <= kMin)
-                return types::make_int(std::numeric_limits<std::int64_t>::min());
-            return types::make_int(static_cast<std::int64_t>(d));
-        }
-        return a[0];
-    });
+    register_prim(
+        add, ev, "inexact->exact",
+        [](const auto& a) -> EvalValue {
+            if (a.empty())
+                return make_int(0);
+            if (types::is_float(a[0])) {
+                const double d = types::as_float(a[0]);
+                constexpr double kMax =
+                    static_cast<double>(std::numeric_limits<std::int64_t>::max());
+                constexpr double kMin =
+                    static_cast<double>(std::numeric_limits<std::int64_t>::min());
+                if (!(d == d) || d >= kMax)
+                    return types::make_int(std::numeric_limits<std::int64_t>::max());
+                if (d <= kMin)
+                    return types::make_int(std::numeric_limits<std::int64_t>::min());
+                return types::make_int(static_cast<std::int64_t>(d));
+            }
+            return a[0];
+        },
+        pure_general(1, "(number) -> int", "Coerce inexact number to exact int."));
 
     // ── Arithmetic extensions (#1158/#1159/#1174: no signed int64 UB) ──
     constexpr auto kI64Min = std::numeric_limits<std::int64_t>::min();
@@ -444,192 +525,219 @@ void register_math_regex_and_arithmetic_primitives(
         return !(n == kI64Min && d == -1);
     };
 
-    add("modulo", [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
-                   i64_div_ok](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto divisor = coerce_to_int(a[1], string_heap);
-        if (divisor == 0) {
-            return make_primitive_error(string_heap, error_values, "modulo: division by zero",
-                                        primitive_error_counter);
-        }
-        auto n = coerce_to_int(a[0], string_heap);
-        if (!i64_div_ok(n, divisor)) {
-            return make_primitive_error(string_heap, error_values,
-                                        "modulo: integer overflow (INT64_MIN/-1)",
-                                        primitive_error_counter);
-        }
-        auto r = n % divisor;
-        if (r < 0)
-            r += safe_abs_i64(divisor);
-        return make_int(r);
-    });
-    add("mod", [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
-                i64_div_ok](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto divisor = coerce_to_int(a[1], string_heap);
-        if (divisor == 0) {
-            return make_primitive_error(string_heap, error_values, "mod: division by zero",
-                                        primitive_error_counter);
-        }
-        auto n = coerce_to_int(a[0], string_heap);
-        if (!i64_div_ok(n, divisor)) {
-            return make_primitive_error(string_heap, error_values,
-                                        "mod: integer overflow (INT64_MIN/-1)",
-                                        primitive_error_counter);
-        }
-        auto r = n % divisor;
-        if (r < 0)
-            r += safe_abs_i64(divisor);
-        return make_int(r);
-    });
-    add("quotient", [&string_heap, &error_values, primitive_error_counter,
-                     i64_div_ok](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto divisor = coerce_to_int(a[1], string_heap);
-        if (divisor == 0) {
-            return make_primitive_error(string_heap, error_values, "quotient: division by zero",
-                                        primitive_error_counter);
-        }
-        auto n = coerce_to_int(a[0], string_heap);
-        if (!i64_div_ok(n, divisor)) {
-            return make_primitive_error(string_heap, error_values,
-                                        "quotient: integer overflow (INT64_MIN/-1)",
-                                        primitive_error_counter);
-        }
-        return make_int(n / divisor);
-    });
-    add("remainder", [&string_heap, &error_values, primitive_error_counter,
-                      i64_div_ok](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto divisor = coerce_to_int(a[1], string_heap);
-        if (divisor == 0) {
-            return make_primitive_error(string_heap, error_values, "remainder: division by zero",
-                                        primitive_error_counter);
-        }
-        auto n = coerce_to_int(a[0], string_heap);
-        if (!i64_div_ok(n, divisor)) {
-            return make_primitive_error(string_heap, error_values,
-                                        "remainder: integer overflow (INT64_MIN/-1)",
-                                        primitive_error_counter);
-        }
-        return make_int(n % divisor);
-    });
-    add("abs", [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        if (is_float(a[0]))
-            return make_float(std::abs(as_float(a[0])));
-        auto n = coerce_to_int(a[0], string_heap);
-        return make_int(safe_abs_i64(n));
-    });
-    add("gcd", [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        auto to_int = [&](const EvalValue& v) { return coerce_to_int(v, string_heap); };
-        auto r = to_int(a[0]);
-        auto abs_gcd = [&](std::int64_t x, std::int64_t y) -> std::int64_t {
-            x = safe_abs_i64(x);
-            y = safe_abs_i64(y);
-            while (y != 0) {
-                auto t = y;
-                y = x % y;
-                x = t;
+    register_prim(
+        add, ev, "modulo",
+        [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
+         i64_div_ok](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto divisor = coerce_to_int(a[1], string_heap);
+            if (divisor == 0) {
+                return make_primitive_error(string_heap, error_values, "modulo: division by zero",
+                                            primitive_error_counter);
             }
-            return x;
-        };
-        for (std::size_t i = 1; i < a.size(); ++i)
-            r = abs_gcd(r, to_int(a[i]));
-        return make_int(r);
-    });
-    add("lcm", [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(1);
-        auto to_int = [&](const EvalValue& v) { return coerce_to_int(v, string_heap); };
-        auto r = to_int(a[0]);
-        auto gcd = [&](std::int64_t x, std::int64_t y) -> std::int64_t {
-            x = safe_abs_i64(x);
-            y = safe_abs_i64(y);
-            if (x == 0 || y == 0)
-                return 0;
-            while (y != 0) {
-                auto t = y;
-                y = x % y;
-                x = t;
+            auto n = coerce_to_int(a[0], string_heap);
+            if (!i64_div_ok(n, divisor)) {
+                return make_primitive_error(string_heap, error_values,
+                                            "modulo: integer overflow (INT64_MIN/-1)",
+                                            primitive_error_counter);
             }
-            return x;
-        };
-        for (std::size_t i = 1; i < a.size(); ++i) {
-            auto n = to_int(a[i]);
-            auto g = gcd(r, n);
-            if (g == 0) {
-                r = 0;
-                continue;
+            auto r = n % divisor;
+            if (r < 0)
+                r += safe_abs_i64(divisor);
+            return make_int(r);
+        },
+        pure_general(2, "(int int) -> int", "Floor modulo of two integers."));
+    register_prim(
+        add, ev, "mod",
+        [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
+         i64_div_ok](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto divisor = coerce_to_int(a[1], string_heap);
+            if (divisor == 0) {
+                return make_primitive_error(string_heap, error_values, "mod: division by zero",
+                                            primitive_error_counter);
             }
-            // Issue #1174: checked (r/g)*n to avoid silent overflow.
-            const auto q = r / g;
-            std::int64_t next = 0;
-            if (__builtin_mul_overflow(q, n, &next)) {
-                r = (q > 0) == (n > 0) ? kI64Max : kI64Min;
-            } else {
-                r = next;
+            auto n = coerce_to_int(a[0], string_heap);
+            if (!i64_div_ok(n, divisor)) {
+                return make_primitive_error(string_heap, error_values,
+                                            "mod: integer overflow (INT64_MIN/-1)",
+                                            primitive_error_counter);
             }
-        }
-        // abs(INT64_MIN) is UB — saturate via safe_abs_i64.
-        r = safe_abs_i64(r);
-        return make_int(r);
-    });
-    add("min", [&string_heap](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        bool any_f = false;
-        for (auto& v : a)
-            if (is_float(v)) {
-                any_f = true;
-                break;
+            auto r = n % divisor;
+            if (r < 0)
+                r += safe_abs_i64(divisor);
+            return make_int(r);
+        },
+        pure_general(2, "(int int) -> int", "Alias for modulo."));
+    register_prim(
+        add, ev, "quotient",
+        [&string_heap, &error_values, primitive_error_counter,
+         i64_div_ok](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto divisor = coerce_to_int(a[1], string_heap);
+            if (divisor == 0) {
+                return make_primitive_error(string_heap, error_values, "quotient: division by zero",
+                                            primitive_error_counter);
             }
-        if (any_f) {
-            auto to_f = [&](const EvalValue& v) {
-                return is_float(v) ? as_float(v)
-                                   : static_cast<double>(coerce_to_int(v, string_heap));
+            auto n = coerce_to_int(a[0], string_heap);
+            if (!i64_div_ok(n, divisor)) {
+                return make_primitive_error(string_heap, error_values,
+                                            "quotient: integer overflow (INT64_MIN/-1)",
+                                            primitive_error_counter);
+            }
+            return make_int(n / divisor);
+        },
+        pure_general(2, "(int int) -> int", "Integer quotient toward zero."));
+    register_prim(
+        add, ev, "remainder",
+        [&string_heap, &error_values, primitive_error_counter,
+         i64_div_ok](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto divisor = coerce_to_int(a[1], string_heap);
+            if (divisor == 0) {
+                return make_primitive_error(string_heap, error_values,
+                                            "remainder: division by zero", primitive_error_counter);
+            }
+            auto n = coerce_to_int(a[0], string_heap);
+            if (!i64_div_ok(n, divisor)) {
+                return make_primitive_error(string_heap, error_values,
+                                            "remainder: integer overflow (INT64_MIN/-1)",
+                                            primitive_error_counter);
+            }
+            return make_int(n % divisor);
+        },
+        pure_general(2, "(int int) -> int", "Remainder of integer division."));
+    register_prim(
+        add, ev, "abs",
+        [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            if (is_float(a[0]))
+                return make_float(std::abs(as_float(a[0])));
+            auto n = coerce_to_int(a[0], string_heap);
+            return make_int(safe_abs_i64(n));
+        },
+        pure_general(1, "(number) -> number", "Absolute value."));
+    register_prim(
+        add, ev, "gcd",
+        [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            auto to_int = [&](const EvalValue& v) { return coerce_to_int(v, string_heap); };
+            auto r = to_int(a[0]);
+            auto abs_gcd = [&](std::int64_t x, std::int64_t y) -> std::int64_t {
+                x = safe_abs_i64(x);
+                y = safe_abs_i64(y);
+                while (y != 0) {
+                    auto t = y;
+                    y = x % y;
+                    x = t;
+                }
+                return x;
             };
-            double r = to_f(a[0]);
             for (std::size_t i = 1; i < a.size(); ++i)
-                r = std::min(r, to_f(a[i]));
-            return make_float(r);
-        }
-        std::int64_t r = coerce_to_int(a[0], string_heap);
-        for (std::size_t i = 1; i < a.size(); ++i)
-            r = std::min(r, coerce_to_int(a[i], string_heap));
-        return make_int(r);
-    });
-    add("max", [&string_heap](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        bool any_f = false;
-        for (auto& v : a)
-            if (is_float(v)) {
-                any_f = true;
-                break;
-            }
-        if (any_f) {
-            auto to_f = [&](const EvalValue& v) {
-                return is_float(v) ? as_float(v)
-                                   : static_cast<double>(coerce_to_int(v, string_heap));
+                r = abs_gcd(r, to_int(a[i]));
+            return make_int(r);
+        },
+        pure_general(2, "(int int) -> int", "Greatest common divisor."));
+    register_prim(
+        add, ev, "lcm",
+        [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(1);
+            auto to_int = [&](const EvalValue& v) { return coerce_to_int(v, string_heap); };
+            auto r = to_int(a[0]);
+            auto gcd = [&](std::int64_t x, std::int64_t y) -> std::int64_t {
+                x = safe_abs_i64(x);
+                y = safe_abs_i64(y);
+                if (x == 0 || y == 0)
+                    return 0;
+                while (y != 0) {
+                    auto t = y;
+                    y = x % y;
+                    x = t;
+                }
+                return x;
             };
-            double r = to_f(a[0]);
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                auto n = to_int(a[i]);
+                auto g = gcd(r, n);
+                if (g == 0) {
+                    r = 0;
+                    continue;
+                }
+                // Issue #1174: checked (r/g)*n to avoid silent overflow.
+                const auto q = r / g;
+                std::int64_t next = 0;
+                if (__builtin_mul_overflow(q, n, &next)) {
+                    r = (q > 0) == (n > 0) ? kI64Max : kI64Min;
+                } else {
+                    r = next;
+                }
+            }
+            // abs(INT64_MIN) is UB — saturate via safe_abs_i64.
+            r = safe_abs_i64(r);
+            return make_int(r);
+        },
+        pure_general(2, "(int int) -> int", "Least common multiple."));
+    register_prim(
+        add, ev, "min",
+        [&string_heap](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            bool any_f = false;
+            for (auto& v : a)
+                if (is_float(v)) {
+                    any_f = true;
+                    break;
+                }
+            if (any_f) {
+                auto to_f = [&](const EvalValue& v) {
+                    return is_float(v) ? as_float(v)
+                                       : static_cast<double>(coerce_to_int(v, string_heap));
+                };
+                double r = to_f(a[0]);
+                for (std::size_t i = 1; i < a.size(); ++i)
+                    r = std::min(r, to_f(a[i]));
+                return make_float(r);
+            }
+            std::int64_t r = coerce_to_int(a[0], string_heap);
             for (std::size_t i = 1; i < a.size(); ++i)
-                r = std::max(r, to_f(a[i]));
-            return make_float(r);
-        }
-        std::int64_t r = coerce_to_int(a[0], string_heap);
-        for (std::size_t i = 1; i < a.size(); ++i)
-            r = std::max(r, coerce_to_int(a[i], string_heap));
-        return make_int(r);
-    });
+                r = std::min(r, coerce_to_int(a[i], string_heap));
+            return make_int(r);
+        },
+        pure_general(255, "(...numbers) -> number", "Minimum of numeric arguments."));
+    register_prim(
+        add, ev, "max",
+        [&string_heap](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            bool any_f = false;
+            for (auto& v : a)
+                if (is_float(v)) {
+                    any_f = true;
+                    break;
+                }
+            if (any_f) {
+                auto to_f = [&](const EvalValue& v) {
+                    return is_float(v) ? as_float(v)
+                                       : static_cast<double>(coerce_to_int(v, string_heap));
+                };
+                double r = to_f(a[0]);
+                for (std::size_t i = 1; i < a.size(); ++i)
+                    r = std::max(r, to_f(a[i]));
+                return make_float(r);
+            }
+            std::int64_t r = coerce_to_int(a[0], string_heap);
+            for (std::size_t i = 1; i < a.size(); ++i)
+                r = std::max(r, coerce_to_int(a[i], string_heap));
+            return make_int(r);
+        },
+        pure_general(255, "(...numbers) -> number", "Maximum of numeric arguments."));
 }
 
 } // namespace aura::compiler::primitives_detail

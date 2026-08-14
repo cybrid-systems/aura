@@ -2471,6 +2471,18 @@ def cmd_lint():
             "Issue #2993 typecheck metrics tier linter failed — run python3 scripts/coverage/checks/check_typecheck_metrics_tier_2993.py"
         )
         return r
+    # Issue #2996: core TUs on register_prim + PrimSpec (follow #2915).
+    # Extends test_obs_metrics_smoke_batch (#81967); no docs/design/.
+    prc_script = COVERAGE_CHECKS / "check_prim_register_core_2996.py"
+    if not prc_script.exists():
+        fail(f"missing {prc_script}")
+        return 1
+    r = run([sys.executable, str(prc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2996 core register_prim linter failed — run python3 scripts/coverage/checks/check_prim_register_core_2996.py"
+        )
+        return r
     # Issue #2995: unified OccurrenceCommitHealth + single-shot recover.
     # Extends persist-rehydrate + type-linear-commit-health (#81967); no docs/design/.
     och_script = COVERAGE_CHECKS / "check_occurrence_commit_health_2995.py"
@@ -10517,6 +10529,27 @@ def cmd_query_primitives_split_2914_coverage():
     return 0
 
 
+def cmd_prim_register_core_2996_coverage():
+    """Issue #2996: core TUs migrated to register_prim + PrimSpec."""
+    print(f"{B}=== core register_prim migration coverage (#2996) ==={N}")
+    script = COVERAGE_CHECKS / "check_prim_register_core_2996.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("core register_prim migration (#2996) coverage contract rows failed")
+        return 1
+    ok("core register_prim migration (#2996) coverage clean")
+    return 0
+
+
+def cmd_prim_register_core_2996():
+    """Issue #2996: migrate list/math/json/pair/vector onto register_prim."""
+    print(f"{B}=== core register_prim migration (#2996) ==={N}")
+    return cmd_prim_register_core_2996_coverage()
+
+
 def cmd_prim_registrar_scaffold_2915_coverage():
     """Issue #2915: PrimRegistrar + PrimMeta scaffolding + agent contract.
 
@@ -14263,6 +14296,8 @@ def main():
         "incremental-soundness-prod": cmd_incremental_soundness_prod_coverage,
         "register-render-hot-prim": cmd_register_render_hot_prim_coverage,
         "prim-registrar-scaffold-2915": cmd_prim_registrar_scaffold_2915_coverage,
+        "prim-register-core-2996": cmd_prim_register_core_2996,
+        "prim-register-core-2996-coverage": cmd_prim_register_core_2996_coverage,
         "prim-heap-quota-2916": cmd_prim_heap_quota_2916_coverage,
         "agent-recovery-2917": cmd_agent_recovery_2917_coverage,
         "ast-snapshot-workspace-2918": cmd_ast_snapshot_workspace_2918_coverage,

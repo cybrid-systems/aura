@@ -1,4 +1,5 @@
 // evaluator_primitives_list.cpp — P0 step 3: list primitives
+// Issue #2996: migrate onto register_prim + PrimSpec (core TU).
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
@@ -6,6 +7,8 @@ module;
 #include "primitives_detail.h"
 #include "observability_metrics.h"
 #include "prim_heap_quota.hh" // Issue #2916
+
+#include "prim_registrar_scaffold.hh" // Issue #2996
 
 module aura.compiler.evaluator;
 
@@ -69,6 +72,9 @@ namespace {
 void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                               std::pmr::vector<std::string>& string_heap,
                               std::vector<EvalValue>& error_values, Evaluator& ev) {
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     auto apply_unary = [&ev](const EvalValue& fn, const EvalValue& arg,
                              bool list_hotpath = false) -> EvalValue {
         if (is_primitive(fn)) {
@@ -148,160 +154,224 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         }
         return make_void();
     };
-    add("list", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
-        // Build proper list (pair chain ending with void)
-        // Issue #2651: lock pairs_ growth under multi-fiber fanout.
-        // Issue #2916: soft pairs quota before bulk grow (Agent-visible error).
-        std::lock_guard lock(ev.alloc_storage_lock_);
-        if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + a.size())) {
-            return make_primitive_error(
-                string_heap, error_values,
-                std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                ev.primitive_error_counter_ptr());
-        }
-        EvalValue result = make_void();
-        for (auto it = a.rbegin(); it != a.rend(); ++it) {
-            auto id = pairs.size();
-            pairs.push_back({*it, result});
-            ev.bump_pair_alloc_count(); // Issue #614
-            result = make_pair(id);
-        }
-        return result;
-    });
-    add("list?", [&pairs](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_bool(true);
-        auto v = a[0];
-        while (!is_end_of_list(v)) {
-            if (!is_pair(v))
-                return make_bool(false);
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size())
-                return make_bool(false);
-            v = pairs[idx].cdr; // follow cdr chain
-        }
-        // Issue #2026-07-17 (commercial-readiness audit): predicates must
-        // return make_bool(true), not make_int(1). Several stdlib sites
-        // (filter, list-statistics, etc.) treat truthy values as numeric
-        // and silently dropped list? results; the surface test worked
-        // around this bug by checking (length ...) instead of (list? ...).
-        // Now consistent with all other predicates.
-        return make_bool(true);
-    });
-    // Issue #2482: null? is true only for the empty list (void), not int 0.
-    add("null?", [](const auto& a) { return make_bool(!a.empty() && is_void(a[0])); });
-    add("length", [&pairs, &ev](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        auto v = a[0];
-        std::int64_t n = 0;
-        while (!is_end_of_list(v)) {
-            // Issue #2482: non-pair (e.g. improper list ending in 0) stops
-            // the walk and returns the count so far — not forced zero.
-            // Bare non-list input (length 0) still yields 0 (n unchanged).
-            if (!is_pair(v))
-                break;
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size())
-                break;
-            v = pairs[idx].cdr;
-            n++;
-        }
-        // Issue #614: surface the cdr-walk cost so AI agents can
-        // see list-depth vs pair_alloc in production.
-        ev.bump_linear_traverse_count(static_cast<std::uint64_t>(n), static_cast<std::uint64_t>(n));
-        return make_int(n);
-    });
-    add("list-ref", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
-        auto* counter = ev.primitive_error_counter_ptr();
-        if (a.size() < 2) {
-            return make_primitive_error(string_heap, error_values, "list-ref: too few args",
-                                        counter);
-        }
-        auto v = a[0];
-        auto pos = static_cast<std::size_t>(as_int(a[1]));
-        for (std::size_t i = 0; i < pos; ++i) {
-            if (!is_pair(v)) {
-                return make_primitive_error(string_heap, error_values,
-                                            "list-ref: index out of bounds", counter);
+    register_prim(
+        add, ev, "list",
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            // Build proper list (pair chain ending with void)
+            // Issue #2651: lock pairs_ growth under multi-fiber fanout.
+            // Issue #2916: soft pairs quota before bulk grow (Agent-visible error).
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + a.size())) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
             }
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size()) {
-                return make_primitive_error(string_heap, error_values, "list-ref: corrupted pair",
+            EvalValue result = make_void();
+            for (auto it = a.rbegin(); it != a.rend(); ++it) {
+                auto id = pairs.size();
+                pairs.push_back({*it, result});
+                ev.bump_pair_alloc_count(); // Issue #614
+                result = make_pair(id);
+            }
+            return result;
+        },
+        pure_general(255, "(...vals) -> list", "Construct a proper list from arguments."));
+    register_prim(
+        add, ev, "list?",
+        [&pairs](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_bool(true);
+            auto v = a[0];
+            while (!is_end_of_list(v)) {
+                if (!is_pair(v))
+                    return make_bool(false);
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size())
+                    return make_bool(false);
+                v = pairs[idx].cdr; // follow cdr chain
+            }
+            // Issue #2026-07-17 (commercial-readiness audit): predicates must
+            // return make_bool(true), not make_int(1). Several stdlib sites
+            // (filter, list-statistics, etc.) treat truthy values as numeric
+            // and silently dropped list? results; the surface test worked
+            // around this bug by checking (length ...) instead of (list? ...).
+            // Now consistent with all other predicates.
+            return make_bool(true);
+        },
+        pure_general(1, "(any) -> bool", "True if value is a proper list ending in empty."));
+    // Issue #2482: null? is true only for the empty list (void), not int 0.
+    register_prim(
+        add, ev, "null?", [](const auto& a) { return make_bool(!a.empty() && is_void(a[0])); },
+        pure_general(1, "(any) -> bool", "True if value is the empty list."));
+    register_prim(
+        add, ev, "length",
+        [&pairs, &ev](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            auto v = a[0];
+            std::int64_t n = 0;
+            while (!is_end_of_list(v)) {
+                // Issue #2482: non-pair (e.g. improper list ending in 0) stops
+                // the walk and returns the count so far — not forced zero.
+                // Bare non-list input (length 0) still yields 0 (n unchanged).
+                if (!is_pair(v))
+                    break;
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size())
+                    break;
+                v = pairs[idx].cdr;
+                n++;
+            }
+            // Issue #614: surface the cdr-walk cost so AI agents can
+            // see list-depth vs pair_alloc in production.
+            ev.bump_linear_traverse_count(static_cast<std::uint64_t>(n),
+                                          static_cast<std::uint64_t>(n));
+            return make_int(n);
+        },
+        pure_general(1, "(list) -> int", "Length of a proper list (improper walk stops)."));
+    register_prim(
+        add, ev, "list-ref",
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            auto* counter = ev.primitive_error_counter_ptr();
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "list-ref: too few args",
                                             counter);
             }
-            v = pairs[idx].cdr;
-        }
-        // Issue #614: surface the cdr-walk depth for list-ref so the
-        // high-water tracks worst-case positional access cost.
-        ev.bump_linear_traverse_count(pos, pos);
-        if (is_pair(v)) {
-            auto idx = as_pair_idx(v);
-            return idx < pairs.size() ? pairs[idx].car : make_int(0);
-        }
-        return v;
-    });
-    // (member val list) — Find val in list using content equality (equal?)
-    // Returns the tail of the list starting with val, or #f if not found
-    add("member", [&pairs, &string_heap](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_int(0);
-        auto& val = a[0];
-        auto v = a[1];
-        auto elem_eq = [&](const EvalValue& x, const EvalValue& y) -> bool {
-            if (x == y)
-                return true;
-            if (is_int(x) && is_int(y))
-                return as_int(x) == as_int(y);
-            if (is_string(x) && is_string(y)) {
-                auto xi = as_string_idx(x), yi = as_string_idx(y);
-                return xi < string_heap.size() && yi < string_heap.size() &&
-                       string_heap[xi] == string_heap[yi];
-            }
-            if (is_bool(x) && is_bool(y))
-                return as_bool(x) == as_bool(y);
-            return false;
-        };
-        while (!is_end_of_list(v)) {
-            if (!is_pair(v))
-                return make_int(0);
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size())
-                return make_int(0);
-            if (elem_eq(pairs[idx].car, val))
-                return v;
-            v = pairs[idx].cdr;
-        }
-        return make_int(0);
-    });
-    // (append list ...) — Variadic: concatenate all provided lists
-    add("append", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_void();
-        if (a.size() < 2)
-            return a[0];
-        // Iteratively append all arguments
-        auto result = a[0];
-        for (std::size_t i = 1; i < a.size(); ++i) {
-            auto list2 = a[i];
-            if (is_end_of_list(result)) {
-                result = list2;
-                continue;
-            }
-            EvalValue new_result = make_void();
-            EvalValue tail = make_void();
-            auto v = result;
-            while (!is_end_of_list(v)) {
+            auto v = a[0];
+            auto pos = static_cast<std::size_t>(as_int(a[1]));
+            for (std::size_t i = 0; i < pos; ++i) {
                 if (!is_pair(v)) {
-                    result = a[0];
-                    break;
+                    return make_primitive_error(string_heap, error_values,
+                                                "list-ref: index out of bounds", counter);
                 }
                 auto idx = as_pair_idx(v);
                 if (idx >= pairs.size()) {
-                    result = a[0];
-                    break;
+                    return make_primitive_error(string_heap, error_values,
+                                                "list-ref: corrupted pair", counter);
                 }
-                // Issue #2916: soft pairs quota on each grow step.
+                v = pairs[idx].cdr;
+            }
+            // Issue #614: surface the cdr-walk depth for list-ref so the
+            // high-water tracks worst-case positional access cost.
+            ev.bump_linear_traverse_count(pos, pos);
+            if (is_pair(v)) {
+                auto idx = as_pair_idx(v);
+                return idx < pairs.size() ? pairs[idx].car : make_int(0);
+            }
+            return v;
+        },
+        pure_general(2, "(list int) -> any", "Element at index in a list."));
+    // (member val list) — Find val in list using content equality (equal?)
+    // Returns the tail of the list starting with val, or #f if not found
+    register_prim(
+        add, ev, "member",
+        [&pairs, &string_heap](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_int(0);
+            auto& val = a[0];
+            auto v = a[1];
+            auto elem_eq = [&](const EvalValue& x, const EvalValue& y) -> bool {
+                if (x == y)
+                    return true;
+                if (is_int(x) && is_int(y))
+                    return as_int(x) == as_int(y);
+                if (is_string(x) && is_string(y)) {
+                    auto xi = as_string_idx(x), yi = as_string_idx(y);
+                    return xi < string_heap.size() && yi < string_heap.size() &&
+                           string_heap[xi] == string_heap[yi];
+                }
+                if (is_bool(x) && is_bool(y))
+                    return as_bool(x) == as_bool(y);
+                return false;
+            };
+            while (!is_end_of_list(v)) {
+                if (!is_pair(v))
+                    return make_int(0);
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size())
+                    return make_int(0);
+                if (elem_eq(pairs[idx].car, val))
+                    return v;
+                v = pairs[idx].cdr;
+            }
+            return make_int(0);
+        },
+        pure_general(2, "(any list) -> any", "Sublist whose car equals the key, or empty."));
+    // (append list ...) — Variadic: concatenate all provided lists
+    register_prim(
+        add, ev, "append",
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_void();
+            if (a.size() < 2)
+                return a[0];
+            // Iteratively append all arguments
+            auto result = a[0];
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                auto list2 = a[i];
+                if (is_end_of_list(result)) {
+                    result = list2;
+                    continue;
+                }
+                EvalValue new_result = make_void();
+                EvalValue tail = make_void();
+                auto v = result;
+                while (!is_end_of_list(v)) {
+                    if (!is_pair(v)) {
+                        result = a[0];
+                        break;
+                    }
+                    auto idx = as_pair_idx(v);
+                    if (idx >= pairs.size()) {
+                        result = a[0];
+                        break;
+                    }
+                    // Issue #2916: soft pairs quota on each grow step.
+                    if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                            ev.primitive_error_counter_ptr());
+                    }
+                    auto new_id = pairs.size();
+                    pairs.push_back({pairs[idx].car, make_void()});
+                    ev.bump_pair_alloc_count(); // Issue #614
+                    auto new_pair = make_pair(new_id);
+                    if (is_void(new_result))
+                        new_result = new_pair;
+                    else {
+                        auto tidx = as_pair_idx(tail);
+                        pairs[tidx].cdr = new_pair;
+                    }
+                    tail = new_pair;
+                    v = pairs[idx].cdr;
+                }
+                if (!is_void(tail)) {
+                    auto tidx = as_pair_idx(tail);
+                    pairs[tidx].cdr = list2;
+                }
+                if (!is_void(new_result))
+                    result = new_result;
+            }
+            return result;
+        },
+        pure_general(255, "(...lists) -> list", "Concatenate lists into one proper list."));
+    register_prim(
+        add, ev, "reverse",
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            if (a.empty())
+                return make_int(0);
+            // Issue #2651: pairs_ push under alloc_storage_lock_.
+            std::lock_guard lock(ev.alloc_storage_lock_);
+            auto v = a[0];
+            EvalValue result = make_void();
+            while (!is_end_of_list(v)) {
+                if (!is_pair(v))
+                    return a[0];
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size())
+                    return a[0];
                 if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
                     return make_primitive_error(
                         string_heap, error_values,
@@ -309,55 +379,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         ev.primitive_error_counter_ptr());
                 }
                 auto new_id = pairs.size();
-                pairs.push_back({pairs[idx].car, make_void()});
+                pairs.push_back({pairs[idx].car, result});
                 ev.bump_pair_alloc_count(); // Issue #614
-                auto new_pair = make_pair(new_id);
-                if (is_void(new_result))
-                    new_result = new_pair;
-                else {
-                    auto tidx = as_pair_idx(tail);
-                    pairs[tidx].cdr = new_pair;
-                }
-                tail = new_pair;
+                result = make_pair(new_id);
                 v = pairs[idx].cdr;
             }
-            if (!is_void(tail)) {
-                auto tidx = as_pair_idx(tail);
-                pairs[tidx].cdr = list2;
-            }
-            if (!is_void(new_result))
-                result = new_result;
-        }
-        return result;
-    });
-    add("reverse", [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
-        if (a.empty())
-            return make_int(0);
-        // Issue #2651: pairs_ push under alloc_storage_lock_.
-        std::lock_guard lock(ev.alloc_storage_lock_);
-        auto v = a[0];
-        EvalValue result = make_void();
-        while (!is_end_of_list(v)) {
-            if (!is_pair(v))
-                return a[0];
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size())
-                return a[0];
-            if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
-                return make_primitive_error(
-                    string_heap, error_values,
-                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                    ev.primitive_error_counter_ptr());
-            }
-            auto new_id = pairs.size();
-            pairs.push_back({pairs[idx].car, result});
-            ev.bump_pair_alloc_count(); // Issue #614
-            result = make_pair(new_id);
-            v = pairs[idx].cdr;
-        }
-        return result;
-    });
-    add("map",
+            return result;
+        },
+        pure_general(1, "(list) -> list", "Reverse a proper list."));
+    register_prim(
+        add, ev, "map",
         [&pairs, &string_heap, &error_values, apply_unary, &ev](std::span<const EvalValue> a) {
             // (map func list) — apply func to each element, collect results
             if (a.size() < 2 || is_void(a[1]))
@@ -417,150 +448,163 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
 
             return result;
-        });
-    add("filter", [&pairs, apply_pred, &ev](std::span<const EvalValue> a) {
-        // (filter pred list) — keep elements where pred returns truthy
-        if (a.size() < 2 || is_void(a[1]))
-            return make_void();
+        },
+        pure_general(2, "(fn list) -> list", "Apply fn to each element; collect results."));
+    register_prim(
+        add, ev, "filter",
+        [&pairs, apply_pred, &ev](std::span<const EvalValue> a) {
+            // (filter pred list) — keep elements where pred returns truthy
+            if (a.size() < 2 || is_void(a[1]))
+                return make_void();
 
-        EvalValue result = make_void();
-        EvalValue tail = make_void();
-        bool first = true;
-        EvalValue current = a[1];
+            EvalValue result = make_void();
+            EvalValue tail = make_void();
+            bool first = true;
+            EvalValue current = a[1];
 
-        while (is_pair(current)) {
-            auto idx = as_pair_idx(current);
-            if (idx >= pairs.size())
-                break;
-
-            ev.bump_list_chain_traversals();
-            ev.bump_list_estimated_cache_misses();
-            bool keep = apply_pred(a[0], pairs[idx].car, true);
-            if (keep) {
-                auto new_id = pairs.size();
-                pairs.push_back({pairs[idx].car, make_void()});
-                ev.bump_pair_alloc_count(); // Issue #614
-                auto new_pair = make_pair(new_id);
-
-                if (first) {
-                    result = new_pair;
-                    tail = new_pair;
-                    first = false;
-                } else {
-                    auto tail_idx = as_pair_idx(tail);
-                    if (tail_idx < pairs.size())
-                        pairs[tail_idx].cdr = new_pair;
-                    tail = new_pair;
-                }
-            }
-
-            current = pairs[idx].cdr;
-        }
-
-        return result;
-    });
-    add("take", [&pairs, &ev](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_void();
-        auto n = static_cast<std::size_t>(as_int(a[0]));
-        auto v = a[1];
-        if (n == 0 || is_end_of_list(v))
-            return make_void();
-        // B-list-2026-07-18-A fix: bound n by list length BEFORE the
-        // for-loop so the early-exit path (when n > length) cannot
-        // bypass the post-loop reverse. Without this bound, callers
-        // got the un-reversed accumulator as the return value, e.g.
-        // (take 5 (list 10 20 30 40)) returned (40 30 20 10) instead
-        // of (10 20 30 40). Walk the list once for length, clamp n,
-        // then run the loop body exactly min(n, length) times.
-        {
-            std::size_t len = 0;
-            auto probe = v;
-            while (is_pair(probe)) {
-                auto pidx = as_pair_idx(probe);
-                if (pidx >= pairs.size())
+            while (is_pair(current)) {
+                auto idx = as_pair_idx(current);
+                if (idx >= pairs.size())
                     break;
-                ++len;
-                probe = pairs[pidx].cdr;
-            }
-            if (n > len)
-                n = len;
-        }
-        EvalValue result = make_void();
-        // Build result in reverse then reverse it
-        for (std::size_t i = 0; i < n; ++i) {
-            if (!is_pair(v))
-                return result;
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size())
-                return result;
-            auto new_id = pairs.size();
-            pairs.push_back({pairs[idx].car, result});
-            ev.bump_pair_alloc_count(); // Issue #614
-            result = make_pair(new_id);
-            v = pairs[idx].cdr;
-        }
-        // Reverse to get correct order
-        EvalValue final = make_void();
-        while (!is_end_of_list(result)) {
-            if (!is_pair(result))
-                break;
-            auto idx = as_pair_idx(result);
-            if (idx >= pairs.size())
-                break;
-            auto nid = pairs.size();
-            pairs.push_back({pairs[idx].car, final});
-            ev.bump_pair_alloc_count(); // Issue #614
-            final = make_pair(nid);
-            result = pairs[idx].cdr;
-        }
-        return final;
-    });
-    add("drop", [&pairs](std::span<const EvalValue> a) {
-        if (a.size() < 2)
-            return make_void();
-        auto n = static_cast<std::size_t>(as_int(a[0]));
-        auto v = a[1];
-        for (std::size_t i = 0; i < n; ++i) {
-            if (is_end_of_list(v))
-                return make_void();
-            if (!is_pair(v))
-                return make_void();
-            auto idx = as_pair_idx(v);
-            if (idx >= pairs.size())
-                return make_void();
-            v = pairs[idx].cdr;
-        }
-        return v;
-    });
-    add("foldl", [&pairs, apply_binary, &ev](std::span<const EvalValue> a) {
-        if (a.size() < 3)
-            return make_void();
-        auto acc = a[1];
-        auto lst = a[2];
-        std::uint64_t steps = 0;
 
-        while (!is_end_of_list(lst)) {
-            if (!is_pair(lst))
-                break;
-            auto idx = as_pair_idx(lst);
-            if (idx >= pairs.size())
-                break;
-            ev.bump_list_chain_traversals();
-            ev.bump_list_estimated_cache_misses();
-            acc = apply_binary(a[0], acc, pairs[idx].car, true);
-            lst = pairs[idx].cdr;
-            ++steps;
-        }
-        // Issue #614: bump the cdr-walk count once at the end.
-        ev.bump_linear_traverse_count(steps, steps);
-        return acc;
-    });
+                ev.bump_list_chain_traversals();
+                ev.bump_list_estimated_cache_misses();
+                bool keep = apply_pred(a[0], pairs[idx].car, true);
+                if (keep) {
+                    auto new_id = pairs.size();
+                    pairs.push_back({pairs[idx].car, make_void()});
+                    ev.bump_pair_alloc_count(); // Issue #614
+                    auto new_pair = make_pair(new_id);
+
+                    if (first) {
+                        result = new_pair;
+                        tail = new_pair;
+                        first = false;
+                    } else {
+                        auto tail_idx = as_pair_idx(tail);
+                        if (tail_idx < pairs.size())
+                            pairs[tail_idx].cdr = new_pair;
+                        tail = new_pair;
+                    }
+                }
+
+                current = pairs[idx].cdr;
+            }
+
+            return result;
+        },
+        pure_general(2, "(pred list) -> list", "Keep elements where pred is truthy."));
+    register_prim(
+        add, ev, "take",
+        [&pairs, &ev](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_void();
+            auto n = static_cast<std::size_t>(as_int(a[0]));
+            auto v = a[1];
+            if (n == 0 || is_end_of_list(v))
+                return make_void();
+            // B-list-2026-07-18-A fix: bound n by list length BEFORE the
+            // for-loop so the early-exit path (when n > length) cannot
+            // bypass the post-loop reverse. Without this bound, callers
+            // got the un-reversed accumulator as the return value, e.g.
+            // (take 5 (list 10 20 30 40)) returned (40 30 20 10) instead
+            // of (10 20 30 40). Walk the list once for length, clamp n,
+            // then run the loop body exactly min(n, length) times.
+            {
+                std::size_t len = 0;
+                auto probe = v;
+                while (is_pair(probe)) {
+                    auto pidx = as_pair_idx(probe);
+                    if (pidx >= pairs.size())
+                        break;
+                    ++len;
+                    probe = pairs[pidx].cdr;
+                }
+                if (n > len)
+                    n = len;
+            }
+            EvalValue result = make_void();
+            // Build result in reverse then reverse it
+            for (std::size_t i = 0; i < n; ++i) {
+                if (!is_pair(v))
+                    return result;
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size())
+                    return result;
+                auto new_id = pairs.size();
+                pairs.push_back({pairs[idx].car, result});
+                ev.bump_pair_alloc_count(); // Issue #614
+                result = make_pair(new_id);
+                v = pairs[idx].cdr;
+            }
+            // Reverse to get correct order
+            EvalValue final = make_void();
+            while (!is_end_of_list(result)) {
+                if (!is_pair(result))
+                    break;
+                auto idx = as_pair_idx(result);
+                if (idx >= pairs.size())
+                    break;
+                auto nid = pairs.size();
+                pairs.push_back({pairs[idx].car, final});
+                ev.bump_pair_alloc_count(); // Issue #614
+                final = make_pair(nid);
+                result = pairs[idx].cdr;
+            }
+            return final;
+        },
+        pure_general(2, "(int list) -> list", "Prefix of n elements from a list."));
+    register_prim(
+        add, ev, "drop",
+        [&pairs](std::span<const EvalValue> a) {
+            if (a.size() < 2)
+                return make_void();
+            auto n = static_cast<std::size_t>(as_int(a[0]));
+            auto v = a[1];
+            for (std::size_t i = 0; i < n; ++i) {
+                if (is_end_of_list(v))
+                    return make_void();
+                if (!is_pair(v))
+                    return make_void();
+                auto idx = as_pair_idx(v);
+                if (idx >= pairs.size())
+                    return make_void();
+                v = pairs[idx].cdr;
+            }
+            return v;
+        },
+        pure_general(2, "(int list) -> list", "List after dropping n elements."));
+    register_prim(
+        add, ev, "foldl",
+        [&pairs, apply_binary, &ev](std::span<const EvalValue> a) {
+            if (a.size() < 3)
+                return make_void();
+            auto acc = a[1];
+            auto lst = a[2];
+            std::uint64_t steps = 0;
+
+            while (!is_end_of_list(lst)) {
+                if (!is_pair(lst))
+                    break;
+                auto idx = as_pair_idx(lst);
+                if (idx >= pairs.size())
+                    break;
+                ev.bump_list_chain_traversals();
+                ev.bump_list_estimated_cache_misses();
+                acc = apply_binary(a[0], acc, pairs[idx].car, true);
+                lst = pairs[idx].cdr;
+                ++steps;
+            }
+            // Issue #614: bump the cdr-walk count once at the end.
+            ev.bump_linear_traverse_count(steps, steps);
+            return acc;
+        },
+        pure_general(3, "(fn acc list) -> any", "Left fold fn over list starting at acc."));
 
     // Issue #923 / #928: native iterative list-sort (no Aura recursion depth).
     // Sorts a proper list of numbers ascending via std::sort on a temp buffer.
-    ev.primitives_.add(
-        "list-sort",
+    register_prim(
+        add, ev, "list-sort",
         [&pairs, &ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty())
                 return make_void();
@@ -599,14 +643,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             }
             return result;
         },
-        PrimMeta{.arity = 1,
-                 .pure = true,
-                 .safety_flags = 0,
-                 .perf_tier = 1,
-                 .security_level = 1,
-                 .doc = "Iterative sort of a numeric list (Issue #923).",
-                 .category = "general",
-                 .schema = "(list) -> list"});
+        pure_general(1, "(list) -> list", "Iterative ascending sort of a numeric list."));
 }
 
 } // namespace aura::compiler::primitives_detail
