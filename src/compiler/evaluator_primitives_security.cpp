@@ -199,7 +199,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         "query:security-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                auto* ht = FlatHashTable::create(16);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -247,6 +247,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(ev.granted_capability_count()))},
                 {"effect-sandbox-mode",
                  make_int(static_cast<std::int64_t>(ev.effect_sandbox_mode()))},
+                // Issue #3011: IsolationDeny fiber stamp + query:security-audit
+                // fiber filter (limit tenant fiber …). Additive keys only.
+                {"schema-3011", make_int(3011)},
+                {"issue-3011", make_int(3011)},
+                {"isolation-deny-fiber-wired", make_int(1)},
             };
             return build_hash(kv);
         });
@@ -785,6 +790,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("allow-cross-tenant-admin-wired", 1);
                 insert_kv("allow-cross-tenant-deny-total",
                           static_cast<std::int64_t>(iso.allow_cross_tenant_deny));
+            }
+            // Issue #3011: IsolationDeny SecurityEvent carries live fiber
+            // (effect_fiber_id_or). query:security-audit filters by fiber.
+            {
+                insert_kv("schema-3011", 3011);
+                insert_kv("issue-3011", 3011);
+                insert_kv("isolation-deny-fiber-wired", 1);
             }
             // Issue #2883: production hard principal check on fiber
             // resume/steal handoff. Under production/Restricted, if the
@@ -4615,6 +4627,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2156", kIsolationAuditMidIssue);
             insert_kv("issue-2156", kIsolationAuditMidIssue);
             insert_kv("isolation-audit-mid-wired", 1);
+            // Issue #3011: IsolationDeny fiber stamp; filter via
+            // query:security-audit [limit] [tenant] [fiber].
+            insert_kv("schema-3011", 3011);
+            insert_kv("issue-3011", 3011);
+            insert_kv("isolation-deny-fiber-wired", 1);
             insert_kv("ring-size", static_cast<std::int64_t>(kSecurityEventRingSize));
             insert_kv("seq", static_cast<std::int64_t>(ring.seq.load(std::memory_order_relaxed)));
             insert_kv("total",

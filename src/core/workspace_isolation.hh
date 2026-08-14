@@ -17,10 +17,13 @@
 #include <utility>
 #include <vector>
 
+#include "core/capability_model.hh"   // #3011 effect_fiber_id_or
 #include "core/provenance_tracker.hh" // #2125: set_isolation_capture_tenant
 #include "core/security_event.hh"     // #2388 dual-write kinds
 #include "core/security_event_wal.hh" // #2388 emit_security_event_durable
 #include "core/workspace_epoch.hh"    // #2388 / #2156 isolation mid = Mutation epoch
+
+extern "C" std::uint64_t aura_fiber_current_id();
 
 namespace aura::core::workspace_isolation {
 
@@ -57,6 +60,9 @@ struct IsolationAuditEntry {
     // Issue #2530 / #2534: Mutation epoch mid for correlated-trail join.
     std::uint64_t mutation_id = 0;
     char op[40]{};
+    // Issue #3011: live fiber (or #2151 override) on deny; 0 on allow
+    // (fiber lookup is deny-only so Soft/Off allow stays cheap).
+    std::int64_t fiber_id = 0;
 };
 
 // Issue #2530: published isolation slot (mirrors Capability PublishedAuditSlot
@@ -207,6 +213,14 @@ struct WorkspaceIsolationPolicy {
         const auto n = std::min(op.size(), sizeof(entry.op) - 1);
         std::memcpy(entry.op, op.data(), n);
         entry.op[n] = '\0';
+        // Issue #3011: IsolationDeny must carry the live fiber (or the
+        // #2151 test override used by EffectDeny). Resolve only on deny
+        // so Soft/Off allow (record_audit reached but !denied) pays no
+        // fiber TLS / override load. EffectDeny path is unchanged.
+        if (denied) {
+            entry.fiber_id = static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
+                static_cast<std::uint32_t>(aura_fiber_current_id())));
+        }
         {
             // Issue #2530: exclusive → data → release publish_seq.
             std::unique_lock<std::shared_mutex> wlock(audit_ring_mtx_);
@@ -237,9 +251,9 @@ struct WorkspaceIsolationPolicy {
         }
         // Tenant stays in tenant_id field; mid is Mutation epoch (#2156).
         // effect_bits preserves required side-effect mask for forensic join.
+        // Issue #3011: fiber_id is the live / override id (never hard 0).
         emit_security_event_durable(SecurityEventKind::IsolationDeny, target, mid, mid,
-                                    required_effects, op, reason, /*denied=*/true,
-                                    /*fiber_id=*/0);
+                                    required_effects, op, reason, /*denied=*/true, entry.fiber_id);
     }
 
     // Issue #2530: TSAN-clean load of slot for `seq` (seq % kAuditRing).
