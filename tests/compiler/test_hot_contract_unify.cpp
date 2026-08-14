@@ -112,7 +112,8 @@ int run_test_hot_contract_unify() {
         auto hh = read_file("src/core/cpp26_contract_stats.h");
         // Under NDEBUG without ENFORCE, CHECK is ((void)0)
         CHECK(hh.find("((void)0)") != std::string::npos, "release no-op CHECK");
-#if defined(NDEBUG) && !defined(AURA_CONTRACTS_ENFORCE) && !defined(AURA_CONTRACTS_OBSERVE)
+#if defined(NDEBUG) && !defined(AURA_CONTRACTS_ENFORCE) && !defined(AURA_CONTRACTS_OBSERVE) &&     \
+    !defined(AURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE) && !defined(AURA_HOT_SOFT_OBSERVE)
         // In this build, AURA_HOT_CHECK should compile as no-op.
         AURA_HOT_CHECK(false); // must not abort in release
         CHECK(true, "release AURA_HOT_CHECK(false) no abort");
@@ -163,6 +164,8 @@ int run_test_hot_contract_unify() {
         CHECK(r && is_int(*r) && as_int(*r) == 42, "42");
         CHECK(href(cs, "schema-2142") == 2142, "schema-2142");
         CHECK(href(cs, "issue-2142") == 2142, "issue-2142");
+        CHECK(href(cs, "schema-3043") == 3043, "schema-3043");
+        CHECK(href(cs, "hot-contract-false-total") >= 0, "3043 false-total");
         CHECK(href(cs, "aura-hot-contract-wired") == 1, "wired");
         CHECK(href(cs, "hotpath-contracts-2142-active") == 1, "active");
         CHECK(href(cs, "hotpath-invariant-hits") >= 0, "hits queryable");
