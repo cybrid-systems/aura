@@ -1080,19 +1080,21 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // Unified contract (#2620 Phase A): incomplete dual provenance never
         // becomes executable IR under any non-Off strategy (default).
         const bool prov_complete = fill_coercion_provenance_chain(flat, e);
-        // Issue #2991 / #3046: under a live mutate session, CoercionNode/CastOp
-        // must carry the current session mid (post-condition). Force-stamp
-        // TLS session over empty, weak, or leftover prior-epoch mids.
+        // Issue #2991 / #3046: under a live TLS session, fill empty or
+        // weak leftover mids. Do not clobber a non-weak mid already
+        // stamped at add (explicit / engine) — TLS can be stale from a
+        // prior mutate in-process (test_ir CS34).
         if (s_coercion_active_mutation_id != 0) {
-            if (e.source_mutation_id != s_coercion_active_mutation_id) {
-                if (e.source_mutation_id != 0)
-                    g_coercion_blame_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
-                else
+            if (e.source_mutation_id == 0 || is_weak_coercion_mutation_id(e)) {
+                if (e.source_mutation_id == 0)
                     g_coercion_blame_missing_total.fetch_add(1, std::memory_order_relaxed);
+                else
+                    g_coercion_blame_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
                 e.source_mutation_id = s_coercion_active_mutation_id;
                 g_coercion_blame_session_force_total.fetch_add(1, std::memory_order_relaxed);
             }
-            g_coercion_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
+            if (e.source_mutation_id != 0)
+                g_coercion_blame_chain_complete_total.fetch_add(1, std::memory_order_relaxed);
         }
         if (!prov_complete) {
             using aura::compiler::typed_audit::AuditStrategy;
