@@ -99,6 +99,9 @@ extern "C" std::uint64_t aura_macro_clone_concurrent_peak_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_in_flight_v_read() noexcept;
 extern "C" std::uint64_t aura_hygiene_tracer_depth_max_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_concurrent_fiber_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_clone_same_flat_reject_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_clone_steal_abort_total_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_clone_last_reject_reason_v_read() noexcept;
 extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
 namespace aura::compiler::primitives_detail {
@@ -1202,6 +1205,18 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("depth-obs-wired", 1);
                 insert_kv("concurrent-obs-wired", 1);
                 insert_kv("depth-concurrent-obs-issue", 2021);
+                // Issue #3028: same-FlatAST reject + steal abort (additive).
+                insert_kv(
+                    "same-flat-reject-total",
+                    static_cast<std::int64_t>(aura_macro_clone_same_flat_reject_total_v_read()));
+                insert_kv("steal-abort-total",
+                          static_cast<std::int64_t>(aura_macro_clone_steal_abort_total_v_read()));
+                insert_kv("last-reject-reason",
+                          static_cast<std::int64_t>(aura_macro_clone_last_reject_reason_v_read()));
+                insert_kv("same-flat-reject-wired", 1);
+                insert_kv("explicit-depth-authority-wired", 1);
+                insert_kv("schema-3028", 3028);
+                insert_kv("issue-3028", 3028);
             }
             insert_kv("health-score", health);
             insert_kv("hygiene-health-score", health); // AC alias

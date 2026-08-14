@@ -305,12 +305,8 @@ int effective_hygiene_depth_limit() noexcept {
     int cap_depth = 0;
     if (chk.allowed && chk.effective.max_depth > 0)
         cap_depth = static_cast<int>(chk.effective.max_depth);
-    // Also honour TLS expand-session bound when nested under expand.
-    int tls = s_effective_max_depth;
-    if (tls > 0 && tls < MAX_HYGIENE_DEPTH) {
-        if (cap_depth <= 0 || tls < cap_depth)
-            cap_depth = tls;
-    }
+    // Issue #3028: TLS s_effective_max_depth is diagnostics only — not
+    // authority for rename/ceiling. Live limit is hard + runtime + capability.
     return combine_depth_limit(cap_depth);
 }
 
@@ -374,6 +370,50 @@ std::atomic<std::uint64_t> g_unquote_splicing_hygiene_mismatch_total{0};
 // across threads, and the high-water mark (peak concurrent).
 std::atomic<std::uint64_t> g_macro_clone_in_flight{0};
 std::atomic<std::uint64_t> g_macro_clone_concurrent_peak{0};
+// Issue #3028: same-FlatAST concurrent top-level clone reject + steal abort.
+// 0=none 1=capability 2=same-flat 3=steal-abort.
+std::atomic<std::uint64_t> g_macro_clone_same_flat_reject_total{0};
+std::atomic<std::uint64_t> g_macro_clone_steal_abort_total{0};
+std::atomic<std::uint8_t> g_macro_clone_last_reject_reason{0};
+
+namespace {
+    // Lock-free hashed slot: same FlatAST address → reject second top-level
+    // writer. Different flats that collide are allowed (cross-flat OK).
+    constexpr int kSameFlatSlots = 16;
+    std::atomic<std::uintptr_t> g_same_flat_slots[kSameFlatSlots]{};
+
+    [[nodiscard]] int same_flat_slot(const aura::ast::FlatAST* t) noexcept {
+        return static_cast<int>((reinterpret_cast<std::uintptr_t>(t) >> 4) &
+                                static_cast<std::uintptr_t>(kSameFlatSlots - 1));
+    }
+
+    [[nodiscard]] bool claim_same_flat_clone(const aura::ast::FlatAST* t) noexcept {
+        if (!t)
+            return true;
+        const auto addr = reinterpret_cast<std::uintptr_t>(t);
+        auto& slot = g_same_flat_slots[same_flat_slot(t)];
+        std::uintptr_t expected = 0;
+        if (slot.compare_exchange_strong(expected, addr, std::memory_order_acq_rel,
+                                         std::memory_order_acquire))
+            return true;
+        return expected != addr; // occupied by a different flat → allow
+    }
+
+    void release_same_flat_clone(const aura::ast::FlatAST* t) noexcept {
+        if (!t)
+            return;
+        const auto addr = reinterpret_cast<std::uintptr_t>(t);
+        auto& slot = g_same_flat_slots[same_flat_slot(t)];
+        auto cur = addr;
+        (void)slot.compare_exchange_strong(cur, 0, std::memory_order_acq_rel,
+                                           std::memory_order_relaxed);
+    }
+} // namespace
+
+extern "C" __attribute__((weak)) std::uint64_t
+aura_fiber_static_cross_fiber_mutation_safe_steal_total(void) {
+    return 0;
+}
 
 // Issue #1247–#1248 Phase 1: macro-origin provenance + hygiene tracer.
 std::atomic<std::uint64_t> g_macro_origin_provenance_errors{0};
@@ -763,6 +803,21 @@ extern "C" void
 aura_test_reset_clone_macro_body_concurrent_top_level_total_for_test(void) noexcept {
     g_clone_macro_body_concurrent_top_level_total.store(0, std::memory_order_relaxed);
 }
+// Issue #3028: same-FlatAST reject + steal abort + last reason.
+extern "C" std::uint64_t aura_macro_clone_same_flat_reject_total_v_read(void) noexcept {
+    return g_macro_clone_same_flat_reject_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_macro_clone_steal_abort_total_v_read(void) noexcept {
+    return g_macro_clone_steal_abort_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_macro_clone_last_reject_reason_v_read(void) noexcept {
+    return g_macro_clone_last_reject_reason.load(std::memory_order_relaxed);
+}
+extern "C" void aura_test_reset_macro_clone_same_flat_reject_for_test(void) noexcept {
+    g_macro_clone_same_flat_reject_total.store(0, std::memory_order_relaxed);
+    g_macro_clone_steal_abort_total.store(0, std::memory_order_relaxed);
+    g_macro_clone_last_reject_reason.store(0, std::memory_order_relaxed);
+}
 // Issue #2807: unquote-splicing boundary recognition metric.
 extern "C" std::uint64_t aura_unquote_splicing_hygiene_mismatch_total_v_read(void) noexcept {
     return g_unquote_splicing_hygiene_mismatch_total.load(std::memory_order_relaxed);
@@ -1069,7 +1124,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                              std::equal_to<>>* subst,
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
-    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth);
+    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit);
 
 aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
@@ -1079,9 +1134,11 @@ aura::ast::NodeId clone_macro_body(
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
     aura::ast::SyntaxMarker cloned_marker) {
-    // Issue #2806: public API is always top-level depth=0.
+    // Issue #2806 / #3028: public API is always top-level depth=0.
+    // session_depth_limit=0 → compute at entry from capability+runtime (not TLS).
     return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
-                                     name_map, cloned_marker, /*hygiene_depth=*/0);
+                                     name_map, cloned_marker, /*hygiene_depth=*/0,
+                                     /*session_depth_limit=*/0);
 }
 
 static aura::ast::NodeId clone_macro_body_at_depth(
@@ -1091,7 +1148,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                              std::equal_to<>>* subst,
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
-    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth) {
+    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit) {
     using namespace aura::ast;
     // Issue #2806: residual TLS mirror for diagnostics only (not authority).
     s_hygiene_depth = hygiene_depth;
@@ -1114,7 +1171,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // re-entries on the same thread). Peak is visible via query/metrics.
     struct ConcurrentCloneGuard {
         bool armed = false;
+        bool rejected_same_flat = false;
+        bool claimed_flat = false;
         std::uint32_t captured_fiber_id = 0;
+        const aura::ast::FlatAST* target_ptr = nullptr;
         // Issue #2241: capture name_map* by value — dtor cannot touch
         // enclosing function parameters (C++ local-class rule).
         const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
@@ -1122,11 +1182,22 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         ConcurrentCloneGuard(
             const std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                                      std::equal_to<>>* nm,
-            int depth) noexcept
-            : name_map_ptr(nm) {
-            // Issue #2806: arm only for explicit top-level depth.
+            int depth, const aura::ast::FlatAST* tgt) noexcept
+            : target_ptr(tgt)
+            , name_map_ptr(nm) {
+            // Issue #2806: arm occupancy only for explicit top-level depth.
             if (depth != 0)
                 return;
+            // Issue #3028: two top-level writers into the same FlatAST
+            // reject (stable reason). Nested recursion (depth>0) inherits
+            // the top-level claim. Cross-flat concurrent clones still allowed.
+            if (tgt && !claim_same_flat_clone(tgt)) {
+                rejected_same_flat = true;
+                g_macro_clone_same_flat_reject_total.fetch_add(1, std::memory_order_relaxed);
+                g_macro_clone_last_reject_reason.store(2, std::memory_order_relaxed);
+                return;
+            }
+            claimed_flat = tgt != nullptr;
             armed = true;
             const auto prev = g_macro_clone_in_flight.fetch_add(1, std::memory_order_relaxed);
             // Issue #2806: another top-level clone already in flight.
@@ -1148,6 +1219,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 bump_fiber_hygiene_on_enter(captured_fiber_id, depth);
         }
         ~ConcurrentCloneGuard() noexcept {
+            if (claimed_flat && target_ptr)
+                release_same_flat_clone(target_ptr);
             if (armed) {
                 g_macro_clone_in_flight.fetch_sub(1, std::memory_order_relaxed);
                 // Issue #2097: zero per-fiber depth on exit (violations
@@ -1162,12 +1235,16 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
         ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
-    } concurrent_guard{name_map, hygiene_depth};
+    } concurrent_guard{name_map, hygiene_depth, &target};
+    if (concurrent_guard.rejected_same_flat)
+        return NULL_NODE;
     // Issue #2023: top-level clone entry also consults MacroSelfEvo so
     // direct clone_macro_body (without macro_expand_all) cannot bypass
     // the sandbox. Nested recursion skips the check.
     struct TopLevelMacroCapGuard {
         bool armed = false;
+        bool denied_ = false;
+        int session_depth_limit = MAX_HYGIENE_DEPTH;
         int prev_depth = MAX_HYGIENE_DEPTH;
         bool prev_rest = true;
         explicit TopLevelMacroCapGuard(int depth) noexcept {
@@ -1180,8 +1257,9 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
             if (!chk.allowed) {
                 g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
-                // Signal denial to outer scope via depth sentinel.
-                s_effective_max_depth = -1;
+                // Issue #3028: member flag — not TLS sentinel -1 (fiber leak).
+                denied_ = true;
+                g_macro_clone_last_reject_reason.store(1, std::memory_order_relaxed);
                 return;
             }
             // Issue #2241: per-fiber hygiene violation budget gate
@@ -1204,22 +1282,22 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                                  "(no clone work performed)\n",
                                  cur_fid);
                 }
-                s_effective_max_depth = -1;
+                denied_ = true;
+                g_macro_clone_last_reject_reason.store(1, std::memory_order_relaxed);
                 return;
             }
             armed = true;
             prev_depth = s_effective_max_depth;
             prev_rest = s_allow_rest_hygiene;
-            // Issue #2101: capability may only tighten further under the
-            // process-wide runtime depth cap (never raise past hard/runtime).
+            // Issue #2101 / #3028: capability may only tighten further under
+            // the process-wide runtime depth cap. Session limit is a member
+            // (explicit authority); TLS is a diagnostic mirror only.
             {
                 int cap_d = 0;
                 if (chk.effective.max_depth > 0)
                     cap_d = static_cast<int>(chk.effective.max_depth);
-                const int d = combine_depth_limit(cap_d);
-                // Only tighten if expand_all has not already set a tighter bound.
-                if (s_effective_max_depth == MAX_HYGIENE_DEPTH || d < s_effective_max_depth)
-                    s_effective_max_depth = d;
+                session_depth_limit = combine_depth_limit(cap_d);
+                s_effective_max_depth = session_depth_limit;
             }
             s_allow_rest_hygiene = chk.effective.allow_rest_hygiene;
             // Issue #2243: thread 3 new MacroSelfEvo knobs through for the
@@ -1244,7 +1322,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
         TopLevelMacroCapGuard(const TopLevelMacroCapGuard&) = delete;
         TopLevelMacroCapGuard& operator=(const TopLevelMacroCapGuard&) = delete;
-        [[nodiscard]] bool denied() const noexcept { return s_effective_max_depth < 0; }
+        [[nodiscard]] bool denied() const noexcept { return denied_; }
     } top_cap_guard{hygiene_depth};
     if (top_cap_guard.denied()) {
         if (detail::macro_self_evo_verbose()) {
@@ -1252,7 +1330,6 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                          "[#2023 MacroSelfEvo] clone_macro_body denied: capability not granted "
                          "(no clone work performed)\n");
         }
-        s_effective_max_depth = MAX_HYGIENE_DEPTH; // restore after deny sentinel
         return NULL_NODE;
     }
     // Issue #365 / #2806: depth guard uses explicit hygiene_depth
@@ -1263,11 +1340,14 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     if (hygiene_depth == 0) {
         s_warned_this_call = false;
     }
-    // Issue #2023 / #2101: honour min(hard, runtime cap, TLS/capability).
-    const int depth_limit =
-        combine_depth_limit((s_effective_max_depth > 0 && s_effective_max_depth < MAX_HYGIENE_DEPTH)
-                                ? s_effective_max_depth
-                                : 0);
+    // Issue #2023 / #2101 / #3028: honour min(hard, runtime, capability).
+    // Explicit session_depth_limit (from parent / cap guard) is sole
+    // authority — TLS is not read for this decision.
+    int depth_limit = session_depth_limit;
+    if (hygiene_depth == 0)
+        depth_limit = top_cap_guard.session_depth_limit;
+    else if (depth_limit <= 0)
+        depth_limit = combine_depth_limit(0);
     if (hygiene_depth >= depth_limit) {
         if (!s_warned_this_call) {
             s_warned_this_call = true;
@@ -1331,6 +1411,54 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
         return NULL_NODE;
     }
+
+    // Issue #3028: top-level name_map checkpoint — fail-closed rollback so
+    // a mid-clone steal / abort never publishes a half-written rename table.
+    using NameMapT = std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                        std::equal_to<>>;
+    struct NameMapCheckpoint {
+        NameMapT* map = nullptr;
+        std::vector<std::string> keys0;
+        bool committed = false;
+        explicit NameMapCheckpoint(NameMapT* m)
+            : map(m) {
+            if (!map)
+                return;
+            keys0.reserve(map->size());
+            for (const auto& kv : *map)
+                keys0.push_back(kv.first);
+        }
+        void commit() noexcept { committed = true; }
+        void rollback() noexcept {
+            if (!map)
+                return;
+            if (keys0.empty()) {
+                map->clear();
+                return;
+            }
+            for (auto it = map->begin(); it != map->end();) {
+                bool keep = false;
+                for (const auto& k : keys0) {
+                    if (k == it->first) {
+                        keep = true;
+                        break;
+                    }
+                }
+                if (!keep)
+                    it = map->erase(it);
+                else
+                    ++it;
+            }
+        }
+        ~NameMapCheckpoint() {
+            if (!committed)
+                rollback();
+        }
+    };
+    NameMapCheckpoint nm_ckpt{hygiene_depth == 0 ? name_map : nullptr};
+    const auto steal0 =
+        hygiene_depth == 0 ? aura_fiber_static_cross_fiber_mutation_safe_steal_total() : 0;
+
     auto v = source.get(body_id);
 
     // Variable substitution: if this variable is a macro param, return the arg clone.
@@ -1610,7 +1738,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // (explicit parameter; siblings share the same depth).
         child_ids.push_back(clone_macro_body_at_depth(target, target_pool, source, source_pool, cid,
                                                       subst, name_map, cloned_marker,
-                                                      hygiene_depth + 1));
+                                                      hygiene_depth + 1, depth_limit));
     }
 
     // Clone params (for Lambda nodes) — with hygienic renaming.
@@ -1851,6 +1979,16 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // hot in-flat path used by macro_expand_all).
     if (cross_flat_top && new_id != NULL_NODE) {
         ensure_cross_flat_expand_consistency(target, target_pool, source, source_pool, new_id);
+    }
+    // Issue #3028: steal mid-clone → fail-closed (name_map rolled back).
+    if (hygiene_depth == 0 && new_id != NULL_NODE) {
+        const auto steal1 = aura_fiber_static_cross_fiber_mutation_safe_steal_total();
+        if (steal1 > steal0) {
+            g_macro_clone_steal_abort_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_clone_last_reject_reason.store(3, std::memory_order_relaxed);
+            return NULL_NODE; // nm_ckpt rolls back
+        }
+        nm_ckpt.commit();
     }
     return new_id;
 }
@@ -2152,7 +2290,9 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             g_capability_effect_metrics().macro_self_evo_pass_clamp_total.fetch_add(
                 1, std::memory_order_relaxed);
         }
-        // RAII-ish restore of TLS policy for nested clone_macro_body.
+        // Issue #3028: TLS policy mirror is diagnostics / observability only.
+        // clone_macro_body_at_depth uses explicit hygiene_depth + session
+        // depth_limit (not s_effective_max_depth) for rename/ceiling.
         struct DepthPolicyGuard {
             int prev_depth;
             bool prev_rest;
