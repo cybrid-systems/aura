@@ -684,6 +684,18 @@ def cmd_lint():
             "Issue #2932 hold-budget forced fail-closed linter failed — run python3 scripts/coverage/checks/check_hold_budget_forced_fail_closed_2932.py"
         )
         return r
+    # Issue #2999: outermost dtor consume of hold-budget cancel (#2932 residual).
+    # Extends test_mailbox_hold_starvation_hard + chaos residual_zero (#81967).
+    hbdc_script = COVERAGE_CHECKS / "check_hold_budget_dtor_consume_2999.py"
+    if not hbdc_script.exists():
+        fail(f"missing {hbdc_script}")
+        return 1
+    r = run([sys.executable, str(hbdc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2999 hold-budget dtor consume linter failed — run python3 scripts/coverage/checks/check_hold_budget_dtor_consume_2999.py"
+        )
+        return r
     # Issue #2933: first-class QueryResult binding (QueryEpoch + matches +
     # optional pin; :as-query-result opt-in; result-fresh?/matches).
     qrb_script = COVERAGE_CHECKS / "check_query_result_binding_2933.py"
@@ -11104,6 +11116,21 @@ def cmd_chaos_steal_gc_nightly_2931_coverage():
     return 0
 
 
+def cmd_hold_budget_dtor_consume_2999_coverage():
+    """Issue #2999: outermost Guard dtor consume of hold-budget cancel."""
+    print(f"{B}=== hold-budget dtor consume coverage (#2999) ==={N}")
+    script = COVERAGE_CHECKS / "check_hold_budget_dtor_consume_2999.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hold-budget dtor consume (#2999) coverage contract rows failed")
+        return 1
+    ok("hold-budget dtor consume (#2999) coverage clean")
+    return 0
+
+
 def cmd_hold_budget_forced_fail_closed_2932_coverage():
     """Issue #2932: hold-budget overtime forced outermost fail-closed.
 
@@ -14376,6 +14403,7 @@ def main():
         "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,
         "chaos-steal-gc-nightly-2931-coverage": cmd_chaos_steal_gc_nightly_2931_coverage,
         "hold-budget-forced-fail-closed-2932": cmd_hold_budget_forced_fail_closed_2932_coverage,
+        "hold-budget-dtor-consume-2999": cmd_hold_budget_dtor_consume_2999_coverage,
         "query-result-binding-2933": cmd_query_result_binding_2933_coverage,
         "restamp-budget-2934": cmd_restamp_budget_2934_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,

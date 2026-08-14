@@ -361,16 +361,25 @@ inline void clear_mutation_hold_budget_holder_degrade_cross_fiber_cancel_for_tes
 // failed so Guard dtor releases workspace_mtx_ + MutationHold + residual
 // closed-loop (#2846) even under a non-yielding body.
 //
+// Issue #2999: dtor consume is the *exit* half. Once ~MutationBoundaryGuard
+// runs with cancel armed, it cannot commit success — even if
+// check_gc_safepoint never ran. Remaining in-body window (body that never
+// exits) still relies on #2932 force-safepoint to *enter* dtor; this is
+// not a preemptive unlock while the body is still running.
+//
 // g_mutation_hold_budget_forced_fail_closed_total: bumped when the
-// safepoint-edge path (aura_evaluator_try_hold_budget_fail_closed_at_
-// safepoint) actually consumes + marks failed. Distinct from Soft observe
-// (#2701 soft_observe) and from voluntary Phase-5 consume (#2726
-// cancel_consumed — still bumped for Agent health fired/consumed parity).
-// Soft / sandbox=off: never bumps (reject_enabled gate). Nested guards
-// never independently force-fail (outermost success flag only).
+// safepoint-edge path *or* the outermost dtor consume actually fail-closes.
+// Distinct from Soft observe (#2701 soft_observe) and from voluntary
+// #2726 cancel_consumed (still bumped for Agent health fired/consumed
+// parity). Soft / sandbox=off: never bumps (reject_enabled gate). Nested
+// guards never independently force-fail (outermost success flag only).
 inline std::atomic<std::uint64_t> g_mutation_hold_budget_forced_fail_closed_total{0};
 inline std::atomic<std::uint32_t> g_mutation_hold_budget_forced_fail_closed_wired{1};
 inline constexpr int kMutationHoldBudgetForcedFailClosedIssue = 2932;
+// Issue #2999: dtor-side consume of a pending cancel (additive split of
+// forced-fail-closed-total). Safepoint consume does not bump this.
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_forced_fail_closed_dtor_consume_total{0};
+inline constexpr int kMutationHoldBudgetForcedFailClosedDtorIssue = 2999;
 
 [[nodiscard]] inline std::uint64_t mutation_hold_budget_forced_fail_closed_total_v_read() noexcept {
     return g_mutation_hold_budget_forced_fail_closed_total.load(std::memory_order_relaxed);
@@ -379,8 +388,16 @@ inline constexpr int kMutationHoldBudgetForcedFailClosedIssue = 2932;
     return g_mutation_hold_budget_forced_fail_closed_wired.load(std::memory_order_relaxed);
 }
 
+[[nodiscard]] inline std::uint64_t
+mutation_hold_budget_forced_fail_closed_dtor_consume_total_v_read() noexcept {
+    return g_mutation_hold_budget_forced_fail_closed_dtor_consume_total.load(
+        std::memory_order_relaxed);
+}
+
 inline void clear_mutation_hold_budget_forced_fail_closed_for_test() noexcept {
     g_mutation_hold_budget_forced_fail_closed_total.store(0, std::memory_order_relaxed);
+    g_mutation_hold_budget_forced_fail_closed_dtor_consume_total.store(0,
+                                                                       std::memory_order_relaxed);
 }
 
 // Issue #2724: region/subtree-scoped MutationBoundary concurrent admit.

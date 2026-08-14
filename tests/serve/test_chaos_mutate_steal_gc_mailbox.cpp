@@ -1729,6 +1729,23 @@ static void ac2902_5_release_blocker_docs_and_linter() {
     CHECK(read_file("tests/serve/test_issue_2902.cpp").empty(), "AC5: no new test file per #81967");
 }
 
+// Issue #2999: residual_zero / chaos cite — dtor consume is the exit half
+// of #2932. In-body window still needs force-safepoint to enter dtor.
+static void ac2999_residual_dtor_consume_cite() {
+    std::println("\n--- #2999: dtor consume cite (residual_zero lineage) ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(emb.find("Issue #2999") != std::string::npos, "#2999: emb cites dtor consume");
+    CHECK(emb.find("forced_fail_closed_dtor_consume_total") != std::string::npos,
+          "#2999: dtor-consume counter");
+    CHECK(mhb.find("kMutationHoldBudgetForcedFailClosedDtorIssue = 2999") != std::string::npos,
+          "#2999: issue stamp");
+    CHECK(emb.find("in-body") != std::string::npos ||
+              mhb.find("in-body window") != std::string::npos,
+          "#2999: remaining in-body window documented");
+    CHECK(read_file("tests/serve/test_issue_2999.cpp").empty(), "#2999: no invent test file");
+}
+
 } // namespace
 
 int run_test_chaos_mutate_steal_gc_mailbox() {
@@ -1743,6 +1760,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2902_3_sustained_mode();
         ac2902_4_structural_source_cite();
         ac2902_5_release_blocker_docs_and_linter();
+        ac2999_residual_dtor_consume_cite();
         std::println("\n=== Results (release blocker only): {} passed, {} failed ===", g_passed,
                      g_failed);
         return g_failed ? 1 : 0;
@@ -1752,6 +1770,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     // (fast, deterministic; FULL/SOAK unchanged for nightly).
     if (chaos_pr_gate_only()) {
         ac2554_pr_gate_short();
+        ac2999_residual_dtor_consume_cite();
         std::println("\n=== Results (PR gate only): {} passed, {} failed ===", g_passed, g_failed);
         return g_failed ? 1 : 0;
     }
@@ -1775,6 +1794,9 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     ac2755_3_counter_list_documented();
     ac2755_4_2722_preserved();
     ac2755_5_source_and_linter();
+    // Issue #2999: residual_zero lineage cites dtor consume (hold-starvation
+    // is the runtime suite; chaos stays source-cite).
+    ac2999_residual_dtor_consume_cite();
 
     // Issue #2856: production chaos gate (release blocker) — multi-fiber
     // mutate × densify × steal × mailbox composition under production

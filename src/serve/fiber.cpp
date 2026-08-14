@@ -637,6 +637,9 @@ void Fiber::check_gc_safepoint() {
     // reaches Phase-5 on its own. Soft / sandbox=off: metric-only
     // (reject_enabled gate inside the C ABI). Nested guards never
     // independently force-fail (outermost success flag only).
+    // Issue #2999: dtor consume is the *exit* half if this edge never
+    // ran. In-body still needs this force-safepoint poll to *enter*
+    // dtor — do not claim that remaining window is gone.
     if (auto* cur = g_current_fiber) {
         if (cur->peek_hold_budget_cancel()) {
             (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
