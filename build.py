@@ -2307,6 +2307,20 @@ def cmd_lint():
             "Issue #3014 body_acquire_rejected linter failed — run python3 scripts/coverage/checks/check_body_acquire_rejected_3014.py"
         )
         return r
+    # Issue #3015: production AgentScope auto-inherits bp_scope_id
+    # (multi-tenant BP residual of #2633). Soft / explicit "-" stay
+    # process-bucket. Extends test_per_scope_bp_admit.cpp (#81967);
+    # no docs/design/ (#1655).
+    sbi_script = COVERAGE_CHECKS / "check_scope_bp_inherit_3015.py"
+    if not sbi_script.exists():
+        fail(f"missing {sbi_script}")
+        return 1
+    r = run([sys.executable, str(sbi_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3015 scope bp inherit linter failed — run python3 scripts/coverage/checks/check_scope_bp_inherit_3015.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —

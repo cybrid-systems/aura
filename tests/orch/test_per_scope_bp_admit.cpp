@@ -39,6 +39,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+#include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "serve/scheduler.h"
 
@@ -334,10 +336,140 @@ int run_test_per_scope_bp_admit() {
         }
     }
 
+    // ── Issue #3015: production AgentScope inherit (no cross-poison) ──
+    {
+        std::println("\n--- #3015 AC: production scope inherit / Soft process bucket ---");
+        CHECK(aura::orch::kBpScopeInheritIssue == 3015, "#3015 AC1: issue stamp");
+        CHECK(aura::orch::kBpScopeProcessBucket == "-", "#3015 AC1: process-bucket sentinel");
+
+        auto set_prod = [](bool on) {
+            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                .store(on ? 1u : 0u, std::memory_order_relaxed);
+        };
+
+        auto reset_3015 = [&]() {
+            reset_all();
+            g_orch_module_stats.spawn_bp_admit_reject_scope_total.store(0,
+                                                                        std::memory_order_relaxed);
+            g_orch_module_stats.spawn_bp_scope_inherited_total.store(0, std::memory_order_relaxed);
+            g_orch_module_stats.spawn_bp_process_bucket_used_total.store(0,
+                                                                         std::memory_order_relaxed);
+            (void)aura::orch::reset_scope_bp_map_for_test();
+        };
+
+        {
+            const auto scope_h = read_file("src/orch/agent_scope.h");
+            const auto spawn_h = read_file("src/orch/agent_spawn.h");
+            const auto readme = read_file("src/orch/README.md");
+            CHECK(scope_h.find("production_scope_bp_inherit") != std::string::npos,
+                  "#3015 AC1: inherit helper");
+            CHECK(scope_h.find("Issue #3015") != std::string::npos, "#3015 AC1: scope cites #3015");
+            CHECK(spawn_h.find("kBpScopeProcessBucket") != std::string::npos,
+                  "#3015 AC1: process-bucket sentinel");
+            CHECK(readme.find("Issue #3015") != std::string::npos,
+                  "#3015 AC1: README documents inherit");
+            CHECK(readme.find("as:<seq>") != std::string::npos,
+                  "#3015 AC1: README session-local key");
+            CHECK(read_file("docs/design/3015-bp-scope-inherit.md").empty(),
+                  "#3015: no docs/design/");
+        }
+
+        {
+            reset_3015();
+            set_prod(false);
+            unsetenv("AURA_SANDBOX");
+            CHECK(!aura::orch::production_scope_bp_inherit(), "#3015 AC2: Soft inherit OFF");
+            aura::orch::AgentScope sa(sched);
+            aura::orch::AgentScope sb(sched);
+            CHECK(sa.bp_scope_id() != sb.bp_scope_id(), "#3015 AC2: scopes have distinct keys");
+            const auto inh0 =
+                g_orch_module_stats.spawn_bp_scope_inherited_total.load(std::memory_order_relaxed);
+            auto spec = make_spec("soft-a");
+            auto& ha = sa.spawn(std::move(spec));
+            CHECK(ha.ok, "#3015 AC2: Soft scope spawn admits (no storm)");
+            CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(
+                      std::memory_order_relaxed) == inh0,
+                  "#3015 AC2: Soft does not inherit");
+        }
+
+        {
+            reset_3015();
+            set_prod(true);
+            unsetenv("AURA_SANDBOX");
+            CHECK(aura::orch::production_scope_bp_inherit(), "#3015 AC3: production inherit ON");
+            aura::orch::AgentScope sa(sched);
+            aura::orch::AgentScope sb(sched);
+            const auto inh0 =
+                g_orch_module_stats.spawn_bp_scope_inherited_total.load(std::memory_order_relaxed);
+            const auto proc_rej0 =
+                g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed);
+            const auto scope_rej0 = g_orch_module_stats.spawn_bp_admit_reject_scope_total.load(
+                std::memory_order_relaxed);
+
+            auto spec_a0 = make_spec("prod-a0");
+            auto& ha0 = sa.spawn(std::move(spec_a0));
+            CHECK(ha0.ok, "#3015 AC3: first A spawn admits");
+            CHECK(g_orch_module_stats.spawn_bp_scope_inherited_total.load(
+                      std::memory_order_relaxed) == inh0 + 1,
+                  "#3015 AC3: inherit bumped");
+
+            for (int i = 0; i < 40; ++i)
+                note_mailbox_bp_recent_event(sa.bp_scope_id());
+            bump_bp_recent(40);
+
+            auto spec_b = make_spec("prod-b");
+            auto& hb = sb.spawn(std::move(spec_b));
+            CHECK(hb.ok, "#3015 AC3: B admits while A + process bucket are hot");
+            CHECK(g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed) ==
+                      proc_rej0,
+                  "#3015 AC3: process spawn_bp_admit_reject unchanged for B");
+
+            auto spec_a1 = make_spec("prod-a1");
+            auto& ha1 = sa.spawn(std::move(spec_a1));
+            CHECK(!ha1.ok, "#3015 AC3: A rejects on its own storm");
+            CHECK(ha1.quota_dimension == "mailbox-bp", "#3015 AC3: A reject is mailbox-bp");
+            CHECK(g_orch_module_stats.spawn_bp_admit_reject_scope_total.load(
+                      std::memory_order_relaxed) == scope_rej0 + 1,
+                  "#3015 AC3: reject counted as scope, not process");
+            CHECK(g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed) ==
+                      proc_rej0,
+                  "#3015 AC3: process reject counter still unchanged");
+        }
+
+        {
+            reset_3015();
+            set_prod(true);
+            unsetenv("AURA_SANDBOX");
+            bump_bp_recent(40);
+            aura::orch::AgentScope sc(sched);
+            auto spec = make_spec("explicit-process");
+            spec.bp_scope_id = std::string{aura::orch::kBpScopeProcessBucket};
+            auto& h = sc.spawn(std::move(spec));
+            CHECK(!h.ok, "#3015 AC2: explicit '-' uses process bucket (hot → reject)");
+            CHECK(h.quota_dimension == "mailbox-bp", "#3015 AC2: '-' reject mailbox-bp");
+        }
+
+        {
+            reset_3015();
+            set_prod(true);
+            unsetenv("AURA_SANDBOX");
+            auto spec = make_spec("direct-prod");
+            auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+            CHECK(h.ok, "#3015 AC2: direct empty id admits (no storm)");
+            CHECK(g_orch_module_stats.spawn_bp_process_bucket_used_total.load(
+                      std::memory_order_relaxed) >= 1,
+                  "#3015 AC1: production process-bucket use is observable");
+        }
+
+        set_prod(false);
+        unsetenv("AURA_SANDBOX");
+        reset_3015();
+    }
+
     g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
     g_orch_module_stats.spawn_bp_admit_reject_total.store(0, std::memory_order_relaxed);
     g_orch_module_stats.spawn_bp_admit_reject_override_total.store(0, std::memory_order_relaxed);
-    std::println("\n=== #2591/#2948: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    std::println("\n=== #2591/#2948/#3015: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

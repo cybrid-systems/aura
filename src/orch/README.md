@@ -774,6 +774,25 @@ per-spawn threshold only).
 
 Regression: `tests/orch/test_per_scope_bp_admit`.
 
+### Scope-local inherit (Issue #3015)
+
+`bp_scope_id` is still opt-in on `spawn_agent_with_mailbox` / `orch:spawn-agent`.
+Empty stays the **process bucket** (Soft / single-agent MVP / explicit `"-"`).
+
+When spawning **through `AgentScope::spawn`** under production defaults
+(`production_defaults_active` and `AURA_SANDBOX!=off`), an empty
+`bp_scope_id` is filled with a session-local key (`as:<seq>`). Two
+scopes no longer share `mailbox_bp_recent_total`, so a storm in A
+cannot soft-reject B's `attach_mailbox` spawns. Soft / sandbox=off
+does not inherit (zero extra atomic / no map lookup). Explicit
+`bp_scope_id` is never overwritten. `"-"` (`kBpScopeProcessBucket`)
+is the documented process-bucket opt-in.
+
+Metrics: `spawn_bp_scope_inherited_total` (inherit applied) and
+`spawn_bp_process_bucket_used_total` (production admit still on the
+process gauge — operator fail-closed signal). No process-global
+AgentRegistry; the key lives on the scope object only.
+
 ## Observability facade (Issue #2589)
 
 Cancel-storm health for the **unified** hard-reclaim protocol
