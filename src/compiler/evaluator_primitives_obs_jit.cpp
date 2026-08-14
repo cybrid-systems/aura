@@ -10341,6 +10341,29 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                                   std::memory_order_relaxed)));
                     insert_kv("schema-2964", 2964);
                     insert_kv("issue-2964", 2964);
+                    // Issue #3006: dirty-root revalidate + Production no-elide.
+                    using aura::compiler::typed_audit::g_linear_fast_path_dirty_revalidate_total;
+                    using aura::compiler::typed_audit::g_linear_fast_path_dirty_revalidate_wired;
+                    using aura::compiler::typed_audit::
+                        g_linear_fast_path_elide_blocked_production_total;
+                    using aura::compiler::typed_audit::g_linear_fast_path_late_reeval_total;
+                    insert_kv(
+                        "linear-fast-path-dirty-revalidate-total",
+                        static_cast<std::int64_t>(g_linear_fast_path_dirty_revalidate_total.load(
+                            std::memory_order_relaxed)));
+                    insert_kv("linear-fast-path-late-reeval-total",
+                              static_cast<std::int64_t>(g_linear_fast_path_late_reeval_total.load(
+                                  std::memory_order_relaxed)));
+                    insert_kv("linear-fast-path-elide-blocked-production-total",
+                              static_cast<std::int64_t>(
+                                  g_linear_fast_path_elide_blocked_production_total.load(
+                                      std::memory_order_relaxed)));
+                    insert_kv(
+                        "linear-fast-path-dirty-revalidate-wired",
+                        static_cast<std::int64_t>(g_linear_fast_path_dirty_revalidate_wired.load(
+                            std::memory_order_relaxed)));
+                    insert_kv("schema-3006", 3006);
+                    insert_kv("issue-3006", 3006);
                 }
             }
             // Issue #2286: per-(eval, cow_gen) gate scoping.

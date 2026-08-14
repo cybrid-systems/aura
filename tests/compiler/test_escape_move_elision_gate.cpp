@@ -816,6 +816,147 @@ static void ac2964_6_source_cite() {
           "2964 AC6: no new test file per #81967");
 }
 
+// ── Issue #3006: Production !ok forces dirty-root revalidate ──
+// Residual of #2964: late re-eval after Phase 1; render_fast cannot skip;
+// Production never elides under a false predicate.
+
+static void ac3006_1_production_dirty_root() {
+    std::println("\n--- #3006 AC1: Production !ok → dirty-root ForceRevalidate ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_fast_path_force_revalidate_for_test();
+    reset_linear_fast_path_dirty_revalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    CHECK(!linear_fast_path_ok(), "3006 AC1: stale → !ok");
+    CHECK(linear_fast_path_boundary_exit_action() == LinearFastPathExitAction::ForceRevalidate,
+          "3006 AC1: production ForceRevalidate");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("enforce_linear_boundary_consistency") != std::string::npos,
+          "3006 AC1: dirty-root walk (not EnvFrame-only)");
+    CHECK(mb.find("g_linear_fast_path_dirty_revalidate_total") != std::string::npos,
+          "3006 AC1: dirty-revalidate counter");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3006_2_no_elide_under_false() {
+    std::println("\n--- #3006 AC2: Production never elides under false predicate ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    reset_linear_fast_path_dirty_revalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    // Stamp a proof so try_skip is past the zero-stamp quiet return, then
+    // flip depth so !ok — Production must not elide (blocked counter).
+    stamp_type_linear_commit_proof(30061);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    g_linear_ir_fastpath_boundary_depth_override = 2;
+    CHECK(!linear_fast_path_ok(), "3006 AC2: !ok");
+    CHECK(!linear_ir_fastpath_try_skip(), "3006 AC2: try_skip false when !ok");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() > 0,
+          "3006 AC2: Production elide-blocked counter");
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    // Fresh ok still allowed.
+    stamp_type_linear_commit_proof(30062);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    reset_linear_ir_fastpath_counters_for_test();
+    CHECK(linear_fast_path_ok(), "3006 AC2: fresh ok");
+    CHECK(linear_ir_fastpath_try_skip(), "3006 AC2: try_skip when ok");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3006_3_late_reeval_and_render_fast() {
+    std::println("\n--- #3006 AC3: late re-eval + render_fast cannot skip ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("linear_fast_path_maybe_force_dirty_revalidate") != std::string::npos,
+          "3006 AC3: helper");
+    CHECK(mb.find("late re-eval after Phase 1") != std::string::npos ||
+              mb.find("/*late=*/true") != std::string::npos,
+          "3006 AC3: late re-eval after Phase 1");
+    CHECK(mb.find("cannot") != std::string::npos && mb.find("render_fast") != std::string::npos,
+          "3006 AC3: render_fast cannot skip when !ok");
+    const auto low = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    CHECK(low.find("aura_linear_fast_path_depth_or_densify_block") != std::string::npos,
+          "3006 AC3: lowering hard-block depth/densify");
+}
+
+static void ac3006_4_soft_observe() {
+    std::println("\n--- #3006 AC4: Soft observe only ---");
+    using namespace aura::compiler::typed_audit;
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_fast_path_dirty_revalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    CHECK(!linear_fast_path_ok(), "3006 AC4: !ok");
+    CHECK(linear_fast_path_boundary_exit_action() == LinearFastPathExitAction::SoftObserve,
+          "3006 AC4: Soft observe");
+    CHECK(linear_fast_path_dirty_revalidate_total_v_read() == 0,
+          "3006 AC4: no dirty-revalidate bump on Soft");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3006_5_schema_lineage() {
+    std::println("\n--- #3006 AC5: schema-3006 + #2964/#2899 lineage ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3006") == 3006, "3006 AC5: schema-3006");
+    CHECK(href(cs, "issue-3006") == 3006, "3006 AC5: issue-3006");
+    CHECK(href(cs, "linear-fast-path-dirty-revalidate-wired") == 1, "3006 AC5: wired");
+    CHECK(href(cs, "linear-fast-path-dirty-revalidate-total") >= 0, "3006 AC5: dirty total");
+    CHECK(href(cs, "linear-fast-path-late-reeval-total") >= 0, "3006 AC5: late total");
+    CHECK(href(cs, "linear-fast-path-elide-blocked-production-total") >= 0,
+          "3006 AC5: elide-blocked");
+    CHECK(href(cs, "schema-2964") == 2964, "3006 AC5: schema-2964 preserved");
+    CHECK(href(cs, "schema-2899") == 2899, "3006 AC5: schema-2899 preserved");
+    CHECK(aura::compiler::typed_audit::kLinearFastPathDirtyRevalidateIssue == 3006,
+          "3006 AC5: issue constant");
+}
+
+static void ac3006_6_linter_no_design() {
+    std::println("\n--- #3006 AC6: linter + no invent / no design ---");
+    const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_linear_fast_path_dirty_revalidate_3006.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3006_1_production_dirty_root") != std::string::npos, "3006 AC6: AC1");
+    CHECK(t.find("ac3006_2_no_elide_under_false") != std::string::npos, "3006 AC6: AC2");
+    CHECK(t.find("ac3006_3_late_reeval_and_render_fast") != std::string::npos, "3006 AC6: AC3");
+    CHECK(t.find("ac3006_4_soft_observe") != std::string::npos, "3006 AC6: AC4");
+    CHECK(t.find("ac3006_5_schema_lineage") != std::string::npos, "3006 AC6: AC5");
+    CHECK(!lint.empty() && lint.find("#3006") != std::string::npos, "3006 AC6: linter");
+    CHECK(build.find("check_linear_fast_path_dirty_revalidate_3006") != std::string::npos,
+          "3006 AC6: build.py gate");
+    CHECK(build.find("cmd_linear_fast_path_dirty_revalidate_3006_coverage") != std::string::npos,
+          "3006 AC6: build.py cmd");
+    CHECK(read_file("tests/compiler/test_issue_3006.cpp").empty(),
+          "3006 AC6: no test_issue_3006.cpp");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -850,6 +991,13 @@ int run_test_escape_move_elision_gate() {
     ac2964_4_soft_and_quiet();
     ac2964_5_additive_schema();
     ac2964_6_source_cite();
+    std::println("\n=== Issue #3006: Production dirty-root revalidate on !ok ===");
+    ac3006_1_production_dirty_root();
+    ac3006_2_no_elide_under_false();
+    ac3006_3_late_reeval_and_render_fast();
+    ac3006_4_soft_observe();
+    ac3006_5_schema_lineage();
+    ac3006_6_linter_no_design();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

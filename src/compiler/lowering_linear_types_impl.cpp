@@ -110,7 +110,13 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
                 ++state.linear_move_elided;
                 return inner;
             }
-            if (escape_move_elision_gate_active()) {
+            // Issue #3006: depth!=0 / densify_pending remain hard blockers
+            // for Move elision even after IR emission. Escape-blocked names
+            // stay on the keyed path below (#2263 clean bindings may elide).
+            if (aura_linear_fast_path_depth_or_densify_block() != 0) {
+                // Fall through: emit MoveOp (no elision under mid-boundary /
+                // densify-pending).
+            } else if (escape_move_elision_gate_active()) {
                 g_linear_lowering_escape_summary_hit_total.fetch_add(1, std::memory_order_relaxed);
                 // Issue #2286: keyed lookup reads thread-local current key
                 // (set by Evaluator before lower_to_ir). Legacy

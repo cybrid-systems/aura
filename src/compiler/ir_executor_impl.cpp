@@ -163,12 +163,12 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
     // / use-after-move). Owned/Borrow gates are op-specific above.
     if (state == 0)
         return true;
-    // Issue #2899 / #2964: proven Move/Drop fast-path — skip redundant
-    // provenance re-sim when linear_fast_path_ok (proof fresh + linear_ok,
-    // boundary_depth==0, !escape, !densify_pending). Heap double-move checks
-    // still run at the op site. Zero cost when no stamp. Does not weaken
-    // #2108 cross-batch escape or #2563 cross-closure force. Inverse on
-    // MutationBoundary exit: !linear_fast_path_ok forces revalidate (#2964).
+    // Issue #2899 / #2964 / #3006: proven Move/Drop fast-path — skip
+    // redundant provenance re-sim when linear_fast_path_ok (proof fresh +
+    // linear_ok, boundary_depth==0, !escape, !densify_pending). Production
+    // never elides under a false predicate (#3006). Heap double-move
+    // checks still run at the op site. Inverse on MutationBoundary exit:
+    // !ok forces dirty-root revalidate (#2964 / #3006).
     if ((op == LinearOpKind::Move || op == LinearOpKind::Drop) &&
         aura::compiler::typed_audit::linear_ir_fastpath_try_skip()) {
         return true;

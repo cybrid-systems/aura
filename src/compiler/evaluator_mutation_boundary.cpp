@@ -2472,27 +2472,42 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     }
     ev_->exit_mutation_boundary(success);
     ev_->render_fast_exit_this_boundary_ = false;
-    // Issue #2964: unified linear fast-path gate on outermost success.
-    // Depth is 0 after pop (before exit fence). When !linear_fast_path_ok
-    // under production/Full → force dirty-root linear revalidate (no silent
-    // skip after IR elided under a now-stale proof). Soft → observe only.
-    // Quiet when proof fresh + all gates clear (AC4 zero extra cost).
-    if (outermost && success) {
+    // Issue #2964 / #3006: unified linear fast-path gate on outermost
+    // success. Depth is 0 after pop (before exit fence). When
+    // !linear_fast_path_ok under production/Full → force dirty-root
+    // linear revalidate (enforce_linear_boundary_consistency — no Quiet
+    // skip, no render_fast skip). Soft → observe only.
+    // #3006: re-eval again after Phase 1 so escape/densify/depth flips
+    // after the initial check still force the dirty-root walk.
+    bool linear_fast_path_force_revalidated = false;
+    auto linear_fast_path_maybe_force_dirty_revalidate = [&](bool late) {
+        if (!(outermost && success))
+            return;
+        using aura::compiler::typed_audit::g_linear_fast_path_dirty_revalidate_total;
         using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_observe_total;
         using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_total;
+        using aura::compiler::typed_audit::g_linear_fast_path_late_reeval_total;
         using aura::compiler::typed_audit::linear_fast_path_boundary_exit_action;
         using aura::compiler::typed_audit::LinearFastPathExitAction;
         const auto act = linear_fast_path_boundary_exit_action();
         if (act == LinearFastPathExitAction::ForceRevalidate) {
+            if (linear_fast_path_force_revalidated)
+                return;
             g_linear_fast_path_force_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+            g_linear_fast_path_dirty_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+            if (late)
+                g_linear_fast_path_late_reeval_total.fetch_add(1, std::memory_order_relaxed);
             aura::compiler::linear_occurrence_mutate::record_revalidate_hit();
-            (void)ev_->linear_post_mutate_enforce_all();
-        } else if (act == LinearFastPathExitAction::SoftObserve) {
+            (void)ev_->enforce_linear_boundary_consistency(Evaluator::kLinearGcRootAuditTypedMutate,
+                                                           /*mark_all_linear=*/false);
+            linear_fast_path_force_revalidated = true;
+        } else if (act == LinearFastPathExitAction::SoftObserve && !late) {
             g_linear_fast_path_force_revalidate_observe_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
         }
         // Quiet: no extra revalidate / counter (matches #2899 quiet path).
-    }
+    };
+    linear_fast_path_maybe_force_dirty_revalidate(/*late=*/false);
     // Issue #2120: keep per-fiber mutation stack depth visible during
     // exit pipeline so steal/GC do not observe "depth==0 mid-probes".
     // exit_mutation_boundary already popped the real checkpoint; push a
@@ -2518,9 +2533,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         boundary_gc_coord.emplace(gc_coord::Path::Boundary);
     if (outermost) {
         if (render_fast) {
-            // Fast: skip enforce_linear_boundary_consistency + dual-path scan.
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3006: Production/Full + !linear_fast_path_ok cannot
+            // skip the dirty-root walk (elision may have been taken under
+            // a momentarily true predicate). Soft render-fast still skips.
+            linear_fast_path_maybe_force_dirty_revalidate(/*late=*/true);
+            if (!linear_fast_path_force_revalidated) {
+                // Fast: skip enforce_linear_boundary_consistency + dual-path scan.
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
+            }
             if (boundary_gc_coord)
                 boundary_gc_coord->enter_cascade();
         } else if (!success) {
@@ -2592,6 +2613,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2131: PostAudit after pin/probe phase (audit ran in enforce).
         if (boundary_gc_coord)
             boundary_gc_coord->after_cascade();
+        // Issue #3006: late re-eval after Phase 1 probes (escape / densify
+        // / depth can flip after the post-pop check). Production !ok
+        // still forces dirty-root revalidate; Soft stays observe-only.
+        linear_fast_path_maybe_force_dirty_revalidate(/*late=*/true);
     }
     // ── Phase 2–3: panic checkpoint + GC defer (before reemit) ──
     // Issue #241 / #2120: commit/restore under lock so dual-epoch observers
