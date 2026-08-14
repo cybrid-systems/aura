@@ -2198,6 +2198,20 @@ def cmd_lint():
             "Issue #2942 NodeId side-effect mandate linter failed — run python3 scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py"
         )
         return r
+    # Issue #3040: residual compile:/verify:/syntax: NodeId writers must
+    # call require_effect_for_node_id / on_ref before Guard (no 2-arg
+    # default ref_tenant=0). Extends test_tenant_isolation_enforcement
+    # (#81967); no docs/design/ (#1655).
+    se3040_script = COVERAGE_CHECKS / "check_compile_node_id_entry_3040.py"
+    if not se3040_script.exists():
+        fail(f"missing {se3040_script}")
+        return 1
+    r = run([sys.executable, str(se3040_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3040 compile NodeId-only entry linter failed — run python3 scripts/coverage/checks/check_compile_node_id_entry_3040.py"
+        )
+        return r
     # Issue #2882: production default single-use for high-risk grants
     # (Mutate / MacroSelfEvo / TenantAdmin / Syscall) under Restricted/Strict.
     # grant_effect_capability force-promotes single_use=true; explicit

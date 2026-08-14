@@ -11782,7 +11782,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
             const auto snap = snapshot_tenant_isolation_stats();
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(64);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -11841,6 +11841,11 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             // Agent / CI / docs to verify the mandate + gate are active.
             insert_kv("export-ref-mandate", 1);
             insert_kv("resolve-stamped-gate", 1);
+            // Issue #3040: NodeId-only compile/mutate entry prevented.
+            insert_kv("nodeid-only-entry-prevented-total",
+                      static_cast<std::int64_t>(snap.nodeid_only_entry_prevented));
+            insert_kv("nodeid-only-entry-prevented-wired", 1);
+            insert_kv("schema-3040", 3040);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

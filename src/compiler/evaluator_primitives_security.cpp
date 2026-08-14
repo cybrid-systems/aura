@@ -799,6 +799,19 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("allow-cross-tenant-deny-total",
                           static_cast<std::int64_t>(iso.allow_cross_tenant_deny));
             }
+            // Issue #3040: residual compile:/verify:/syntax: NodeId writers
+            // gate via require_effect_for_node_id / on_ref before Guard.
+            {
+                using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
+                const auto iso = snapshot_tenant_isolation_stats();
+                insert_kv("schema-3040", 3040);
+                insert_kv("issue-3040", 3040);
+                insert_kv(
+                    "nodeid-only-entry-prevented-wired",
+                    static_cast<std::int64_t>(::aura::compiler::kNodeIdOnlyEntryPreventedWired));
+                insert_kv("nodeid-only-entry-prevented-total",
+                          static_cast<std::int64_t>(iso.nodeid_only_entry_prevented));
+            }
             // Issue #3011: IsolationDeny SecurityEvent carries live fiber
             // (effect_fiber_id_or). query:security-audit filters by fiber.
             {
@@ -989,6 +1002,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("strict-linked", snap.strict_linked);
             insert_kv("allow-cross-tenant-deny-total",
                       static_cast<std::int64_t>(snap.allow_cross_tenant_deny));
+            insert_kv("nodeid-only-entry-prevented-total",
+                      static_cast<std::int64_t>(snap.nodeid_only_entry_prevented));
+            insert_kv("nodeid-only-entry-prevented-wired", 1);
+            insert_kv("schema-3040", 3040);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -4787,7 +4804,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto& se_ring = g_security_event_ring();
 
             // Issue #3020: ~44 live keys; next_pow2(planned*2) ≥64.
-            constexpr std::size_t kSecurityPosturePlannedKeys = 48;
+            // Issue #3040: +4 keys (schema/issue/wired/total).
+            constexpr std::size_t kSecurityPosturePlannedKeys = 56;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
                 return make_void();
@@ -4876,6 +4894,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(::aura::compiler::kNodeIdMandateExemptOpsCount));
             insert_kv("schema-2942", 2942);
             insert_kv("issue-2942", 2942);
+            // Issue #3040: residual compile NodeId-only entry gate.
+            insert_kv("nodeid-only-entry-prevented-wired",
+                      static_cast<std::int64_t>(::aura::compiler::kNodeIdOnlyEntryPreventedWired));
+            insert_kv("nodeid-only-entry-prevented-total",
+                      static_cast<std::int64_t>(iso.nodeid_only_entry_prevented));
+            insert_kv("schema-3040", 3040);
+            insert_kv("issue-3040", 3040);
             const auto checks = cap.checks == 0 ? 1 : cap.checks;
             insert_kv("effect-deny-rate-bp",
                       static_cast<std::int64_t>((cap.denied * 10000) / checks));

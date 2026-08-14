@@ -6,6 +6,9 @@ mutating prim that takes a concrete NodeId must go through
 require_effect_for_node_id or require_effect_on_ref. Bare 2-arg
 require_effect is only for documented non-workspace ops (file/io/network/exec).
 
+Issue #3040 successor: compile:/verify:/syntax: NodeId writers that never
+called require_effect at all are gated by check_compile_node_id_entry_3040.py.
+
 Contract (one row per AC):
   AC1  add_mutate / NodeId workspace prims use for_node_id or on_ref
   AC2  EXEMPT_2ARG_OPS documents non-workspace ops only (with rationale)

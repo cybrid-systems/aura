@@ -1708,6 +1708,141 @@ int main() {
         }
     }
 
+    // ── #3040: residual compile NodeId-only entry gated before body ──
+    {
+        std::println("\n--- #3040 AC1: Restricted NodeId compile entry denied before body ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(cs.eval("(set-code \"(define (n3040 x) x)\")").has_value(), "3040 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3040 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3040 workspace");
+        const auto before_bumps = ws->subtree_bump_count();
+        const auto prev = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                              .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+        auto r = cs.eval("(compile:subtree-bump (car (query:defines-by-marker \"User\")))");
+        CHECK(r.has_value(), "ac3040_1_edsl_returns");
+        if (r && is_int(*r))
+            CHECK(as_int(*r) == 0, "ac3040_1_denied_before_body");
+        CHECK(ws->subtree_bump_count() == before_bumps, "ac3040_1_no_topology_write");
+        const auto after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+        CHECK(after == prev + 1, "ac3040_1_nodeid_only_entry_prevented");
+        const auto compile_src = read_file("src/compiler/evaluator_primitives_compile.cpp");
+        CHECK(compile_src.find("gate_compile_node_effect") != std::string::npos,
+              "ac3040_1_gate_helper");
+        CHECK(compile_src.find("require_effect_for_node_id") != std::string::npos,
+              "ac3040_1_for_node_id");
+    }
+
+    {
+        std::println("\n--- #3040 AC2: foreign stamped ref denied before body ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.grant_effect_capability(/*tenant=*/7, "mut-3040-ac2", kEffectMutate, /*mid=*/1);
+        CHECK(cs.eval("(set-code \"(define (n3040b x) x)\")").has_value(), "3040 AC2 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3040 AC2 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3040 AC2 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3040 AC2 live node");
+        const auto before_bumps = ws->subtree_bump_count();
+        const auto iso_before = snapshot_tenant_isolation_stats().boundary_violations_prevented;
+        auto foreign = ev.make_stamped_ref(id);
+        foreign.tenant_id = 99;
+        CHECK(!ev.require_effect_on_ref(kEffectMutate, "compile:subtree-bump", foreign),
+              "ac3040_2_on_ref_foreign_denies");
+        auto edsl =
+            cs.eval(std::format("(compile:subtree-bump (cons {} (cons 0 (cons 99 0))))", id));
+        CHECK(edsl.has_value(), "ac3040_2_edsl_returns");
+        if (edsl && is_int(*edsl))
+            CHECK(as_int(*edsl) == 0, "ac3040_2_edsl_denied_before_body");
+        CHECK(ws->subtree_bump_count() == before_bumps, "ac3040_2_no_topology_write");
+        const auto iso_after = snapshot_tenant_isolation_stats().boundary_violations_prevented;
+        CHECK(iso_after > iso_before, "ac3040_2_isolation_counters_bump");
+    }
+
+    {
+        std::println("\n--- #3040 AC3: Soft / Off path unchanged ---");
+        reset_all(); // Off
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (n3040c x) x)\")").has_value(), "3040 AC3 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3040 AC3 eval");
+        const auto prev = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                              .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+        auto r = cs.eval("(compile:subtree-bump (car (query:defines-by-marker \"User\")))");
+        CHECK(r.has_value(), "ac3040_3_soft_off_returns");
+        const auto after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
+        CHECK(after == prev, "ac3040_3_soft_off_no_prevent_store");
+        const auto compile_src = read_file("src/compiler/evaluator_primitives_compile.cpp");
+        CHECK(compile_src.find("sandbox_mode() == 0 && ev.effect_sandbox_mode() == 0") !=
+                  std::string::npos,
+              "ac3040_3_soft_off_short_circuit");
+        (void)ev;
+    }
+
+    {
+        std::println("\n--- #3040 AC4: schema-3040 + snapshot counter ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(!ev.require_effect_for_node_id(kEffectMutate, "compile:subtree-bump", /*node_id=*/1),
+              "ac3040_4_for_node_id_denies_unset_grant");
+        const auto snap = snapshot_tenant_isolation_stats();
+        CHECK(snap.nodeid_only_entry_prevented >= 1, "ac3040_4_snapshot_counter");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(posture.find("schema-3040") != std::string::npos, "ac3040_4_schema");
+        CHECK(posture.find("nodeid-only-entry-prevented-wired") != std::string::npos,
+              "ac3040_4_wired");
+        CHECK(posture.find("nodeid-only-entry-prevented-total") != std::string::npos,
+              "ac3040_4_total_key");
+        CHECK(aura::compiler::kNodeIdOnlyEntryIssue == 3040, "ac3040_4_issue_const");
+        CHECK(aura::compiler::kNodeIdOnlyEntryPreventedWired == 1, "ac3040_4_wired_const");
+    }
+
+    {
+        std::println("\n--- #3040 AC5/AC6: source-cite + linter + no invent ---");
+        const auto compile_src = read_file("src/compiler/evaluator_primitives_compile.cpp");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        const auto build = read_file("build.py");
+        CHECK(compile_src.find("Issue #3040") != std::string::npos, "ac3040_5_compile_cite");
+        CHECK(sec.find("Issue #3040") != std::string::npos, "ac3040_5_security_cite");
+        CHECK(iso.find("#3040") != std::string::npos, "ac3040_5_iso_cite");
+        CHECK(posture.find("schema-3040") != std::string::npos, "ac3040_5_posture");
+        CHECK(test_self.find("#3040") != std::string::npos, "ac3040_5_test_cite");
+        CHECK(build.find("check_compile_node_id_entry_3040") != std::string::npos,
+              "ac3040_5_linter_and_suite");
+        std::ifstream invent("tests/core/test_issue_3040.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3040.cpp");
+        CHECK(!invent.good(), "ac3040_5_no_invent_test");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3040-") == std::string::npos,
+                      std::string("ac3040_5: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);
