@@ -1343,6 +1343,26 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                     mutation_hold_budget_forced_fail_closed_dtor_consume_total_v_read()));
                             insert_kv("schema-2999", 2999);
                             insert_kv("issue-2999", 2999);
+                            // Issue #3035: P0 force-unlock + dual-topology
+                            // restore on hold-budget cancel for a non-yield
+                            // body. #2932/#2999 fail-closed at safepoint/dtor
+                            // edges, but a body that never polls the flag can
+                            // keep workspace_mtx_ + fiber depth slot held
+                            // indefinitely. #3035 forces the boundary
+                            // fail-closed on outermost dtor cancel consume
+                            // (success=false even without a success flag) so
+                            // exit_mutation_boundary runs
+                            // abort_restore_dual_topology + dual canary and
+                            // Phase-5 force-releases the lock + clears the
+                            // depth slot. Additive — all #2932/#2999 surfaces
+                            // preserved.
+                            insert_kv("mutation-hold-budget-forced-unlock-total",
+                                      static_cast<std::int64_t>(
+                                          mutation_hold_budget_forced_unlock_total_v_read()));
+                            insert_kv("mutation-hold-budget-forced-unlock-wired",
+                                      static_cast<std::int64_t>(1));
+                            insert_kv("schema-3035", 3035);
+                            insert_kv("issue-3035", 3035);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail

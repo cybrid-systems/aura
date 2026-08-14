@@ -1804,6 +1804,23 @@ static void ac2999_residual_dtor_consume_cite() {
     CHECK(read_file("tests/serve/test_issue_2999.cpp").empty(), "#2999: no invent test file");
 }
 
+// Issue #3035: forced-unlock residual cite — cancel consume forces
+// success=false + abort_restore_dual_topology + lock release + depth
+// clear (non-yield body window closes; chaos residual_zero stays 0).
+static void ac3035_residual_force_unlock_cite() {
+    std::println("\n--- #3035: forced unlock cite (residual_zero lineage) ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(emb.find("Issue #3035") != std::string::npos, "#3035: emb cites forced unlock");
+    CHECK(emb.find("cancel_forced_fail") != std::string::npos, "#3035: dtor force-fail");
+    CHECK(emb.find("forced_unlock_total") != std::string::npos, "#3035: forced-unlock counter");
+    CHECK(mhb.find("kMutationHoldBudgetForcedUnlockIssue = 3035") != std::string::npos,
+          "#3035: issue stamp");
+    CHECK(q.find("schema-3035") != std::string::npos, "#3035: schema-3035 wired");
+    CHECK(read_file("tests/serve/test_issue_3035.cpp").empty(), "#3035: no invent test file");
+}
+
 } // namespace
 
 int run_test_chaos_mutate_steal_gc_mailbox() {

@@ -2057,6 +2057,22 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // guards fall through; is_outermost_ is ctor-captured (#2120).
     // AC2 — Soft / sandbox=off: peek + soft-observe only; no consume,
     // no forced fail. Production / hard-env: consume + fail-closed.
+    // Issue #3035: P0 force-unlock + dual-topology restore on hold-budget
+    // cancel for a non-yield body. #2932/#2999 consume the cancel flag at
+    // safepoint/dtor edges, but a body that never polls the flag can keep
+    // workspace_mtx_ + per-fiber depth slot held indefinitely (steal/GC
+    // residual starve; densify×steal can observe half-topology). #3035
+    // closes the remaining window: consuming a pending cancel under
+    // production / hard-env forces the boundary fail-closed (success=false
+    // EVEN when the Guard carries no success flag — flag_==nullptr used to
+    // fall through to success=true and skip abort_restore_dual_topology).
+    // exit_mutation_boundary(false) then runs abort_restore_dual_topology +
+    // dual canary (same path as panic/abort) and the Phase-5 pipeline
+    // force-releases workspace_mtx_ + clears the fiber depth slot + closes
+    // residual defer. Soft / sandbox=off: peek + soft_observe only (no
+    // consume, no force — existing #2701 AC2). Zero cost on happy path
+    // (cancel flag unset: one peek inside consume_hold_budget_cancel CAS).
+    bool cancel_forced_fail = false;
     if (is_outermost_) {
         if (auto* f = aura::serve::g_current_fiber) {
             if (mutation_hold_budget_reject_enabled()) {
@@ -2065,6 +2081,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                         .fetch_add(1, std::memory_order_relaxed);
                     g_mutation_hold_budget_forced_fail_closed_dtor_consume_total.fetch_add(
                         1, std::memory_order_relaxed);
+                    // #3035: consumed cancel → forced unlock + dual restore.
+                    // consume only fires under reject_enabled (production or
+                    // hard env), so this is the production force path.
+                    cancel_forced_fail = true;
+                    g_mutation_hold_budget_forced_unlock_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
                     if (flag_ && *flag_) {
                         *flag_ = false; // dtor takes ResidualPolicy fail + unlock
                         g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
@@ -2076,7 +2098,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
         }
     }
-    bool success = flag_ ? *flag_ : true;
+    bool success = cancel_forced_fail ? false : (flag_ ? *flag_ : true);
     // Issue #2944: outermost MutationBoundary exit revokes mutation-session
     // grants bound to session_mid_at_enter_ (success or fail). Nested
     // guards skip (session_mid_at_enter_==0). Zero cost when no live

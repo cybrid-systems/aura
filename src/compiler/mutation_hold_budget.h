@@ -400,6 +400,31 @@ inline void clear_mutation_hold_budget_forced_fail_closed_for_test() noexcept {
                                                                        std::memory_order_relaxed);
 }
 
+// Issue #3035: P0 force-unlock + dual-topology restore on hold-budget
+// cancel for a non-yield body. #2932/#2999 arm the cancel flag and
+// fail-closed at safepoint/dtor edges, but a mutate body that never
+// polls the flag can keep workspace_mtx_ + per-fiber depth slot held
+// indefinitely (steal/GC residual starve; densify×steal can observe
+// half-topology). #3035 closes the remaining window: when the outermost
+// Guard dtor consumes a pending hold-budget cancel under production /
+// hard-env, the boundary is forced fail-closed (success=false even if
+// the Guard has no success flag) so exit_mutation_boundary runs
+// abort_restore_dual_topology + dual canary (same path as panic/abort)
+// and the exit pipeline force-releases workspace_mtx_ + clears the
+// fiber depth slot. Soft / sandbox=off: metric-only (existing
+// soft_observe counters — no consume, no force). Additive — all
+// #2932/#2999 counters preserved.
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_forced_unlock_total{0};
+inline constexpr int kMutationHoldBudgetForcedUnlockIssue = 3035;
+
+[[nodiscard]] inline std::uint64_t mutation_hold_budget_forced_unlock_total_v_read() noexcept {
+    return g_mutation_hold_budget_forced_unlock_total.load(std::memory_order_relaxed);
+}
+
+inline void clear_mutation_hold_budget_forced_unlock_for_test() noexcept {
+    g_mutation_hold_budget_forced_unlock_total.store(0, std::memory_order_relaxed);
+}
+
 // Issue #2724: region/subtree-scoped MutationBoundary concurrent admit.
 // Shared header so evaluator_mutation_boundary (writers) and
 // evaluator_primitives_query (query surface) share one definition.
