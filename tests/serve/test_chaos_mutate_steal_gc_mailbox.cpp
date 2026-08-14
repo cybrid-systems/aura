@@ -321,11 +321,15 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
 
     // Issue #2902: release blocker / sustained enforce production_defaults
     // so Soft residual policies cannot mask multi-fiber fail-closed paths.
-    if (release_blocker || sustained) {
+    // Issue #3036: soak / prod_gate also force production_defaults so
+    // mailbox residual RejectHard cannot Soft-escape to silent Ok.
+    if (release_blocker || sustained || soak || prod_gate) {
         aura::compiler::typed_audit::apply_production_audit_defaults();
         CHECK(aura::compiler::typed_audit::production_defaults_active(),
-              "#2902: production_defaults_active under release blocker / sustained");
-        CHECK(n_fibers >= 32, "#2902: composition fibers ≥ 32 under release blocker / sustained");
+              "#2902/#3036: production_defaults_active under soak / prod / release");
+        if (release_blocker || sustained)
+            CHECK(n_fibers >= 32,
+                  "#2902: composition fibers ≥ 32 under release blocker / sustained");
     }
 
     // Issue #2380 AC1/AC3 / #2554 / #2902: Soft steal forbidden under
@@ -1821,6 +1825,22 @@ static void ac3035_residual_force_unlock_cite() {
     CHECK(read_file("tests/serve/test_issue_3035.cpp").empty(), "#3035: no invent test file");
 }
 
+static void ac3036_mailbox_residual_prod_fail_closed_cite() {
+    std::println("\n--- #3036: soak forces production_defaults (mailbox residual fail-closed) ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(chaos.find("apply_production_audit_defaults") != std::string::npos,
+          "3036: soak applies production_defaults");
+    CHECK(chaos.find("soak || prod_gate") != std::string::npos ||
+              chaos.find("release_blocker || sustained || soak || prod_gate") != std::string::npos,
+          "3036: soak/prod_gate force production_defaults");
+    CHECK(mb.find("mailbox_residual_hard_enabled") != std::string::npos,
+          "3036: residual hard helper");
+    CHECK(mb.find("mailbox_residual_hard_reject_total") != std::string::npos,
+          "3036: residual hard-reject counter");
+    CHECK(mb.find("return true") != std::string::npos, "3036: RejectHard never silent Ok");
+}
+
 } // namespace
 
 int run_test_chaos_mutate_steal_gc_mailbox() {
@@ -1837,6 +1857,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2902_5_release_blocker_docs_and_linter();
         ac2999_residual_dtor_consume_cite();
         ac3002_mailbox_hold_slo_soak_cite();
+        ac3036_mailbox_residual_prod_fail_closed_cite();
         std::println("\n=== Results (release blocker only): {} passed, {} failed ===", g_passed,
                      g_failed);
         return g_failed ? 1 : 0;
@@ -1875,6 +1896,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     // is the runtime suite; chaos stays source-cite).
     ac2999_residual_dtor_consume_cite();
     ac3002_mailbox_hold_slo_soak_cite();
+    ac3036_mailbox_residual_prod_fail_closed_cite();
 
     // Issue #2856: production chaos gate (release blocker) — multi-fiber
     // mutate × densify × steal × mailbox composition under production

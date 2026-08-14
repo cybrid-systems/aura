@@ -2720,6 +2720,18 @@ def cmd_lint():
             "Issue #2987 mailbox delivery safety linter failed — run python3 scripts/coverage/checks/check_mailbox_delivery_safety_2987.py"
         )
         return r
+    # Issue #3036: production mailbox residual RejectHard fail-closed.
+    # Extends test_mailbox_recv_mutation_boundary + chaos soak (#81967).
+    mrh_script = COVERAGE_CHECKS / "check_mailbox_residual_hard_reject_3036.py"
+    if not mrh_script.exists():
+        fail(f"missing {mrh_script}")
+        return 1
+    r = run([sys.executable, str(mrh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3036 mailbox residual hard-reject linter failed — run python3 scripts/coverage/checks/check_mailbox_residual_hard_reject_3036.py"
+        )
+        return r
     # Issue #2988: mutate success DefUse/IR/JIT invalidate close-loop.
     # Extends test_post_mutate_push_cascade (#81967); no docs/design/.
     miv_script = COVERAGE_CHECKS / "check_mutate_invalidate_incremental_2988.py"
@@ -11010,6 +11022,26 @@ def cmd_mailbox_delivery_safety_2987_coverage():
     return 0
 
 
+def cmd_mailbox_residual_hard_reject_3036_coverage():
+    """Issue #3036: production mailbox residual RejectHard fail-closed."""
+    print(f"{B}=== mailbox residual hard-reject coverage (#3036) ==={N}")
+    script = COVERAGE_CHECKS / "check_mailbox_residual_hard_reject_3036.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox residual hard-reject (#3036) coverage contract rows failed")
+        return 1
+    ok("mailbox residual hard-reject (#3036) coverage clean")
+    return 0
+
+
+def cmd_mailbox_residual_hard_reject_3036():
+    """Alias for coverage check."""
+    return cmd_mailbox_residual_hard_reject_3036_coverage()
+
+
 def cmd_mutate_invalidate_incremental_2988_coverage():
     """Issue #2988: mutate success DefUse/IR/JIT invalidate close-loop."""
     print(f"{B}=== mutate invalidate incremental coverage (#2988) ==={N}")
@@ -15490,6 +15522,8 @@ def main():
         "mutation-concurrency-health-admit-2985": cmd_mutation_concurrency_health_admit_2985_coverage,
         "mutate-guard-coverage-2986": cmd_mutate_guard_coverage_2986_coverage,
         "mailbox-delivery-safety-2987": cmd_mailbox_delivery_safety_2987_coverage,
+        "mailbox-residual-hard-reject-3036": cmd_mailbox_residual_hard_reject_3036,
+        "mailbox-residual-hard-reject-3036-coverage": cmd_mailbox_residual_hard_reject_3036_coverage,
         "mutate-invalidate-incremental-2988": cmd_mutate_invalidate_incremental_2988_coverage,
         "query-concurrent-hygiene-safe-span-2989": cmd_query_concurrent_hygiene_safe_span_2989_coverage,
         "workspace-concurrent-policy-2990": cmd_workspace_concurrent_policy_2990_coverage,

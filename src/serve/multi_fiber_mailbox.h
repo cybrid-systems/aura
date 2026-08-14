@@ -264,6 +264,11 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_delivery_reject_hard_total{0};         // #2987
     std::atomic<std::uint64_t> mailbox_delivery_reject_soft_observe_total{0}; // #2987
     std::atomic<std::uint32_t> mailbox_delivery_safety_wired{1};              // #2987
+    // Issue #3036: production_defaults residual RejectHard face. Independent
+    // of is_mutate_mailbox_strict so sandbox/env Soft leak cannot hide a
+    // hard deny. Soft / AURA_SANDBOX=off stay on soft_observe only.
+    std::atomic<std::uint64_t> mailbox_residual_hard_reject_total{0}; // #3036
+    std::atomic<std::uint32_t> mailbox_residual_hard_reject_wired{1}; // #3036
     // Issue #2511: outermost Guard exit forced deferred drain under budget.
     // hold_exit_drain_total: drain path entered with open depth
     // hold_exit_drain_us_total / max: elapsed under budget
@@ -805,6 +810,19 @@ inline void clear_recv_boundary_reject_window() noexcept {
     return aura_production_defaults_active_probe() != 0;
 }
 
+// Issue #3036: production residual hard-AND cannot Soft-escape.
+// Explicit AURA_SANDBOX=off stays observe-only. Otherwise production
+// defaults (probe) or MUTATE_MAILBOX_STRICT force hard deny.
+[[nodiscard]] inline bool mailbox_sandbox_explicit_off() noexcept {
+    const char* e = std::getenv("AURA_SANDBOX");
+    return e && e[0] == 'o' && e[1] == 'f' && e[2] == 'f' && e[3] == '\0';
+}
+[[nodiscard]] inline bool mailbox_residual_hard_enabled() noexcept {
+    if (mailbox_sandbox_explicit_off())
+        return false;
+    return is_mutate_mailbox_strict() || aura_production_defaults_active_probe() != 0;
+}
+
 // Issue #2849: sole helper for shared-Evaluator mid-mutation delivery gate
 // (closes #2680 residual as production fail-closed proof). When the
 // outermost MutationBoundary is live (depth>0 || held) on the shared
@@ -871,8 +889,9 @@ note_mailbox_deferred_under_boundary(MultiFiberMailboxStats* local_stats = nullp
 // boundary check. Steal and mailbox share StealInvariant definitions
 // (evaluate_residual_hard_and_bits / mailbox_delivery_safety_transaction).
 // RejectHard → Backpressure + counters; never enqueue. Soft still BP
-// (soft_observe); production/Strict bumps hard_total. Happy path:
-// inject==None and no target fiber → thread_local only, no extra atomics.
+// (soft_observe). Issue #3036: production_defaults + !sandbox=off
+// always bumps mailbox_residual_hard_reject_total (no Soft escape).
+// Happy path: inject==None and no target fiber → thread_local only.
 // Callers MUST:
 //   if (note_mailbox_delivery_safety(...))
 //       return PushStatus::Backpressure;
@@ -914,11 +933,18 @@ note_mailbox_delivery_safety(Fiber* target, const MutationSafetySnapshot* snap, 
             local_stats->mailbox_delivery_reject_residual_total.fetch_add(
                 1, std::memory_order_relaxed);
     }
-    if (is_mutate_mailbox_strict()) {
+    // Issue #3036: production_defaults + !sandbox=off → hard deny counter
+    // (no Soft escape via is_mutate_mailbox_strict leak). Soft / sandbox=off
+    // stay observe-only. RejectHard always returns true → Backpressure.
+    if (mailbox_residual_hard_enabled()) {
+        g_mf_mailbox_stats.mailbox_residual_hard_reject_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
         g_mf_mailbox_stats.mailbox_delivery_reject_hard_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-        if (local_stats)
+        if (local_stats) {
+            local_stats->mailbox_residual_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
             local_stats->mailbox_delivery_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+        }
     } else {
         g_mf_mailbox_stats.mailbox_delivery_reject_soft_observe_total.fetch_add(
             1, std::memory_order_relaxed);
