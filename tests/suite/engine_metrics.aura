@@ -32,7 +32,19 @@
   (define all (engine:metrics :all))
   (check (hash? all))
   (check (= (hash-ref (engine:metrics) "stats-count")
-            (hash-ref all "stats-count"))))
+            (hash-ref all "stats-count")))
+  ; Issue #3018: current catalog must not collapse the table or stamp overflow.
+  (check (= 2 (hash-ref all "schema")))
+  (check (not (hash-has-key? all "overflow"))))
+
+(test-suite "engine:metrics-overflow-3018"
+  (define all (engine:metrics :all))
+  (define q (engine:metrics :prefix "query:"))
+  (check (hash? all))
+  (check (hash? q))
+  (check (eq? (hash-ref all "overflow") (void)))
+  (check (eq? (hash-ref q "overflow") (void)))
+  (check (eq? (engine:metrics "query:no-such-stats-zzz") (void))))
 
 ; Full-mode parity: direct stats prim matches facade by-name.
 (test-suite "engine:metrics-parity"

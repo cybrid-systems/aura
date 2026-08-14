@@ -2363,6 +2363,19 @@ def cmd_lint():
             "Issue #3017 incomplete-remap residual linter failed — run python3 scripts/coverage/checks/check_moving_incomplete_remap_3017.py"
         )
         return r
+    # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
+    # miss (never void for capacity). Extends test_engine_metrics_facade
+    # + engine_metrics.aura (#81967); no docs/design/ (#1655).
+    emho_script = COVERAGE_CHECKS / "check_engine_metrics_hash_overflow_3018.py"
+    if not emho_script.exists():
+        fail(f"missing {emho_script}")
+        return 1
+    r = run([sys.executable, str(emho_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3018 engine:metrics hash overflow linter failed — run python3 scripts/coverage/checks/check_engine_metrics_hash_overflow_3018.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -7807,6 +7820,31 @@ def cmd_moving_incomplete_remap_3017():
     """
     print(f"{B}=== moving incomplete-remap residual (#3017) ==={N}")
     return cmd_moving_incomplete_remap_3017_coverage()
+
+
+def cmd_engine_metrics_hash_overflow_3018_coverage():
+    """Issue #3018: engine:metrics hash overflow fail-soft (static)."""
+    print(f"{B}=== engine:metrics hash overflow coverage (#3018) ==={N}")
+    script = COVERAGE_CHECKS / "check_engine_metrics_hash_overflow_3018.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("engine:metrics hash overflow (#3018) coverage contract rows failed")
+        return 1
+    ok("engine:metrics hash overflow (#3018) coverage clean")
+    return 0
+
+
+def cmd_engine_metrics_hash_overflow_3018():
+    """Issue #3018: engine:metrics :all / :prefix fail-soft on insert miss.
+
+    Capacity miss keeps the partial hash and stamps overflow=1 instead of
+    destroying the table and returning void. Soft extra cost is one load.
+    """
+    print(f"{B}=== engine:metrics hash overflow (#3018) ==={N}")
+    return cmd_engine_metrics_hash_overflow_3018_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -14875,6 +14913,8 @@ def main():
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,
         "moving-incomplete-remap-3017-coverage": cmd_moving_incomplete_remap_3017_coverage,
+        "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
+        "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,

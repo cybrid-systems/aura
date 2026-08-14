@@ -1880,6 +1880,119 @@ static const char* metrics_group_for_field(std::string_view name) noexcept {
     return "telemetry";
 }
 
+// Issue #3018: process atomics for engine:metrics hash overflow (fail-soft).
+// force_hash_cap == 0 → use computed capacity (production). Soft/Off
+// pays one relaxed load. Never a second metrics bus.
+std::atomic<std::uint64_t> g_engine_metrics_hash_overflow_total{0};
+std::atomic<std::uint64_t> g_engine_metrics_force_hash_cap{0};
+
+// Issue #3018: insert one k/v into an unpublished FlatHashTable.
+// Returns false on probe exhaustion (table full / collisions).
+static bool engine_metrics_hash_try_insert(FlatHashTable* ht, Evaluator& ev, std::string_view k,
+                                           EvalValue v) {
+    if (!ht)
+        return false;
+    std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
+    for (char c : k)
+        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
+    const auto fp = ::aura::compiler::hash::fingerprint(h);
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    const auto hcap = ht->capacity;
+    auto& sh = ev.string_heap_mut();
+    const auto kidx = sh.size();
+    sh.push_back(std::string(k));
+    const EvalValue key_ev = make_string(kidx);
+    for (std::size_t at = 0; at < hcap; ++at) {
+        const auto idx = ((h >> 1) + at) & (hcap - 1);
+        if (meta[idx] == 0xFF) {
+            meta[idx] = fp;
+            keys[idx] = key_ev.val;
+            vals[idx] = v.val;
+            ht->size++;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Issue #3018: when the table is already full, overwrite a non-schema
+// slot so Agents still see overflow=1 next to schema.
+static void engine_metrics_hash_force_overflow_sentinel(FlatHashTable* ht, Evaluator& ev) {
+    if (!ht)
+        return;
+    if (engine_metrics_hash_try_insert(ht, ev, "overflow", make_int(1)))
+        return;
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
+    for (char c : std::string_view{"overflow"})
+        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
+    const auto fp = ::aura::compiler::hash::fingerprint(h);
+    auto& sh = ev.string_heap_mut();
+    const auto kidx = sh.size();
+    sh.push_back("overflow");
+    const EvalValue key_ev = make_string(kidx);
+    const EvalValue val_ev = make_int(1);
+    for (std::size_t i = 0; i < ht->capacity; ++i) {
+        if (meta[i] == 0xFF)
+            continue;
+        EvalValue ke{};
+        ke.val = keys[i];
+        if (is_string(ke)) {
+            const auto si = as_string_idx(ke);
+            if (si < sh.size() && sh[si] == "schema")
+                continue;
+        }
+        meta[i] = fp;
+        keys[i] = key_ev.val;
+        vals[i] = val_ev.val;
+        return;
+    }
+}
+
+// Issue #3018: facade hash builder. Headroom is kv.size()*2+8 then
+// next power-of-two. On residual insert miss: keep the partial table,
+// stamp overflow=1, bump engine_metrics_hash_overflow_total.
+// never FlatHashTable::destroy + return void for capacity alone.
+// create() failure (OOM) still returns void.
+static EvalValue build_engine_metrics_hash(Evaluator& ev,
+                                           std::span<const std::pair<std::string, EvalValue>> kv) {
+    std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 8;
+    std::uint64_t cap = 16;
+    while (cap < need && cap < (1ull << 63))
+        cap <<= 1;
+    const auto force = g_engine_metrics_force_hash_cap.load(std::memory_order_relaxed);
+    if (force > 0) {
+        cap = force < 2 ? 2 : force;
+        if ((cap & (cap - 1)) != 0) {
+            std::uint64_t p = 2;
+            while (p < cap && p < (1ull << 63))
+                p <<= 1;
+            cap = p;
+        }
+    }
+    auto* ht = FlatHashTable::create(cap);
+    if (!ht)
+        return make_void();
+    bool overflowed = false;
+    for (auto& [k, v] : kv) {
+        if (!engine_metrics_hash_try_insert(ht, ev, k, v))
+            overflowed = true;
+    }
+    if (overflowed) {
+        g_engine_metrics_hash_overflow_total.fetch_add(1, std::memory_order_relaxed);
+        engine_metrics_hash_force_overflow_sentinel(ht, ev);
+        (void)engine_metrics_hash_try_insert(ht, ev, "schema-3018", make_int(3018));
+        (void)engine_metrics_hash_try_insert(ht, ev, "issue-3018", make_int(3018));
+    }
+    auto hidx = g_hash_tables.size();
+    g_hash_tables.push_back(ht);
+    return make_hash(hidx);
+}
+
 // P2b / #1433: observability facade for AURA_PRIMITIVES=s0 and full.
 // stats:list / stats:count / engine:metrics — no bulk query:*-stats on s0.
 void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& ev) {
@@ -1909,47 +2022,10 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
     });
 
     // Issue #1433 / P1a: (engine:metrics [name | :all | :prefix s | :group g])
+    // Issue #3018: build_hash fail-soft on insert miss (never void for capacity).
     add("engine:metrics", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
-            std::uint64_t cap = 16;
-            while (cap < need)
-                cap <<= 1;
-            auto* ht = FlatHashTable::create(cap);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
-                auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
-                    }
-                }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return build_engine_metrics_hash(ev, kv);
         };
 
         auto kw_str = [&](const EvalValue& v) -> std::string {
@@ -2191,46 +2267,8 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 if (fn)
                     kv.push_back({n, (*fn)({})});
             }
-            // Minimal hash builder (same layout as engine:metrics).
-            std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
-            std::uint64_t cap = 16;
-            while (cap < need)
-                cap <<= 1;
-            auto* ht = FlatHashTable::create(cap);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
-                auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
-                    }
-                }
-                if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
-                }
-            }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            // Issue #3018: same fail-soft builder as engine:metrics.
+            return build_engine_metrics_hash(ev, kv);
         }
         if (auto fn = ObservabilityPrims::lookup_stats_impl(name))
             return (*fn)({});
@@ -2294,45 +2332,8 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             {"deprecated-dispatch-total",
              make_int(static_cast<std::int64_t>(ev.deprecated_prim_dispatch_total()))},
         };
-        std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 2;
-        std::uint64_t cap = 16;
-        while (cap < need)
-            cap <<= 1;
-        auto* ht = FlatHashTable::create(cap);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        for (auto& [k, v] : kv) {
-            std::uint64_t h = ::aura::compiler::hash::kFnvOffsetBasis;
-            for (char c : k)
-                h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::hash::kFnvPrime;
-            auto fp = ::aura::compiler::hash::fingerprint(h);
-            auto kidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(k);
-            EvalValue key_ev = make_string(kidx);
-            bool inserted = false;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    keys[idx] = key_ev.val;
-                    vals[idx] = v.val;
-                    ht->size++;
-                    inserted = true;
-                    break;
-                }
-            }
-            if (!inserted) {
-                FlatHashTable::destroy(ht);
-                return make_void();
-            }
-        }
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
+        // Issue #3018: same fail-soft builder (tiny kv; headroom always holds).
+        return build_engine_metrics_hash(ev, kv);
     });
 }
 
@@ -13168,3 +13169,21 @@ void ObservabilityPrims::register_jit_p113(PrimRegistrar add, Evaluator& ev) {
     });
 }
 } // namespace aura::compiler::primitives_detail
+
+// Issue #3018: test / Agent C ABI for facade hash overflow (no second metrics bus).
+extern "C" void aura_engine_metrics_set_force_hash_cap(std::uint64_t cap) {
+    aura::compiler::primitives_detail::g_engine_metrics_force_hash_cap.store(
+        cap, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_engine_metrics_hash_overflow_total(void) {
+    return aura::compiler::primitives_detail::g_engine_metrics_hash_overflow_total.load(
+        std::memory_order_relaxed);
+}
+
+extern "C" void aura_engine_metrics_reset_hash_overflow_for_test(void) {
+    aura::compiler::primitives_detail::g_engine_metrics_hash_overflow_total.store(
+        0, std::memory_order_relaxed);
+    aura::compiler::primitives_detail::g_engine_metrics_force_hash_cap.store(
+        0, std::memory_order_relaxed);
+}
