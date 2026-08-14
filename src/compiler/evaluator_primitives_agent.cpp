@@ -3065,6 +3065,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::string bp_scope_id{};
             // Issue #2925: consecutive BP budget before producer self-throttle.
             std::uint32_t producer_bp_budget = 0;
+            // Issue #2972: per-mailbox inflight credit (0 = high_water).
+            std::uint32_t mailbox_credit = 0;
             for (; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -3105,6 +3107,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                            types::is_int(val)) {
                     // Issue #2925: consecutive BP self-throttle (0 = off).
                     producer_bp_budget =
+                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "mailbox-credit" || k == "mailbox_credit") && types::is_int(val)) {
+                    // Issue #2972: inflight credit (0 = use high_water).
+                    mailbox_credit =
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 }
             }
@@ -3149,6 +3155,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             spec.bp_admit_threshold = bp_admit_threshold; // Issue #2591
             spec.bp_scope_id = std::move(bp_scope_id);    // Issue #2633
             spec.producer_bp_budget = producer_bp_budget; // Issue #2925
+            spec.mailbox_credit = mailbox_credit;         // Issue #2972
             auto handle = aura::orch::spawn_agent_with_mailbox(*orch_sched.sched, std::move(spec));
             // Issue #2009: move-only handle; snapshot then put on success.
             const bool ok = handle.ok;
@@ -5332,6 +5339,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2925", 2925);
             insert_kv("issue-2925", 2925);
             insert_kv("producer-bp-budget-wired", 1);
+            // Issue #2972: per-mailbox inflight credit (complement BP-recent).
+            insert_kv("mailbox-credit-bp-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_credit_bp_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-inflight-hwm",
+                      static_cast<std::int64_t>(
+                          aura::serve::mf_mailbox::g_mf_mailbox_stats.mailbox_inflight_hwm.load(
+                              std::memory_order_relaxed)));
+            insert_kv("mailbox-credit-wired", 1);
+            insert_kv("schema-2972", aura::serve::mf_mailbox::kMailboxCreditInflightIssue);
+            insert_kv("issue-2972", aura::serve::mf_mailbox::kMailboxCreditInflightIssue);
             // Issue #2756: workflow-level FailurePolicy composition
             // (batch + AgentScope + residual preference). Additive —
             // #2007/#2229/#2539 surfaces above preserved.

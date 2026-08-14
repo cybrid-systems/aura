@@ -293,7 +293,7 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             MultiFiberMailbox::snapshot_global_full(pushes, pops, broadcasts, bp, attaches, ph,
                                                     waits, tmo, lchk, lviol, &fbp, &rej_bound,
                                                     &def_mh);
-            // Capacity 64→128→256: #2188/#2312/#2347/#2378/#2987 keys.
+            // Capacity 64→128→256: #2188/#2312/#2347/#2378/#2987 + #2972 credit.
             auto* ht = FlatHashTable::create(256);
             if (!ht)
                 return make_void();
@@ -611,6 +611,16 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("recv-boundary-hard-wired", 1);
             insert_kv("schema-2347", 2347);
             insert_kv("issue-2347", 2347);
+            // Issue #2972: per-mailbox inflight credit (additive).
+            insert_kv("mailbox-credit-bp-total",
+                      static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_credit_bp_total.load(
+                          std::memory_order_relaxed)));
+            insert_kv("mailbox-inflight-hwm",
+                      static_cast<std::int64_t>(
+                          g_mf_mailbox_stats.mailbox_inflight_hwm.load(std::memory_order_relaxed)));
+            insert_kv("mailbox-credit-wired", 1);
+            insert_kv("schema-2972", kMailboxCreditInflightIssue);
+            insert_kv("issue-2972", kMailboxCreditInflightIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
