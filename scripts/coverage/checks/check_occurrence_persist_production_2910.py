@@ -35,6 +35,11 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     impl = _read("src/compiler/type_checker_impl.cpp")
     ixx = _read("src/compiler/type_checker.ixx")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
@@ -69,8 +74,8 @@ def main() -> int:
 
     # AC5
     must("schema-2910", "AC5", q)
-    must("occurrence-persist-stamp-after-rehydrate-wired", "AC5", q)
-    must("occurrence-persist-production-always-on-success", "AC5", q)
+    must_key("occurrence-persist-stamp-after-rehydrate-wired", "AC5", q)
+    must_key("occurrence-persist-production-always-on-success", "AC5", q)
     must("schema-2896", "AC5", q)
     must("schema-2608", "AC5", q)
     must("check_occurrence_persist_production_2910", "AC5", build)

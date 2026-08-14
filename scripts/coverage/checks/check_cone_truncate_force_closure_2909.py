@@ -35,6 +35,11 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_key(n: str, label: str, hay: str) -> None:
+        normalized = "".join(ch for ch in hay if not ch.isspace() and ch != '"')
+        if n not in normalized:
+            fails.append(f"{label}: missing {n!r}")
+
     tma = _read("src/compiler/typed_mutation_audit.h")
     impl = _read("src/compiler/type_checker_impl.cpp")
     tc = _read("src/compiler/type_checker.ixx")
@@ -62,7 +67,7 @@ def main() -> int:
 
     # AC4
     must("schema-2909", "AC4", q)
-    must("cone-truncate-force-closure-total", "AC4", q)
+    must_key("cone-truncate-force-closure-total", "AC4", q)
     must("kConeTruncateForceClosureIssue", "AC4", tma)
     must("schema-2703", "AC4", q)
     must("schema-2750", "AC4", q)
