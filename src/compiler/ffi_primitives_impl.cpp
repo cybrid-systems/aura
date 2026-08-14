@@ -133,6 +133,9 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         auto addr = types::as_int(a[0]);
         auto idx = oh->size();
         oh->push_back(reinterpret_cast<void*>(static_cast<std::uintptr_t>(addr)));
+        // Issue #3022: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
+        // Not arena-tracked. Wrap arena ptrs via (ffi:pin-buffer).
+        aura::core::lifetime::note_ffi_opaque_create_exempt("external-native-addr");
         return types::make_opaque(idx);
     });
 
@@ -165,6 +168,9 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         oh->push_back(ptr);
         // Issue #980: track allocation size for bounds checks.
         opaque_sizes_[ptr] = size;
+        // Issue #3022: GENERAL_OBJECT_PIN_EXEMPT: libc-heap
+        // calloc is not densify-tracked. Survive densify as-is.
+        aura::core::lifetime::note_ffi_opaque_create_exempt("libc-heap");
         return types::make_opaque(idx);
     });
 
@@ -294,6 +300,8 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             std::memcpy(&ptr, base + offset, sizeof(ptr));
             auto ni = oh->size();
             oh->push_back(ptr);
+            // Issue #3022: GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy
+            aura::core::lifetime::note_ffi_opaque_create_exempt("opaque-struct-copy");
             return types::make_opaque(ni);
         }
         return make_int(0);
@@ -319,7 +327,14 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
                                          : 0;
             auto pin = std::make_unique<aura::core::lifetime::LifetimePin>();
             pin->pin(ptr, gen, arena_id);
-            pin->mark_ffi_handoff(); // #2048: handoff signal on pin
+            // Issue #3022: 4th arg != 0 → FfiOwned (blocks reclaim);
+            // default FfiBorrowed (Moving allowed at PinOwner, live pin
+            // still fail-closes Moving via live_pin_count).
+            const bool owned = a.size() >= 4 && types::is_int(a[3]) && types::as_int(a[3]) != 0;
+            if (owned)
+                pin->mark_ffi_owned();
+            else
+                pin->mark_ffi_handoff(); // #2048: handoff signal on pin
             aura::gc_hooks::arm_ffi_pin_defer();
             std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
             const std::int64_t handle = static_cast<std::int64_t>(g_ffi_pin_registry.size());

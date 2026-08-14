@@ -2414,6 +2414,18 @@ def cmd_lint():
             "Issue #3021 EnvFrame/Closure apply protocol linter failed — run python3 scripts/coverage/checks/check_envframe_closure_apply_protocol_3021.py"
         )
         return r
+    # Issue #3022: FFI opaque/native pin-or-remap (or EXEMPT).
+    # Extends test_general_object_pin (#81967); no docs/design/ (#1655).
+    fop_script = COVERAGE_CHECKS / "check_ffi_opaque_pin_or_remap_3022.py"
+    if not fop_script.exists():
+        fail(f"missing {fop_script}")
+        return 1
+    r = run([sys.executable, str(fop_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3022 FFI opaque pin-or-remap linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_pin_or_remap_3022.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -7958,6 +7970,31 @@ def cmd_envframe_closure_apply_protocol_3021():
     """
     print(f"{B}=== EnvFrame/Closure apply protocol (#3021) ==={N}")
     return cmd_envframe_closure_apply_protocol_3021_coverage()
+
+
+def cmd_ffi_opaque_pin_or_remap_3022_coverage():
+    """Issue #3022: FFI opaque/native pin-or-remap (static)."""
+    print(f"{B}=== FFI opaque pin-or-remap coverage (#3022) ==={N}")
+    script = COVERAGE_CHECKS / "check_ffi_opaque_pin_or_remap_3022.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("FFI opaque pin-or-remap (#3022) coverage contract rows failed")
+        return 1
+    ok("FFI opaque pin-or-remap (#3022) coverage clean")
+    return 0
+
+
+def cmd_ffi_opaque_pin_or_remap_3022():
+    """Issue #3022: FFI opaque/native buffers pin / slot / EXEMPT.
+
+    Create-point observe is not cover. FfiOwned blocks reclaim.
+    Soft extra cost is zero extra pin.
+    """
+    print(f"{B}=== FFI opaque pin-or-remap (#3022) ==={N}")
+    return cmd_ffi_opaque_pin_or_remap_3022_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -15034,6 +15071,8 @@ def main():
         "query-hash-overflow-3020-coverage": cmd_query_hash_overflow_3020_coverage,
         "envframe-closure-apply-protocol-3021": cmd_envframe_closure_apply_protocol_3021,
         "envframe-closure-apply-protocol-3021-coverage": cmd_envframe_closure_apply_protocol_3021_coverage,
+        "ffi-opaque-pin-or-remap-3022": cmd_ffi_opaque_pin_or_remap_3022,
+        "ffi-opaque-pin-or-remap-3022-coverage": cmd_ffi_opaque_pin_or_remap_3022_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,

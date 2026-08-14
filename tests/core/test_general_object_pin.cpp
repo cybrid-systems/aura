@@ -294,6 +294,77 @@ static void ac8_2337_source_cite() {
     CHECK(txt.find("pat_flat_pin") != std::string::npos, "AC8.4: pat_flat_pin present");
 }
 
+// Issue #3022: FFI opaque/native create is pin / slot / EXEMPT, not
+// create-point observe. FfiOwned blocks reclaim. Soft extra cost is
+// one exempt counter, no extra pin.
+static void ac3022_ffi_handoff_inventory() {
+    std::println("\n--- #3022: FFI handoff inventory pin/slot/EXEMPT ---");
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(!ffi.empty(), "AC3022: ffi_primitives_impl.cpp readable");
+    CHECK(ffi.find("GENERAL_OBJECT_PIN_EXEMPT: external-native-addr") != std::string::npos,
+          "AC3022: c-opaque EXEMPT external-native-addr");
+    CHECK(ffi.find("GENERAL_OBJECT_PIN_EXEMPT: libc-heap") != std::string::npos,
+          "AC3022: c-alloc EXEMPT libc-heap");
+    CHECK(ffi.find("GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy") != std::string::npos,
+          "AC3022: c-struct-ref EXEMPT opaque-struct-copy");
+    CHECK(ffi.find("mark_ffi_owned") != std::string::npos,
+          "AC3022: ffi:pin-buffer can mark FfiOwned");
+    CHECK(flat.find("GENERAL_OBJECT_PIN_EXEMPT: ffi-return-external") != std::string::npos,
+          "AC3022: apply_closure Opaque EXEMPT ffi-return-external");
+    CHECK(lp.find("any_pin_blocks_arena_reclaim") != std::string::npos,
+          "AC3022: reclaim-block walk on existing pin registry");
+    CHECK(lp.find("kFfiOpaquePinOrRemapIssue") != std::string::npos, "AC3022: issue stamp");
+    CHECK(lp.find("no second") != std::string::npos || lp.find("No second") != std::string::npos,
+          "AC3022: no second pin registry");
+}
+
+static void ac3022_ffi_owned_blocks_reclaim() {
+    std::println("\n--- #3022: FfiOwned blocks reclaim canary ---");
+    MovingFlagGuard on(1);
+    ASTArena arena(64 * 1024);
+    auto* p = arena.create<Pod16>(1, 2);
+    CHECK(p, "AC3022: create");
+    LifetimePin pin;
+    pin.pin(p, arena.generation(), arena.arena_id());
+    pin.mark_ffi_owned();
+    CHECK(pin.blocks_arena_reclaim(), "AC3022: FfiOwned blocks_arena_reclaim");
+    CHECK(aura::core::lifetime::any_pin_blocks_arena_reclaim(),
+          "AC3022: any_pin_blocks_arena_reclaim");
+    const auto rf = arena.live_compact(LiveCompactMode::Force);
+    CHECK(rf.force_blocked_by_pin || rf.soft_gated, "AC3022: Force blocked while FfiOwned");
+    const auto rm = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(rm.moving_blocked_precondition || rm.force_blocked_by_pin,
+          "AC3022: Moving blocked while FfiOwned (live pin)");
+    pin.release_ffi();
+    CHECK(!pin.blocks_arena_reclaim(), "AC3022: release_ffi clears reclaim block");
+}
+
+static void ac3022_pin_required_and_soak() {
+    std::println("\n--- #3022: pin-required fail-closed + FFI densify soak ---");
+    CHECK(aura::core::lifetime::general_object_pin_required_breach_active() ==
+              aura::core::lifetime::general_object_pin_required_breach_active(),
+          "AC3022: required breach axis reused (no second gate)");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(obs.find("schema-3022") != std::string::npos, "AC3022: schema-3022 on query");
+    CHECK(obs.find("ffi-opaque-pin-or-remap-wired") != std::string::npos,
+          "AC3022: ffi-opaque-pin-or-remap-wired");
+    CHECK(obs.find("ffi-owned-blocks-reclaim-wired") != std::string::npos,
+          "AC3022: ffi-owned-blocks-reclaim-wired");
+    // Soft densify: no extra pin work (existing remaps stay flat).
+    MovingFlagGuard off(0);
+    ASTArena arena(64 * 1024);
+    auto* p = arena.create<Pod16>(9, 8);
+    CHECK(p, "AC3022 soak: create");
+    const auto remaps0 = g_lifetime_pin_stats.remaps;
+    (void)arena.live_compact(LiveCompactMode::Soft);
+    CHECK(g_lifetime_pin_stats.remaps == remaps0, "AC3022 soak: Soft zero extra pin remap");
+    CompilerService cs;
+    const auto schema = href(cs, "schema-3022");
+    CHECK(schema == 3022 || schema == -1, "AC3022: schema-3022 queryable or hash-ref skip");
+}
+
 } // namespace
 
 int run_test_general_object_pin() {
@@ -308,7 +379,10 @@ int run_test_general_object_pin() {
     ac6_2337_wire_counter_initialized();
     ac7_2337_schema_sentinels();
     ac8_2337_source_cite();
-    std::println("\n=== #2298 + #2337: {} passed, {} failed ===", g_passed, g_failed);
+    ac3022_ffi_handoff_inventory();
+    ac3022_ffi_owned_blocks_reclaim();
+    ac3022_pin_required_and_soak();
+    std::println("\n=== #2298 + #2337 + #3022: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

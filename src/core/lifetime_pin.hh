@@ -76,6 +76,10 @@ inline constexpr int kGeneralObjectPinAutoWireIssue = 2709;
 // Issue #3017: value-only register_external_root_for_densify is not the
 // pin / slot / EXEMPT triad — lint treats it as insufficient cover.
 inline constexpr std::uint64_t kGeneralObjectPinAdoptSiteCount = 7;
+// Issue #3022: FFI opaque / native buffer create must be pin / slot /
+// EXEMPT (not create-point observe). Sibling of #3017. Soft extra
+// cost is one required-pref load — zero extra pin. No second registry.
+inline constexpr int kFfiOpaquePinOrRemapIssue = 3022;
 
 // ── Object class × required protocol inventory (#2298 AC5 / #2363) ────
 // | Class                         | Protocol                          |
@@ -808,6 +812,31 @@ inline std::size_t pin_registry_total_pinned_count() noexcept {
 // to pin_registry_total_pinned_count() which iterates all shards.
 inline std::size_t live_pin_count() noexcept {
     return pin_registry_total_pinned_count();
+}
+
+// Issue #3022: FfiOwned blocks arena reclaim (Force / Moving).
+// FfiBorrowed allows Moving per PinOwner (Moving still fail-closes
+// on any live pin via live_pin_count — AC_M3). This walk is the
+// reclaim-block axis. no second pin registry.
+[[nodiscard]] inline bool any_pin_blocks_arena_reclaim() noexcept {
+    for (std::size_t i = 0; i < kPinRegistryShardCount; ++i) {
+        auto& s = pin_registry_shards()[i];
+        std::lock_guard<std::mutex> lock(s.mtx);
+        for (auto* p : s.pins)
+            if (p && p->pinned() && p->blocks_arena_reclaim())
+                return true;
+    }
+    return false;
+}
+
+// Issue #3022: FFI opaque / native create that is NOT arena-tracked
+// (libc heap, external native addr, FFI return). EXEMPT with reason;
+// no LifetimePin. Soft / required both skip pin (zero extra pin).
+// Reason taxonomy (linter): libc-heap | external-native-addr |
+// ffi-return-external | opaque-struct-copy.
+inline void note_ffi_opaque_create_exempt(const char* reason) noexcept {
+    (void)reason;
+    ++g_lifetime_pin_stats.general_object_pin_exempt_total;
 }
 
 // Issue #2256: Moving-compact hard contract. Every live pointer
