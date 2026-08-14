@@ -98,6 +98,21 @@ inline constexpr int kRestampIncrementalDefaultIssue = 2402;
 // a lagging gen.
 inline constexpr int kRestampBudgetIssue = 2934;
 inline constexpr int kQueryStableRefRestampLagIssue = 3000;
+// Issue #3019: unified restamp after boundary / abort / steal / densify.
+// Additive torn-visible counter — does not replace restamp-lag (#3000).
+inline constexpr int kUnifiedRestampIssue = 3019;
+inline std::atomic<std::uint64_t> g_unified_restamp_torn_visible_total{0};
+inline std::atomic<std::uint64_t> g_unified_restamp_calls_total{0};
+[[nodiscard]] inline std::uint64_t unified_restamp_torn_visible_total_v_read() noexcept {
+    return g_unified_restamp_torn_visible_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t unified_restamp_calls_total_v_read() noexcept {
+    return g_unified_restamp_calls_total.load(std::memory_order_relaxed);
+}
+inline void reset_unified_restamp_3019_for_test() noexcept {
+    g_unified_restamp_torn_visible_total.store(0, std::memory_order_relaxed);
+    g_unified_restamp_calls_total.store(0, std::memory_order_relaxed);
+}
 
 [[nodiscard]] inline std::atomic<std::uint32_t>& g_restamp_budget_nodes_override() noexcept {
     static std::atomic<std::uint32_t> v{0};

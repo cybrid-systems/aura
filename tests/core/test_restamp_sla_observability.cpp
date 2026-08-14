@@ -273,6 +273,128 @@ static void ac2934_5_source_and_linter() {
     CHECK(read_file("docs/design/2934-restamp-budget.md").empty(), "AC6: no docs/design/2934-*");
 }
 
+// ── Issue #3019: unified restamp after boundary / abort / steal / densify ──
+//   AC1: single unified_restamp_after_boundary called from all four sites.
+//   AC2: order is node gen → stable-ref → LifetimePin (source-cite).
+//   AC3: budget exceed marks torn visible; query keys additive schema-3019.
+//   AC4: Soft steal/densify skip extra node/pin walks (skipped_extra).
+//   AC5: abort restore canary + steal×compact + query soak + no invent/design.
+
+static void ac3019_1_unified_entry_four_sites() {
+    std::println("\n--- #3019 AC1: unified restamp entry on four sites ---");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    CHECK(ev.find("unified_restamp_after_boundary") != std::string::npos,
+          "AC1: Evaluator declares unified_restamp_after_boundary");
+    CHECK(ev.find("UnifiedRestampSite") != std::string::npos, "AC1: UnifiedRestampSite enum");
+    CHECK(fm.find("unified_restamp_after_boundary") != std::string::npos,
+          "AC1: implementation in fiber_mutation");
+    CHECK(mb.find("UnifiedRestampSite::BoundarySuccess") != std::string::npos,
+          "AC1: boundary success calls unified");
+    CHECK(mb.find("UnifiedRestampSite::AbortRestore") != std::string::npos,
+          "AC1: abort restore calls unified");
+    CHECK(fm.find("UnifiedRestampSite::StealComplete") != std::string::npos,
+          "AC1: steal complete calls unified");
+    CHECK(fm.find("UnifiedRestampSite::Densify") != std::string::npos,
+          "AC1: densify/compact calls unified");
+    CHECK(gc.find("UnifiedRestampSite::StealComplete") != std::string::npos,
+          "AC1: fiber-steal probe uses unified");
+}
+
+static void ac3019_2_order_node_stable_pin() {
+    std::println("\n--- #3019 AC2: restamp order node → stable → pin ---");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto uni = fm.find("Evaluator::unified_restamp_after_boundary");
+    CHECK(uni != std::string::npos, "AC2: unified impl present");
+    const auto triad = uni == std::string::npos ? std::string::npos : fm.find("if (ws) {", uni);
+    const auto body = triad == std::string::npos ? std::string{} : fm.substr(triad, 1600);
+    const auto node = body.find("restamp_all_node_generations");
+    const auto stable = body.find("auto_restamp_pinned_stable_refs_at");
+    const auto pin = body.find("restamp_all_pins_for_arena");
+    CHECK(node != std::string::npos && stable != std::string::npos && pin != std::string::npos,
+          "AC2: triad present in unified impl");
+    CHECK(node < stable && stable < pin, "AC2: order is node gen then stable-ref then pin");
+    CHECK(fm.find("do not reverse") != std::string::npos ||
+              fm.find("stables/pins must observe") != std::string::npos,
+          "AC2: order documented");
+}
+
+static void ac3019_3_budget_torn_visible() {
+    std::println("\n--- #3019 AC3: budget exceed torn visible ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::reset_unified_restamp_3019_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::ast::unified_restamp_torn_visible_total_v_read;
+    clear_restamp_budget_nodes_override_for_test();
+    reset_unified_restamp_3019_for_test();
+    FlatAST flat;
+    for (int i = 0; i < 32; ++i)
+        (void)flat.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    set_restamp_budget_nodes_for_process(1);
+    const auto torn0 = unified_restamp_torn_visible_total_v_read();
+    flat.restamp_all_node_generations();
+    CHECK(flat.restamp_last_budget_exceeded(), "AC3: last restamp exceeded under budget=1");
+    // Unified torn counter bumps only through unified_restamp_after_boundary;
+    // direct restamp still sets last-exceeded (query:*-stable restamp-lag).
+    CHECK(unified_restamp_torn_visible_total_v_read() == torn0,
+          "AC3: direct restamp does not invent torn via unified (entry is the gate)");
+    const auto review = read_file("src/compiler/evaluator_primitives_stdlib_review.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(review.find("schema-3019") != std::string::npos, "AC3: schema-3019 on review surface");
+    CHECK(review.find("unified-restamp-torn-visible-total") != std::string::npos,
+          "AC3: torn-visible key");
+    CHECK(review.find("unified-restamp-wired") != std::string::npos, "AC3: wired sentinel");
+    CHECK(obs.find("schema-3019") != std::string::npos, "AC3: schema-3019 on hold-stats");
+    CHECK(review.find("schema-3000") != std::string::npos, "AC3: restamp-lag keys preserved");
+    CHECK(review.find("schema-2934") != std::string::npos, "AC3: budget keys preserved");
+    clear_restamp_budget_nodes_override_for_test();
+}
+
+static void ac3019_4_soft_zero_extra_walk() {
+    std::println("\n--- #3019 AC4: Soft steal/densify skip extra walks ---");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fm.find("skipped_extra = true") != std::string::npos, "AC4: Soft skip flag");
+    CHECK(fm.find("!production && !wrap_pending && !last_budget") != std::string::npos,
+          "AC4: Soft skip gated on no wrap / no torn budget");
+    CHECK(fm.find("production_defaults_active") != std::string::npos,
+          "AC4: production check (Soft is the skip path)");
+}
+
+static void ac3019_5_canary_soak_linter() {
+    std::println("\n--- #3019 AC5: abort/steal×compact canary + soak + linter ---");
+    const auto t = read_file("tests/core/test_restamp_sla_observability.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_unified_restamp_3019.py");
+    const auto build = read_file("build.py");
+    CHECK(mb.find("AbortRestore") != std::string::npos, "AC5: abort restore canary site");
+    CHECK(fm.find("StealComplete") != std::string::npos && fm.find("Densify") != std::string::npos,
+          "AC5: steal×compact share unified entry");
+    CHECK(t.find("ac3019_1_unified_entry_four_sites") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac3019_3_budget_torn_visible") != std::string::npos, "AC5: query soak test");
+    CHECK(!lint.empty() && lint.find("Issue #3019") != std::string::npos, "AC5: linter present");
+    CHECK(build.find("check_unified_restamp_3019") != std::string::npos, "AC5: build.py gate");
+    CHECK(read_file("tests/core/test_issue_3019.cpp").empty(), "AC5: no invent test file");
+    CHECK(read_file("docs/design/3019-unified-restamp.md").empty(),
+          "AC5: no docs/design/3019-* per #1655");
+    // Soak: many restamps under budget=1 — last-exceeded stays visible.
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    clear_restamp_budget_nodes_override_for_test();
+    FlatAST soak;
+    for (int i = 0; i < 64; ++i)
+        (void)soak.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    set_restamp_budget_nodes_for_process(1);
+    for (int i = 0; i < 32; ++i)
+        soak.restamp_all_node_generations();
+    CHECK(soak.restamp_last_budget_exceeded(),
+          "AC5: query-stable gen soak — last-exceeded stays visible");
+    CHECK(soak.restamp_budget_exceeded_total() >= 32, "AC5: soak bumped exceed total");
+    clear_restamp_budget_nodes_override_for_test();
+}
+
 } // namespace
 
 int run_test_restamp_sla_observability() {
@@ -288,7 +410,13 @@ int run_test_restamp_sla_observability() {
     ac2934_2_default_unlimited();
     ac2934_3_agent_metrics();
     ac2934_5_source_and_linter();
-    std::println("\n=== #2528+#2934: see per-AC results above ===");
+    std::println("\n=== Issue #3019: unified restamp after boundary/abort/steal/densify ===");
+    ac3019_1_unified_entry_four_sites();
+    ac3019_2_order_node_stable_pin();
+    ac3019_3_budget_torn_visible();
+    ac3019_4_soft_zero_extra_walk();
+    ac3019_5_canary_soak_linter();
+    std::println("\n=== #2528+#2934+#3019: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 

@@ -496,16 +496,19 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // valid NodeIds (including unrelated workspace defines).
     // Issue #1282: restamp also consumes auto_restamp_pending_
     // after a generation wrap so live node_gen_ recovers.
-    // Issue #2934: restamp_all_node_generations honors restamp budget
-    // (AURA_RESTAMP_BUDGET_NODES / process override). Over budget →
-    // soft-degrade to incremental or lazy-align only; Agents read
+    // Issue #2934 / #3019: restamp_all_node_generations honors restamp
+    // budget (AURA_RESTAMP_BUDGET_NODES / process override). Over budget
+    // → soft-degrade to incremental or lazy-align only; Agents read
     // restamp-budget-exceeded-total / restamp-last-budget-exceeded.
     // Hard fail-closed only on genuine invariant violations (never
     // silent torn generation — lazy-align keeps is_valid consistent).
     // Issue #3000: export face is the residual — query:*-stable must
     // not stamp a pre-mutate generation when last restamp exceeded
     // and the node was not eagerly restamped (allow_query_stable_ref_export).
-    if (workspace_flat_) {
+    // Issue #3019: outermost triad (node → stable → pin) runs in the
+    // Guard dtor via unified_restamp_after_boundary. Nested still
+    // restamps node gen here (outer owns pin/stable).
+    if (workspace_flat_ && !stack.empty()) {
         const bool wrap_pending = workspace_flat_->auto_restamp_pending();
         workspace_flat_->restamp_all_node_generations();
         if (wrap_pending) {
@@ -2626,19 +2629,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 }
             }
         }
-        // Issue #1500 / #2085: LifetimePin + StableNodeRef restamp under lock
-        // (BEFORE reemit so hot-update sees consistent pins — #2120 order).
-        // Always on outermost (including RenderFastExit — live render buffers).
-        (void)ev_->restamp_pinned_stable_refs();
-        const std::uint64_t boundary_gen =
-            ev_->workspace_flat() != nullptr ? ev_->workspace_flat()->generation() : 0;
-        // Module-only free function (lifetime_pin.ixx). Do not include
-        // lifetime_pin.hh in this TU — dual include+import is ambiguous.
-        const auto n_pins =
-            aura::core::lifetime::restamp_all_pins_for_arena(std::uint64_t{0}, boundary_gen);
+        // Issue #1500 / #2085 / #3019: unified restamp under lock
+        // (node gen → StableNodeRef → LifetimePin) BEFORE reemit so
+        // hot-update sees consistent pins (#2120 order). Always on
+        // outermost (including RenderFastExit — live render buffers).
+        // Abort restore uses the same entry (AbortRestore).
+        const auto ur = ev_->unified_restamp_after_boundary(
+            success ? Evaluator::UnifiedRestampSite::BoundarySuccess
+                    : Evaluator::UnifiedRestampSite::AbortRestore);
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
-            if (n_pins > 0)
-                m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(n_pins),
+            if (ur.pins > 0)
+                m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(ur.pins),
                                                          std::memory_order_relaxed);
         }
         // Issue #2003: EnvFrame lifetime scan at boundary exit.

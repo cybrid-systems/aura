@@ -26,6 +26,7 @@ module;
 #include "compiler/typed_mutation_audit.h" // Issue #2710: production_defaults_active on steal Ok clear
 #include "core/layout_stamp.hh"            // Issue #2519: full 8-field LayoutStamp equality
 #include "core/lifetime_consistency_proof.hh" // Issue #2888: unified proof header
+#include "core/flatast_restamp.hh"            // Issue #3019: unified restamp counters
 #include "core/security_event_wal.hh" // Issue #2839: IsolationDeny SE on fiber principal mismatch
 #include "core/workspace_epoch.hh"    // Issue #2839: Mutation epoch mid for SE
 #include <algorithm>                  // Issue #2189: remove_if for pin table invalidate
@@ -785,6 +786,52 @@ aura::compiler::Evaluator::auto_restamp_pinned_stable_refs_at(StableRefRefreshSi
     return n;
 }
 
+// Issue #3019: unified restamp after boundary / abort / steal / densify.
+// Order (do not reverse — stables/pins must observe the post-restamp gen):
+//   1. restamp_all_node_generations   (FlatAST node_gen_)
+//   2. restamp_pinned_stable_refs     (StableNodeRef / pinned stable)
+//   3. restamp_all_pins_for_arena     (LifetimePin)
+// Soft + steal/densify + no wrap pending + no last-budget-exceeded:
+// stable-only (no extra node/pin walk).
+aura::compiler::Evaluator::UnifiedRestampResult
+aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite site) noexcept {
+    UnifiedRestampResult r{};
+    aura::ast::g_unified_restamp_calls_total.fetch_add(1, std::memory_order_relaxed);
+    auto* ws = workspace_flat();
+    const bool wrap_pending = ws && ws->auto_restamp_pending();
+    const bool last_budget = ws && ws->restamp_last_budget_exceeded();
+    const bool production = typed_audit::production_defaults_active();
+    const bool boundary =
+        site == UnifiedRestampSite::BoundarySuccess || site == UnifiedRestampSite::AbortRestore;
+    // Soft steal/densify with no wrap and no torn budget: no extra walk.
+    if (!boundary && !production && !wrap_pending && !last_budget) {
+        const auto sref_site = (site == UnifiedRestampSite::Densify)
+                                   ? StableRefRefreshSite::CompactOrRepin
+                                   : StableRefRefreshSite::Steal;
+        r.stables = auto_restamp_pinned_stable_refs_at(sref_site);
+        r.skipped_extra = true;
+        return r;
+    }
+    if (ws) {
+        ws->restamp_all_node_generations();
+        r.nodes = static_cast<std::size_t>(ws->restamp_nodes_last());
+        r.budget_exceeded = ws->restamp_last_budget_exceeded();
+        if (wrap_pending) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->generation_auto_restamp_on_wrap.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (r.budget_exceeded)
+            aura::ast::g_unified_restamp_torn_visible_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    const auto sref_site = (site == UnifiedRestampSite::Densify)
+                               ? StableRefRefreshSite::CompactOrRepin
+                               : StableRefRefreshSite::Steal;
+    r.stables = auto_restamp_pinned_stable_refs_at(sref_site);
+    const std::uint64_t gen = ws ? ws->generation() : 0;
+    r.pins = aura::core::lifetime::restamp_all_pins_for_arena(std::uint64_t{0}, gen);
+    return r;
+}
+
 // Issue #1446: re_pin_cow_children_from_snapshot — walk the
 // outermost MutationBoundaryGuard's pinned StableNodeRef / COW
 // children and re-pin them after a steal or GC compact event.
@@ -802,10 +849,9 @@ bool aura::compiler::Evaluator::re_pin_cow_children_from_snapshot() {
             m->checkpoint_lost_on_compact.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    // Issue #1497: unified auto-restamp (atomic-batch + cow-boundary
-    // pins) for compact / post-steal re-pin — replaces the cow-only
-    // validate_or_refresh walk so no registry is skipped.
-    (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::CompactOrRepin);
+    // Issue #1497 / #3019: unified restamp (node gen → stable → pin)
+    // after densify/compact. Soft with no wrap/budget skips extra walks.
+    (void)unified_restamp_after_boundary(UnifiedRestampSite::Densify);
     if (m)
         m->panic_transfer_nested_success.fetch_add(1, std::memory_order_relaxed);
     return true;
@@ -2179,8 +2225,9 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
     bump_hygiene_violation_prevented_on_boundary_total();
     (void)refreshed;
 
-    // 3) StableNodeRef pin restamp (generation-bound; safe if Guard also restamped).
-    (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
+    // 3) Issue #3019: unified restamp after steal (node gen → stable → pin).
+    // Soft with no wrap/budget stays stable-only (no extra walk).
+    (void)unified_restamp_after_boundary(UnifiedRestampSite::StealComplete);
     // Issue #1612: MacroIntroduced marker + provenance refresh on resume/steal.
     (void)refresh_stale_macro_frames(hint_env, expected_epoch);
     probe_and_repin_macro_provenance();
@@ -3249,7 +3296,8 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             // Issue #2362: EnvFrameRef ownership across steal (OOB drop /
             // gen advanced → transfer_to). Soft free when live set empty.
             ev->sync_live_env_frame_refs_ownership();
-            (void)ev->auto_restamp_pinned_stable_refs_at(Evaluator::StableRefRefreshSite::Steal);
+            // Issue #3019: steal-complete uses the unified restamp entry.
+            (void)ev->unified_restamp_after_boundary(Evaluator::UnifiedRestampSite::StealComplete);
             if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics())) {
                 m->steal_complete_restamp_total.fetch_add(1, std::memory_order_relaxed);
             }
