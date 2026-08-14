@@ -844,6 +844,10 @@ void FlatAST::restamp_all_node_generations() {
     // consistent; wrap_pending is still cleared below. Hard fail-closed
     // only for genuine invariant violations elsewhere.
     restamp_last_budget_exceeded_.store(0, std::memory_order_relaxed);
+    restamp_generation_torn_.store(0, std::memory_order_relaxed);
+    if (restamp_eager_.size() < size())
+        restamp_eager_.resize(size(), 0);
+    std::fill(restamp_eager_.begin(), restamp_eager_.end(), 0);
     const auto budget = restamp_budget_nodes_effective();
     if (budget > 0 && !lazy_only && live > 0) {
         const std::uint64_t planned =
@@ -851,6 +855,9 @@ void FlatAST::restamp_all_node_generations() {
         if (planned > static_cast<std::uint64_t>(budget)) {
             restamp_budget_exceeded_total_.fetch_add(1, std::memory_order_relaxed);
             restamp_last_budget_exceeded_.store(1, std::memory_order_relaxed);
+            // Issue #3037: mark generation torn for export (do not rely
+            // on lazy-align making node_gen_ look post-mutate).
+            restamp_generation_torn_.store(1, std::memory_order_relaxed);
             if (touched_live > 0 && touched_live <= static_cast<std::uint64_t>(budget)) {
                 // Soft: cone fits — incremental + lazy for untouched.
                 use_incremental = true;
@@ -879,6 +886,8 @@ void FlatAST::restamp_all_node_generations() {
                 continue;
             if (id < restamp_touched_.size() && restamp_touched_[id]) {
                 node_gen_[id] = generation_;
+                if (id < restamp_eager_.size())
+                    restamp_eager_[id] = 1;
                 ++restamped;
             }
         }
@@ -891,6 +900,8 @@ void FlatAST::restamp_all_node_generations() {
         for (NodeId id = 0; id < size(); ++id) {
             if (!on_free[id] && id < node_gen_.size()) {
                 node_gen_[id] = generation_;
+                if (id < restamp_eager_.size())
+                    restamp_eager_[id] = 1;
                 ++restamped;
             }
         }

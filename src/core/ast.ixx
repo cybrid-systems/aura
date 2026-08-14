@@ -54,6 +54,7 @@ export constexpr SymId INVALID_SYM = ~0u;
 export using ::aura::ast::RestampPolicy;
 export using ::aura::ast::kRestampIncrementalDefaultIssue;
 export using ::aura::ast::kRestampBudgetIssue;
+export using ::aura::ast::kRestampOverBudgetExportIssue;
 export using ::aura::ast::kUnifiedRestampIssue;
 export using ::aura::ast::unified_restamp_torn_visible_total_v_read;
 export using ::aura::ast::unified_restamp_calls_total_v_read;
@@ -2115,6 +2116,13 @@ public:
     mutable std::atomic<std::uint64_t> restamp_budget_exceeded_total_{0};
     mutable std::atomic<std::uint64_t> restamp_nodes_skipped_total_{0};
     mutable std::atomic<std::uint32_t> restamp_last_budget_exceeded_{0};
+    // Issue #3037: generation torn for Agent export after over-budget
+    // restamp. Distinct from last_budget_exceeded so Soft can observe
+    // without changing is_valid/make_ref (lazy-align still #2934 AC2).
+    mutable std::atomic<std::uint32_t> restamp_generation_torn_{0};
+    // Eager-restamp bits: set only when restamp_all writes node_gen_.
+    // Lazy-align must not flip these (#3037: no silent pre-mutate export).
+    std::vector<std::uint8_t> restamp_eager_;
     // Issue #2528: long-session SLA surface — restamp_slo_breach_total_
     // bumps when restamp_us_last_ exceeds the configured AURA_RESTAMP_SLO_US
     // budget (default 500 µs). Agents / orch poll this counter via the
@@ -7838,6 +7846,19 @@ public:
     // Agent soft-reject flag: last restamp_all_node_generations hit budget.
     [[nodiscard]] bool restamp_last_budget_exceeded() const noexcept {
         return restamp_last_budget_exceeded_.load(std::memory_order_relaxed) != 0;
+    }
+    // Issue #3037: over-budget restamp marked generation torn for export.
+    // query:*-stable production reject uses this + eager bit (lazy-align
+    // of node_gen_ must not stamp-green a pre-mutate handle).
+    [[nodiscard]] bool restamp_generation_torn() const noexcept {
+        return restamp_generation_torn_.load(std::memory_order_relaxed) != 0;
+    }
+    // Issue #3037: true only if restamp_all wrote node_gen_[id] this call.
+    // Lazy-align / is_valid must not flip this bit.
+    [[nodiscard]] bool node_eagerly_restamped(NodeId id) const noexcept {
+        if (id == NULL_NODE || id >= restamp_eager_.size())
+            return false;
+        return restamp_eager_[id] != 0;
     }
     // Issue #3000: raw peek of node_gen_ vs workspace generation_ — does
     // NOT lazy-align. true iff this slot was eagerly restamped (or

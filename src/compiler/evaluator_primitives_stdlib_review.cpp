@@ -1395,6 +1395,27 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                         "issue-3000",
                         make_int(aura::core::provenance::kQueryStableRefRestampLagIssue));
                     kv.emplace_back("query-stable-ref-restamp-lag-wired", make_int(1));
+                    // Issue #3037: over-budget generation-torn export face.
+                    kv.emplace_back("query-stable-ref-restamp-torn-reject-total",
+                                    make_int(static_cast<std::int64_t>(
+                                        aura::core::provenance::
+                                            g_query_stable_ref_restamp_torn_reject_total_atomic()
+                                                .load(std::memory_order_relaxed))));
+                    kv.emplace_back(
+                        "query-stable-ref-restamp-torn-soft-observe-total",
+                        make_int(static_cast<std::int64_t>(
+                            aura::core::provenance::
+                                g_query_stable_ref_restamp_torn_soft_observe_total_atomic()
+                                    .load(std::memory_order_relaxed))));
+                    kv.emplace_back("restamp-generation-torn",
+                                    make_int(ws->restamp_generation_torn() ? 1 : 0));
+                    kv.emplace_back(
+                        "schema-3037",
+                        make_int(aura::core::provenance::kQueryStableRefRestampTornIssue));
+                    kv.emplace_back(
+                        "issue-3037",
+                        make_int(aura::core::provenance::kQueryStableRefRestampTornIssue));
+                    kv.emplace_back("query-stable-ref-restamp-torn-wired", make_int(1));
                     // Issue #3019: unified restamp torn-visible (additive).
                     kv.emplace_back("unified-restamp-torn-visible-total",
                                     make_int(static_cast<std::int64_t>(

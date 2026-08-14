@@ -1337,6 +1337,29 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         .load(std::memory_order_relaxed)));
             insert_kv("schema-3000", 3000);
             insert_kv("issue-3000", 3000);
+            // Issue #3037: over-budget restamp torn export (additive on
+            // stable-ref-stats-hash; #2960 stamped / #3000 lag non-regress).
+            insert_kv(
+                "query-stable-ref-restamp-torn-reject-total",
+                static_cast<std::int64_t>(
+                    aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic()
+                        .load(std::memory_order_relaxed)));
+            insert_kv("query-stable-ref-restamp-torn-soft-observe-total",
+                      static_cast<std::int64_t>(
+                          aura::core::provenance::
+                              g_query_stable_ref_restamp_torn_soft_observe_total_atomic()
+                                  .load(std::memory_order_relaxed)));
+            insert_kv(
+                "query-stable-ref-restamp-torn-wired",
+                static_cast<std::int64_t>(
+                    aura::core::provenance::g_query_stable_ref_restamp_torn_wired_atomic().load(
+                        std::memory_order_relaxed)));
+            insert_kv(
+                "restamp-generation-torn",
+                static_cast<std::int64_t>(
+                    ev.workspace_flat() && ev.workspace_flat()->restamp_generation_torn() ? 1 : 0));
+            insert_kv("schema-3037", 3037);
+            insert_kv("issue-3037", 3037);
             // Issue #2170: LayoutStamp keys (schema bump — fold into the
             // existing stable-ref-stats-hash per #2170 AC contract,
             // "no new public prim if constrained"). The stamp captures

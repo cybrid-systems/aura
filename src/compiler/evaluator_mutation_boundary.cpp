@@ -509,6 +509,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // Issue #3000: export face is the residual — query:*-stable must
     // not stamp a pre-mutate generation when last restamp exceeded
     // and the node was not eagerly restamped (allow_query_stable_ref_export).
+    // Issue #3037: over-budget marks generation torn; production
+    // reject_stable_ref_export even after lazy-align hides node_gen lag.
     // Issue #3019: outermost triad (node → stable → pin) runs in the
     // Guard dtor via unified_restamp_after_boundary. Nested still
     // restamps node gen here (outer owns pin/stable).

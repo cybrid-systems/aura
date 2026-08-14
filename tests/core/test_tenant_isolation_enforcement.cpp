@@ -1011,6 +1011,62 @@ int main() {
         }
     }
 
+    // ── #3037: over-budget restamp torn export (lazy-align must not hide) ──
+    {
+        std::println("\n--- #3037 AC1/AC2: torn reject after lazy-align under production ---");
+        reset_all();
+        CHECK(aura::core::provenance::kQueryStableRefRestampTornIssue == 3037,
+              "3037: kQueryStableRefRestampTornIssue == 3037");
+        using aura::ast::clear_restamp_budget_nodes_override_for_test;
+        using aura::ast::set_restamp_budget_nodes_for_process;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(cs.eval("(set-code \"(define (q-torn a) a) (define (q-torn2 b) b) "
+                      "(define (q-torn3 c) c) (define (q-torn4 d) d)\")")
+                  .has_value(),
+              "set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "live node");
+        apply_production_audit_defaults();
+        set_restamp_budget_nodes_for_process(1);
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+        CHECK(ws->restamp_generation_torn(), "#3037: generation torn");
+        if (!ws->node_eagerly_restamped(id)) {
+            (void)ws->is_valid(id);
+            CHECK(ws->node_generation_is_post_mutate(id), "#3037: lazy-align hid raw gen lag");
+            CHECK(!ev.allow_query_stable_ref_export(id),
+                  "#3037: production rejects after lazy-align");
+            FlatAST::StableNodeRef brace{};
+            brace.id = id;
+            ev.stamp_query_stable_ref_export(brace);
+            CHECK(brace.id == NULL_NODE, "#3037: stamp nulls torn export");
+            CHECK(
+                aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+                    std::memory_order_relaxed) >= 1,
+                "#3037: torn reject advanced");
+        } else {
+            CHECK(true, "#3037: node eagerly restamped — current gen ok");
+        }
+        apply_dev_audit_defaults();
+        clear_restamp_budget_nodes_override_for_test();
+        const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+        CHECK(qws.find("Issue #3037") != std::string::npos, "#3037: query workspace cites torn");
+        CHECK(qws.find("generation torn") != std::string::npos, "#3037: torn message");
+        const auto astx = read_file("src/core/ast.ixx");
+        CHECK(astx.find("node_eagerly_restamped") != std::string::npos, "#3037: eager bit helper");
+        for (const auto& p : {"docs/design/3037-restamp-over-budget-export.md",
+                              "docs/restamp_over_budget_export_3037.md", "design/3037.md"}) {
+            std::ifstream f(p);
+            CHECK(!f.good(), "#3037: no design doc at " + std::string(p));
+        }
+    }
+
     // ── #2968: cross-tenant grant write path requires TenantAdmin ──
     {
         std::println("\n--- #2968 AC1: cross-tenant grant without TenantAdmin → deny ---");

@@ -373,105 +373,105 @@ void register_workspace_query_primitives(
     // Issue #2759 / #2960: stamp each child via Evaluator (sole production
     // authority) before packing id.gen — process-global capture is Soft-only
     // under hard-close. FlatAST for_each_stable_child is layout-only (#2960).
-    (*q_impls)["query:children-stable"] =
-        PrimFn{[ws, mev, resolve_query_node_arg, begin_query_epoch, end_query_epoch_maybe_result,
-                pin_query_children, &ev](const auto& a) -> EvalValue {
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (a.empty() || !ws.workspace_flat)
-                return mev("bad-arg",
-                           "usage: (query :children-stable node-id|stable-ref [:as-query-result])");
-            bool ok = true;
-            aura::ast::NodeId node = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a[0], "query:children-stable", &ok, node);
-            if (!ok)
-                return err;
-            // Issue #2933: optional QueryResult; pin=true (SafePCVSpan-stable path).
-            bool as_query_result = false;
-            for (std::size_t ai = 1; ai < a.size(); ++ai) {
-                if (!is_keyword(a[ai]))
-                    continue;
-                auto kidx = as_keyword_idx(a[ai]);
-                if (kidx >= ws.keyword_table.size())
-                    continue;
-                auto kw = ws.keyword_table[kidx];
-                if (kw == ":as-query-result" || kw == ":query-result") {
-                    as_query_result = true;
-                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                        if (is_bool(a[ai + 1]))
-                            as_query_result = as_bool(a[ai + 1]);
-                        else
-                            as_query_result = (as_int(a[ai + 1]) != 0);
-                        ++ai;
-                    }
+    (*q_impls)["query:children-stable"] = PrimFn{[ws, mev, resolve_query_node_arg,
+                                                  begin_query_epoch, end_query_epoch_maybe_result,
+                                                  pin_query_children,
+                                                  &ev](const auto& a) -> EvalValue {
+        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+        if (a.empty() || !ws.workspace_flat)
+            return mev("bad-arg",
+                       "usage: (query :children-stable node-id|stable-ref [:as-query-result])");
+        bool ok = true;
+        aura::ast::NodeId node = aura::ast::NULL_NODE;
+        auto err = resolve_query_node_arg(a[0], "query:children-stable", &ok, node);
+        if (!ok)
+            return err;
+        // Issue #2933: optional QueryResult; pin=true (SafePCVSpan-stable path).
+        bool as_query_result = false;
+        for (std::size_t ai = 1; ai < a.size(); ++ai) {
+            if (!is_keyword(a[ai]))
+                continue;
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ws.keyword_table.size())
+                continue;
+            auto kw = ws.keyword_table[kidx];
+            if (kw == ":as-query-result" || kw == ":query-result") {
+                as_query_result = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        as_query_result = as_bool(a[ai + 1]);
+                    else
+                        as_query_result = (as_int(a[ai + 1]) != 0);
+                    ++ai;
                 }
             }
-            auto& flat = *ws.workspace_flat;
-            // Issue #3000: gate *before* for_each_stable_child / make_ref_layout
-            // (lazy-align would hide a pre-mutate node_gen_). Production +
-            // restamp-budget exceeded + child not eagerly restamped → typed
-            // restamp-lag (not -1 / no last-reason). Soft: observe, stamp as today.
-            {
-                auto kids = pin_query_children(flat, node);
-                for (std::size_t ki = 0; ki < kids.size(); ++ki) {
-                    const auto cid = kids[ki];
-                    if (cid == aura::ast::NULL_NODE)
-                        continue;
-                    if (!ev.allow_query_stable_ref_export(cid))
-                        return mev("restamp-lag", "query:children-stable: restamp budget exceeded; "
-                                                  "node generation is pre-mutate (Issue #3000)");
-                }
+        }
+        auto& flat = *ws.workspace_flat;
+        // Issue #3000: gate *before* for_each_stable_child / make_ref_layout
+        // (lazy-align would hide a pre-mutate node_gen_). Production +
+        // restamp-budget exceeded + child not eagerly restamped → typed
+        // restamp-lag (not -1 / no last-reason). Soft: observe, stamp as today.
+        {
+            auto kids = pin_query_children(flat, node);
+            for (std::size_t ki = 0; ki < kids.size(); ++ki) {
+                const auto cid = kids[ki];
+                if (cid == aura::ast::NULL_NODE)
+                    continue;
+                if (!ev.allow_query_stable_ref_export(cid))
+                    return mev("restamp-lag", "query:children-stable: restamp budget exceeded; "
+                                              "generation torn for export (Issue #3037 / #3000)");
             }
-            const auto qe = begin_query_epoch(&flat); // Issue #2192
-            // Issue #398: truly zero-allocation path (no local
-            // vector). The result is a list of (id . gen) pairs
-            // — each child takes 3 entries in ws.pairs:
-            //   - (gen, nil)
-            //   - (id, ^prev)
-            //   - (pair_ev, ^next-list-node)
-            // We pre-allocate 3*N entries directly in ws.pairs
-            // (no temp vector), fill them via the callback, then
-            // thread the list-node cdrs in a second O(N) walk.
-            auto gen = flat.generation();
-            std::size_t n = flat.stable_child_count(node);
-            if (n == 0)
-                return end_query_epoch_maybe_result(qe, &flat, make_void(), as_query_result,
-                                                    /*pinned=*/true);
-            const auto base = ws.pairs.size();
-            // Pre-allocate 3*N slots with placeholder pairs. The
-            // exact car / cdr values are filled in below; the
-            // placeholders keep the indices stable.
-            for (std::size_t i = 0; i < 3 * n; ++i) {
-                ws.pairs.push_back({make_void(), make_void()});
-            }
-            // Fill (gen, nil) and (id, ^gen-pair) for each child.
-            // The list-node cdr is filled in the second loop.
-            std::size_t i = 0;
-            flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
-                // Issue #2759 / #2960: sole production isolation stamp + query counters.
-                ev.stamp_query_stable_ref_export(ref);
-                const auto gen_idx = static_cast<int>(base + 3 * i);
-                const auto pair_idx = static_cast<int>(base + 3 * i + 1);
-                const auto list_idx = static_cast<int>(base + 3 * i + 2);
-                ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
-                ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)),
-                                      make_pair(gen_idx)};
-                // The list-node cdr is filled below (we don't know
-                // the next list-node index until the loop ends).
-                ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
-                ++i;
-            });
-            // Thread the list-node cdrs: list[i].cdr = list[i+1]
-            // for i in 0..N-2; list[N-1].cdr = nil (already set).
-            for (std::size_t j = 0; j + 1 < n; ++j) {
-                const auto list_idx = static_cast<int>(base + 3 * j + 2);
-                const auto next_idx = static_cast<int>(base + 3 * (j + 1) + 2);
-                ws.pairs[list_idx].cdr = make_pair(next_idx);
-            }
-            // The final result is the first list-node.
-            // Issue #2933: children_stable is the SafePCVSpan pin path → pinned=1.
-            return end_query_epoch_maybe_result(qe, &flat, make_pair(static_cast<int>(base + 2)),
-                                                as_query_result, /*pinned=*/true);
-        }};
+        }
+        const auto qe = begin_query_epoch(&flat); // Issue #2192
+        // Issue #398: truly zero-allocation path (no local
+        // vector). The result is a list of (id . gen) pairs
+        // — each child takes 3 entries in ws.pairs:
+        //   - (gen, nil)
+        //   - (id, ^prev)
+        //   - (pair_ev, ^next-list-node)
+        // We pre-allocate 3*N entries directly in ws.pairs
+        // (no temp vector), fill them via the callback, then
+        // thread the list-node cdrs in a second O(N) walk.
+        auto gen = flat.generation();
+        std::size_t n = flat.stable_child_count(node);
+        if (n == 0)
+            return end_query_epoch_maybe_result(qe, &flat, make_void(), as_query_result,
+                                                /*pinned=*/true);
+        const auto base = ws.pairs.size();
+        // Pre-allocate 3*N slots with placeholder pairs. The
+        // exact car / cdr values are filled in below; the
+        // placeholders keep the indices stable.
+        for (std::size_t i = 0; i < 3 * n; ++i) {
+            ws.pairs.push_back({make_void(), make_void()});
+        }
+        // Fill (gen, nil) and (id, ^gen-pair) for each child.
+        // The list-node cdr is filled in the second loop.
+        std::size_t i = 0;
+        flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
+            // Issue #2759 / #2960: sole production isolation stamp + query counters.
+            ev.stamp_query_stable_ref_export(ref);
+            const auto gen_idx = static_cast<int>(base + 3 * i);
+            const auto pair_idx = static_cast<int>(base + 3 * i + 1);
+            const auto list_idx = static_cast<int>(base + 3 * i + 2);
+            ws.pairs[gen_idx] = {make_int(static_cast<std::int64_t>(gen)), make_void()};
+            ws.pairs[pair_idx] = {make_int(static_cast<std::int64_t>(ref.id)), make_pair(gen_idx)};
+            // The list-node cdr is filled below (we don't know
+            // the next list-node index until the loop ends).
+            ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
+            ++i;
+        });
+        // Thread the list-node cdrs: list[i].cdr = list[i+1]
+        // for i in 0..N-2; list[N-1].cdr = nil (already set).
+        for (std::size_t j = 0; j + 1 < n; ++j) {
+            const auto list_idx = static_cast<int>(base + 3 * j + 2);
+            const auto next_idx = static_cast<int>(base + 3 * (j + 1) + 2);
+            ws.pairs[list_idx].cdr = make_pair(next_idx);
+        }
+        // The final result is the first list-node.
+        // Issue #2933: children_stable is the SafePCVSpan pin path → pinned=1.
+        return end_query_epoch_maybe_result(qe, &flat, make_pair(static_cast<int>(base + 2)),
+                                            as_query_result, /*pinned=*/true);
+    }};
 
     // Issue #249: (query :parent-stable node-id|stable-ref) — Get the
     // parent as a (node-id . generation) stable-ref pair. Returns
@@ -495,7 +495,7 @@ void register_workspace_query_primitives(
         // Issue #3000: gate before export_ref_safe (make_ref_layout lazy-aligns).
         if (!ev.allow_query_stable_ref_export(pref.id))
             return mev("restamp-lag", "query:parent-stable: restamp budget exceeded; "
-                                      "node generation is pre-mutate (Issue #3000)");
+                                      "generation torn for export (Issue #3037 / #3000)");
         // Issue #2404 / #2960: export_ref_safe stamps + finalize_agent_export.
         const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
         auto exported = ev.export_ref_safe(pref.id, /*workspace_id=*/0, cur_fiber);
@@ -610,7 +610,7 @@ void register_workspace_query_primitives(
         // cannot ship a stamped-green pre-mutate generation.
         if (!ev.allow_query_stable_ref_export(node))
             return mev("restamp-lag", "query:stable-ref: restamp budget exceeded; "
-                                      "node generation is pre-mutate (Issue #3000)");
+                                      "generation torn for export (Issue #3037 / #3000)");
         // Issue #738 / #1630 / #2404 / #2960: export_ref_safe stamps + finalize
         // (sole Agent export path); query counter tracks the stamp.
         std::uint32_t layer = 0;

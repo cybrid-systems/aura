@@ -306,6 +306,52 @@ int run_test_stable_ref_tenant_capture() {
         CHECK(aura::core::provenance::kQueryStableRefRestampLagIssue == 3000, "#3000: issue stamp");
     }
 
+    // ── #3037: over-budget torn export (lazy-align must not stamp-green) ──
+    {
+        std::println("\n--- #3037: tenant-capture torn gate after lazy-align ---");
+        reset_all();
+        using aura::ast::clear_restamp_budget_nodes_override_for_test;
+        using aura::ast::set_restamp_budget_nodes_for_process;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.grant_capability(kCapWildcard);
+        CHECK(cs.eval("(set-code \"(define (torn-a x) x) (define (torn-b y) y) "
+                      "(define (torn-c z) z)\")")
+                  .has_value(),
+              "set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "workspace");
+        const auto id = first_live(*ws);
+        ev.set_capability_tenant_id(42);
+        apply_production_audit_defaults();
+        set_restamp_budget_nodes_for_process(1);
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+        CHECK(ws->restamp_generation_torn(), "#3037: generation torn");
+        if (!ws->node_eagerly_restamped(id)) {
+            (void)ws->make_ref_layout(id);
+            CHECK(ws->node_generation_is_post_mutate(id), "#3037: lazy-align hid raw gen lag");
+            FlatAST::StableNodeRef r{};
+            r.id = id;
+            ev.stamp_query_stable_ref_export(r);
+            CHECK(r.id == NULL_NODE, "#3037: production stamp does not export torn gen");
+            CHECK(r.tenant_id == 0, "#3037: rejected ref not stamp-greened");
+        } else {
+            CHECK(true, "#3037: node eagerly restamped");
+        }
+        apply_dev_audit_defaults();
+        clear_restamp_budget_nodes_override_for_test();
+        {
+            std::ifstream f("docs/design/3037-restamp-over-budget-export.md");
+            CHECK(!f.good(), "#3037: no docs/design/3037-*");
+        }
+        CHECK(aura::core::provenance::kQueryStableRefRestampTornIssue == 3037,
+              "#3037: issue stamp");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
