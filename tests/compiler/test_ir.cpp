@@ -1,4 +1,5 @@
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 import std;
 import aura.core;
@@ -3366,6 +3367,11 @@ int main() {
     {
         using namespace aura::compiler;
         int cs34_passed = 0, cs34_failed = 0;
+
+        // Unit smoke: Sampled/dev defaults. Cold-start Full + #2983
+        // required-TypeId auto-fill otherwise force-rollbacks a simple
+        // rebind (ubsan-smoke test_ir CS34).
+        aura::compiler::typed_audit::reset_for_test();
 
         CompilerService cs34;
 
