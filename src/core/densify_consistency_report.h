@@ -198,6 +198,20 @@ inline void reset_moving_pre_densify_completeness_for_test() noexcept {
     g_moving_pre_densify_reject_total.store(0, std::memory_order_relaxed);
     g_moving_pre_densify_untracked_total.store(0, std::memory_order_relaxed);
 }
+// Issue #3017: residual of #2495/#2837/#2973 — value-only prep is not
+// safe cover. Bumped only on the production-hard pre-move walk (same
+// branch as pre-densify-untracked; Soft / hard_pref<=0 is a single
+// atomic load and never increments this). Additive observability so
+// Agents can distinguish "declared but not slotted/pinned" from other
+// untracked axes without a second pin registry.
+inline std::atomic<std::uint64_t> g_moving_value_only_not_cover_total{0};
+inline constexpr int kMovingIncompleteRemapResidual3017Issue = 3017;
+[[nodiscard]] inline std::uint64_t moving_value_only_not_cover_total_v_read() noexcept {
+    return g_moving_value_only_not_cover_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_incomplete_remap_residual_3017_for_test() noexcept {
+    g_moving_value_only_not_cover_total.store(0, std::memory_order_relaxed);
+}
 inline std::atomic<std::uint8_t> g_last_densify_envframe_fail_code{0};
 inline std::atomic<std::uint8_t> g_last_densify_closure_fail_code{0};
 

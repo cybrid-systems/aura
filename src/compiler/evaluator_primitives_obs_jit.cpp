@@ -12189,6 +12189,18 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                       aura::core::densify_consistency::kMovingPreDensifyCompletenessIssue);
             insert_kv("issue-2973",
                       aura::core::densify_consistency::kMovingPreDensifyCompletenessIssue);
+            // Issue #3017: value-only prep is not safe cover. Additive —
+            // pre-densify-untracked / incomplete-remap stay the #2973
+            // observe + hard-block signals. Soft never bumps this key.
+            insert_kv(
+                "value-only-not-cover-total",
+                static_cast<std::int64_t>(
+                    aura::core::densify_consistency::moving_value_only_not_cover_total_v_read()));
+            insert_kv("incomplete-remap-residual-wired", 1);
+            insert_kv("schema-3017",
+                      aura::core::densify_consistency::kMovingIncompleteRemapResidual3017Issue);
+            insert_kv("issue-3017",
+                      aura::core::densify_consistency::kMovingIncompleteRemapResidual3017Issue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

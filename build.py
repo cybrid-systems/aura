@@ -2350,6 +2350,19 @@ def cmd_lint():
             "Issue #3016 boundary audit mid linter failed — run python3 scripts/coverage/checks/check_boundary_audit_mid_3016.py"
         )
         return r
+    # Issue #3017: densify incomplete-remap residual — value-only prep
+    # is not safe cover; expand allocate-bypass lint to FFI/agent/scratch.
+    # Extends test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
+    mir_script = COVERAGE_CHECKS / "check_moving_incomplete_remap_3017.py"
+    if not mir_script.exists():
+        fail(f"missing {mir_script}")
+        return 1
+    r = run([sys.executable, str(mir_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3017 incomplete-remap residual linter failed — run python3 scripts/coverage/checks/check_moving_incomplete_remap_3017.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -7768,6 +7781,32 @@ def cmd_moving_pre_densify_completeness_2973():
     """
     print(f"{B}=== moving pre-densify completeness (#2973) ==={N}")
     return cmd_moving_pre_densify_completeness_2973_coverage()
+
+
+def cmd_moving_incomplete_remap_3017_coverage():
+    """Issue #3017: value-only / un-slotted incomplete-remap residual (static)."""
+    print(f"{B}=== moving incomplete-remap residual coverage (#3017) ==={N}")
+    script = COVERAGE_CHECKS / "check_moving_incomplete_remap_3017.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving incomplete-remap residual (#3017) coverage contract rows failed")
+        return 1
+    ok("moving incomplete-remap residual (#3017) coverage clean")
+    return 0
+
+
+def cmd_moving_incomplete_remap_3017():
+    """Issue #3017: densify incomplete-remap residual (value-only not cover).
+
+    Value-only register_external_root_for_densify is observability only.
+    Production hard still pre-move rejects uncovered externals + sticky-off.
+    Soft / Off stays a single atomic load. Lint expands to FFI/agent/scratch.
+    """
+    print(f"{B}=== moving incomplete-remap residual (#3017) ==={N}")
+    return cmd_moving_incomplete_remap_3017_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -14834,6 +14873,8 @@ def main():
         "general-object-pin-create-densify-2971-coverage": cmd_general_object_pin_create_densify_2971_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
+        "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,
+        "moving-incomplete-remap-3017-coverage": cmd_moving_incomplete_remap_3017_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,
