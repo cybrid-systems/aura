@@ -1221,6 +1221,9 @@ extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept {
 
 // Issue #2932: hold-budget overtime forced outermost fail-closed at a
 // cooperative safepoint edge (Fiber::check_gc_safepoint / yield).
+// Issue #2999: outermost Guard dtor is the *exit* half if this edge
+// never ran. In-body still needs this ABI + force-safepoint to *enter*
+// dtor — the remaining in-body window is not gone.
 //
 // Under production / AURA_MUTATION_HOLD_BUDGET_HARD=1, when the holder
 // fiber has pending_hold_budget_cancel_ (set by #2726 force-degrade +

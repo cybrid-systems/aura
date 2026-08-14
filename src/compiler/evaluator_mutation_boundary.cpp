@@ -2021,45 +2021,39 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #2726: cross-fiber hold-budget cancel poll (one-shot CAS).
-    // If the cross-fiber force-degrade path (aura_evaluator_force_
-    // degrade_outermost_holder) set this holder's pending_hold_budget_
-    // cancel_ flag during this Guard's lifetime, consume it now and
-    // flip *flag_=false so the outermost dtor runs the failure path —
-    // same effect as the same-fiber path's mark_outermost_mutation_failed
-    // (the existing #1897/#1818 exception auto-flip above uses the same
-    // shape).
-    //
-    // Issue #2932: may already have been consumed at a safepoint edge
-    // (aura_evaluator_try_hold_budget_fail_closed_at_safepoint) which
-    // also mark_outermost_mutation_failed — Phase-5 still runs the
+    // Issue #2726 / Issue #2932 / Issue #2999: outermost hold-budget
+    // cancel poll. Issue #2932 arms cancel + force-safepoint so a
+    // still-in-body loop can hit check_gc_safepoint and
+    // mark_outermost_mutation_failed. Phase-5 still runs the
     // forced-failure residual closed-loop (#2846) because success=false.
-    // If the body never hit a safepoint, this poll is the voluntary
-    // cooperative consume path (still fail-closed under production).
+    // #2999 is the *exit* half: once this dtor runs with cancel armed,
+    // it cannot commit success — even if check_gc_safepoint never ran
+    // in this body. Remaining in-body window (body that never exits)
+    // still relies on #2932 force-safepoint to enter dtor; do not
+    // invent preemptive unlock while the body is still running.
     //
     // AC3 — only outermost Guards observe/clear the flag. Nested
-    // guards fall through to the nested depth_slot-- branch below;
-    // is_outermost_ is ctor-captured (#2120) so the guard is robust
-    // against mid-exit migration.
-    //
-    // AC2 — production gating: only consume under production/hard-env
-    // so Soft / sandbox=off callers (test ergonomics) keep existing
-    // behavior. The cross-fiber fire path is already gated by
-    // mutation_hold_budget_reject_enabled() inside
-    // aura_evaluator_force_degrade_outermost_holder; the defensive
-    // check here is for ABI calls from non-gated entry points.
-    //
-    // Happy path (flag unset): one relaxed atomic load on the holder's
-    // flag, CAS falls through, single relaxed atomic on the gate
-    // predicate. Zero cost on the common case.
-    if (is_outermost_ && aura::serve::g_current_fiber &&
-        aura::serve::g_current_fiber->consume_hold_budget_cancel() &&
-        mutation_hold_budget_reject_enabled()) {
-        if (flag_) {
-            *flag_ = false;
+    // guards fall through; is_outermost_ is ctor-captured (#2120).
+    // AC2 — Soft / sandbox=off: peek + soft-observe only; no consume,
+    // no forced fail. Production / hard-env: consume + fail-closed.
+    if (is_outermost_) {
+        if (auto* f = aura::serve::g_current_fiber) {
+            if (mutation_hold_budget_reject_enabled()) {
+                if (f->consume_hold_budget_cancel()) {
+                    g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total
+                        .fetch_add(1, std::memory_order_relaxed);
+                    g_mutation_hold_budget_forced_fail_closed_dtor_consume_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (flag_ && *flag_) {
+                        *flag_ = false; // dtor takes ResidualPolicy fail + unlock
+                        g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            } else if (f->peek_hold_budget_cancel()) {
+                g_mutation_hold_budget_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
-        g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total.fetch_add(
-            1, std::memory_order_relaxed);
     }
     bool success = flag_ ? *flag_ : true;
     // Issue #2944: outermost MutationBoundary exit revokes mutation-session

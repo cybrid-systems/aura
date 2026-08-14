@@ -1049,6 +1049,217 @@ static void ac2932_6_no_docs_design() {
           "AC6: no docs/design/2932-* per #1655");
 }
 
+// ── Issue #2999 AC1: outermost dtor consume fail-closes without
+// check_gc_safepoint (exit half of #2932). In-body still needs
+// force-safepoint to *enter* dtor.
+static void ac2999_1_dtor_consume_fail_closed() {
+    std::println("\n--- #2999 AC1: dtor consume fail-closed (no safepoint) ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("Issue #2999") != std::string::npos, "AC1: emb cites #2999");
+    CHECK(emb.find("forced_fail_closed_dtor_consume_total") != std::string::npos,
+          "AC1: dtor consume counter");
+    CHECK(emb.find("in-body window") != std::string::npos ||
+              emb.find("never exits") != std::string::npos,
+          "AC1: remaining in-body window documented");
+
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "AC1: reject_enabled under production");
+    aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+    aura::compiler::clear_mutation_hold_budget_holder_degrade_cross_fiber_cancel_for_test();
+    const auto forced0 = aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read();
+    const auto dtor0 =
+        aura::compiler::mutation_hold_budget_forced_fail_closed_dtor_consume_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{1};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "AC1: outermost Guard");
+            aura::gc_hooks::arm_mutation_hold_defer();
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "AC1: fiber current");
+            f->request_hold_budget_cancel();
+            // No check_gc_safepoint / yield — dtor must consume.
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC1: fiber body ran");
+    CHECK(ok_flag.load() == 0, "AC1: dtor consume forced success=false");
+    CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() > forced0,
+          "AC1: forced_fail_closed_total advanced");
+    CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_dtor_consume_total_v_read() >
+              dtor0,
+          "AC1: dtor-consume-total advanced");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0,
+          "AC1: residual defer drained after dtor fail-closed");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #2999 AC2: Soft / sandbox=off → observe only; no consume/fail.
+static void ac2999_2_soft_observe_only() {
+    std::println("\n--- #2999 AC2: Soft dtor observe-only ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+          "AC2: reject_enabled false under Soft");
+    aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+    const auto forced0 = aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read();
+    const auto dtor0 =
+        aura::compiler::mutation_hold_budget_forced_fail_closed_dtor_consume_total_v_read();
+    const auto obs0 = aura::compiler::mutation_hold_budget_soft_observe_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{0};
+    std::atomic<int> still_pending{0};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            auto* f = aura::serve::g_current_fiber;
+            if (f)
+                f->request_hold_budget_cancel();
+            ran.store(1, std::memory_order_relaxed);
+        }
+        auto* f = aura::serve::g_current_fiber;
+        still_pending.store((f && f->peek_hold_budget_cancel()) ? 1 : 0, std::memory_order_relaxed);
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC2: Soft fiber ran");
+    CHECK(ok_flag.load() == 1, "AC2: Soft dtor does not force-fail");
+    CHECK(still_pending.load() == 1, "AC2: Soft leaves cancel pending");
+    CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() == forced0,
+          "AC2: forced_fail_closed not advanced");
+    CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_dtor_consume_total_v_read() ==
+              dtor0,
+          "AC2: dtor-consume not advanced");
+    CHECK(aura::compiler::mutation_hold_budget_soft_observe_total_v_read() > obs0,
+          "AC2: soft observe bumped");
+    ::unsetenv("AURA_SANDBOX");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #2999 AC3: nested guards never independently consume.
+static void ac2999_3_nested_outermost_only() {
+    std::println("\n--- #2999 AC3: nested dtor does not consume ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("is_outermost_") != std::string::npos, "AC3: dtor poll is outermost-only");
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> inner_still{0};
+    std::atomic<int> ok_flag{1};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &ok);
+            {
+                Evaluator::MutationBoundaryGuard inner(cs.evaluator(), &ok);
+                CHECK(!inner.is_outermost(), "AC3: inner is not outermost");
+                auto* f = aura::serve::g_current_fiber;
+                if (f)
+                    f->request_hold_budget_cancel();
+            }
+            auto* f = aura::serve::g_current_fiber;
+            inner_still.store((f && f->peek_hold_budget_cancel()) ? 1 : 0,
+                              std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC3: nested body ran");
+    CHECK(inner_still.load() == 1, "AC3: inner dtor left cancel pending");
+    CHECK(ok_flag.load() == 0, "AC3: outermost dtor consume fail-closed");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #2999 AC4: remaining in-body window documented; not claimed gone.
+static void ac2999_4_in_body_window_documented() {
+    std::println("\n--- #2999 AC4: remaining in-body window documented ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(emb.find("enter dtor") != std::string::npos || emb.find("*enter*") != std::string::npos,
+          "AC4: emb documents in-body must enter dtor via #2932");
+    CHECK(efm.find("Issue #2999") != std::string::npos, "AC4: efm cites #2999 exit half");
+    CHECK(fc.find("Issue #2999") != std::string::npos, "AC4: fiber.cpp cites #2999");
+    CHECK(mhb.find("in-body window") != std::string::npos ||
+              mhb.find("never exits") != std::string::npos,
+          "AC4: mhb documents remaining in-body window");
+    CHECK(emb.find("preemptive unlock") != std::string::npos, "AC4: no preemptive unlock");
+}
+
+// ── Issue #2999 AC5: additive query + extend existing suite; no invent.
+static void ac2999_5_source_and_linter() {
+    std::println("\n--- #2999 AC5: additive query + linter ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_hold_budget_dtor_consume_2999.py");
+    CHECK(mhb.find("Issue #2999") != std::string::npos, "AC5: mhb cites #2999");
+    CHECK(emb.find("Issue #2999") != std::string::npos, "AC5: emb cites #2999");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-fail-closed-dtor-consume-total"),
+          "AC5: dtor-consume-total query key");
+    CHECK(source_has_key(q, "schema-2999"), "AC5: schema-2999");
+    CHECK(source_has_key(q, "issue-2999"), "AC5: issue-2999");
+    CHECK(source_has_key(q, "schema-2932"), "AC5: #2932 schema preserved");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-fail-closed-total"),
+          "AC5: #2932 total preserved");
+    CHECK(t.find("ac2999_1_dtor_consume_fail_closed") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac2999_2_soft_observe_only") != std::string::npos, "AC5: AC2 test");
+    CHECK(build.find("check_hold_budget_dtor_consume_2999") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("2999") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("tests/serve/test_issue_2999.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
+// ── Issue #2999 AC6: no docs/design/2999-*.
+static void ac2999_6_no_docs_design() {
+    std::println("\n--- #2999 AC6: no docs/design/2999-* per #1655 ---");
+    CHECK(read_file("docs/design/2999-hold-budget-dtor-consume.md").empty(),
+          "AC6: no docs/design/2999-* per #1655");
+}
+
 // ── Issue #2754 AC1: equal keys + cone-/mask-disjoint ImpactScope →
 // concurrent admit (bump cone-admit counter). Key-disjoint fast path
 // preserved (#2724). regions_disjoint 4-arg + regions_cone_disjoint
@@ -1770,6 +1981,13 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2932_4_residual_closed_loop();
     ac2932_5_source_and_linter();
     ac2932_6_no_docs_design();
+    std::println("\n=== Issue #2999: outermost dtor consume fail-closed (#2932 residual) ===");
+    ac2999_1_dtor_consume_fail_closed();
+    ac2999_2_soft_observe_only();
+    ac2999_3_nested_outermost_only();
+    ac2999_4_in_body_window_documented();
+    ac2999_5_source_and_linter();
+    ac2999_6_no_docs_design();
     std::println(
         "\n=== Issue #2754: region concurrent cone/ImpactScope mask-AND (#2724 residual) ===");
     ac2754_1_cone_disjoint_concurrent_admit();

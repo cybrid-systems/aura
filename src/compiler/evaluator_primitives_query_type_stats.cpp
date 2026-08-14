@@ -1281,6 +1281,16 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                           mutation_hold_budget_forced_fail_closed_wired_v_read()));
                             insert_kv("schema-2932", 2932);
                             insert_kv("issue-2932", 2932);
+                            // Issue #2999: outermost dtor consume (exit half
+                            // of #2932). Additive — in-body window still
+                            // requires force-safepoint to enter dtor.
+                            insert_kv(
+                                "mutation-hold-budget-forced-fail-"
+                                "closed-dtor-consume-total",
+                                static_cast<std::int64_t>(
+                                    mutation_hold_budget_forced_fail_closed_dtor_consume_total_v_read()));
+                            insert_kv("schema-2999", 2999);
+                            insert_kv("issue-2999", 2999);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail
