@@ -35,7 +35,9 @@
 
 import std;
 import aura.compiler.service;
+import aura.compiler.type_checker;
 import aura.compiler.value;
+import aura.core.type;
 
 namespace {
 
@@ -1120,6 +1122,50 @@ static void ac2984_6_source_and_linter() {
           "2984 AC6: no invent test per #81967");
 }
 
+static void ac2995_3_recover_fail_keeps_reject() {
+    std::println("\n--- #2995 AC3: recover fail → existing force_reason, no silent green ---");
+    apply_production_audit_defaults();
+    typed_audit::clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_occurrence_commit_health_for_test();
+    aura::core::TypeRegistry reg;
+    aura::compiler::TypeChecker tc(reg);
+    aura::compiler::Constraint eq;
+    eq.kind = aura::compiler::Constraint::EQUAL;
+    eq.lhs = reg.int_type();
+    eq.rhs = reg.string_type();
+    tc.constraint_system().add(eq);
+    typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
+    CHECK(!tc.ensure_occurrence_commit_or_recover(), "2995 AC3: recover fails on conflict");
+    CHECK(typed_audit::occurrence_empty_after_fence_total_v_read() > 0,
+          "2995 AC3: face stays latched");
+    auto in = typed_audit::commit_readiness_live_policy();
+    in.occurrence_face_hard = true;
+    in.occurrence_empty_after_fence_face = true;
+    in.solve_status = 0;
+    const auto r = typed_audit::commit_readiness(in);
+    CHECK(!r.would_allow_commit, "2995 AC3: still rejected");
+    CHECK(r.force_reason == "occurrence_empty_after_fence" || r.force_reason == "solve",
+          "2995 AC3: existing force_reason (no new silent green)");
+    apply_dev_audit_defaults();
+    typed_audit::clear_occurrence_empty_after_fence_for_test();
+    typed_audit::reset_occurrence_commit_health_for_test();
+}
+
+static void ac2995_6_health_query_keys() {
+    std::println("\n--- #2995 AC6: type-linear-commit-health keys ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-2995") == 2995, "2995 AC6: schema-2995");
+    CHECK(href(cs, "issue-2995") == 2995, "2995 AC6: issue-2995");
+    CHECK(href(cs, "occurrence-commit-health-wired") == 1, "2995 AC6: wired");
+    CHECK(href(cs, "occurrence-commit-health-faces") >= 0, "2995 AC6: faces");
+    CHECK(href(cs, "occurrence-commit-health-goals-live") >= 0, "2995 AC6: goals-live");
+    CHECK(href(cs, "occurrence-commit-health-persist-size") >= 0, "2995 AC6: persist-size");
+    CHECK(href(cs, "occurrence-commit-health-needs-recover") >= 0, "2995 AC6: needs-recover");
+    CHECK(href(cs, "occurrence-commit-health-recovered-ok") >= 0, "2995 AC6: recovered-ok");
+    CHECK(href(cs, "schema-2613") == 2613, "2995 AC6: schema-2613 preserved");
+    CHECK(href(cs, "schema-2981") == 2981, "2995 AC6: schema-2981 preserved");
+}
+
 } // namespace
 
 int run_test_type_linear_commit_health() {
@@ -1187,7 +1233,11 @@ int run_test_type_linear_commit_health() {
     ac2984_4_family_2673();
     ac2984_5_schema();
     ac2984_6_source_and_linter();
-    std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984: {} "
+    std::println("\n=== Issue #2995: OccurrenceCommitHealth on commit-health query ===");
+    ac2995_3_recover_fail_keeps_reject();
+    ac2995_6_health_query_keys();
+    std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984 + "
+                 "#2995: {} "
                  "passed, {} "
                  "failed ===",
                  g_passed, g_failed);

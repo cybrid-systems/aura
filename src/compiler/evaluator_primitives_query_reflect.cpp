@@ -462,6 +462,49 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("schema-2911", kRefinedConsistencyGateIssue);
                 insert_kv("issue-2911", kRefinedConsistencyGateIssue);
             }
+            // Issue #2995: unified OccurrenceCommitHealth (single Agent fold).
+            {
+                using aura::compiler::typed_audit::g_occurrence_commit_health_faces;
+                using aura::compiler::typed_audit::g_occurrence_commit_health_fingerprint_ok;
+                using aura::compiler::typed_audit::g_occurrence_commit_health_goals_live;
+                using aura::compiler::typed_audit::g_occurrence_commit_health_needs_recover;
+                using aura::compiler::typed_audit::g_occurrence_commit_health_persist_size;
+                using aura::compiler::typed_audit::kOccurrenceCommitHealthIssue;
+                using aura::compiler::typed_audit::occurrence_commit_health_recovered_ok_v_read;
+                std::int64_t faces = static_cast<std::int64_t>(
+                    g_occurrence_commit_health_faces.load(std::memory_order_relaxed));
+                std::int64_t goals = static_cast<std::int64_t>(
+                    g_occurrence_commit_health_goals_live.load(std::memory_order_relaxed));
+                std::int64_t persist = static_cast<std::int64_t>(
+                    g_occurrence_commit_health_persist_size.load(std::memory_order_relaxed));
+                std::int64_t needs = static_cast<std::int64_t>(
+                    g_occurrence_commit_health_needs_recover.load(std::memory_order_relaxed));
+                std::int64_t recovered =
+                    static_cast<std::int64_t>(occurrence_commit_health_recovered_ok_v_read());
+                std::int64_t fp_ok = static_cast<std::int64_t>(
+                    g_occurrence_commit_health_fingerprint_ok.load(std::memory_order_relaxed));
+                if (__qev_) {
+                    if (auto* ctc = static_cast<aura::compiler::TypeChecker*>(
+                            __qev_->commit_type_checker_handle())) {
+                        const auto h = ctc->evaluate_occurrence_commit_health();
+                        faces = static_cast<std::int64_t>(h.faces_bitmask);
+                        goals = static_cast<std::int64_t>(h.goals_live);
+                        persist = static_cast<std::int64_t>(h.persist_size);
+                        needs = h.needs_recover ? 1 : 0;
+                        fp_ok = h.fingerprint_ok ? 1 : 0;
+                        recovered = h.recovered_ok ? 1 : 0;
+                    }
+                }
+                insert_kv("occurrence-commit-health-faces", faces);
+                insert_kv("occurrence-commit-health-goals-live", goals);
+                insert_kv("occurrence-commit-health-persist-size", persist);
+                insert_kv("occurrence-commit-health-needs-recover", needs);
+                insert_kv("occurrence-commit-health-recovered-ok", recovered);
+                insert_kv("occurrence-commit-health-fingerprint-ok", fp_ok);
+                insert_kv("occurrence-commit-health-wired", 1);
+                insert_kv("schema-2995", kOccurrenceCommitHealthIssue);
+                insert_kv("issue-2995", kOccurrenceCommitHealthIssue);
+            }
 
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);

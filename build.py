@@ -2471,6 +2471,18 @@ def cmd_lint():
             "Issue #2993 typecheck metrics tier linter failed — run python3 scripts/coverage/checks/check_typecheck_metrics_tier_2993.py"
         )
         return r
+    # Issue #2995: unified OccurrenceCommitHealth + single-shot recover.
+    # Extends persist-rehydrate + type-linear-commit-health (#81967); no docs/design/.
+    och_script = COVERAGE_CHECKS / "check_occurrence_commit_health_2995.py"
+    if not och_script.exists():
+        fail(f"missing {och_script}")
+        return 1
+    r = run([sys.executable, str(och_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2995 OccurrenceCommitHealth linter failed — run python3 scripts/coverage/checks/check_occurrence_commit_health_2995.py"
+        )
+        return r
     # Issue #2994: Agent locality residual budget on production solve_delta.
     # Extends test_solve_delta_unresolved_export (#81967); no docs/design/.
     lrb_script = COVERAGE_CHECKS / "check_solve_delta_locality_budget_2994.py"
@@ -10331,6 +10343,27 @@ def cmd_typecheck_metrics_tier_2993_coverage():
     return 0
 
 
+def cmd_occurrence_commit_health_2995_coverage():
+    """Issue #2995: unified OccurrenceCommitHealth + single-shot recover."""
+    print(f"{B}=== OccurrenceCommitHealth coverage (#2995) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_commit_health_2995.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("OccurrenceCommitHealth (#2995) coverage contract rows failed")
+        return 1
+    ok("OccurrenceCommitHealth (#2995) coverage clean")
+    return 0
+
+
+def cmd_occurrence_commit_health_2995():
+    """Issue #2995: single OccurrenceCommitHealth + ensure recover entry."""
+    print(f"{B}=== OccurrenceCommitHealth (#2995) ==={N}")
+    return cmd_occurrence_commit_health_2995_coverage()
+
+
 def cmd_solve_delta_locality_budget_2994_coverage():
     """Issue #2994: Agent locality residual budget."""
     print(f"{B}=== locality residual budget coverage (#2994) ==={N}")
@@ -14369,6 +14402,8 @@ def main():
         "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,
         "occurrence-commit-snapshot-2938": cmd_occurrence_commit_snapshot_2938,
         "occurrence-commit-snapshot-2938-coverage": cmd_occurrence_commit_snapshot_2938_coverage,
+        "occurrence-commit-health-2995": cmd_occurrence_commit_health_2995,
+        "occurrence-commit-health-2995-coverage": cmd_occurrence_commit_health_2995_coverage,
         "refined-consistency-commit-gate-2911": cmd_refined_consistency_commit_gate_2911,
         "refined-consistency-commit-gate-2911-coverage": cmd_refined_consistency_commit_gate_2911_coverage,
         "occurrence-dirty-key-authority": cmd_occurrence_dirty_key_authority_coverage,
