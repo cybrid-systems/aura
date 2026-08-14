@@ -1886,6 +1886,11 @@ static const char* metrics_group_for_field(std::string_view name) noexcept {
 std::atomic<std::uint64_t> g_engine_metrics_hash_overflow_total{0};
 std::atomic<std::uint64_t> g_engine_metrics_force_hash_cap{0};
 
+// Issue #3020: domain query:* hash overflow (sibling of #3018 facade).
+// force_cap == 0 → computed capacity. Soft/Off pays one relaxed load.
+std::atomic<std::uint64_t> g_query_hash_overflow_total{0};
+std::atomic<std::uint64_t> g_query_hash_force_cap{0};
+
 // Issue #3018: insert one k/v into an unpublished FlatHashTable.
 // Returns false on probe exhaustion (table full / collisions).
 static bool engine_metrics_hash_try_insert(FlatHashTable* ht, Evaluator& ev, std::string_view k,
@@ -13186,4 +13191,20 @@ extern "C" void aura_engine_metrics_reset_hash_overflow_for_test(void) {
         0, std::memory_order_relaxed);
     aura::compiler::primitives_detail::g_engine_metrics_force_hash_cap.store(
         0, std::memory_order_relaxed);
+}
+
+// Issue #3020: test / Agent C ABI for domain query hash overflow.
+extern "C" void aura_query_hash_set_force_cap(std::uint64_t cap) {
+    aura::compiler::primitives_detail::g_query_hash_force_cap.store(cap, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_query_hash_overflow_total(void) {
+    return aura::compiler::primitives_detail::g_query_hash_overflow_total.load(
+        std::memory_order_relaxed);
+}
+
+extern "C" void aura_query_hash_reset_overflow_for_test(void) {
+    aura::compiler::primitives_detail::g_query_hash_overflow_total.store(0,
+                                                                         std::memory_order_relaxed);
+    aura::compiler::primitives_detail::g_query_hash_force_cap.store(0, std::memory_order_relaxed);
 }

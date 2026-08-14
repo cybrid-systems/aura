@@ -2388,6 +2388,19 @@ def cmd_lint():
             "Issue #3019 unified restamp linter failed — run python3 scripts/coverage/checks/check_unified_restamp_3019.py"
         )
         return r
+    # Issue #3020: domain query:* hash builders fail-soft on insert miss.
+    # Extends test_engine_metrics_facade + engine_metrics.aura (#81967);
+    # no docs/design/ (#1655).
+    qho_script = COVERAGE_CHECKS / "check_query_hash_overflow_3020.py"
+    if not qho_script.exists():
+        fail(f"missing {qho_script}")
+        return 1
+    r = run([sys.executable, str(qho_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3020 query hash overflow linter failed — run python3 scripts/coverage/checks/check_query_hash_overflow_3020.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -7882,6 +7895,31 @@ def cmd_unified_restamp_3019():
     """
     print(f"{B}=== unified restamp (#3019) ==={N}")
     return cmd_unified_restamp_3019_coverage()
+
+
+def cmd_query_hash_overflow_3020_coverage():
+    """Issue #3020: domain query:* hash overflow fail-soft (static)."""
+    print(f"{B}=== query hash overflow coverage (#3020) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_hash_overflow_3020.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query hash overflow (#3020) coverage contract rows failed")
+        return 1
+    ok("query hash overflow (#3020) coverage clean")
+    return 0
+
+
+def cmd_query_hash_overflow_3020():
+    """Issue #3020: domain query:* builders fail-soft on hash insert miss.
+
+    Size from planned*2 (or ≥64). Insert miss stamps overflow=1 and bumps
+    query_hash_overflow_total. High-churn surfaces migrated first.
+    """
+    print(f"{B}=== query hash overflow (#3020) ==={N}")
+    return cmd_query_hash_overflow_3020_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -14954,6 +14992,8 @@ def main():
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,
         "unified-restamp-3019-coverage": cmd_unified_restamp_3019_coverage,
+        "query-hash-overflow-3020": cmd_query_hash_overflow_3020,
+        "query-hash-overflow-3020-coverage": cmd_query_hash_overflow_3020_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,

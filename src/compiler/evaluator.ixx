@@ -1158,6 +1158,120 @@ namespace primitives_detail {
     // Issue #751: defined in evaluator_eval_flat.cpp (after Evaluator is complete).
     void bump_prim_error_unified_total() noexcept;
 
+    // Issue #3020: domain query:* hash builders. Size from planned key
+    // count (next_pow2(max(planned*2, 64))); insert miss stamps
+    // overflow=1 and bumps query_hash_overflow_total. Prefer
+    // insert_kv_checked over a local probe that returns without insert.
+    // Soft/Off extra cost is one force-cap load. no second metrics bus.
+    // Inventory: high-churn security-posture / type-linear-commit-health
+    // / reload-recovery-playbook migrated first. Remaining
+    // FlatHashTable::create(N) catalogs are static (key count << 0.7*N)
+    // or already N>=64; migrate when adding keys. headroom-3020.
+    extern std::atomic<std::uint64_t> g_query_hash_overflow_total;
+    extern std::atomic<std::uint64_t> g_query_hash_force_cap;
+
+    inline std::uint64_t query_hash_capacity_for(std::size_t planned_keys) noexcept {
+        std::uint64_t need = static_cast<std::uint64_t>(planned_keys) * 2;
+        if (need < 64)
+            need = 64;
+        std::uint64_t cap = 16;
+        while (cap < need && cap < (1ull << 63))
+            cap <<= 1;
+        const auto force = g_query_hash_force_cap.load(std::memory_order_relaxed);
+        if (force > 0) {
+            cap = force < 2 ? 2 : force;
+            if ((cap & (cap - 1)) != 0) {
+                std::uint64_t p = 2;
+                while (p < cap && p < (1ull << 63))
+                    p <<= 1;
+                cap = p;
+            }
+        }
+        return cap;
+    }
+
+    template <class StringHeap>
+    inline bool insert_kv_checked(FlatHashTable* ht, StringHeap& string_heap, std::string_view k,
+                                  std::int64_t v) {
+        if (!ht)
+            return false;
+        std::uint64_t h = 0xcbf29ce484222325ull;
+        for (unsigned char c : k)
+            h = (h ^ c) * 0x100000001b3ull;
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+        if (fp == 0xFF)
+            fp = 0xFE;
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        const auto hcap = ht->capacity;
+        const auto kidx = string_heap.size();
+        string_heap.push_back(std::string(k));
+        const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
+        const auto val_ev = types::make_int(v);
+        for (std::size_t at = 0; at < hcap; ++at) {
+            const auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == 0xFF) {
+                meta[idx] = fp;
+                keys[idx] = key_ev.val;
+                vals[idx] = val_ev.val;
+                ht->size++;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    template <class StringHeap>
+    inline void query_hash_stamp_overflow(FlatHashTable* ht, StringHeap& string_heap) {
+        if (!ht)
+            return;
+        if (insert_kv_checked(ht, string_heap, "overflow", 1))
+            return;
+        auto meta = ht->metadata();
+        auto keys = ht->keys();
+        auto vals = ht->values();
+        std::uint64_t h = 0xcbf29ce484222325ull;
+        for (unsigned char c : std::string_view{"overflow"})
+            h = (h ^ c) * 0x100000001b3ull;
+        auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+        if (fp == 0xFF)
+            fp = 0xFE;
+        const auto kidx = string_heap.size();
+        string_heap.push_back("overflow");
+        const auto key_ev = types::make_string(static_cast<std::uint64_t>(kidx));
+        const auto val_ev = types::make_int(1);
+        for (std::size_t i = 0; i < ht->capacity; ++i) {
+            if (meta[i] == 0xFF)
+                continue;
+            types::EvalValue ke{};
+            ke.val = keys[i];
+            if (types::is_string(ke)) {
+                const auto si = types::as_string_idx(ke);
+                if (si < string_heap.size() && string_heap[si] == "schema")
+                    continue;
+            }
+            meta[i] = fp;
+            keys[i] = key_ev.val;
+            vals[i] = val_ev.val;
+            return;
+        }
+    }
+
+    template <class StringHeap>
+    inline types::EvalValue query_hash_finish(FlatHashTable* ht, StringHeap& string_heap,
+                                              bool overflowed) {
+        if (overflowed) {
+            g_query_hash_overflow_total.fetch_add(1, std::memory_order_relaxed);
+            query_hash_stamp_overflow(ht, string_heap);
+            (void)insert_kv_checked(ht, string_heap, "schema-3020", 3020);
+            (void)insert_kv_checked(ht, string_heap, "issue-3020", 3020);
+        }
+        auto hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        return types::make_hash(hidx);
+    }
+
     export inline types::EvalValue
     make_primitive_error(std::pmr::vector<std::string>& string_heap,
                          std::vector<types::EvalValue>& error_values, std::string_view msg,
