@@ -7164,6 +7164,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> prim_heap_quota_pairs_limit{0};
     std::atomic<std::uint64_t> prim_heap_quota_strings_limit{0};
     std::atomic<std::uint64_t> prim_heap_quota_vectors_limit{0};
+    // Issue #2997: constructor lock SLO + unlimited bypass + soft-hit (70%).
+    std::atomic<std::uint64_t> list_constructor_lock_hold_ns{0};
+    std::atomic<std::uint64_t> list_constructor_lock_samples{0};
+    std::atomic<std::uint64_t> prim_heap_quota_soft_hit_total{0};
+    std::atomic<std::uint64_t> prim_heap_quota_unlimited_bypass_total{0};
 
     // Issue #2917: closed-loop Agent recovery (diagnose → apply-fix under Guard).
     // Surfaced via (engine:metrics "query:agent-recovery-stats") schema-2917.

@@ -2483,6 +2483,18 @@ def cmd_lint():
             "Issue #2996 core register_prim linter failed — run python3 scripts/coverage/checks/check_prim_register_core_2996.py"
         )
         return r
+    # Issue #2997: list/json constructor lock SLO + unlimited/small fast-path.
+    # Extends test_pmr_alloc_fiber_safe + prim_heap_quota_2916.aura (#81967).
+    lch_script = COVERAGE_CHECKS / "check_list_ctor_hotpath_2997.py"
+    if not lch_script.exists():
+        fail(f"missing {lch_script}")
+        return 1
+    r = run([sys.executable, str(lch_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2997 list ctor hot-path linter failed — run python3 scripts/coverage/checks/check_list_ctor_hotpath_2997.py"
+        )
+        return r
     # Issue #2995: unified OccurrenceCommitHealth + single-shot recover.
     # Extends persist-rehydrate + type-linear-commit-health (#81967); no docs/design/.
     och_script = COVERAGE_CHECKS / "check_occurrence_commit_health_2995.py"
@@ -10568,6 +10580,21 @@ def cmd_prim_registrar_scaffold_2915_coverage():
     return 0
 
 
+def cmd_list_ctor_hotpath_2997_coverage():
+    """Issue #2997: list/json constructor lock SLO + unlimited/small fast-path."""
+    print(f"{B}=== list ctor hot-path coverage (#2997) ==={N}")
+    script = COVERAGE_CHECKS / "check_list_ctor_hotpath_2997.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("list ctor hot-path (#2997) coverage contract rows failed")
+        return 1
+    ok("list ctor hot-path (#2997) coverage clean")
+    return 0
+
+
 def cmd_prim_heap_quota_2916_coverage():
     """Issue #2916: multi-fiber prim heap soft quotas + Agent stats.
 
@@ -14299,6 +14326,7 @@ def main():
         "prim-register-core-2996": cmd_prim_register_core_2996,
         "prim-register-core-2996-coverage": cmd_prim_register_core_2996_coverage,
         "prim-heap-quota-2916": cmd_prim_heap_quota_2916_coverage,
+        "list-ctor-hotpath-2997": cmd_list_ctor_hotpath_2997_coverage,
         "agent-recovery-2917": cmd_agent_recovery_2917_coverage,
         "ast-snapshot-workspace-2918": cmd_ast_snapshot_workspace_2918_coverage,
         "ast-snapshot-fail-reason-2966": cmd_ast_snapshot_fail_reason_2966_coverage,

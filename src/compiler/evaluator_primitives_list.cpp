@@ -6,7 +6,7 @@ module;
 
 #include "primitives_detail.h"
 #include "observability_metrics.h"
-#include "prim_heap_quota.hh" // Issue #2916
+#include "prim_heap_quota.hh" // Issue #2916 / #2997
 
 #include "prim_registrar_scaffold.hh" // Issue #2996
 
@@ -160,20 +160,26 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Build proper list (pair chain ending with void)
             // Issue #2651: lock pairs_ growth under multi-fiber fanout.
             // Issue #2916: soft pairs quota before bulk grow (Agent-visible error).
-            std::lock_guard lock(ev.alloc_storage_lock_);
-            if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + a.size())) {
+            // Issue #2997: reserve + one allow (skip when unlimited + small) + timed lock.
+            if (a.empty())
+                return make_void();
+            const auto n = a.size();
+            Evaluator::ListCtorLockHold hold(ev);
+            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
+                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
                 return make_primitive_error(
                     string_heap, error_values,
                     std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                     ev.primitive_error_counter_ptr());
             }
+            pairs.reserve(pairs.size() + n);
             EvalValue result = make_void();
             for (auto it = a.rbegin(); it != a.rend(); ++it) {
                 auto id = pairs.size();
                 pairs.push_back({*it, result});
-                ev.bump_pair_alloc_count(); // Issue #614
                 result = make_pair(id);
             }
+            ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
             return result;
         },
         pure_general(255, "(...vals) -> list", "Construct a proper list from arguments."));
@@ -306,54 +312,40 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_void();
             if (a.size() < 2)
                 return a[0];
-            // Iteratively append all arguments
-            auto result = a[0];
-            for (std::size_t i = 1; i < a.size(); ++i) {
-                auto list2 = a[i];
-                if (is_end_of_list(result)) {
-                    result = list2;
-                    continue;
-                }
-                EvalValue new_result = make_void();
-                EvalValue tail = make_void();
-                auto v = result;
+            // Issue #2997: snapshot prefix cars, one allow + reserve, cons onto last.
+            Evaluator::ListCtorLockHold hold(ev);
+            std::vector<EvalValue> cars;
+            cars.reserve(16);
+            for (std::size_t i = 0; i + 1 < a.size(); ++i) {
+                auto v = a[i];
                 while (!is_end_of_list(v)) {
-                    if (!is_pair(v)) {
-                        result = a[0];
+                    if (!is_pair(v))
                         break;
-                    }
                     auto idx = as_pair_idx(v);
-                    if (idx >= pairs.size()) {
-                        result = a[0];
+                    if (idx >= pairs.size())
                         break;
-                    }
-                    // Issue #2916: soft pairs quota on each grow step.
-                    if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
-                        return make_primitive_error(
-                            string_heap, error_values,
-                            std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                            ev.primitive_error_counter_ptr());
-                    }
-                    auto new_id = pairs.size();
-                    pairs.push_back({pairs[idx].car, make_void()});
-                    ev.bump_pair_alloc_count(); // Issue #614
-                    auto new_pair = make_pair(new_id);
-                    if (is_void(new_result))
-                        new_result = new_pair;
-                    else {
-                        auto tidx = as_pair_idx(tail);
-                        pairs[tidx].cdr = new_pair;
-                    }
-                    tail = new_pair;
+                    cars.push_back(pairs[idx].car);
                     v = pairs[idx].cdr;
                 }
-                if (!is_void(tail)) {
-                    auto tidx = as_pair_idx(tail);
-                    pairs[tidx].cdr = list2;
-                }
-                if (!is_void(new_result))
-                    result = new_result;
             }
+            const auto n = cars.size();
+            if (n == 0)
+                return a.back();
+            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
+                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
+            }
+            pairs.reserve(pairs.size() + n);
+            EvalValue result = a.back();
+            for (auto it = cars.rbegin(); it != cars.rend(); ++it) {
+                auto id = pairs.size();
+                pairs.push_back({*it, result});
+                result = make_pair(id);
+            }
+            ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
             return result;
         },
         pure_general(255, "(...lists) -> list", "Concatenate lists into one proper list."));
@@ -363,27 +355,37 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (a.empty())
                 return make_int(0);
             // Issue #2651: pairs_ push under alloc_storage_lock_.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            // Issue #2997: snapshot cars, one allow + reserve, timed lock.
+            Evaluator::ListCtorLockHold hold(ev);
+            std::vector<EvalValue> cars;
             auto v = a[0];
-            EvalValue result = make_void();
             while (!is_end_of_list(v)) {
                 if (!is_pair(v))
                     return a[0];
                 auto idx = as_pair_idx(v);
                 if (idx >= pairs.size())
                     return a[0];
-                if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
-                    return make_primitive_error(
-                        string_heap, error_values,
-                        std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                        ev.primitive_error_counter_ptr());
-                }
-                auto new_id = pairs.size();
-                pairs.push_back({pairs[idx].car, result});
-                ev.bump_pair_alloc_count(); // Issue #614
-                result = make_pair(new_id);
+                cars.push_back(pairs[idx].car);
                 v = pairs[idx].cdr;
             }
+            const auto n = cars.size();
+            if (n == 0)
+                return make_void();
+            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
+                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
+            }
+            pairs.reserve(pairs.size() + n);
+            EvalValue result = make_void();
+            for (const auto& car : cars) {
+                auto new_id = pairs.size();
+                pairs.push_back({car, result});
+                result = make_pair(new_id);
+            }
+            ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
             return result;
         },
         pure_general(1, "(list) -> list", "Reverse a proper list."));
@@ -394,59 +396,45 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (a.size() < 2 || is_void(a[1]))
                 return make_void();
 
-            EvalValue result = make_void();
-            EvalValue tail = make_void();
-            bool first = true;
-            EvalValue current = a[1];
-
-            while (is_pair(current)) {
-                EvalValue car;
-                EvalValue next;
-                {
-                    // Issue #2651: snapshot car/next under lock (pairs_ may reallocate).
-                    std::lock_guard lock(ev.alloc_storage_lock_);
+            // Issue #2997: snapshot under lock, apply outside, one construct CS.
+            std::vector<EvalValue> cars;
+            {
+                Evaluator::ListCtorLockHold hold(ev);
+                auto current = a[1];
+                while (is_pair(current)) {
                     auto idx = as_pair_idx(current);
                     if (idx >= pairs.size())
                         break;
-                    car = pairs[idx].car;
-                    next = pairs[idx].cdr;
+                    cars.push_back(pairs[idx].car);
+                    current = pairs[idx].cdr;
+                    ev.bump_list_chain_traversals();
+                    ev.bump_list_estimated_cache_misses();
                 }
-
-                ev.bump_list_chain_traversals();
-                ev.bump_list_estimated_cache_misses();
-                // apply_unary outside lock (may re-enter primitives; recursive_mutex OK
-                // if it also takes alloc_storage_lock_).
-                auto mapped = apply_unary(a[0], car, true);
-
-                {
-                    std::lock_guard lock(ev.alloc_storage_lock_);
-                    // Issue #2916: soft pairs quota before result cons cell.
-                    if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + 1)) {
-                        return make_primitive_error(
-                            string_heap, error_values,
-                            std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
-                            ev.primitive_error_counter_ptr());
-                    }
-                    auto new_id = pairs.size();
-                    pairs.push_back({mapped, make_void()});
-                    ev.bump_pair_alloc_count(); // Issue #614
-                    auto new_pair = make_pair(new_id);
-
-                    if (first) {
-                        result = new_pair;
-                        tail = new_pair;
-                        first = false;
-                    } else {
-                        auto tail_idx = as_pair_idx(tail);
-                        if (tail_idx < pairs.size())
-                            pairs[tail_idx].cdr = new_pair;
-                        tail = new_pair;
-                    }
-                }
-
-                current = next;
             }
+            std::vector<EvalValue> mapped;
+            mapped.reserve(cars.size());
+            for (const auto& car : cars)
+                mapped.push_back(apply_unary(a[0], car, true));
 
+            Evaluator::ListCtorLockHold hold(ev);
+            const auto n = mapped.size();
+            if (n == 0)
+                return make_void();
+            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
+                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
+            }
+            pairs.reserve(pairs.size() + n);
+            EvalValue result = make_void();
+            for (auto it = mapped.rbegin(); it != mapped.rend(); ++it) {
+                auto id = pairs.size();
+                pairs.push_back({*it, result});
+                result = make_pair(id);
+            }
+            ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
             return result;
         },
         pure_general(2, "(fn list) -> list", "Apply fn to each element; collect results."));
@@ -605,7 +593,7 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // Sorts a proper list of numbers ascending via std::sort on a temp buffer.
     register_prim(
         add, ev, "list-sort",
-        [&pairs, &ev](std::span<const EvalValue> a) -> EvalValue {
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty())
                 return make_void();
             std::vector<std::int64_t> buf;
@@ -632,15 +620,24 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 m->stdlib_list_iterative_sorts_total.fetch_add(1, std::memory_order_relaxed);
             }
-            // Issue #2651: build result list under alloc_storage_lock_.
-            std::lock_guard lock(ev.alloc_storage_lock_);
+            // Issue #2651 / #2997: timed lock + reserve + one allow.
+            Evaluator::ListCtorLockHold hold(ev);
+            const auto n = buf.size();
+            if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) || n > kPrimHeapUnlimitedSmall) &&
+                !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
+                return make_primitive_error(
+                    string_heap, error_values,
+                    std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
+                    ev.primitive_error_counter_ptr());
+            }
+            pairs.reserve(pairs.size() + n);
             EvalValue result = make_void();
             for (auto it = buf.rbegin(); it != buf.rend(); ++it) {
                 auto new_id = pairs.size();
                 pairs.push_back({make_int(*it), result});
-                ev.bump_pair_alloc_count();
                 result = make_pair(new_id);
             }
+            ev.bump_pair_alloc_count_n(static_cast<std::uint64_t>(n));
             return result;
         },
         pure_general(1, "(list) -> list", "Iterative ascending sort of a numeric list."));
