@@ -18,6 +18,7 @@
 #include "core/provenance_tracker.hh"
 
 #include <cstdint>
+#include <format>
 #include <fstream>
 #include <print>
 #include <string>
@@ -33,6 +34,9 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
+using aura::compiler::types::EvalValue;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -909,6 +913,198 @@ static void ac3000_4_schema_and_source() {
         CHECK(true, "AC4: light-link skip generation-stats");
 }
 
+static std::string merr_kind_3027(CompilerService& cs, const EvalValue& v) {
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size())
+        return {};
+    if (!is_string(pairs[idx].car))
+        return {};
+    auto sidx = as_string_idx(pairs[idx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+static aura::ast::NodeId first_parented(aura::ast::FlatAST* ws) {
+    if (!ws)
+        return aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->parent_of(id) != aura::ast::NULL_NODE)
+            return id;
+    }
+    return aura::ast::NULL_NODE;
+}
+
+static aura::ast::NodeId first_tag(aura::ast::FlatAST* ws, aura::ast::NodeTag tag) {
+    if (!ws)
+        return aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == tag)
+            return id;
+    }
+    return aura::ast::NULL_NODE;
+}
+
+// ── Issue #3027: residual MacroIntroduced gates on structural mutate prims ──
+
+static void ac3027_1_default_reject_all_prims() {
+    std::println("\n--- #3027 AC1: structural prims reject MacroIntroduced by default ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1))) (define g (lambda () (f 2)))\")")
+              .has_value(),
+          "3027 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3027 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3027 AC1: workspace");
+
+    aura::ast::NodeId f_def = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::Define)
+            f_def = id; // last Define is fine; stamp all Defines below
+    }
+    CHECK(f_def != aura::ast::NULL_NODE, "3027 AC1: find f");
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::Define)
+            CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", id)).has_value(),
+                  "3027 AC1: stamp f MacroIntroduced");
+    }
+
+    auto sb = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 2))\")");
+    CHECK(sb.has_value() && merr_kind_3027(cs, *sb) == "hygiene", "3027 AC1: set-body hygiene");
+
+    auto parented = first_parented(ws);
+    CHECK(parented != aura::ast::NULL_NODE, "3027 AC1: parented node");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", parented)).has_value(),
+          "3027 AC1: stamp parented");
+    auto rm = cs.eval(std::format("(mutate:remove-node {})", parented));
+    CHECK(rm.has_value() && merr_kind_3027(cs, *rm) == "hygiene", "3027 AC1: remove-node hygiene");
+
+    auto lam = first_tag(ws, aura::ast::NodeTag::Lambda);
+    if (lam != aura::ast::NULL_NODE) {
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lam)).has_value(),
+              "3027 AC1: stamp lambda");
+        auto ins = cs.eval(std::format("(mutate:insert-child {} 0 \"0\")", lam));
+        CHECK(ins.has_value() && merr_kind_3027(cs, *ins) == "hygiene",
+              "3027 AC1: insert-child hygiene");
+        auto spl = cs.eval(std::format("(mutate:splice {} 0 \"1\")", lam));
+        CHECK(spl.has_value() && merr_kind_3027(cs, *spl) == "hygiene", "3027 AC1: splice hygiene");
+    }
+
+    auto wrap_tgt = first_parented(ws);
+    if (wrap_tgt != aura::ast::NULL_NODE) {
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", wrap_tgt)).has_value(),
+              "3027 AC1: stamp wrap target");
+        auto wr = cs.eval(std::format("(mutate:wrap {} \"(begin _)\")", wrap_tgt));
+        CHECK(wr.has_value() && merr_kind_3027(cs, *wr) == "hygiene", "3027 AC1: wrap hygiene");
+        auto ex = cs.eval(std::format("(mutate:extract-function {} \"h3027\")", wrap_tgt));
+        CHECK(ex.has_value() && merr_kind_3027(cs, *ex) == "hygiene",
+              "3027 AC1: extract-function hygiene");
+    }
+
+    auto call = first_tag(ws, aura::ast::NodeTag::Call);
+    if (call != aura::ast::NULL_NODE) {
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", call)).has_value(),
+              "3027 AC1: stamp call");
+        auto inl = cs.eval(std::format("(mutate:inline-call {})", call));
+        CHECK(inl.has_value() && merr_kind_3027(cs, *inl) == "hygiene",
+              "3027 AC1: inline-call hygiene");
+    }
+}
+
+static void ac3027_2_allow_macro_permits() {
+    std::println("\n--- #3027 AC2: :allow-macro? #t permits + restamps ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3027 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3027 AC2: eval");
+    auto find_f = cs.eval("(car (query :find \"f\"))");
+    CHECK(find_f && is_int(*find_f), "3027 AC2: find f");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_f))).has_value(),
+          "3027 AC2: stamp f");
+    auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\")");
+    CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene",
+          "3027 AC2: denied without allow");
+    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene",
+          "3027 AC2: :allow-macro? #t permits set-body");
+}
+
+static void ac3027_3_extract_no_stamp_without_allow() {
+    std::println("\n--- #3027 AC3: extract-function never stamps without allow ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3027 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3027 AC3: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3027 AC3: workspace");
+    aura::ast::NodeId body = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (!ws->is_live_node(id) || ws->is_macro_introduced(id))
+            continue;
+        if (ws->parent_of(id) != aura::ast::NULL_NODE && ws->tag(id) == aura::ast::NodeTag::Call) {
+            body = id;
+            break;
+        }
+    }
+    if (body == aura::ast::NULL_NODE)
+        body = first_parented(ws);
+    CHECK(body != aura::ast::NULL_NODE, "3027 AC3: extract target");
+    CHECK(!ws->is_macro_introduced(body), "3027 AC3: target not already macro");
+    auto r = cs.eval(std::format("(mutate:extract-function {} \"ext3027\")", body));
+    CHECK(r.has_value() && merr_kind_3027(cs, *r) != "hygiene",
+          "3027 AC3: extract non-macro succeeds");
+    auto* ws2 = cs.evaluator().workspace_flat();
+    CHECK(ws2 != nullptr, "3027 AC3: workspace after extract");
+    bool stamped = false;
+    for (aura::ast::NodeId id = 0; id < ws2->size(); ++id) {
+        if (ws2->is_live_node(id) && ws2->is_macro_introduced(id))
+            stamped = true;
+    }
+    CHECK(!stamped, "3027 AC3: extract did not invent MacroIntroduced");
+}
+
+static void ac3027_4_soft_non_macro_unchanged() {
+    std::println("\n--- #3027 AC4: Soft / non-macro structural mutate still works ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
+          "3027 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3027 AC4: eval");
+    auto r = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 3))\")");
+    CHECK(r.has_value() && merr_kind_3027(cs, *r) != "hygiene", "3027 AC4: non-macro set-body ok");
+    if (r && is_bool(*r))
+        CHECK(as_bool(*r), "3027 AC4: set-body success bool");
+}
+
+static void ac3027_5_source_and_linter() {
+    std::println("\n--- #3027 AC5: source-cite + linter ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_structural_macro_hygiene_3027.py");
+    CHECK(mut.find("Issue #3027") != std::string::npos, "3027 AC5: mutate cites #3027");
+    CHECK(mut.find("reject_structural_macro_hygiene") != std::string::npos, "3027 AC5: helper");
+    CHECK(mut.find("cannot set-body MacroIntroduced") != std::string::npos ||
+              mut.find("\"set-body\"") != std::string::npos,
+          "3027 AC5: set-body gate");
+    CHECK(mut.find("extract-function") != std::string::npos &&
+              mut.find("stamp_macro") != std::string::npos,
+          "3027 AC5: extract stamps only after allow");
+    CHECK(flat.find("Issue #3027") != std::string::npos, "3027 AC5: lockless cites #3027");
+    CHECK(flat.find("batch :remove-node: cannot remove-node MacroIntroduced") != std::string::npos,
+          "3027 AC5: lockless remove-node");
+    CHECK(!lint.empty() && lint.find("Issue #3027") != std::string::npos, "3027 AC5: linter");
+    CHECK(build.find("check_structural_macro_hygiene_3027") != std::string::npos,
+          "3027 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3027-structural-macro-hygiene.md").empty(),
+          "3027 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3027.cpp").empty(),
+          "3027 AC5: no invent test per #81967");
+}
+
 static void ac3000_5_linter_and_suites() {
     std::println("\n--- #3000 AC5/AC6: linter + isolation/tenant-capture ---");
     const auto build = read_file("build.py");
@@ -927,7 +1123,7 @@ static void ac3000_5_linter_and_suites() {
 
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
-                 "#2961 + #3000) ===");
+                 "#2961 + #3000 + #3027) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
@@ -969,6 +1165,12 @@ int main() {
     ac3000_2_soft_observe_unlimited_green();
     ac3000_4_schema_and_source();
     ac3000_5_linter_and_suites();
+    std::println("\n=== Issue #3027: residual structural MacroIntroduced gates ===");
+    ac3027_1_default_reject_all_prims();
+    ac3027_2_allow_macro_permits();
+    ac3027_3_extract_no_stamp_without_allow();
+    ac3027_4_soft_non_macro_unchanged();
+    ac3027_5_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

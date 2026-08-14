@@ -2218,6 +2218,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :remove-node: node ID " + std::to_string(target) +
                                        " >= flat size " + std::to_string(flat.size())});
+    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced.
+    if (flat.is_macro_introduced(target)) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :remove-node: cannot remove-node MacroIntroduced without "
+                                   "public mutate:remove-node :allow-macro? #t"});
+    }
     auto result = aura::ast::mutators::remove_node_from_all_parents(
         flat, target, [&](aura::ast::NodeId parent, std::uint32_t ci) {
             flat.add_structural_mutation_log_entry(parent, ci, target, aura::ast::NULL_NODE,
@@ -2257,6 +2265,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
         !flat.is_live_node(parent))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :insert-child: parent out of range"});
+    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced spine.
+    if (flat.is_macro_introduced(parent)) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :insert-child: cannot insert-child MacroIntroduced without "
+            "public mutate:insert-child :allow-macro? #t"});
+    }
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         std::string parse_err = "batch :insert-child: parse failed";
@@ -2332,6 +2348,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :set-body: function \"" + name + "\" not found"});
+    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced define/lambda.
+    if (flat.is_macro_introduced(target) || flat.is_macro_introduced(lambda_id)) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :set-body: cannot set-body MacroIntroduced without "
+                                   "public mutate:set-body :allow-macro? #t"});
+    }
     // Issue #1687: capture size before parse; re-resolve BOTH Define and
     // Lambda (double-stale NodeId risk, sibling of #1685 rebind path).
     const auto size_before_parse = static_cast<std::size_t>(flat.size());
@@ -2349,6 +2373,24 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::TypeError,
                                    "batch :set-body: define body is not a Lambda after parse"});
+    // Issue #3027: parsed body walk (parity with public set-body / #2792).
+    {
+        aura::ast::NodeId hit = aura::ast::NULL_NODE;
+        flat.walk_subtree(pr.root, [&](aura::ast::NodeId id) {
+            if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                hit = id;
+        });
+        if (hit != aura::ast::NULL_NODE) {
+            if (size_before_parse < flat.size())
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+            record_hygiene_violation_attempt();
+            return std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "batch :set-body: cannot set-body MacroIntroduced without "
+                                       "public mutate:set-body :allow-macro? #t"});
+        }
+    }
     auto root_v = flat.get(pr.root);
     aura::ast::NodeId body_to_set = pr.root;
     if (root_v.tag == aura::ast::NodeTag::Define) {
@@ -2743,6 +2785,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
     if (parent == aura::ast::NULL_NODE || parent >= flat.size() || !flat.is_live_node(parent))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :splice: parent out of range"});
+    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced spine.
+    if (flat.is_macro_introduced(parent)) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :splice: cannot splice MacroIntroduced without "
+                                   "public mutate:splice :allow-macro? #t"});
+    }
     std::vector<types::EvalValue> code_args;
     for (std::size_t i = 2; i < a.size(); ++i) {
         if (i == a.size() - 1 && i >= 3 && is_string(a[i]))
@@ -2814,6 +2864,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
     if (node == aura::ast::NULL_NODE || node >= flat.size() || !flat.is_live_node(node))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :wrap: node out of range"});
+    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced target.
+    if (flat.is_macro_introduced(node)) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :wrap: cannot wrap MacroIntroduced without "
+                                   "public mutate:wrap :allow-macro? #t"});
+    }
     std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
                                                             : "wrap node " + std::to_string(node);
     auto parent_of_target = flat.parent_of(node);
@@ -3083,6 +3141,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
     if (call_id >= flat.size())
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :inline-call: call node out of range"});
+    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced call.
+    if (flat.is_macro_introduced(call_id)) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :inline-call: cannot inline-call MacroIntroduced without "
+                                   "public mutate:inline-call :allow-macro? #t"});
+    }
     auto cv = flat.get(call_id);
     if (cv.tag != aura::ast::NodeTag::Call || cv.children.empty())
         return std::unexpected(aura::diag::Diagnostic{
@@ -3128,6 +3194,13 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :inline-call: target function form not supported"});
+    }
+    if (func_body_node != aura::ast::NULL_NODE && flat.is_macro_introduced(func_body_node)) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :inline-call: cannot inline-call MacroIntroduced without "
+                                   "public mutate:inline-call :allow-macro? #t"});
     }
     std::vector<aura::ast::NodeId> actual_args;
     for (std::size_t i = 1; i < cv.children.size(); ++i)
