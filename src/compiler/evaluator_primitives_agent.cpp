@@ -3381,6 +3381,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.emplace_back("issue-3012", make_int(3012));
                 kv.emplace_back("must-wait-reclaimed-wired", make_int(1));
             }
+            // Issue #3014: body try_acquire reject — keys only on reject
+            // (zero extra hash keys on success / Soft ok path).
+            if (hp->body_acquire_rejected()) {
+                kv.emplace_back("body-acquire-rejected", make_bool(true));
+                kv.emplace_back("schema-3014", make_int(3014));
+                kv.emplace_back("issue-3014", make_int(3014));
+                kv.emplace_back("body-acquire-rejected-wired", make_int(1));
+            }
             return build_orch_hash(kv);
         });
 
@@ -4917,6 +4925,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                       static_cast<std::int64_t>(
                           os.agent_body_try_acquire_ok_total.load(std::memory_order_relaxed)));
             insert_kv("schema-1880", 1880);
+            // Issue #3014: per-handle body try_acquire reject (join hash).
+            insert_kv("schema-3014", 3014);
+            insert_kv("issue-3014", 3014);
+            insert_kv("body-acquire-rejected-wired", 1);
             // Issue #2118: soft mutation-boundary registration (fiber agent body).
             insert_kv("orch_agent_boundary_entered_total",
                       static_cast<std::int64_t>(

@@ -2293,6 +2293,20 @@ def cmd_lint():
             "Issue #3013 agent_send HandoffRequired linter failed — run python3 scripts/coverage/checks/check_agent_send_handoff_required_3013.py"
         )
         return r
+    # Issue #3014: surface agent body try_acquire reject on AgentHandle /
+    # orch:agent-join hash (residual of #1880/#2006). Keys only on the
+    # reject path. Extends test_fiber_orch_parallel_quota_batch.cpp
+    # (#81967); no docs/design/ (#1655).
+    bar_script = COVERAGE_CHECKS / "check_body_acquire_rejected_3014.py"
+    if not bar_script.exists():
+        fail(f"missing {bar_script}")
+        return 1
+    r = run([sys.executable, str(bar_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3014 body_acquire_rejected linter failed — run python3 scripts/coverage/checks/check_body_acquire_rejected_3014.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —

@@ -167,10 +167,10 @@ namespace {
 (parallel-intend (vector (lambda () 1)) :timeout-ms 5000)
 )");
         auto schema =
-            cs.eval(R"((hash-ref (engine:metrics \"query:parallel-orch-stats\") "schema"))");
+            cs.eval("(hash-ref (engine:metrics \"query:parallel-orch-stats\") \"schema\")");
         CHECK(schema && is_int(*schema) && as_int(*schema) == 1586, "orch schema 1586");
         auto batches =
-            cs.eval(R"((hash-ref (engine:metrics \"query:parallel-orch-stats\") "batches"))");
+            cs.eval("(hash-ref (engine:metrics \"query:parallel-orch-stats\") \"batches\")");
         CHECK(batches && is_int(*batches) && as_int(*batches) >= 1, "batches advanced");
     }
 
@@ -1041,6 +1041,7 @@ namespace aura_fiber_run_orch_quota_integration {
 // Issue #1880 (#1978 renamed): issue# moved from filename to header.
 // parallel_orch (typed ResourceQuotaExceeded, no panic/OOM).
 // Issue #2006: reject path must not call orch_agent_body_exit_provenance.
+// Issue #3014: per-handle body_acquire_rejected + join hash (reject only).
 //
 //   AC1: source cites #1880; memory preflight + try_acquire body wire
 //   AC2: spawn rejects when memory quota exhausted (typed error)
@@ -1049,6 +1050,7 @@ namespace aura_fiber_run_orch_quota_integration {
 //   AC5: spawn until memory exhaust → graceful reject, join releases
 //   AC6: try_acquire reject path under mutation budget (no panic)
 //   AC7: #2006 reject path skips provenance; success path still bumps
+//       #3014 AC1: handle flag + join hash carry the reject bit
 //   AC8: #2009 RAII release on scope-exit / reject; no double-free
 
 
@@ -1137,7 +1139,9 @@ int run_orch_quota_integration() {
         // Issue #2006: provenance closed-loop must live only under acq==0.
         CHECK(spawn.find("#2006") != std::string::npos, "agent_spawn cites #2006");
         {
-            const auto acq_pos = spawn.find("aura_orch_agent_body_try_acquire()");
+            // Match the _ex call, not the parameterless extern declaration
+            // (that declaration sits above many unrelated `} else {`).
+            const auto acq_pos = spawn.find("const int acq = aura_orch_agent_body_try_acquire_ex");
             const auto exit_pos = spawn.find("orch_agent_body_exit_provenance()");
             const auto else_pos =
                 spawn.find("} else {", acq_pos == std::string::npos ? 0 : acq_pos);
@@ -1153,6 +1157,17 @@ int run_orch_quota_integration() {
         CHECK(!mut.empty() && mut.find("aura_orch_agent_body_try_acquire") != std::string::npos,
               "try_acquire strong def");
         CHECK(!stats.empty() && stats.find("schema-1880") != std::string::npos, "schema-1880");
+        // Issue #3014: per-handle reject flag + join-hash key (reject only).
+        CHECK(spawn.find("#3014") != std::string::npos, "agent_spawn cites #3014");
+        CHECK(spawn.find("body_acquire_rejected") != std::string::npos,
+              "AgentHandle.body_acquire_rejected");
+        CHECK(spawn.find("body_acq_rej->store(true") != std::string::npos,
+              "fiber stores reject bit");
+        auto agent = read_first({"src/compiler/evaluator_primitives_agent.cpp",
+                                 "../src/compiler/evaluator_primitives_agent.cpp"});
+        CHECK(!agent.empty() && agent.find("body-acquire-rejected") != std::string::npos,
+              "join hash body-acquire-rejected");
+        CHECK(agent.find("schema-3014") != std::string::npos, "schema-3014 on join/stats");
     }
 
     // ── AC2: memory quota reject on spawn ──
@@ -1206,7 +1221,7 @@ int run_orch_quota_integration() {
         std::println("\n--- AC4: query:resource-quota-stats #1880 ---");
         reset_process_resource_quota_for_test();
         CompilerService cs;
-        auto h = cs.eval(R"((engine:metrics \"query:resource-quota-stats\"))");
+        auto h = cs.eval("(engine:metrics \"query:resource-quota-stats\")");
         CHECK(h && is_hash(*h), "stats hash");
         CHECK(href(cs, "schema-1880") == 1880, "schema-1880");
         CHECK(href(cs, "orch_agent_body_try_acquire_wired") == 1, "try_acquire wired");
@@ -1289,8 +1304,11 @@ int run_orch_quota_integration() {
         bool ok = true;
         auto gr = Guard::try_acquire(ev, 1, &ok);
         CHECK(gr.has_value(), "pre-consume mutation quota");
-        // Keep unique_ptr Guard alive so used stays at 1 (dtor does not refund).
-        std::unique_ptr<Guard> host_guard = std::move(*gr);
+        // Drop the host Guard before spawn. used is not refunded (same as
+        // test_mutation_guard_try_acquire ac3) but the panic checkpoint is
+        // released — a live host Guard + fiber try_acquire restores a
+        // null uc_link and the worker thread exit(0)s the process.
+        (*gr).reset();
 
         std::uint64_t r0 = 0, s0 = 0, l0 = 0;
         aura::orch::snapshot_orch_provenance_stats(r0, s0, l0);
@@ -1311,6 +1329,11 @@ int run_orch_quota_integration() {
         auto jr = aura::orch::join_agent(h, std::optional<std::uint64_t>{5000});
         CHECK(jr.status == aura::serve::JoinStatus::Ok || (h.fiber && h.fiber->is_done()),
               "join done");
+        // Issue #3014 AC1: join stays Ok (fiber completed); reject is a
+        // per-handle reason, not JoinStatus::Error. Reservation/mailbox
+        // still cleaned by the normal Done path.
+        CHECK(h.body_acquire_rejected(), "#3014 AC1: handle reject flag after body skip");
+        CHECK(h.reserved_memory_bytes == 0, "#3014: Done-path released reservation");
 
         std::uint64_t r1 = 0, s1 = 0, l1 = 0;
         aura::orch::snapshot_orch_provenance_stats(r1, s1, l1);
@@ -1330,9 +1353,29 @@ int run_orch_quota_integration() {
         CHECK(r1 >= r0, "join may still bump stable_ref");
         CHECK(l1 >= l0, "join may still bump linear");
 
-        // Control: after dropping host Guard and resetting quota, success
-        // path still performs body-exit provenance (#1879).
-        host_guard.reset();
+        // Issue #3014: Aura orch:agent-join hash carries the reject bit
+        // (key only present on this path). Host Guard still held.
+        {
+            auto jflag = cs.eval(R"(
+(begin
+  (orch:spawn-agent "rej-3014" (lambda () 1))
+  (if (hash-has-key? (orch:agent-join "rej-3014" :timeout-ms 5000)
+                     "body-acquire-rejected")
+      1 0))
+)");
+            CHECK(jflag && is_int(*jflag) && as_int(*jflag) == 1,
+                  "#3014 AC1: join hash has body-acquire-rejected");
+            auto jschema = cs.eval(R"(
+(begin
+  (orch:spawn-agent "rej-3014s" (lambda () 1))
+  (hash-ref (orch:agent-join "rej-3014s" :timeout-ms 5000) "schema-3014"))
+)");
+            CHECK(jschema && is_int(*jschema) && as_int(*jschema) == 3014,
+                  "#3014 AC1: join hash schema-3014");
+        }
+
+        // Control: reset quota so the success path still performs
+        // body-exit provenance (#1879).
         ev.reset_mutation_quota_used();
         ev.set_resource_quota_mutations(0); // unlimited
         std::uint64_t s2 = 0, r2 = 0, l2 = 0;
@@ -1348,8 +1391,22 @@ int run_orch_quota_integration() {
         aura::orch::snapshot_orch_provenance_stats(r3, s3, l3);
         CHECK(ran.load() == 1, "body ran on success path");
         CHECK(s3 > s2, "success path still bumps steal provenance (body exit)");
+        CHECK(!h2.body_acquire_rejected(), "#3014: success handle has no reject bit");
         (void)r3;
         (void)l3;
+
+        // Success join hash must omit the reject key (zero-cost Ok path).
+        {
+            auto jmiss = cs.eval(R"(
+(begin
+  (orch:spawn-agent "ok-3014" (lambda () 1))
+  (if (hash-has-key? (orch:agent-join "ok-3014" :timeout-ms 5000)
+                     "body-acquire-rejected")
+      1 0))
+)");
+            CHECK(jmiss && is_int(*jmiss) && as_int(*jmiss) == 0,
+                  "#3014: success join hash omits body-acquire-rejected");
+        }
 
         reset_process_resource_quota_for_test();
     }
@@ -2340,10 +2397,8 @@ int run_orch_quota_structured_2079() {
         CHECK(orch_rejects_after == orch_rejects_before + 1,
               "process ResourceQuota orch_rejects bumped by exactly 1");
         // Verify counters also visible via query:orch-module-stats primitive.
-        CHECK(href_int(
-                  cs,
-                  R"((hash-ref (engine:metrics \"query:orch-module-stats\") "spawn-failures"))") >=
-                  0,
+        CHECK(href_int(cs, "(hash-ref (engine:metrics \"query:orch-module-stats\") "
+                           "\"spawn-failures\")") >= 0,
               "spawn-failures readable via query:orch-module-stats");
         reset_process_resource_quota_for_test();
     }

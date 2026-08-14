@@ -1084,6 +1084,14 @@ struct AgentHandle {
     // Hosts must wait or drop the handle (dtor finishes cleanup). Soft /
     // explicit wait stay false (zero-cost).
     bool must_wait_reclaimed = false;
+    // Issue #3014: fiber stores true when try_acquire rejects (body
+    // skipped). Shared so the write survives handle move / name-table
+    // put. Success path never stores (no extra atomic on hot ok).
+    std::shared_ptr<std::atomic<bool>> body_acquire_rejected_slot;
+    [[nodiscard]] bool body_acquire_rejected() const noexcept {
+        return body_acquire_rejected_slot &&
+               body_acquire_rejected_slot->load(std::memory_order_acquire);
+    }
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1115,7 +1123,8 @@ struct AgentHandle {
         , last_producer_bp_us(o.last_producer_bp_us)
         , wait_reclaimed_used(o.wait_reclaimed_used)
         , wait_reclaimed_timeout(o.wait_reclaimed_timeout)
-        , must_wait_reclaimed(o.must_wait_reclaimed) {
+        , must_wait_reclaimed(o.must_wait_reclaimed)
+        , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot)) {
         o.id = 0;
         o.fiber = nullptr;
         o.ok = false;
@@ -1172,6 +1181,7 @@ struct AgentHandle {
             wait_reclaimed_used = o.wait_reclaimed_used;
             wait_reclaimed_timeout = o.wait_reclaimed_timeout;
             must_wait_reclaimed = o.must_wait_reclaimed;
+            body_acquire_rejected_slot = std::move(o.body_acquire_rejected_slot);
             o.id = 0;
             o.fiber = nullptr;
             o.ok = false;
@@ -1193,6 +1203,7 @@ struct AgentHandle {
             o.wait_reclaimed_used = false;
             o.wait_reclaimed_timeout = false;
             o.must_wait_reclaimed = false;
+            o.body_acquire_rejected_slot.reset();
         }
         return *this;
     }
@@ -1650,62 +1661,71 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     }
 
     const bool register_soft = spec.mutation_boundary;
-    serve::Fiber* f = sched.spawn([body = std::move(body), mb, attach, live, coop,
-                                   progress_clock = want_progress_clock, register_soft]() mutable {
-        // Issue #2540: register fiber-local coop state for agent_poll().
-        struct CoopReg {
-            std::uint64_t fid = 0;
-            explicit CoopReg(const std::shared_ptr<AgentCoopYield>& c) {
-                if (!c || !serve::g_current_fiber)
-                    return;
-                fid = serve::g_current_fiber->id();
-                register_agent_coop(fid, c);
-                c->last_coop_us.store(orch_now_us(), std::memory_order_relaxed);
-            }
-            ~CoopReg() { unregister_agent_coop(fid); }
-        } coop_reg(coop);
+    // Issue #3014: heap flag so the fiber can mark try_acquire reject
+    // after this handle is moved into the name table / caller.
+    auto body_acq_rej = std::make_shared<std::atomic<bool>>(false);
+    h.body_acquire_rejected_slot = body_acq_rej;
+    serve::Fiber* f =
+        sched.spawn([body = std::move(body), mb, attach, live, coop,
+                     progress_clock = want_progress_clock, register_soft, body_acq_rej]() mutable {
+            // Issue #2540: register fiber-local coop state for agent_poll().
+            struct CoopReg {
+                std::uint64_t fid = 0;
+                explicit CoopReg(const std::shared_ptr<AgentCoopYield>& c) {
+                    if (!c || !serve::g_current_fiber)
+                        return;
+                    fid = serve::g_current_fiber->id();
+                    register_agent_coop(fid, c);
+                    c->last_coop_us.store(orch_now_us(), std::memory_order_relaxed);
+                }
+                ~CoopReg() { unregister_agent_coop(fid); }
+            } coop_reg(coop);
 
-        if (attach && mb && serve::g_current_fiber)
-            mb->attach(serve::g_current_fiber);
-        // Issue #2080: ProgressClock mode — seed last_keepalive_us at body
-        // entry so watch_agent_liveness has a baseline even if the body
-        // never calls `orch:agent-touch`. MailboxKeepalive mode seeds the
-        // same clock from emit_keepalive (#2008 / #2159 helper fiber).
-        if (live && progress_clock) {
-            const auto t0 = orch_now_us();
-            live->last_keepalive_us.store(t0, std::memory_order_release);
-            g_orch_module_stats.last_keepalive_us.store(t0, std::memory_order_relaxed);
-        }
-        // Issue #1880 / #2118: try_acquire mutation boundary when Evaluator
-        // is bound. On fiber: soft-registers per-fiber depth when
-        // mutation_boundary is true (default) so steal/GC see the window;
-        // mutation_boundary=false keeps pure-reasoning zero-cost (AC2).
-        // On reject: skip body (typed quota path already recorded); no panic.
-        // Issue #2006: provenance closed-loop only after a successful body
-        // that actually entered the acquire path — reject must not call
-        // aura_evaluator_post_resume_refresh or bump provenance counters.
-        const int acq = aura_orch_agent_body_try_acquire_ex(register_soft ? 1 : 0);
-        if (acq == 0) {
-            g_orch_module_stats.agent_body_try_acquire_ok_total.fetch_add(
-                1, std::memory_order_relaxed);
-            body();
-            aura_orch_agent_body_release_guard();
-            // Issue #1879: after successful agent body, force StableNodeRef
-            // provenance validation + auto pin/refresh + linear ownership
-            // probe so COW / steal / GC cannot leave dangling refs for join.
-            orch_agent_body_exit_provenance();
-        } else {
-            g_orch_module_stats.agent_body_try_acquire_rejects_total.fetch_add(
-                1, std::memory_order_relaxed);
-            g_orch_module_stats.resource_quota_rejects_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-        }
-        // Issue #2008: signal keepalive helper to stop.
-        if (live)
-            live->body_done.store(true, std::memory_order_release);
-        if (attach && mb && serve::g_current_fiber)
-            mb->detach(serve::g_current_fiber);
-    });
+            if (attach && mb && serve::g_current_fiber)
+                mb->attach(serve::g_current_fiber);
+            // Issue #2080: ProgressClock mode — seed last_keepalive_us at body
+            // entry so watch_agent_liveness has a baseline even if the body
+            // never calls `orch:agent-touch`. MailboxKeepalive mode seeds the
+            // same clock from emit_keepalive (#2008 / #2159 helper fiber).
+            if (live && progress_clock) {
+                const auto t0 = orch_now_us();
+                live->last_keepalive_us.store(t0, std::memory_order_release);
+                g_orch_module_stats.last_keepalive_us.store(t0, std::memory_order_relaxed);
+            }
+            // Issue #1880 / #2118: try_acquire mutation boundary when Evaluator
+            // is bound. On fiber: soft-registers per-fiber depth when
+            // mutation_boundary is true (default) so steal/GC see the window;
+            // mutation_boundary=false keeps pure-reasoning zero-cost (AC2).
+            // On reject: skip body (typed quota path already recorded); no panic.
+            // Issue #2006: provenance closed-loop only after a successful body
+            // that actually entered the acquire path — reject must not call
+            // aura_evaluator_post_resume_refresh or bump provenance counters.
+            const int acq = aura_orch_agent_body_try_acquire_ex(register_soft ? 1 : 0);
+            if (acq == 0) {
+                g_orch_module_stats.agent_body_try_acquire_ok_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                body();
+                aura_orch_agent_body_release_guard();
+                // Issue #1879: after successful agent body, force StableNodeRef
+                // provenance validation + auto pin/refresh + linear ownership
+                // probe so COW / steal / GC cannot leave dangling refs for join.
+                orch_agent_body_exit_provenance();
+            } else {
+                // Issue #3014: per-handle reject bit (join hash / C++ hosts).
+                // Success path does not store (no extra atomic on hot ok).
+                if (body_acq_rej)
+                    body_acq_rej->store(true, std::memory_order_release);
+                g_orch_module_stats.agent_body_try_acquire_rejects_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                g_orch_module_stats.resource_quota_rejects_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            // Issue #2008: signal keepalive helper to stop.
+            if (live)
+                live->body_done.store(true, std::memory_order_release);
+            if (attach && mb && serve::g_current_fiber)
+                mb->detach(serve::g_current_fiber);
+        });
 
     if (!f) {
         // Issue #1600 / #2155: Scheduler::spawn returns nullptr on fiber
