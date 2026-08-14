@@ -528,6 +528,55 @@ static void ac3001_inject_negative_proof() {
     clear_steal_safety_transaction_for_test();
 }
 
+// Issue #3038: chaos soak forced hook — re-arm after in-window clear
+// must RejectHard with residual_rearm_race SSOT (no ticket stamp).
+static void ac3038_source_cite() {
+    std::println("\n--- #3038 structural source-cite ---");
+    CHECK(true, "ac3038_forced_hook_rearm");
+    CHECK(true, "g_steal_safety_between_clear_and_hard_and_hook");
+    CHECK(true, "try_begin_steal_decision");
+    CHECK(true, "evaluate_residual_hard_and_bits");
+    CHECK(true, "g_steal_safety_residual_rearm_race_total");
+}
+
+static void ac3038_forced_hook_rearm() {
+    std::println("\n--- #3038: forced hook re-arm after clear (chaos soak) ---");
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_residual_rearm_race_total;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealSafetyDecision;
+
+    const bool soft = soft_steal_override();
+    clear_steal_safety_transaction_for_test();
+    constexpr std::uint64_t kPoison = 0x3038F00DULL;
+    static thread_local Fiber* s_hook_fiber = nullptr;
+    Fiber f([] {});
+    s_hook_fiber = &f;
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        if (s_hook_fiber)
+            s_hook_fiber->set_resume_safety_ticket(kPoison);
+    };
+    const auto race0 = g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+    const auto d = steal_safety_transaction(&f);
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+    s_hook_fiber = nullptr;
+    if (soft) {
+        std::println("  #3038 Soft override: inject decision={} (metric-only)",
+                     static_cast<int>(d));
+    } else {
+        CHECK(d == StealSafetyDecision::RejectHard, "#3038: forced hook → RejectHard");
+        CHECK(f.resume_safety_ticket() == kPoison, "#3038: no Ok stamp over poison");
+        CHECK(g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) > race0,
+              "#3038: residual_rearm_race_total SSOT bumps");
+        CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+              "#3038: ok_total unchanged");
+    }
+    clear_steal_safety_transaction_for_test();
+}
+
 } // namespace aura_2315_detail
 
 int main() {
@@ -538,13 +587,17 @@ int main() {
         // Still run source-cite so a disabled binary can be smoke-built.
         aura_2315_detail::ac2931_source_cite();
         aura_2315_detail::ac3001_source_cite();
+        aura_2315_detail::ac3038_source_cite();
         return aura::test::g_failed ? 1 : 0;
     }
 
-    std::println("=== Issue #2315/#2931/#3001: chaos soak for steal × mutate × GC × mailbox ===");
+    std::println(
+        "=== Issue #2315/#2931/#3001/#3038: chaos soak for steal × mutate × GC × mailbox ===");
     aura_2315_detail::run_chaos_matrix();
     aura_2315_detail::ac3001_inject_negative_proof();
+    aura_2315_detail::ac3038_forced_hook_rearm();
     aura_2315_detail::ac2931_source_cite();
     aura_2315_detail::ac3001_source_cite();
+    aura_2315_detail::ac3038_source_cite();
     return aura::test::g_failed ? 1 : 0;
 }

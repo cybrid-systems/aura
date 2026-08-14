@@ -109,9 +109,12 @@ inline constexpr int kStealSafetyLifetimeProofResidualIssue = 2957;
 // Issue #2901: residual re-arm race between on_steal_complete clear and
 // hard-AND / ticket stamp. Bumped only on the fail path (RejectHard after
 // clear when residual is still/re-observed). Quiet happy path: zero bump.
+// Issue #3038: same counter is SSOT for the post-clear re-sample under
+// the per-Fiber decision window (no second race counter).
 inline std::atomic<std::uint64_t> g_steal_safety_residual_rearm_race_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_residual_rearm_race_wired{1};
 inline constexpr int kStealSafetyResidualRearmRaceIssue = 2901;
+inline constexpr int kStealSafetyResidualRearmResampleIssue = 3038;
 // Issue #2954: per-Fiber decision protocol (replaces process-wide mutex).
 // contention_total bumps when try_begin_steal_decision CAS fails (same
 // victim concurrent decision). per_fiber_wired=1 when Ok path uses Fiber
@@ -266,11 +269,12 @@ MailboxDeliverySafety mailbox_delivery_safety_transaction(Fiber* target,
                                                             bool bump_counters,
                                                             std::uint64_t skip_mask = 0) noexcept;
 
-// Issue #2901: test seam — optional hook invoked after on_steal_complete
-// clear and before residual hard-AND / stamp (under the per-Fiber decision
-// window). Used to inject concurrent residual re-arm between clear and stamp.
+// Issue #2901 / #3038: test seam — optional hook invoked after
+// on_steal_complete clear and before residual hard-AND re-sample / stamp
+// (under the per-Fiber try_begin_steal_decision window). Used to inject
+// concurrent residual re-arm between clear and the post-clear sample.
 // Nullptr default (production); never called on the quiet path when unset.
-// Set only from unit tests; cleared after use.
+// Set only from unit tests / chaos forced hook; cleared after use.
 inline thread_local void (*g_steal_safety_between_clear_and_hard_and_hook)() noexcept = nullptr;
 
 // Test reset (used by the #81967 extension in

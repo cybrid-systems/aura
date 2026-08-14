@@ -265,31 +265,36 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
     // fiber id — the earlier fiber_id() form was a type error).
     // Single-transaction contract: one call covers AC1 steps 3-6
     // (AC5 coverage linter asserts the call graph).
-    // Issue #2901 / #2954: primary residual clear remains a single
-    // on_steal_complete on the happy path (AC2). Hard-AND + quiet
+    // Issue #2901 / #2954 / #3038: primary residual clear remains a
+    // single on_steal_complete on the happy path (AC2). Clear + hard-AND
     // re-sample + ticket stamp run under the *per-Fiber* decision window
-    // so concurrent densify / Guard re-enter cannot re-arm residual between
-    // observation and stamp without being observed — without process-wide
-    // mutex serialization across unrelated victims (#2954).
-    aura_evaluator_on_steal_complete(stolen);
-
-    // AC1 #2721 + #2901 + #2954 — residual hard-AND + stamp under exclusive
-    // *per-Fiber* decision window. #2721 hard-ANDs residual predicates BEFORE
-    // ticket stamp. #2901 closes the re-arm window between clear and stamp:
-    //   - hard-AND under decision window (with optional test inject hook)
-    //   - quiet re-sample under same window (zero counter atomics when clean)
-    //   - on any residual fail: force second residual clear + rearm_race
-    //     counter + RejectHard WITHOUT stamping the ticket
-    // #2954: decision window is Fiber::try_begin_steal_decision (CAS), not
-    // a process-wide mutex.
+    // so a re-arm between the old outside-clear and the residual sample
+    // cannot stamp a ticket (#3038). Concurrent densify / Guard re-enter
+    // is observed by the post-clear re-sample. No process-wide mutex
+    // (#2954).
+    //
+    // AC1 #2721 + #2901 + #2954 + #3038 — under exclusive per-Fiber
+    // try_begin_steal_decision:
+    //   1. clear residual (on_steal_complete)
+    //   2. test hook only
+    //   3. re-sample residual hard-AND (same StealInvariant table)
+    //   4. bits != 0 → RejectHard + residual_rearm_race_total++ (no stamp)
+    // Quiet path: hook nullptr + one sample + quiet re-sample (no extra
+    // atomics when clean — same work as #2901).
     {
         StealDecisionGuard decision_guard(stolen);
+
+        // Issue #3038: clear under the per-Fiber window (was outside).
+        aura_evaluator_on_steal_complete(stolen);
 
         // Test seam: inject residual re-arm between clear and hard-AND.
         if (g_steal_safety_between_clear_and_hard_and_hook != nullptr) {
             g_steal_safety_between_clear_and_hard_and_hook();
         }
 
+        // Issue #3038: re-sample residual hard-AND after clear (same
+        // StealInvariant table, no new arms). Production must never stamp
+        // a ticket when residual is observed after clear.
         std::uint64_t fail_bits =
             evaluate_residual_hard_and_bits(stolen, snap, /*bump_counters=*/true);
         bool residual_ok = (fail_bits == 0);

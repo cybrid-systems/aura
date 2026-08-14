@@ -2962,6 +2962,18 @@ def cmd_lint():
             "Issue #2954 steal decision per-fiber linter failed — run python3 scripts/coverage/checks/check_steal_decision_per_fiber_2954.py"
         )
         return r
+    # Issue #3038: re-sample after clear under per-Fiber window.
+    # Extends test_steal_complete_restamp_txn + chaos_steal (#81967).
+    srrs_script = COVERAGE_CHECKS / "check_steal_residual_rearm_resample_3038.py"
+    if not srrs_script.exists():
+        fail(f"missing {srrs_script}")
+        return 1
+    r = run([sys.executable, str(srrs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3038 steal residual re-arm re-sample linter failed — run python3 scripts/coverage/checks/check_steal_residual_rearm_resample_3038.py"
+        )
+        return r
     # Issue #2955: production startup strong-symbol ABI self-check
     # for steal/mutation/GC hooks. Extends test_steal_complete_strong_entry
     # (#81967); no docs/design.
@@ -12089,6 +12101,30 @@ def cmd_steal_residual_rearm_race_2901_coverage():
     return 0
 
 
+def cmd_steal_residual_rearm_resample_3038_coverage():
+    """Issue #3038: re-sample residual after clear under per-Fiber window.
+
+    Clear + hook + re-sample inside try_begin_steal_decision. Injected
+    re-arm → RejectHard, no ticket, residual_rearm_race_total SSOT.
+    """
+    print(f"{B}=== steal residual re-arm re-sample coverage (#3038) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_residual_rearm_resample_3038.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal residual re-arm re-sample (#3038) coverage contract rows failed")
+        return 1
+    ok("steal residual re-arm re-sample (#3038) coverage clean")
+    return 0
+
+
+def cmd_steal_residual_rearm_resample_3038():
+    """Alias for coverage check."""
+    return cmd_steal_residual_rearm_resample_3038_coverage()
+
+
 def cmd_steal_invariant_table_2929_coverage():
     """Issue #2929: StealInvariant table for steal_safety_transaction hard-AND.
 
@@ -15572,6 +15608,8 @@ def main():
         "solve-delta-timeout-fail-closed-3003": cmd_solve_delta_timeout_fail_closed_3003_coverage,
         "adt-exhaust-dirty-cone-3005": cmd_adt_exhaust_dirty_cone_3005_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
+        "steal-residual-rearm-resample-3038": cmd_steal_residual_rearm_resample_3038,
+        "steal-residual-rearm-resample-3038-coverage": cmd_steal_residual_rearm_resample_3038_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
         "steal-lifetime-proof-residual-2957": cmd_steal_lifetime_proof_residual_2957_coverage,
