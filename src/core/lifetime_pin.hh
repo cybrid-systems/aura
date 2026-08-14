@@ -73,6 +73,8 @@ inline constexpr int kGeneralObjectPinAutoWireIssue = 2709;
 //   7 eval-expr                       (evaluator_primitives_eval.cpp)
 // Agent create paths funnel through eval/mutate (no separate temp_arena
 // create in evaluator_primitives_agent.cpp).
+// Issue #3017: value-only register_external_root_for_densify is not the
+// pin / slot / EXEMPT triad — lint treats it as insufficient cover.
 inline constexpr std::uint64_t kGeneralObjectPinAdoptSiteCount = 7;
 
 // ── Object class × required protocol inventory (#2298 AC5 / #2363) ────

@@ -964,6 +964,9 @@ public:
     // must re-register for each Moving window they want covered.
     // No-op when p == nullptr (callers may pass nullptr from nullable
     // external captures; those don't need densify coverage).
+    // Issue #3017: value-only prep is observability only, not safe cover.
+    // Callers that must survive Moving need LifetimePin or
+    // register_external_root_slot_for_densify (or GENERAL_OBJECT_PIN_EXEMPT).
     void register_external_root_for_densify(void* p) noexcept {
         if (p == nullptr)
             return;
@@ -1509,14 +1512,16 @@ public:
                 g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
                 return result;
             }
-            // Issue #2973: production hard pre-densify external-root
+            // Issue #2973 / #3017: production hard pre-densify external-root
             // completeness. Soft / hard_pref<=0 is a single atomic load
             // (AC2 / AC6 — no walk, no extra pin work). When hard, walk
             // declared external roots (#2775/#2935 inventory) and require
             // every densify-tracked candidate that would move is covered
-            // by a registered slot or LifetimePin. Uncovered → block
-            // BEFORE relocate (no UAF window). Post-move incomplete-remap
-            // stays defense-in-depth.
+            // by a registered slot or LifetimePin. Value-only
+            // register_external_root_for_densify is not safe cover (#3017).
+            // Uncovered → block BEFORE relocate (no UAF window) + sticky-off.
+            // Clean densify later clears sticky (#2905). Post-move
+            // incomplete-remap stays defense-in-depth.
             if (g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed) > 0) {
                 const auto untracked = count_pre_densify_untracked_external_roots_();
                 if (untracked > 0) {
@@ -1528,6 +1533,8 @@ public:
                     aura::core::densify_consistency::g_moving_pre_densify_reject_total.fetch_add(
                         1, std::memory_order_relaxed);
                     aura::core::densify_consistency::g_moving_pre_densify_untracked_total.fetch_add(
+                        untracked, std::memory_order_relaxed);
+                    aura::core::densify_consistency::g_moving_value_only_not_cover_total.fetch_add(
                         untracked, std::memory_order_relaxed);
                     g_moving_incomplete_remap_densify_hard_fail_total.fetch_add(
                         1, std::memory_order_relaxed);
@@ -2200,10 +2207,11 @@ private:
         return false;
     }
 
-    // Issue #2973: declared external roots (#2775 value-only / #2935
-    // inventory) that would actually move and are not covered by a
-    // registered slot or LifetimePin. Empty prep set → 0 without a
-    // dtors_ walk (Soft/no-registration stays cheap even if called).
+    // Issue #2973 / #3017: declared external roots (#2775 value-only /
+    // #2935 inventory) that would actually move and are not covered by a
+    // registered slot or LifetimePin. Value-only prep is observability
+    // only — it does not count as safe cover. Empty prep set → 0 without
+    // a dtors_ walk (Soft/no-registration stays cheap even if called).
     [[nodiscard]] std::size_t count_pre_densify_untracked_external_roots_() const noexcept {
         if (external_roots_for_densify_.empty())
             return 0;
@@ -2528,9 +2536,10 @@ private:
     // Issue #2166: old→new create-object addresses from last Moving densify.
     // Cleared/rebuilt each Moving call; Soft/Force leave it empty.
     std::unordered_map<void*, void*> last_object_remap_;
-    // Issue #2775: external roots registered by callers via
+    // Issue #2775 / #3017: external roots registered by callers via
     // register_external_root_for_densify(void*) / batch span before a
     // Moving densify. Value-only observability + #2837 stale detection.
+    // Not safe cover — slot or LifetimePin required to survive move.
     // Consumed (captured + cleared) after relocate + slot rewrite on each
     // live_compact(Moving) work. Survives Soft / Force / blocked-Moving
     // early-returns — caller re-registers per window they want covered.

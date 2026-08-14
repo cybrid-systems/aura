@@ -1493,6 +1493,203 @@ static void ac2973_6_linter_and_no_design() {
           "AC6: no new invent test file per #81967");
 }
 
+// ── Issue #3017: incomplete-remap residual (value-only / un-slotted) ──
+// Residual of #2495/#2664/#2837/#2971/#2973: production hard already
+// fail-closes untracked declared roots BEFORE relocate, but value-only
+// prep was still readable as if it were safe cover, and the 2709 lint
+// scan omitted FFI / agent / scratch. #3017 makes value-only
+// observability-only, expands the allocate-bypass lint, and adds
+// mutate×densify soak + untracked inject + sticky recover.
+//
+//   AC1: value-only is not safe cover (source-cite + lint).
+//   AC2: untracked inject canary — production hard pre-move reject.
+//   AC3: mutate × densify soak with slot cover — payloads intact.
+//   AC4: after inject + sticky, slot-cover + clean densify clears sticky.
+//   AC5: Soft / Off zero extra cost (no value-only-not-cover bump).
+//   AC6: linter + no docs/design/ / no invent file.
+
+static void ac3017_1_audit_value_only_not_cover() {
+    std::println("\n--- #3017 AC1: value-only prep is not safe cover ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto lint = read_file("scripts/coverage/checks/check_moving_incomplete_remap_3017.py");
+    CHECK(arena.find("Issue #3017: value-only prep is observability only, not safe cover") !=
+              std::string::npos,
+          "AC1: register_external_root_for_densify cites not-safe-cover");
+    CHECK(arena.find("value-only prep is observability only") != std::string::npos,
+          "AC1: pre-densify helper treats value-only as not cover");
+    CHECK(lp.find("value-only register_external_root_for_densify is not the") != std::string::npos,
+          "AC1: LifetimePin triad excludes value-only");
+    CHECK(lint.find("evaluator_primitives_agent.cpp") != std::string::npos,
+          "AC1: lint scans agent create surface");
+    CHECK(lint.find("ffi_primitives_impl.cpp") != std::string::npos, "AC1: lint scans FFI");
+    CHECK(lint.find("evaluator_primitives_memory.cpp") != std::string::npos,
+          "AC1: lint scans scratch/memory");
+    CHECK(lint.find("_value_only_is_not_cover") != std::string::npos,
+          "AC1: lint classifies value-only as not cover");
+}
+
+static void ac3017_2_untracked_inject_canary() {
+    std::println("\n--- #3017 AC2: untracked inject canary (value-only) ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::core::densify_consistency::reset_moving_pre_densify_completeness_for_test();
+    aura::core::densify_consistency::reset_moving_incomplete_remap_residual_3017_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    arena.register_external_root_for_densify(ext); // inject: value-only, no slot
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "AC2: no address movement on untracked inject");
+    CHECK(r.moving_blocked_precondition, "AC2: blocked as precondition");
+    CHECK(r.moving_incomplete_remap, "AC2: incomplete-remap marked");
+    CHECK(!r.pin_contract_held, "AC2: pin_contract_held is the fail signal");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC2: sticky densify-off armed");
+    CHECK(aura::core::densify_consistency::moving_pre_densify_reject_total_v_read() >= 1,
+          "AC2: pre-densify-reject-total bumped");
+    CHECK(aura::core::densify_consistency::moving_value_only_not_cover_total_v_read() >= 1,
+          "AC2: value-only-not-cover-total bumped");
+    CHECK(p0->a == 1 && p0->b == 2 && p0->c == 3 && p0->d == 4, "AC2: p0 payload intact");
+    CHECK(p1->a == 5 && p1->b == 6, "AC2: p1 payload intact");
+    CHECK(p2->a == 9 && p2->b == 10, "AC2: p2 payload intact");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+}
+
+static void ac3017_3_mutate_densify_soak() {
+    std::println("\n--- #3017 AC3: mutate × densify soak (slot-covered) ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::core::densify_consistency::reset_moving_incomplete_remap_residual_3017_for_test();
+    const auto not_cover0 =
+        aura::core::densify_consistency::moving_value_only_not_cover_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    constexpr int kSoak = 32;
+    for (int i = 0; i < kSoak; ++i) {
+        static_cast<Pod16*>(s0)->a = 100 + i;
+        static_cast<Pod16*>(s1)->b = 200 + i;
+        static_cast<Pod16*>(s2)->c = 300 + i;
+        arena.register_external_root_slot_for_densify(&s0);
+        arena.register_external_root_slot_for_densify(&s1);
+        arena.register_external_root_slot_for_densify(&s2);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(aura::core::densify_consistency::moving_value_only_not_cover_total_v_read() ==
+                  not_cover0,
+              "AC3: slot-covered soak does not bump value-only-not-cover");
+        CHECK(static_cast<Pod16*>(s0)->a == 100 + i, "AC3: s0 payload intact after densify");
+        CHECK(static_cast<Pod16*>(s1)->b == 200 + i, "AC3: s1 payload intact after densify");
+        CHECK(static_cast<Pod16*>(s2)->c == 300 + i, "AC3: s2 payload intact after densify");
+        if (r.objects_moved > 0) {
+            CHECK(r.pin_contract_held, "AC3: pin_contract_held after slot-covered move");
+            CHECK(!r.moving_incomplete_remap, "AC3: no incomplete-remap on slot-covered soak");
+        }
+    }
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "AC3: soak never arms sticky densify-off");
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3017_4_sticky_recover_after_inject() {
+    std::println("\n--- #3017 AC4: sticky recover after untracked inject ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    arena.register_external_root_for_densify(ext); // inject
+    const auto blocked = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(blocked.objects_moved == 0, "AC4: inject blocks before move");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC4: sticky armed");
+    // Recover: slot-cover + re-enable Moving; clean densify clears sticky.
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::set_moving_compact_enabled(1);
+    void* s0 = p0;
+    void* s1 = p1;
+    void* s2 = p2;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    arena.register_external_root_slot_for_densify(&s2);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0 && !r.moving_incomplete_remap && r.pin_contract_held) {
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC4: clean densify cleared sticky");
+        CHECK(static_cast<Pod16*>(s0)->a == 1 && static_cast<Pod16*>(s0)->b == 2,
+              "AC4: payload intact via remapped slot");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5 && p2->a == 9, "AC4: no-move payloads intact");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC4: sticky stays clear after slot-covered window");
+    }
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3017_5_soft_zero_cost() {
+    std::println("\n--- #3017 AC5: Soft / Off zero extra cost ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    const auto not_cover0 =
+        aura::core::densify_consistency::moving_value_only_not_cover_total_v_read();
+    const auto rej0 = aura::core::densify_consistency::moving_pre_densify_reject_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    void* ext = p0;
+    arena.register_external_root_for_densify(ext);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "AC5: Soft still densifies");
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC5: Soft never arms sticky");
+    CHECK(aura::core::densify_consistency::moving_value_only_not_cover_total_v_read() == not_cover0,
+          "AC5: value-only-not-cover-total unchanged on Soft");
+    CHECK(aura::core::densify_consistency::moving_pre_densify_reject_total_v_read() == rej0,
+          "AC5: pre-densify-reject unchanged on Soft");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("hard_pref<=0 is a single atomic load") != std::string::npos,
+          "AC5: Soft skip is a single atomic load");
+    (void)p1;
+    (void)p2;
+}
+
+static void ac3017_6_linter_and_no_design() {
+    std::println("\n--- #3017 AC6: linter + no docs/design/ ---");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_moving_incomplete_remap_3017.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3017_1_audit_value_only_not_cover") != std::string::npos, "AC6: AC1 test");
+    CHECK(t.find("ac3017_2_untracked_inject_canary") != std::string::npos, "AC6: AC2 test");
+    CHECK(t.find("ac3017_3_mutate_densify_soak") != std::string::npos, "AC6: AC3 test");
+    CHECK(t.find("ac3017_4_sticky_recover_after_inject") != std::string::npos, "AC6: AC4 test");
+    CHECK(t.find("ac3017_5_soft_zero_cost") != std::string::npos, "AC6: AC5 test");
+    CHECK(t.find("ac3017_6_linter_and_no_design") != std::string::npos, "AC6: AC6 self-test");
+    CHECK(!lint.empty() && lint.find("Issue #3017") != std::string::npos,
+          "AC6: coverage linter present and cites #3017");
+    CHECK(build.find("check_moving_incomplete_remap_3017") != std::string::npos,
+          "AC6: build.py gate entry");
+    std::ifstream design("docs/design/3017-incomplete-remap-residual.md");
+    if (!design) {
+        design.open("../docs/design/3017-incomplete-remap-residual.md");
+    }
+    CHECK(!design.good(), "AC6: no docs/design/3017-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3017.cpp").empty(),
+          "AC6: no new invent test file per #81967");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -1506,6 +1703,8 @@ int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2664: production-default hard-fail on untracked external roots "
                  "(extends #2495 test file per #81967) ===");
     std::println("=== Issue #2837: external-root slot remap + sticky densify-off "
+                 "(extends #2495 test file per #81967) ===");
+    std::println("=== Issue #3017: value-only / un-slotted incomplete-remap residual "
                  "(extends #2495 test file per #81967) ===");
 
     ac1_source_cite_live_compact_result();
@@ -1574,6 +1773,14 @@ int run_test_moving_densify_fail_closed() {
     ac2973_4_observability_schema();
     ac2973_5_recovery_and_soft_zero();
     ac2973_6_linter_and_no_design();
+    // Issue #3017: value-only / un-slotted incomplete-remap residual
+    // (extends #2495 test file per #81967).
+    ac3017_1_audit_value_only_not_cover();
+    ac3017_2_untracked_inject_canary();
+    ac3017_3_mutate_densify_soak();
+    ac3017_4_sticky_recover_after_inject();
+    ac3017_5_soft_zero_cost();
+    ac3017_6_linter_and_no_design();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 
