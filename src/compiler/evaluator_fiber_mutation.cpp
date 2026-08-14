@@ -511,12 +511,24 @@ void aura::compiler::Evaluator::pin_stable_refs_for_cow_boundary(
 // production isolation authority + query counters) before pin — never relies
 // on FlatAST process-global capture under multi-tenant / hard-close.
 // children_stable is layout-only (#2960); stamp fills tenant+fiber.
+// Issue #3000: gate *before* children_stable (make_ref_layout lazy-aligns);
+// production restamp-lag → empty batch (do not export pre-mutate gens).
 std::vector<aura::ast::FlatAST::StableNodeRef>
 aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept {
     std::vector<aura::ast::FlatAST::StableNodeRef> out;
     auto* ws = workspace_flat();
     if (!ws)
         return out;
+    {
+        auto kids = ws->children_columnar(id);
+        for (std::size_t i = 0; i < kids.size(); ++i) {
+            const auto cid = kids[i];
+            if (cid == aura::ast::NULL_NODE)
+                continue;
+            if (!allow_query_stable_ref_export(cid))
+                return out;
+        }
+    }
     out = ws->children_stable(id);
     if (out.empty())
         return out;

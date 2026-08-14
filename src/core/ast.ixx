@@ -7835,6 +7835,17 @@ public:
     [[nodiscard]] bool restamp_last_budget_exceeded() const noexcept {
         return restamp_last_budget_exceeded_.load(std::memory_order_relaxed) != 0;
     }
+    // Issue #3000: raw peek of node_gen_ vs workspace generation_ — does
+    // NOT lazy-align. true iff this slot was eagerly restamped (or
+    // previously aligned) to the current generation. query:*-stable
+    // uses this before make_ref_layout so a skipped restamp cannot
+    // export a stamped-green pre-mutate generation.
+    [[nodiscard]] bool node_generation_is_post_mutate(NodeId id) const noexcept {
+        if (id == NULL_NODE || id >= node_gen_.size())
+            return false;
+        const auto ng = node_gen_[id];
+        return ng != 0 && ng == generation_;
+    }
     // Issue #2528: long-session SLA surface. Each restamp_all_node_generations
     // call that exceeds restamp_slo_us_budget() bumps the breach counter.
     // Agents / orch poll this via query:eda-stability-stats to degrade mutation

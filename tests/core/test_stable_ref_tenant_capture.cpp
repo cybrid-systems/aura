@@ -15,10 +15,12 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
@@ -253,6 +255,55 @@ int run_test_stable_ref_tenant_capture() {
         // zero-rejected is optional soft counter (no default deny) — key exists.
         CHECK(href_prov(cs, "ref-tenant-stamp-zero-rejected-total") >= 0,
               "zero-rejected key present");
+    }
+
+    // ── #3000: restamp-lag must not stamp-green a pre-mutate generation ──
+    {
+        std::println("\n--- #3000: tenant-capture stamp gate on lagging gen ---");
+        reset_all();
+        using aura::ast::clear_restamp_budget_nodes_override_for_test;
+        using aura::ast::set_restamp_budget_nodes_for_process;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.grant_capability(kCapWildcard);
+        CHECK(cs.eval("(set-code \"(define (lag-a x) x) (define (lag-b y) y) "
+                      "(define (lag-c z) z)\")")
+                  .has_value(),
+              "set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "workspace");
+        const auto id = first_live(*ws);
+        ev.set_capability_tenant_id(42);
+        apply_production_audit_defaults();
+        set_restamp_budget_nodes_for_process(1);
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+        if (!ws->node_generation_is_post_mutate(id)) {
+            FlatAST::StableNodeRef r{};
+            r.id = id;
+            ev.stamp_query_stable_ref_export(r);
+            CHECK(r.id == NULL_NODE, "#3000: production stamp does not export lagging gen");
+            CHECK(r.tenant_id == 0, "#3000: rejected ref not stamp-greened");
+        } else {
+            auto kids = ws->children_stable(id);
+            for (auto k : kids) {
+                if (!ws->node_generation_is_post_mutate(k.id)) {
+                    ev.stamp_query_stable_ref_export(k);
+                    CHECK(k.id == NULL_NODE || k.gen == ws->generation(),
+                          "#3000: child export fail-closed or post-mutate");
+                }
+            }
+        }
+        apply_dev_audit_defaults();
+        clear_restamp_budget_nodes_override_for_test();
+        {
+            std::ifstream f("docs/design/3000-restamp-lag.md");
+            CHECK(!f.good(), "#3000: no docs/design/3000-*");
+        }
+        CHECK(aura::core::provenance::kQueryStableRefRestampLagIssue == 3000, "#3000: issue stamp");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

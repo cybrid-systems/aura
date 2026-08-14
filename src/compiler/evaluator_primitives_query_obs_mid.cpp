@@ -2649,6 +2649,19 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                         .load(std::memory_order_relaxed)));
             insert_kv("schema-2960", 2960);
             insert_kv("issue-2960", 2960);
+            // Issue #3000: restamp-lag export gate (additive on children-stable-stats).
+            insert_kv(
+                "query-stable-ref-restamp-lag-prevented-total",
+                static_cast<std::int64_t>(
+                    aura::core::provenance::g_query_stable_ref_restamp_lag_prevented_total_atomic()
+                        .load(std::memory_order_relaxed)));
+            insert_kv("query-stable-ref-restamp-lag-soft-observe-total",
+                      static_cast<std::int64_t>(
+                          aura::core::provenance::
+                              g_query_stable_ref_restamp_lag_soft_observe_total_atomic()
+                                  .load(std::memory_order_relaxed)));
+            insert_kv("schema-3000", 3000);
+            insert_kv("issue-3000", 3000);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

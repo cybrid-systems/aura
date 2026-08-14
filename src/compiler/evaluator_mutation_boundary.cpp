@@ -481,6 +481,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // restamp-budget-exceeded-total / restamp-last-budget-exceeded.
     // Hard fail-closed only on genuine invariant violations (never
     // silent torn generation — lazy-align keeps is_valid consistent).
+    // Issue #3000: export face is the residual — query:*-stable must
+    // not stamp a pre-mutate generation when last restamp exceeded
+    // and the node was not eagerly restamped (allow_query_stable_ref_export).
     if (workspace_flat_) {
         const bool wrap_pending = workspace_flat_->auto_restamp_pending();
         workspace_flat_->restamp_all_node_generations();

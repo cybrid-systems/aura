@@ -2680,6 +2680,19 @@ def cmd_lint():
             "Issue #2961 rename/replace hygiene restamp linter failed — run python3 scripts/coverage/checks/check_rename_replace_hygiene_restamp_2961.py"
         )
         return r
+    # Issue #3000: query:*-stable restamp-lag export face (#2934/#2960 residual).
+    # Extends test_hygiene_mutate_closed_loop + isolation/tenant-capture
+    # (#81967); no docs/design (#1655).
+    qrl_script = COVERAGE_CHECKS / "check_query_stable_ref_restamp_lag_3000.py"
+    if not qrl_script.exists():
+        fail(f"missing {qrl_script}")
+        return 1
+    r = run([sys.executable, str(qrl_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3000 query stable-ref restamp-lag linter failed — run python3 scripts/coverage/checks/check_query_stable_ref_restamp_lag_3000.py"
+        )
+        return r
     # Issue #2886: region-concurrent promoted as recommended multi-agent
     # mutate path. `parallel-intend` Aura hash gains 3rd isolation-level
     # value ("region-concurrent") when ≥2 distinct region_keys are
@@ -11020,6 +11033,26 @@ def cmd_query_stable_ref_stamp_2960_coverage():
     return 0
 
 
+def cmd_query_stable_ref_restamp_lag_3000_coverage():
+    """Issue #3000: query:*-stable restamp-lag export face.
+
+    Production + restamp-budget exceeded + node not eagerly restamped
+    rejects export (typed restamp-lag); Soft observe only. schema-3000
+    on stable-ref-stats-hash + generation-stats. Residual of #2934/#2960.
+    """
+    print(f"{B}=== query stable-ref restamp-lag coverage (#3000) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_stable_ref_restamp_lag_3000.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query stable-ref restamp-lag (#3000) coverage contract rows failed")
+        return 1
+    ok("query stable-ref restamp-lag (#3000) coverage clean")
+    return 0
+
+
 def cmd_rename_replace_hygiene_restamp_2961_coverage():
     """Issue #2961: rename-symbol / replace-pattern Guard + hygiene + restamp.
 
@@ -14483,6 +14516,7 @@ def main():
         "mailbox-defer-slo-hold-cancel-2958": cmd_mailbox_defer_slo_hold_cancel_2958_coverage,
         "topology-dual-restore-2959": cmd_topology_dual_restore_2959_coverage,
         "query-stable-ref-stamp-2960": cmd_query_stable_ref_stamp_2960_coverage,
+        "query-stable-ref-restamp-lag-3000": cmd_query_stable_ref_restamp_lag_3000_coverage,
         "rename-replace-hygiene-restamp-2961": cmd_rename_replace_hygiene_restamp_2961_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
