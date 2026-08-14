@@ -546,6 +546,12 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                               std::memory_order_relaxed)));
             insert_kv("schema-2958", 2958);
             insert_kv("issue-2958", 2958);
+            // Issue #3002: SSOT live p99 sample feeds #2947 deny + #2958 cancel.
+            insert_kv("mailbox-hold-slo-ssot-wired",
+                      static_cast<std::int64_t>(g_mf_mailbox_stats.mailbox_hold_slo_ssot_wired.load(
+                          std::memory_order_relaxed)));
+            insert_kv("schema-3002", 3002);
+            insert_kv("issue-3002", 3002);
             // Issue #2987: mailbox delivery residual hard-AND (steal table).
             insert_kv("mailbox-delivery-reject-layout-stamp-total",
                       static_cast<std::int64_t>(

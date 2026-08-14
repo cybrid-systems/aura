@@ -24,6 +24,9 @@
 //        (or open-window age / throttle). Complements #2947 schedule gate
 //        (deny new admits) by force-degrading the live outermost holder.
 //        Soft: observe-only. Under-SLO / no open defer: early return.
+// #3002: fill_mailbox_hold_slo_live_ + this sample share p99/throttle/SLO
+//        (no second hist walk). Production + mailbox_hold_slo_signal +
+//        live holder → one-shot cancel (reuse #2958 CAS; no double-arm).
 // #2511: outermost Guard exit forces deferred drain under budget
 //        (AURA_MAILBOX_HOLD_DRAIN_BUDGET_US, default 1000 µs). Soft: retain
 //        + starvation. Strict: force-resolve remaining depth + audit.
@@ -238,6 +241,9 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_defer_slo_breach_observe_total{0}; // #2958
     std::atomic<std::uint64_t> mailbox_defer_slo_no_holder_total{0};      // #2958
     std::atomic<std::uint32_t> mailbox_defer_slo_hold_cancel_wired{1};    // #2958
+    // Issue #3002: SSOT live sample (p99 + throttle) feeds both #2947 deny
+    // and #2958 cancel. Additive wired sentinel; no second hist walk.
+    std::atomic<std::uint32_t> mailbox_hold_slo_ssot_wired{1}; // #3002
     // Issue #2987: mailbox delivery residual hard-AND (same StealInvariant
     // table as steal: LayoutStampMatch / TicketFresh / GcDeferClear).
     // RejectHard → Backpressure, never enqueue. Soft: soft_observe;
@@ -353,6 +359,22 @@ inline void clear_agent_throttle_for_mailbox_starvation() noexcept {
                std::memory_order_relaxed) != 0;
 }
 
+// Issue #3002: SSOT live sample for p99 + throttle + SLO. No hist walk.
+// Quiet path: two relaxed loads (p99 + throttle) + SLO helper. Shared by
+// fill_mailbox_hold_slo_live_ (#2947) and maybe_mailbox_defer_slo_hold_cancel
+// (#2958) so the two faces cannot drift.
+inline constexpr int kMailboxHoldSloSsotIssue = 3002;
+inline void sample_mailbox_hold_slo_live(std::uint64_t& p99_us, bool& throttled,
+                                         std::uint64_t& slo_us) noexcept {
+    p99_us = g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed);
+    throttled = aura_orch_mailbox_starvation_throttled();
+    slo_us = aura::compiler::mailbox_under_boundary_wait_slo_us();
+}
+[[nodiscard]] inline bool mailbox_hold_slo_live_signal(std::uint64_t p99_us, std::uint64_t slo_us,
+                                                       bool throttled) noexcept {
+    return (slo_us != 0 && p99_us >= slo_us) || throttled;
+}
+
 // Issue #2587: bump the throttle-rejected counter at every gate site.
 // Hard-reject / metric-only decision lives at the call site so callers
 // can decide whether production_defaults_active() is the actual hard
@@ -439,14 +461,15 @@ inline void note_mailbox_under_boundary_wait_sample(std::uint64_t us, bool dropp
 // One-shot armed flag (cleared on defer window close) avoids cancel storms;
 // Fiber::consume_hold_budget_cancel remains the one-shot CAS on the holder.
 inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {
-    const auto slo = aura::compiler::mailbox_under_boundary_wait_slo_us();
-    const bool throttled = aura_orch_mailbox_starvation_throttled();
-    const auto p99 =
-        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed);
+    // Issue #3002: same live p99 + throttle + SLO as #2947 (no hist walk).
+    std::uint64_t p99 = 0;
+    std::uint64_t slo = 0;
+    bool throttled = false;
+    sample_mailbox_hold_slo_live(p99, throttled, slo);
     const auto mx =
         g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
-    bool wait_hot = slo != 0 && ((p99 >= slo) || (mx >= slo));
-    if (!wait_hot && !throttled) {
+    bool wait_hot = mailbox_hold_slo_live_signal(p99, slo, throttled) || (slo != 0 && mx >= slo);
+    if (!wait_hot) {
         // Mid-hold path: open defer window age may already exceed SLO
         // before any deliver sample (long Guard still live).
         if (slo == 0)

@@ -26,6 +26,12 @@
 // it never masks commit_not_ready / deny_storm / mid_fallback_slo /
 // posture_degraded. #2587 mutate reject sites remain independent
 // defense-in-depth (not weakened).
+//
+// Issue #3002: fill_mailbox_hold_slo_live_ is the SSOT live sample for
+// p99 + throttle (#2958 cancel reuses the same loads via
+// sample_mailbox_hold_slo_live). Production + mailbox_hold_slo_signal +
+// live outermost holder → one-shot request_hold_budget_cancel (no
+// double-arm). Quiet path remains two relaxed loads.
 
 #pragma once
 
@@ -107,12 +113,11 @@ struct SecurityScheduleInput {
     bool soft_mode = false;
 };
 
-// Issue #2947: pure predicate — p99 ≥ SLO (SLO>0) or throttle flag.
-// Separated so tests can assert without full decide matrix.
+// Issue #2947 / #3002: pure predicate — p99 ≥ SLO (SLO>0) or throttle flag.
+// Same boolean as mf_mailbox::mailbox_hold_slo_live_signal (SSOT).
 [[nodiscard]] inline bool mailbox_hold_slo_signal(const SecurityScheduleInput& in) noexcept {
-    const bool wait_hot =
-        in.mailbox_wait_slo_us != 0 && in.mailbox_wait_p99_us >= in.mailbox_wait_slo_us;
-    return wait_hot || in.mailbox_starvation_throttled;
+    return aura::serve::mf_mailbox::mailbox_hold_slo_live_signal(
+        in.mailbox_wait_p99_us, in.mailbox_wait_slo_us, in.mailbox_starvation_throttled);
 }
 
 // ── Pure decision (#2590 AC1: same input → same output, no atomics) ──
@@ -302,12 +307,13 @@ inline bool posture_wal_off_restricted_live(std::uint8_t sandbox_mode) noexcept 
 // Quiet path (no samples, throttle=0) is the same cost as a pair of
 // loads; matches #2903 AC zero-extra-work when depth==0.
 inline void fill_mailbox_hold_slo_live_(SecurityScheduleInput& in) noexcept {
-    using aura::serve::mf_mailbox::g_mf_mailbox_stats;
-    in.mailbox_wait_p99_us =
-        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_p99.load(std::memory_order_relaxed);
-    in.mailbox_starvation_throttled =
-        aura::serve::mf_mailbox::aura_orch_mailbox_starvation_throttled();
-    in.mailbox_wait_slo_us = aura::compiler::mailbox_under_boundary_wait_slo_us();
+    // Issue #3002: SSOT sample (same two relaxed loads as #2958).
+    aura::serve::mf_mailbox::sample_mailbox_hold_slo_live(
+        in.mailbox_wait_p99_us, in.mailbox_starvation_throttled, in.mailbox_wait_slo_us);
+    // Production + signal + live holder → one-shot cancel (reuse #2958
+    // CAS; do not double-arm). Quiet: signal false → no extra work.
+    if (mailbox_hold_slo_signal(in))
+        aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel();
 }
 
 inline SecurityScheduleInput make_security_schedule_input_live(std::uint8_t eval_sandbox_mode,

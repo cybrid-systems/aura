@@ -2643,6 +2643,18 @@ def cmd_lint():
             "Issue #2958 mailbox defer-SLO hold-cancel linter failed — run python3 scripts/coverage/checks/check_mailbox_defer_slo_hold_cancel_2958.py"
         )
         return r
+    # Issue #3002: mailbox hold p99 SSOT + soak fail-closed (#2947+#2958 residual).
+    # Extends test_mailbox_recv_mutation_boundary + chaos_mutate (#81967).
+    mhss2_script = COVERAGE_CHECKS / "check_mailbox_hold_slo_ssot_soak_3002.py"
+    if not mhss2_script.exists():
+        fail(f"missing {mhss2_script}")
+        return 1
+    r = run([sys.executable, str(mhss2_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3002 mailbox hold SLO SSOT soak linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_slo_ssot_soak_3002.py"
+        )
+        return r
     # Issue #2959: Guard abort dual topology restore (children_+parent_).
     # Extends test_restore_children_structural_lock (#81967); no docs/design.
     tdr_script = COVERAGE_CHECKS / "check_topology_dual_restore_2959.py"
@@ -11007,6 +11019,26 @@ def cmd_mailbox_defer_slo_hold_cancel_2958_coverage():
     return 0
 
 
+def cmd_mailbox_hold_slo_ssot_soak_3002_coverage():
+    """Issue #3002: mailbox hold p99 SSOT + soak fail-closed cancel/release.
+
+    fill_mailbox_hold_slo_live_ and #2958 share live p99/throttle sample.
+    Production + signal + holder → one-shot cancel. Soak aborts if p99
+    stays hot without cancel / forced-fail-closed.
+    """
+    print(f"{B}=== mailbox hold SLO SSOT soak coverage (#3002) ==={N}")
+    script = COVERAGE_CHECKS / "check_mailbox_hold_slo_ssot_soak_3002.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox hold SLO SSOT soak (#3002) coverage contract rows failed")
+        return 1
+    ok("mailbox hold SLO SSOT soak (#3002) coverage clean")
+    return 0
+
+
 def cmd_topology_dual_restore_2959_coverage():
     """Issue #2959: Guard abort dual topology restore (children_+parent_).
 
@@ -14547,6 +14579,7 @@ def main():
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,
         "steal-lifetime-proof-residual-2957": cmd_steal_lifetime_proof_residual_2957_coverage,
         "mailbox-defer-slo-hold-cancel-2958": cmd_mailbox_defer_slo_hold_cancel_2958_coverage,
+        "mailbox-hold-slo-ssot-soak-3002": cmd_mailbox_hold_slo_ssot_soak_3002_coverage,
         "topology-dual-restore-2959": cmd_topology_dual_restore_2959_coverage,
         "query-stable-ref-stamp-2960": cmd_query_stable_ref_stamp_2960_coverage,
         "query-stable-ref-restamp-lag-3000": cmd_query_stable_ref_restamp_lag_3000_coverage,
