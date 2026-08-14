@@ -3602,12 +3602,25 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 }
                 typed_audit::publish_type_linear_proof_outcome(
                     typed_audit::kTypeLinearProofOutcomeReject);
+                // Issue #3032: rehydrate-miss / reject → drop fast-path +
+                // force hot deopt so in-flight Move/Drop re-checks.
+                if (typed_audit::invalidate_fast_path_on_rehydrate_miss()) {
+                    const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+                    (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
+                    aura_aot_record_deopt_on_steal();
+                }
             } else if (!densify_scan_mismatch) {
                 // Success path (rebind ok + scan pass — AC1): stamp
                 // success proof with post-remap linear_root_count via
                 // the new overload. Bump cumulative stamp counter +
                 // same-transaction-order success counter. Advance Phase-5
                 // success metrics.
+                // Issue #3032: bind EnvFrame/occurrence fingerprint before
+                // a new green stamp after successful rehydrate.
+                if (densify_goal_truth_2842.live_goal_count > 0 && densify_goal_truth_2842.from_cs)
+                    typed_audit::note_rehydrate_success_bind(
+                        densify_goal_truth_2842.live_goal_count,
+                        densify_goal_truth_2842.goal_fingerprint);
                 (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                     ev_->defuse_version_.load(std::memory_order_acquire),
                     /*would_allow_commit=*/true, /*linear_ok=*/true,

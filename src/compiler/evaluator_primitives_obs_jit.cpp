@@ -10427,6 +10427,28 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                                   std::memory_order_relaxed)));
                     insert_kv("schema-3031", kPendingFullSolveResidualIssue);
                     insert_kv("issue-3031", kPendingFullSolveResidualIssue);
+                    // Issue #3032: rehydrate-miss invalidate + deopt.
+                    using aura::compiler::typed_audit::g_rehydrate_miss_invalidate_wired;
+                    using aura::compiler::typed_audit::kRehydrateMissInvalidateIssue;
+                    using aura::compiler::typed_audit::rehydrate_miss_force_deopt_total_v_read;
+                    using aura::compiler::typed_audit::
+                        rehydrate_miss_invalidate_observe_total_v_read;
+                    using aura::compiler::typed_audit::rehydrate_miss_invalidate_total_v_read;
+                    using aura::compiler::typed_audit::rehydrate_success_bind_total_v_read;
+                    insert_kv("rehydrate-miss-invalidate-total",
+                              static_cast<std::int64_t>(rehydrate_miss_invalidate_total_v_read()));
+                    insert_kv("rehydrate-miss-invalidate-observe-total",
+                              static_cast<std::int64_t>(
+                                  rehydrate_miss_invalidate_observe_total_v_read()));
+                    insert_kv("rehydrate-miss-force-deopt-total",
+                              static_cast<std::int64_t>(rehydrate_miss_force_deopt_total_v_read()));
+                    insert_kv("rehydrate-miss-success-bind-total",
+                              static_cast<std::int64_t>(rehydrate_success_bind_total_v_read()));
+                    insert_kv("rehydrate-miss-invalidate-wired",
+                              static_cast<std::int64_t>(g_rehydrate_miss_invalidate_wired.load(
+                                  std::memory_order_relaxed)));
+                    insert_kv("schema-3032", kRehydrateMissInvalidateIssue);
+                    insert_kv("issue-3032", kRehydrateMissInvalidateIssue);
                 }
             }
             // Issue #2286: per-(eval, cow_gen) gate scoping.

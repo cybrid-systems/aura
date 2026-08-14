@@ -2458,6 +2458,14 @@ export struct TypeChecker {
                     aura::compiler::typed_audit::publish_type_linear_proof_outcome(
                         aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
                 }
+                // Issue #3032: invalidate in-flight linear_fast_path +
+                // force deopt/revalidate so Move/Drop cannot keep a
+                // pre-miss green stamp. Soft: observe only.
+                (void)aura::compiler::typed_audit::invalidate_fast_path_on_rehydrate_miss();
+            } else if (n_reh > 0) {
+                // Issue #3032: bind CS truth before any later green stamp.
+                aura::compiler::typed_audit::note_rehydrate_success_bind(
+                    static_cast<std::uint64_t>(solve_delta_cs_.occurrence_goals_size()), 0);
             }
         }
         if (metrics_) {

@@ -1107,6 +1107,39 @@ static void ac3030_6_linter_no_design() {
           "3030 AC6: no docs/design/");
 }
 
+static void ac3032_hermetic_invalidate() {
+    std::println("\n--- #3032 AC: hermetic invalidate blocks Move/Drop skip ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(30320);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_fast_path_ok(), "3032: green ok");
+    CHECK(linear_ir_fastpath_try_skip(), "3032: skip before miss");
+    CHECK(invalidate_fast_path_on_rehydrate_miss(), "3032: hard invalidate");
+    CHECK(!linear_fast_path_ok(), "3032: !ok after invalidate");
+    CHECK(!linear_ir_fastpath_try_skip(), "3032: cannot skip after miss");
+    {
+        CompilerService cs;
+        CHECK(href(cs, "schema-3032") == 3032, "3032: schema-3032 on escape-postmutate");
+        CHECK(href(cs, "rehydrate-miss-invalidate-wired") == 1, "3032: wired");
+    }
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    reset_rehydrate_miss_invalidate_for_test();
+    clear_type_linear_commit_proof_for_test();
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1155,6 +1188,8 @@ int run_test_escape_move_elision_gate() {
     ac3030_4_quiet_zero_cost();
     ac3030_5_schema_and_wire();
     ac3030_6_linter_no_design();
+    std::println("\n=== Issue #3032: rehydrate-miss invalidates linear_fast_path ===");
+    ac3032_hermetic_invalidate();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
