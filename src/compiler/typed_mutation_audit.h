@@ -208,6 +208,15 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> solve_delta_locality_escalate_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_reject_total{0};
     std::atomic<std::uint32_t> solve_delta_locality_slo_wired{1};
+    // Issue #2994: Agent locality residual budget (production only).
+    // allow: residual ≤ max_locality_residual, SOLVED retained.
+    // escalate: residual > budget, full path.
+    // pending_handoff: residual roots merged into pending_full_solve.
+    // Quiet / Soft / budget 0: no bump on these three (compat #2913).
+    std::atomic<std::uint64_t> delta_locality_budget_allow_total{0};
+    std::atomic<std::uint64_t> delta_locality_budget_escalate_total{0};
+    std::atomic<std::uint64_t> delta_locality_budget_pending_handoff_total{0};
+    std::atomic<std::uint32_t> delta_locality_budget_wired{1};
     // Issue #2900: SolverBudget surface (Agent-controlled delta TIMEOUT policy).
     // timeout_export: Soft + allow_timeout_commit kept TIMEOUT (never SOLVED).
     // full_escalate: production still escalated under non-default budget.

@@ -9033,6 +9033,11 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> solve_delta_locality_escalate_total{0};
     std::atomic<std::uint64_t> solve_delta_locality_reject_total{0};
     std::atomic<std::uint32_t> solve_delta_locality_slo_wired{1};
+    // Issue #2994: locality residual budget (mirror of typed_audit).
+    std::atomic<std::uint64_t> delta_locality_budget_allow_total{0};
+    std::atomic<std::uint64_t> delta_locality_budget_escalate_total{0};
+    std::atomic<std::uint64_t> delta_locality_budget_pending_handoff_total{0};
+    std::atomic<std::uint32_t> delta_locality_budget_wired{1};
     // Issue #2065: solve_delta_epoch_skip_total — count of touched /
     // occurrence / let-poly roots skipped during solve_delta worklist
     // seeding because last_seen_epoch already matches the current

@@ -2471,6 +2471,18 @@ def cmd_lint():
             "Issue #2993 typecheck metrics tier linter failed — run python3 scripts/coverage/checks/check_typecheck_metrics_tier_2993.py"
         )
         return r
+    # Issue #2994: Agent locality residual budget on production solve_delta.
+    # Extends test_solve_delta_unresolved_export (#81967); no docs/design/.
+    lrb_script = COVERAGE_CHECKS / "check_solve_delta_locality_budget_2994.py"
+    if not lrb_script.exists():
+        fail(f"missing {lrb_script}")
+        return 1
+    r = run([sys.executable, str(lrb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2994 locality residual budget linter failed — run python3 scripts/coverage/checks/check_solve_delta_locality_budget_2994.py"
+        )
+        return r
     # Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count.
     # Extends test_type_linear_commit_health (#81967); no docs/design/.
     lcrc_script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
@@ -10319,6 +10331,21 @@ def cmd_typecheck_metrics_tier_2993_coverage():
     return 0
 
 
+def cmd_solve_delta_locality_budget_2994_coverage():
+    """Issue #2994: Agent locality residual budget."""
+    print(f"{B}=== locality residual budget coverage (#2994) ==={N}")
+    script = COVERAGE_CHECKS / "check_solve_delta_locality_budget_2994.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("locality residual budget (#2994) coverage contract rows failed")
+        return 1
+    ok("locality residual budget (#2994) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -14296,6 +14323,7 @@ def main():
         "coercion-provenance-hf-mutate-2991": cmd_coercion_provenance_hf_mutate_2991_coverage,
         "gradual-permissiveness-2992": cmd_gradual_permissiveness_2992_coverage,
         "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,
+        "solve-delta-locality-budget-2994": cmd_solve_delta_locality_budget_2994_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "production-abi-selfcheck-2955": cmd_production_abi_selfcheck_2955_coverage,
         "mutation-mirror-canary-2956": cmd_mutation_mirror_canary_2956_coverage,

@@ -384,14 +384,24 @@ export struct SolverBudget {
     // Soft escalate_if_production still skips the repair walk (AC2).
     bool prefer_instance_repair_before_full = true;
     bool allow_timeout_commit = false; // Soft-only; production forces false
+    // Issue #2994: locality residual budget. 0 = #2913 compat (any
+    // residual → production full escalate). N>0 keeps local SOLVED
+    // when last_locality_pruned_ (or dirty residual) ≤ N.
+    std::uint32_t max_locality_residual = 0;
+    // Issue #2994: merge residual var-reps into pending_full_solve_roots_
+    // so the next solve_delta consumes them (no silent drop).
+    bool prefer_pending_roots_next = true;
     [[nodiscard]] constexpr bool is_default() const noexcept {
-        return max_delta_passes == 0 && prefer_instance_repair_before_full && !allow_timeout_commit;
+        return max_delta_passes == 0 && prefer_instance_repair_before_full &&
+               !allow_timeout_commit && max_locality_residual == 0 && prefer_pending_roots_next;
     }
 };
 export inline constexpr SolverBudget kSolverBudgetDefault{};
 export inline constexpr int kSolverBudgetIssue = 2900;
 // Issue #2963: residual production prefer-instance-repair-before-full.
 export inline constexpr int kSolverBudgetInstanceRepairIssue = 2963;
+// Issue #2994: Agent-controlled locality residual budget.
+export inline constexpr int kSolverBudgetLocalityIssue = 2994;
 
 // Issue #2278: epoch-scoped OccurrenceGoal table — replaces
 // retained_*-only cross-delta stitch with durable replayable
@@ -699,6 +709,9 @@ public:
     // Issue #2913: test inject residual for Soft/prod matrix (production code
     // leaves this at 0; solve_delta_impl overwrites from real prune count).
     void force_locality_pruned_for_test(std::size_t n) noexcept { last_locality_pruned_ = n; }
+    // Issue #2994: merge dirty constraint var-reps into pending_full_solve
+    // so the next solve_delta drains residual (budget-allow path).
+    void handoff_locality_residual_to_pending();
     // Issue #2900: Agent SolverBudget surface (null/default = current behavior).
     void set_solver_budget(SolverBudget b) noexcept { solver_budget_ = b; }
     void clear_solver_budget() noexcept { solver_budget_ = kSolverBudgetDefault; }
