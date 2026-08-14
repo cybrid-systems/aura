@@ -725,6 +725,12 @@ Evaluator::enforce_linear_post_failure(std::uint8_t path) noexcept {
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->guard_failure_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
 
+    // Issue #3023: post-abort / mutate-fail owns leftover linear_roots
+    // unpin (Move/Drop did not consume them). Nested Guard fail still
+    // runs this helper only on outermost (call site). Soft empty
+    // registry: one lock + empty check. post-densify verify never unpins.
+    (void)aura::core::lifetime::unpin_all_linear_roots();
+
     return out;
 }
 

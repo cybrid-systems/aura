@@ -11814,6 +11814,13 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             // 0=none 1=pin-miss 2=linear-miss 3=residual 4=defer-orphan.
             insert_kv("lifetime-contract-wired", 1);
             insert_kv("schema-2300", 2300);
+            // Issue #3023: leftover linear_roots unpin on abort/reclaim.
+            insert_kv("linear-root-abort-release-total",
+                      static_cast<std::int64_t>(
+                          aura::core::lifetime::linear_root_abort_release_total_v_read()));
+            insert_kv("linear-root-abort-release-wired", 1);
+            insert_kv("schema-3023", aura::core::lifetime::kLinearRootAbortReleaseIssue);
+            insert_kv("issue-3023", aura::core::lifetime::kLinearRootAbortReleaseIssue);
             insert_kv("issue-2300", static_cast<std::int64_t>(
                                         aura::core::lifetime_contract::kLifetimeContractIssue));
             // Issue #2341: unified post-densify consistency probe.

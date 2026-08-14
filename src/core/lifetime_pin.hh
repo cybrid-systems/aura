@@ -989,7 +989,8 @@ verify_pins_under_moving_compact(std::uint64_t arena_id,
 // callable from the JIT lowering (aura_jit.cpp OpLinearWrap/OpMoveOp/
 // OpDropOp) and the env frame binding paths (evaluator_env.cpp).
 // verify_linear_pins_under_moving_compact iterates the registry and
-// checks each root.
+// checks each root. Issue #3023: this verify never unpins — abort /
+// reclaim (unpin_all_linear_roots) own leftover drain.
 //
 // AC3 (zero extra atomics when no linear pins): the linear_roots
 // registry is a no-op when empty (early-return below), and the
@@ -1058,6 +1059,16 @@ inline LinearRootSnapshot linear_root_snapshot() noexcept {
     return s;
 }
 
+// Issue #3023: leftover linear_roots unpin after abort / mutate-fail /
+// fiber reclaim. Responsibility (single audit face — no second model):
+//   post-join:    Fiber::release_orphan_roots (JoinStatus::Reclaimed)
+//   post-abort:   enforce_linear_post_failure (outermost Guard fail)
+//   post-densify: verify_linear_pins_under_moving_compact only
+//                 verifies pin-or-remap; it NEVER unpins.
+// Soft: empty registry is one lock + empty check (no extra pin walks).
+inline std::atomic<std::uint64_t> g_linear_root_abort_release_total{0};
+inline constexpr int kLinearRootAbortReleaseIssue = 3023;
+
 // Reset for tests only. Production leaves linear_roots alone (the
 // live linear bindings are the source of truth).
 inline void reset_linear_roots_for_test() noexcept {
@@ -1066,6 +1077,23 @@ inline void reset_linear_roots_for_test() noexcept {
     g_linear_pin_total.store(0, std::memory_order_relaxed);
     g_linear_unpin_total.store(0, std::memory_order_relaxed);
     g_linear_pin_miss_total.store(0, std::memory_order_relaxed);
+    g_linear_root_abort_release_total.store(0, std::memory_order_relaxed);
+}
+
+inline std::size_t unpin_all_linear_roots() noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    auto& roots = linear_roots();
+    const auto n = roots.size();
+    if (n == 0)
+        return 0;
+    roots.clear();
+    g_linear_unpin_total.fetch_add(n, std::memory_order_relaxed);
+    g_linear_root_abort_release_total.fetch_add(1, std::memory_order_relaxed);
+    return n;
+}
+
+[[nodiscard]] inline std::uint64_t linear_root_abort_release_total_v_read() noexcept {
+    return g_linear_root_abort_release_total.load(std::memory_order_relaxed);
 }
 
 // ── Issue #2298: pin-or-fail for non-render general objects ─────────

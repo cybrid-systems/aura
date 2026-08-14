@@ -12,7 +12,8 @@
 #include "../compiler/shape.h"                // Issue #570: record_shape_fiber_refresh
 #include "../compiler/typed_mutation_audit.h" // Issue #2853: production_residual_policy_locked()
 #include "aura_platform.h"
-#include "core/gc_hooks.h" // Issue #1364
+#include "core/gc_hooks.h"      // Issue #1364
+#include "core/lifetime_pin.hh" // Issue #3023: post-join linear_roots unpin
 #include <unordered_map> // Issue #2726: process-wide Fiber* registry for cross-fiber cancel lookup
 
 #include <sys/mman.h>
@@ -1419,9 +1420,8 @@ std::size_t Fiber::release_orphan_roots() noexcept {
     std::vector<std::function<void()>> drops;
     {
         std::lock_guard<std::mutex> lk(orphan_roots_mtx_);
-        if (orphan_root_releases_.empty())
-            return 0;
-        drops.swap(orphan_root_releases_);
+        if (!orphan_root_releases_.empty())
+            drops.swap(orphan_root_releases_);
     }
     // Invoke OUTSIDE the lock. A drop callback may acquire other
     // locks (Evaluator mutex, mailbox mutex, GC root table) — holding
@@ -1434,6 +1434,10 @@ std::size_t Fiber::release_orphan_roots() noexcept {
         }
     }
     orphan_roots_dropped_on_reclaim_total_.fetch_add(n, std::memory_order_relaxed);
+    // Issue #3023: post-join reclaim owns leftover linear_roots unpin
+    // (linear roots are not orphan-callback registered). Empty registry
+    // is one lock + empty check. post-densify verify never unpins.
+    (void)aura::core::lifetime::unpin_all_linear_roots();
     return n;
 }
 
