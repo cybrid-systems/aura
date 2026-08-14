@@ -1549,6 +1549,9 @@ target_link_libraries(test_issue_178 PRIVATE aura_test_objects stdc++ pthread)
 # + regression. Non-duplicative with #266/#369/#553/#213.
 aura_add_issue_test(test_mutation_rollback_coverage)
 aura_issue_test_link_light(test_mutation_rollback_coverage)
+# Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert miss.
+aura_add_issue_test(test_engine_metrics_facade)
+aura_issue_test_link_light(test_engine_metrics_facade)
 # Issue #2315: production chaos soak for steal × mutate × GC × mailbox.
 # Runtime-gated by AURA_CHAOS_STEAL_GC=1; production binaries / default test
 # runs unaffected when unset. CI opt-in: set AURA_CHAOS_DURATION_S=60+

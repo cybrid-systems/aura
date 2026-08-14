@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <string_view>
@@ -50,6 +52,10 @@ std::int64_t hash_len(CompilerService& cs, std::string_view expr) {
 }
 
 } // namespace
+
+extern "C" void aura_engine_metrics_set_force_hash_cap(std::uint64_t);
+extern "C" std::uint64_t aura_engine_metrics_hash_overflow_total(void);
+extern "C" void aura_engine_metrics_reset_hash_overflow_for_test(void);
 
 int main() {
     CompilerService cs;
@@ -116,6 +122,59 @@ int main() {
         auto r = cs.eval("(engine:metrics :all)");
         CHECK(r && is_hash(*r), ":all returns hash");
         CHECK(hash_int(cs, "(engine:metrics :all)", "schema") == 2, ":all schema 2");
+        CHECK(hash_int(cs, "(engine:metrics :all)", "overflow") == -1,
+              "#3018 AC2: normal :all has no overflow key");
+    }
+
+    // ── Issue #3018: fail-soft on hash capacity overflow ──
+    // AC1: forced undersized table still returns hash with schema + overflow=1.
+    // AC2: normal :all is full map (checked above).
+    // AC3: :prefix "query:" stays a hash; missing impl is void-per-key.
+    // AC4: Soft/Off facade cost is one force-cap load (source-cite).
+    // AC5: overflow / capacity case (this block + engine_metrics.aura).
+    {
+        aura_engine_metrics_reset_hash_overflow_for_test();
+        aura_engine_metrics_set_force_hash_cap(4); // undersized vs catalog
+        const auto overflow0 = aura_engine_metrics_hash_overflow_total();
+        auto r = cs.eval("(engine:metrics :all)");
+        CHECK(r && is_hash(*r), "#3018 AC1: forced undersized :all still returns hash");
+        CHECK(!is_void(*r), "#3018 AC1: never void solely due to capacity");
+        CHECK(hash_int(cs, "(engine:metrics :all)", "schema") == 2,
+              "#3018 AC1: schema present on overflow hash");
+        CHECK(hash_int(cs, "(engine:metrics :all)", "overflow") == 1,
+              "#3018 AC1: overflow=1 sentinel");
+        CHECK(aura_engine_metrics_hash_overflow_total() > overflow0,
+              "#3018 AC1: engine_metrics_hash_overflow_total bumped");
+        aura_engine_metrics_reset_hash_overflow_for_test();
+        auto pref = cs.eval("(engine:metrics :prefix \"query:\")");
+        CHECK(pref && is_hash(*pref), "#3018 AC3: :prefix query: returns hash (table lives)");
+        CHECK(hash_int(cs, "(engine:metrics :prefix \"query:\")", "schema") == 2,
+              "#3018 AC3: :prefix schema 2");
+        CHECK(hash_int(cs, "(engine:metrics :prefix \"query:\")", "overflow") == -1,
+              "#3018 AC3: :prefix no overflow under computed cap");
+        auto miss = cs.eval("(engine:metrics \"query:no-such-stats-zzz\")");
+        CHECK(miss && is_void(*miss), "#3018 AC3: missing impl still void-per-key");
+        const auto src = []() -> std::string {
+            for (const auto& p :
+                 {std::string("src/compiler/evaluator_primitives_obs_jit.cpp"),
+                  std::string("../src/compiler/evaluator_primitives_obs_jit.cpp"),
+                  std::string("../../src/compiler/evaluator_primitives_obs_jit.cpp")}) {
+                std::ifstream in(p);
+                if (!in)
+                    continue;
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            }
+            return {};
+        }();
+        CHECK(src.find("never FlatHashTable::destroy + return void for capacity alone") !=
+                  std::string::npos,
+              "#3018 AC4: fail-soft cited (no destroy-on-capacity)");
+        CHECK(src.find("kv.size()) * 2 + 8") != std::string::npos ||
+                  src.find("kv.size() * 2 + 8") != std::string::npos,
+              "#3018 AC4: headroom is size*2+8");
+        CHECK(src.find("g_engine_metrics_force_hash_cap.load") != std::string::npos,
+              "#3018 AC4: Soft extra cost is one force-cap load");
     }
 
     // ── AC6: legacy query:*-stats still via facade (internal impl, #1439) ──
