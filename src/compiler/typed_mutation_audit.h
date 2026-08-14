@@ -1397,6 +1397,32 @@ inline void reset_linear_fast_path_force_revalidate_for_test() noexcept {
     g_linear_fast_path_force_revalidate_observe_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3006: residual of #2964 — Production/Full exit with !ok must
+// run dirty-root linear revalidate (enforce_linear_boundary_consistency),
+// not just EnvFrame sweep. Late re-eval after Phase 1 catches
+// escape / densify / depth flips after the initial check. Soft observe.
+inline constexpr int kLinearFastPathDirtyRevalidateIssue = 3006;
+inline std::atomic<std::uint64_t> g_linear_fast_path_dirty_revalidate_total{0};
+inline std::atomic<std::uint64_t> g_linear_fast_path_late_reeval_total{0};
+inline std::atomic<std::uint64_t> g_linear_fast_path_elide_blocked_production_total{0};
+inline std::atomic<std::uint32_t> g_linear_fast_path_dirty_revalidate_wired{1};
+
+[[nodiscard]] inline std::uint64_t linear_fast_path_dirty_revalidate_total_v_read() noexcept {
+    return g_linear_fast_path_dirty_revalidate_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t linear_fast_path_late_reeval_total_v_read() noexcept {
+    return g_linear_fast_path_late_reeval_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+linear_fast_path_elide_blocked_production_total_v_read() noexcept {
+    return g_linear_fast_path_elide_blocked_production_total.load(std::memory_order_relaxed);
+}
+inline void reset_linear_fast_path_dirty_revalidate_for_test() noexcept {
+    g_linear_fast_path_dirty_revalidate_total.store(0, std::memory_order_relaxed);
+    g_linear_fast_path_late_reeval_total.store(0, std::memory_order_relaxed);
+    g_linear_fast_path_elide_blocked_production_total.store(0, std::memory_order_relaxed);
+}
+
 // Purpose: single pure eligibility for Linear IR fast-path + boundary revalidate
 // Pre: none (relaxed loads only)
 // Post: true iff proof fresh, linear_ok, outermost, no escape, no densify-pending
@@ -1473,6 +1499,10 @@ enum class LinearFastPathExitAction : std::uint8_t {
     // Issue #2964: single predicate drives elision (preserve #2899 counters).
     if (!linear_fast_path_ok()) {
         g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3006: Production / Full never elides under a false predicate.
+        if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
         return false;
     }
     g_linear_ir_fastpath_skip_total.fetch_add(1, std::memory_order_relaxed);

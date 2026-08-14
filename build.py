@@ -2953,6 +2953,18 @@ def cmd_lint():
             "Issue #2964 linear-fast-path-unified linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_unified_2964.py"
         )
         return r
+    # Issue #3006: !linear_fast_path_ok forces dirty-root revalidate.
+    # Extends test_escape_move_elision_gate (#81967); no docs/design/.
+    lfp3006 = COVERAGE_CHECKS / "check_linear_fast_path_dirty_revalidate_3006.py"
+    if not lfp3006.exists():
+        fail(f"missing {lfp3006}")
+        return 1
+    r = run([sys.executable, str(lfp3006)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3006 linear-fast-path dirty-revalidate linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_dirty_revalidate_3006.py"
+        )
+        return r
     # Issue #2966: ast:snapshot fail reason (never silent -1).
     asfr2966 = COVERAGE_CHECKS / "check_ast_snapshot_fail_reason_2966.py"
     if not asfr2966.exists():
@@ -10596,6 +10608,25 @@ def cmd_linear_fast_path_unified_2964_coverage():
     return 0
 
 
+def cmd_linear_fast_path_dirty_revalidate_3006_coverage():
+    """Issue #3006: Production !linear_fast_path_ok → dirty-root revalidate.
+
+    Late re-eval after Phase 1; render_fast cannot skip; Soft observe;
+    Production never elides under a false predicate.
+    """
+    print(f"{B}=== linear fast-path dirty-revalidate coverage (#3006) ==={N}")
+    script = COVERAGE_CHECKS / "check_linear_fast_path_dirty_revalidate_3006.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear fast-path dirty-revalidate (#3006) coverage contract rows failed")
+        return 1
+    ok("linear fast-path dirty-revalidate (#3006) coverage clean")
+    return 0
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -14711,6 +14742,7 @@ def main():
         "instance-repair-before-full-2963": cmd_instance_repair_before_full_2963_coverage,
         "instance-repair-before-full-2963-coverage": cmd_instance_repair_before_full_2963_coverage,
         "linear-fast-path-unified-2964": cmd_linear_fast_path_unified_2964_coverage,
+        "linear-fast-path-dirty-revalidate-3006": cmd_linear_fast_path_dirty_revalidate_3006_coverage,
         "linear-fast-path-unified-2964-coverage": cmd_linear_fast_path_unified_2964_coverage,
         "occurrence-persist-production-2910": cmd_occurrence_persist_production_2910,
         "occurrence-persist-production-2910-coverage": cmd_occurrence_persist_production_2910_coverage,

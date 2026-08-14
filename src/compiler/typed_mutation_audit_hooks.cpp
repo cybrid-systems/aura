@@ -182,6 +182,28 @@ extern "C" void aura_escape_move_gate_clear() noexcept {
     s.entries[aura::compiler::detail::current_escape_key] = {};
 }
 
+// Issue #3006: lowering hard-block for mid-boundary / densify-pending
+// (escape-blocked names stay on the keyed #2263/#2344 path so clean
+// bindings under an active summary can still elide).
+extern "C" int aura_linear_fast_path_ok() noexcept {
+    return aura::compiler::typed_audit::linear_fast_path_ok() ? 1 : 0;
+}
+extern "C" int aura_linear_fast_path_depth_or_densify_block() noexcept {
+    using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    std::size_t depth = 0;
+    if (g_linear_ir_fastpath_boundary_depth_override >= 0)
+        depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
+    else
+        depth = aura_evaluator_mutation_boundary_depth();
+    if (depth > 0)
+        return 1;
+    if (g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
+            std::memory_order_relaxed) > 0)
+        return 1;
+    return 0;
+}
+
 extern "C" int aura_escape_move_gate_active() noexcept {
     auto& s = escape_move_gate_state();
     std::lock_guard lock(s.mu);
