@@ -787,6 +787,20 @@ def cmd_lint():
             "Issue #3044 bidirectional tag coverage linter failed — run python3 scripts/coverage/checks/check_bidirectional_tag_coverage_3044.py"
         )
         return r
+    # Issue #3045: ADT exhaustiveness under-mark cone-force. Variant add /
+    # arm delete still puts match sites in the dirty cone; Production
+    # hard-rejects non-exhaustive. Extends test_adt_match_goal_table
+    # (#81967); no docs/design/.
+    aeu3045_script = COVERAGE_CHECKS / "check_adt_exhaust_undermark_cone_3045.py"
+    if not aeu3045_script.exists():
+        fail(f"missing {aeu3045_script}")
+        return 1
+    r = run([sys.executable, str(aeu3045_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3045 ADT exhaust under-mark cone linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_undermark_cone_3045.py"
+        )
+        return r
     # Issue #2754: region concurrent cone / ImpactScope mask-AND
     # disjointness (#2724 residual). Equal keys + proven cone masks
     # (mask AND == 0) → concurrent admit; true overlap still rejects.
@@ -11329,6 +11343,26 @@ def cmd_adt_exhaust_dirty_cone_3005_coverage():
     return 0
 
 
+def cmd_adt_exhaust_undermark_cone_3045_coverage():
+    """Issue #3045: ADT exhaustiveness under-mark cone-force.
+
+    Variant add / arm delete forces containing match sites into the
+    dirty cone; Production hard-rejects non-exhaustive; Soft observe;
+    Quiet when no ADT ancestor.
+    """
+    print(f"{B}=== ADT exhaust under-mark cone coverage (#3045) ==={N}")
+    script = COVERAGE_CHECKS / "check_adt_exhaust_undermark_cone_3045.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ADT exhaust under-mark cone (#3045) coverage contract rows failed")
+        return 1
+    ok("ADT exhaust under-mark cone (#3045) coverage clean")
+    return 0
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -15707,6 +15741,7 @@ def main():
         "solve-delta-locality-budget-2994": cmd_solve_delta_locality_budget_2994_coverage,
         "solve-delta-timeout-fail-closed-3003": cmd_solve_delta_timeout_fail_closed_3003_coverage,
         "adt-exhaust-dirty-cone-3005": cmd_adt_exhaust_dirty_cone_3005_coverage,
+        "adt-exhaust-undermark-cone-3045": cmd_adt_exhaust_undermark_cone_3045_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "steal-residual-rearm-resample-3038": cmd_steal_residual_rearm_resample_3038,
         "steal-residual-rearm-resample-3038-coverage": cmd_steal_residual_rearm_resample_3038_coverage,

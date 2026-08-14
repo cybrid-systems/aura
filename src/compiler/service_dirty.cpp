@@ -1447,6 +1447,10 @@ void CompilerService::invalidate_function(const std::string& name) {
 // Issue #2110 / #2187: hybrid NodeId cascade after string-keyed BFS.
 // Mirrors function-level edges (encode_fn_node) and block-level edges
 // (encode_block_dep_node). Prefer NodeId BFS when mirror is populated:
+// Issue #3045: AST exhaustiveness cone-force lives in
+// dirty::force_adt_exhaust_sites_into_cone (infer_flat_partial /
+// evaluator_typecheck). This IR cascade stays function/block scoped;
+// match sites enter via encode_ast_dep_node marks from that helper.
 //   1. cascade_mark_dirty from root fn node
 //   2. Apply block-precise dirty for any marked block-dep nodes first
 //   3. Fallback body-only for string dependents lacking block marks

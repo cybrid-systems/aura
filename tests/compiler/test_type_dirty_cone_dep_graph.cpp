@@ -194,6 +194,8 @@ int run_test_type_dirty_cone_dep_graph() {
         CHECK(dirty.find("encode_block_dep_node") != std::string::npos, "#2187 block dep");
         CHECK(dirty.find("encode_ast_dep_node") != std::string::npos, "#2191 ast dep");
         CHECK(dirty.find("mirror_type_affected_to_cascade") != std::string::npos, "mirror helper");
+        CHECK(dirty.find("force_adt_exhaust_sites_into_cone") != std::string::npos,
+              "#3045 under-mark exhaustiveness cone-force");
         CHECK(dirty.find("cascade_skip_subtree") != std::string::npos ||
                   dirty.find("dirty_skip_subtree") != std::string::npos,
               "#2106 skip subtree");

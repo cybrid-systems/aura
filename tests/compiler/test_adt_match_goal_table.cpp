@@ -2,6 +2,7 @@
 // @reason: Issue #2564 — ADT match exhaustiveness goal table + delta
 //          reverify roots for Soft delta fidelity. Issue #3005 extends
 //          the same suite: dirty-cone seed + Production no Dynamic slide.
+//          Issue #3045: under-mark cone-force on variant add / arm delete.
 //
 //   AC1: note goals + invalidate by ADT → reverify roots; Soft recheck path
 //   AC2: no ADT/match mutation → zero invalidate / reverify-root counters
@@ -22,6 +23,7 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.type_checker;
+import aura.compiler.dirty_propagation;
 import aura.compiler.value;
 import aura.core.type;
 
@@ -299,6 +301,119 @@ static void ac3005_5_schema_lineage() {
     CHECK(href(cs, "schema-2564") == 2564, "3005 AC5: schema-2564 preserved");
 }
 
+// ── Issue #3045: under-mark cone-force ──
+// AC1: Production + variant add / arm delete → site forced into cone
+// AC2: Soft under-mark → counter only
+// AC3: Quiet (no ADT touch) zero extra
+// AC4: schema-3045
+// AC5: source cites dirty_propagation + evaluator_typecheck + mutate_type_gate
+
+static void ac3045_1_undermark_force_cone() {
+    std::println("\n--- #3045 AC1: under-mark force → cone ---");
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    u.cs.note_adt_match_goal(10, 42, 0xabc);
+    const std::vector<std::uint32_t> arm_only{10};
+    const auto n = u.cs.force_adt_exhaust_undermark_from_match_nodes(arm_only);
+    CHECK(n == 1, "3045 AC1: force inserts match site");
+    CHECK(u.cs.adt_reverify_roots_size() == 1, "3045 AC1: reverify root present");
+    CHECK(u.m.adt_exhaust_undermark_force_total.load() == 1, "3045 AC1: force counter");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("force_adt_exhaust_undermark_into_cone") != std::string::npos,
+          "3045 AC1: ancestor force wired");
+    CHECK(tci.find("collect_adt_ancestors_from_dirty") != std::string::npos,
+          "3045 AC1: ancestor walk");
+    CHECK(tci.find("kAdtExhaustUndermarkConeIssue") != std::string::npos ||
+              tci.find("#3045") != std::string::npos,
+          "3045 AC1: cites #3045");
+    const auto dp = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(dp.find("force_adt_exhaust_sites_into_cone") != std::string::npos,
+          "3045 AC1: dirty_propagation cone-force");
+    CHECK(read_file("src/compiler/evaluator_typecheck.cpp").find("#3045") != std::string::npos,
+          "3045 AC1: evaluator_typecheck");
+    CHECK(read_file("src/compiler/mutate_type_gate.hh").find("#3045") != std::string::npos,
+          "3045 AC1: mutate_type_gate Hard");
+}
+
+static void ac3045_2_soft_observe() {
+    std::println("\n--- #3045 AC2: Soft under-mark observe only ---");
+    UnitCs u;
+    u.cs.note_adt_match_goal(7, 1, 1);
+    const std::vector<std::uint32_t> arm{7};
+    (void)u.cs.force_adt_exhaust_undermark_from_match_nodes(arm);
+    CHECK(u.cs.adt_reverify_roots_size() == 1, "3045 AC2: Soft still seeds roots");
+    CHECK(u.m.adt_exhaust_production_reject_total.load() == 0,
+          "3045 AC2: no production reject on unit CS");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("adt_exhaust_soft_observe_total") != std::string::npos,
+          "3045 AC2: Soft observe counter retained");
+    CHECK(tci.find("production_defaults_active()") != std::string::npos,
+          "3045 AC2: Production vs Soft branch retained");
+}
+
+static void ac3045_3_quiet() {
+    std::println("\n--- #3045 AC3: Quiet no ADT → zero extra ---");
+    UnitCs u;
+    const std::vector<std::uint32_t> empty;
+    CHECK(u.cs.force_adt_exhaust_undermark_from_match_nodes(empty) == 0, "3045 AC3: empty force 0");
+    CHECK(u.cs.adt_reverify_roots_size() == 0, "3045 AC3: no roots");
+    CHECK(u.m.adt_exhaust_undermark_force_total.load() == 0, "3045 AC3: force counter quiet");
+    const std::vector<aura::compiler::dirty::NodeId> empty_sites;
+    CHECK(aura::compiler::dirty::force_adt_exhaust_sites_into_cone(empty_sites) == 0,
+          "3045 AC3: dirty_propagation empty 0");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("Quiet AC3") != std::string::npos ||
+              tci.find("no ADT ancestor") != std::string::npos,
+          "3045 AC3: Quiet path cited");
+}
+
+static void ac3045_4_schema() {
+    std::println("\n--- #3045 AC4: schema-3045 ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(q.find("schema-3045") != std::string::npos, "3045 AC4: schema-3045");
+    CHECK(q.find("adt-exhaust-undermark-force-total") != std::string::npos,
+          "3045 AC4: undermark key");
+    CHECK(q.find("schema-3005") != std::string::npos, "3045 AC4: lineage #3005");
+    CHECK(read_file("src/compiler/type_checker.ixx").find("kAdtExhaustUndermarkConeIssue = 3045") !=
+              std::string::npos,
+          "3045 AC4: issue stamp");
+    CHECK(read_file("src/compiler/observability_metrics.h")
+                  .find("adt_exhaust_undermark_force_total") != std::string::npos,
+          "3045 AC4: metrics field");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3045") == 3045, "3045 AC4: live schema-3045");
+    CHECK(href(cs, "issue-3045") == 3045, "3045 AC4: live issue-3045");
+    CHECK(href(cs, "adt-exhaust-undermark-cone-wired") == 1, "3045 AC4: wired");
+    CHECK(href(cs, "adt-exhaust-undermark-force-total") >= 0, "3045 AC4: force queryable");
+    CHECK(href(cs, "schema-3005") == 3005, "3045 AC4: schema-3005 preserved");
+}
+
+static void ac3045_5_source_cites() {
+    std::println("\n--- #3045 AC5: source cites + no invent ---");
+    const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_adt_exhaust_undermark_cone_3045.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3045_1_undermark_force_cone") != std::string::npos, "3045 AC5: AC1");
+    CHECK(lint.find("#3045") != std::string::npos, "3045 AC5: linter present");
+    CHECK(build.find("check_adt_exhaust_undermark_cone_3045") != std::string::npos,
+          "3045 AC5: build.py gate");
+    CHECK(build.find("cmd_adt_exhaust_undermark_cone_3045_coverage") != std::string::npos,
+          "3045 AC5: build.py cmd");
+    CHECK(read_file("tests/compiler/test_issue_3045.cpp").empty(),
+          "3045 AC5: no test_issue_3045.cpp");
+    CHECK(
+        read_file("src/compiler/dirty_propagation.ixx").find("force_adt_exhaust_sites_into_cone") !=
+            std::string::npos,
+        "3045 AC5: dirty_propagation");
+    CHECK(read_file("src/compiler/evaluator_typecheck.cpp").find("force_adt_exhaust_undermark") !=
+              std::string::npos,
+          "3045 AC5: evaluator_typecheck force");
+    CHECK(read_file("src/compiler/mutate_type_gate.hh").find("under-mark cone-force") !=
+              std::string::npos,
+          "3045 AC5: mutate_type_gate");
+}
+
 static void ac3005_6_linter_no_design() {
     std::println("\n--- #3005 AC6: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
@@ -323,7 +438,7 @@ static void ac3005_6_linter_no_design() {
 } // namespace
 
 int run_test_adt_match_goal_table() {
-    std::println("=== Issue #2564 / #3005: ADT match goal table + dirty cone ===");
+    std::println("=== Issue #2564 / #3005 / #3045: ADT match goal table + dirty cone ===");
     ac1_note_invalidate_reverify();
     ac2_zero_work();
     ac3_cap();
@@ -335,7 +450,12 @@ int run_test_adt_match_goal_table() {
     ac3005_4_quiet_empty();
     ac3005_5_schema_lineage();
     ac3005_6_linter_no_design();
-    std::println("\n=== #2564/#3005: {} passed, {} failed ===", g_passed, g_failed);
+    ac3045_1_undermark_force_cone();
+    ac3045_2_soft_observe();
+    ac3045_3_quiet();
+    ac3045_4_schema();
+    ac3045_5_source_cites();
+    std::println("\n=== #2564/#3005/#3045: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

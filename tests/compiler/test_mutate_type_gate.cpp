@@ -171,6 +171,8 @@ int run_test_mutate_type_gate() {
         CHECK(read_file("src/compiler/mutate_type_gate.hh").find("MutateTypeGate") !=
                   std::string::npos,
               "header");
+        CHECK(read_file("src/compiler/mutate_type_gate.hh").find("#3045") != std::string::npos,
+              "3045: Hard still rejects after under-mark cone-force");
         CHECK(read_file("src/compiler/security_defaults.hh").find("mutate_type_gate") !=
                   std::string::npos,
               "security_defaults");

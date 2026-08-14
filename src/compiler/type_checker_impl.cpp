@@ -502,6 +502,20 @@ void ConstraintSystem::note_adt_exhaust_dirty_type(std::uint32_t adt_type_id) no
         pending_full_solve_roots_.insert(adt_type_id);
 }
 
+// Issue #3045: under-mark force — same insert as seed, distinct metric.
+// Empty input → 0 (Quiet / AC3).
+std::size_t ConstraintSystem::force_adt_exhaust_undermark_from_match_nodes(
+    const std::vector<std::uint32_t>& nodes) noexcept {
+    if (nodes.empty())
+        return 0;
+    const auto n = seed_adt_reverify_from_match_nodes(nodes);
+    if (n > 0 && metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(metrics_);
+        m->adt_exhaust_undermark_force_total.fetch_add(n, std::memory_order_relaxed);
+    }
+    return n;
+}
+
 // Issue #2564: TLS pending match reverify roots filled by static ADT
 // invalidate path (no CS* required). Absorbed into CS on partial/delta.
 namespace {
@@ -8852,13 +8866,28 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             renarrow_roots.push_back(id);
         (void)selective_adt_guardshape_renarrow(flat, pool, types, renarrow_roots, metrics_);
     }
-    // Issue #2288 / #2564 / #3005: selective ADT exhaustiveness on
-    // infer_flat_partial. Variant invalidate + pattern-dirty match
+    // Issue #2288 / #2564 / #3005 / #3045: selective ADT exhaustiveness
+    // on infer_flat_partial. Variant invalidate + pattern-dirty match
     // nodes seed reverify roots; those roots join the dirty cone
     // (affected) and solve_delta touched/pending seeds (#2939 BFS).
     // Soft bumps observe counters; Production hard-rejects unproven
     // / Dynamic-slide results (no residual SOLVED via Dynamic).
     // Quiet: no match in dirty set and no reverify roots → zero extra.
+    // #3045: constructor / arm-only under-mark still walks ancestors
+    // so containing match sites enter the cone (dirty_propagation +
+    // evaluator_typecheck + mutate_type_gate Hard).
+    {
+        std::vector<NodeId> undermark_seeds;
+        undermark_seeds.reserve(affected.size() + 2);
+        if (rec.target_node != aura::ast::NULL_NODE)
+            undermark_seeds.push_back(rec.target_node);
+        if (rec.parent_id != aura::ast::NULL_NODE)
+            undermark_seeds.push_back(rec.parent_id);
+        for (auto id : affected)
+            undermark_seeds.push_back(id);
+        (void)force_adt_exhaust_undermark_into_cone(flat, pool, types, undermark_seeds,
+                                                    &engine.constraint_system(), metrics_);
+    }
     engine.constraint_system().absorb_pending_adt_reverify_roots();
     {
         std::vector<std::uint32_t> pattern_matches;
@@ -8883,10 +8912,32 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             const auto nid = static_cast<NodeId>(raw);
             if (nid == aura::ast::NULL_NODE || nid >= flat.size())
                 continue;
-            if (cone_seen.insert(nid).second) {
-                affected.push_back(nid);
-                if (m)
-                    m->adt_exhaust_cone_seed_total.fetch_add(1, std::memory_order_relaxed);
+            if (!flat.has_match_info(nid))
+                continue; // stale id after rebind — do not infer
+            // Issue #3045: do not infer the match-let as a root (unbound
+            // pattern vars). Lift to enclosing Lambda/Define; post-infer
+            // exhaustiveness recheck still uses `nid` via adt_reverify.
+            {
+                NodeId cur = flat.parent_of(nid);
+                std::size_t safety = 0;
+                NodeId lift = aura::ast::NULL_NODE;
+                while (cur != aura::ast::NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
+                    const auto v = flat.get(cur);
+                    const bool match_let = v.tag == NodeTag::Let &&
+                                           (flat.has_match_info(cur) ||
+                                            std::string(pool.resolve(v.sym_id)) == "__match_tmp");
+                    if (v.tag == NodeTag::Lambda || v.tag == NodeTag::Define ||
+                        v.tag == NodeTag::LetRec || (v.tag == NodeTag::Let && !match_let)) {
+                        lift = cur;
+                        break;
+                    }
+                    cur = flat.parent_of(cur);
+                }
+                if (lift != aura::ast::NULL_NODE && cone_seen.insert(lift).second) {
+                    affected.push_back(lift);
+                    if (m)
+                        m->adt_exhaust_cone_seed_total.fetch_add(1, std::memory_order_relaxed);
+                }
             }
             if (auto* mi = flat.get_match_info(nid)) {
                 if (mi->subject_type_id > 0)
@@ -10271,6 +10322,40 @@ namespace {
         }
     }
 
+    // Issue #3045: walk *ancestors* of dirty constructor / match-arm
+    // nodes so a Variant add or arm delete that only marked the child
+    // still finds containing DefineType / match sites. Empty dirty →
+    // immediate return (Quiet). Does not scan the whole workspace.
+    static void collect_adt_ancestors_from_dirty(const FlatAST& flat, const StringPool& pool,
+                                                 const std::vector<NodeId>& dirty,
+                                                 std::vector<NodeId>& define_types,
+                                                 std::vector<NodeId>& match_lets) {
+        if (dirty.empty())
+            return;
+        std::unordered_set<NodeId> seen_dt(define_types.begin(), define_types.end());
+        std::unordered_set<NodeId> seen_match(match_lets.begin(), match_lets.end());
+        for (auto start : dirty) {
+            if (start == NULL_NODE || start >= flat.size())
+                continue;
+            NodeId cur = start;
+            std::size_t safety = 0;
+            while (cur != NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
+                const auto v = flat.get(cur);
+                if (v.tag == NodeTag::DefineType && seen_dt.insert(cur).second)
+                    define_types.push_back(cur);
+                if (flat.has_match_info(cur)) {
+                    if (seen_match.insert(cur).second)
+                        match_lets.push_back(cur);
+                } else if (v.tag == NodeTag::Let &&
+                           std::string(pool.resolve(v.sym_id)) == "__match_tmp" &&
+                           seen_match.insert(cur).second) {
+                    match_lets.push_back(cur);
+                }
+                cur = flat.parent_of(cur);
+            }
+        }
+    }
+
     static void collect_adt_nodes_in_subtrees(const FlatAST& flat, const StringPool& pool,
                                               const std::vector<NodeId>& roots,
                                               std::vector<NodeId>& define_types,
@@ -10348,8 +10433,15 @@ namespace {
     static void refresh_adt_constructors_for_dirty_define_types_impl(
         FlatAST& flat, const StringPool& pool, TypeRegistry& reg,
         const std::vector<NodeId>& dirty_nodes, void* metrics) {
+        if (dirty_nodes.empty())
+            return; // Quiet: no dirty → zero extra
+        std::vector<NodeId> define_types;
+        std::vector<NodeId> match_unused;
+        collect_adt_ancestors_from_dirty(flat, pool, dirty_nodes, define_types, match_unused);
+        if (define_types.empty())
+            return; // Quiet: no DefineType in dirty or ancestors
         auto* m = static_cast<CompilerMetrics*>(metrics);
-        for (auto id : dirty_nodes) {
+        for (auto id : define_types) {
             if (id == NULL_NODE || id >= flat.size())
                 continue;
             if (flat.get(id).tag != NodeTag::DefineType)
@@ -10379,6 +10471,49 @@ void refresh_adt_constructors_for_dirty_define_types(FlatAST& flat, const String
     refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, dirty_nodes, metrics);
 }
 
+// Issue #3045: under-mark force. Walk ancestors of dirty constructor /
+// match-arm nodes; refresh DefineType ctor lists; seed match sites into
+// reverify roots + dirty::force_adt_exhaust_sites_into_cone. Empty dirty
+// or no ADT ancestor → 0 (Quiet). Soft does not reject (observe via
+// existing #3005 counters); Production reject stays in infer_flat_partial
+// + evaluator_typecheck / mutate_type_gate Hard.
+std::size_t force_adt_exhaust_undermark_into_cone(FlatAST& flat, const StringPool& pool,
+                                                  TypeRegistry& reg,
+                                                  const std::vector<NodeId>& dirty_nodes,
+                                                  ConstraintSystem* cs, void* metrics) {
+    if (dirty_nodes.empty())
+        return 0; // Quiet AC3
+    std::vector<NodeId> define_types;
+    std::vector<NodeId> match_lets;
+    collect_adt_ancestors_from_dirty(flat, pool, dirty_nodes, define_types, match_lets);
+    if (define_types.empty() && match_lets.empty())
+        return 0; // Quiet: no ADT ancestor
+    if (!define_types.empty())
+        refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, define_types,
+                                                             metrics);
+    std::vector<std::uint32_t> forced;
+    forced.reserve(match_lets.size());
+    for (auto id : match_lets)
+        forced.push_back(static_cast<std::uint32_t>(id));
+    std::size_t n = 0;
+    if (cs && !forced.empty()) {
+        n = cs->force_adt_exhaust_undermark_from_match_nodes(forced);
+    } else if (!forced.empty()) {
+        for (auto id : forced)
+            g_adt_reverify_pending_tls.push_back(id);
+        n = forced.size();
+        if (metrics) {
+            static_cast<CompilerMetrics*>(metrics)->adt_exhaust_undermark_force_total.fetch_add(
+                n, std::memory_order_relaxed);
+        }
+    }
+    if (!forced.empty()) {
+        const std::span<const dirty::NodeId> sites{forced.data(), forced.size()};
+        (void)dirty::force_adt_exhaust_sites_into_cone(sites);
+    }
+    return n;
+}
+
 void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool, TypeRegistry& reg,
                                          const std::vector<NodeId>& subtree_roots,
                                          const MutationRecord& rec, std::uint64_t cache_epoch,
@@ -10386,6 +10521,9 @@ void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool, 
     std::vector<NodeId> define_types;
     std::vector<NodeId> match_lets;
     collect_adt_nodes_in_subtrees(flat, pool, subtree_roots, define_types, match_lets);
+    // Issue #3045: also walk ancestors so constructor / arm-only dirty
+    // still finds containing DefineType / match (under-mark).
+    collect_adt_ancestors_from_dirty(flat, pool, subtree_roots, define_types, match_lets);
     if (define_types.empty() && match_lets.empty())
         return;
     refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, define_types, metrics);
