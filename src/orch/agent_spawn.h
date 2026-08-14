@@ -2336,11 +2336,10 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
 
 // Issue #2848: stamp MailMessage after a successful Evaluator::handoff_ref so
 // the #2663 push/broadcast gate admits the held-ref payload. Language path
-// (orch:agent-send) auto-calls this after handoff; raw C++ callers that set
-// held_ref_token without stamping still hit PushStatus::Closed +
-// handoff_reject_total (defense in depth — never weakens the mailbox gate).
-// Soft / sandbox=off still prefer the export path for consistency; fail is
-// structured typed status on the language path (not silent Closed).
+// (orch:agent-send) auto-calls this after handoff. Issue #3013: raw
+// agent_send with unstamped held_ref_token returns HandoffRequired (not
+// Closed); direct mailbox->push still Closed + handoff_reject_total
+// (defense in depth — never weakens the mailbox gate).
 inline void stamp_mail_message_handoff_completed(serve::mf_mailbox::MailMessage& msg,
                                                  std::uint64_t held_token) noexcept {
     msg.held_ref_token = held_token;
@@ -2368,8 +2367,10 @@ inline void stamp_mail_message_handoff_completed(serve::mf_mailbox::MailMessage&
 //     AC1).
 //   - Otherwise (string / int / bool payload, no held_ref_token, no
 //     ev pointer, or already-stamped) → zero-cost fall through to raw
-//     agent_send. Raw agent_send with un-stamped held_ref_token still
-//     hits #2663 Closed (defense in depth per AC3).
+//     agent_send. Issue #3013: raw agent_send with un-stamped
+//     held_ref_token now returns HandoffRequired (same typed fail as
+//     this helper) instead of ambiguous Closed. Mailbox push still
+//     returns Closed for direct mb.push (#2663 defense in depth).
 //
 // Caller rules:
 //   - ev must outlive the call (raw pointer, not owned). Real type is
@@ -2439,9 +2440,12 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
 // Send a message to an agent's mailbox (if any).
 // Issue #1881: bump all outcomes (ok / backpressure / closed) — no dead path.
 // Issue #2848: auto handoff_ref for StableNodeRef payloads lives on the
-// language path (orch:agent-send in evaluator_primitives_agent.cpp). This
-// C++ helper still pushes as-is so raw callers that set held_ref_token
-// without handoff_completed continue to hit the #2663 Closed gate.
+// language path (orch:agent-send) and on agent_send_safe.
+// Issue #3013: prefer agent_send_safe for new C++ call sites. Raw
+// agent_send with unstamped held_ref_token returns HandoffRequired
+// (not Closed) so callers cannot misread "mailbox closed". Direct
+// mailbox->push still returns Closed (#2663). Zero-cost when no
+// held_ref_token / already stamped.
 // Issue #2925: optional producer_bp_budget self-throttle after N consecutive
 // BP (default 0 = off / zero extra work). Does not cancel body or detach
 // mailbox (Throttle; Cancel remains watch_all / explicit).
@@ -2450,6 +2454,15 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
     if (!h.ok || !h.mailbox) {
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
         return serve::mf_mailbox::PushStatus::Closed;
+    }
+    // Issue #3013: unstamped held_ref is a typed handoff miss, not Closed.
+    // One optional + bool — same cost the mailbox gate would pay; skip
+    // the lock and do not bump send_closed / handoff_reject.
+    if (msg.held_ref_token.has_value() && !msg.handoff_completed) {
+        g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.agent_send_safe_handoff_required_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return serve::mf_mailbox::PushStatus::HandoffRequired;
     }
     // #2925: when throttled, short-circuit BP without growing the queue
     // (unbounded producer spin stays BP without enqueue pressure).

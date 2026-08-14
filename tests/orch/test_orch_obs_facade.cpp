@@ -336,7 +336,91 @@ int run_test_orch_obs_facade() {
         }
     }
 
-    std::println("\n=== #2589+#2636+2884: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    // ── #3013: raw agent_send unstamped held_ref → HandoffRequired ──
+    {
+        std::println("\n--- #3013 AC1: agent_send unstamped held_ref is HandoffRequired ---");
+        using aura::orch::agent_send;
+        using aura::orch::agent_send_safe;
+        using aura::orch::AgentHandle;
+        using aura::orch::stamp_mail_message_handoff_completed;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+        AgentHandle h;
+        h.ok = true;
+        h.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        MailMessage raw;
+        raw.payload = "held-no-stamp";
+        raw.held_ref_token = 42;
+        raw.handoff_completed = false;
+        const auto before = g_orch_module_stats.agent_send_safe_handoff_required_total.load(
+            std::memory_order_relaxed);
+        const auto st = agent_send(h, std::move(raw));
+        CHECK(st == PushStatus::HandoffRequired,
+              "3013 AC1: raw agent_send unstamped held_ref → HandoffRequired");
+        CHECK(g_orch_module_stats.agent_send_safe_handoff_required_total.load(
+                  std::memory_order_relaxed) >= before + 1,
+              "3013 AC1: reuses agent_send_safe_handoff_required_total");
+        MailMessage raw2;
+        raw2.payload = "held-no-stamp-safe";
+        raw2.held_ref_token = 43;
+        raw2.handoff_completed = false;
+        const auto st_safe = agent_send_safe(h, std::move(raw2), /*ev=*/nullptr);
+        CHECK(st_safe == PushStatus::HandoffRequired,
+              "3013 AC1: agent_send_safe(ev=null) unstamped also HandoffRequired");
+
+        std::println("\n--- #3013 AC2: no token / stamped stay zero-cost Ok ---");
+        MailMessage plain;
+        plain.payload = "plain";
+        CHECK(agent_send(h, std::move(plain)) == PushStatus::Ok,
+              "3013 AC2: no held_ref_token still Ok");
+        MailMessage stamped;
+        stamped.payload = "stamped";
+        stamp_mail_message_handoff_completed(stamped, 44);
+        CHECK(agent_send(h, std::move(stamped)) == PushStatus::Ok,
+              "3013 AC2: already-stamped still Ok");
+
+        std::println("\n--- #3013 AC3: mailbox push still Closed (defense in depth) ---");
+        MailMessage gate;
+        gate.payload = "direct-push";
+        gate.held_ref_token = 45;
+        gate.handoff_completed = false;
+        CHECK(h.mailbox->push(std::move(gate)) == PushStatus::Closed,
+              "3013 AC3: direct mb.push unstamped still Closed");
+
+        std::println("\n--- #3013 AC4/AC5: schema + prefer agent_send_safe ---");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+        CHECK(spawn.find("Issue #3013") != std::string::npos,
+              "3013 AC4: agent_spawn.h cites #3013");
+        CHECK(spawn.find("prefer agent_send_safe") != std::string::npos,
+              "3013 AC4: deprecation / prefer-safe comment");
+        CHECK(agent.find("schema-3013") != std::string::npos, "3013 AC5: schema-3013");
+        CHECK(agent.find("agent-send-handoff-required-wired") != std::string::npos,
+              "3013 AC5: wired key");
+        CHECK(mb.find("Issue #2884 / #3013") != std::string::npos ||
+                  mb.find("#3013") != std::string::npos,
+              "3013 AC5: mailbox enum cites #3013");
+        CHECK(href(cs, "schema-3013") == 3013, "3013 AC5: live schema-3013");
+        CHECK(href(cs, "agent-send-handoff-required-wired") == 1, "3013 AC5: live wired sentinel");
+
+        std::println("\n--- #3013 AC6: extend suite + no invent + no docs/design/ ---");
+        const auto t = read_file("tests/orch/test_orch_obs_facade.cpp");
+        CHECK(t.find("#3013 AC1") != std::string::npos, "3013 AC6: this suite cites #3013");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_agent_send_handoff_required_3013") != std::string::npos,
+              "3013 AC6: build.py wires #3013 linter");
+        std::ifstream invent("tests/orch/test_issue_3013.cpp");
+        if (!invent.good())
+            invent.open("../tests/orch/test_issue_3013.cpp");
+        CHECK(!invent.good(), "3013 AC6: no test_issue_3013.cpp per #81967");
+        CHECK(read_file("docs/design/3013-agent-send-handoff-required.md").empty(),
+              "3013 AC6: no docs/design/3013-* per #1655");
+    }
+
+    std::println("\n=== #2589+#2636+2884+#3013: {}/{} checks passed ===", g_passed,
+                 g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

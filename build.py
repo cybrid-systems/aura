@@ -2279,6 +2279,20 @@ def cmd_lint():
             "Issue #2884 agent_send_safe linter failed — run python3 scripts/coverage/checks/check_agent_send_safe_2884.py"
         )
         return r
+    # Issue #3013: raw agent_send unstamped held_ref_token →
+    # PushStatus::HandoffRequired (not Closed). Mailbox push stays Closed
+    # (#2663). Extends test_orch_obs_facade.cpp (#81967); no
+    # docs/design/ (#1655).
+    ashr_script = COVERAGE_CHECKS / "check_agent_send_handoff_required_3013.py"
+    if not ashr_script.exists():
+        fail(f"missing {ashr_script}")
+        return 1
+    r = run([sys.executable, str(ashr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3013 agent_send HandoffRequired linter failed — run python3 scripts/coverage/checks/check_agent_send_handoff_required_3013.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —

@@ -96,11 +96,12 @@ enum class PushStatus : std::uint8_t {
     Ok = 0,
     Backpressure = 1, // queue at high-water mark
     Closed = 2,
-    // Issue #2884: typed handoff-required failure. Returned by
-    // agent_send_safe when a StableNodeRef-bearing payload fails the
-    // auto handoff_ref export path under Restricted/Strict. Distinct
-    // from Closed so C++ callers can disambiguate mailbox-closed from
-    // export-stale / handoff-required — never silent Closed conflation.
+    // Issue #2884 / #3013: typed handoff-required failure. Returned by
+    // agent_send_safe (handoff fail) and raw agent_send (unstamped
+    // held_ref_token). Distinct from Closed so C++ callers can
+    // disambiguate mailbox-closed from export-stale / handoff-required
+    // — never silent Closed conflation. Direct mailbox->push still
+    // returns Closed for unstamped held_ref (#2663 defense in depth).
     HandoffRequired = 3,
 };
 
