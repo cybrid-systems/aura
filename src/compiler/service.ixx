@@ -5330,6 +5330,54 @@ public:
         return true;
     }
 
+    // Issue #3034: upper bound for the partial-relower decision from
+    // ImpactScope / hybrid cascade. Reuses the workspace flat +
+    // source_to_ir_map + compute_impact_scope walk (same shape as
+    // try_apply_impact_minimal_dirty_). Returns 0 when impact cannot be
+    // computed (no flat / no root / empty source map) so Soft/Off stays
+    // zero-cost on clean or empty-impact windows. The returned bound
+    // counts affected blocks plus cross-fn indirect / unresolved callee
+    // hits — signals that the local block_dirty mask may under-count.
+    std::size_t impact_upper_bound_for_entry_(const std::string& name, IRCacheEntry& entry) {
+        auto* flat = evaluator_.workspace_flat();
+        auto* pool = evaluator_.workspace_pool();
+        if (!flat || !pool)
+            return 0;
+        aura::ast::NodeId root = aura::ast::NULL_NODE;
+        {
+            auto found = flat->find_define_by_name(*pool, name);
+            if (!found)
+                return 0;
+            root = *found;
+        }
+        ensure_source_to_ir_map_(entry);
+        if (entry.source_to_ir_map.empty())
+            return 0;
+        std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            ir_cache_index;
+        for (std::size_t fi = 0; fi < entry.irs.size(); ++fi)
+            ir_cache_index[entry.irs[fi].name] = fi;
+        auto scope = compute_impact_scope(*flat, root, entry.source_to_ir_map, ir_cache_index);
+        // Upper bound = affected blocks NOT yet covered by the local dirty
+        // mask (under-estimate signal) + cross-fn indirect / unresolved
+        // callee hits (dual-DepGraph edges not reflected in the mask).
+        // Blocks already dirty are not under-estimates; __top__ synthetic
+        // blocks with no AST mapping are excluded automatically (not in
+        // affected_blocks).
+        std::size_t uncovered = 0;
+        for (const auto& br : scope.affected_blocks) {
+            const auto fi = br.function_index;
+            const auto bi = br.block_index;
+            if (fi < entry.block_dirty_per_func_.size() &&
+                bi < entry.block_dirty_per_func_[fi].size() &&
+                entry.block_dirty_per_func_[fi][bi] != 0)
+                continue; // already dirty — no under-estimate here
+            ++uncovered;
+        }
+        return uncovered + scope.cross_fn_indirect_hits + scope.unresolved_callee_hits;
+    }
+
     // Issue #2133: build [func][block] instruction counts for DefineDirtyMaskView.
     static std::vector<std::vector<std::uint32_t>>
     build_block_instr_counts_(const IRCacheEntry& entry) {
@@ -6724,7 +6772,19 @@ public:
             for (const auto& fb : it->second.block_dirty_per_func_)
                 total_blocks += fb.size();
             const auto adaptive = consult_workload_adaptive_partial_(dirty_n, total_blocks);
-            const bool want_partial = adaptive.want_partial;
+            bool want_partial = adaptive.want_partial;
+            // Issue #3034: cross-check ImpactScope / hybrid-cascade upper
+            // bound. Monotonic — only upgrades partial → full, never lowers
+            // (storm gates stay the outer envelope). Zero cost on clean /
+            // empty-impact windows (helper returns 0 → no upgrade).
+            if (want_partial && dirty_n > 0) {
+                const std::size_t impact_ub = impact_upper_bound_for_entry_(name, it->second);
+                if (!should_partial_relower_impact_checked(dirty_n, impact_ub)) {
+                    want_partial = false;
+                    metrics_.partial_forced_full_by_impact_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
             if (want_partial)
                 metrics_.should_partial_relower_yes_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #1623: workspace dirty sweep is on eval/eval_ir entry.

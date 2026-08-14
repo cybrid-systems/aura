@@ -340,6 +340,10 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> relower_instruction_skip_total{0};
     std::atomic<std::uint64_t> should_partial_relower_consult_total{0};
     std::atomic<std::uint64_t> should_partial_relower_yes_total{0};
+    // Issue #3034: partial decision upgraded to full because ImpactScope /
+    // hybrid cascade reported more blocks / cross-fn than the local mask
+    // (dual-DepGraph callee edge not yet cascaded into block_dirty).
+    std::atomic<std::uint64_t> partial_forced_full_by_impact_total{0};
     // Issue #2133: consume ImpactScope affected_instrs in relower + pass pipeline.
     //   - instr_level_relower_total: times relower_affected_instrs path ran
     //   - instr_level_pass_skipped_clean: clean instrs skipped inside dirty blocks
