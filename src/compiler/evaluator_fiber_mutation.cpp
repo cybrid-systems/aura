@@ -820,8 +820,14 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->generation_auto_restamp_on_wrap.fetch_add(1, std::memory_order_relaxed);
         }
-        if (r.budget_exceeded)
+        if (r.budget_exceeded) {
             aura::ast::g_unified_restamp_torn_visible_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3041: production budget exceed → force QueryEpoch stale
+            // so Agents poll query:query-epoch-stats after Guard (lazy-align
+            // still ran above). Soft: metric-only (existing exceeded total).
+            if (production)
+                aura::core::force_query_epoch_stale_from_restamp_budget();
+        }
     }
     const auto sref_site = (site == UnifiedRestampSite::Densify)
                                ? StableRefRefreshSite::CompactOrRepin

@@ -23,6 +23,9 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+#include "core/workspace_epoch.hh"
+
 #include <cstdint>
 #include <fstream>
 #include <print>
@@ -395,6 +398,111 @@ static void ac3019_5_canary_soak_linter() {
     clear_restamp_budget_nodes_override_for_test();
 }
 
+// ── Issue #3041: production budget exceed forces QueryEpoch stale ──
+static void ac3041_1_production_budget_forces_query_epoch_stale() {
+    std::println("\n--- #3041 AC1: production + budget hit → QueryEpoch stale + counter ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::capture_query_epoch;
+    using aura::core::force_query_epoch_stale_from_restamp_budget;
+    using aura::core::g_query_epoch_forced_stale;
+    using aura::core::g_query_epoch_stale_total;
+    using aura::core::g_restamp_budget_query_epoch_stale_total;
+    using aura::core::last_query_epoch;
+    using aura::core::reset_query_epoch_metrics_for_test;
+    clear_restamp_budget_nodes_override_for_test();
+    reset_query_epoch_metrics_for_test();
+    apply_production_audit_defaults();
+    FlatAST flat;
+    for (int i = 0; i < 32; ++i)
+        (void)flat.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    auto e = capture_query_epoch(flat.generation(), 0);
+    CHECK(g_query_epoch_forced_stale().load() == 0, "AC1: not forced before budget");
+    set_restamp_budget_nodes_for_process(1);
+    const auto stale0 = g_query_epoch_stale_total().load();
+    const auto qe0 = g_restamp_budget_query_epoch_stale_total().load();
+    flat.restamp_all_node_generations();
+    CHECK(flat.restamp_last_budget_exceeded(), "AC1: last restamp exceeded");
+    CHECK(flat.restamp_lazy_align_enabled(), "AC1: lazy-align still ran");
+    // Direct restamp is metric-only; production force is the helper /
+    // unified_restamp path (compiler layer).
+    force_query_epoch_stale_from_restamp_budget();
+    CHECK(g_query_epoch_forced_stale().load() != 0, "AC1: QueryEpoch forced stale");
+    CHECK(g_query_epoch_stale_total().load() > stale0, "AC1: stale-total advanced");
+    CHECK(g_restamp_budget_query_epoch_stale_total().load() > qe0,
+          "AC1: restamp-budget-query-epoch-stale-total advanced");
+    CHECK(!last_query_epoch().is_fresh(aura::core::current_mutation_epoch(), e.generation),
+          "AC1: last QueryEpoch no longer fresh");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_query_epoch_metrics_for_test();
+}
+
+static void ac3041_2_lazy_align_still_runs() {
+    std::println("\n--- #3041 AC2: lazy-align still runs (no torn is_valid) ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    clear_restamp_budget_nodes_override_for_test();
+    FlatAST flat;
+    for (int i = 0; i < 16; ++i)
+        (void)flat.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    set_restamp_budget_nodes_for_process(1);
+    flat.restamp_all_node_generations();
+    CHECK(flat.restamp_lazy_align_enabled(), "AC2: lazy-align enabled after budget");
+    const auto impl = read_file("src/core/ast_impl.cpp");
+    CHECK(impl.find("Issue #3041") != std::string::npos, "AC2: impl cites lazy-align still runs");
+    CHECK(impl.find("lazy_only = true") != std::string::npos, "AC2: lazy_only path kept");
+    clear_restamp_budget_nodes_override_for_test();
+}
+
+static void ac3041_3_soft_unlimited_zero_extra() {
+    std::println("\n--- #3041 AC3: Soft / unlimited zero extra QueryEpoch stores ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::core::g_query_epoch_forced_stale;
+    using aura::core::g_restamp_budget_query_epoch_stale_total;
+    using aura::core::reset_query_epoch_metrics_for_test;
+    clear_restamp_budget_nodes_override_for_test();
+    reset_query_epoch_metrics_for_test();
+    FlatAST flat;
+    (void)flat.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    const auto qe0 = g_restamp_budget_query_epoch_stale_total().load();
+    const auto forced0 = g_query_epoch_forced_stale().load();
+    flat.restamp_all_node_generations();
+    CHECK(flat.restamp_budget_nodes() == 0, "AC3: default unlimited");
+    CHECK(!flat.restamp_last_budget_exceeded(), "AC3: unlimited no last-exceeded");
+    CHECK(g_restamp_budget_query_epoch_stale_total().load() == qe0,
+          "AC3: unlimited does not bump QueryEpoch stale counter");
+    CHECK(g_query_epoch_forced_stale().load() == forced0, "AC3: unlimited does not force stale");
+}
+
+static void ac3041_4_schema_and_linter() {
+    std::println("\n--- #3041 AC4/AC5: schema additive + linter + no invent ---");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto qfile = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto gen = read_file("src/compiler/evaluator_primitives_stdlib_review.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto iso = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+    const auto build = read_file("build.py");
+    CHECK(qws.find("schema-3041") != std::string::npos, "AC4: query-epoch-stats schema-3041");
+    CHECK(qws.find("restamp-budget-query-epoch-stale-total") != std::string::npos,
+          "AC4: query-epoch-stats counter key");
+    CHECK(qfile.find("schema-3041") != std::string::npos, "AC4: stable-ref-stats schema-3041");
+    CHECK(gen.find("schema-3041") != std::string::npos, "AC4: generation-stats schema-3041");
+    CHECK(obs.find("schema-3041") != std::string::npos, "AC4: hold-stats schema-3041");
+    CHECK(fm.find("force_query_epoch_stale_from_restamp_budget") != std::string::npos,
+          "AC4: unified restamp forces QueryEpoch");
+    CHECK(fm.find("production") != std::string::npos, "AC4: production gate on force");
+    CHECK(iso.find("#3041") != std::string::npos, "AC4: isolation suite cites #3041");
+    CHECK(build.find("check_restamp_budget_query_epoch_stale_3041") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("tests/core/test_issue_3041.cpp").empty(), "AC5: no invent test file");
+    CHECK(read_file("docs/design/3041-restamp-query-epoch.md").empty(),
+          "AC5: no docs/design/3041-*");
+}
+
 } // namespace
 
 int run_test_restamp_sla_observability() {
@@ -416,7 +524,12 @@ int run_test_restamp_sla_observability() {
     ac3019_3_budget_torn_visible();
     ac3019_4_soft_zero_extra_walk();
     ac3019_5_canary_soak_linter();
-    std::println("\n=== #2528+#2934+#3019: see per-AC results above ===");
+    std::println("\n=== Issue #3041: restamp budget QueryEpoch stale ===");
+    ac3041_1_production_budget_forces_query_epoch_stale();
+    ac3041_2_lazy_align_still_runs();
+    ac3041_3_soft_unlimited_zero_extra();
+    ac3041_4_schema_and_linter();
+    std::println("\n=== #2528+#2934+#3019+#3041: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 

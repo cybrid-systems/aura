@@ -13,6 +13,7 @@ module;
 #include "core/gap_buffer.hh"
 #include "core/zero_copy_output.hh"   // #2048 zero_copy_handoff metrics
 #include "core/provenance_tracker.hh" // Issue #3000: restamp-lag export counters
+#include "core/workspace_epoch.hh"    // Issue #3041: restamp-budget QueryEpoch stale
 #include "jit_typed_mutation_stats.h"
 #include "tui/tui_runtime.hh"
 
@@ -1425,6 +1426,18 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                                         aura::ast::unified_restamp_calls_total_v_read())));
                     kv.emplace_back("schema-3019", make_int(aura::ast::kUnifiedRestampIssue));
                     kv.emplace_back("issue-3019", make_int(aura::ast::kUnifiedRestampIssue));
+                    // Issue #3041: production restamp-budget QueryEpoch stale.
+                    kv.emplace_back("restamp-budget-query-epoch-stale-total",
+                                    make_int(static_cast<std::int64_t>(
+                                        aura::core::g_restamp_budget_query_epoch_stale_total().load(
+                                            std::memory_order_relaxed))));
+                    kv.emplace_back("query-epoch-forced-stale",
+                                    make_int(aura::core::g_query_epoch_forced_stale().load(
+                                                 std::memory_order_relaxed)
+                                                 ? 1
+                                                 : 0));
+                    kv.emplace_back("schema-3041", make_int(3041));
+                    kv.emplace_back("issue-3041", make_int(3041));
                     kv.emplace_back("unified-restamp-wired", make_int(1));
                 }
             }

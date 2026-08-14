@@ -9,6 +9,9 @@ Contract (one row per AC):
   AC5 source-cite evaluator.ixx / mutation_boundary / ast / flatast_restamp
   AC6 no docs/design/*; linter-checkable
 
+Issue #3041 successor: production budget exceed also forces QueryEpoch
+stale (check_restamp_budget_query_epoch_stale_3041.py).
+
 Exit 0 = all rows satisfied.
 """
 

@@ -2696,6 +2696,11 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                         .load(std::memory_order_relaxed)));
             insert_kv("schema-3037", 3037);
             insert_kv("issue-3037", 3037);
+            insert_kv("schema-3041", 3041);
+            insert_kv("restamp-budget-query-epoch-stale-total",
+                      static_cast<std::int64_t>(
+                          aura::core::g_restamp_budget_query_epoch_stale_total().load(
+                              std::memory_order_relaxed)));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

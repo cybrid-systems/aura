@@ -6254,6 +6254,16 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"schema-3019", make_int(aura::ast::kUnifiedRestampIssue)},
                 {"issue-3019", make_int(aura::ast::kUnifiedRestampIssue)},
                 {"unified-restamp-wired", make_int(1)},
+                {"restamp-budget-query-epoch-stale-total",
+                 make_int(static_cast<std::int64_t>(
+                     aura::core::g_restamp_budget_query_epoch_stale_total().load(
+                         std::memory_order_relaxed)))},
+                {"query-epoch-forced-stale",
+                 make_int(aura::core::g_query_epoch_forced_stale().load(std::memory_order_relaxed)
+                              ? 1
+                              : 0)},
+                {"schema-3041", make_int(3041)},
+                {"issue-3041", make_int(3041)},
                 // Issue #2364: PanicCheckpoint residual × densify closed loop.
                 {"panic-defer-after-densify-total",
                  make_int(m ? load(m->panic_defer_after_densify_total)
