@@ -1859,7 +1859,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_reverify_expand.cpp` (—) [domain_suite, theme_compiler] — occurrence / let-poly priority roots (between bounded reverify and
 - `tests/compiler/test_runtime_observability_correlated_stats.cpp` (—) [obs_named, domain_suite, theme_compiler] — test_runtime_observability_correlated_stats_673.cpp — Issue #673:
 - `tests/compiler/test_safe_snapshot_umbrella.cpp` (—) [domain_suite, theme_compiler] — Issue #1839/#1856 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_scan_skip_freed_closures.cpp` (—) [domain_suite, theme_compiler] — Issue #1665 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_scan_skip_freed_closures.cpp` (—) [large, domain_suite, theme_compiler] — Issue #1665 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_security_posture_trail.cpp` (—) [small, domain_suite, theme_compiler] — AC1: posture returns schema-2534
 - `tests/compiler/test_self_evo_stats.cpp` (—) [domain_suite, theme_compiler] — Issue #1909 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_self_evolution_chaos_stable.cpp` (—) [domain_suite, theme_serve] — test_self_evolution_chaos_stable_674.cpp — Issue #674:
