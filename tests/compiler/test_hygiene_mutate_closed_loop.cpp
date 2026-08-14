@@ -1119,11 +1119,191 @@ static void ac3000_5_linter_and_suites() {
     CHECK(cap.find("#3000") != std::string::npos, "AC5: tenant-capture cites #3000");
 }
 
+static aura::ast::NodeId first_non_eager(aura::ast::FlatAST& ws) {
+    for (aura::ast::NodeId id = 1; id < ws.size(); ++id) {
+        if (ws.is_live_node(id) && !ws.is_free_slot(id) && !ws.node_eagerly_restamped(id))
+            return id;
+    }
+    return aura::ast::NULL_NODE;
+}
+
+static void ac3037_1_production_torn_after_lazy_align() {
+    std::println("\n--- #3037 AC1: over-budget + production → torn reject after lazy-align ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(1);
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3037 AC1: dense workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3037 AC1: workspace");
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_last_budget_exceeded(), "3037 AC1: last restamp exceeded");
+    CHECK(ws->restamp_generation_torn(), "3037 AC1: generation torn");
+    auto lag = first_non_eager(*ws);
+    CHECK(lag != aura::ast::NULL_NODE, "3037 AC1: non-eager node");
+    CHECK(!ws->node_eagerly_restamped(lag), "3037 AC1: not eagerly restamped");
+    // Lazy-align must not hide torn: is_valid / make_ref_layout flip node_gen_.
+    CHECK(ws->is_valid(lag), "3037 AC1: lazy-align is_valid still true (#2934)");
+    CHECK(ws->node_generation_is_post_mutate(lag),
+          "3037 AC1: lazy-align made node_gen look post-mutate");
+    CHECK(!cs.evaluator().allow_query_stable_ref_export(lag),
+          "3037 AC1: production still rejects after lazy-align");
+    aura::ast::FlatAST::StableNodeRef brace{};
+    brace.id = lag;
+    cs.evaluator().stamp_query_stable_ref_export(brace);
+    CHECK(brace.id == aura::ast::NULL_NODE, "3037 AC1: stamp nulls torn export");
+    auto car = cs.eval(std::format("(car (query:stable-ref {}))", lag));
+    CHECK(car && is_string(*car), "3037 AC1: query:stable-ref error (not stale gen)");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+              std::memory_order_relaxed) >= 1,
+          "3037 AC1: torn reject counter");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3037_2_soft_observe_only() {
+    std::println("\n--- #3037 AC2: Soft observe only ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3037 AC2: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3037 AC2: workspace");
+    set_restamp_budget_nodes_for_process(1);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_generation_torn(), "3037 AC2: torn under Soft");
+    auto lag = first_non_eager(*ws);
+    CHECK(lag != aura::ast::NULL_NODE, "3037 AC2: non-eager");
+    const auto rej0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+            std::memory_order_relaxed);
+    const auto obs0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_soft_observe_total_atomic().load(
+            std::memory_order_relaxed);
+    CHECK(cs.evaluator().allow_query_stable_ref_export(lag), "3037 AC2: Soft allow");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_soft_observe_total_atomic().load(
+              std::memory_order_relaxed) > obs0,
+          "3037 AC2: Soft observe advanced");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+              std::memory_order_relaxed) == rej0,
+          "3037 AC2: Soft does not reject");
+    aura::ast::FlatAST::StableNodeRef brace{};
+    brace.id = lag;
+    cs.evaluator().stamp_query_stable_ref_export(brace);
+    CHECK(brace.id == lag, "3037 AC2: Soft stamp proceeds");
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3037_3_under_budget_zero_regression() {
+    std::println("\n--- #3037 AC3: under-budget path identical restamp ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    clear_restamp_budget_nodes_override_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3037 AC3: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3037 AC3: workspace");
+    CHECK(ws->restamp_budget_nodes() == 0, "3037 AC3: unlimited");
+    const auto rej0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+            std::memory_order_relaxed);
+    const auto obs0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_soft_observe_total_atomic().load(
+            std::memory_order_relaxed);
+    const auto stamped0 = aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
+        std::memory_order_relaxed);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3037 AC3: live");
+    ws->restamp_all_node_generations();
+    CHECK(!ws->restamp_last_budget_exceeded(), "3037 AC3: not exceeded");
+    CHECK(!ws->restamp_generation_torn(), "3037 AC3: not torn");
+    auto car = cs.eval(std::format("(car (query:stable-ref {}))", live));
+    CHECK(car && is_int(*car), "3037 AC3: under-budget stamps as #2960");
+    CHECK(aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
+              std::memory_order_relaxed) > stamped0,
+          "3037 AC3: stamped_total advanced");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+              std::memory_order_relaxed) == rej0,
+          "3037 AC3: no torn reject");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_soft_observe_total_atomic().load(
+              std::memory_order_relaxed) == obs0,
+          "3037 AC3: no torn observe");
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3037_4_schema() {
+    std::println("\n--- #3037 AC4: schema-3037 on stable-ref-stats ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto gen = read_file("src/compiler/evaluator_primitives_stdlib_review.cpp");
+    CHECK(q.find("schema-3037") != std::string::npos, "3037 AC4: schema-3037 stats-hash");
+    CHECK(q.find("query-stable-ref-restamp-torn-reject-total") != std::string::npos,
+          "3037 AC4: torn reject key");
+    CHECK(q.find("query-stable-ref-stamped-total") != std::string::npos,
+          "3037 AC4: #2960 stamped preserved");
+    CHECK(q.find("schema-3000") != std::string::npos, "3037 AC4: schema-3000 preserved");
+    CHECK(gen.find("schema-3037") != std::string::npos, "3037 AC4: generation-stats schema-3037");
+    CHECK(gen.find("restamp-generation-torn") != std::string::npos, "3037 AC4: torn flag key");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define z 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    const auto s = href_stable(cs, "schema-3037");
+    if (s >= 0)
+        CHECK(s == 3037, "3037 AC4: schema-3037 == 3037");
+    else
+        CHECK(true, "3037 AC4: light-link skip");
+    CHECK(href_stable(cs, "query-stable-ref-restamp-torn-wired") == 1 || s < 0,
+          "3037 AC4: torn wired");
+    const auto g = href_gen(cs, "schema-3037");
+    if (g >= 0)
+        CHECK(g == 3037, "3037 AC4: generation-stats schema-3037");
+    else
+        CHECK(true, "3037 AC4: light-link skip generation-stats");
+}
+
+static void ac3037_5_linter_and_suites() {
+    std::println("\n--- #3037 AC5: linter + #2960 isolation suites ---");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_restamp_over_budget_export_3037.py");
+    const auto iso = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+    const auto cap = read_file("tests/core/test_stable_ref_tenant_capture.cpp");
+    const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    CHECK(t.find("ac3037_1_production_torn_after_lazy_align") != std::string::npos,
+          "3037 AC5: AC1");
+    CHECK(iso.find("#3037") != std::string::npos, "3037 AC5: isolation cites #3037");
+    CHECK(cap.find("#3037") != std::string::npos, "3037 AC5: tenant-capture cites #3037");
+    CHECK(!lint.empty() && lint.find("3037") != std::string::npos, "3037 AC5: linter");
+    CHECK(build.find("check_restamp_over_budget_export_3037") != std::string::npos,
+          "3037 AC5: build.py");
+    CHECK(read_file("docs/design/3037-restamp-over-budget-export.md").empty(),
+          "3037 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3037.cpp").empty(), "3037 AC5: no invent test");
+    CHECK(read_file("tests/core/test_issue_3037.cpp").empty(), "3037 AC5: no invent core test");
+}
+
 } // namespace
 
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
-                 "#2961 + #3000 + #3027) ===");
+                 "#2961 + #3000 + #3027 + #3037) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
@@ -1171,6 +1351,12 @@ int main() {
     ac3027_3_extract_no_stamp_without_allow();
     ac3027_4_soft_non_macro_unchanged();
     ac3027_5_source_and_linter();
+    std::println("\n=== Issue #3037: restamp over-budget reject StableNodeRef export ===");
+    ac3037_1_production_torn_after_lazy_align();
+    ac3037_2_soft_observe_only();
+    ac3037_3_under_budget_zero_regression();
+    ac3037_4_schema();
+    ac3037_5_linter_and_suites();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

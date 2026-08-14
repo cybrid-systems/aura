@@ -6523,13 +6523,16 @@ public:
     // Remakes brace-init residuals via make_ref_layout when workspace has
     // non-zero wrap/cow (counts unstamped_prevented), then stamp_stable_ref
     // and bumps query_stable_ref_stamped_total.
-    // Issue #3000: production + last restamp-budget exceeded + node not
-    // eagerly restamped → reject (null ref; restamp-lag prevented). Soft:
-    // observe only, stamp as #2960. Call allow_query_stable_ref_export
-    // before make_ref_layout so lazy-align cannot hide a pre-mutate gen.
+    // Issue #3000 / #3037: production + last restamp-budget exceeded +
+    // node not eagerly restamped → reject (null ref; restamp-lag /
+    // torn). Soft: observe only, stamp as #2960. Call
+    // allow_query_stable_ref_export before make_ref_layout so lazy-align
+    // cannot hide a pre-mutate gen. Eager bit (not node_gen_==generation_)
+    // is the post-mutate authority after over-budget.
     void stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) const noexcept;
-    // Issue #3000: export-face restamp-lag gate. Quiet path (budget
-    // unlimited / not exceeded): one relaxed load, no new atomics.
+    // Issue #3000 / #3037: export-face restamp-lag / torn gate. Quiet
+    // path (budget unlimited / not exceeded): one relaxed load, no new
+    // atomics. reject_stable_ref_export under production + torn.
     [[nodiscard]] bool allow_query_stable_ref_export(ast::NodeId id) const noexcept;
     // Issue #2056: create helpers that stamp before returning to Agent code.
     [[nodiscard]] ast::FlatAST::StableNodeRef make_stamped_ref(ast::NodeId id) const noexcept;

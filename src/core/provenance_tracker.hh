@@ -99,6 +99,12 @@ struct ProvenanceEnforcementMetrics {
     std::atomic<std::uint64_t> query_stable_ref_restamp_lag_prevented_total{0};
     std::atomic<std::uint64_t> query_stable_ref_restamp_lag_soft_observe_total{0};
     std::atomic<std::uint32_t> query_stable_ref_restamp_lag_last_reason{0};
+    // Issue #3037: over-budget restamp generation-torn export face.
+    // reject = production query:*-stable deny (never stale gen). Soft
+    // observe only. Distinct from #3000 lag counters (additive).
+    std::atomic<std::uint64_t> query_stable_ref_restamp_torn_reject_total{0};
+    std::atomic<std::uint64_t> query_stable_ref_restamp_torn_soft_observe_total{0};
+    std::atomic<std::uint32_t> query_stable_ref_restamp_torn_wired{1};
     // Issue #2026: linear ownership × provenance consistency closed-loop.
     std::atomic<std::uint64_t> linear_provenance_checks_total{0};
     std::atomic<std::uint64_t> linear_provenance_ok_total{0};
@@ -239,6 +245,26 @@ g_query_stable_ref_restamp_lag_soft_observe_total_atomic() noexcept {
 }
 inline std::atomic<std::uint32_t>& g_query_stable_ref_restamp_lag_last_reason_atomic() noexcept {
     return g_provenance_enforcement().query_stable_ref_restamp_lag_last_reason;
+}
+// Issue #3037: over-budget restamp torn export (schema-3037).
+inline constexpr int kQueryStableRefRestampTornIssue = 3037;
+inline void record_query_stable_ref_restamp_torn_reject(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().query_stable_ref_restamp_torn_reject_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+inline void record_query_stable_ref_restamp_torn_soft_observe(std::uint64_t n = 1) noexcept {
+    g_provenance_enforcement().query_stable_ref_restamp_torn_soft_observe_total.fetch_add(
+        n, std::memory_order_relaxed);
+}
+inline std::atomic<std::uint64_t>& g_query_stable_ref_restamp_torn_reject_total_atomic() noexcept {
+    return g_provenance_enforcement().query_stable_ref_restamp_torn_reject_total;
+}
+inline std::atomic<std::uint64_t>&
+g_query_stable_ref_restamp_torn_soft_observe_total_atomic() noexcept {
+    return g_provenance_enforcement().query_stable_ref_restamp_torn_soft_observe_total;
+}
+inline std::atomic<std::uint32_t>& g_query_stable_ref_restamp_torn_wired_atomic() noexcept {
+    return g_provenance_enforcement().query_stable_ref_restamp_torn_wired;
 }
 
 // Issue #2404: production hard-reject of unrefreshable Agent exports.
@@ -878,6 +904,8 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.query_stable_ref_restamp_lag_prevented_total.store(0, std::memory_order_relaxed);
     m.query_stable_ref_restamp_lag_soft_observe_total.store(0, std::memory_order_relaxed);
     m.query_stable_ref_restamp_lag_last_reason.store(0, std::memory_order_relaxed);
+    m.query_stable_ref_restamp_torn_reject_total.store(0, std::memory_order_relaxed);
+    m.query_stable_ref_restamp_torn_soft_observe_total.store(0, std::memory_order_relaxed);
     set_isolation_capture_tenant(0);
     m.linear_provenance_checks_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_ok_total.store(0, std::memory_order_relaxed);

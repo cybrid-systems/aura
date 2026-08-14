@@ -1174,25 +1174,31 @@ void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcep
     ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
 }
 
-// Issue #3000: production query:*-stable must not export a pre-mutate
-// generation when the last outermost restamp hit AURA_RESTAMP_BUDGET_NODES
-// and this node was not eagerly restamped. Soft / sandbox=off: observe
-// only (stamp proceeds). Quiet path: last-exceeded false → one relaxed load,
-// no new atomics. Peek node_gen_ *before* make_ref_layout so
+// Issue #3000 / #3037: production query:*-stable must not export a
+// pre-mutate generation when the last outermost restamp hit
+// AURA_RESTAMP_BUDGET_NODES. Soft / sandbox=off: observe only (stamp
+// proceeds). Quiet path: last-exceeded false → one relaxed load,
+// no new atomics. Peek eager bit *before* make_ref_layout so
 // lazy-align cannot hide lag.
+// Issue #3037: do not treat lazy-align (node_gen_==generation_) as
+// eager restamp. Over-budget marks generation torn; only nodes
+// restamp_all actually wrote may export. Peek eager bit *before*
+// make_ref_layout so is_valid cannot hide lag.
 bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
     auto* ws = workspace_flat_;
     if (!ws || id == ast::NULL_NODE)
         return true;
     if (!ws->restamp_last_budget_exceeded())
         return true;
-    if (ws->node_generation_is_post_mutate(id))
+    if (ws->node_eagerly_restamped(id))
         return true;
     if (typed_audit::production_defaults_active()) {
         ::aura::core::provenance::record_query_stable_ref_restamp_lag_prevented();
+        ::aura::core::provenance::record_query_stable_ref_restamp_torn_reject();
         return false;
     }
     ::aura::core::provenance::record_query_stable_ref_restamp_lag_soft_observe();
+    ::aura::core::provenance::record_query_stable_ref_restamp_torn_soft_observe();
     return true;
 }
 

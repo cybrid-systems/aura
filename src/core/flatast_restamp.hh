@@ -96,8 +96,13 @@ inline constexpr int kRestampIncrementalDefaultIssue = 2402;
 // is_valid/make_ref consistent (never silent torn generation, #2934 AC2);
 // production export rejects (typed restamp-lag) instead of stamping-green
 // a lagging gen.
+// Issue #3037: over-budget outermost restamp marks generation torn for
+// export. Lazy-align must not hide a pre-mutate gen (eager bit, not
+// node_gen_==generation_). Production reject_stable_ref_export; Soft
+// observe only. Happy under-budget path is identical restamp_all.
 inline constexpr int kRestampBudgetIssue = 2934;
 inline constexpr int kQueryStableRefRestampLagIssue = 3000;
+inline constexpr int kRestampOverBudgetExportIssue = 3037;
 // Issue #3019: unified restamp after boundary / abort / steal / densify.
 // Additive torn-visible counter — does not replace restamp-lag (#3000).
 inline constexpr int kUnifiedRestampIssue = 3019;

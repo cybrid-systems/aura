@@ -3086,6 +3086,19 @@ def cmd_lint():
             "Issue #3000 query stable-ref restamp-lag linter failed — run python3 scripts/coverage/checks/check_query_stable_ref_restamp_lag_3000.py"
         )
         return r
+    # Issue #3037: restamp over-budget reject StableNodeRef export.
+    # Extends test_hygiene_mutate_closed_loop + #2960 isolation
+    # (#81967); no docs/design (#1655).
+    rob_script = COVERAGE_CHECKS / "check_restamp_over_budget_export_3037.py"
+    if not rob_script.exists():
+        fail(f"missing {rob_script}")
+        return 1
+    r = run([sys.executable, str(rob_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3037 restamp over-budget export linter failed — run python3 scripts/coverage/checks/check_restamp_over_budget_export_3037.py"
+        )
+        return r
     # Issue #3001: chaos soak fail-closed on LifetimeProofOk / EnvFrameOk
     # residual arms (#2931/#2957 residual). Extends test_chaos_steal_mutation_gc
     # + test_steal_complete_restamp_txn (#81967); no docs/design (#1655).
@@ -11950,6 +11963,31 @@ def cmd_query_stable_ref_restamp_lag_3000_coverage():
     return 0
 
 
+def cmd_restamp_over_budget_export_3037_coverage():
+    """Issue #3037: restamp over-budget reject StableNodeRef export.
+
+    Production + over-budget marks generation torn; query:*-stable
+    rejects even after lazy-align. Soft observe only. schema-3037
+    on stable-ref-stats-hash. Residual of #2960/#3000.
+    """
+    print(f"{B}=== restamp over-budget export coverage (#3037) ==={N}")
+    script = COVERAGE_CHECKS / "check_restamp_over_budget_export_3037.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("restamp over-budget export (#3037) coverage contract rows failed")
+        return 1
+    ok("restamp over-budget export (#3037) coverage clean")
+    return 0
+
+
+def cmd_restamp_over_budget_export_3037():
+    """Alias for coverage check."""
+    return cmd_restamp_over_budget_export_3037_coverage()
+
+
 def cmd_rename_replace_hygiene_restamp_2961_coverage():
     """Issue #2961: rename-symbol / replace-pattern Guard + hygiene + restamp.
 
@@ -15542,6 +15580,8 @@ def main():
         "topology-dual-restore-2959": cmd_topology_dual_restore_2959_coverage,
         "query-stable-ref-stamp-2960": cmd_query_stable_ref_stamp_2960_coverage,
         "query-stable-ref-restamp-lag-3000": cmd_query_stable_ref_restamp_lag_3000_coverage,
+        "restamp-over-budget-export-3037": cmd_restamp_over_budget_export_3037,
+        "restamp-over-budget-export-3037-coverage": cmd_restamp_over_budget_export_3037_coverage,
         "rename-replace-hygiene-restamp-2961": cmd_rename_replace_hygiene_restamp_2961_coverage,
         "structural-macro-hygiene-3027": cmd_structural_macro_hygiene_3027,
         "structural-macro-hygiene-3027-coverage": cmd_structural_macro_hygiene_3027_coverage,
