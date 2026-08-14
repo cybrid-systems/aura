@@ -24,6 +24,27 @@ observe failures consistently.
 - Empty-collection returns (`car` on empty via error, `list-ref` OOB → error) prefer `make_primitive_error`.
 - Stats facades (`ObservabilityPrims::register_stats_impl`) may return `make_int(0)` / empty hashes when metrics are unwired — that is “no sample”, not an error.
 
+## Residual core-surface rules (Issue #2998)
+
+Audit of list / math / json / pair / vector after #2914. True errors
+always go through `make_primitive_error` (counter bumped). Predicates
+stay boolean. Documented empty / not-found stay silent only as below.
+
+| Primitive | Documented empty / not-found | True error (`make_primitive_error`) |
+|-----------|------------------------------|-------------------------------------|
+| `member` | not-found → int `0` (falsy) | too few args, not a list, improper / corrupted |
+| `list-ref` | — | too few args, non-int / negative index, OOB, corrupted (including empty list at index) |
+| `take` / `drop` | `n=0`, empty list, drop past end → void | too few args, non-int / negative count, not a list, improper / corrupted |
+| `filter` / `map` | empty list → void | too few args, not a list |
+| `reverse` | empty list → void | too few args, not a list, improper / corrupted |
+| `car` / `cdr` | — | not a pair, corrupted pair index (no silent `0`) |
+| `cadr` family | missing cdr / non-pair → void (stdlib guards with `pair?`) | — |
+| `vector-length` / `vector->list` | — | not a vector, corrupted index |
+| `modulo` / `mod` / `quotient` / `remainder` / `abs` | — | too few args, non-numeric, div-by-zero, INT64_MIN/-1 |
+| `inexact->exact` | out-of-range float saturates (documented #1153) | too few args, non-number |
+| `json-parse` | JSON `null` → void | non-string arg, unexpected EOF, invalid token |
+| `json-get-string` | missing field → void | non-string args |
+
 ## Discovery
 
 - `query:primitives-meta` / `primitive:describe` / `engine:metrics` remain the Agent surfaces for names and counters.

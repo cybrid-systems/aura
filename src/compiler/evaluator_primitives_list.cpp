@@ -1,5 +1,6 @@
 // evaluator_primitives_list.cpp — P0 step 3: list primitives
 // Issue #2996: migrate onto register_prim + PrimSpec (core TU).
+// Issue #2998: residual silent sentinels → make_primitive_error.
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
@@ -244,6 +245,11 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_primitive_error(string_heap, error_values, "list-ref: too few args",
                                             counter);
             }
+            if (!is_int(a[1]) || as_int(a[1]) < 0) {
+                return make_primitive_error(string_heap, error_values,
+                                            "list-ref: index must be a non-negative integer",
+                                            counter);
+            }
             auto v = a[0];
             auto pos = static_cast<std::size_t>(as_int(a[1]));
             for (std::size_t i = 0; i < pos; ++i) {
@@ -263,20 +269,33 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             ev.bump_linear_traverse_count(pos, pos);
             if (is_pair(v)) {
                 auto idx = as_pair_idx(v);
-                return idx < pairs.size() ? pairs[idx].car : make_int(0);
+                if (idx >= pairs.size()) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "list-ref: corrupted pair", counter);
+                }
+                return pairs[idx].car;
             }
-            return v;
+            // Issue #2998: empty list at the landing index is OOB, not silent 0/void.
+            return make_primitive_error(string_heap, error_values, "list-ref: index out of bounds",
+                                        counter);
         },
         pure_general(2, "(list int) -> any", "Element at index in a list."));
     // (member val list) — Find val in list using content equality (equal?)
-    // Returns the tail of the list starting with val, or #f if not found
+    // Not-found is documented empty (int 0, falsy). Malformed input is an error (#2998).
     register_prim(
         add, ev, "member",
-        [&pairs, &string_heap](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            auto* counter = ev.primitive_error_counter_ptr();
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "member: too few args",
+                                            counter);
+            }
             auto& val = a[0];
             auto v = a[1];
+            if (!is_end_of_list(v) && !is_pair(v)) {
+                return make_primitive_error(string_heap, error_values, "member: not a list",
+                                            counter);
+            }
             auto elem_eq = [&](const EvalValue& x, const EvalValue& y) -> bool {
                 if (x == y)
                     return true;
@@ -292,16 +311,20 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return false;
             };
             while (!is_end_of_list(v)) {
-                if (!is_pair(v))
-                    return make_int(0);
+                if (!is_pair(v)) {
+                    return make_primitive_error(string_heap, error_values, "member: improper list",
+                                                counter);
+                }
                 auto idx = as_pair_idx(v);
-                if (idx >= pairs.size())
-                    return make_int(0);
+                if (idx >= pairs.size()) {
+                    return make_primitive_error(string_heap, error_values, "member: corrupted pair",
+                                                counter);
+                }
                 if (elem_eq(pairs[idx].car, val))
                     return v;
                 v = pairs[idx].cdr;
             }
-            return make_int(0);
+            return make_int(0); // documented not-found (falsy)
         },
         pure_general(2, "(any list) -> any", "Sublist whose car equals the key, or empty."));
     // (append list ...) — Variadic: concatenate all provided lists
@@ -352,19 +375,32 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     register_prim(
         add, ev, "reverse",
         [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
-            if (a.empty())
-                return make_int(0);
+            auto* counter = ev.primitive_error_counter_ptr();
+            if (a.empty()) {
+                return make_primitive_error(string_heap, error_values, "reverse: too few args",
+                                            counter);
+            }
+            if (is_end_of_list(a[0]))
+                return make_void();
+            if (!is_pair(a[0])) {
+                return make_primitive_error(string_heap, error_values, "reverse: not a list",
+                                            counter);
+            }
             // Issue #2651: pairs_ push under alloc_storage_lock_.
             // Issue #2997: snapshot cars, one allow + reserve, timed lock.
             Evaluator::ListCtorLockHold hold(ev);
             std::vector<EvalValue> cars;
             auto v = a[0];
             while (!is_end_of_list(v)) {
-                if (!is_pair(v))
-                    return a[0];
+                if (!is_pair(v)) {
+                    return make_primitive_error(string_heap, error_values, "reverse: improper list",
+                                                counter);
+                }
                 auto idx = as_pair_idx(v);
-                if (idx >= pairs.size())
-                    return a[0];
+                if (idx >= pairs.size()) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "reverse: corrupted pair", counter);
+                }
                 cars.push_back(pairs[idx].car);
                 v = pairs[idx].cdr;
             }
@@ -393,8 +429,16 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         add, ev, "map",
         [&pairs, &string_heap, &error_values, apply_unary, &ev](std::span<const EvalValue> a) {
             // (map func list) — apply func to each element, collect results
-            if (a.size() < 2 || is_void(a[1]))
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "map: too few args",
+                                            ev.primitive_error_counter_ptr());
+            }
+            if (is_void(a[1]))
                 return make_void();
+            if (!is_pair(a[1])) {
+                return make_primitive_error(string_heap, error_values, "map: not a list",
+                                            ev.primitive_error_counter_ptr());
+            }
 
             // Issue #2997: snapshot under lock, apply outside, one construct CS.
             std::vector<EvalValue> cars;
@@ -440,10 +484,18 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(2, "(fn list) -> list", "Apply fn to each element; collect results."));
     register_prim(
         add, ev, "filter",
-        [&pairs, apply_pred, &ev](std::span<const EvalValue> a) {
+        [&pairs, &string_heap, &error_values, apply_pred, &ev](std::span<const EvalValue> a) {
             // (filter pred list) — keep elements where pred returns truthy
-            if (a.size() < 2 || is_void(a[1]))
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "filter: too few args",
+                                            ev.primitive_error_counter_ptr());
+            }
+            if (is_void(a[1]))
                 return make_void();
+            if (!is_pair(a[1])) {
+                return make_primitive_error(string_heap, error_values, "filter: not a list",
+                                            ev.primitive_error_counter_ptr());
+            }
 
             EvalValue result = make_void();
             EvalValue tail = make_void();
@@ -484,13 +536,23 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(2, "(pred list) -> list", "Keep elements where pred is truthy."));
     register_prim(
         add, ev, "take",
-        [&pairs, &ev](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_void();
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            auto* counter = ev.primitive_error_counter_ptr();
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "take: too few args",
+                                            counter);
+            }
+            if (!is_int(a[0]) || as_int(a[0]) < 0) {
+                return make_primitive_error(string_heap, error_values,
+                                            "take: count must be a non-negative integer", counter);
+            }
             auto n = static_cast<std::size_t>(as_int(a[0]));
             auto v = a[1];
             if (n == 0 || is_end_of_list(v))
                 return make_void();
+            if (!is_pair(v)) {
+                return make_primitive_error(string_heap, error_values, "take: not a list", counter);
+            }
             // B-list-2026-07-18-A fix: bound n by list length BEFORE the
             // for-loop so the early-exit path (when n > length) cannot
             // bypass the post-loop reverse. Without this bound, callers
@@ -544,19 +606,37 @@ void register_list_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         pure_general(2, "(int list) -> list", "Prefix of n elements from a list."));
     register_prim(
         add, ev, "drop",
-        [&pairs](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_void();
+        [&pairs, &string_heap, &error_values, &ev](std::span<const EvalValue> a) {
+            auto* counter = ev.primitive_error_counter_ptr();
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "drop: too few args",
+                                            counter);
+            }
+            if (!is_int(a[0]) || as_int(a[0]) < 0) {
+                return make_primitive_error(string_heap, error_values,
+                                            "drop: count must be a non-negative integer", counter);
+            }
             auto n = static_cast<std::size_t>(as_int(a[0]));
             auto v = a[1];
+            if (n == 0)
+                return v;
+            if (is_end_of_list(v))
+                return make_void();
+            if (!is_pair(v)) {
+                return make_primitive_error(string_heap, error_values, "drop: not a list", counter);
+            }
             for (std::size_t i = 0; i < n; ++i) {
                 if (is_end_of_list(v))
-                    return make_void();
-                if (!is_pair(v))
-                    return make_void();
+                    return make_void(); // documented: drop past end → empty
+                if (!is_pair(v)) {
+                    return make_primitive_error(string_heap, error_values, "drop: improper list",
+                                                counter);
+                }
                 auto idx = as_pair_idx(v);
-                if (idx >= pairs.size())
-                    return make_void();
+                if (idx >= pairs.size()) {
+                    return make_primitive_error(string_heap, error_values, "drop: corrupted pair",
+                                                counter);
+                }
                 v = pairs[idx].cdr;
             }
             return v;

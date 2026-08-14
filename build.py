@@ -2495,6 +2495,18 @@ def cmd_lint():
             "Issue #2997 list ctor hot-path linter failed — run python3 scripts/coverage/checks/check_list_ctor_hotpath_2997.py"
         )
         return r
+    # Issue #2998: residual silent sentinels on core primitives.
+    # Extends query_primitives_split_2914.aura (#81967); no docs/design/.
+    pec_script = COVERAGE_CHECKS / "check_prim_error_convention_2998.py"
+    if not pec_script.exists():
+        fail(f"missing {pec_script}")
+        return 1
+    r = run([sys.executable, str(pec_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #2998 prim error convention linter failed — run python3 scripts/coverage/checks/check_prim_error_convention_2998.py"
+        )
+        return r
     # Issue #2995: unified OccurrenceCommitHealth + single-shot recover.
     # Extends persist-rehydrate + type-linear-commit-health (#81967); no docs/design/.
     och_script = COVERAGE_CHECKS / "check_occurrence_commit_health_2995.py"
@@ -10523,6 +10535,21 @@ def cmd_solve_delta_locality_slo_2913_coverage():
     return 0
 
 
+def cmd_prim_error_convention_2998_coverage():
+    """Issue #2998: residual silent sentinels on core primitives."""
+    print(f"{B}=== prim error convention coverage (#2998) ==={N}")
+    script = COVERAGE_CHECKS / "check_prim_error_convention_2998.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("prim error convention (#2998) coverage contract rows failed")
+        return 1
+    ok("prim error convention (#2998) coverage clean")
+    return 0
+
+
 def cmd_query_primitives_split_2914_coverage():
     """Issue #2914: split evaluator_primitives_query.cpp + error convention.
 
@@ -14352,6 +14379,7 @@ def main():
         "query-result-binding-2933": cmd_query_result_binding_2933_coverage,
         "restamp-budget-2934": cmd_restamp_budget_2934_coverage,
         "query-primitives-split-2914": cmd_query_primitives_split_2914_coverage,
+        "prim-error-convention-2998": cmd_prim_error_convention_2998_coverage,
         "solve-delta-locality-slo-2913": cmd_solve_delta_locality_slo_2913_coverage,
         "solve-delta-dep-closure-2939": cmd_solve_delta_dep_closure_2939,
         "solve-delta-dep-closure-2939-coverage": cmd_solve_delta_dep_closure_2939_coverage,

@@ -25,6 +25,62 @@
     #t
     (begin (display "FAIL-2914 list-ref should error\n") (set! ok #f)))
 
+; Issue #2998: residual silent sentinels become observable errors.
+(if (error? (list-ref (list) 0))
+    #t
+    (begin (display "FAIL-2998 list-ref empty\n") (set! ok #f)))
+(if (error? (member 1 42))
+    #t
+    (begin (display "FAIL-2998 member not-a-list\n") (set! ok #f)))
+(if (= (member 9 (list 1 2 3)) 0)
+    #t
+    (begin (display "FAIL-2998 member not-found stays 0\n") (set! ok #f)))
+(if (error? (take "x" (list 1)))
+    #t
+    (begin (display "FAIL-2998 take bad count\n") (set! ok #f)))
+(if (error? (drop 1 42))
+    #t
+    (begin (display "FAIL-2998 drop not-a-list\n") (set! ok #f)))
+(if (null? (drop 9 (list 1)))
+    #t
+    (begin (display "FAIL-2998 drop past end empty\n") (set! ok #f)))
+(if (error? (filter (lambda (x) #t) 42))
+    #t
+    (begin (display "FAIL-2998 filter not-a-list\n") (set! ok #f)))
+(if (null? (filter (lambda (x) #t) (list)))
+    #t
+    (begin (display "FAIL-2998 filter empty\n") (set! ok #f)))
+(if (error? (reverse 42))
+    #t
+    (begin (display "FAIL-2998 reverse not-a-list\n") (set! ok #f)))
+(if (error? (car 42))
+    #t
+    (begin (display "FAIL-2998 car not-a-pair\n") (set! ok #f)))
+(if (error? (vector-length 42))
+    #t
+    (begin (display "FAIL-2998 vector-length not-a-vector\n") (set! ok #f)))
+(if (error? (modulo #t 2))
+    #t
+    (begin (display "FAIL-2998 modulo non-numeric\n") (set! ok #f)))
+(if (error? (abs))
+    #t
+    (begin (display "FAIL-2998 abs arity\n") (set! ok #f)))
+(if (error? (json-parse 42))
+    #t
+    (begin (display "FAIL-2998 json-parse non-string\n") (set! ok #f)))
+(if (error? (json-parse "not-json"))
+    #t
+    (begin (display "FAIL-2998 json-parse invalid\n") (set! ok #f)))
+(if (null? (json-parse "null"))
+    #t
+    (begin (display "FAIL-2998 json null stays void\n") (set! ok #f)))
+(if (list? #f)
+    (begin (display "FAIL-2998 list? predicate\n") (set! ok #f))
+    #t)
+(if (vector? 42)
+    (begin (display "FAIL-2998 vector? predicate\n") (set! ok #f))
+    #t)
+
 (if ok
     (begin (display "OK-2914 query-primitives-split") (newline))
     (begin (display "FAIL-2914") (newline) (unbound-2914-force-fail)))

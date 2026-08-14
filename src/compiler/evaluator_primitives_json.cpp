@@ -198,9 +198,13 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     // (json-get-string json-str field-name) → string
     register_prim(
         add, ev, "json-get-string",
-        [&pairs, &string_heap](std::span<const EvalValue> a) -> EvalValue {
-            if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
-                return make_void();
+        [&pairs, &string_heap, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "json-get-string: expected two strings",
+                                            primitive_error_counter);
+            }
             auto json = string_heap[types::as_string_idx(a[0])];
             auto field = string_heap[types::as_string_idx(a[1])];
 
@@ -246,8 +250,11 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         add, ev, "json-parse",
         [&pairs, &string_heap, &error_values, primitive_error_counter,
          &ev](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !types::is_string(a[0]))
-                return make_void();
+            if (a.empty() || !types::is_string(a[0])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "json-parse: expected a string",
+                                            primitive_error_counter);
+            }
             auto json_str = string_heap[types::as_string_idx(a[0])];
 
             std::size_t pos = 0;
@@ -647,8 +654,11 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
             parse_value = [&]() -> EvalValue {
                 skip_ws();
-                if (pos >= json_str.size())
-                    return make_void();
+                if (pos >= json_str.size()) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "json-parse: unexpected end of input",
+                                                primitive_error_counter);
+                }
                 char c = json_str[pos];
                 if (c == '"')
                     return parse_string();
@@ -664,7 +674,9 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return make_bool(false);
                 if (parse_keyword("null", make_void()))
                     return make_void();
-                return make_void();
+                // Issue #2998: invalid token is a true parse error, not silent void.
+                return make_primitive_error(string_heap, error_values, "json-parse: invalid input",
+                                            primitive_error_counter);
             };
 
             return parse_value();

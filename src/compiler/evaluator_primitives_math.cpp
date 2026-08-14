@@ -81,6 +81,18 @@ namespace {
         return 0;
     }
 
+    // Issue #2998: true coerce failure (non-numeric) vs documented 0.
+    [[nodiscard]] bool try_coerce_int(const EvalValue& v, std::span<const std::string> heap,
+                                      std::int64_t& out) {
+        if (!is_int(v) && !is_float(v) && !is_string(v))
+            return false;
+        auto r = aura::compiler::pure::coerce_to_int_pure(v, heap);
+        if (!r)
+            return false;
+        out = *r;
+        return true;
+    }
+
     // Issue #2479: wall-clock budget for regex-* (ReDoS guard).
     // Env AURA_REGEX_TIMEOUT_MS (default 100). Detached-thread race so
     // the interpreter fiber is not stuck in catastrophic backtracking.
@@ -492,9 +504,17 @@ void register_math_regex_and_arithmetic_primitives(
     // Issue #1153/#1158/#1174 family: saturate float→int out of range.
     register_prim(
         add, ev, "inexact->exact",
-        [](const auto& a) -> EvalValue {
-            if (a.empty())
-                return make_int(0);
+        [&string_heap, &error_values, primitive_error_counter](const auto& a) -> EvalValue {
+            if (a.empty()) {
+                return make_primitive_error(string_heap, error_values,
+                                            "inexact->exact: too few args",
+                                            primitive_error_counter);
+            }
+            if (!is_int(a[0]) && !is_float(a[0])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "inexact->exact: expected number",
+                                            primitive_error_counter);
+            }
             if (types::is_float(a[0])) {
                 const double d = types::as_float(a[0]);
                 constexpr double kMax =
@@ -529,14 +549,20 @@ void register_math_regex_and_arithmetic_primitives(
         add, ev, "modulo",
         [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
          i64_div_ok](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
-            auto divisor = coerce_to_int(a[1], string_heap);
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "modulo: too few args",
+                                            primitive_error_counter);
+            }
+            std::int64_t divisor = 0, n = 0;
+            if (!try_coerce_int(a[1], string_heap, divisor) ||
+                !try_coerce_int(a[0], string_heap, n)) {
+                return make_primitive_error(string_heap, error_values, "modulo: expected number",
+                                            primitive_error_counter);
+            }
             if (divisor == 0) {
                 return make_primitive_error(string_heap, error_values, "modulo: division by zero",
                                             primitive_error_counter);
             }
-            auto n = coerce_to_int(a[0], string_heap);
             if (!i64_div_ok(n, divisor)) {
                 return make_primitive_error(string_heap, error_values,
                                             "modulo: integer overflow (INT64_MIN/-1)",
@@ -552,14 +578,20 @@ void register_math_regex_and_arithmetic_primitives(
         add, ev, "mod",
         [&string_heap, &error_values, primitive_error_counter, safe_abs_i64,
          i64_div_ok](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
-            auto divisor = coerce_to_int(a[1], string_heap);
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "mod: too few args",
+                                            primitive_error_counter);
+            }
+            std::int64_t divisor = 0, n = 0;
+            if (!try_coerce_int(a[1], string_heap, divisor) ||
+                !try_coerce_int(a[0], string_heap, n)) {
+                return make_primitive_error(string_heap, error_values, "mod: expected number",
+                                            primitive_error_counter);
+            }
             if (divisor == 0) {
                 return make_primitive_error(string_heap, error_values, "mod: division by zero",
                                             primitive_error_counter);
             }
-            auto n = coerce_to_int(a[0], string_heap);
             if (!i64_div_ok(n, divisor)) {
                 return make_primitive_error(string_heap, error_values,
                                             "mod: integer overflow (INT64_MIN/-1)",
@@ -575,14 +607,20 @@ void register_math_regex_and_arithmetic_primitives(
         add, ev, "quotient",
         [&string_heap, &error_values, primitive_error_counter,
          i64_div_ok](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
-            auto divisor = coerce_to_int(a[1], string_heap);
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "quotient: too few args",
+                                            primitive_error_counter);
+            }
+            std::int64_t divisor = 0, n = 0;
+            if (!try_coerce_int(a[1], string_heap, divisor) ||
+                !try_coerce_int(a[0], string_heap, n)) {
+                return make_primitive_error(string_heap, error_values, "quotient: expected number",
+                                            primitive_error_counter);
+            }
             if (divisor == 0) {
                 return make_primitive_error(string_heap, error_values, "quotient: division by zero",
                                             primitive_error_counter);
             }
-            auto n = coerce_to_int(a[0], string_heap);
             if (!i64_div_ok(n, divisor)) {
                 return make_primitive_error(string_heap, error_values,
                                             "quotient: integer overflow (INT64_MIN/-1)",
@@ -595,14 +633,20 @@ void register_math_regex_and_arithmetic_primitives(
         add, ev, "remainder",
         [&string_heap, &error_values, primitive_error_counter,
          i64_div_ok](std::span<const EvalValue> a) {
-            if (a.size() < 2)
-                return make_int(0);
-            auto divisor = coerce_to_int(a[1], string_heap);
+            if (a.size() < 2) {
+                return make_primitive_error(string_heap, error_values, "remainder: too few args",
+                                            primitive_error_counter);
+            }
+            std::int64_t divisor = 0, n = 0;
+            if (!try_coerce_int(a[1], string_heap, divisor) ||
+                !try_coerce_int(a[0], string_heap, n)) {
+                return make_primitive_error(string_heap, error_values, "remainder: expected number",
+                                            primitive_error_counter);
+            }
             if (divisor == 0) {
                 return make_primitive_error(string_heap, error_values,
                                             "remainder: division by zero", primitive_error_counter);
             }
-            auto n = coerce_to_int(a[0], string_heap);
             if (!i64_div_ok(n, divisor)) {
                 return make_primitive_error(string_heap, error_values,
                                             "remainder: integer overflow (INT64_MIN/-1)",
@@ -613,12 +657,19 @@ void register_math_regex_and_arithmetic_primitives(
         pure_general(2, "(int int) -> int", "Remainder of integer division."));
     register_prim(
         add, ev, "abs",
-        [&string_heap, safe_abs_i64](std::span<const EvalValue> a) {
-            if (a.empty())
-                return make_int(0);
+        [&string_heap, &error_values, primitive_error_counter,
+         safe_abs_i64](std::span<const EvalValue> a) {
+            if (a.empty()) {
+                return make_primitive_error(string_heap, error_values, "abs: too few args",
+                                            primitive_error_counter);
+            }
             if (is_float(a[0]))
                 return make_float(std::abs(as_float(a[0])));
-            auto n = coerce_to_int(a[0], string_heap);
+            std::int64_t n = 0;
+            if (!try_coerce_int(a[0], string_heap, n)) {
+                return make_primitive_error(string_heap, error_values, "abs: expected number",
+                                            primitive_error_counter);
+            }
             return make_int(safe_abs_i64(n));
         },
         pure_general(1, "(number) -> number", "Absolute value."));

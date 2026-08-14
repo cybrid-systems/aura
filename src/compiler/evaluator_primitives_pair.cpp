@@ -235,7 +235,9 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // Fallback to shared pair storage (JIT/arena pairs)
             if (id < g_pair_slots.size() && g_pair_slots[id])
                 return types::EvalValue{g_pair_slots[id]->car};
-            return make_int(0);
+            // Issue #2998: corrupted pair index is a true error, not silent 0.
+            return make_primitive_error(string_heap, error_values, "car: corrupted pair",
+                                        primitive_error_counter);
         },
         pure_general(1, "(pair) -> any", "First element of a pair."));
     register_prim(
@@ -252,7 +254,9 @@ void register_pair_and_string_primitives(PrimRegistrar add, Evaluator& ev,
             // Fallback to shared pair storage (JIT/arena pairs)
             if (id < g_pair_slots.size() && g_pair_slots[id])
                 return types::EvalValue{g_pair_slots[id]->cdr};
-            return make_int(0);
+            // Issue #2998: corrupted pair index is a true error, not silent 0.
+            return make_primitive_error(string_heap, error_values, "cdr: corrupted pair",
+                                        primitive_error_counter);
         },
         pure_general(1, "(pair) -> any", "Rest of a pair."));
     register_prim(
