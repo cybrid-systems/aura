@@ -487,6 +487,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // lookup_define_v2 / eval / AOT reemit never serve stale IR.
         if (abort_ir_cache_force_dirty_fn_)
             abort_ir_cache_force_dirty_fn_();
+        // Issue #3030: drop stale TypeLinearCommitProof / linear_fast_path
+        // face so post-abort Move/Drop cannot elide on a pre-abort stamp.
+        typed_audit::clear_type_linear_commit_proof_on_abort();
         last_boundary_rollback_stats_ = stats;
         // Invalidate the def-use index — the workspace state
         // is now different from what the index reflects.
@@ -1111,6 +1114,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         // (stamps point at intermediate state; see exit boundary).
                         if (abort_ir_cache_force_dirty_fn_)
                             abort_ir_cache_force_dirty_fn_();
+                        // Issue #3030: invariant force-rollback clears proof face.
+                        typed_audit::clear_type_linear_commit_proof_on_abort();
                         last_boundary_rollback_stats_ = stats;
                         defuse_index_ = nullptr;
                         // Issue #2105: leave txn_dirty set until outermost clean exit,
@@ -1192,6 +1197,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // Issue #3033: dual-topology abort → force-dirty IR cache.
                     if (abort_ir_cache_force_dirty_fn_)
                         abort_ir_cache_force_dirty_fn_();
+                    // Issue #3030: Strict reflect-validate rollback clears proof face.
+                    typed_audit::clear_type_linear_commit_proof_on_abort();
                     last_boundary_rollback_stats_ = stats;
                     defuse_index_ = nullptr;
                     if (!nested_boundary)

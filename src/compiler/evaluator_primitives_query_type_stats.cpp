@@ -757,6 +757,24 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("occurrence-commit-health-wired", 1);
                 insert_kv("schema-2995", aura::compiler::typed_audit::kOccurrenceCommitHealthIssue);
                 insert_kv("issue-2995", aura::compiler::typed_audit::kOccurrenceCommitHealthIssue);
+                // Issue #3030: abort/restore clears TypeLinearCommitProof face.
+                insert_kv("type-linear-proof-cleared-on-abort-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::
+                                  type_linear_proof_cleared_on_abort_total_v_read()));
+                insert_kv("type-linear-proof-cleared-on-abort-observe-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::
+                                  type_linear_proof_cleared_on_abort_observe_total_v_read()));
+                insert_kv(
+                    "type-linear-proof-cleared-on-abort-wired",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::g_type_linear_proof_cleared_on_abort_wired
+                            .load(std::memory_order_relaxed)));
+                insert_kv("schema-3030",
+                          aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
+                insert_kv("issue-3030",
+                          aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
             }
             // Issue #2307: sole-authority sentinel.
             // solve_delta_occurrence now seeds occurrence

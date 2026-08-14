@@ -957,6 +957,156 @@ static void ac3006_6_linter_no_design() {
           "3006 AC6: no test_issue_3006.cpp");
 }
 
+// ── Issue #3030: abort/restore clears TypeLinearCommitProof face ──
+
+static void ac3030_1_abort_clears_fast_path() {
+    std::println("\n--- #3030 AC1: production abort → !linear_fast_path_ok ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_type_linear_proof_cleared_on_abort_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        1, std::memory_order_relaxed);
+
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    stamp_type_linear_commit_proof(30301);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    CHECK(linear_fast_path_ok(), "3030 AC1: fresh stamp ok before abort");
+    CHECK(linear_ir_fastpath_try_skip(), "3030 AC1: try_skip before abort");
+
+    const auto clr0 = type_linear_proof_cleared_on_abort_total_v_read();
+    clear_type_linear_commit_proof_on_abort();
+    CHECK(!linear_fast_path_ok(), "3030 AC1: after abort !ok");
+    CHECK(!linear_ir_fastpath_try_skip(), "3030 AC1: Move/Drop cannot skip");
+    CHECK(last_type_linear_commit_proof_stamp_v_read() == 0, "3030 AC1: stamp cleared");
+    CHECK(g_last_proof_would_allow_commit.load() == 0, "3030 AC1: would_allow=0");
+    CHECK(g_last_proof_linear_ok.load() == 0, "3030 AC1: linear_ok=0");
+    CHECK(last_type_linear_proof_outcome_v_read() == kTypeLinearProofOutcomeReject,
+          "3030 AC1: outcome Reject");
+    CHECK(type_linear_proof_cleared_on_abort_total_v_read() == clr0 + 1,
+          "3030 AC1: production counter +1");
+    CHECK(linear_densify_scan_mismatch_inject_pending() == 0, "3030 AC1: densify inject cleared");
+    CHECK(linear_fast_path_boundary_exit_action() == LinearFastPathExitAction::ForceRevalidate,
+          "3030 AC1: production ForceRevalidate until fresh stamp");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+}
+
+static void ac3030_2_fresh_stamp_restores() {
+    std::println("\n--- #3030 AC2: fresh outermost stamp restores fast-path ---");
+    using namespace aura::compiler::typed_audit;
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(7);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    clear_type_linear_commit_proof_on_abort();
+    CHECK(!linear_fast_path_ok(), "3030 AC2: cleared");
+    stamp_type_linear_commit_proof(30302);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_fast_path_ok(), "3030 AC2: fresh stamp ok (no success-path regression)");
+    CHECK(linear_ir_fastpath_try_skip(), "3030 AC2: try_skip after fresh stamp");
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3030_3_soft_observe() {
+    std::println("\n--- #3030 AC3: Soft observe-only counter ---");
+    using namespace aura::compiler::typed_audit;
+    clear_type_linear_commit_proof_for_test();
+    reset_type_linear_proof_cleared_on_abort_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    stamp_type_linear_commit_proof(30303);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    const auto hard0 = type_linear_proof_cleared_on_abort_total_v_read();
+    const auto obs0 = type_linear_proof_cleared_on_abort_observe_total_v_read();
+    clear_type_linear_commit_proof_on_abort();
+    CHECK(!linear_fast_path_ok(), "3030 AC3: Soft still clears face");
+    CHECK(type_linear_proof_cleared_on_abort_total_v_read() == hard0,
+          "3030 AC3: production counter unchanged");
+    CHECK(type_linear_proof_cleared_on_abort_observe_total_v_read() == obs0 + 1,
+          "3030 AC3: observe counter +1");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3030_4_quiet_zero_cost() {
+    std::println("\n--- #3030 AC4: quiet abort (no face) zero extra counter ---");
+    using namespace aura::compiler::typed_audit;
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_type_linear_proof_cleared_on_abort_for_test();
+    const auto hard0 = type_linear_proof_cleared_on_abort_total_v_read();
+    const auto obs0 = type_linear_proof_cleared_on_abort_observe_total_v_read();
+    clear_type_linear_commit_proof_on_abort();
+    CHECK(type_linear_proof_cleared_on_abort_total_v_read() == hard0, "3030 AC4: no hard bump");
+    CHECK(type_linear_proof_cleared_on_abort_observe_total_v_read() == obs0,
+          "3030 AC4: no observe");
+}
+
+static void ac3030_5_schema_and_wire() {
+    std::println("\n--- #3030 AC5: schema-3030 + abort sites wired ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3030") == 3030, "3030 AC5: schema-3030");
+    CHECK(href(cs, "issue-3030") == 3030, "3030 AC5: issue-3030");
+    CHECK(href(cs, "type-linear-proof-cleared-on-abort-wired") == 1, "3030 AC5: wired");
+    CHECK(href(cs, "type-linear-proof-cleared-on-abort-total") >= 0, "3030 AC5: total");
+    CHECK(href(cs, "schema-3006") == 3006, "3030 AC5: schema-3006 preserved");
+    CHECK(href(cs, "schema-2964") == 2964, "3030 AC5: schema-2964 preserved");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("clear_type_linear_commit_proof_on_abort") != std::string::npos,
+          "3030 AC5: boundary calls clear");
+    std::size_t restores = 0;
+    std::size_t clears = 0;
+    for (std::size_t p = 0; (p = mb.find("abort_restore_dual_topology", p)) != std::string::npos;
+         p += 1)
+        ++restores;
+    for (std::size_t p = 0;
+         (p = mb.find("clear_type_linear_commit_proof_on_abort", p)) != std::string::npos; p += 1)
+        ++clears;
+    CHECK(restores >= 3, "3030 AC5: three dual-restore call sites");
+    CHECK(clears >= 3, "3030 AC5: clear on every restore site");
+}
+
+static void ac3030_6_linter_no_design() {
+    std::println("\n--- #3030 AC6: linter + no invent / no design ---");
+    const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_type_linear_proof_clear_on_abort_3030.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3030_1_abort_clears_fast_path") != std::string::npos, "3030 AC6: AC1");
+    CHECK(t.find("ac3030_2_fresh_stamp_restores") != std::string::npos, "3030 AC6: AC2");
+    CHECK(!lint.empty() && lint.find("#3030") != std::string::npos, "3030 AC6: linter");
+    CHECK(build.find("check_type_linear_proof_clear_on_abort_3030") != std::string::npos,
+          "3030 AC6: build.py gate");
+    CHECK(read_file("tests/compiler/test_issue_3030.cpp").empty(),
+          "3030 AC6: no test_issue_3030.cpp");
+    CHECK(read_file("docs/design/3030-type-linear-proof-abort.md").empty(),
+          "3030 AC6: no docs/design/");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -998,6 +1148,13 @@ int run_test_escape_move_elision_gate() {
     ac3006_4_soft_observe();
     ac3006_5_schema_lineage();
     ac3006_6_linter_no_design();
+    std::println("\n=== Issue #3030: abort clears TypeLinearCommitProof face ===");
+    ac3030_1_abort_clears_fast_path();
+    ac3030_2_fresh_stamp_restores();
+    ac3030_3_soft_observe();
+    ac3030_4_quiet_zero_cost();
+    ac3030_5_schema_and_wire();
+    ac3030_6_linter_no_design();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

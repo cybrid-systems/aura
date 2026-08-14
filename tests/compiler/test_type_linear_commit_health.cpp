@@ -1122,6 +1122,17 @@ static void ac2984_6_source_and_linter() {
           "2984 AC6: no invent test per #81967");
 }
 
+static void ac3030_health_schema() {
+    std::println("\n--- #3030 AC: type-linear-commit-health abort-clear keys ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3030") == 3030, "3030: schema-3030 on health");
+    CHECK(href(cs, "issue-3030") == 3030, "3030: issue-3030");
+    CHECK(href(cs, "type-linear-proof-cleared-on-abort-wired") == 1, "3030: wired");
+    CHECK(href(cs, "type-linear-proof-cleared-on-abort-total") >= 0, "3030: total");
+    CHECK(href(cs, "type-linear-proof-cleared-on-abort-observe-total") >= 0, "3030: observe");
+    CHECK(href(cs, "schema-2613") == 2613, "3030: schema-2613 preserved");
+}
+
 static void ac2995_3_recover_fail_keeps_reject() {
     std::println("\n--- #2995 AC3: recover fail → existing force_reason, no silent green ---");
     apply_production_audit_defaults();
@@ -1236,8 +1247,10 @@ int run_test_type_linear_commit_health() {
     std::println("\n=== Issue #2995: OccurrenceCommitHealth on commit-health query ===");
     ac2995_3_recover_fail_keeps_reject();
     ac2995_6_health_query_keys();
+    std::println("\n=== Issue #3030: abort-clear keys on type-linear-commit-health ===");
+    ac3030_health_schema();
     std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984 + "
-                 "#2995: {} "
+                 "#2995 + #3030: {} "
                  "passed, {} "
                  "failed ===",
                  g_passed, g_failed);
