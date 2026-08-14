@@ -15309,6 +15309,7 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t pure_anon_bg_ok = 0;
             std::uint64_t pure_anon_bg_fail = 0;
             std::uint64_t pure_anon_bg_ovf = 0;
+            std::uint64_t pure_anon_bg_ovf_md = 0;
             // Issue #2928: residual round-robin remount (outside reemit-success).
             std::uint64_t residual_remount_ok = 0;
             std::uint64_t residual_remount_budget_skip = 0;
@@ -15354,6 +15355,8 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 pure_anon_bg_fail =
                     m->pure_anon_bg_drain_fail_total.load(std::memory_order_relaxed);
                 pure_anon_bg_ovf = m->pure_anon_bg_overflow_total.load(std::memory_order_relaxed);
+                pure_anon_bg_ovf_md =
+                    m->pure_anon_bg_overflow_must_deopt_total.load(std::memory_order_relaxed);
                 residual_remount_ok = m->residual_remount_ok_total.load(std::memory_order_relaxed);
                 residual_remount_budget_skip =
                     m->residual_remount_budget_skip_total.load(std::memory_order_relaxed);
@@ -15578,6 +15581,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"pure-anon-bg-remount-wired", make_int(1)},
                 {"schema-2950", make_int(2950)},
                 {"issue-2950", make_int(2950)},
+                // Issue #3024: production overflow MustDeopt (additive).
+                {"pure-anon-bg-overflow-must-deopt-total",
+                 make_int(static_cast<std::int64_t>(pure_anon_bg_ovf_md))},
+                {"pure-anon-bg-overflow-must-deopt-wired", make_int(1)},
+                {"schema-3024", make_int(3024)},
+                {"issue-3024", make_int(3024)},
                 // Issue #2928: residual round-robin remount outside reemit-success.
                 {"residual-remount-ok-total",
                  make_int(static_cast<std::int64_t>(residual_remount_ok))},

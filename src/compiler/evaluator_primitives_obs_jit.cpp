@@ -1183,6 +1183,12 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                 {"pure-anon-bg-remount-wired", make_int(1)},
                 {"schema-2950", make_int(2950)},
                 {"issue-2950", make_int(2950)},
+                // Issue #3024: production overflow MustDeopt (additive).
+                {"pure-anon-bg-overflow-must-deopt-total",
+                 make_int(L(&CompilerMetrics::pure_anon_bg_overflow_must_deopt_total))},
+                {"pure-anon-bg-overflow-must-deopt-wired", make_int(1)},
+                {"schema-3024", make_int(3024)},
+                {"issue-3024", make_int(3024)},
                 // Issue #2928: residual round-robin remount (outside reemit-success).
                 {"residual-remount-ok-total",
                  make_int(L(&CompilerMetrics::residual_remount_ok_total))},

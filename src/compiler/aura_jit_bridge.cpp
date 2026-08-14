@@ -277,6 +277,14 @@ extern "C" void aura_bump_pure_anon_bg_totals(std::uint64_t enqueue, std::uint64
     }
 }
 
+// Issue #3024: production overflow MustDeopt (additive to #2950 overflow).
+extern "C" void aura_bump_pure_anon_bg_overflow_must_deopt_total(std::uint64_t n) {
+    if (n == 0)
+        return;
+    if (auto* m = aot_metrics())
+        m->pure_anon_bg_overflow_must_deopt_total.fetch_add(n, std::memory_order_relaxed);
+}
+
 // Issue #2928: residual round-robin remount counters (outside reemit-success).
 extern "C" void aura_bump_residual_remount_totals(std::uint64_t ok, std::uint64_t budget_skip) {
     if (auto* m = aot_metrics()) {

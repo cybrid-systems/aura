@@ -884,6 +884,135 @@ static void ac2950_6_source_and_linter() {
           "2950 AC6: no docs/design/");
 }
 
+// ── Issue #3024: production pure-anon bg overflow → MustDeopt ──
+// Close residual native-hole after #2950/#2850: overflow under
+// production_defaults_active sets MustDeopt (+ poisons bridge_epoch)
+// before enqueue returns. Soft / budget=0: overflow counter only.
+
+extern "C" std::uint64_t aura_pure_anon_bg_overflow_must_deopt_total_v_read() noexcept;
+extern "C" std::int64_t aura_closure_call(std::int64_t closure_id, std::int64_t* args,
+                                          std::int64_t argc);
+extern "C" std::uint64_t aura_get_closure_bridge_epoch(std::int64_t closure_id);
+
+static void fill_pure_anon_bg_queue_to_cap() {
+    aura_test_reset_pure_anon_bg_queue();
+    for (int i = 0; i < 256; ++i)
+        aura_pure_anon_bg_enqueue(/*dummy=*/1);
+}
+
+static void ac3024_1_prod_overflow_must_deopt() {
+    std::println("\n--- #3024 AC1: production overflow → MustDeopt + leave native ---");
+    fill_pure_anon_bg_queue_to_cap();
+    CHECK(aura_pure_anon_bg_pending() == 256, "3024 AC1: queue at cap");
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3024 AC1: alloc pure-anon");
+    aura_closure_set_must_deopt(cid, 0);
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3024 AC1: MustDeopt clear before overflow");
+
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    const auto ovf0 = aura_pure_anon_bg_overflow_total_v_read();
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    aura_pure_anon_bg_enqueue(cid);
+    prod.store(prev, std::memory_order_relaxed);
+
+    CHECK(aura_pure_anon_bg_overflow_total_v_read() > ovf0, "3024 AC1: overflow counter");
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() > md0,
+          "3024 AC1: overflow-must-deopt counter");
+    CHECK(aura_closure_get_must_deopt(cid) != 0, "3024 AC1: MustDeopt set before enqueue returns");
+    CHECK(aura_get_closure_bridge_epoch(cid) == 0, "3024 AC1: bridge_epoch poisoned");
+    CHECK(!aura_is_jit_closure_fresh(aura_get_closure_bridge_epoch(cid), 0),
+          "3024 AC1: dual-fresh fails after overflow");
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "3024 AC1: call path leaves native");
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3024_2_soft_overflow_counter_only() {
+    std::println("\n--- #3024 AC2: Soft / !production overflow is counter-only ---");
+    fill_pure_anon_bg_queue_to_cap();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3024 AC2: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(0, std::memory_order_relaxed);
+    const auto ovf0 = aura_pure_anon_bg_overflow_total_v_read();
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    aura_pure_anon_bg_enqueue(cid);
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(aura_pure_anon_bg_overflow_total_v_read() > ovf0, "3024 AC2: overflow still counts");
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() == md0,
+          "3024 AC2: must-deopt counter unchanged");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3024 AC2: MustDeopt not forced");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("budget == 0") != std::string::npos, "3024 AC2: budget=0 path unchanged");
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3024_3_soak_no_gen_behind_native() {
+    std::println("\n--- #3024 AC3: mutate×reemit soak — no gen-behind native after overflow ---");
+    fill_pure_anon_bg_queue_to_cap();
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    std::int64_t cids[8];
+    for (int i = 0; i < 8; ++i) {
+        cids[i] = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cids[i] >= 0, "3024 AC3: alloc soak cid");
+        aura_closure_set_must_deopt(cids[i], 0);
+        aura_pure_anon_bg_enqueue(cids[i]);
+        CHECK(aura_closure_get_must_deopt(cids[i]) != 0, "3024 AC3 soak: MustDeopt");
+        CHECK(aura_closure_call(cids[i], nullptr, 0) == 0,
+              "3024 AC3 soak: no generation-behind native");
+    }
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3024_4_query_additive() {
+    std::println("\n--- #3024 AC4: query keys additive; #2950 preserved ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3024") == 3024, "3024 AC4: schema-3024");
+    CHECK(href(cs, "issue-3024") == 3024, "3024 AC4: issue-3024");
+    CHECK(href(cs, "pure-anon-bg-overflow-must-deopt-wired") == 1, "3024 AC4: wired");
+    CHECK(href(cs, "pure-anon-bg-overflow-must-deopt-total") >= 0,
+          "3024 AC4: overflow-must-deopt-total");
+    CHECK(href(cs, "pure-anon-bg-overflow-total") >= 0, "3024 AC4: overflow-total preserved");
+    CHECK(href(cs, "schema-2950") == 2950, "3024 AC4: schema-2950 preserved");
+    CHECK(href(cs, "schema-2850") == 2850, "3024 AC4: schema-2850 preserved");
+    CHECK(href(cs, "schema-2928") == 2928, "3024 AC4: schema-2928 preserved");
+}
+
+static void ac3024_5_source_and_linter() {
+    std::println("\n--- #3024 AC5: source-cite + linter ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto sh = read_file("src/compiler/runtime_shared.h");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_pure_anon_bg_overflow_must_deopt_3024.py");
+    CHECK(rt.find("Issue #3024") != std::string::npos, "3024 AC5: runtime cites #3024");
+    CHECK(rt.find("pure_anon_bg_overflow_force_leave_native") != std::string::npos,
+          "3024 AC5: overflow helper");
+    CHECK(rt.find("production_defaults_active()") != std::string::npos,
+          "3024 AC5: production gate");
+    CHECK(br.find("pure_anon_bg_overflow_must_deopt_total") != std::string::npos,
+          "3024 AC5: bridge bump");
+    CHECK(sh.find("aura_pure_anon_bg_overflow_must_deopt_total_v_read") != std::string::npos,
+          "3024 AC5: shared API");
+    CHECK(stub.find("aura_pure_anon_bg_overflow_must_deopt_total_v_read") != std::string::npos,
+          "3024 AC5: weak stub");
+    CHECK(!lint.empty() && lint.find("Issue #3024") != std::string::npos, "3024 AC5: linter");
+    CHECK(build.find("check_pure_anon_bg_overflow_must_deopt_3024") != std::string::npos,
+          "3024 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3024-pure-anon-bg-overflow-must-deopt.md").empty(),
+          "3024 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3024.cpp").empty(),
+          "3024 AC5: no invent test per #81967");
+}
+
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
 // Outside reemit-success; clears residual MustDeopt under bounded budget.
 
@@ -1856,6 +1985,12 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2950_4_filters_pure_anon_only();
     ac2950_5_query_and_lineage();
     ac2950_6_source_and_linter();
+    std::println("\n=== Issue #3024: production overflow MustDeopt ===");
+    ac3024_1_prod_overflow_must_deopt();
+    ac3024_2_soft_overflow_counter_only();
+    ac3024_3_soak_no_gen_behind_native();
+    ac3024_4_query_additive();
+    ac3024_5_source_and_linter();
     std::println("\n=== Issue #2928: residual remount round-robin ===");
     ac2928_1_residual_tick_clears_must_deopt();
     ac2928_2_storm_skip();
@@ -1886,7 +2021,7 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2980_6_source_and_linter();
 
     std::println(
-        "\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980: {} "
+        "\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024: {} "
         "passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
